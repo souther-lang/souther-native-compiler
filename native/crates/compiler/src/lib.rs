@@ -121,6 +121,12 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
         let symbol = behavior_symbol(of_module, name);
         let signature = signature_over(&target.takes, &target.answers, call_conv)?;
         let linkage = match target.is {
+            // Every body, which is not the language's answer about what a module publishes. A
+            // module says which of its names it publishes and a checked program does not carry it,
+            // so nothing that crossed says whether this name is one of them. Exporting all of them
+            // makes the object usable and says more about a module than the module does; the other
+            // way round leaves an object nothing can be linked against. Neither is right, and
+            // which it should be is not this side's to work out from a name.
             Answers::Body => Linkage::Export,
             // Named and not defined. What answers it is settled where the object is linked, and
             // the two reasons a body is absent are one call to whoever reaches in.

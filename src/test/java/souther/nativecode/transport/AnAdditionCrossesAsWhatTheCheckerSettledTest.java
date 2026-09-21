@@ -55,6 +55,32 @@ class AnAdditionCrossesAsWhatTheCheckerSettledTest {
     }
 
     /**
+     * A type nothing in a body names still has to be in the document.
+     *
+     * <p>It is named by a signature and by nothing else, so it is found while the behaviors are
+     * being written — after the declarations would be finished, if the two were finished one at a
+     * time. The document would then name a type it says nothing about.
+     */
+    @Test
+    void aTypeOnlyASignatureNamesIsStillDeclared() {
+        String written = ProgramWriter.written(CheckedProgram.of(List.of("""
+                module demo
+
+                data Inner = Int
+                data Token = { held: Inner }
+
+                behavior ignore : (token: Token) -> Int
+                let ignore (token) = 42
+                """)));
+
+        assertThat(written).contains("\"takes\":[{\"declared\":\"demo.Token\"}]");
+        assertThat(written).contains("{\"declared\":\"demo.Token\",\"is\":\"product\"");
+        // And what that one holds, which nothing but its declaration names: found while the
+        // declarations were being written, after the behaviors were finished.
+        assertThat(written).contains("{\"declared\":\"demo.Inner\",\"is\":\"newtype\"");
+    }
+
+    /**
      * A body this backend does not write yet says so. It is not a refusal of the program: the
      * language admits this one and will compile it on another backend today.
      */

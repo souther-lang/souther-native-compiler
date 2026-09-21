@@ -19,7 +19,9 @@ import souther.compiler.types.ValueName;
 import souther.nativecode.NotLowered;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -97,55 +99,52 @@ public final class ProgramWriter {
             }
             modules.add(module(module));
         }
+
+        Map<ValueName.Behavior, String> behaviors = new LinkedHashMap<>();
+        Map<TypeSymbol.AtModule, String> declarations = new LinkedHashMap<>();
+        close(behaviors, declarations);
+
         return "{\"transport\":" + TRANSPORT_VERSION
-                + ",\"declarations\":" + declarations()
-                + ",\"behaviors\":" + behaviors()
+                + ",\"declarations\":" + joined(declarations.values())
+                + ",\"behaviors\":" + joined(behaviors.values())
                 + ",\"modules\":" + modules + "}";
     }
 
     /**
-     * Every declared type the document names, and what each is made of.
+     * Writes both tables until neither has anything left to write.
      *
-     * <p>Closed over what a declaration is made of: a field's type names a type, and that one's
-     * fields name more. Walked until nothing new turns up rather than to a fixed depth, because
-     * what a declaration reaches is the program's shape and not a number this file picked.
+     * <p>Together, because each is where the other's entries come from: writing a behavior's
+     * signature names a type, writing a type's fields names more types, and one of those may be a
+     * behavior's parameter that no body ever reads. Finished one at a time, whichever went first
+     * would be closed over a set the second was still adding to — and which went first would be
+     * the order two expressions happen to be written in rather than anything about the program.
      */
-    private String declarations() {
-        StringJoiner written = new StringJoiner(",", "[", "]");
-        Set<TypeSymbol.AtModule> emitted = new LinkedHashSet<>();
+    private void close(Map<ValueName.Behavior, String> behaviors,
+                       Map<TypeSymbol.AtModule, String> declarations) {
         while (true) {
-            List<TypeSymbol.AtModule> left = new ArrayList<>(declarationsMet);
-            left.removeAll(emitted);
-            if (left.isEmpty()) {
-                return written.toString();
+            boolean grew = false;
+            for (ValueName.Behavior name : new ArrayList<>(behaviorsMet)) {
+                if (!behaviors.containsKey(name)) {
+                    behaviors.put(name, target(name, program.behavior(name)));
+                    grew = true;
+                }
             }
-            for (TypeSymbol.AtModule name : left) {
-                emitted.add(name);
-                written.add(declaration(program.declaration(name).data()));
+            for (TypeSymbol.AtModule name : new ArrayList<>(declarationsMet)) {
+                if (!declarations.containsKey(name)) {
+                    declarations.put(name, declaration(program.declaration(name).data()));
+                    grew = true;
+                }
+            }
+            if (!grew) {
+                return;
             }
         }
     }
 
-    /**
-     * Every behavior the document names, with the signature a caller reaches it by.
-     *
-     * <p>Asked of the program and not of the module, because a behavior a module read off the path
-     * declares is one this program answers for and no module here holds.
-     */
-    private String behaviors() {
-        StringJoiner written = new StringJoiner(",", "[", "]");
-        Set<ValueName.Behavior> emitted = new LinkedHashSet<>();
-        while (true) {
-            List<ValueName.Behavior> left = new ArrayList<>(behaviorsMet);
-            left.removeAll(emitted);
-            if (left.isEmpty()) {
-                return written.toString();
-            }
-            for (ValueName.Behavior name : left) {
-                emitted.add(name);
-                written.add(target(name, program.behavior(name)));
-            }
-        }
+    private String joined(Collection<String> written) {
+        StringJoiner out = new StringJoiner(",", "[", "]");
+        written.forEach(out::add);
+        return out.toString();
     }
 
     /**
