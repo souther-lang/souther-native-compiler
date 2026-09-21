@@ -52,6 +52,8 @@ impl Arena {
     /// this answered stays where it is until that mark is reset. A vector of blocks rather than one
     /// growing block for that reason: growing one would move what a caller is holding.
     fn room(&mut self, size: usize) -> *mut u8 {
+        // At least one, so that two values made of nothing are still two places. A value with no
+        // fields is a value, and a pointer it shared with the next one would make them one.
         let wanted = size.div_ceil(SLOT as usize).max(1);
         let room = self.blocks.last().map_or(0, |it| it.capacity() - it.len());
         if room < wanted {
@@ -99,9 +101,15 @@ impl Arena {
 ///
 /// The pointer is good until a mark taken before this call is reset. Reading it after that is
 /// reading room something else has been handed.
+/// # Panics
+///
+/// Where the size is below nought, which is generated code having worked one out wrongly rather
+/// than a program doing anything. Read as nought it would answer a slot and the run would carry on
+/// writing into room nobody asked for.
 #[unsafe(no_mangle)]
 pub extern "C" fn souther_alloc(size: i64) -> *mut u8 {
-    ARENA.with(|it| it.borrow_mut().room(size.max(0) as usize))
+    let wanted = usize::try_from(size).expect("room is asked for in bytes, and never fewer than 0");
+    ARENA.with(|it| it.borrow_mut().room(wanted))
 }
 
 /// Where the arena stands, for a caller about to bracket a call.
@@ -111,9 +119,14 @@ pub extern "C" fn souther_mark() -> i64 {
 }
 
 /// Drops what a call made, back to `mark`.
+/// # Panics
+///
+/// Where the mark is one this never issued. Read as nought it would drop what a caller further out
+/// is still holding, which is the one thing a mark is for.
 #[unsafe(no_mangle)]
 pub extern "C" fn souther_reset(mark: i64) {
-    ARENA.with(|it| it.borrow_mut().reset(mark.max(0) as usize));
+    let held = usize::try_from(mark).expect("a mark is one this arena answered");
+    ARENA.with(|it| it.borrow_mut().reset(held));
 }
 
 #[cfg(test)]

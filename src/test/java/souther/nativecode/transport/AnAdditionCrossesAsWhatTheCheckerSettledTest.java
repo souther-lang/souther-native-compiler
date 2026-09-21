@@ -37,7 +37,7 @@ class AnAdditionCrossesAsWhatTheCheckerSettledTest {
 
         assertThat(written).isEqualTo("""
                 {"transport":1,"declarations":[],\
-                "behaviors":[{"declared":"calculation.add","is":"body",\
+                "behaviors":[{"module":"calculation","name":"add","is":"body",\
                 "takes":[{"prim":"INT"},{"prim":"INT"}],"answers":{"prim":"INT"}}],\
                 "modules":[{"name":"calculation","helpers":[],\
                 "bodies":[{"declared":"calculation.add","parameters":["a","b"],\

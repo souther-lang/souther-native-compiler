@@ -114,11 +114,7 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
     // reach one another. Nothing here orders the program to make that go away.
     let mut reachable = Reachable::default();
     for target in &program.behaviors {
-        let (of_module, name) = target
-            .declared
-            .rsplit_once('.')
-            .ok_or_else(|| anyhow!("{} names no module", target.declared))?;
-        let symbol = behavior_symbol(of_module, name);
+        let symbol = behavior_symbol(&target.module, &target.name);
         let signature = signature_over(&target.takes, &target.answers, call_conv)?;
         let linkage = match target.is {
             // Every body, which is not the language's answer about what a module publishes. A
@@ -135,17 +131,17 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
                 Linkage::Import
             }
             Answers::Composed => {
-                return Err(not_lowered(format!("the composition {}", target.declared)));
+                return Err(not_lowered(format!("the composition {}", target.declared())));
             }
             Answers::Unwritten => {
                 return Err(not_lowered(format!(
                     "the unwritten behavior {}",
-                    target.declared
+                    target.declared()
                 )));
             }
         };
         let id = module.declare_function(&symbol, linkage, &signature)?;
-        reachable.behavior(&target.declared, id)?;
+        reachable.behavior(&target.declared(), id)?;
     }
     for written in &program.modules {
         for held in &written.helpers {
@@ -185,7 +181,7 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
             let target = program
                 .behaviors
                 .iter()
-                .find(|it| it.declared == held.declared)
+                .find(|it| it.declared() == held.declared)
                 .ok_or_else(|| {
                     anyhow!("a body for {}, which no target names", held.declared)
                 })?;
@@ -339,10 +335,24 @@ fn signature_over(takes: &[Ty], answers: &Ty, call_conv: CallConv) -> Result<ir:
 /// is decided by giving it a width here.
 fn machine_type(ty: &Ty) -> Result<types::Type> {
     match ty {
-        Ty::Prim { prim: Prim::Int } => Ok(types::I64),
-        Ty::Prim { prim: Prim::Bool } => Ok(types::I8),
-        Ty::Declared { .. } | Ty::Union { .. } | Ty::Option { .. } | Ty::Tuple { .. } => Ok(POINTER),
-        other => Err(not_lowered(format!("a value of type {}", other.spelt()))),
+        Ty::Declared { .. } | Ty::Union { .. } | Ty::Option { .. } | Ty::Tuple { .. } => {
+            Ok(POINTER)
+        }
+        // Every primitive is named. A set the language closed is one this has to answer for member
+        // by member: caught by an arm standing for the rest, a primitive added to the language
+        // would arrive here as something with no representation and nothing would have said so.
+        Ty::Prim { prim } => match prim {
+            Prim::Int => Ok(types::I64),
+            Prim::Bool => Ok(types::I8),
+            Prim::String
+            | Prim::Decimal
+            | Prim::Rational
+            | Prim::Date
+            | Prim::Time
+            | Prim::DateTime
+            | Prim::Instant
+            | Prim::Raw => Err(not_lowered(format!("a value of type {}", prim.spelt()))),
+        },
     }
 }
 
@@ -359,18 +369,31 @@ fn machine_type(ty: &Ty) -> Result<types::Type> {
 /// place the two scopes meet.
 fn crosses_objects(target: &Target) -> Result<()> {
     for ty in target.takes.iter().chain([&target.answers]) {
-        match ty {
-            Ty::Prim {
-                prim: Prim::Int | Prim::Bool,
-            } => {}
-            other => {
-                return Err(not_lowered(format!(
-                    "{} takes or answers {}, whose representation is this object's own,\
-                     and it is reached across objects",
-                    target.declared,
-                    other.spelt()
-                )));
-            }
+        let nobodys_count = match ty {
+            // Named member by member for the same reason the widths are: a primitive added to the
+            // language must be answered for here rather than admitted by an arm standing for the
+            // rest, since what this decides is whether a value of it may leave the object.
+            Ty::Prim { prim } => match prim {
+                Prim::Int | Prim::Bool => true,
+                Prim::String
+                | Prim::Decimal
+                | Prim::Rational
+                | Prim::Date
+                | Prim::Time
+                | Prim::DateTime
+                | Prim::Instant
+                | Prim::Raw => false,
+            },
+            Ty::Declared { .. } | Ty::Union { .. } | Ty::Option { .. } | Ty::Tuple { .. } => false,
+        };
+        if !nobodys_count {
+            return Err(not_lowered(format!(
+                "{}.{} takes or answers {}, whose representation is this object's own, and it is \
+                 reached across objects",
+                target.module,
+                target.name,
+                ty.spelt()
+            )));
         }
     }
     Ok(())
@@ -598,7 +621,7 @@ fn lower(
                 held.push(into_slot(builder, answered));
             }
             let flags = TRUSTED;
-            let value = lowering.room(builder, module,members.len().max(1));
+            let value = lowering.room(builder, module, members.len());
             for (at, member) in held.into_iter().enumerate() {
                 builder.ins().store(flags, member, value, member_at(at) as i32);
             }

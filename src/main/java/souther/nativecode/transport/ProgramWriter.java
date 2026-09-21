@@ -290,7 +290,11 @@ public final class ProgramWriter {
         for (Type type : behavior.signature().takes()) {
             takes.add(type(type));
         }
-        return "{\"declared\":" + quoted(name.module() + "." + name.name())
+        // The module and the name apart, which is what an identity is made of and what a symbol is
+        // built from. Joined into one string it would have to be split back, and a module's name
+        // carries dots.
+        return "{\"module\":" + quoted(name.module())
+                + ",\"name\":" + quoted(name.name())
                 + ",\"is\":" + quoted(how)
                 + ",\"takes\":" + takes
                 + ",\"answers\":" + type(behavior.signature().answers())
@@ -322,8 +326,15 @@ public final class ProgramWriter {
 
         private final Map<BindingId, Integer> numbered = new HashMap<>();
 
+        private int counted;
+
         int number(BindingId binding) {
-            return numbered.computeIfAbsent(binding, it -> numbered.size());
+            Integer already = numbered.get(binding);
+            if (already != null) {
+                return already;
+            }
+            numbered.put(binding, counted);
+            return counted++;
         }
 
         int of(BindingId binding, String name) {

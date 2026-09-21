@@ -64,8 +64,8 @@ class ABehaviorAnotherBuildImplementsTest {
     void itCrossesWithTheSignatureACallerReachesItBy() {
         String written = ProgramWriter.written(compiled());
 
-        assertThat(written).contains("\"declared\":\"lib.rates.spin\",\"is\":\"elsewhere\"");
-        assertThat(written).contains("\"declared\":\"lib.rates.tally\",\"is\":\"elsewhere\"");
+        assertThat(written).contains("\"module\":\"lib.rates\",\"name\":\"spin\",\"is\":\"elsewhere\"");
+        assertThat(written).contains("\"module\":\"lib.rates\",\"name\":\"tally\",\"is\":\"elsewhere\"");
         // And what it takes and answers, which is a declaration no module here holds either.
         assertThat(written).contains("\"declared\":\"lib.rates.Rate\"");
     }
@@ -98,7 +98,7 @@ class ABehaviorAnotherBuildImplementsTest {
                 """), path());
 
         assertThat(ProgramWriter.written(program))
-                .contains("\"declared\":\"lib.rates.twice\",\"is\":\"elsewhere\"");
+                .contains("\"module\":\"lib.rates\",\"name\":\"twice\",\"is\":\"elsewhere\"");
         assertThat(NativeCompiler.compile(program)).isNotEmpty();
     }
 

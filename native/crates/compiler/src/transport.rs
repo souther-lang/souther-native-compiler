@@ -123,13 +123,25 @@ pub struct Body {
 }
 
 /// A behavior as a caller reaches it.
+///
+/// The module and the name apart, because that is what a behavior's identity is made of and it is
+/// what the symbol is built from. Written as one string and split back, the two halves would be
+/// recovered from a spelling rather than carried, and a module's name carries dots.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Target {
-    pub declared: String,
+    pub module: String,
+    pub name: String,
     pub is: Answers,
     pub takes: Vec<Ty>,
     pub answers: Ty,
+}
+
+impl Target {
+    /// What a call reaching this behavior writes, which is the two halves joined the one way.
+    pub fn declared(&self) -> String {
+        format!("{}.{}", self.module, self.name)
+    }
 }
 
 /// How a behavior comes to answer.

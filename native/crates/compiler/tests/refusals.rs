@@ -15,7 +15,7 @@ fn document(op: &str, ty: &str) -> String {
     let body =
         format!(r#"{{"core":"binary","op":"{op}","left":{},"right":{},"type":{prim}}}"#, read(0), read(1));
     let target = format!(
-        r#"{{"declared":"calculation.f","is":"body","takes":[{prim},{prim}],"answers":{prim}}}"#
+        r#"{{"module":"calculation","name":"f","is":"body","takes":[{prim},{prim}],"answers":{prim}}}"#
     );
     let held = format!(
         r#"{{"declared":"calculation.f","parameters":["a","b"],"body":{body}}}"#
