@@ -149,6 +149,11 @@ class ARowHoldsWhereverItIsRunTest {
             data Square = { side: Int }
             data Shape = Round | Square
 
+            data Side = Int
+            data Flat
+            data Edged = { side: Side }
+            data Face = Flat | Edged
+
             behavior edge : (size: Int, round: Bool) -> Int
             let edge (size, round) = {
                 let shape: Shape = if round then Round { across = size } else Square { side = size }
@@ -157,10 +162,24 @@ class ARowHoldsWhereverItIsRunTest {
                     | Square as q -> q.side * 4
             }
 
+            // A type with nothing in it beside one that wraps a single value, so a fork tells
+            // apart two values that are made of different amounts of nothing.
+            behavior around : (size: Int, edged: Bool) -> Int
+            let around (size, edged) = {
+                let face: Face = if edged then Edged { side = Side(size) } else Flat
+                match face with
+                    | Flat -> 0
+                    | Edged as e -> e.side.value * 3
+            }
+
             example edge
                 | "round" : (5, true) -> 10
                 | "square" : (5, false) -> 20
                 | "nothing of it" : (0, true) -> 0
+
+            example around
+                | "with an edge" : (5, true) -> 15
+                | "with none" : (5, false) -> 0
             """;
 
     /** A value that may be absent, and several values carried as one. */
@@ -168,6 +187,7 @@ class ARowHoldsWhereverItIsRunTest {
             module holding
 
             data Held = { value: Int? }
+            data Asked = { value: Bool? }
 
             behavior orElse : (a: Int, has: Bool) -> Int
             let orElse (a, has) = {
@@ -175,6 +195,16 @@ class ARowHoldsWhereverItIsRunTest {
                 match held.value with
                     | Some v -> v
                     | None -> 0
+            }
+
+            // What it holds is narrower than a slot, so an arm reading it at the slot's width
+            // would answer a number where the language says a truth.
+            behavior settled : (a: Bool, has: Bool) -> Bool
+            let settled (a, has) = {
+                let held = if has then Asked { value = a } else Asked { value = None }
+                match held.value with
+                    | Some v -> v == true
+                    | None -> false
             }
 
             behavior both : (a: Int, b: Int) -> Int
@@ -192,6 +222,11 @@ class ARowHoldsWhereverItIsRunTest {
             example both
                 | "two of them" : (3, 4) -> 304
                 | "nothing and something" : (0, 9) -> 9
+
+            example settled
+                | "holding a truth" : (true, true) -> true
+                | "holding the other one" : (false, true) -> false
+                | "holding nothing" : (true, false) -> false
             """;
 
     @Test

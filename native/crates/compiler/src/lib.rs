@@ -310,7 +310,7 @@ fn lower(
         }
         Node::Neg { operand, .. } => {
             let held = lower(builder, lowering, bindings, operand)?;
-            let nought = builder.ins().iconst(types::I64, 0);
+            let nought = builder.ins().iconst(machine_type(operand.ty())?, 0);
             difference(builder, nought, held)
         }
         Node::Let {
@@ -472,8 +472,12 @@ fn fork_on_what_it_is(
 
         builder.switch_to_block(taken);
         if let Some(number) = arm.binding {
-            let held = binds(builder, value, &arm.selects);
-            let variable = builder.declare_var(builder.func.dfg.value_type(held));
+            let read_as = arm
+                .binds
+                .as_ref()
+                .ok_or_else(|| anyhow!("an arm binds a value and does not say what it reads it as"))?;
+            let held = binds(builder, value, &arm.selects, machine_type(read_as)?);
+            let variable = builder.declare_var(machine_type(read_as)?);
             builder.def_var(variable, held);
             bindings.at(number, variable);
         }
@@ -530,10 +534,18 @@ fn tests(
 /// What the arm reads the value as, once it is known to be one of its cases.
 ///
 /// An arm over an optional's present carrier reads what it holds; every other arm reads the value
-/// itself, which is already the case it selected.
-fn binds(builder: &mut FunctionBuilder, value: ir::Value, selects: &[Selects]) -> ir::Value {
+/// itself, which is already the case it selected. What comes out of the slot is narrowed to what
+/// the arm says it reads the value as — which the arm carries, because the test it was selected by
+/// does not say it.
+fn binds(
+    builder: &mut FunctionBuilder,
+    value: ir::Value,
+    selects: &[Selects],
+    read_as: types::Type,
+) -> ir::Value {
     if selects.iter().any(|it| matches!(it, Selects::Held)) {
-        builder.ins().load(types::I64, TRUSTED, value, HELD as i32)
+        let held = builder.ins().load(types::I64, TRUSTED, value, HELD as i32);
+        out_of_slot(builder, held, read_as)
     } else {
         value
     }
@@ -597,7 +609,10 @@ fn binary(
         Op::And | Op::Or => {
             let settles_it = matches!(op, Op::Or);
             let asked = lower(builder, lowering, bindings, left)?;
-            let answers = machine_type(&Ty::Prim { prim: Prim::Bool })?;
+            // What the left one is, which is what the whole of it is: a condition answers what its
+            // operands answer, and reading that off the operand rather than knowing it here keeps
+            // the width a fact that crossed.
+            let answers = machine_type(left.ty())?;
             fork(builder, asked, answers, |builder, taken| {
                 if taken == settles_it {
                     Ok(builder.ins().iconst(answers, i64::from(settles_it)))

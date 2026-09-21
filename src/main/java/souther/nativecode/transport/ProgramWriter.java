@@ -286,7 +286,13 @@ public final class ProgramWriter {
             String binding = arm.binder() == null
                     ? "null"
                     : Integer.toString(bindings.number(arm.binder().binding()));
-            arms.add("{\"selects\":" + selects + ",\"binding\":" + binding
+            // What the value is read as inside the arm, which the checker settled and nothing
+            // downstream can work out from what the arm tests: an optional's present carrier is
+            // tested the same way whatever it holds.
+            String binds = arm.binder() == null
+                    ? "null"
+                    : type(arm.pattern().bindType());
+            arms.add("{\"selects\":" + selects + ",\"binding\":" + binding + ",\"binds\":" + binds
                     + ",\"body\":" + core(arm.body(), bindings) + "}");
         }
         return "{\"core\":\"match\",\"subject\":" + core(it.scrutinee(), bindings)

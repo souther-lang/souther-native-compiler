@@ -289,6 +289,12 @@ pub struct Arm {
     pub selects: Vec<Selects>,
     /// The number the body reads the value under, where the arm binds it at all.
     pub binding: Option<usize>,
+    /// What the value is read as inside the arm.
+    ///
+    /// Carried rather than worked out from what the arm tests, because the test does not say it:
+    /// an optional's present carrier is tested the same way whatever it holds, so a reader that
+    /// took the type from the test would read every optional's value at one width.
+    pub binds: Option<Ty>,
     pub body: Node,
 }
 
