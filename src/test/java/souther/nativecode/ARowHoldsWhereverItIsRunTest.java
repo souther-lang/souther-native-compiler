@@ -245,6 +245,41 @@ class ARowHoldsWhereverItIsRunTest {
             """;
 
     /**
+     * One published definition, held by two modules, reached by each.
+     *
+     * <p>A module carries every definition it reaches, so a copy each — and a call reaching the
+     * other module's copy would be one module's answer standing for another's wherever the two
+     * came to differ.
+     */
+    private static final String COUNTING = """
+            module lib.counting exposing ( downTo )
+
+            partial let downTo (n: Int): Int = if n <= 0 then 0 else n + downTo(n - 1)
+            """;
+
+    private static final String ONE = """
+            module one
+            import lib.counting ( downTo )
+
+            behavior summed : (a: Int) -> Int
+            let summed (a) = downTo(a)
+
+            example summed
+                | "three of them" : (3) -> 6
+            """;
+
+    private static final String TWO = """
+            module two
+            import lib.counting ( downTo )
+
+            behavior doubled : (a: Int) -> Int
+            let doubled (a) = downTo(a) * 2
+
+            example doubled
+                | "three of them, twice" : (3) -> 12
+            """;
+
+    /**
      * A behavior the object names and does not define, and one that reaches it.
      *
      * <p>What answers it is settled where the object is linked, so the row's stand-in is the
@@ -278,6 +313,7 @@ class ARowHoldsWhereverItIsRunTest {
         assertEveryRowHolds(HOLDING);
         assertEveryRowHolds(REACHING);
         assertEveryRowHolds(DEPENDING);
+        assertEveryRowHolds(COUNTING, ONE, TWO);
     }
 
     /**
@@ -308,8 +344,8 @@ class ARowHoldsWhereverItIsRunTest {
      * which is the one thing a count of what it did compare could never tell it. Said as a switch
      * with no arm standing for the rest, so a way of arriving added later has to be answered here.
      */
-    static void assertEveryRowHolds(String source) throws Exception {
-        CheckedProgram program = CheckedProgram.of(List.of(source));
+    static void assertEveryRowHolds(String... sources) throws Exception {
+        CheckedProgram program = CheckedProgram.of(List.of(sources));
         int asked = 0;
         try (Running running = Running.of(program)) {
             for (CheckedModule module : program.modules()) {

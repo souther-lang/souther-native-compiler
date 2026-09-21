@@ -23,7 +23,8 @@ use souther_native_abi::{
 use std::collections::HashMap;
 use std::fmt;
 use transport::{
-    Arm, Behavior, Declaration, Node, Op, Prim, Program, Reaches, Selects, TRANSPORT_VERSION, Ty,
+    Answers, Arm, Declaration, Node, Op, Prim, Program, Reaches, Selects, TRANSPORT_VERSION, Target,
+    Ty,
 };
 
 /// An `Int` overflowing is an abort and not an answer, so the arithmetic traps rather than
@@ -112,6 +113,34 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
     // after it — a definition that calls itself reaches itself, and two that call each other
     // reach one another. Nothing here orders the program to make that go away.
     let mut reachable = Reachable::default();
+    for target in &program.behaviors {
+        let (of_module, name) = target
+            .declared
+            .rsplit_once('.')
+            .ok_or_else(|| anyhow!("{} names no module", target.declared))?;
+        let symbol = behavior_symbol(of_module, name);
+        let signature = signature_over(&target.takes, &target.answers, call_conv)?;
+        let linkage = match target.is {
+            Answers::Body => Linkage::Export,
+            // Named and not defined. What answers it is settled where the object is linked, and
+            // the two reasons a body is absent are one call to whoever reaches in.
+            Answers::Injected | Answers::Elsewhere => {
+                crosses_objects(target)?;
+                Linkage::Import
+            }
+            Answers::Composed => {
+                return Err(not_lowered(format!("the composition {}", target.declared)));
+            }
+            Answers::Unwritten => {
+                return Err(not_lowered(format!(
+                    "the unwritten behavior {}",
+                    target.declared
+                )));
+            }
+        };
+        let id = module.declare_function(&symbol, linkage, &signature)?;
+        reachable.behavior(&target.declared, id)?;
+    }
     for written in &program.modules {
         for held in &written.helpers {
             let symbol = held_symbol(&written.name, &held.declared);
@@ -120,24 +149,6 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
             // nothing outside the object reaches one.
             let id = module.declare_function(&symbol, Linkage::Local, &signature)?;
             reachable.held(&written.name, &held.declared, id)?;
-        }
-        for behavior in &written.behaviors {
-            let symbol = behavior_symbol(&written.name, behavior.name());
-            let signature = signature_over(behavior.takes(), behavior.answers(), call_conv)?;
-            let linkage = match behavior {
-                Behavior::Body { .. } => Linkage::Export,
-                // Named and not defined. What answers it is settled where the object is linked,
-                // and the two reasons a body is absent are one call to whoever reaches in.
-                Behavior::Injected { .. } | Behavior::Elsewhere { .. } => Linkage::Import,
-                Behavior::Composed { name, .. } => {
-                    return Err(not_lowered(format!("the composition {name}")));
-                }
-                Behavior::Unwritten { name, .. } => {
-                    return Err(not_lowered(format!("the unwritten behavior {name}")));
-                }
-            };
-            let id = module.declare_function(&symbol, linkage, &signature)?;
-            reachable.behavior(&written.name, behavior.name(), id)?;
         }
     }
 
@@ -164,15 +175,18 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
             )?;
             module.define_function(id, &mut context)?;
         }
-        for behavior in &written.behaviors {
-            let Behavior::Body {
-                takes, body, name, ..
-            } = behavior
-            else {
-                continue;
-            };
-            let signature = signature_over(behavior.takes(), behavior.answers(), call_conv)?;
-            let id = reachable.of_behavior(&written.name, name)?;
+        for held in &written.bodies {
+            let target = program
+                .behaviors
+                .iter()
+                .find(|it| it.declared == held.declared)
+                .ok_or_else(|| {
+                    anyhow!("a body for {}, which no target names", held.declared)
+                })?;
+            let takes = &target.takes;
+            let body = &held.body;
+            let signature = signature_over(&target.takes, &target.answers, call_conv)?;
+            let id = reachable.of_behavior_named(&held.declared)?;
             context.clear();
             context.func = Function::with_name_signature(UserFuncName::default(), signature);
             let lowering = Lowering {
@@ -205,7 +219,7 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
 #[derive(Default)]
 struct Reachable {
     held: HashMap<(String, String), FuncId>,
-    behaviors: HashMap<(String, String), FuncId>,
+    behaviors: HashMap<String, FuncId>,
 }
 
 impl Reachable {
@@ -217,10 +231,9 @@ impl Reachable {
         Ok(())
     }
 
-    fn behavior(&mut self, module: &str, name: &str, id: FuncId) -> Result<()> {
-        let key = (module.to_string(), name.to_string());
-        if self.behaviors.insert(key, id).is_some() {
-            bail!("{module} declares two behaviors both called {name}");
+    fn behavior(&mut self, declared: &str, id: FuncId) -> Result<()> {
+        if self.behaviors.insert(declared.to_string(), id).is_some() {
+            bail!("two behaviors are both written {declared}");
         }
         Ok(())
     }
@@ -232,19 +245,11 @@ impl Reachable {
             .ok_or_else(|| anyhow!("{carrier} reaches {declared}, which it holds no copy of"))
     }
 
-    /// The behavior `declared` names, which is written as its module and then its own name.
     fn of_behavior_named(&self, declared: &str) -> Result<FuncId> {
-        let (module, name) = declared
-            .rsplit_once('.')
-            .ok_or_else(|| anyhow!("{declared} names no module"))?;
-        self.of_behavior(module, name)
-    }
-
-    fn of_behavior(&self, module: &str, name: &str) -> Result<FuncId> {
         self.behaviors
-            .get(&(module.to_string(), name.to_string()))
+            .get(declared)
             .copied()
-            .ok_or_else(|| anyhow!("a call reaching {module}.{name}, which no module declares"))
+            .ok_or_else(|| anyhow!("a call reaching {declared}, which the program does not name"))
     }
 }
 
@@ -333,6 +338,36 @@ fn machine_type(ty: &Ty) -> Result<types::Type> {
         Ty::Declared { .. } | Ty::Union { .. } | Ty::Option { .. } | Ty::Tuple { .. } => Ok(POINTER),
         other => Err(not_lowered(format!("a value of type {}", other.spelt()))),
     }
+}
+
+/// Holds the signature of a behavior the object does not define to what may cross an object.
+///
+/// A value of a declared type says which type it is with a number this object counted, so the same
+/// declaration is a different number in an object built from a different document. Two objects
+/// exchanging such a value would compare numbers that were never about each other: both valid,
+/// both compared without complaint, and the arm taken whichever the two happened to agree on.
+///
+/// So the representations that cross are the ones that are nobody's count — a number and a truth.
+/// The rest cross when a declared type has an identity a linker settles rather than one an object
+/// counts, and not before. Said here, where the signature is declared, because that is the one
+/// place the two scopes meet.
+fn crosses_objects(target: &Target) -> Result<()> {
+    for ty in target.takes.iter().chain([&target.answers]) {
+        match ty {
+            Ty::Prim {
+                prim: Prim::Int | Prim::Bool,
+            } => {}
+            other => {
+                return Err(not_lowered(format!(
+                    "{} takes or answers {}, whose representation is this object's own,\
+                     and it is reached across objects",
+                    target.declared,
+                    other.spelt()
+                )));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// What holds the address of a value made of fields.

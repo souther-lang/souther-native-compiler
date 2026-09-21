@@ -61,6 +61,14 @@ what the language says a published helper is. A behavior reaching a behavior is 
 program answers it or not: a behavior with no body is a name the object leaves for whoever links
 it, so what answers a dependency is settled at the link and not arranged around the run.
 
+What a call may reach is wider than what the object defines — a body may name a behavior, or a
+type, that a module built before this one declares — so the document says the two apart.
+
+A behavior the object does not define is reached over numbers and truths alone. A value of a
+declared type says which type it is with a number this object counted, so two objects exchanging
+one would compare numbers that were never about each other; that is refused until a declared type
+has an identity a linker settles.
+
 A type that states what its values owe is not built: a construction runs those clauses and stops at
 the first that does not hold, and nothing here runs one.
 

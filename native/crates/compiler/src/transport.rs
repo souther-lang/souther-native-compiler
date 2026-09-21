@@ -25,6 +25,9 @@ pub const TRANSPORT_VERSION: u32 = 1;
 pub struct Program {
     pub transport: u32,
     pub declarations: Vec<Declaration>,
+    /// Every behavior the program names, which is wider than what it emits: a body may reach a
+    /// behavior a module read off the path declares, and that module is not one of these.
+    pub behaviors: Vec<Target>,
     pub modules: Vec<Module>,
 }
 
@@ -105,7 +108,45 @@ impl Declaration {
 pub struct Module {
     pub name: String,
     pub helpers: Vec<Held>,
-    pub behaviors: Vec<Behavior>,
+    /// What this object puts under a name. A behavior that answers some other way is in the table
+    /// above and nowhere here.
+    pub bodies: Vec<Body>,
+}
+
+/// A behavior's body, under the name the table of targets knows it by.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Body {
+    pub declared: String,
+    pub parameters: Vec<String>,
+    pub body: Node,
+}
+
+/// A behavior as a caller reaches it.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Target {
+    pub declared: String,
+    pub is: Answers,
+    pub takes: Vec<Ty>,
+    pub answers: Ty,
+}
+
+/// How a behavior comes to answer.
+#[derive(Debug, Deserialize, PartialEq, Eq, Clone, Copy)]
+#[serde(rename_all = "lowercase")]
+pub enum Answers {
+    /// Code this object holds, which is emitted.
+    Body,
+    /// Supplied by whoever runs the program. The object names it and defines nothing for it.
+    Injected,
+    /// Implemented by another build. The same call to whoever reaches in, and a different thing to
+    /// whoever links.
+    Elsewhere,
+    /// By running other behaviors in an order the composition states.
+    Composed,
+    /// Not written, which the language admits and nothing can run.
+    Unwritten,
 }
 
 /// A definition the module holds as one of its own.
@@ -122,77 +163,6 @@ pub struct Held {
     pub body: Node,
 }
 
-/// A behavior, and how it comes to answer.
-#[derive(Debug, Deserialize)]
-#[serde(tag = "is", rename_all = "lowercase", deny_unknown_fields)]
-pub enum Behavior {
-    /// Code this program holds, which is emitted.
-    Body {
-        name: String,
-        parameters: Vec<String>,
-        takes: Vec<Ty>,
-        answers: Ty,
-        body: Node,
-    },
-    /// Supplied by whoever runs the program. The object names it and defines nothing for it, so
-    /// what answers it is settled where the object is linked.
-    Injected {
-        name: String,
-        takes: Vec<Ty>,
-        answers: Ty,
-    },
-    /// Implemented by another build, which is the same thing to a caller reaching in and a
-    /// different thing to whoever links the object.
-    Elsewhere {
-        name: String,
-        takes: Vec<Ty>,
-        answers: Ty,
-    },
-    /// Answered by running other behaviors in an order the composition states.
-    Composed {
-        name: String,
-        takes: Vec<Ty>,
-        answers: Ty,
-    },
-    /// Not written, which the language admits and nothing can run.
-    Unwritten {
-        name: String,
-        takes: Vec<Ty>,
-        answers: Ty,
-    },
-}
-
-impl Behavior {
-    pub fn name(&self) -> &str {
-        match self {
-            Behavior::Body { name, .. }
-            | Behavior::Injected { name, .. }
-            | Behavior::Elsewhere { name, .. }
-            | Behavior::Composed { name, .. }
-            | Behavior::Unwritten { name, .. } => name,
-        }
-    }
-
-    pub fn takes(&self) -> &[Ty] {
-        match self {
-            Behavior::Body { takes, .. }
-            | Behavior::Injected { takes, .. }
-            | Behavior::Elsewhere { takes, .. }
-            | Behavior::Composed { takes, .. }
-            | Behavior::Unwritten { takes, .. } => takes,
-        }
-    }
-
-    pub fn answers(&self) -> &Ty {
-        match self {
-            Behavior::Body { answers, .. }
-            | Behavior::Injected { answers, .. }
-            | Behavior::Elsewhere { answers, .. }
-            | Behavior::Composed { answers, .. }
-            | Behavior::Unwritten { answers, .. } => answers,
-        }
-    }
-}
 
 #[derive(Debug, Deserialize, PartialEq, Eq, Clone, Copy)]
 pub enum Prim {
