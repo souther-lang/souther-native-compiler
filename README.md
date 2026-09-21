@@ -36,4 +36,19 @@ abstraction over the two is written to make it look as though something is.
     mvn test
 
 Cargo is what builds the Rust half; Maven runs it. The toolchain is pinned in
-`rust-toolchain.toml`, so a clone needs rustup and nothing else installed by hand.
+`rust-toolchain.toml`, so a clone needs rustup and nothing else installed by hand. A C compiler is
+needed too, by the test that links what came out and runs it.
+
+## Where it runs
+
+Unix hosts: what the object is written as is decided by the host's format, and Mach-O and ELF are
+the two anything here has been run on. Windows is not refused anywhere — it is untried, and the
+test that links and runs would have to say what a COFF object and its linker want before it meant
+anything there.
+
+## What compiles today
+
+An addition of two `Int` parameters, and that is all. Everything else the language admits says so
+rather than being written as whatever it resembles: the walk over `Core` names every node there is,
+and the ones not lowered yet raise `NotLowered`, which is not what a program the language refuses
+gets.

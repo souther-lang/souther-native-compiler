@@ -108,6 +108,22 @@
                     <workingDirectory>${project.basedir}/native</workingDirectory>
                 </configuration>
                 <executions>
+                    <!-- Before the Java tests, because one of them reaches the driver over the
+                         process boundary and a clone that had not built it would report the
+                         boundary as broken. -->
+                    <execution>
+                        <id>cargo-build</id>
+                        <phase>process-classes</phase>
+                        <goals>
+                            <goal>exec</goal>
+                        </goals>
+                        <configuration>
+                            <executable>cargo</executable>
+                            <arguments>
+                                <argument>build</argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
                     <execution>
                         <id>cargo-test</id>
                         <phase>test</phase>

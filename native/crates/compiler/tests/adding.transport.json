@@ -1,0 +1,1 @@
+{"transport":1,"modules":[{"name":"calculation","behaviors":[{"name":"add","parameters":["a","b"],"takes":[{"prim":"INT"},{"prim":"INT"}],"answers":{"prim":"INT"},"body":{"core":"binary","op":"ADD","left":{"core":"read","binding":0,"type":{"prim":"INT"}},"right":{"core":"read","binding":1,"type":{"prim":"INT"}},"type":{"prim":"INT"}}}]}]}
