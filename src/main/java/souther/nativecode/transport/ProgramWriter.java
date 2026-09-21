@@ -4,6 +4,7 @@ import souther.compiler.core.Core;
 import souther.compiler.core.ValueShape;
 import souther.compiler.program.CheckedBehavior;
 import souther.compiler.program.CheckedData;
+import souther.compiler.program.CheckedHelper;
 import souther.compiler.program.CheckedImplementation;
 import souther.compiler.program.CheckedModule;
 import souther.compiler.program.CheckedProgram;
@@ -13,6 +14,7 @@ import souther.compiler.types.Refinement;
 import souther.compiler.types.ResolvedCase;
 import souther.compiler.types.Type;
 import souther.compiler.types.TypeSymbol;
+import souther.compiler.types.ValueName;
 import souther.nativecode.NotLowered;
 
 import java.util.HashMap;
@@ -117,7 +119,49 @@ public final class ProgramWriter {
         for (CheckedBehavior behavior : module.behaviors()) {
             behaviors.add(behavior(behavior));
         }
-        return "{\"name\":" + quoted(module.name()) + ",\"behaviors\":" + behaviors + "}";
+        StringJoiner helpers = new StringJoiner(",", "[", "]");
+        for (CheckedHelper helper : module.helpers()) {
+            helpers.add(helper(helper));
+        }
+        return "{\"name\":" + quoted(module.name())
+                + ",\"helpers\":" + helpers
+                + ",\"behaviors\":" + behaviors + "}";
+    }
+
+    /**
+     * A definition the module holds as one of its own.
+     *
+     * <p>A module carries every helper it reaches, including one another module declares, so what
+     * a helper is called here is where it is declared and what it is holding is which module is
+     * holding it. Two modules holding one helper hold a copy each, which is what the language says
+     * a published helper is.
+     */
+    private static String helper(CheckedHelper helper) {
+        Bindings bindings = new Bindings();
+        StringJoiner parameters = new StringJoiner(",", "[", "]");
+        StringJoiner takes = new StringJoiner(",", "[", "]");
+        for (CheckedHelper.Parameter parameter : helper.parameters()) {
+            bindings.number(parameter.binder().binding());
+            parameters.add(quoted(parameter.binder().name()));
+            takes.add(type(parameter.type()));
+        }
+        return "{\"declared\":" + quoted(reached(helper.declares()))
+                + ",\"parameters\":" + parameters
+                + ",\"takes\":" + takes
+                + ",\"answers\":" + type(helper.body().type())
+                + ",\"body\":" + core(helper.body(), bindings)
+                + "}";
+    }
+
+    /** How a definition of a module is named on the wire: its module, then its own name. */
+    private static String reached(ValueName name) {
+        return switch (name) {
+            case ValueName.OfAModule it -> it.module() + "." + it.name();
+            // A name that is in scope where it stands, and one the standard library declares.
+            // Neither is a definition a module holds, and nothing here reaches one.
+            case ValueName.InScope it -> throw notYet("a call reaching " + it.name());
+            case ValueName.Stdlib it -> throw notYet("a call reaching " + it.name());
+        };
     }
 
     /**
@@ -141,10 +185,37 @@ public final class ProgramWriter {
         };
     }
 
+    /**
+     * A behavior, and how it comes to answer.
+     *
+     * <p>A body is emitted. The rest are ways of answering that are not code this program holds —
+     * supplied by the caller, implemented by another build, composed out of other behaviors, or
+     * not written at all — and which of them it is crosses, because it decides what the object
+     * says about the name rather than what it puts under it.
+     */
     private static String behavior(CheckedBehavior behavior) {
-        if (!(behavior.implementation() instanceof CheckedImplementation.Body written)) {
-            throw new NotLowered("a behavior implemented other than by a body: " + behavior.name());
+        return switch (behavior.implementation()) {
+            case CheckedImplementation.Body it -> withABody(behavior, it);
+            case CheckedImplementation.Injected it -> reaching(behavior, "injected");
+            case CheckedImplementation.ImplementedElsewhere it -> reaching(behavior, "elsewhere");
+            case CheckedImplementation.Composed it -> reaching(behavior, "composed");
+            case CheckedImplementation.Unwritten it -> reaching(behavior, "unwritten");
+        };
+    }
+
+    private static String reaching(CheckedBehavior behavior, String how) {
+        StringJoiner takes = new StringJoiner(",", "[", "]");
+        for (Type type : behavior.signature().takes()) {
+            takes.add(type(type));
         }
+        return "{\"name\":" + quoted(behavior.name().name())
+                + ",\"is\":" + quoted(how)
+                + ",\"takes\":" + takes
+                + ",\"answers\":" + type(behavior.signature().answers())
+                + "}";
+    }
+
+    private static String withABody(CheckedBehavior behavior, CheckedImplementation.Body written) {
         Bindings bindings = new Bindings();
         StringJoiner parameters = new StringJoiner(",", "[", "]");
         for (Core.Binder parameter : written.parameters()) {
@@ -156,6 +227,7 @@ public final class ProgramWriter {
             takes.add(type(type));
         }
         return "{\"name\":" + quoted(behavior.name().name())
+                + ",\"is\":\"body\""
                 + ",\"parameters\":" + parameters
                 + ",\"takes\":" + takes
                 + ",\"answers\":" + type(behavior.signature().answers())
@@ -238,7 +310,7 @@ public final class ProgramWriter {
             case Core.Str it -> throw notYet("a string literal", it);
             case Core.Temporal it -> throw notYet("a temporal literal", it);
             case Core.MaterialisedValue it -> throw notYet("a value read from its module", it);
-            case Core.Call it -> throw notYet("a call", it);
+            case Core.Call it -> call(it, bindings);
             case Core.PreservedCall it -> throw notYet("a call kept for what it says", it);
             case Core.Apply it -> throw notYet("an application of a function value", it);
             case Core.IfConstructed it -> throw notYet("an attempted construction", it);
@@ -262,6 +334,41 @@ public final class ProgramWriter {
         return "{\"core\":\"let\",\"binding\":" + number
                 + ",\"value\":" + value
                 + ",\"body\":" + core(it.body(), bindings)
+                + ",\"type\":" + type(it.type()) + "}";
+    }
+
+    /**
+     * A call, and what it reaches.
+     *
+     * <p>What a residual call reaches is one of three things and the checker has already decided
+     * which: a definition the module holds, a value that runs where it is declared, or a behavior.
+     * A kernel is what the language implements rather than what a program holds, and nothing here
+     * runs one yet.
+     */
+    private static String call(Core.Call it, Bindings bindings) {
+        StringJoiner arguments = new StringJoiner(",", "[", "]");
+        for (Core argument : it.args()) {
+            arguments.add(core(argument, bindings));
+        }
+        String reaches = switch (it.fn()) {
+            case Core.Reached.OfDeclaration target -> switch (target.reaches()) {
+                case Core.Reaches.AHelper held ->
+                        "\"reaches\":\"helper\",\"declared\":" + quoted(reached(held.declaration()));
+                case Core.Reaches.APublishedValue held ->
+                        "\"reaches\":\"value\",\"declared\":" + quoted(reached(held.declaration()));
+                case Core.Reaches.ABehavior held ->
+                        "\"reaches\":\"behavior\",\"declared\":" + quoted(reached(held.declaration()));
+            };
+            case Core.Reached.OfPublishedValue target ->
+                    "\"reaches\":\"value\",\"declared\":" + quoted(reached(target.denotes()));
+            case Core.Reached.OfKernel target ->
+                    throw notYet("a call to " + target.kernel(), it);
+            // An operation this compiler mints after everything is resolved, which no source can
+            // write and which stands for a shape a backend knows how to lower.
+            case Core.Emitted target -> throw notYet("the operation " + target, it);
+        };
+        return "{\"core\":\"call\"," + reaches
+                + ",\"arguments\":" + arguments
                 + ",\"type\":" + type(it.type()) + "}";
     }
 

@@ -15,10 +15,10 @@ fn document(op: &str, ty: &str) -> String {
     let body =
         format!(r#"{{"core":"binary","op":"{op}","left":{},"right":{},"type":{prim}}}"#, read(0), read(1));
     let behavior = format!(
-        r#"{{"name":"f","parameters":["a","b"],"takes":[{prim},{prim}],"answers":{prim},"body":{body}}}"#
+        r#"{{"name":"f","is":"body","parameters":["a","b"],"takes":[{prim},{prim}],"answers":{prim},"body":{body}}}"#
     );
     format!(
-        r#"{{"transport":1,"declarations":[],"modules":[{{"name":"calculation","behaviors":[{behavior}]}}]}}"#
+        r#"{{"transport":1,"declarations":[],"modules":[{{"name":"calculation","helpers":[],"behaviors":[{behavior}]}}]}}"#
     )
 }
 

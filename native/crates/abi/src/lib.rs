@@ -26,6 +26,24 @@ pub fn behavior_symbol(module: &str, behavior: &str) -> String {
     format!("souther.{module}.{behavior}")
 }
 
+/// The symbol a definition a module holds is reached by.
+///
+/// Both the module holding it and the module that declared it, because a module carries every
+/// helper it reaches and two modules reaching one helper hold a copy each — which is what the
+/// language says a published helper is. One name for both copies would be one of them silently
+/// standing for the other.
+///
+/// Nothing outside the object reaches one of these, so what this has to be is unambiguous here and
+/// nowhere else. The `$` is what keeps it so: a module's name carries dots and a declaration's
+/// carries them too, and neither carries this.
+pub fn held_symbol(carrier: &str, declared: &str) -> String {
+    assert!(
+        !carrier.contains('$'),
+        "a module's name carries no dollar, and the symbol is split on one: {carrier}"
+    );
+    format!("souther.{carrier}${declared}")
+}
+
 /// How wide a slot is, and so what a value made of slots is measured in.
 ///
 /// One width for every slot, whatever it holds. A layout that packed a `Bool` into a byte would
@@ -81,7 +99,7 @@ pub const RESET: &str = "souther_reset";
 
 #[cfg(test)]
 mod tests {
-    use super::{FIRST_FIELD, SLOT, WHICH, behavior_symbol, field_at, member_at};
+    use super::{FIRST_FIELD, SLOT, WHICH, behavior_symbol, field_at, held_symbol, member_at};
 
     #[test]
     fn a_behavior_is_reached_by_its_module_and_its_name() {
@@ -108,6 +126,15 @@ mod tests {
             assert!(field_at(position) >= FIRST_FIELD);
             assert_ne!(field_at(position), WHICH);
         }
+    }
+
+    /// Two modules holding one declaration hold a copy each, and the copies are not one symbol.
+    #[test]
+    fn a_definition_held_by_two_modules_is_two_symbols() {
+        assert_ne!(
+            held_symbol("pricing", "pricing.taxed"),
+            held_symbol("order", "pricing.taxed")
+        );
     }
 
     #[test]

@@ -229,6 +229,45 @@ class ARowHoldsWhereverItIsRunTest {
                 | "holding nothing" : (true, false) -> false
             """;
 
+    /** A definition the module holds and reaches, including one that reaches itself. */
+    private static final String REACHING = """
+            module reaching
+
+            partial let countDown (n: Int): Int = if n <= 0 then 0 else n + countDown(n - 1)
+
+            behavior total : (a: Int) -> Int
+            let total (a) = countDown(a)
+
+            example total
+                | "three of them" : (3) -> 6
+                | "none of them" : (0) -> 0
+                | "one" : (1) -> 1
+            """;
+
+    /**
+     * A behavior the object names and does not define, and one that reaches it.
+     *
+     * <p>What answers it is settled where the object is linked, so the row's stand-in is the
+     * definition the linker was missing rather than something arranged around the run.
+     */
+    private static final String DEPENDING = """
+            module depending
+
+            behavior lookUp : (a: Int) -> Int
+
+            behavior twice : (a: Int) -> Int
+                depends on lookUp
+            let twice (a, lookUp) = lookUp(a) * 2
+
+            fake lookUp
+                | (1) -> 21
+                | _ -> 0
+
+            example twice
+                | "what the dependency answered, doubled" : (1) -> 42
+                | "what it answers for anything else" : (2) -> 0
+            """;
+
     @Test
     void everyRowOfEveryBehaviorHoldsWhenTheNativeObjectAnswersIt() throws Exception {
         assertEveryRowHolds(ARITHMETIC);
@@ -237,6 +276,8 @@ class ARowHoldsWhereverItIsRunTest {
         assertEveryRowHolds(NAMING);
         assertEveryRowHolds(SHAPES);
         assertEveryRowHolds(HOLDING);
+        assertEveryRowHolds(REACHING);
+        assertEveryRowHolds(DEPENDING);
     }
 
     /**
@@ -286,10 +327,19 @@ class ARowHoldsWhereverItIsRunTest {
                                         .isInstanceOf(Verdict.Held.class);
                                 asked++;
                             }
-                            // Nothing in this corpus depends on anything or owes its answer, and a
-                            // row that did is one nobody put the two carriers to.
-                            case CheckedRow.WithStandIns states -> throw new AssertionError(
-                                    where + " needs something stood in for: " + states.standsIn());
+                            // A behavior that depends on another is reached with what the row says
+                            // that other one answers, which is the object's undefined symbol being
+                            // given a definition rather than the run being arranged around it.
+                            case CheckedRow.WithStandIns states -> {
+                                List<ObservedValue> inputs = states.states().inputs();
+                                ObservedValue answered = running.answering(
+                                        module, behavior, inputs, states.standsIn());
+
+                                assertThat(states.holds(answered))
+                                        .as("%s, handed %s, answered %s", where, inputs, answered)
+                                        .isInstanceOf(Verdict.Held.class);
+                                asked++;
+                            }
                             case CheckedRow.AnswerOwed states -> throw new AssertionError(
                                     where + " states no answer to hold anything to: " + states);
                             // The compile did not run it, and says why. Left out silently, this

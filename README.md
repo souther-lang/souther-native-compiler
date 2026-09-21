@@ -53,16 +53,20 @@ name for a value. `/` answers the exact quotient, which is a `Rational` and has 
 here.
 
 A model's own types: a product, a newtype, a unit, a sum, a value that may be absent, and several
-values carried as one. Built, read a field off, and forked on which case a value is. A helper that
-does not call itself arrives already written into the body that calls it, so a model that factors
-its arithmetic out compiles without anything here knowing what a call is; one that does call itself
-is carried to its reader as a definition, and the call to it is still a call.
+values carried as one. Built, read a field off, and forked on which case a value is.
+
+Calls. A helper that does not call itself arrives already written into the body that calls it; one
+that does is a definition the module holds, and every module that reaches it holds a copy, which is
+what the language says a published helper is. A behavior reaching a behavior is a call whether this
+program answers it or not: a behavior with no body is a name the object leaves for whoever links
+it, so what answers a dependency is settled at the link and not arranged around the run.
 
 A type that states what its values owe is not built: a construction runs those clauses and stops at
 the first that does not hold, and nothing here runs one.
 
-Still ahead: a `String`, a `Decimal`, the collections, a function value, a kernel, and reaching a
-behavior another build implements.
+Still ahead: a `String`, a `Decimal`, the collections, a function value, a kernel the language
+implements, a value that runs in the module declaring it, and a composition.
+
 
 ## Where a value lives
 

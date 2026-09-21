@@ -1,9 +1,12 @@
 package souther.nativecode;
 
 import souther.compiler.observe.ObservedValue;
+import souther.compiler.observe.StoodIn;
 import souther.compiler.program.CheckedBehavior;
 import souther.compiler.program.CheckedModule;
 import souther.compiler.program.CheckedProgram;
+import souther.compiler.program.CheckedSignature;
+import souther.compiler.program.StandsIn;
 import souther.compiler.types.Type;
 
 import java.io.IOException;
@@ -32,11 +35,13 @@ import java.util.StringJoiner;
  */
 final class Running implements AutoCloseable {
 
+    private final CheckedProgram program;
     private final Path into;
     private final Path object;
     private final Map<String, Path> linked = new HashMap<>();
 
-    private Running(Path into, Path object) {
+    private Running(CheckedProgram program, Path into, Path object) {
+        this.program = program;
         this.into = into;
         this.object = object;
     }
@@ -46,7 +51,7 @@ final class Running implements AutoCloseable {
         Path into = Files.createTempDirectory("souther-native-running");
         Path object = into.resolve("program.o");
         Files.write(object, NativeCompiler.compile(program));
-        return new Running(into, object);
+        return new Running(program, into, object);
     }
 
     /**
@@ -58,9 +63,15 @@ final class Running implements AutoCloseable {
      */
     ObservedValue answering(CheckedModule module, CheckedBehavior behavior,
                             List<ObservedValue> inputs) throws IOException, InterruptedException {
-        return answeredOrEnded(module, behavior, inputs).orElseThrow(() -> new AssertionError(
-                "the run ended rather than answering: " + behavior.name() + " of " + module.name()
-                        + ", handed " + inputs));
+        return answering(module, behavior, inputs, List.of());
+    }
+
+    ObservedValue answering(CheckedModule module, CheckedBehavior behavior,
+                            List<ObservedValue> inputs, List<StandsIn> standIns)
+            throws IOException, InterruptedException {
+        return answeredOrEnded(module, behavior, inputs, standIns).orElseThrow(
+                () -> new AssertionError("the run ended rather than answering: " + behavior.name()
+                        + " of " + module.name() + ", handed " + inputs));
     }
 
     /**
@@ -74,7 +85,13 @@ final class Running implements AutoCloseable {
     Optional<ObservedValue> answeredOrEnded(CheckedModule module, CheckedBehavior behavior,
                                             List<ObservedValue> inputs)
             throws IOException, InterruptedException {
-        Path executable = linked(module, behavior);
+        return answeredOrEnded(module, behavior, inputs, List.of());
+    }
+
+    Optional<ObservedValue> answeredOrEnded(CheckedModule module, CheckedBehavior behavior,
+                                            List<ObservedValue> inputs, List<StandsIn> standIns)
+            throws IOException, InterruptedException {
+        Path executable = linked(module, behavior, standIns);
         List<String> command = new ArrayList<>();
         command.add(executable.toString());
         for (ObservedValue given : inputs) {
@@ -91,15 +108,22 @@ final class Running implements AutoCloseable {
         return Optional.of(read(behavior.signature().answers(), said.strip()));
     }
 
-    private Path linked(CheckedModule module, CheckedBehavior behavior) throws IOException {
-        String name = module.name() + "." + behavior.name().name();
+    private Path linked(CheckedModule module, CheckedBehavior behavior, List<StandsIn> standIns)
+            throws IOException {
+        String reached = module.name() + "." + behavior.name().name();
+        // What stands in for a dependency is part of what is linked, so two rows of one behavior
+        // that state different stand-ins are two executables and not one reused.
+        String name = standIns.isEmpty()
+                ? reached
+                : reached + "." + Integer.toHexString(standIns.toString().hashCode());
         Path already = linked.get(name);
         if (already != null) {
             return already;
         }
 
         Path harness = into.resolve(name + ".c");
-        Files.writeString(harness, harnessFor("souther." + name, behavior), StandardCharsets.UTF_8);
+        Files.writeString(harness, harnessFor("souther." + reached, behavior, standIns),
+                StandardCharsets.UTF_8);
         Path executable = into.resolve(name);
 
         Process cc = new ProcessBuilder("cc", "-o", executable.toString(),
@@ -135,7 +159,8 @@ final class Running implements AutoCloseable {
      * where one call is all that happens, because a harness that never gave the room back would be
      * a harness the contract had never been put to.
      */
-    private static String harnessFor(String symbol, CheckedBehavior behavior) {
+    private String harnessFor(String symbol, CheckedBehavior behavior,
+                              List<StandsIn> standIns) {
         List<Type> takes = behavior.signature().takes();
         StringJoiner parameters = new StringJoiner(", ");
         StringJoiner arguments = new StringJoiner(", ");
@@ -144,11 +169,18 @@ final class Running implements AutoCloseable {
             arguments.add(read(takes.get(at), at + 1));
         }
 
+        StringJoiner supplied = new StringJoiner("\n");
+        for (StandsIn standsIn : standIns) {
+            supplied.add(standingIn(standsIn));
+        }
+
         return """
                 #include <inttypes.h>
                 #include <stdint.h>
                 #include <stdio.h>
                 #include <stdlib.h>
+
+                %s
 
                 extern %s reached(%s) __asm__("%s%s");
                 extern int64_t souther_mark(void);
@@ -165,6 +197,7 @@ final class Running implements AutoCloseable {
                     return 0;
                 }
                 """.formatted(
+                supplied.toString(),
                 cType(behavior.signature().answers()),
                 takes.isEmpty() ? "void" : parameters.toString(),
                 PREFIX, symbol,
@@ -172,6 +205,44 @@ final class Running implements AutoCloseable {
                 cType(behavior.signature().answers()),
                 arguments.toString(),
                 format(behavior.signature().answers()));
+    }
+
+    /**
+     * What answers a behavior the object names and does not define.
+     *
+     * <p>The row says what the dependency answers, entry by entry, and this is that table as the
+     * definition the linker was missing. Arguments it was not told about end the run rather than
+     * answering something: a stand-in asked for what the row never stated would be this harness
+     * deciding what the dependency does, which is the row's to say.
+     */
+    private String standingIn(StandsIn standsIn) {
+        StoodIn stated = standsIn.stated();
+        CheckedSignature signature = program.behavior(standsIn.dependency()).signature();
+        List<Type> takes = signature.takes();
+        StringJoiner parameters = new StringJoiner(", ");
+        for (int at = 0; at < takes.size(); at++) {
+            parameters.add(cType(takes.get(at)) + " a" + at);
+        }
+
+        StringBuilder answering = new StringBuilder();
+        for (StoodIn.Entry entry : stated.entries()) {
+            StringJoiner asked = new StringJoiner(" && ");
+            for (int at = 0; at < entry.arguments().size(); at++) {
+                asked.add("a" + at + " == " + written(entry.arguments().get(at)));
+            }
+            answering.append("    if (%s) { return %s; }\n"
+                    .formatted(asked.toString(), written(entry.answer())));
+        }
+        String otherwise = switch (stated.otherwise()) {
+            case StoodIn.Otherwise.Answer it -> "    return " + written(it.value()) + ";\n";
+            case StoodIn.Otherwise.NothingStated it -> "    exit(3);\n";
+        };
+
+        String symbol = PREFIX + "souther." + standsIn.dependency().module()
+                + "." + standsIn.dependency().name();
+        return "%s standsIn(%s) __asm__(\"%s\");\n%s standsIn(%s) {\n%s%s}"
+                .formatted(cType(signature.answers()), parameters, symbol,
+                        cType(signature.answers()), parameters, answering, otherwise);
     }
 
     /**

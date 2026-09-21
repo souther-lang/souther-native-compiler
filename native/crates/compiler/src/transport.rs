@@ -104,17 +104,94 @@ impl Declaration {
 #[serde(deny_unknown_fields)]
 pub struct Module {
     pub name: String,
+    pub helpers: Vec<Held>,
     pub behaviors: Vec<Behavior>,
 }
 
+/// A definition the module holds as one of its own.
+///
+/// Named by where it was declared, held by the module that reaches it. Two modules reaching one
+/// definition hold a copy each.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Behavior {
-    pub name: String,
+pub struct Held {
+    pub declared: String,
     pub parameters: Vec<String>,
     pub takes: Vec<Ty>,
     pub answers: Ty,
     pub body: Node,
+}
+
+/// A behavior, and how it comes to answer.
+#[derive(Debug, Deserialize)]
+#[serde(tag = "is", rename_all = "lowercase", deny_unknown_fields)]
+pub enum Behavior {
+    /// Code this program holds, which is emitted.
+    Body {
+        name: String,
+        parameters: Vec<String>,
+        takes: Vec<Ty>,
+        answers: Ty,
+        body: Node,
+    },
+    /// Supplied by whoever runs the program. The object names it and defines nothing for it, so
+    /// what answers it is settled where the object is linked.
+    Injected {
+        name: String,
+        takes: Vec<Ty>,
+        answers: Ty,
+    },
+    /// Implemented by another build, which is the same thing to a caller reaching in and a
+    /// different thing to whoever links the object.
+    Elsewhere {
+        name: String,
+        takes: Vec<Ty>,
+        answers: Ty,
+    },
+    /// Answered by running other behaviors in an order the composition states.
+    Composed {
+        name: String,
+        takes: Vec<Ty>,
+        answers: Ty,
+    },
+    /// Not written, which the language admits and nothing can run.
+    Unwritten {
+        name: String,
+        takes: Vec<Ty>,
+        answers: Ty,
+    },
+}
+
+impl Behavior {
+    pub fn name(&self) -> &str {
+        match self {
+            Behavior::Body { name, .. }
+            | Behavior::Injected { name, .. }
+            | Behavior::Elsewhere { name, .. }
+            | Behavior::Composed { name, .. }
+            | Behavior::Unwritten { name, .. } => name,
+        }
+    }
+
+    pub fn takes(&self) -> &[Ty] {
+        match self {
+            Behavior::Body { takes, .. }
+            | Behavior::Injected { takes, .. }
+            | Behavior::Elsewhere { takes, .. }
+            | Behavior::Composed { takes, .. }
+            | Behavior::Unwritten { takes, .. } => takes,
+        }
+    }
+
+    pub fn answers(&self) -> &Ty {
+        match self {
+            Behavior::Body { answers, .. }
+            | Behavior::Injected { answers, .. }
+            | Behavior::Elsewhere { answers, .. }
+            | Behavior::Composed { answers, .. }
+            | Behavior::Unwritten { answers, .. } => answers,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, PartialEq, Eq, Clone, Copy)]
@@ -280,6 +357,26 @@ pub enum Node {
         #[serde(rename = "type")]
         ty: Ty,
     },
+    /// A call, and what the checker settled it reaches.
+    Call {
+        reaches: Reaches,
+        declared: String,
+        arguments: Vec<Node>,
+        #[serde(rename = "type")]
+        ty: Ty,
+    },
+}
+
+/// What a call reaches, which the checker decided and nothing here works out again.
+#[derive(Debug, Deserialize, PartialEq, Eq, Clone, Copy)]
+#[serde(rename_all = "lowercase")]
+pub enum Reaches {
+    /// A definition the calling module holds, which is a copy of its own.
+    Helper,
+    /// A value that runs in the module that declares it, wherever it is named.
+    Value,
+    /// A behavior, whether this program answers it or whoever links the object does.
+    Behavior,
 }
 
 /// One arm of a fork on what a value is.
@@ -331,7 +428,8 @@ impl Node {
             | Node::Some { ty, .. }
             | Node::None { ty, .. }
             | Node::Tuple { ty, .. }
-            | Node::Member { ty, .. } => ty,
+            | Node::Member { ty, .. }
+            | Node::Call { ty, .. } => ty,
         }
     }
 }
