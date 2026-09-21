@@ -48,9 +48,10 @@ anything there.
 
 ## What compiles today
 
-`Int` and `Bool`: the arithmetic, the comparisons, the two conditions that stop as soon as the
-answer is settled, a fork, a name for a value. Nothing is allocated and no value has a layout, so
-a `String`, a `Decimal`, a data and a function value are all still ahead.
+Over `Int` and `Bool`: `+`, `-`, `*`, unary `-`, the six comparisons, `&&` and `||`, `if`, and a
+name for a value. `/` answers the exact quotient, which is a `Rational` and has no representation
+here. Nothing is allocated and no value has a layout, so a `String`, a `Decimal`, a data and a
+function value are all still ahead.
 
 Everything else the language admits says so rather than being written as whatever it resembles. A
 closed set crosses whole — every operator and every primitive — and the driver answers whether it
@@ -60,9 +61,16 @@ gets.
 
 ## How it is known to be right
 
-By the program's own `example` rows. A program whose rows do not hold is not accepted, and
-accepting one means the rows were run — on the JVM, by the compile that produced the checked
-program. So a row states an answer the JVM produced, and putting the native run to the same row
-compares the two carriers without this project ever writing down what either of them should say.
-Whether an answer keeps a row is asked of the row, so there is no second reading of what a row
-means either.
+By the program's own `example` rows, and by what a row's arrival says about it. A row the compile
+ran arrives as one an output can put to its own emission; a row whose answer did not keep it
+refuses the program. So for such a row the JVM answered and the answer kept the row, and putting
+the native run to the same row holds both carriers to one statement without this project writing
+down what either of them should say. Whether an answer keeps a row is asked of the row, so there is
+no second reading of what a row means either.
+
+A row the compile did not run arrives saying so and carrying why. Those are not skipped: skipping
+them is how a check goes on being green over fewer and fewer rows.
+
+This is not the two carriers compared against each other. Holding both to one statement is not
+running both and comparing what came back, and running a program on every carrier and comparing the
+answers is still ahead.

@@ -15,6 +15,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.StringJoiner;
 
 /**
@@ -57,6 +58,22 @@ final class Running implements AutoCloseable {
      */
     ObservedValue answering(CheckedModule module, CheckedBehavior behavior,
                             List<ObservedValue> inputs) throws IOException, InterruptedException {
+        return answeredOrEnded(module, behavior, inputs).orElseThrow(() -> new AssertionError(
+                "the run ended rather than answering: " + behavior.name() + " of " + module.name()
+                        + ", handed " + inputs));
+    }
+
+    /**
+     * What the behavior answered, or nothing where the run ended instead.
+     *
+     * <p>For a caller whose question is which of the two happened. A run ending is an answer to
+     * that question and not the absence of one, so it comes back as a value rather than as a
+     * failure — and a caller asking it is expected to have a pair of runs where one of each
+     * happens, since a run that ends says nothing on its own about why.
+     */
+    Optional<ObservedValue> answeredOrEnded(CheckedModule module, CheckedBehavior behavior,
+                                            List<ObservedValue> inputs)
+            throws IOException, InterruptedException {
         Path executable = linked(module, behavior);
         List<String> command = new ArrayList<>();
         command.add(executable.toString());
@@ -69,9 +86,9 @@ final class Running implements AutoCloseable {
                 .start();
         String said = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
         if (process.waitFor() != 0) {
-            throw new AssertionError("the run ended rather than answering: " + said.strip());
+            return Optional.empty();
         }
-        return read(behavior.signature().answers(), said.strip());
+        return Optional.of(read(behavior.signature().answers(), said.strip()));
     }
 
     private Path linked(CheckedModule module, CheckedBehavior behavior) throws IOException {

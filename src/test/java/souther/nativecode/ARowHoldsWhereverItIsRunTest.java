@@ -17,11 +17,20 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /**
  * What a native run answers, held against what the program's own rows say.
  *
- * <p>The rows are the oracle and not this project's idea of one. A program whose rows do not hold
- * is not accepted, and accepting one means the rows were run — on the JVM, by the compile this test
- * reads the program through. So a row states an answer the JVM produced, and putting the native
- * run to the same row compares the two carriers without this backend ever writing down what either
- * of them should say.
+ * <p>The rows are the oracle and not this project's idea of one, and what that establishes is worth
+ * stating exactly. A row arrives as {@link CheckedRow.SelfContained} only where the compile ran it,
+ * and a row that ran whose answer did not keep it refuses the program — so for such a row the JVM
+ * answered and the answer kept the row. Putting the native run to the same row therefore holds both
+ * carriers to one statement without this backend writing down what either of them should say.
+ *
+ * <p>What it says nothing about is a row the compile did not run. Acceptance says so itself: a row
+ * whose classes will not link observes nothing and does not refuse the program. Such a row arrives
+ * as {@link CheckedRow.NotReproducible} carrying why, so the checked program does say which rows
+ * those are — and a reader that filtered them out would quietly compare fewer rows than the program
+ * states and stay green. Every arm is answered below for that reason.
+ *
+ * <p>Nor is this carriers compared against each other. Holding two of them to one statement is not
+ * running both and comparing what came back.
  *
  * <p>Whether an answer is the one a row states is asked of the row. A test deciding that for itself
  * would be a second reading of what a row means, and the two carriers would then agree only as far
@@ -160,7 +169,14 @@ class ARowHoldsWhereverItIsRunTest {
                 .hasMessageContaining("41");
     }
 
-    /** Runs every row the program states and asks the row whether the answer keeps it. */
+    /**
+     * Runs every row the program states and asks the row whether the answer keeps it.
+     *
+     * <p>Every row, and every way a row can arrive. A corpus written to be run is one where each
+     * row ran, so a row arriving any other way is this test's population having shrunk under it —
+     * which is the one thing a count of what it did compare could never tell it. Said as a switch
+     * with no arm standing for the rest, so a way of arriving added later has to be answered here.
+     */
     static void assertEveryRowHolds(String source) throws Exception {
         CheckedProgram program = CheckedProgram.of(List.of(source));
         int asked = 0;
@@ -168,17 +184,30 @@ class ARowHoldsWhereverItIsRunTest {
             for (CheckedModule module : program.modules()) {
                 for (CheckedBehavior behavior : module.behaviors()) {
                     for (CheckedRow row : behavior.rows()) {
-                        if (!(row.statement() instanceof CheckedRow.SelfContained states)) {
-                            continue;
-                        }
-                        List<ObservedValue> inputs = states.states().inputs();
-                        ObservedValue answered = running.answering(module, behavior, inputs);
+                        String where = row.identity() + " of " + behavior.name();
+                        switch (row.statement()) {
+                            case CheckedRow.SelfContained states -> {
+                                List<ObservedValue> inputs = states.states().inputs();
+                                ObservedValue answered =
+                                        running.answering(module, behavior, inputs);
 
-                        assertThat(states.holds(answered))
-                                .as("%s of %s, handed %s, answered %s",
-                                        row.identity(), behavior.name(), inputs, answered)
-                                .isInstanceOf(Verdict.Held.class);
-                        asked++;
+                                assertThat(states.holds(answered))
+                                        .as("%s, handed %s, answered %s", where, inputs, answered)
+                                        .isInstanceOf(Verdict.Held.class);
+                                asked++;
+                            }
+                            // Nothing in this corpus depends on anything or owes its answer, and a
+                            // row that did is one nobody put the two carriers to.
+                            case CheckedRow.WithStandIns states -> throw new AssertionError(
+                                    where + " needs something stood in for: " + states.standsIn());
+                            case CheckedRow.AnswerOwed states -> throw new AssertionError(
+                                    where + " states no answer to hold anything to: " + states);
+                            // The compile did not run it, and says why. Left out silently, this
+                            // test would go on being green over fewer and fewer rows.
+                            case CheckedRow.NotReproducible why -> throw new AssertionError(
+                                    where + " was not run by the compile, so nothing about it was"
+                                            + " observed on the JVM either: " + why.why());
+                        }
                     }
                 }
             }
