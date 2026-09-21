@@ -24,7 +24,80 @@ pub const TRANSPORT_VERSION: u32 = 1;
 #[serde(deny_unknown_fields)]
 pub struct Program {
     pub transport: u32,
+    pub declarations: Vec<Declaration>,
     pub modules: Vec<Module>,
+}
+
+/// What a declared type is made of, as its declaration says.
+///
+/// The shape and not the layout: how many fields there are and what they are called. Where a field
+/// sits and what a value costs to make are decided here on this side, from this.
+#[derive(Debug, Deserialize)]
+#[serde(tag = "is", rename_all = "lowercase", deny_unknown_fields)]
+pub enum Declaration {
+    Product {
+        declared: String,
+        fields: Vec<String>,
+        /// How many clauses every construction of this type owes. Nothing here checks one, so a
+        /// type that states any is one no value can be built of yet.
+        invariants: usize,
+    },
+    Newtype {
+        declared: String,
+        fields: Vec<String>,
+        invariants: usize,
+    },
+    Unit {
+        declared: String,
+        fields: Vec<String>,
+        invariants: usize,
+    },
+    /// A sum is never built. What it says is which types stand as its cases, and a case may be a
+    /// sum again — which is why an arm tests the leaves it resolved to rather than this list.
+    Sum {
+        declared: String,
+        cases: Vec<String>,
+    },
+}
+
+impl Declaration {
+    pub fn declared(&self) -> &str {
+        match self {
+            Declaration::Product { declared, .. }
+            | Declaration::Newtype { declared, .. }
+            | Declaration::Unit { declared, .. }
+            | Declaration::Sum { declared, .. } => declared,
+        }
+    }
+
+    /// Where a field of this type sits among its fields, by the name it is declared under.
+    pub fn position_of(&self, field: &str) -> Option<usize> {
+        match self {
+            Declaration::Product { fields, .. }
+            | Declaration::Newtype { fields, .. }
+            | Declaration::Unit { fields, .. } => fields.iter().position(|it| it == field),
+            Declaration::Sum { .. } => None,
+        }
+    }
+
+    pub fn field_count(&self) -> usize {
+        match self {
+            Declaration::Product { fields, .. }
+            | Declaration::Newtype { fields, .. }
+            | Declaration::Unit { fields, .. } => fields.len(),
+            Declaration::Sum { .. } => 0,
+        }
+    }
+
+    /// How many clauses every construction of this type owes.
+    pub fn invariants(&self) -> usize {
+        match self {
+            Declaration::Product { invariants, .. }
+            | Declaration::Newtype { invariants, .. }
+            | Declaration::Unit { invariants, .. } => *invariants,
+            Declaration::Sum { .. } => 0,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -45,8 +118,7 @@ pub struct Behavior {
 }
 
 #[derive(Debug, Deserialize, PartialEq, Eq, Clone, Copy)]
-#[serde(tag = "prim", deny_unknown_fields)]
-pub enum Ty {
+pub enum Prim {
     #[serde(rename = "INT")]
     Int,
     #[serde(rename = "STRING")]
@@ -69,20 +141,48 @@ pub enum Ty {
     Raw,
 }
 
-impl Ty {
+impl Prim {
     /// What a reader of a refusal is told this was.
     pub fn spelt(self) -> &'static str {
         match self {
-            Ty::Int => "Int",
-            Ty::String => "String",
-            Ty::Bool => "Bool",
-            Ty::Decimal => "Decimal",
-            Ty::Rational => "Rational",
-            Ty::Date => "Date",
-            Ty::Time => "Time",
-            Ty::DateTime => "DateTime",
-            Ty::Instant => "Instant",
-            Ty::Raw => "Raw",
+            Prim::Int => "Int",
+            Prim::String => "String",
+            Prim::Bool => "Bool",
+            Prim::Decimal => "Decimal",
+            Prim::Rational => "Rational",
+            Prim::Date => "Date",
+            Prim::Time => "Time",
+            Prim::DateTime => "DateTime",
+            Prim::Instant => "Instant",
+            Prim::Raw => "Raw",
+        }
+    }
+}
+
+/// The type the checker decided for something, as much of one as crosses.
+///
+/// Told apart by which key is written rather than by a word beside it, since each of these is a
+/// different shape and no two of them are ever both readable.
+#[derive(Debug, Deserialize, PartialEq, Eq, Clone)]
+#[serde(untagged, deny_unknown_fields)]
+pub enum Ty {
+    Prim { prim: Prim },
+    Declared { declared: String },
+    /// Several declared types, any one of which a value here may be. Each of them says which type
+    /// it is, so a union is written nowhere at run time: what holds it is what holds one of them.
+    Union { union: Vec<String> },
+    Option { option: Box<Ty> },
+    Tuple { tuple: Vec<Ty> },
+}
+
+impl Ty {
+    pub fn spelt(&self) -> String {
+        match self {
+            Ty::Prim { prim } => prim.spelt().to_string(),
+            Ty::Declared { declared } => declared.clone(),
+            Ty::Union { union } => union.join(" | "),
+            Ty::Option { option } => format!("an Option of {}", option.spelt()),
+            Ty::Tuple { tuple } => format!("a tuple of {} members", tuple.len()),
         }
     }
 }
@@ -135,6 +235,78 @@ pub enum Node {
         #[serde(rename = "type")]
         ty: Ty,
     },
+    /// A value of a type with nothing in it. It still says which type it is: that is what it is.
+    Unit {
+        declared: String,
+        #[serde(rename = "type")]
+        ty: Ty,
+    },
+    /// Every declared field, in declaration order, which is also the order they are worked out in.
+    Construct {
+        declared: String,
+        values: Vec<Node>,
+        #[serde(rename = "type")]
+        ty: Ty,
+    },
+    Field {
+        target: Box<Node>,
+        field: String,
+        #[serde(rename = "type")]
+        ty: Ty,
+    },
+    Match {
+        subject: Box<Node>,
+        arms: Vec<Arm>,
+        #[serde(rename = "type")]
+        ty: Ty,
+    },
+    Some {
+        value: Box<Node>,
+        #[serde(rename = "type")]
+        ty: Ty,
+    },
+    None {
+        #[serde(rename = "type")]
+        ty: Ty,
+    },
+    Tuple {
+        members: Vec<Node>,
+        #[serde(rename = "type")]
+        ty: Ty,
+    },
+    Member {
+        tuple: Box<Node>,
+        at: usize,
+        #[serde(rename = "type")]
+        ty: Ty,
+    },
+}
+
+/// One arm of a fork on what a value is.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Arm {
+    pub selects: Vec<Selects>,
+    /// The number the body reads the value under, where the arm binds it at all.
+    pub binding: Option<usize>,
+    /// What the value is read as inside the arm.
+    ///
+    /// Carried rather than worked out from what the arm tests, because the test does not say it:
+    /// an optional's present carrier is tested the same way whatever it holds, so a reader that
+    /// took the type from the test would read every optional's value at one width.
+    pub binds: Option<Ty>,
+    pub body: Node,
+}
+
+/// What one case of an arm tests for.
+#[derive(Debug, Deserialize)]
+#[serde(tag = "tests", rename_all = "lowercase", deny_unknown_fields)]
+pub enum Selects {
+    /// The value's own type is one of these. The atoms are the leaves the checker resolved the
+    /// case to, so a case that is a sum arrives as the several types it stands for.
+    Which { atoms: Vec<String> },
+    Held,
+    Nothing,
 }
 
 impl Node {
@@ -143,7 +315,7 @@ impl Node {
     /// Read off the node rather than worked out from where it sits: what a comparison compares is
     /// not what a comparison answers, and a lowering that took the second for the first would
     /// compare two values at the width of the answer.
-    pub fn ty(&self) -> Ty {
+    pub fn ty(&self) -> &Ty {
         match self {
             Node::Int { ty, .. }
             | Node::Read { ty, .. }
@@ -151,7 +323,15 @@ impl Node {
             | Node::Binary { ty, .. }
             | Node::Neg { ty, .. }
             | Node::Let { ty, .. }
-            | Node::If { ty, .. } => *ty,
+            | Node::If { ty, .. }
+            | Node::Unit { ty, .. }
+            | Node::Construct { ty, .. }
+            | Node::Field { ty, .. }
+            | Node::Match { ty, .. }
+            | Node::Some { ty, .. }
+            | Node::None { ty, .. }
+            | Node::Tuple { ty, .. }
+            | Node::Member { ty, .. } => ty,
         }
     }
 }

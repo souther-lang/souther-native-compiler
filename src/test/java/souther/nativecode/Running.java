@@ -103,7 +103,7 @@ final class Running implements AutoCloseable {
         Path executable = into.resolve(name);
 
         Process cc = new ProcessBuilder("cc", "-o", executable.toString(),
-                harness.toString(), object.toString())
+                harness.toString(), object.toString(), RUNTIME.toString())
                 .redirectErrorStream(true)
                 .start();
         String said = new String(cc.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
@@ -119,12 +119,21 @@ final class Running implements AutoCloseable {
         return executable;
     }
 
+    /** What a program made here calls for room, linked in beside what this compiler emitted. */
+    private static final Path RUNTIME =
+            Path.of("native", "target", "debug", "libsouther_native_runtime.a");
+
     /**
      * A C program that reaches the one behavior and writes what it answered.
      *
      * <p>Written for this behavior's own signature rather than dispatched at run time: the arity
      * and the widths are what a call is made of, and a harness that took them as data would be
      * making the call from something other than what the behavior says it takes.
+     *
+     * <p>The call is bracketed, which is how a Souther value is freed: nothing frees one on its
+     * own, and what the run made is dropped in a single go by the caller. Bracketed here even
+     * where one call is all that happens, because a harness that never gave the room back would be
+     * a harness the contract had never been put to.
      */
     private static String harnessFor(String symbol, CheckedBehavior behavior) {
         List<Type> takes = behavior.signature().takes();
@@ -142,13 +151,17 @@ final class Running implements AutoCloseable {
                 #include <stdlib.h>
 
                 extern %s reached(%s) __asm__("%s%s");
+                extern int64_t souther_mark(void);
+                extern void souther_reset(int64_t);
 
                 int main(int argc, char **argv) {
                     if (argc != %d) {
                         return 2;
                     }
+                    int64_t mark = souther_mark();
                     %s answered = reached(%s);
                     printf("%s\\n", answered);
+                    souther_reset(mark);
                     return 0;
                 }
                 """.formatted(

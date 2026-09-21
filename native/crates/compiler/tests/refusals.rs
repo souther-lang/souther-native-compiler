@@ -17,7 +17,9 @@ fn document(op: &str, ty: &str) -> String {
     let behavior = format!(
         r#"{{"name":"f","parameters":["a","b"],"takes":[{prim},{prim}],"answers":{prim},"body":{body}}}"#
     );
-    format!(r#"{{"transport":1,"modules":[{{"name":"calculation","behaviors":[{behavior}]}}]}}"#)
+    format!(
+        r#"{{"transport":1,"declarations":[],"modules":[{{"name":"calculation","behaviors":[{behavior}]}}]}}"#
+    )
 }
 
 /// An operator crosses whether or not there is a lowering for it. What it means is the language's

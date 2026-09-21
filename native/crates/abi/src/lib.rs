@@ -26,9 +26,62 @@ pub fn behavior_symbol(module: &str, behavior: &str) -> String {
     format!("souther.{module}.{behavior}")
 }
 
+/// How wide a slot is, and so what a value made of slots is measured in.
+///
+/// One width for every slot, whatever it holds. A layout that packed a `Bool` into a byte would
+/// make a field's offset depend on the types of the fields before it, which is a computation both
+/// sides would have to agree on for every declaration rather than a multiplication either can do.
+pub const SLOT: i64 = 8;
+
+/// Where a value of a declared type says which type it is.
+///
+/// Every constructed value carries it, including one of a type no sum has a case for. A value's
+/// own type is what it is, not what it is being read as, so writing the number only where someone
+/// was going to match on it would make the representation depend on a use rather than on the
+/// value — and a value built in one behavior and matched in another has no such use to read.
+pub const WHICH: i64 = 0;
+
+/// Where a constructed value's first field is. Its fields follow in declaration order.
+pub const FIRST_FIELD: i64 = SLOT;
+
+/// The offset of a field of a declared type, by its position in the declaration.
+pub fn field_at(position: usize) -> i64 {
+    FIRST_FIELD + SLOT * position as i64
+}
+
+/// The offset of a tuple's member. A tuple says which type it is nowhere: it is not a declared
+/// type and nothing matches on one, so its members start where they are.
+pub fn member_at(position: usize) -> i64 {
+    SLOT * position as i64
+}
+
+/// What an `Option` holding nothing is.
+///
+/// A null pointer, which no allocation answers, so the two are told apart by what the pointer is
+/// rather than by a slot beside it. An `Option` holding a value is a pointer to one slot holding
+/// it, boxed even where the value would fit in a pointer, because whether it fits is a fact about
+/// one type and an `Option` is one representation over every type.
+pub const NOTHING: i64 = 0;
+
+/// Where an `Option`'s value is, once it is known to be holding one.
+pub const HELD: i64 = 0;
+
+/// The symbol generated code takes room from.
+///
+/// It answers a pointer to `size` bytes that stay valid until the mark below them is reset. A
+/// Souther value is never freed on its own: what a run makes is dropped in one go by the caller
+/// that bracketed the call, so nothing generated has to know what owns what.
+pub const ALLOCATE: &str = "souther_alloc";
+
+/// The symbol a caller reads the arena's position from, to reset to afterwards.
+pub const MARK: &str = "souther_mark";
+
+/// The symbol a caller gives a mark back to, dropping everything taken since.
+pub const RESET: &str = "souther_reset";
+
 #[cfg(test)]
 mod tests {
-    use super::behavior_symbol;
+    use super::{FIRST_FIELD, SLOT, WHICH, behavior_symbol, field_at, member_at};
 
     #[test]
     fn a_behavior_is_reached_by_its_module_and_its_name() {
@@ -46,5 +99,21 @@ mod tests {
     #[should_panic(expected = "carries no dot")]
     fn a_behavior_whose_name_carries_a_dot_is_refused() {
         let _ = behavior_symbol("a", "b.c");
+    }
+
+    /// A field never lands where the type of the value is, whatever its position.
+    #[test]
+    fn no_field_stands_where_a_value_says_which_type_it_is() {
+        for position in 0..16 {
+            assert!(field_at(position) >= FIRST_FIELD);
+            assert_ne!(field_at(position), WHICH);
+        }
+    }
+
+    #[test]
+    fn fields_and_members_follow_one_after_another() {
+        assert_eq!(field_at(1) - field_at(0), SLOT);
+        assert_eq!(member_at(0), 0);
+        assert_eq!(member_at(3) - member_at(2), SLOT);
     }
 }

@@ -50,8 +50,35 @@ anything there.
 
 Over `Int` and `Bool`: `+`, `-`, `*`, unary `-`, the six comparisons, `&&` and `||`, `if`, and a
 name for a value. `/` answers the exact quotient, which is a `Rational` and has no representation
-here. Nothing is allocated and no value has a layout, so a `String`, a `Decimal`, a data and a
-function value are all still ahead.
+here.
+
+A model's own types: a product, a newtype, a unit, a sum, a value that may be absent, and several
+values carried as one. Built, read a field off, and forked on which case a value is. A helper that
+does not call itself arrives already written into the body that calls it, so a model that factors
+its arithmetic out compiles without anything here knowing what a call is; one that does call itself
+is carried to its reader as a definition, and the call to it is still a call.
+
+A type that states what its values owe is not built: a construction runs those clauses and stops at
+the first that does not hold, and nothing here runs one.
+
+Still ahead: a `String`, a `Decimal`, the collections, a function value, a kernel, and reaching a
+behavior another build implements.
+
+## Where a value lives
+
+In an arena the caller brackets. Nothing frees a Souther value on its own: what a run makes is
+dropped in one go by whoever bracketed the call, so generated code takes room and never gives any
+back, and nothing it emits has to know what owns what.
+
+A value of a declared type carries which type it is, so a fork on what a value is reads a number
+rather than asking where the value came from. Everything a value is made of sits in a slot of one
+width, which keeps a field's offset a fact about its position rather than about the types of the
+fields before it.
+
+The number a value carries is this object's own: it counts the declarations the document brought,
+so two builds of one document agree and nothing else has to. It is not an identity anything outside
+the object may read, and making it one is the first thing to settle before a value crosses between
+objects.
 
 Everything else the language admits says so rather than being written as whatever it resembles. A
 closed set crosses whole — every operator and every primitive — and the driver answers whether it

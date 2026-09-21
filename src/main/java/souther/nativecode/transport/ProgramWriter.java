@@ -1,16 +1,22 @@
 package souther.nativecode.transport;
 
 import souther.compiler.core.Core;
+import souther.compiler.core.ValueShape;
 import souther.compiler.program.CheckedBehavior;
+import souther.compiler.program.CheckedData;
 import souther.compiler.program.CheckedImplementation;
 import souther.compiler.program.CheckedModule;
 import souther.compiler.program.CheckedProgram;
 import souther.compiler.types.BinOp;
 import souther.compiler.types.BindingId;
+import souther.compiler.types.Refinement;
+import souther.compiler.types.ResolvedCase;
 import souther.compiler.types.Type;
+import souther.compiler.types.TypeSymbol;
 import souther.nativecode.NotLowered;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.StringJoiner;
 
@@ -52,11 +58,58 @@ public final class ProgramWriter {
 
     /** The whole program as one document. */
     public static String written(CheckedProgram program) {
+        StringJoiner declarations = new StringJoiner(",", "[", "]");
         StringJoiner modules = new StringJoiner(",", "[", "]");
         for (CheckedModule module : program.modules()) {
+            for (CheckedData declared : module.data()) {
+                declarations.add(declaration(declared));
+            }
             modules.add(module(module));
         }
-        return "{\"transport\":" + TRANSPORT_VERSION + ",\"modules\":" + modules + "}";
+        return "{\"transport\":" + TRANSPORT_VERSION
+                + ",\"declarations\":" + declarations
+                + ",\"modules\":" + modules + "}";
+    }
+
+    /**
+     * What a declared type is made of.
+     *
+     * <p>The shape and not the layout: how many fields there are and what they are called, which is
+     * the declaration's own answer, while what a field costs and where it sits is the lowering's.
+     * A writer that started saying where a field goes would be deciding the representation from the
+     * side that never emits one.
+     */
+    private static String declaration(CheckedData declared) {
+        return switch (declared) {
+            case CheckedData.Product it -> "{\"declared\":" + quoted(named(it.name()))
+                    + ",\"is\":\"product\",\"fields\":" + fieldNames(it.fields())
+                    + ",\"invariants\":" + it.invariants().size() + "}";
+            // A newtype holds one value and is told apart from a product of one field by what may
+            // be written of it, which is the checker's business and settled before this.
+            case CheckedData.Newtype it -> "{\"declared\":" + quoted(named(it.name()))
+                    + ",\"is\":\"newtype\",\"fields\":" + fieldNames(it.fields())
+                    + ",\"invariants\":" + it.invariants().size() + "}";
+            case CheckedData.Unit it -> "{\"declared\":" + quoted(named(it.name()))
+                    + ",\"is\":\"unit\",\"fields\":[],\"invariants\":0}";
+            // A sum is never built, so it has no fields of its own; what it says is which types
+            // stand as its cases, and a case may be a sum again.
+            case CheckedData.Sum it -> {
+                StringJoiner cases = new StringJoiner(",", "[", "]");
+                for (TypeSymbol held : it.cases()) {
+                    cases.add(quoted(symbol(held)));
+                }
+                yield "{\"declared\":" + quoted(named(it.name()))
+                        + ",\"is\":\"sum\",\"cases\":" + cases + "}";
+            }
+        };
+    }
+
+    private static String fieldNames(List<ValueShape.Field> fields) {
+        StringJoiner names = new StringJoiner(",", "[", "]");
+        for (ValueShape.Field field : fields) {
+            names.add(quoted(field.name()));
+        }
+        return names.toString();
     }
 
     private static String module(CheckedModule module) {
@@ -65,6 +118,27 @@ public final class ProgramWriter {
             behaviors.add(behavior(behavior));
         }
         return "{\"name\":" + quoted(module.name()) + ",\"behaviors\":" + behaviors + "}";
+    }
+
+    /**
+     * How a declared type is named on the wire.
+     *
+     * <p>Its module and then its own name. A module's name carries dots and a type's carries none,
+     * so the last segment is the type and no two declarations are spelt the same way.
+     */
+    private static String named(TypeSymbol.AtModule name) {
+        return name.module() + "." + name.name();
+    }
+
+    /** The same for a name that may not be a module's, which is refused rather than guessed at. */
+    private static String symbol(TypeSymbol name) {
+        return switch (name) {
+            case TypeSymbol.AtModule it -> named(it);
+            // A primitive standing as a case of a union, and a case the language gives. Both are
+            // cases with no declaration to be made of, and nothing here builds or reads one yet.
+            case TypeSymbol.Primitive it -> throw notYet("the primitive case " + it.name());
+            case TypeSymbol.LanguageCase it -> throw notYet("the case " + it.name());
+        };
     }
 
     private static String behavior(CheckedBehavior behavior) {
@@ -125,6 +199,33 @@ public final class ProgramWriter {
                     + ",\"left\":" + core(it.left(), bindings)
                     + ",\"right\":" + core(it.right(), bindings)
                     + ",\"type\":" + type(it.type()) + "}";
+            case Core.UnitValue it -> "{\"core\":\"unit\",\"declared\":"
+                    + quoted(symbol(it.data())) + ",\"type\":" + type(it.type()) + "}";
+            case Core.Construct it -> {
+                StringJoiner values = new StringJoiner(",", "[", "]");
+                for (Core.FieldValue field : it.values()) {
+                    values.add(core(field.value(), bindings));
+                }
+                yield "{\"core\":\"construct\",\"declared\":" + quoted(named(it.typeName()))
+                        + ",\"values\":" + values + ",\"type\":" + type(it.type()) + "}";
+            }
+            case Core.FieldAccess it -> "{\"core\":\"field\",\"target\":"
+                    + core(it.target(), bindings) + ",\"field\":" + quoted(it.field())
+                    + ",\"type\":" + type(it.type()) + "}";
+            case Core.Match it -> match(it, bindings);
+            case Core.OptionSome it -> "{\"core\":\"some\",\"value\":" + core(it.value(), bindings)
+                    + ",\"type\":" + type(it.type()) + "}";
+            case Core.OptionNone it -> "{\"core\":\"none\",\"type\":" + type(it.type()) + "}";
+            case Core.Tuple it -> {
+                StringJoiner members = new StringJoiner(",", "[", "]");
+                for (Core element : it.elements()) {
+                    members.add(core(element, bindings));
+                }
+                yield "{\"core\":\"tuple\",\"members\":" + members
+                        + ",\"type\":" + type(it.type()) + "}";
+            }
+            case Core.TupleGet it -> "{\"core\":\"member\",\"tuple\":" + core(it.tuple(), bindings)
+                    + ",\"at\":" + it.index() + ",\"type\":" + type(it.type()) + "}";
             case Core.Neg it -> "{\"core\":\"neg\",\"operand\":" + core(it.operand(), bindings)
                     + ",\"type\":" + type(it.type()) + "}";
             case Core.LetIn it -> letIn(it, bindings);
@@ -136,21 +237,13 @@ public final class ProgramWriter {
             case Core.Decimal it -> throw notYet("a decimal literal", it);
             case Core.Str it -> throw notYet("a string literal", it);
             case Core.Temporal it -> throw notYet("a temporal literal", it);
-            case Core.UnitValue it -> throw notYet("a unit value", it);
             case Core.MaterialisedValue it -> throw notYet("a value read from its module", it);
-            case Core.FieldAccess it -> throw notYet("a field access", it);
             case Core.Call it -> throw notYet("a call", it);
             case Core.PreservedCall it -> throw notYet("a call kept for what it says", it);
             case Core.Apply it -> throw notYet("an application of a function value", it);
             case Core.IfConstructed it -> throw notYet("an attempted construction", it);
             case Core.Block it -> throw notYet("a function value", it);
             case Core.ListLit it -> throw notYet("a list", it);
-            case Core.OptionSome it -> throw notYet("an option holding a value", it);
-            case Core.OptionNone it -> throw notYet("an option holding nothing", it);
-            case Core.Tuple it -> throw notYet("a tuple", it);
-            case Core.TupleGet it -> throw notYet("a member of a tuple", it);
-            case Core.Construct it -> throw notYet("a construction", it);
-            case Core.Match it -> throw notYet("a match", it);
             case Core.Unreachable it -> throw notYet("an unreachable", it);
         };
     }
@@ -170,6 +263,55 @@ public final class ProgramWriter {
                 + ",\"value\":" + value
                 + ",\"body\":" + core(it.body(), bindings)
                 + ",\"type\":" + type(it.type()) + "}";
+    }
+
+    /**
+     * A fork on what a value is, arm by arm.
+     *
+     * <p>An arm crosses as what it tests and what it reads, both as the checker resolved them.
+     * What a case comes to is not worked out again here: a case that is itself a sum stands for the
+     * leaves under it, and those leaves are what the arm tests against, so the atoms are written
+     * rather than the name they were written under.
+     *
+     * <p>The binder is numbered before the body is written, because the body reads it. An arm that
+     * binds nothing has no number, which is a different thing from binding something nothing reads.
+     */
+    private static String match(Core.Match it, Bindings bindings) {
+        StringJoiner arms = new StringJoiner(",", "[", "]");
+        for (Core.Case arm : it.cases()) {
+            StringJoiner selects = new StringJoiner(",", "[", "]");
+            for (ResolvedCase selected : arm.pattern().cases()) {
+                selects.add(selects(selected));
+            }
+            String binding = arm.binder() == null
+                    ? "null"
+                    : Integer.toString(bindings.number(arm.binder().binding()));
+            // What the value is read as inside the arm, which the checker settled and nothing
+            // downstream can work out from what the arm tests: an optional's present carrier is
+            // tested the same way whatever it holds.
+            String binds = arm.binder() == null
+                    ? "null"
+                    : type(arm.pattern().bindType());
+            arms.add("{\"selects\":" + selects + ",\"binding\":" + binding + ",\"binds\":" + binds
+                    + ",\"body\":" + core(arm.body(), bindings) + "}");
+        }
+        return "{\"core\":\"match\",\"subject\":" + core(it.scrutinee(), bindings)
+                + ",\"arms\":" + arms + ",\"type\":" + type(it.type()) + "}";
+    }
+
+    /** What one case of an arm tests for, and what it leaves to be read. */
+    private static String selects(ResolvedCase selected) {
+        return switch (selected.refinement()) {
+            case Refinement.Direct it -> {
+                StringJoiner atoms = new StringJoiner(",", "[", "]");
+                for (TypeSymbol atom : selected.atoms()) {
+                    atoms.add(quoted(symbol(atom)));
+                }
+                yield "{\"tests\":\"which\",\"atoms\":" + atoms + "}";
+            }
+            case Refinement.OptionPresent it -> "{\"tests\":\"held\"}";
+            case Refinement.OptionAbsent it -> "{\"tests\":\"nothing\"}";
+        };
     }
 
     private static NotLowered notYet(String what, Core node) {
@@ -227,14 +369,30 @@ public final class ProgramWriter {
             case Type.Erroneous it -> throw notYet("the type " + it);
             case Type.Var it -> throw notYet("a type variable");
             case Type.MetaVar it -> throw notYet("a type this compiler left open");
-            case Type.Ref it -> throw notYet("a declared type");
+            case Type.Ref it -> "{\"declared\":" + quoted(symbol(it.name())) + "}";
+            case Type.OptionOf it -> "{\"option\":" + type(it.element()) + "}";
+            case Type.TupleOf it -> {
+                StringJoiner members = new StringJoiner(",", "[", "]");
+                for (Type member : it.elements()) {
+                    members.add(type(member));
+                }
+                yield "{\"tuple\":" + members + "}";
+            }
+
+            // What a union's members are is what tells one apart from another, and each of them
+            // says which type it is. The union itself is written nowhere at run time.
+            case Type.Union it -> {
+                StringJoiner members = new StringJoiner(",", "[", "]");
+                for (TypeSymbol member : it.members()) {
+                    members.add(quoted(symbol(member)));
+                }
+                yield "{\"union\":" + members + "}";
+            }
+
             case Type.ListOf it -> throw notYet("a list type");
             case Type.MapOf it -> throw notYet("a map type");
             case Type.SetOf it -> throw notYet("a set type");
-            case Type.OptionOf it -> throw notYet("an option type");
-            case Type.Union it -> throw notYet("a union type");
             case Type.FnOf it -> throw notYet("a function type");
-            case Type.TupleOf it -> throw notYet("a tuple type");
         };
     }
 
