@@ -48,7 +48,29 @@ anything there.
 
 ## What compiles today
 
-An addition of two `Int` parameters, and that is all. Everything else the language admits says so
-rather than being written as whatever it resembles: the walk over `Core` names every node there is,
-and the ones not lowered yet raise `NotLowered`, which is not what a program the language refuses
+Over `Int` and `Bool`: `+`, `-`, `*`, unary `-`, the six comparisons, `&&` and `||`, `if`, and a
+name for a value. `/` answers the exact quotient, which is a `Rational` and has no representation
+here. Nothing is allocated and no value has a layout, so a `String`, a `Decimal`, a data and a
+function value are all still ahead.
+
+Everything else the language admits says so rather than being written as whatever it resembles. A
+closed set crosses whole — every operator and every primitive — and the driver answers whether it
+can write one; a node whose shape on the wire has not been designed cannot be written at all, and
+the writer says so. Either way it is `NotLowered`, which is not what a program the language refuses
 gets.
+
+## How it is known to be right
+
+By the program's own `example` rows, and by what a row's arrival says about it. A row the compile
+ran arrives as one an output can put to its own emission; a row whose answer did not keep it
+refuses the program. So for such a row the JVM answered and the answer kept the row, and putting
+the native run to the same row holds both carriers to one statement without this project writing
+down what either of them should say. Whether an answer keeps a row is asked of the row, so there is
+no second reading of what a row means either.
+
+A row the compile did not run arrives saying so and carrying why. Those are not skipped: skipping
+them is how a check goes on being green over fewer and fewer rows.
+
+This is not the two carriers compared against each other. Holding both to one statement is not
+running both and comparing what came back, and running a program on every carrier and comparing the
+answers is still ahead.

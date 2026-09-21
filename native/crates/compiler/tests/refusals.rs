@@ -24,13 +24,13 @@ fn document(op: &str, ty: &str) -> String {
 /// and the writer's business; whether this can write it is this driver's, and it is answered here.
 #[test]
 fn an_operator_with_no_lowering_is_not_lowered_rather_than_unreadable() {
-    let refused = object_for(&document("SUB", "INT")).expect_err("no lowering for it");
+    let refused = object_for(&document("DIV", "INT")).expect_err("no lowering for it");
 
     assert!(
         refused.downcast_ref::<NotLowered>().is_some(),
         "read as something other than a lowering this driver has not got: {refused}"
     );
-    assert!(refused.to_string().contains('-'), "{refused}");
+    assert!(refused.to_string().contains('/'), "{refused}");
 }
 
 /// The same for a primitive. A type with no machine representation yet is a lowering this driver

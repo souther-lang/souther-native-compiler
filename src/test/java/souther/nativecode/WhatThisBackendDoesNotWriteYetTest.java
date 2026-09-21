@@ -25,14 +25,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 class WhatThisBackendDoesNotWriteYetTest {
 
-    private static final String SUBTRACTING = """
-            module calculation
-
-            behavior less : (a: Int, b: Int) -> Int
-
-            let less (a, b) = a - b
-            """;
-
     private static final String OVER_A_STRING = """
             module calculation
 
@@ -42,27 +34,23 @@ class WhatThisBackendDoesNotWriteYetTest {
             """;
 
     /**
-     * The operator crosses. What it means is the language's and whether it can be written is the
-     * driver's, so a writer holding its own list of what the driver supports would be a second
-     * copy of an answer that lives over there.
+     * The type crosses. What a primitive is called is the language's and whether there is a
+     * representation for it is the driver's, so a writer holding its own list of what the driver
+     * supports would be a second copy of an answer that lives over there.
+     *
+     * <p>The operator half of this is checked where a document can be written by hand
+     * (`native/crates/compiler/tests/refusals.rs`): every operator a program can currently get
+     * past this writer has a lowering, so there is no program to write here that would show it.
      */
     @Test
-    void anOperatorWithNoLoweringStillCrosses() {
-        String written = ProgramWriter.written(CheckedProgram.of(List.of(SUBTRACTING)));
+    void aTypeWithNoRepresentationStillCrosses() {
+        String written = ProgramWriter.written(CheckedProgram.of(List.of(OVER_A_STRING)));
 
-        assertThat(written).contains("\"op\":\"SUB\"");
+        assertThat(written).contains("\"prim\":\"STRING\"");
     }
 
     @Test
     void theDriverSaysItIsOneThisBackendHasNotGotRoundTo() {
-        assertThatThrownBy(() -> NativeCompiler.compile(CheckedProgram.of(List.of(SUBTRACTING))))
-                .isInstanceOf(NotLowered.class)
-                .hasMessageContaining("-");
-    }
-
-    /** The same for a type with no representation yet, which crosses for the same reason. */
-    @Test
-    void aTypeWithNoRepresentationIsOneThisBackendHasNotGotRoundToEither() {
         assertThatThrownBy(() -> NativeCompiler.compile(CheckedProgram.of(List.of(OVER_A_STRING))))
                 .isInstanceOf(NotLowered.class)
                 .hasMessageContaining("String");
@@ -71,7 +59,7 @@ class WhatThisBackendDoesNotWriteYetTest {
     @Test
     void theCommandLineSaysTheBackendIsBehindAndNotThatTheCommandWasWrong() throws Exception {
         Path source = Files.createTempDirectory("souther-native-test").resolve("calculation.sou");
-        Files.writeString(source, SUBTRACTING, StandardCharsets.UTF_8);
+        Files.writeString(source, OVER_A_STRING, StandardCharsets.UTF_8);
         ByteArrayOutputStream problems = new ByteArrayOutputStream();
 
         int ended = Main.run(

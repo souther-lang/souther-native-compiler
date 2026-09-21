@@ -99,8 +99,8 @@ public final class ProgramWriter {
 
         private final Map<BindingId, Integer> numbered = new HashMap<>();
 
-        void number(BindingId binding) {
-            numbered.put(binding, numbered.size());
+        int number(BindingId binding) {
+            return numbered.computeIfAbsent(binding, it -> numbered.size());
         }
 
         int of(BindingId binding, String name) {
@@ -119,25 +119,30 @@ public final class ProgramWriter {
             case Core.Read it -> "{\"core\":\"read\",\"binding\":"
                     + bindings.of(it.binding(), it.name())
                     + ",\"type\":" + type(it.type()) + "}";
+            case Core.Bool it -> "{\"core\":\"bool\",\"value\":" + it.value()
+                    + ",\"type\":" + type(it.type()) + "}";
             case Core.Binary it -> "{\"core\":\"binary\",\"op\":" + quoted(op(it.op()))
                     + ",\"left\":" + core(it.left(), bindings)
                     + ",\"right\":" + core(it.right(), bindings)
                     + ",\"type\":" + type(it.type()) + "}";
+            case Core.Neg it -> "{\"core\":\"neg\",\"operand\":" + core(it.operand(), bindings)
+                    + ",\"type\":" + type(it.type()) + "}";
+            case Core.LetIn it -> letIn(it, bindings);
+            case Core.If it -> "{\"core\":\"if\",\"cond\":" + core(it.cond(), bindings)
+                    + ",\"then\":" + core(it.then(), bindings)
+                    + ",\"else\":" + core(it.els(), bindings)
+                    + ",\"type\":" + type(it.type()) + "}";
 
             case Core.Decimal it -> throw notYet("a decimal literal", it);
             case Core.Str it -> throw notYet("a string literal", it);
-            case Core.Bool it -> throw notYet("a boolean literal", it);
             case Core.Temporal it -> throw notYet("a temporal literal", it);
             case Core.UnitValue it -> throw notYet("a unit value", it);
             case Core.MaterialisedValue it -> throw notYet("a value read from its module", it);
-            case Core.Neg it -> throw notYet("a negation", it);
             case Core.FieldAccess it -> throw notYet("a field access", it);
             case Core.Call it -> throw notYet("a call", it);
             case Core.PreservedCall it -> throw notYet("a call kept for what it says", it);
             case Core.Apply it -> throw notYet("an application of a function value", it);
-            case Core.If it -> throw notYet("a condition", it);
             case Core.IfConstructed it -> throw notYet("an attempted construction", it);
-            case Core.LetIn it -> throw notYet("a binding", it);
             case Core.Block it -> throw notYet("a function value", it);
             case Core.ListLit it -> throw notYet("a list", it);
             case Core.OptionSome it -> throw notYet("an option holding a value", it);
@@ -148,6 +153,23 @@ public final class ProgramWriter {
             case Core.Match it -> throw notYet("a match", it);
             case Core.Unreachable it -> throw notYet("an unreachable", it);
         };
+    }
+
+    /**
+     * A binding and what is written under it.
+     *
+     * <p>The value is written before the binder is numbered, because what the value names is what
+     * was in scope where it stands and a binding cannot be read in its own value. Written the other
+     * way round, a value mentioning a name the binder shadows would cross as a read of the binder
+     * it is still being computed for.
+     */
+    private static String letIn(Core.LetIn it, Bindings bindings) {
+        String value = core(it.value(), bindings);
+        int number = bindings.number(it.binder().binding());
+        return "{\"core\":\"let\",\"binding\":" + number
+                + ",\"value\":" + value
+                + ",\"body\":" + core(it.body(), bindings)
+                + ",\"type\":" + type(it.type()) + "}";
     }
 
     private static NotLowered notYet(String what, Core node) {
