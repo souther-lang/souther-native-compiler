@@ -4,14 +4,34 @@
 //! is nothing here for an in-process call to make faster, and a panic on this side ends this
 //! process rather than the one that started it.
 
-use anyhow::Result;
-use souther_native_driver::object_for;
+use souther_native_driver::{NotLowered, ended, object_for};
 use std::io::{Read, Write, stdin, stdout};
+use std::process::ExitCode;
 
-fn main() -> Result<()> {
+fn main() -> ExitCode {
     let mut document = String::new();
-    stdin().read_to_string(&mut document)?;
-    let object = object_for(&document)?;
-    stdout().write_all(&object)?;
-    Ok(())
+    if let Err(problem) = stdin().read_to_string(&mut document) {
+        eprintln!("{problem}");
+        return ExitCode::from(ended::BADLY);
+    }
+
+    match object_for(&document) {
+        Ok(object) => match stdout().write_all(&object) {
+            Ok(()) => ExitCode::from(ended::WITH_AN_OBJECT),
+            Err(problem) => {
+                eprintln!("{problem}");
+                ExitCode::from(ended::BADLY)
+            }
+        },
+        Err(problem) => {
+            eprintln!("{problem}");
+            // Which of the two it was, said as the number rather than left for the other side to
+            // work out from the words.
+            ExitCode::from(if problem.downcast_ref::<NotLowered>().is_some() {
+                ended::NOT_LOWERED
+            } else {
+                ended::BADLY
+            })
+        }
+    }
 }

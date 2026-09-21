@@ -22,6 +22,17 @@ public final class NativeCompiler {
     /** Where the driver is, for a caller whose build puts it somewhere else. */
     public static final String DRIVER_PROPERTY = "souther.native.driver";
 
+    /**
+     * What the driver answering this means: the program is one the language admits and the backend
+     * does not write yet.
+     *
+     * <p>The driver's own {@code ended} module is the other half of this, and neither compiler
+     * checks the two agree. What holds them together is that a program the driver refuses is
+     * compiled the whole way through in a test, so the number being wrong is a red test rather
+     * than a refusal quietly reported as something else.
+     */
+    private static final int NOT_LOWERED = 2;
+
     private static final Path BUILT =
             Path.of("native", "target", "debug", "souther-native-driver");
 
@@ -56,8 +67,12 @@ public final class NativeCompiler {
                 object = from.readAllBytes();
             }
 
-            if (process.waitFor() != 0) {
-                throw new IOException("the driver refused it: "
+            int ended = process.waitFor();
+            if (ended == NOT_LOWERED) {
+                throw new NotLowered(Files.readString(said, StandardCharsets.UTF_8).strip());
+            }
+            if (ended != 0) {
+                throw new IOException("the driver could not do it: "
                         + Files.readString(said, StandardCharsets.UTF_8).strip());
             }
             return object;

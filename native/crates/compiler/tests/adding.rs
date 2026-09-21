@@ -10,6 +10,7 @@ use souther_native_driver::object_for;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use tempfile::{TempDir, tempdir};
 
 /// The document the Java half wrote, and the one its own test holds it to.
 const ADDING: &str = include_str!("adding.transport.json");
@@ -21,24 +22,29 @@ const ADDING: &str = include_str!("adding.transport.json");
 /// to reach it.
 const PREFIX: &str = if cfg!(target_vendor = "apple") { "_" } else { "" };
 
+/// Written in the width the object actually answers in. `long` is that width on the platforms this
+/// builds on today and is not the same thing: what the behavior takes and answers is an `Int`, and
+/// an `Int` is sixty-four bits wherever it is.
 const HARNESS: &str = r#"
+#include <inttypes.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 
-extern long adding(long, long) __asm__("PREFIXsouther.calculation.add");
+extern int64_t adding(int64_t, int64_t) __asm__("PREFIXsouther.calculation.add");
 
 int main(int argc, char **argv) {
     if (argc != 3) {
         return 2;
     }
-    printf("%ld\n", adding(atol(argv[1]), atol(argv[2])));
+    printf("%" PRId64 "\n", adding(strtoll(argv[1], NULL, 10), strtoll(argv[2], NULL, 10)));
     return 0;
 }
 "#;
 
 #[test]
 fn an_addition_of_two_numbers_answers_their_sum() {
-    let built = build();
+    let (_swept, built) = build();
     let answered = run(&built, "2", "40");
 
     assert!(answered.status.success(), "the run ended: {answered:?}");
@@ -49,7 +55,7 @@ fn an_addition_of_two_numbers_answers_their_sum() {
 /// not asked here: nothing carries a reason out of a native run yet.
 #[test]
 fn a_sum_past_what_an_int_holds_ends_the_run() {
-    let built = build();
+    let (_swept, built) = build();
     let answered = run(&built, "9223372036854775807", "1");
 
     assert!(!answered.status.success(), "it answered: {answered:?}");
@@ -58,19 +64,23 @@ fn a_sum_past_what_an_int_holds_ends_the_run() {
 
 /// Compiles the document, links what came out, and answers where the executable is.
 ///
-/// Under a directory of this process's own: a fixed name in a shared place is a file somebody
-/// else's run is in the middle of writing.
-fn build() -> PathBuf {
-    let into = std::env::temp_dir().join(format!("souther-native-{}", std::process::id()));
-    fs::create_dir_all(&into).expect("a directory to work in");
+/// Under a directory of this build's own, and not of this process's. Tests in one process run at
+/// the same time by default, so a name that varies by process varies by less than what is using
+/// it: two of them would write one object while the other's linker was reading it.
+///
+/// The directory is handed back with the executable so that it outlives the run and is swept up
+/// after it.
+fn build() -> (TempDir, PathBuf) {
+    let into = tempdir().expect("a directory to work in");
+    let into_path = into.path().to_path_buf();
 
-    let object = into.join("calculation.o");
+    let object = into_path.join("calculation.o");
     fs::write(&object, object_for(ADDING).expect("an object")).expect("the object written");
 
-    let harness = into.join("harness.c");
+    let harness = into_path.join("harness.c");
     fs::write(&harness, HARNESS.replace("PREFIX", PREFIX)).expect("the harness written");
 
-    let executable = into.join("adding");
+    let executable = into_path.join("adding");
     let linked = Command::new("cc")
         .arg("-o")
         .arg(&executable)
@@ -83,7 +93,7 @@ fn build() -> PathBuf {
         "the link failed: {}",
         String::from_utf8_lossy(&linked.stderr)
     );
-    executable
+    (into, executable)
 }
 
 fn run(executable: &Path, a: &str, b: &str) -> Output {

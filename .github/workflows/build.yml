@@ -1,0 +1,33 @@
+name: build
+
+# On both of them, because what this project writes is decided by the host: the object's format,
+# what the linker wants, and how a symbol is spelt once it is in one. A green build on one of them
+# says nothing about the other.
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        on: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.on }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+
+      # The toolchain comes from rust-toolchain.toml, which rustup reads when cargo is first run
+      # in the checkout. Nothing here names a version, so there is one place it is written.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native
+
+      - run: mvn --batch-mode test

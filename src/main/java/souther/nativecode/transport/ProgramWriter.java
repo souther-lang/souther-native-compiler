@@ -5,6 +5,7 @@ import souther.compiler.program.CheckedBehavior;
 import souther.compiler.program.CheckedImplementation;
 import souther.compiler.program.CheckedModule;
 import souther.compiler.program.CheckedProgram;
+import souther.compiler.types.BinOp;
 import souther.compiler.types.BindingId;
 import souther.compiler.types.Type;
 import souther.nativecode.NotLowered;
@@ -25,6 +26,13 @@ import java.util.StringJoiner;
  * <p>So the walk over {@link Core} lists every kind there is. A kind added to the language stops
  * this compiling, which is the point: the alternative is a default arm that lets a new node cross
  * as whatever it resembles.
+ *
+ * <p>Two things are refused and they are refused in different places. A node whose shape on the
+ * wire has not been designed cannot be written at all, and that is this writer's to say. What a
+ * closed set spells — an operator, a primitive — needs no design, so all of them are written and
+ * whether one can be lowered is answered by the half that lowers. Keeping a list here of what the
+ * driver supports would be a second table of the same fact, and the two would come apart the first
+ * time the driver learnt something this had not been told.
  *
  * <p>A binding crosses as a number and not as the compiler's own identity for it. The number is
  * this document's, counted where the binder is written, so what the far side reads is complete in
@@ -111,7 +119,7 @@ public final class ProgramWriter {
             case Core.Read it -> "{\"core\":\"read\",\"binding\":"
                     + bindings.of(it.binding(), it.name())
                     + ",\"type\":" + type(it.type()) + "}";
-            case Core.Binary it -> "{\"core\":\"binary\",\"op\":" + quoted(it.op().name())
+            case Core.Binary it -> "{\"core\":\"binary\",\"op\":" + quoted(op(it.op()))
                     + ",\"left\":" + core(it.left(), bindings)
                     + ",\"right\":" + core(it.right(), bindings)
                     + ",\"type\":" + type(it.type()) + "}";
@@ -146,11 +154,52 @@ public final class ProgramWriter {
         return new NotLowered(what + " at " + node.pos());
     }
 
+    /**
+     * How an operator is spelt on the wire.
+     *
+     * <p>Every one of them, written out rather than taken from the name the enum happens to carry.
+     * A name is a spelling and this is a vocabulary: written as {@code name()}, an operator added
+     * to the language would cross to a reader that has never heard of it, and the first thing to
+     * notice would be the far side failing to parse a document this side thought it had written.
+     */
+    private static String op(BinOp op) {
+        return switch (op) {
+            case EQ -> "EQ";
+            case NE -> "NE";
+            case LT -> "LT";
+            case LE -> "LE";
+            case GT -> "GT";
+            case GE -> "GE";
+            case AND -> "AND";
+            case OR -> "OR";
+            case ADD -> "ADD";
+            case SUB -> "SUB";
+            case MUL -> "MUL";
+            case DIV -> "DIV";
+            case CONCAT -> "CONCAT";
+        };
+    }
+
+    /** How a primitive is spelt on the wire, for the same reason and in the same way. */
+    private static String prim(Type.Prim prim) {
+        return switch (prim) {
+            case INT -> "INT";
+            case STRING -> "STRING";
+            case BOOL -> "BOOL";
+            case DECIMAL -> "DECIMAL";
+            case RATIONAL -> "RATIONAL";
+            case DATE -> "DATE";
+            case TIME -> "TIME";
+            case DATETIME -> "DATETIME";
+            case INSTANT -> "INSTANT";
+            case RAW -> "RAW";
+        };
+    }
+
     private static String type(Type type) {
         return switch (type) {
-            case Type.Prim it when it == Type.Prim.INT -> "{\"prim\":\"INT\"}";
+            case Type.Prim it -> "{\"prim\":" + quoted(prim(it)) + "}";
 
-            case Type.Prim it -> throw notYet("the type " + it);
             case Type.Nothing it -> throw notYet("the type " + it);
             case Type.Never it -> throw notYet("the type " + it);
             case Type.Erroneous it -> throw notYet("the type " + it);
