@@ -1,0 +1,14 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/abi",
+    "crates/runtime",
+]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.95"
+license = "EPL-2.0"
+
+[workspace.dependencies]
+souther-native-abi = { path = "crates/abi" }
