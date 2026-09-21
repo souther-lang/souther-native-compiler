@@ -8,22 +8,31 @@ pub mod transport;
 
 use anyhow::{Result, anyhow, bail};
 use cranelift::codegen::ir::condcodes::IntCC;
-use cranelift::codegen::ir::{AbiParam, Function, InstBuilder, TrapCode, UserFuncName, types};
+use cranelift::codegen::ir::{
+    AbiParam, Function, InstBuilder, MemFlagsData, TrapCode, UserFuncName, types,
+};
 use cranelift::codegen::isa::{CallConv, TargetFrontendConfig};
 use cranelift::codegen::settings::{self, Configurable};
 use cranelift::codegen::{Context, ir};
 use cranelift::frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use cranelift::module::{Linkage, Module, default_libcall_names};
 use cranelift::object::{ObjectBuilder, ObjectModule};
-use souther_native_abi::behavior_symbol;
+use souther_native_abi::{
+    ALLOCATE, HELD, NOTHING, SLOT, WHICH, behavior_symbol, field_at, member_at,
+};
+use std::collections::HashMap;
 use std::fmt;
-use transport::{Behavior, Node, Op, Program, TRANSPORT_VERSION, Ty};
+use transport::{Arm, Behavior, Declaration, Node, Op, Prim, Program, Selects, TRANSPORT_VERSION, Ty};
 
 /// An `Int` overflowing is an abort and not an answer, so the arithmetic traps rather than
 /// wrapping. Which abort it was is not said here: nothing yet carries a reason out of a native run,
 /// and a number invented at this end would be a second answer to a question Souther has not
 /// answered once.
 const OVERFLOWED: u8 = 1;
+
+/// A fork that ran out of arms, which is this compiler having emitted the wrong test rather than
+/// anything a program can be written as: the checker settles that a fork always answers.
+const NO_ARM: u8 = 2;
 
 /// Something the language admits and this driver does not lower yet.
 ///
@@ -75,10 +84,10 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
     }
 
     let mut flags = settings::builder();
-    // Nothing links these into a position-independent object yet, and the default on some hosts is
-    // to assume one. Said here rather than left to the host so that what is emitted is the same
-    // wherever it is built.
-    flags.set("is_pic", "false")?;
+    // A call out of this object reaches its callee the way the platform's linker expects, which on
+    // both of the hosts this runs on means position-independent. Said here rather than left to the
+    // host, so that what is emitted is the same wherever it is built.
+    flags.set("is_pic", "true")?;
     let isa = cranelift::native::builder()
         .map_err(|it| anyhow!("no code generator for this host: {it}"))?
         .finish(settings::Flags::new(flags))?;
@@ -88,16 +97,29 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
     let mut context = Context::new();
     let mut shapes = FunctionBuilderContext::new();
     let frontend = module.isa().frontend_config();
+    let call_conv = module.isa().default_call_conv();
+
+    let mut taking_room = ir::Signature::new(call_conv);
+    taking_room.params.push(AbiParam::new(types::I64));
+    taking_room.returns.push(AbiParam::new(POINTER));
+    let allocate = module.declare_function(ALLOCATE, Linkage::Import, &taking_room)?;
+
+    let declared = Declared::of(&program.declarations)?;
 
     for written in &program.modules {
         for behavior in &written.behaviors {
             let symbol = behavior_symbol(&written.name, &behavior.name);
-            let signature = signature_of(behavior, module.isa().default_call_conv())?;
+            let signature = signature_of(behavior, call_conv)?;
             let id = module.declare_function(&symbol, Linkage::Export, &signature)?;
 
             context.clear();
             context.func = Function::with_name_signature(UserFuncName::default(), signature);
-            define(&mut context.func, &mut shapes, behavior, frontend)?;
+            let taking = module.declare_func_in_func(allocate, &mut context.func);
+            let lowering = Lowering {
+                declared: &declared,
+                taking,
+            };
+            define(&mut context.func, &mut shapes, behavior, frontend, &lowering)?;
             module.define_function(id, &mut context)?;
         }
     }
@@ -105,27 +127,118 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
     Ok(module.finish().emit()?)
 }
 
+/// What every declared type of the program is, and which number stands for it.
+///
+/// The number is this lowering's and nothing outside it means anything by one: it is an index into
+/// the declarations the document carries, so two builds of one document agree and nothing else has
+/// to. A value carries it so that a fork on what a value is can be a comparison rather than a
+/// question about where the value came from.
+struct Declared<'a> {
+    which: HashMap<&'a str, i64>,
+    shapes: HashMap<&'a str, &'a Declaration>,
+}
+
+impl<'a> Declared<'a> {
+    fn of(declarations: &'a [Declaration]) -> Result<Self> {
+        let mut which = HashMap::new();
+        let mut shapes = HashMap::new();
+        for (at, declaration) in declarations.iter().enumerate() {
+            let name = declaration.declared();
+            if which.insert(name, at as i64).is_some() {
+                bail!("two declarations are both written {name}");
+            }
+            shapes.insert(name, declaration);
+        }
+        Ok(Declared { which, shapes })
+    }
+
+    fn number(&self, declared: &str) -> Result<i64> {
+        self.which
+            .get(declared)
+            .copied()
+            .ok_or_else(|| anyhow!("a value of {declared}, which no declaration crossed for"))
+    }
+
+    fn shape(&self, declared: &str) -> Result<&'a Declaration> {
+        self.shapes
+            .get(declared)
+            .copied()
+            .ok_or_else(|| anyhow!("a value of {declared}, which no declaration crossed for"))
+    }
+}
+
+/// What the lowering of one function needs besides the function itself.
+struct Lowering<'a> {
+    declared: &'a Declared<'a>,
+    taking: ir::FuncRef,
+}
+
+impl Lowering<'_> {
+    /// Room for `slots` slots, from the arena the caller brackets.
+    fn room(&self, builder: &mut FunctionBuilder, slots: usize) -> ir::Value {
+        let size = builder.ins().iconst(types::I64, SLOT * slots as i64);
+        let taken = builder.ins().call(self.taking, &[size]);
+        builder.inst_results(taken)[0]
+    }
+}
+
 fn signature_of(behavior: &Behavior, call_conv: CallConv) -> Result<ir::Signature> {
     let mut signature = ir::Signature::new(call_conv);
     for taken in &behavior.takes {
-        signature.params.push(AbiParam::new(machine_type(*taken)?));
+        signature.params.push(AbiParam::new(machine_type(taken)?));
     }
     signature
         .returns
-        .push(AbiParam::new(machine_type(behavior.answers)?));
+        .push(AbiParam::new(machine_type(&behavior.answers)?));
     Ok(signature)
 }
 
 /// What a value of this type is on the machine.
 ///
-/// `Int` and `Bool` have one. Every other primitive is a value with a representation to design —
-/// how it is held, who owns it, what frees it — and none of that is decided by giving it a width
-/// here.
-fn machine_type(ty: Ty) -> Result<types::Type> {
+/// A number, a truth, or the address of what a value is made of. Every other primitive is a value
+/// with a representation to design — how it is held, who owns it, what frees it — and none of that
+/// is decided by giving it a width here.
+fn machine_type(ty: &Ty) -> Result<types::Type> {
     match ty {
-        Ty::Int => Ok(types::I64),
-        Ty::Bool => Ok(types::I8),
+        Ty::Prim { prim: Prim::Int } => Ok(types::I64),
+        Ty::Prim { prim: Prim::Bool } => Ok(types::I8),
+        Ty::Declared { .. } | Ty::Union { .. } | Ty::Option { .. } | Ty::Tuple { .. } => Ok(POINTER),
         other => Err(not_lowered(format!("a value of type {}", other.spelt()))),
+    }
+}
+
+/// What holds the address of a value made of fields.
+///
+/// One width, and the host's. Nothing here is written for a machine this is not running on, and a
+/// pointer narrower or wider than a slot would make a field's offset a question about the host
+/// rather than a multiplication.
+const POINTER: types::Type = types::I64;
+
+/// Everything a value is made of sits in a slot of one width, so what is put in one is widened to
+/// it and what comes out is narrowed back.
+///
+/// A `Bool` is the only thing narrower today. Widening it here rather than laying it out where it
+/// fits keeps a field's offset a fact about its position and not about the types before it.
+/// How this reads and writes what it has just made room for.
+///
+/// Aligned and not trapping, which is what the arena answers: room is handed out a slot at a time
+/// and a pointer from it is one nothing else is using. Written once here so that every access says
+/// the same thing rather than each site deciding what it trusts.
+const TRUSTED: MemFlagsData = MemFlagsData::trusted();
+
+fn into_slot(builder: &mut FunctionBuilder, value: ir::Value) -> ir::Value {
+    if builder.func.dfg.value_type(value) == types::I64 {
+        value
+    } else {
+        builder.ins().uextend(types::I64, value)
+    }
+}
+
+fn out_of_slot(builder: &mut FunctionBuilder, held: ir::Value, wanted: types::Type) -> ir::Value {
+    if wanted == types::I64 {
+        held
+    } else {
+        builder.ins().ireduce(wanted, held)
     }
 }
 
@@ -134,6 +247,7 @@ fn define(
     shapes: &mut FunctionBuilderContext,
     behavior: &Behavior,
     frontend: TargetFrontendConfig,
+    lowering: &Lowering,
 ) -> Result<()> {
     let mut builder = FunctionBuilder::new(function, shapes);
     let entry = builder.create_block();
@@ -143,13 +257,13 @@ fn define(
 
     let mut bindings = Bindings::default();
     for (at, taken) in behavior.takes.iter().enumerate() {
-        let variable = builder.declare_var(machine_type(*taken)?);
+        let variable = builder.declare_var(machine_type(taken)?);
         let given = builder.block_params(entry)[at];
         builder.def_var(variable, given);
         bindings.at(at, variable);
     }
 
-    let answer = lower(&mut builder, &mut bindings, &behavior.body)?;
+    let answer = lower(&mut builder, lowering, &mut bindings, &behavior.body)?;
     builder.ins().return_(&[answer]);
     builder.finalize(frontend);
     Ok(())
@@ -182,15 +296,20 @@ impl Bindings {
     }
 }
 
-fn lower(builder: &mut FunctionBuilder, bindings: &mut Bindings, node: &Node) -> Result<ir::Value> {
+fn lower(
+    builder: &mut FunctionBuilder,
+    lowering: &Lowering,
+    bindings: &mut Bindings,
+    node: &Node,
+) -> Result<ir::Value> {
     Ok(match node {
-        Node::Int { value, ty } => builder.ins().iconst(machine_type(*ty)?, *value),
+        Node::Int { value, ty } => builder.ins().iconst(machine_type(ty)?, *value),
         Node::Read { binding, .. } => {
             let variable = bindings.of(*binding)?;
             builder.use_var(variable)
         }
         Node::Neg { operand, .. } => {
-            let held = lower(builder, bindings, operand)?;
+            let held = lower(builder, lowering, bindings, operand)?;
             let nought = builder.ins().iconst(types::I64, 0);
             difference(builder, nought, held)
         }
@@ -200,28 +319,224 @@ fn lower(builder: &mut FunctionBuilder, bindings: &mut Bindings, node: &Node) ->
             body,
             ..
         } => {
-            let held = lower(builder, bindings, value)?;
+            let held = lower(builder, lowering, bindings, value)?;
             let variable = builder.declare_var(machine_type(value.ty())?);
             builder.def_var(variable, held);
             bindings.at(*binding, variable);
-            lower(builder, bindings, body)?
+            lower(builder, lowering, bindings, body)?
         }
-        Node::Bool { value, ty } => builder.ins().iconst(machine_type(*ty)?, i64::from(*value)),
+        Node::Bool { value, ty } => builder.ins().iconst(machine_type(ty)?, i64::from(*value)),
         Node::Binary {
             op, left, right, ..
-        } => binary(builder, bindings, *op, left, right)?,
+        } => binary(builder, lowering, bindings, *op, left, right)?,
         Node::If {
             cond,
             then,
             els,
             ty,
         } => {
-            let asked = lower(builder, bindings, cond)?;
-            fork(builder, asked, machine_type(*ty)?, |builder, taken| {
-                lower(builder, bindings, if taken { then } else { els })
+            let asked = lower(builder, lowering, bindings, cond)?;
+            let answers = machine_type(ty)?;
+            fork(builder, asked, answers, |builder, taken| {
+                lower(builder, lowering, bindings, if taken { then } else { els })
             })?
         }
+        Node::Unit { declared, .. } => {
+            let flags = TRUSTED;
+            let value = lowering.room(builder, 1);
+            let which = builder
+                .ins()
+                .iconst(types::I64, lowering.declared.number(declared)?);
+            builder.ins().store(flags, which, value, WHICH as i32);
+            value
+        }
+        Node::Construct {
+            declared, values, ..
+        } => {
+            let shape = lowering.declared.shape(declared)?;
+            // A construction runs the type's clauses and stops at the first that does not hold,
+            // which is an abort and not a value. Nothing here runs one, and building the value
+            // without running them would make a type's invariant true of what this emits by
+            // omission.
+            if shape.invariants() > 0 {
+                return Err(not_lowered(format!(
+                    "a construction of {declared}, which states what every one of its values owes"
+                )));
+            }
+            if shape.field_count() != values.len() {
+                bail!(
+                    "{declared} is declared with {} fields and is built here from {}",
+                    shape.field_count(),
+                    values.len()
+                );
+            }
+            // The fields are worked out before any room is taken, because working one out can
+            // take room of its own and what is half-written is not a value.
+            let mut held = Vec::with_capacity(values.len());
+            for value in values {
+                let answered = lower(builder, lowering, bindings, value)?;
+                held.push(into_slot(builder, answered));
+            }
+            let flags = TRUSTED;
+            let value = lowering.room(builder, 1 + values.len());
+            let which = builder
+                .ins()
+                .iconst(types::I64, lowering.declared.number(declared)?);
+            builder.ins().store(flags, which, value, WHICH as i32);
+            for (at, field) in held.into_iter().enumerate() {
+                builder
+                    .ins()
+                    .store(flags, field, value, field_at(at) as i32);
+            }
+            value
+        }
+        Node::Field { target, field, ty } => {
+            let of = target.ty();
+            let Ty::Declared { declared } = of else {
+                bail!("a field of {}, which holds no fields", of.spelt());
+            };
+            let shape = lowering.declared.shape(declared)?;
+            let at = shape
+                .position_of(field)
+                .ok_or_else(|| anyhow!("{declared} declares no field {field}"))?;
+            let value = lower(builder, lowering, bindings, target)?;
+            let flags = TRUSTED;
+            let held = builder
+                .ins()
+                .load(types::I64, flags, value, field_at(at) as i32);
+            out_of_slot(builder, held, machine_type(ty)?)
+        }
+        Node::Match { subject, arms, ty } => {
+            let value = lower(builder, lowering, bindings, subject)?;
+            fork_on_what_it_is(builder, lowering, bindings, value, arms, machine_type(ty)?)?
+        }
+        Node::Some { value, .. } => {
+            let held = lower(builder, lowering, bindings, value)?;
+            let held = into_slot(builder, held);
+            let flags = TRUSTED;
+            let holding = lowering.room(builder, 1);
+            builder.ins().store(flags, held, holding, HELD as i32);
+            holding
+        }
+        Node::None { .. } => builder.ins().iconst(POINTER, NOTHING),
+        Node::Tuple { members, .. } => {
+            let mut held = Vec::with_capacity(members.len());
+            for member in members {
+                let answered = lower(builder, lowering, bindings, member)?;
+                held.push(into_slot(builder, answered));
+            }
+            let flags = TRUSTED;
+            let value = lowering.room(builder, members.len().max(1));
+            for (at, member) in held.into_iter().enumerate() {
+                builder.ins().store(flags, member, value, member_at(at) as i32);
+            }
+            value
+        }
+        Node::Member { tuple, at, ty } => {
+            let value = lower(builder, lowering, bindings, tuple)?;
+            let flags = TRUSTED;
+            let held = builder
+                .ins()
+                .load(types::I64, flags, value, member_at(*at) as i32);
+            out_of_slot(builder, held, machine_type(ty)?)
+        }
     })
+}
+
+/// A fork on what a value is, arm by arm.
+///
+/// The arms are tried in the order they are written, because that is the order the language reads
+/// them in. What an arm tests is what the checker resolved it to and not the name it was written
+/// under, so a case that is itself a sum arrives here as the several types it stands for.
+///
+/// Running out of arms is this compiler having emitted the wrong test: the checker settles that a
+/// fork always answers, so nothing a program can be written as reaches the end of this.
+fn fork_on_what_it_is(
+    builder: &mut FunctionBuilder,
+    lowering: &Lowering,
+    bindings: &mut Bindings,
+    value: ir::Value,
+    arms: &[Arm],
+    answers: types::Type,
+) -> Result<ir::Value> {
+    let after = builder.create_block();
+    builder.append_block_param(after, answers);
+
+    for arm in arms {
+        let taken = builder.create_block();
+        let next = builder.create_block();
+        let asked = tests(builder, lowering, value, &arm.selects)?;
+        builder.ins().brif(asked, taken, &[], next, &[]);
+        builder.seal_block(taken);
+        builder.seal_block(next);
+
+        builder.switch_to_block(taken);
+        if let Some(number) = arm.binding {
+            let held = binds(builder, value, &arm.selects);
+            let variable = builder.declare_var(builder.func.dfg.value_type(held));
+            builder.def_var(variable, held);
+            bindings.at(number, variable);
+        }
+        let answered = lower(builder, lowering, bindings, &arm.body)?;
+        builder.ins().jump(after, &[answered.into()]);
+
+        builder.switch_to_block(next);
+    }
+
+    builder
+        .ins()
+        .trap(TrapCode::user(NO_ARM).expect("a trap code of its own"));
+
+    builder.seal_block(after);
+    builder.switch_to_block(after);
+    Ok(builder.block_params(after)[0])
+}
+
+/// Whether the value is one of the cases this arm answers for.
+fn tests(
+    builder: &mut FunctionBuilder,
+    lowering: &Lowering,
+    value: ir::Value,
+    selects: &[Selects],
+) -> Result<ir::Value> {
+    let mut asked: Option<ir::Value> = None;
+    for one in selects {
+        let this = match one {
+            Selects::Which { atoms } => {
+                let flags = TRUSTED;
+                let which = builder.ins().load(types::I64, flags, value, WHICH as i32);
+                let mut any: Option<ir::Value> = None;
+                for atom in atoms {
+                    let number = lowering.declared.number(atom)?;
+                    let same = builder.ins().icmp_imm_s(IntCC::Equal, which, number);
+                    any = Some(match any {
+                        None => same,
+                        Some(before) => builder.ins().bor(before, same),
+                    });
+                }
+                any.ok_or_else(|| anyhow!("an arm testing what a value is names no case"))?
+            }
+            Selects::Held => builder.ins().icmp_imm_s(IntCC::NotEqual, value, NOTHING),
+            Selects::Nothing => builder.ins().icmp_imm_s(IntCC::Equal, value, NOTHING),
+        };
+        asked = Some(match asked {
+            None => this,
+            Some(before) => builder.ins().bor(before, this),
+        });
+    }
+    asked.ok_or_else(|| anyhow!("an arm answers for at least one case"))
+}
+
+/// What the arm reads the value as, once it is known to be one of its cases.
+///
+/// An arm over an optional's present carrier reads what it holds; every other arm reads the value
+/// itself, which is already the case it selected.
+fn binds(builder: &mut FunctionBuilder, value: ir::Value, selects: &[Selects]) -> ir::Value {
+    if selects.iter().any(|it| matches!(it, Selects::Held)) {
+        builder.ins().load(types::I64, TRUSTED, value, HELD as i32)
+    } else {
+        value
+    }
 }
 
 /// A value that is one of two, worked out on the side the condition took.
@@ -268,6 +583,7 @@ where
 /// runs at all.
 fn binary(
     builder: &mut FunctionBuilder,
+    lowering: &Lowering,
     bindings: &mut Bindings,
     op: Op,
     left: &Node,
@@ -280,19 +596,19 @@ fn binary(
         // condition exists to exclude.
         Op::And | Op::Or => {
             let settles_it = matches!(op, Op::Or);
-            let asked = lower(builder, bindings, left)?;
-            let answers = machine_type(Ty::Bool)?;
+            let asked = lower(builder, lowering, bindings, left)?;
+            let answers = machine_type(&Ty::Prim { prim: Prim::Bool })?;
             fork(builder, asked, answers, |builder, taken| {
                 if taken == settles_it {
                     Ok(builder.ins().iconst(answers, i64::from(settles_it)))
                 } else {
-                    lower(builder, bindings, right)
+                    lower(builder, lowering, bindings, right)
                 }
             })
         }
         _ => {
-            let a = lower(builder, bindings, left)?;
-            let b = lower(builder, bindings, right)?;
+            let a = lower(builder, lowering, bindings, left)?;
+            let b = lower(builder, lowering, bindings, right)?;
             match op {
                 Op::Add => {
                     let sum = builder.ins().iadd(a, b);
