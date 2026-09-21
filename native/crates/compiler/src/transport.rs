@@ -101,6 +101,11 @@ pub enum Node {
         #[serde(rename = "type")]
         ty: Ty,
     },
+    Bool {
+        value: bool,
+        #[serde(rename = "type")]
+        ty: Ty,
+    },
     Binary {
         op: Op,
         left: Box<Node>,
@@ -108,6 +113,47 @@ pub enum Node {
         #[serde(rename = "type")]
         ty: Ty,
     },
+    Neg {
+        operand: Box<Node>,
+        #[serde(rename = "type")]
+        ty: Ty,
+    },
+    /// A name for a value, and what is written under it. The number is the document's, given where
+    /// the binder is written.
+    Let {
+        binding: usize,
+        value: Box<Node>,
+        body: Box<Node>,
+        #[serde(rename = "type")]
+        ty: Ty,
+    },
+    If {
+        cond: Box<Node>,
+        then: Box<Node>,
+        #[serde(rename = "else")]
+        els: Box<Node>,
+        #[serde(rename = "type")]
+        ty: Ty,
+    },
+}
+
+impl Node {
+    /// The type the checker decided for this expression.
+    ///
+    /// Read off the node rather than worked out from where it sits: what a comparison compares is
+    /// not what a comparison answers, and a lowering that took the second for the first would
+    /// compare two values at the width of the answer.
+    pub fn ty(&self) -> Ty {
+        match self {
+            Node::Int { ty, .. }
+            | Node::Read { ty, .. }
+            | Node::Bool { ty, .. }
+            | Node::Binary { ty, .. }
+            | Node::Neg { ty, .. }
+            | Node::Let { ty, .. }
+            | Node::If { ty, .. } => *ty,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, PartialEq, Eq, Clone, Copy)]

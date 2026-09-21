@@ -48,7 +48,21 @@ anything there.
 
 ## What compiles today
 
-An addition of two `Int` parameters, and that is all. Everything else the language admits says so
-rather than being written as whatever it resembles: the walk over `Core` names every node there is,
-and the ones not lowered yet raise `NotLowered`, which is not what a program the language refuses
+`Int` and `Bool`: the arithmetic, the comparisons, the two conditions that stop as soon as the
+answer is settled, a fork, a name for a value. Nothing is allocated and no value has a layout, so
+a `String`, a `Decimal`, a data and a function value are all still ahead.
+
+Everything else the language admits says so rather than being written as whatever it resembles. A
+closed set crosses whole — every operator and every primitive — and the driver answers whether it
+can write one; a node whose shape on the wire has not been designed cannot be written at all, and
+the writer says so. Either way it is `NotLowered`, which is not what a program the language refuses
 gets.
+
+## How it is known to be right
+
+By the program's own `example` rows. A program whose rows do not hold is not accepted, and
+accepting one means the rows were run — on the JVM, by the compile that produced the checked
+program. So a row states an answer the JVM produced, and putting the native run to the same row
+compares the two carriers without this project ever writing down what either of them should say.
+Whether an answer keeps a row is asked of the row, so there is no second reading of what a row
+means either.
