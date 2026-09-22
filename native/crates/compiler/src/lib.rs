@@ -162,6 +162,20 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
         }
     }
 
+    // Every local definition this object holds agrees with what its own target says — checked
+    // once, exhaustively, from the local definition's side. The declaration loop below checks
+    // the other direction — that a target answering `Body` or `Composed` has a local definition
+    // at all — which is a different question: existence, not kind. Answered from this side and
+    // not folded into that loop, because that loop only ever visits a target whose `is` is
+    // already `Body` or `Composed`; a target answering `Injected`, `Elsewhere` or `Unwritten`
+    // that nonetheless has a local definition sitting under its name — the two halves disagreeing
+    // about the one thing that matters most, whether this object defines the name at all — would
+    // never reach it.
+    for (&name, &local) in &locals {
+        let target = targets.named(name)?;
+        agrees_with_its_target(name, target, local, &targets)?;
+    }
+
     // Every function is declared before any is defined, because a body may reach one written
     // after it — a definition that calls itself reaches itself, and two that call each other
     // reach one another. Nothing here orders the program to make that go away.
@@ -176,7 +190,8 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
             // Defined here, so what the table carries for it is this object's answer about a name
             // the declaring module has already decided. A body or a composition with no such
             // answer is a local definition of a module this document does not carry, which is the
-            // two halves disagreeing rather than something to fall back from.
+            // two halves disagreeing rather than something to fall back from. That the definition
+            // found, if any, is the kind of definition this target says was already checked above.
             Answers::Body | Answers::Composed => {
                 let declared = target.declared();
                 let local = locals.get(declared.as_str()).copied().ok_or_else(|| {
@@ -185,7 +200,6 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
                          carries"
                     )
                 })?;
-                agrees_with_its_target(&declared, target, local, &targets)?;
                 linkage_of(local.publication())
             }
             // Named and not defined. What answers it is settled where the object is linked, and

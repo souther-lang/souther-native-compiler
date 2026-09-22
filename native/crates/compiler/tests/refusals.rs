@@ -236,6 +236,31 @@ fn a_target_and_its_local_definition_disagreeing_about_which_it_is_is_the_halves
     assert!(refused.to_string().contains("m.outer"), "{refused}");
 }
 
+/// The same disagreement, the other way round: a target saying a name is `injected`, `elsewhere`
+/// or (as here) `unwritten` has no local definition to speak of — and one sitting under its name
+/// regardless is not this backend being behind on a program the language admits. `Unwritten` is
+/// Souther's own answer for a behavior nobody has written, and a composition sitting under that
+/// name says the opposite: the two halves disagree about whether this object defines the name at
+/// all, which is checked from the local definition's side and not left for whichever branch of
+/// the declaration loop the target's own `is` happens to route through.
+#[test]
+fn a_local_definition_whose_target_says_unwritten_is_the_halves_disagreeing() {
+    let document = composed_document().replace(
+        r#""name":"outer","is":"composed""#,
+        r#""name":"outer","is":"unwritten""#,
+    );
+
+    let refused = object_for(&document)
+        .expect_err("a composition sitting under a name its target says is unwritten");
+
+    assert!(
+        refused.downcast_ref::<NotLowered>().is_none(),
+        "the halves disagreeing is not the backend admitting a program it has not gotten round \
+         to: {refused}"
+    );
+    assert!(refused.to_string().contains("m.outer"), "{refused}");
+}
+
 /// A composition's own `answers` and its target's `answers` are the same fact, crossed twice —
 /// once as what the composition itself carries, once as what every caller reaching it by name is
 /// told. A document where they disagree is refused rather than read as whichever one happened to
