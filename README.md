@@ -64,12 +64,12 @@ it, so what answers a dependency is settled at the link and not arranged around 
 What a call may reach is wider than what the object defines — a body may name a behavior, or a
 type, that a module built before this one declares — so the document says the two apart.
 
-Every behavior this object defines is a symbol the linker can see, and that is not the language's
-answer about what a module publishes: a module says which of its names it publishes and a checked
-program does not carry it, so nothing this reads says whether a name is one of them. Working it out
-from the source would be re-deriving a decision the checker made. Raised as
-[souther#1865](https://github.com/souther-lang/souther/issues/1865), and what this object says
-about a name is not settled until that is answered.
+What the object's symbol table carries is what the declaring module publishes, read together with
+what this object is for. The object is one whole program, so a name the module keeps is reached
+inside it and nowhere else, and a name it publishes may be reached by a host linking the object in
+or by another Souther build's object. The two are different questions: a module's `exposing` clause
+is its surface in the language, and an object that read that as its own answer would be publishing
+whatever surface suited the shape it happened to be built in.
 
 A behavior the object does not define is reached over numbers and truths alone. A value of a
 declared type says which type it is with a number this object counted, so two objects exchanging
@@ -116,6 +116,13 @@ no second reading of what a row means either.
 
 A row the compile did not run arrives saying so and carrying why. Those are not skipped: skipping
 them is how a check goes on being green over fewer and fewer rows.
+
+The object carries an entry per row, which is what runs one. The values the row states are written
+into the entry when the program crosses, so running a row is the object doing something with the
+row and not the behavior being reached with values from outside — which is what lets a row of a
+name the module keeps be run at all. A row stating a value this backend has no expression for
+refuses the build rather than being left out of the object, for the same reason: an object missing
+an entry would link and answer every row it did carry.
 
 This is not the two carriers compared against each other. Holding both to one statement is not
 running both and comparing what came back, and running a program on every carrier and comparing the

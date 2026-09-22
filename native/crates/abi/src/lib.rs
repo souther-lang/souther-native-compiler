@@ -44,6 +44,23 @@ pub fn held_symbol(carrier: &str, declared: &str) -> String {
     format!("souther.{carrier}${declared}")
 }
 
+/// The symbol the object carries for one of a behavior's `example` rows.
+///
+/// A row states the values to hand over, so what stands under this name takes nothing: the values
+/// are written into it. That is what makes it reachable from outside whatever the module says
+/// about the behavior's own name — running a row is not reaching the behavior, and a row of a name
+/// a module keeps is as much a row as any other.
+///
+/// The `$` is what keeps the spelling unambiguous, as it is for a definition a module holds: a
+/// module's name carries dots and a behavior's carries none, and neither carries this.
+///
+/// # Panics
+///
+/// Where the behavior's name carries a dot, for the reason [`behavior_symbol`] gives.
+pub fn example_symbol(module: &str, behavior: &str, at: usize) -> String {
+    format!("{}$example${at}", behavior_symbol(module, behavior))
+}
+
 /// How wide a slot is, and so what a value made of slots is measured in.
 ///
 /// One width for every slot, whatever it holds. A layout that packed a `Bool` into a byte would
@@ -99,7 +116,10 @@ pub const RESET: &str = "souther_reset";
 
 #[cfg(test)]
 mod tests {
-    use super::{FIRST_FIELD, SLOT, WHICH, behavior_symbol, field_at, held_symbol, member_at};
+    use super::{
+        FIRST_FIELD, SLOT, WHICH, behavior_symbol, example_symbol, field_at, held_symbol,
+        member_at,
+    };
 
     #[test]
     fn a_behavior_is_reached_by_its_module_and_its_name() {
@@ -134,6 +154,23 @@ mod tests {
         assert_ne!(
             held_symbol("pricing", "pricing.taxed"),
             held_symbol("order", "pricing.taxed")
+        );
+    }
+
+    /// A row's entry is reached by neither the behavior's name nor another row's.
+    #[test]
+    fn each_row_of_a_behavior_is_its_own_symbol() {
+        assert_eq!(
+            example_symbol("calculation", "add", 0),
+            "souther.calculation.add$example$0"
+        );
+        assert_ne!(
+            example_symbol("calculation", "add", 0),
+            example_symbol("calculation", "add", 1)
+        );
+        assert_ne!(
+            example_symbol("calculation", "add", 0),
+            behavior_symbol("calculation", "add")
         );
     }
 

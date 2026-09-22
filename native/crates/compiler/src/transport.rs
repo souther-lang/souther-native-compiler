@@ -18,7 +18,7 @@ use serde::Deserialize;
 
 /// What this side reads. A document written to say anything else is refused rather than read as
 /// much of as happens to parse.
-pub const TRANSPORT_VERSION: u32 = 1;
+pub const TRANSPORT_VERSION: u32 = 2;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -111,6 +111,8 @@ pub struct Module {
     /// What this object puts under a name. A behavior that answers some other way is in the table
     /// above and nowhere here.
     pub bodies: Vec<Body>,
+    /// The `example` rows of this module's behaviors that the object runs.
+    pub examples: Vec<Example>,
 }
 
 /// A behavior's body, under the name the table of targets knows it by.
@@ -119,6 +121,37 @@ pub struct Module {
 pub struct Body {
     pub declared: String,
     pub parameters: Vec<String>,
+    /// What the module declaring it says about the name.
+    pub publication: Publication,
+    pub body: Node,
+}
+
+/// Whether the module that declares a behavior publishes it under that name, or keeps it.
+///
+/// The language's answer about the module's surface, which is not the same question as what this
+/// object's symbol table carries. That one is the object's own, worked out from this together with
+/// what the object is for.
+///
+/// Carried by a body and not by a target, because it is the declaring module's answer and a
+/// target is answered for a behavior of a module this compile never checked.
+#[derive(Debug, Deserialize, PartialEq, Eq, Clone, Copy)]
+#[serde(rename_all = "lowercase")]
+pub enum Publication {
+    Published,
+    Kept,
+}
+
+/// One `example` row of a behavior of this module, as the object runs it.
+///
+/// The values the row states are written into the entry rather than handed to it, so the entry
+/// takes nothing and what it does is the one call the row is. Numbered by where the row stands
+/// among the behavior's rows, so a row the writer carried nothing for leaves its number unused
+/// rather than moving every row after it.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Example {
+    pub behavior: String,
+    pub at: usize,
     pub body: Node,
 }
 

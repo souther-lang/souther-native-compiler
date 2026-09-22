@@ -2,6 +2,8 @@ package souther.nativecode.transport;
 
 import souther.compiler.core.Core;
 import souther.compiler.core.ValueShape;
+import souther.compiler.observe.ObservedValue;
+import souther.compiler.observe.RowStatement;
 import souther.compiler.program.BehaviorTarget;
 import souther.compiler.program.CheckedBehavior;
 import souther.compiler.program.CheckedData;
@@ -9,6 +11,8 @@ import souther.compiler.program.CheckedHelper;
 import souther.compiler.program.CheckedImplementation;
 import souther.compiler.program.CheckedModule;
 import souther.compiler.program.CheckedProgram;
+import souther.compiler.program.CheckedRow;
+import souther.compiler.program.Publication;
 import souther.compiler.types.BinOp;
 import souther.compiler.types.BindingId;
 import souther.compiler.types.Refinement;
@@ -59,7 +63,7 @@ public final class ProgramWriter {
      * written moves, so that a driver and a writer that disagree say so rather than producing an
      * object that is wrong quietly.
      */
-    public static final int TRANSPORT_VERSION = 1;
+    public static final int TRANSPORT_VERSION = 2;
 
     private final CheckedProgram program;
 
@@ -207,9 +211,114 @@ public final class ProgramWriter {
         for (CheckedHelper helper : module.helpers()) {
             helpers.add(helper(helper));
         }
+        StringJoiner examples = new StringJoiner(",", "[", "]");
+        for (CheckedBehavior behavior : module.behaviors()) {
+            List<CheckedRow> rows = behavior.rows();
+            for (int at = 0; at < rows.size(); at++) {
+                String entry = example(module, behavior, at, rows.get(at));
+                if (entry != null) {
+                    examples.add(entry);
+                }
+            }
+        }
         return "{\"name\":" + quoted(module.name())
                 + ",\"helpers\":" + helpers
-                + ",\"bodies\":" + bodies + "}";
+                + ",\"bodies\":" + bodies
+                + ",\"examples\":" + examples + "}";
+    }
+
+    /**
+     * An entry that runs one of a behavior's rows, or nothing where the row states no values.
+     *
+     * <p>Numbered by where the row stands among the behavior's rows and not by how many entries
+     * have been written, so a row the compile could not read leaves its number unused rather than
+     * moving every row after it onto a number that was somebody else's.
+     *
+     * <p>A row the compile could not read is the one case with no entry, and it is the one case
+     * where there is nothing to run: the values it would hand over were never read. Every other
+     * row is written, and a value this writer cannot make an expression for refuses the program
+     * the same way a body it cannot write does — the language admits the program and this backend
+     * does not write it yet.
+     */
+    private String example(CheckedModule module, CheckedBehavior behavior, int at, CheckedRow row) {
+        RowStatement.Stated states = switch (row.statement()) {
+            case CheckedRow.SelfContained it -> it.states();
+            case CheckedRow.WithStandIns it -> it.states();
+            // Its answer is owed, which is a row nothing holds an answer to and still a row whose
+            // values were read. The entry runs it; what the run answers is nobody's claim yet.
+            case CheckedRow.AnswerOwed it -> it.states();
+            case CheckedRow.NotReproducible it -> null;
+        };
+        if (states == null) {
+            return null;
+        }
+        return "{\"behavior\":" + quoted(behavior.name().name())
+                + ",\"at\":" + at
+                + ",\"body\":" + applied(module, behavior, states) + "}";
+    }
+
+    /**
+     * The one call a row is: the behavior, handed the values the row states.
+     *
+     * <p>A call and not a shape of its own, so that what an entry does is lowered by whatever
+     * lowers a call and the two cannot come apart. What the behavior answers is read off its
+     * signature, which is also where the arguments' types come from — a row states values and the
+     * signature is what says at which type each of them is handed over.
+     */
+    private String applied(CheckedModule module, CheckedBehavior behavior,
+                           RowStatement.Stated states) {
+        List<Type> takes = behavior.signature().takes();
+        List<ObservedValue> inputs = states.inputs();
+        if (inputs.size() != takes.size()) {
+            throw notYet("a row of `" + behavior.name() + "` stating " + inputs.size()
+                    + " values where the behavior takes " + takes.size());
+        }
+        StringJoiner arguments = new StringJoiner(",", "[", "]");
+        for (int at = 0; at < takes.size(); at++) {
+            arguments.add(given(inputs.get(at), takes.get(at)));
+        }
+        return "{\"core\":\"call\",\"reaches\":\"behavior\""
+                + ",\"declared\":" + quoted(module.name() + "." + behavior.name().name())
+                + ",\"arguments\":" + arguments
+                + ",\"type\":" + type(behavior.signature().answers()) + "}";
+    }
+
+    /**
+     * A value a row states, written as the expression that makes it.
+     *
+     * <p>At the type it is handed over at as well as by what it is, because the value does not say
+     * on its own: a number handed to a parameter of a type that holds one is a different expression
+     * from the same number handed to an {@code Int}, and a writer reading only the value would
+     * write the second where the first was meant.
+     *
+     * <p>Every kind of value a row can state is answered for, and the ones with no expression here
+     * say so. Caught by an arm standing for the rest, a value a row can state would cross as
+     * whatever it resembled.
+     */
+    private String given(ObservedValue value, Type at) {
+        return switch (value) {
+            case ObservedValue.Integer it when at == Type.Prim.INT ->
+                    "{\"core\":\"int\",\"value\":" + it.value() + ",\"type\":" + type(at) + "}";
+            case ObservedValue.Bool it when at == Type.Prim.BOOL ->
+                    "{\"core\":\"bool\",\"value\":" + it.value() + ",\"type\":" + type(at) + "}";
+
+            case ObservedValue.Integer it -> throw notStated(it, at);
+            case ObservedValue.Bool it -> throw notStated(it, at);
+            case ObservedValue.Decimal it -> throw notStated(it, at);
+            case ObservedValue.Text it -> throw notStated(it, at);
+            case ObservedValue.Temporal it -> throw notStated(it, at);
+            case ObservedValue.Unit it -> throw notStated(it, at);
+            case ObservedValue.Constructed it -> throw notStated(it, at);
+            case ObservedValue.Sequence it -> throw notStated(it, at);
+            case ObservedValue.Mapping it -> throw notStated(it, at);
+            case ObservedValue.Absent it -> throw notStated(it, at);
+            case ObservedValue.Unknown it -> throw notStated(it, at);
+            case ObservedValue.Truncated it -> throw notStated(it, at);
+        };
+    }
+
+    private static NotLowered notStated(ObservedValue value, Type at) {
+        return new NotLowered("a row stating " + value + " at " + at);
     }
 
     /**
@@ -301,7 +410,14 @@ public final class ProgramWriter {
                 + "}";
     }
 
-    /** The body of a behavior this object emits, under the name the table above knows it by. */
+    /**
+     * The body of a behavior this object emits, under the name the table above knows it by.
+     *
+     * <p>What the module says about the name crosses with the body, which is the one place it is
+     * this compile's to answer: the module declaring it is one this compile checked. What an
+     * artifact then makes reachable is a different question and the artifact's own, and a body is
+     * where the two meet.
+     */
     private String body(CheckedModule module, CheckedBehavior behavior,
                         CheckedImplementation.Body written) {
         Bindings bindings = new Bindings();
@@ -312,8 +428,17 @@ public final class ProgramWriter {
         }
         return "{\"declared\":" + quoted(module.name() + "." + behavior.name().name())
                 + ",\"parameters\":" + parameters
+                + ",\"publication\":" + quoted(publication(module.publicationOf(behavior.name())))
                 + ",\"body\":" + core(written.body(), bindings)
                 + "}";
+    }
+
+    /** How the module's answer about a name is spelt on the wire, member by member. */
+    private String publication(Publication published) {
+        return switch (published) {
+            case PUBLISHED -> "published";
+            case KEPT -> "kept";
+        };
     }
 
     /**

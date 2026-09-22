@@ -16,7 +16,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class AnAdditionCrossesAsWhatTheCheckerSettledTest {
 
     private static final String ADDING = """
-            module calculation
+            module calculation exposing ( add )
 
             behavior add : (a: Int, b: Int) -> Int
 
@@ -36,15 +36,16 @@ class AnAdditionCrossesAsWhatTheCheckerSettledTest {
         String written = ProgramWriter.written(CheckedProgram.of(List.of(ADDING)));
 
         assertThat(written).isEqualTo("""
-                {"transport":1,"declarations":[],\
+                {"transport":2,"declarations":[],\
                 "behaviors":[{"module":"calculation","name":"add","is":"body",\
                 "takes":[{"prim":"INT"},{"prim":"INT"}],"answers":{"prim":"INT"}}],\
                 "modules":[{"name":"calculation","helpers":[],\
                 "bodies":[{"declared":"calculation.add","parameters":["a","b"],\
+                "publication":"published",\
                 "body":{"core":"binary","op":"ADD",\
                 "left":{"core":"read","binding":0,"type":{"prim":"INT"}},\
                 "right":{"core":"read","binding":1,"type":{"prim":"INT"}},\
-                "type":{"prim":"INT"}}}]}]}""");
+                "type":{"prim":"INT"}}}],"examples":[]}]}""");
     }
 
     /** What the driver compiles is what this writer wrote, and not a second thing like it. */

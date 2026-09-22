@@ -32,14 +32,25 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * <p>Nor is this carriers compared against each other. Holding two of them to one statement is not
  * running both and comparing what came back.
  *
+ * <p>A row is run through the entry the object carries for it, which is what the object does with
+ * the row rather than something arranged out here: the values the row states were written into the
+ * object when the program crossed. So what runs is the same whether the module publishes the
+ * behavior or keeps it, and a corpus of kept names is not a corpus this test had to leave out.
+ *
  * <p>Whether an answer is the one a row states is asked of the row. A test deciding that for itself
  * would be a second reading of what a row means, and the two carriers would then agree only as far
  * as this file agreed with the language.
  */
 class ARowHoldsWhereverItIsRunTest {
 
+    /**
+     * A behavior the module publishes, so that what the object exports is among what runs here as
+     * well as what it keeps. Every other corpus below writes no {@code exposing} clause, which is
+     * a module that publishes nothing — and a row of a name nobody outside the module may reach is
+     * run the same way as any other, through the entry the object carries for it.
+     */
     private static final String ARITHMETIC = """
-            module calculation
+            module calculation exposing ( add )
 
             behavior add : (a: Int, b: Int) -> Int
             let add (a, b) = a + b
@@ -365,29 +376,29 @@ class ARowHoldsWhereverItIsRunTest {
         try (Running running = Running.of(program)) {
             for (CheckedModule module : program.modules()) {
                 for (CheckedBehavior behavior : module.behaviors()) {
-                    for (CheckedRow row : behavior.rows()) {
+                    List<CheckedRow> rows = behavior.rows();
+                    for (int at = 0; at < rows.size(); at++) {
+                        CheckedRow row = rows.get(at);
                         String where = row.identity() + " of " + behavior.name();
                         switch (row.statement()) {
                             case CheckedRow.SelfContained states -> {
-                                List<ObservedValue> inputs = states.states().inputs();
                                 ObservedValue answered =
-                                        running.answering(module, behavior, inputs);
+                                        running.rowAnswering(module, behavior, at, List.of());
 
                                 assertThat(states.holds(answered))
-                                        .as("%s, handed %s, answered %s", where, inputs, answered)
+                                        .as("%s answered %s", where, answered)
                                         .isInstanceOf(Verdict.Held.class);
                                 asked++;
                             }
-                            // A behavior that depends on another is reached with what the row says
+                            // A behavior that depends on another is run with what the row says
                             // that other one answers, which is the object's undefined symbol being
                             // given a definition rather than the run being arranged around it.
                             case CheckedRow.WithStandIns states -> {
-                                List<ObservedValue> inputs = states.states().inputs();
-                                ObservedValue answered = running.answering(
-                                        module, behavior, inputs, states.standsIn());
+                                ObservedValue answered = running.rowAnswering(
+                                        module, behavior, at, states.standsIn());
 
                                 assertThat(states.holds(answered))
-                                        .as("%s, handed %s, answered %s", where, inputs, answered)
+                                        .as("%s answered %s", where, answered)
                                         .isInstanceOf(Verdict.Held.class);
                                 asked++;
                             }

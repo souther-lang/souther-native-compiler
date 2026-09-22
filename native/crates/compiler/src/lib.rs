@@ -18,13 +18,14 @@ use cranelift::frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use cranelift::module::{FuncId, Linkage, Module, default_libcall_names};
 use cranelift::object::{ObjectBuilder, ObjectModule};
 use souther_native_abi::{
-    ALLOCATE, HELD, NOTHING, SLOT, WHICH, behavior_symbol, field_at, held_symbol, member_at,
+    ALLOCATE, HELD, NOTHING, SLOT, WHICH, behavior_symbol, example_symbol, field_at, held_symbol,
+    member_at,
 };
 use std::collections::HashMap;
 use std::fmt;
 use transport::{
-    Answers, Arm, Declaration, Node, Op, Prim, Program, Reaches, Selects, TRANSPORT_VERSION, Target,
-    Ty,
+    Answers, Arm, Declaration, Node, Op, Prim, Program, Publication, Reaches, Selects,
+    TRANSPORT_VERSION, Target, Ty,
 };
 
 /// An `Int` overflowing is an abort and not an answer, so the arithmetic traps rather than
@@ -109,21 +110,38 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
 
     let declared = Declared::of(&program.declarations)?;
 
+    // What the declaring module says about each name this object defines. Read off the bodies
+    // because that is where the answer crossed: it is the module's own, and a module this compile
+    // never checked has no answer here to read.
+    let mut publications: HashMap<&str, Publication> = HashMap::new();
+    for written in &program.modules {
+        for body in &written.bodies {
+            publications.insert(body.declared.as_str(), body.publication);
+        }
+    }
+
     // Every function is declared before any is defined, because a body may reach one written
     // after it — a definition that calls itself reaches itself, and two that call each other
     // reach one another. Nothing here orders the program to make that go away.
     let mut reachable = Reachable::default();
+    // The row entries, which nothing reaches: they are what the object offers to whoever runs its
+    // rows, so they are held by their symbol rather than beside what a call can reach.
+    let mut entries: HashMap<String, FuncId> = HashMap::new();
     for target in &program.behaviors {
         let symbol = behavior_symbol(&target.module, &target.name);
         let signature = signature_over(&target.takes, &target.answers, call_conv)?;
         let linkage = match target.is {
-            // Every body, which is not the language's answer about what a module publishes. A
-            // module says which of its names it publishes and a checked program does not carry it,
-            // so nothing that crossed says whether this name is one of them. Exporting all of them
-            // makes the object usable and says more about a module than the module does; the other
-            // way round leaves an object nothing can be linked against. Neither is right, and
-            // which it should be is not this side's to work out from a name.
-            Answers::Body => Linkage::Export,
+            // Defined here, so what the table carries for it is this object's answer about a name
+            // the declaring module has already decided. A body with no such answer is a body of a
+            // module this document does not carry, which is the two halves disagreeing rather than
+            // something to fall back from.
+            Answers::Body => {
+                let declared = target.declared();
+                let published = publications.get(declared.as_str()).copied().ok_or_else(|| {
+                    anyhow!("{declared} answers with a body no module of this document carries")
+                })?;
+                linkage_of(published)
+            }
             // Named and not defined. What answers it is settled where the object is linked, and
             // the two reasons a body is absent are one call to whoever reaches in.
             Answers::Injected | Answers::Elsewhere => {
@@ -152,6 +170,14 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
             let id = module.declare_function(&symbol, Linkage::Local, &signature)?;
             reachable.held(&written.name, &held.declared, id)?;
         }
+        for example in &written.examples {
+            let signature = running_a_row(&program, &written.name, &example.behavior, call_conv)?;
+            let symbol = example_symbol(&written.name, &example.behavior, example.at);
+            // Reached from outside whatever the module says about the behavior's own name: what
+            // this runs is a row, and a row of a kept name is as much a row as any other.
+            let id = module.declare_function(&symbol, Linkage::Export, &signature)?;
+            entries.insert(symbol, id);
+        }
     }
 
     for written in &program.modules {
@@ -178,13 +204,7 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
             module.define_function(id, &mut context)?;
         }
         for held in &written.bodies {
-            let target = program
-                .behaviors
-                .iter()
-                .find(|it| it.declared() == held.declared)
-                .ok_or_else(|| {
-                    anyhow!("a body for {}, which no target names", held.declared)
-                })?;
+            let target = target_for(&program, &held.declared)?;
             let takes = &target.takes;
             let body = &held.body;
             let signature = signature_over(&target.takes, &target.answers, call_conv)?;
@@ -208,9 +228,78 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
             )?;
             module.define_function(id, &mut context)?;
         }
+        for example in &written.examples {
+            let signature = running_a_row(&program, &written.name, &example.behavior, call_conv)?;
+            let symbol = example_symbol(&written.name, &example.behavior, example.at);
+            let id = *entries
+                .get(&symbol)
+                .ok_or_else(|| anyhow!("no entry was declared for {symbol}"))?;
+            context.clear();
+            context.func = Function::with_name_signature(UserFuncName::default(), signature);
+            let lowering = Lowering {
+                declared: &declared,
+                reachable: &reachable,
+                carrier: &written.name,
+                allocate,
+            };
+            // Taking nothing: what the row states is written into the body, so an entry with
+            // parameters would be a row whose values came from whoever ran it.
+            define(
+                &mut context.func,
+                &mut shapes,
+                &[],
+                &example.body,
+                frontend,
+                &lowering,
+                &mut module,
+            )?;
+            module.define_function(id, &mut context)?;
+        }
     }
 
     Ok(module.finish().emit()?)
+}
+
+/// The behavior a name in this document reaches, as the table of targets says it.
+fn target_for<'a>(program: &'a Program, declared: &str) -> Result<&'a Target> {
+    program
+        .behaviors
+        .iter()
+        .find(|it| it.declared() == declared)
+        .ok_or_else(|| anyhow!("{declared}, which no target names"))
+}
+
+/// What an entry that runs one of a behavior's rows takes and answers.
+///
+/// Nothing, and what the behavior answers. The answer's type is read off the behavior's target
+/// rather than off the row, because what a behavior answers is the behavior's and a row that said
+/// it too would be a second place it was written down.
+fn running_a_row(
+    program: &Program,
+    module: &str,
+    behavior: &str,
+    call_conv: CallConv,
+) -> Result<ir::Signature> {
+    let target = target_for(program, &format!("{module}.{behavior}"))?;
+    signature_over(&[], &target.answers, call_conv)
+}
+
+/// What the object makes reachable, from what the module says together with what the object is
+/// for.
+///
+/// Two questions and not one. What a module publishes is its surface in the language; what a
+/// symbol table carries is this artifact's answer. An object that read the first as the second
+/// would be publishing whatever surface suited the shape it happened to be built in.
+///
+/// This object is one whole program. A name the module keeps is named by that module alone and
+/// every module of the program is in here, so it is reached in here and nowhere else. A name the
+/// module publishes may be reached by a host linking this in or by another Souther build's object,
+/// and neither of those reaches a symbol the table does not carry.
+fn linkage_of(published: Publication) -> Linkage {
+    match published {
+        Publication::Published => Linkage::Export,
+        Publication::Kept => Linkage::Local,
+    }
 }
 
 /// Everything a body can reach, by the name the document reaches it under.
