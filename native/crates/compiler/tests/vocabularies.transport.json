@@ -1,0 +1,1 @@
+{"transport":3,"op":["EQ","NE","LT","LE","GT","GE","AND","OR","ADD","SUB","MUL","DIV","CONCAT"],"prim":["INT","STRING","BOOL","DECIMAL","RATIONAL","DATE","TIME","DATETIME","INSTANT","RAW"],"publication":["published","kept"],"declaredby":["amodule","thelanguage","onthepath"]}

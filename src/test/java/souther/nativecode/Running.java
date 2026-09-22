@@ -47,20 +47,43 @@ final class Running implements AutoCloseable {
     private final CheckedProgram program;
     private final Path into;
     private final Path object;
+    private final List<Path> alongside;
     private final Map<String, Path> linked = new HashMap<>();
 
-    private Running(CheckedProgram program, Path into, Path object) {
+    private Running(CheckedProgram program, Path into, Path object, List<Path> alongside) {
         this.program = program;
         this.into = into;
         this.object = object;
+        this.alongside = alongside;
     }
 
     /** The program compiled to one object, with nothing linked yet. */
     static Running of(CheckedProgram program) throws IOException, InterruptedException {
+        return of(program, List.of());
+    }
+
+    /**
+     * The same, with objects another build wrote linked in beside it.
+     *
+     * <p>Which is the only way to put what two objects agree on to anything: a behavior this
+     * program names and does not define is answered by whoever links it, and a C stand-in
+     * answering it is this test deciding what the dependency does. An object another Souther build
+     * emitted decides it the way a build does, and what the two objects then have to agree about —
+     * a symbol, a signature, what a value of a declared type says it is — is agreed through the
+     * linker or not at all.
+     */
+    static Running of(CheckedProgram program, List<byte[]> alongside)
+            throws IOException, InterruptedException {
         Path into = Files.createTempDirectory("souther-native-running");
         Path object = into.resolve("program.o");
         Files.write(object, NativeCompiler.compile(program));
-        return new Running(program, into, object);
+        List<Path> written = new ArrayList<>();
+        for (byte[] built : alongside) {
+            Path beside = into.resolve("alongside." + written.size() + ".o");
+            Files.write(beside, built);
+            written.add(beside);
+        }
+        return new Running(program, into, object, List.copyOf(written));
     }
 
     /**
@@ -187,8 +210,13 @@ final class Running implements AutoCloseable {
                 StandardCharsets.UTF_8);
         Path executable = into.resolve(name);
 
-        Process cc = new ProcessBuilder("cc", "-o", executable.toString(),
-                harness.toString(), object.toString(), RUNTIME.toString())
+        List<String> link = new ArrayList<>(List.of("cc", "-o", executable.toString(),
+                harness.toString(), object.toString()));
+        for (Path beside : alongside) {
+            link.add(beside.toString());
+        }
+        link.add(RUNTIME.toString());
+        Process cc = new ProcessBuilder(link)
                 .redirectErrorStream(true)
                 .start();
         String said = new String(cc.getInputStream().readAllBytes(), StandardCharsets.UTF_8);

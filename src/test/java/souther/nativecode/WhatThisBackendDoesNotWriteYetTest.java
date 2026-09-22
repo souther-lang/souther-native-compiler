@@ -41,6 +41,9 @@ class WhatThisBackendDoesNotWriteYetTest {
      * <p>The operator half of this is checked where a document can be written by hand
      * (`native/crates/compiler/tests/refusals.rs`): every operator a program can currently get
      * past this writer has a lowering, so there is no program to write here that would show it.
+     * That every member of either vocabulary is spelt the same way on both sides is a different
+     * question, and {@link souther.nativecode.transport.ProgramWriter#vocabularies} is what the two
+     * halves meet at for it.
      */
     @Test
     void aTypeWithNoRepresentationStillCrosses() {
@@ -99,6 +102,39 @@ class WhatThisBackendDoesNotWriteYetTest {
                 .isInstanceOf(NotLowered.class)
                 .hasMessageContaining("a row stating")
                 .hasMessageContaining("owing.Amount");
+    }
+
+    /**
+     * A value of a type the language declares, which is at home in no build's object.
+     *
+     * <p>A declared type's values are tagged by the address of a byte one object defines, and the
+     * object that defines it is the one built from the module that declared the type. The language
+     * declares {@code RoundingMode} and its cases in its own namespace, in no module of any
+     * compilation, so there is no such object — an implementation of one is shipped by hand or
+     * generated, and which of the two is a question this backend has not answered.
+     *
+     * <p>Followed from the writer to the driver, which is what makes this the third answer about
+     * who declared a type rather than the two a program of modules alone can produce. What the
+     * driver answers is what says which of the three it read: a declaration of a module here would
+     * have had its token defined and one off the path named, and either of those compiles.
+     */
+    @Test
+    void aValueOfATypeTheLanguageDeclaresIsAtHomeInNoObject() {
+        CheckedProgram program = CheckedProgram.of(List.of("""
+                module rounding
+
+                behavior of : (a: Int) -> Int
+                let of (a) = {
+                    let mode = HALF_UP
+                    a
+                }
+                """));
+
+        assertThat(ProgramWriter.written(program)).contains(
+                "\"module\":\"souther.decimal\",\"name\":\"HALF_UP\",\"by\":\"thelanguage\"");
+        assertThatThrownBy(() -> NativeCompiler.compile(program))
+                .isInstanceOf(NotLowered.class)
+                .hasMessageContaining("souther.decimal.HALF_UP");
     }
 
     @Test

@@ -18,7 +18,7 @@ use serde::Deserialize;
 
 /// What this side reads. A document written to say anything else is refused rather than read as
 /// much of as happens to parse.
-pub const TRANSPORT_VERSION: u32 = 2;
+pub const TRANSPORT_VERSION: u32 = 3;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -31,46 +31,109 @@ pub struct Program {
     pub modules: Vec<Module>,
 }
 
+/// Who declared a type, which is what decides who defines the byte its values are tagged with.
+///
+/// The checker's answer and not one worked out here. This side could ask whether the declaration's
+/// module is one the document carries and get the same answer for two of these three, which is the
+/// kind of agreement that holds until it does not: a declaration the language itself gives is in
+/// no module of any compilation, and the rule would file it under the one case it is not.
+#[derive(Debug, Deserialize, PartialEq, Eq, Clone, Copy)]
+#[serde(rename_all = "lowercase")]
+pub enum DeclaredBy {
+    /// A module this compile checked. The declaration is at home in this object, which is what
+    /// defines its token for whoever links it.
+    AModule,
+    /// A module this compile read off the path, already built. That build defined the token and
+    /// this object names it, so the linker is what brings the two together.
+    OnThePath,
+    /// The language, in its own namespace and in no module of any compilation. Nothing here ships
+    /// an implementation of one, so there is nothing to be at home in this object either.
+    TheLanguage,
+}
+
 /// What a declared type is made of, as its declaration says.
 ///
 /// The shape and not the layout: how many fields there are and what they are called. Where a field
 /// sits and what a value costs to make are decided here on this side, from this.
+///
+/// The module and the name apart, because this is where a declared type's identity is owned: the
+/// symbol its values are tagged with is built from the two, and a reference elsewhere in the
+/// document carries the key that reaches this rather than a second copy of what the key stands
+/// for. So nothing on this side ever splits a key back up — an identity comes out of a declaration
+/// or it does not come out at all.
 #[derive(Debug, Deserialize)]
 #[serde(tag = "is", rename_all = "lowercase", deny_unknown_fields)]
 pub enum Declaration {
     Product {
-        declared: String,
+        module: String,
+        name: String,
+        by: DeclaredBy,
         fields: Vec<String>,
         /// How many clauses every construction of this type owes. Nothing here checks one, so a
         /// type that states any is one no value can be built of yet.
         invariants: usize,
     },
     Newtype {
-        declared: String,
+        module: String,
+        name: String,
+        by: DeclaredBy,
         fields: Vec<String>,
         invariants: usize,
     },
     Unit {
-        declared: String,
+        module: String,
+        name: String,
+        by: DeclaredBy,
         fields: Vec<String>,
         invariants: usize,
     },
     /// A sum is never built. What it says is which types stand as its cases, and a case may be a
     /// sum again — which is why an arm tests the leaves it resolved to rather than this list.
+    ///
+    /// No value is ever one, so nothing is ever tagged with a sum and no object defines a token
+    /// for one. Which is not to say a sum has no identity: it has the one every declaration has,
+    /// its module and its name, and that is here. What it has no need of is a byte for a value to
+    /// carry the address of.
     Sum {
-        declared: String,
+        module: String,
+        name: String,
+        by: DeclaredBy,
         cases: Vec<String>,
     },
 }
 
 impl Declaration {
-    pub fn declared(&self) -> &str {
+    pub fn module(&self) -> &str {
         match self {
-            Declaration::Product { declared, .. }
-            | Declaration::Newtype { declared, .. }
-            | Declaration::Unit { declared, .. }
-            | Declaration::Sum { declared, .. } => declared,
+            Declaration::Product { module, .. }
+            | Declaration::Newtype { module, .. }
+            | Declaration::Unit { module, .. }
+            | Declaration::Sum { module, .. } => module,
         }
+    }
+
+    pub fn name(&self) -> &str {
+        match self {
+            Declaration::Product { name, .. }
+            | Declaration::Newtype { name, .. }
+            | Declaration::Unit { name, .. }
+            | Declaration::Sum { name, .. } => name,
+        }
+    }
+
+    pub fn by(&self) -> DeclaredBy {
+        match self {
+            Declaration::Product { by, .. }
+            | Declaration::Newtype { by, .. }
+            | Declaration::Unit { by, .. }
+            | Declaration::Sum { by, .. } => *by,
+        }
+    }
+
+    /// What a reference to this declaration in the document says, which is the two halves joined
+    /// the one way.
+    pub fn key(&self) -> String {
+        format!("{}.{}", self.module(), self.name())
     }
 
     /// Where a field of this type sits among its fields, by the name it is declared under.
@@ -259,6 +322,9 @@ impl Prim {
 #[serde(untagged, deny_unknown_fields)]
 pub enum Ty {
     Prim { prim: Prim },
+    /// A declaration of the document, by the key that reaches one. The key is what a reference
+    /// says and not what a declaration is made of: the module and the name apart are carried by
+    /// the declaration, and this finds it.
     Declared { declared: String },
     /// Several declared types, any one of which a value here may be. Each of them says which type
     /// it is, so a union is written nowhere at run time: what holds it is what holds one of them.
@@ -415,7 +481,8 @@ pub struct Arm {
 #[serde(tag = "tests", rename_all = "lowercase", deny_unknown_fields)]
 pub enum Selects {
     /// The value's own type is one of these. The atoms are the leaves the checker resolved the
-    /// case to, so a case that is a sum arrives as the several types it stands for.
+    /// case to, so a case that is a sum arrives as the several types it stands for — and each of
+    /// them by the key that reaches its declaration, which is where its identity is.
     Which { atoms: Vec<String> },
     Held,
     Nothing,

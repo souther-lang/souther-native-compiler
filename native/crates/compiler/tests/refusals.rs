@@ -21,7 +21,7 @@ fn document(op: &str, ty: &str) -> String {
         r#"{{"declared":"calculation.f","parameters":["a","b"],"publication":"published","body":{body}}}"#
     );
     format!(
-        r#"{{"transport":2,"declarations":[],"behaviors":[{target}],"modules":[{{"name":"calculation","helpers":[],"bodies":[{held}],"examples":[]}}]}}"#
+        r#"{{"transport":3,"declarations":[],"behaviors":[{target}],"modules":[{{"name":"calculation","helpers":[],"bodies":[{held}],"examples":[]}}]}}"#
     )
 }
 
@@ -72,9 +72,9 @@ fn a_field_this_driver_does_not_know_is_refused_rather_than_skipped() {
 /// would be reading a document written to mean something else.
 #[test]
 fn a_transport_from_another_version_is_refused() {
-    let later = document("ADD", "INT").replace(r#""transport":2"#, r#""transport":3"#);
+    let later = document("ADD", "INT").replace(r#""transport":3"#, r#""transport":4"#);
 
     let refused = object_for(&later).expect_err("a version this does not read");
 
-    assert!(refused.to_string().contains('3'), "{refused}");
+    assert!(refused.to_string().contains('4'), "{refused}");
 }

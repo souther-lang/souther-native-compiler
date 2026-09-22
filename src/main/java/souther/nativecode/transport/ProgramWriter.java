@@ -12,6 +12,8 @@ import souther.compiler.program.CheckedImplementation;
 import souther.compiler.program.CheckedModule;
 import souther.compiler.program.CheckedProgram;
 import souther.compiler.program.CheckedRow;
+import souther.compiler.program.Declared;
+import souther.compiler.program.DeclaredBy;
 import souther.compiler.program.Publication;
 import souther.compiler.types.BinOp;
 import souther.compiler.types.BindingId;
@@ -31,6 +33,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.StringJoiner;
+import java.util.function.Function;
 
 /**
  * A checked program written out for the half that lowers it.
@@ -63,7 +66,7 @@ public final class ProgramWriter {
      * written moves, so that a driver and a writer that disagree say so rather than producing an
      * object that is wrong quietly.
      */
-    public static final int TRANSPORT_VERSION = 2;
+    public static final int TRANSPORT_VERSION = 3;
 
     private final CheckedProgram program;
 
@@ -85,6 +88,43 @@ public final class ProgramWriter {
     /** The whole program as one document. */
     public static String written(CheckedProgram program) {
         return new ProgramWriter(program).document();
+    }
+
+    /**
+     * Every spelling this writer can write, for each vocabulary both halves hold a copy of.
+     *
+     * <p>A vocabulary the language closed is spelt twice: once here, and once by the driver that
+     * reads it. Neither copy holds the other to anything. A member spelt differently on the two
+     * sides is loud — the driver refuses a word it does not read, and says the two halves disagree
+     * rather than that the backend is behind — but a member spelt as another member of the same
+     * vocabulary is not: the document reads, and the program means something other than it says.
+     *
+     * <p>So this is written out to a document the driver's own test reads back, which is what the
+     * addition fixture already is: the two halves meet at something one of them produced instead of
+     * at two readings of the same prose. The order is the upstream enum's, and it is the
+     * correspondence — the driver's test names the member it expects at each place, so a spelling
+     * that moves on either side is red on the other.
+     *
+     * <p>Four vocabularies and not six. What a behavior does instead of carrying a body, and what a
+     * call reaches, are switches over shapes rather than over an enum, so there is no member to ask
+     * for the spelling of without an instance of one to hand. Those cross under a real program or
+     * not at all.
+     */
+    public static String vocabularies() {
+        return "{\"transport\":" + TRANSPORT_VERSION
+                + ",\"op\":" + spellings(BinOp.values(), ProgramWriter::op)
+                + ",\"prim\":" + spellings(Type.Prim.values(), ProgramWriter::prim)
+                + ",\"publication\":" + spellings(Publication.values(), ProgramWriter::publication)
+                + ",\"declaredby\":" + spellings(DeclaredBy.values(), ProgramWriter::by)
+                + "}";
+    }
+
+    private static <A> String spellings(A[] members, Function<A, String> spelt) {
+        StringJoiner words = new StringJoiner(",", "[", "]");
+        for (A member : members) {
+            words.add(quoted(spelt.apply(member)));
+        }
+        return words.toString();
     }
 
     /**
@@ -135,7 +175,7 @@ public final class ProgramWriter {
             }
             for (TypeSymbol.AtModule name : new ArrayList<>(declarationsMet)) {
                 if (!declarations.containsKey(name)) {
-                    declarations.put(name, declaration(program.declaration(name).data()));
+                    declarations.put(name, declaration(name, program.declaration(name)));
                     grew = true;
                 }
             }
@@ -152,32 +192,46 @@ public final class ProgramWriter {
     }
 
     /**
-     * What a declared type is made of.
+     * What a declared type is made of, and who declared it.
      *
      * <p>The shape and not the layout: how many fields there are and what they are called, which is
      * the declaration's own answer, while what a field costs and where it sits is the lowering's.
      * A writer that started saying where a field goes would be deciding the representation from the
      * side that never emits one.
+     *
+     * <p>Its module and its own name apart, because this is the one place in the document a
+     * declared type's identity is owned: a value of the type says which type it is with a symbol
+     * built from the two, and that symbol is what a linker resolves. Everywhere else a type is
+     * named the document carries the key that reaches this — so the two halves are joined in one
+     * place and split in none.
+     *
+     * <p>What is not written is whether the module publishes the type. That is the same question
+     * the object already asks of a behavior, and {@link CheckedModule#publicationOf} answers it for
+     * a behavior and for nothing else, so there is nothing here to project. Until there is, an
+     * object exports the token of every type it declares, including one the module keeps.
      */
-    private String declaration(CheckedData declared) {
+    private String declaration(TypeSymbol.AtModule name, Declared declared) {
         // What a field holds is a type too, and it may be one nothing else in the document has
         // named. Met here rather than left to whoever reads the field, because a declaration is
         // where a type stops being reachable from anything but itself.
-        if (declared instanceof CheckedData.WithFields held) {
+        if (declared.data() instanceof CheckedData.WithFields held) {
             for (ValueShape.Field field : held.fields()) {
                 type(field.type());
             }
         }
-        return switch (declared) {
-            case CheckedData.Product it -> "{\"declared\":" + quoted(named(it.name()))
+        String identity = "{\"module\":" + quoted(name.module())
+                + ",\"name\":" + quoted(name.name())
+                + ",\"by\":" + quoted(by(declared.declaredBy()));
+        return switch (declared.data()) {
+            case CheckedData.Product it -> identity
                     + ",\"is\":\"product\",\"fields\":" + fieldNames(it.fields())
                     + ",\"invariants\":" + it.invariants().size() + "}";
             // A newtype holds one value and is told apart from a product of one field by what may
             // be written of it, which is the checker's business and settled before this.
-            case CheckedData.Newtype it -> "{\"declared\":" + quoted(named(it.name()))
+            case CheckedData.Newtype it -> identity
                     + ",\"is\":\"newtype\",\"fields\":" + fieldNames(it.fields())
                     + ",\"invariants\":" + it.invariants().size() + "}";
-            case CheckedData.Unit it -> "{\"declared\":" + quoted(named(it.name()))
+            case CheckedData.Unit it -> identity
                     + ",\"is\":\"unit\",\"fields\":[],\"invariants\":0}";
             // A sum is never built, so it has no fields of its own; what it says is which types
             // stand as its cases, and a case may be a sum again.
@@ -186,9 +240,29 @@ public final class ProgramWriter {
                 for (TypeSymbol held : it.cases()) {
                     cases.add(quoted(symbol(held)));
                 }
-                yield "{\"declared\":" + quoted(named(it.name()))
-                        + ",\"is\":\"sum\",\"cases\":" + cases + "}";
+                yield identity + ",\"is\":\"sum\",\"cases\":" + cases + "}";
             }
+        };
+    }
+
+    /**
+     * Who declared a type, as the checker answered it.
+     *
+     * <p>What it decides on the far side is who defines the token a value of the type is tagged by:
+     * the build that checked the module is where the declaration is at home, and every other object
+     * that names the type reaches that one. Written out word by word rather than taken from the name
+     * the enum carries, for the reason an operator is.
+     *
+     * <p>A provenance added upstream stops this compiling, which is what keeps this a report of
+     * the checker's answer. A writer that worked the answer out instead — by asking whether the
+     * module is one this document carries — would be right about two of these three and file the
+     * language's own declarations under the one they are not.
+     */
+    private static String by(DeclaredBy who) {
+        return switch (who) {
+            case A_MODULE -> "amodule";
+            case A_MODULE_ON_THE_PATH -> "onthepath";
+            case THE_LANGUAGE -> "thelanguage";
         };
     }
 
@@ -358,10 +432,16 @@ public final class ProgramWriter {
     }
 
     /**
-     * How a declared type is named on the wire.
+     * How a declared type is referred to on the wire.
      *
      * <p>Its module and then its own name. A module's name carries dots and a type's carries none,
      * so the last segment is the type and no two declarations are spelt the same way.
+     *
+     * <p>A key and not an identity. What the key reaches is the declaration, which carries the
+     * module and the name apart; this is the one place the two are joined, and neither half of the
+     * compiler splits one back up. Written the other way round, every reader of a type name would
+     * be recovering an identity from a spelling — which is what the same convention already says
+     * a behavior's identity must not be.
      */
     private String named(TypeSymbol.AtModule name) {
         declarationsMet.add(name);
@@ -434,7 +514,7 @@ public final class ProgramWriter {
     }
 
     /** How the module's answer about a name is spelt on the wire, member by member. */
-    private String publication(Publication published) {
+    private static String publication(Publication published) {
         return switch (published) {
             case PUBLISHED -> "published";
             case KEPT -> "kept";
@@ -649,7 +729,7 @@ public final class ProgramWriter {
      * to the language would cross to a reader that has never heard of it, and the first thing to
      * notice would be the far side failing to parse a document this side thought it had written.
      */
-    private String op(BinOp op) {
+    private static String op(BinOp op) {
         return switch (op) {
             case EQ -> "EQ";
             case NE -> "NE";
@@ -668,7 +748,7 @@ public final class ProgramWriter {
     }
 
     /** How a primitive is spelt on the wire, for the same reason and in the same way. */
-    private String prim(Type.Prim prim) {
+    private static String prim(Type.Prim prim) {
         return switch (prim) {
             case INT -> "INT";
             case STRING -> "STRING";
@@ -723,7 +803,7 @@ public final class ProgramWriter {
         return new NotLowered(what);
     }
 
-    private String quoted(String text) {
+    private static String quoted(String text) {
         StringBuilder out = new StringBuilder(text.length() + 2).append('"');
         for (int i = 0; i < text.length(); i++) {
             char c = text.charAt(i);

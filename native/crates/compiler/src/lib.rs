@@ -15,16 +15,16 @@ use cranelift::codegen::isa::{CallConv, TargetFrontendConfig};
 use cranelift::codegen::settings::{self, Configurable};
 use cranelift::codegen::{Context, ir};
 use cranelift::frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
-use cranelift::module::{FuncId, Linkage, Module, default_libcall_names};
+use cranelift::module::{DataDescription, DataId, FuncId, Linkage, Module, default_libcall_names};
 use cranelift::object::{ObjectBuilder, ObjectModule};
 use souther_native_abi::{
-    ALLOCATE, HELD, NOTHING, SLOT, WHICH, behavior_symbol, example_symbol, field_at, held_symbol,
-    member_at,
+    ALLOCATE, HELD, NOTHING, SLOT, TOKEN, WHICH, behavior_symbol, example_symbol, field_at,
+    held_symbol, member_at, type_symbol,
 };
 use std::collections::HashMap;
 use std::fmt;
 use transport::{
-    Answers, Arm, Declaration, Node, Op, Prim, Program, Publication, Reaches, Selects,
+    Answers, Arm, Declaration, DeclaredBy, Node, Op, Prim, Program, Publication, Reaches, Selects,
     TRANSPORT_VERSION, Target, Ty,
 };
 
@@ -109,6 +109,26 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
     let allocate = module.declare_function(ALLOCATE, Linkage::Import, &taking_room)?;
 
     let declared = Declared::of(&program.declarations)?;
+
+    // The token every declaration at home in this object is tagged by, defined whether anything
+    // here builds a value of one or not. A declaration has one home and it is the object of the
+    // build that checked its module, so what another build's object names is resolved here or
+    // nowhere.
+    //
+    // A sum is skipped because nothing is ever tagged with one: an arm tests the leaves a case
+    // resolved to, and a token nothing is tagged with would be a name in the table standing for a
+    // value that cannot exist.
+    let mut token = DataDescription::new();
+    token.define(TOKEN.into());
+    for declaration in &program.declarations {
+        if matches!(declaration, Declaration::Sum { .. })
+            || declaration.by() != DeclaredBy::AModule
+        {
+            continue;
+        }
+        let id = declared.tag(&mut module, &declaration.key())?;
+        module.define_data(id, &token)?;
+    }
 
     // What the declaring module says about each name this object defines. Read off the bodies
     // because that is where the answer crossed: it is the module's own, and a module this compile
@@ -344,36 +364,29 @@ impl Reachable {
     }
 }
 
-/// What every declared type of the program is, and which number stands for it.
+/// Every declared type of the program, by the key a reference to one says.
 ///
-/// The number is this lowering's and nothing outside it means anything by one: it is an index into
-/// the declarations the document carries, so two builds of one document agree and nothing else has
-/// to. A value carries it so that a fork on what a value is can be a comparison rather than a
-/// question about where the value came from.
+/// Two questions are asked of this and they are not one question. What a type is made of decides
+/// where a field sits and what a value costs to make; what a type *is* decides which arm a fork
+/// takes. The second used to be answered out of the first — a declaration's position among the
+/// ones one document happened to bring — and that is exactly what made it this object's own.
+///
+/// So what a value is tagged with is not held here. It is a symbol, and what resolves it is the
+/// linker; this resolves a key to the declaration that says what the symbol is called.
 struct Declared<'a> {
-    which: HashMap<&'a str, i64>,
-    shapes: HashMap<&'a str, &'a Declaration>,
+    shapes: HashMap<String, &'a Declaration>,
 }
 
 impl<'a> Declared<'a> {
     fn of(declarations: &'a [Declaration]) -> Result<Self> {
-        let mut which = HashMap::new();
         let mut shapes = HashMap::new();
-        for (at, declaration) in declarations.iter().enumerate() {
-            let name = declaration.declared();
-            if which.insert(name, at as i64).is_some() {
-                bail!("two declarations are both written {name}");
+        for declaration in declarations {
+            let key = declaration.key();
+            if shapes.insert(key.clone(), declaration).is_some() {
+                bail!("two declarations are both written {key}");
             }
-            shapes.insert(name, declaration);
         }
-        Ok(Declared { which, shapes })
-    }
-
-    fn number(&self, declared: &str) -> Result<i64> {
-        self.which
-            .get(declared)
-            .copied()
-            .ok_or_else(|| anyhow!("a value of {declared}, which no declaration crossed for"))
+        Ok(Declared { shapes })
     }
 
     fn shape(&self, declared: &str) -> Result<&'a Declaration> {
@@ -382,6 +395,56 @@ impl<'a> Declared<'a> {
             .copied()
             .ok_or_else(|| anyhow!("a value of {declared}, which no declaration crossed for"))
     }
+
+    /// The token a value of this type is tagged by, as this object names it.
+    ///
+    /// Asked for by the key, and the symbol built from what the declaration carries — never from
+    /// the key itself. The key is how a reference reaches a declaration; splitting one back up
+    /// would be this side working out an identity it was handed, which is the same mistake as
+    /// counting one.
+    ///
+    /// Declared here and not before, because naming a token is what makes it a name this object
+    /// wants resolved. A declaration at home in this object has its token defined whether anything
+    /// here builds a value of it or not — that is what being its home means — and one from another
+    /// build is named only by the object that builds or forks on a value of it. Asking twice is
+    /// asking once: a declaration is one symbol and Cranelift answers with the one it already has.
+    fn tag(&self, module: &mut ObjectModule, declared: &str) -> Result<DataId> {
+        let declaration = self.shape(declared)?;
+        if let Declaration::Sum { .. } = declaration {
+            bail!(
+                "a tag for {declared}, which is a sum: nothing is ever tagged with one, since an \
+                 arm tests the leaves a case resolved to"
+            );
+        }
+        let linkage = match declaration.by() {
+            // At home here. Exported rather than kept, because another build naming this
+            // declaration reaches this object's token and nothing else — and whether the module
+            // publishes the type is a question the program API answers for a behavior and not yet
+            // for a declaration, so this object cannot ask it.
+            DeclaredBy::AModule => Linkage::Export,
+            DeclaredBy::OnThePath => Linkage::Import,
+            DeclaredBy::TheLanguage => {
+                return Err(not_lowered(format!(
+                    "a value of {declared}, which the language declares and no build of a module \
+                     defines"
+                )));
+            }
+        };
+        let symbol = type_symbol(declaration.module(), declaration.name());
+        Ok(module.declare_data(&symbol, linkage, false, false)?)
+    }
+}
+
+/// The address of the declaration's token, as a value of it says which type it is.
+fn tag_of(
+    builder: &mut FunctionBuilder,
+    lowering: &Lowering,
+    module: &mut ObjectModule,
+    declared: &str,
+) -> Result<ir::Value> {
+    let token = lowering.declared.tag(module, declared)?;
+    let named = module.declare_data_in_func(token, builder.func);
+    Ok(builder.ins().symbol_value(POINTER, named))
 }
 
 /// What the lowering of one function needs besides the function itself.
@@ -445,40 +508,16 @@ fn machine_type(ty: &Ty) -> Result<types::Type> {
     }
 }
 
-/// Holds the signature of a behavior the object does not define to what may cross an object.
+/// Holds the signature of a behavior the object does not define to what a value still means in
+/// another object.
 ///
-/// A value of a declared type says which type it is with a number this object counted, so the same
-/// declaration is a different number in an object built from a different document. Two objects
-/// exchanging such a value would compare numbers that were never about each other: both valid,
-/// both compared without complaint, and the arm taken whichever the two happened to agree on.
-///
-/// So the representations that cross are the ones that are nobody's count — a number and a truth.
-/// The rest cross when a declared type has an identity a linker settles rather than one an object
-/// counts, and not before. Said here, where the signature is declared, because that is the one
-/// place the two scopes meet.
+/// Said here, where the signature is declared, because that is the one place the two scopes meet.
 fn crosses_objects(target: &Target) -> Result<()> {
     for ty in target.takes.iter().chain([&target.answers]) {
-        let nobodys_count = match ty {
-            // Named member by member for the same reason the widths are: a primitive added to the
-            // language must be answered for here rather than admitted by an arm standing for the
-            // rest, since what this decides is whether a value of it may leave the object.
-            Ty::Prim { prim } => match prim {
-                Prim::Int | Prim::Bool => true,
-                Prim::String
-                | Prim::Decimal
-                | Prim::Rational
-                | Prim::Date
-                | Prim::Time
-                | Prim::DateTime
-                | Prim::Instant
-                | Prim::Raw => false,
-            },
-            Ty::Declared { .. } | Ty::Union { .. } | Ty::Option { .. } | Ty::Tuple { .. } => false,
-        };
-        if !nobodys_count {
+        if !means_the_same_elsewhere(ty) {
             return Err(not_lowered(format!(
-                "{}.{} takes or answers {}, whose representation is this object's own, and it is \
-                 reached across objects",
+                "{}.{} takes or answers {}, which has no representation an object built from \
+                 another document reads the same way, and it is reached across objects",
                 target.module,
                 target.name,
                 ty.spelt()
@@ -486,6 +525,47 @@ fn crosses_objects(target: &Target) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Whether a value of this type means in another object what it means in this one.
+///
+/// Asked of the representation and answered over the type it is made of, because that is the shape
+/// of the question: a tuple means what its members mean, and an optional means what it holds. A
+/// list of the type names that happen to be admitted today would be a different thing — it would
+/// have to be argued over again every time a representation was designed, and the argument would
+/// be about the name rather than about what was designed.
+fn means_the_same_elsewhere(ty: &Ty) -> bool {
+    match ty {
+        // Named member by member for the same reason the widths are: a primitive added to the
+        // language must be answered for here rather than admitted by an arm standing for the rest,
+        // since what this decides is whether a value of it may leave the object.
+        Ty::Prim { prim } => match prim {
+            Prim::Int | Prim::Bool => true,
+            Prim::String
+            | Prim::Decimal
+            | Prim::Rational
+            | Prim::Date
+            | Prim::Time
+            | Prim::DateTime
+            | Prim::Instant
+            | Prim::Raw => false,
+        },
+        // A value of a declared type says which type it is with the address of its declaration's
+        // token, which the linker resolves. Two objects naming one declaration reach one address,
+        // so the comparison a fork makes is about the same thing on either side.
+        //
+        // Which is what a value says it is, and not where its fields are. Both objects read the
+        // field order off their own copy of the declaration, so they agree while they were checked
+        // against the one build of the module that declares it — and whether the object handed to
+        // the linker is that build is not something an object can ask. That is a separate
+        // question, and answering it here would be answering it with the wrong thing.
+        Ty::Declared { .. } => true,
+        // Written nowhere at run time: what holds a union holds one of its members, and each of
+        // those says which type it is.
+        Ty::Union { .. } => true,
+        Ty::Option { option } => means_the_same_elsewhere(option),
+        Ty::Tuple { tuple } => tuple.iter().all(means_the_same_elsewhere),
+    }
 }
 
 /// What holds the address of a value made of fields.
@@ -628,9 +708,7 @@ fn lower(
         Node::Unit { declared, .. } => {
             let flags = TRUSTED;
             let value = lowering.room(builder, module,1);
-            let which = builder
-                .ins()
-                .iconst(types::I64, lowering.declared.number(declared)?);
+            let which = tag_of(builder, lowering, module, declared)?;
             builder.ins().store(flags, which, value, WHICH as i32);
             value
         }
@@ -663,9 +741,7 @@ fn lower(
             }
             let flags = TRUSTED;
             let value = lowering.room(builder, module,1 + values.len());
-            let which = builder
-                .ins()
-                .iconst(types::I64, lowering.declared.number(declared)?);
+            let which = tag_of(builder, lowering, module, declared)?;
             builder.ins().store(flags, which, value, WHICH as i32);
             for (at, field) in held.into_iter().enumerate() {
                 builder
@@ -778,7 +854,7 @@ fn fork_on_what_it_is(
     for arm in arms {
         let taken = builder.create_block();
         let next = builder.create_block();
-        let asked = tests(builder, lowering, value, &arm.selects)?;
+        let asked = tests(builder, lowering, module, value, &arm.selects)?;
         builder.ins().brif(asked, taken, &[], next, &[]);
         builder.seal_block(taken);
         builder.seal_block(next);
@@ -810,9 +886,16 @@ fn fork_on_what_it_is(
 }
 
 /// Whether the value is one of the cases this arm answers for.
+///
+/// What a value says it is and what a case is are both the address of a declaration's token, so
+/// this is a comparison of two addresses. The one the value carries was written where it was built
+/// — possibly in an object built from another document — and the one compared against is named
+/// here; they are equal exactly when the linker resolved both to the one declaration, which is
+/// what makes the answer mean the same thing on either side of an object boundary.
 fn tests(
     builder: &mut FunctionBuilder,
     lowering: &Lowering,
+    module: &mut ObjectModule,
     value: ir::Value,
     selects: &[Selects],
 ) -> Result<ir::Value> {
@@ -821,11 +904,11 @@ fn tests(
         let this = match one {
             Selects::Which { atoms } => {
                 let flags = TRUSTED;
-                let which = builder.ins().load(types::I64, flags, value, WHICH as i32);
+                let which = builder.ins().load(POINTER, flags, value, WHICH as i32);
                 let mut any: Option<ir::Value> = None;
                 for atom in atoms {
-                    let number = lowering.declared.number(atom)?;
-                    let same = builder.ins().icmp_imm_s(IntCC::Equal, which, number);
+                    let expected = tag_of(builder, lowering, module, atom)?;
+                    let same = builder.ins().icmp(IntCC::Equal, which, expected);
                     any = Some(match any {
                         None => same,
                         Some(before) => builder.ins().bor(before, same),

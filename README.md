@@ -71,10 +71,11 @@ or by another Souther build's object. The two are different questions: a module'
 is its surface in the language, and an object that read that as its own answer would be publishing
 whatever surface suited the shape it happened to be built in.
 
-A behavior the object does not define is reached over numbers and truths alone. A value of a
-declared type says which type it is with a number this object counted, so two objects exchanging
-one would compare numbers that were never about each other; that is refused until a declared type
-has an identity a linker settles.
+A behavior the object does not define is reached over numbers, truths, and values of a model's own
+types. A value of a declared type says which type it is with the address of a byte its declaration
+owns, under a name the linker resolves, so a fork in one object over a value built in another
+compares what the linker resolved for both. A type whose representation is still to be designed
+does not cross, and the signature is where that is said.
 
 A type that states what its values owe is not built: a construction runs those clauses and stops at
 the first that does not hold, and nothing here runs one.
@@ -89,15 +90,17 @@ In an arena the caller brackets. Nothing frees a Souther value on its own: what 
 dropped in one go by whoever bracketed the call, so generated code takes room and never gives any
 back, and nothing it emits has to know what owns what.
 
-A value of a declared type carries which type it is, so a fork on what a value is reads a number
+A value of a declared type carries which type it is, so a fork on what a value is reads a slot
 rather than asking where the value came from. Everything a value is made of sits in a slot of one
 width, which keeps a field's offset a fact about its position rather than about the types of the
 fields before it.
 
-The number a value carries is this object's own: it counts the declarations the document brought,
-so two builds of one document agree and nothing else has to. It is not an identity anything outside
-the object may read, and making it one is the first thing to settle before a value crosses between
-objects.
+What the slot holds is an address, and what is at it is one byte the declaration owns. A
+declaration is at home in the object of the build that checked its module, which is what defines
+that byte; every other object naming the type leaves the name for whoever links it. So two objects
+naming one declaration reach one address, and the agreement is between each build and the linker —
+which is already what makes a call reach a definition, and is the thing a count of the declarations
+one document happened to bring could never be.
 
 Everything else the language admits says so rather than being written as whatever it resembles. A
 closed set crosses whole — every operator and every primitive — and the driver answers whether it

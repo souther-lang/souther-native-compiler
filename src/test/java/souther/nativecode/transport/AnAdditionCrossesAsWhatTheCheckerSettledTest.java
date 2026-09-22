@@ -36,7 +36,7 @@ class AnAdditionCrossesAsWhatTheCheckerSettledTest {
         String written = ProgramWriter.written(CheckedProgram.of(List.of(ADDING)));
 
         assertThat(written).isEqualTo("""
-                {"transport":2,"declarations":[],\
+                {"transport":3,"declarations":[],\
                 "behaviors":[{"module":"calculation","name":"add","is":"body",\
                 "takes":[{"prim":"INT"},{"prim":"INT"}],"answers":{"prim":"INT"}}],\
                 "modules":[{"name":"calculation","helpers":[],\
@@ -75,10 +75,12 @@ class AnAdditionCrossesAsWhatTheCheckerSettledTest {
                 """)));
 
         assertThat(written).contains("\"takes\":[{\"declared\":\"demo.Token\"}]");
-        assertThat(written).contains("{\"declared\":\"demo.Token\",\"is\":\"product\"");
+        assertThat(written).contains(
+                "{\"module\":\"demo\",\"name\":\"Token\",\"by\":\"amodule\",\"is\":\"product\"");
         // And what that one holds, which nothing but its declaration names: found while the
         // declarations were being written, after the behaviors were finished.
-        assertThat(written).contains("{\"declared\":\"demo.Inner\",\"is\":\"newtype\"");
+        assertThat(written).contains(
+                "{\"module\":\"demo\",\"name\":\"Inner\",\"by\":\"amodule\",\"is\":\"newtype\"");
     }
 
     /**
