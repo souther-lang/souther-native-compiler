@@ -21,9 +21,9 @@ fn document(op: &str, ty: &str) -> String {
 /// literal takes the newtype of what it is compared with, and a case value is a value of its sum.
 /// A builder that wrote one type twice could not say what either of those looks like on the wire.
 fn over(op: &str, left: &str, right: &str) -> String {
-    let read = |at: u32, ty: &str| format!(r#"{{"core":"read","binding":{at},"type":{ty}}}"#);
+    let read = |at: u32, ty: &str| format!(r#"{{"core":"read","binding":{at},"type":{ty},"aborts":[]}}"#);
     let body = format!(
-        r#"{{"core":"binary","op":"{op}","left":{},"right":{},"type":{left}}}"#,
+        r#"{{"core":"binary","op":"{op}","left":{},"right":{},"type":{left},"aborts":[]}}"#,
         read(0, left),
         read(1, right)
     );
@@ -34,7 +34,7 @@ fn over(op: &str, left: &str, right: &str) -> String {
         r#"{{"is":"body","declared":"calculation.f","parameters":["a","b"],"publication":"published","body":{body}}}"#
     );
     format!(
-        r#"{{"transport":4,"declarations":[],"behaviors":[{target}],"modules":[{{"name":"calculation","helpers":[],"definitions":[{held}],"examples":[]}}]}}"#
+        r#"{{"transport":5,"declarations":[],"behaviors":[{target}],"modules":[{{"name":"calculation","helpers":[],"definitions":[{held}],"examples":[]}}]}}"#
     )
 }
 
@@ -183,11 +183,11 @@ fn a_field_this_driver_does_not_know_is_refused_rather_than_skipped() {
 /// would be reading a document written to mean something else.
 #[test]
 fn a_transport_from_another_version_is_refused() {
-    let later = document("ADD", "INT").replace(r#""transport":4"#, r#""transport":5"#);
+    let later = document("ADD", "INT").replace(r#""transport":5"#, r#""transport":6"#);
 
     let refused = object_for(&later).expect_err("a version this does not read");
 
-    assert!(refused.to_string().contains('5'), "{refused}");
+    assert!(refused.to_string().contains('6'), "{refused}");
 }
 
 /// The smallest composition this driver can be handed: one behavior with a body, one composed of
@@ -195,11 +195,11 @@ fn a_transport_from_another_version_is_refused() {
 /// tests below has one place to make disagree with the other.
 fn composed_document() -> String {
     concat!(
-        r#"{"transport":4,"declarations":[],"#,
+        r#"{"transport":5,"declarations":[],"#,
         r#""behaviors":[{"module":"m","name":"inner","is":"body","takes":[{"prim":"INT"}],"answers":{"prim":"INT"}},"#,
         r#"{"module":"m","name":"outer","is":"composed","takes":[{"prim":"INT"}],"answers":{"prim":"INT"}}],"#,
         r#""modules":[{"name":"m","helpers":[],"definitions":["#,
-        r#"{"is":"body","declared":"m.inner","parameters":["a"],"publication":"kept","body":{"core":"read","binding":0,"type":{"prim":"INT"}}},"#,
+        r#"{"is":"body","declared":"m.inner","parameters":["a"],"publication":"kept","body":{"core":"read","binding":0,"type":{"prim":"INT"},"aborts":[]}},"#,
         r#"{"is":"composed","declared":"m.outer","publication":"published","stages":["#,
         r#"{"behavior":"m.inner","answers":{"prim":"INT"},"routing":{"is":"always"}}],"answers":{"prim":"INT"}}"#,
         r#"],"examples":[]}]}"#,

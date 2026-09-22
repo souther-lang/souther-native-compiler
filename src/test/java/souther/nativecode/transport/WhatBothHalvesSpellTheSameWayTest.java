@@ -1,6 +1,7 @@
 package souther.nativecode.transport;
 
 import org.junit.jupiter.api.Test;
+import souther.compiler.abort.AbortKind;
 import souther.compiler.program.DeclaredBy;
 import souther.compiler.program.Publication;
 import souther.compiler.types.BinOp;
@@ -64,6 +65,7 @@ class WhatBothHalvesSpellTheSameWayTest {
         assertThat(words(written, "prim")).hasSize(Type.Prim.values().length);
         assertThat(words(written, "publication")).hasSize(Publication.values().length);
         assertThat(words(written, "declaredby")).hasSize(DeclaredBy.values().length);
+        assertThat(words(written, "abort")).hasSize(AbortKind.values().length);
     }
 
     /** No member of one vocabulary is spelt the way another member of it is. */
@@ -71,7 +73,7 @@ class WhatBothHalvesSpellTheSameWayTest {
     void noTwoMembersOfOneVocabularyAreSpeltAlike() {
         String written = ProgramWriter.vocabularies();
 
-        for (String vocabulary : new String[]{"op", "prim", "publication", "declaredby"}) {
+        for (String vocabulary : new String[]{"op", "prim", "publication", "declaredby", "abort"}) {
             assertThat(words(written, vocabulary))
                     .as("the spellings of %s in %s", vocabulary, written)
                     .doesNotHaveDuplicates();

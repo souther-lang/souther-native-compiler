@@ -248,6 +248,27 @@ pub const MARK: &str = "souther_mark";
 /// The symbol a caller gives a mark back to, dropping everything taken since.
 pub const RESET: &str = "souther_reset";
 
+/// What a generated function answers with instead of its value directly.
+///
+/// A Souther computation ends with a value or without one, and a plain return can only ever say
+/// the first — which is why every generated function takes one more parameter than its signature
+/// shows a caller, a pointer the value is written through, and answers this instead. `ANSWERED`
+/// says the pointer holds it; any other code is a language abort's wire number and the pointer was
+/// never written.
+///
+/// What number a member of `souther_compiler`'s `AbortKind` gets is not here. This crate is the
+/// wire's width and its one reserved value, both facts a target decides; which reason gets which
+/// of the numbers left over is `souther_native_driver`'s own exhaustive mapping, kept apart from
+/// this crate for the reason this file's own doc gives — nothing about what Souther means belongs
+/// here, and an abort's reason is exactly that.
+pub type Status = u32;
+
+/// The one code this crate reserves: the pointer holds the answer.
+///
+/// Every other value of [`Status`] is a language abort, and which is which is
+/// `souther_native_driver`'s to say — this crate answers only for the one case that is not one.
+pub const ANSWERED: Status = 0;
+
 #[cfg(test)]
 mod tests {
     use super::{

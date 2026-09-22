@@ -1,7 +1,9 @@
 package souther.nativecode.transport;
 
+import souther.compiler.abort.AbortKind;
 import souther.compiler.core.Composition;
 import souther.compiler.core.Core;
+import souther.compiler.core.Kernel;
 import souther.compiler.core.ValueShape;
 import souther.compiler.observe.ObservedValue;
 import souther.compiler.observe.RowStatement;
@@ -67,7 +69,7 @@ public final class ProgramWriter {
      * written moves, so that a driver and a writer that disagree say so rather than producing an
      * object that is wrong quietly.
      */
-    public static final int TRANSPORT_VERSION = 4;
+    public static final int TRANSPORT_VERSION = 5;
 
     private final CheckedProgram program;
 
@@ -106,10 +108,10 @@ public final class ProgramWriter {
      * correspondence — the driver's test names the member it expects at each place, so a spelling
      * that moves on either side is red on the other.
      *
-     * <p>Four vocabularies and not six. What a behavior does instead of carrying a body, and what a
-     * call reaches, are switches over shapes rather than over an enum, so there is no member to ask
-     * for the spelling of without an instance of one to hand. Those cross under a real program or
-     * not at all.
+     * <p>Five vocabularies and not seven. What a behavior does instead of carrying a body, and what
+     * a call reaches, are switches over shapes rather than over an enum, so there is no member to
+     * ask for the spelling of without an instance of one to hand. Those cross under a real program
+     * or not at all.
      */
     public static String vocabularies() {
         return "{\"transport\":" + TRANSPORT_VERSION
@@ -117,6 +119,7 @@ public final class ProgramWriter {
                 + ",\"prim\":" + spellings(Type.Prim.values(), ProgramWriter::prim)
                 + ",\"publication\":" + spellings(Publication.values(), ProgramWriter::publication)
                 + ",\"declaredby\":" + spellings(DeclaredBy.values(), ProgramWriter::by)
+                + ",\"abort\":" + spellings(AbortKind.values(), ProgramWriter::abort)
                 + "}";
     }
 
@@ -359,10 +362,14 @@ public final class ProgramWriter {
         for (int at = 0; at < takes.size(); at++) {
             arguments.add(given(inputs.get(at), takes.get(at)));
         }
+        // No Core.Call stands behind this one for program.abortsAt to ask of — a row is a value the
+        // checker already observed the behavior answering with, never one it aborted for, so NONE
+        // is this call's own fact and not a default filled in for want of a site to ask.
         return "{\"core\":\"call\",\"reaches\":\"behavior\""
                 + ",\"declared\":" + quoted(module.name() + "." + behavior.name().name())
                 + ",\"arguments\":" + arguments
-                + ",\"type\":" + type(behavior.signature().answers()) + "}";
+                + ",\"type\":" + type(behavior.signature().answers())
+                + ",\"aborts\":[]}";
     }
 
     /**
@@ -378,14 +385,18 @@ public final class ProgramWriter {
      * whatever it resembled.
      */
     private String given(ObservedValue value, Type at) {
+        // A literal, the same as elsewhere: nothing to ask program.abortsAt of, and NONE for the
+        // same reason applied() states it — a literal never aborts, whatever site holds it.
         return switch (value) {
             case ObservedValue.Integer it when at == Type.Prim.INT ->
-                    "{\"core\":\"int\",\"value\":" + it.value() + ",\"type\":" + type(at) + "}";
+                    "{\"core\":\"int\",\"value\":" + it.value() + ",\"type\":" + type(at)
+                            + ",\"aborts\":[]}";
             case ObservedValue.Bool it when at == Type.Prim.BOOL ->
-                    "{\"core\":\"bool\",\"value\":" + it.value() + ",\"type\":" + type(at) + "}";
+                    "{\"core\":\"bool\",\"value\":" + it.value() + ",\"type\":" + type(at)
+                            + ",\"aborts\":[]}";
             case ObservedValue.Text it when at == Type.Prim.STRING ->
                     "{\"core\":\"string\",\"value\":" + quoted(it.value())
-                            + ",\"type\":" + type(at) + "}";
+                            + ",\"type\":" + type(at) + ",\"aborts\":[]}";
 
             case ObservedValue.Integer it -> throw notStated(it, at);
             case ObservedValue.Bool it -> throw notStated(it, at);
@@ -623,55 +634,59 @@ public final class ProgramWriter {
     private String core(Core node, Bindings bindings) {
         return switch (node) {
             case Core.Int it -> "{\"core\":\"int\",\"value\":" + it.value()
-                    + ",\"type\":" + type(it.type()) + "}";
+                    + ",\"type\":" + type(it.type()) + ",\"aborts\":" + aborts(it) + "}";
             case Core.Read it -> "{\"core\":\"read\",\"binding\":"
                     + bindings.of(it.binding(), it.name())
-                    + ",\"type\":" + type(it.type()) + "}";
+                    + ",\"type\":" + type(it.type()) + ",\"aborts\":" + aborts(it) + "}";
             case Core.Bool it -> "{\"core\":\"bool\",\"value\":" + it.value()
-                    + ",\"type\":" + type(it.type()) + "}";
+                    + ",\"type\":" + type(it.type()) + ",\"aborts\":" + aborts(it) + "}";
             // The text as the compiler read it, which is the text normalized to NFC. Nothing here
             // folds it a second time: where text arrives from outside is where that is done, and a
             // source file is one of the two places it arrives.
             case Core.Str it -> "{\"core\":\"string\",\"value\":" + quoted(it.value())
-                    + ",\"type\":" + type(it.type()) + "}";
+                    + ",\"type\":" + type(it.type()) + ",\"aborts\":" + aborts(it) + "}";
             case Core.Binary it -> "{\"core\":\"binary\",\"op\":" + quoted(op(it.op()))
                     + ",\"left\":" + core(it.left(), bindings)
                     + ",\"right\":" + core(it.right(), bindings)
-                    + ",\"type\":" + type(it.type()) + "}";
+                    + ",\"type\":" + type(it.type()) + ",\"aborts\":" + aborts(it) + "}";
             case Core.UnitValue it -> "{\"core\":\"unit\",\"declared\":"
-                    + quoted(symbol(it.data())) + ",\"type\":" + type(it.type()) + "}";
+                    + quoted(symbol(it.data())) + ",\"type\":" + type(it.type())
+                    + ",\"aborts\":" + aborts(it) + "}";
             case Core.Construct it -> {
                 StringJoiner values = new StringJoiner(",", "[", "]");
                 for (Core.FieldValue field : it.values()) {
                     values.add(core(field.value(), bindings));
                 }
                 yield "{\"core\":\"construct\",\"declared\":" + quoted(named(it.typeName()))
-                        + ",\"values\":" + values + ",\"type\":" + type(it.type()) + "}";
+                        + ",\"values\":" + values + ",\"type\":" + type(it.type())
+                        + ",\"aborts\":" + aborts(it) + "}";
             }
             case Core.FieldAccess it -> "{\"core\":\"field\",\"target\":"
                     + core(it.target(), bindings) + ",\"field\":" + quoted(it.field())
-                    + ",\"type\":" + type(it.type()) + "}";
+                    + ",\"type\":" + type(it.type()) + ",\"aborts\":" + aborts(it) + "}";
             case Core.Match it -> match(it, bindings);
             case Core.OptionSome it -> "{\"core\":\"some\",\"value\":" + core(it.value(), bindings)
-                    + ",\"type\":" + type(it.type()) + "}";
-            case Core.OptionNone it -> "{\"core\":\"none\",\"type\":" + type(it.type()) + "}";
+                    + ",\"type\":" + type(it.type()) + ",\"aborts\":" + aborts(it) + "}";
+            case Core.OptionNone it -> "{\"core\":\"none\",\"type\":" + type(it.type())
+                    + ",\"aborts\":" + aborts(it) + "}";
             case Core.Tuple it -> {
                 StringJoiner members = new StringJoiner(",", "[", "]");
                 for (Core element : it.elements()) {
                     members.add(core(element, bindings));
                 }
                 yield "{\"core\":\"tuple\",\"members\":" + members
-                        + ",\"type\":" + type(it.type()) + "}";
+                        + ",\"type\":" + type(it.type()) + ",\"aborts\":" + aborts(it) + "}";
             }
             case Core.TupleGet it -> "{\"core\":\"member\",\"tuple\":" + core(it.tuple(), bindings)
-                    + ",\"at\":" + it.index() + ",\"type\":" + type(it.type()) + "}";
+                    + ",\"at\":" + it.index() + ",\"type\":" + type(it.type())
+                    + ",\"aborts\":" + aborts(it) + "}";
             case Core.Neg it -> "{\"core\":\"neg\",\"operand\":" + core(it.operand(), bindings)
-                    + ",\"type\":" + type(it.type()) + "}";
+                    + ",\"type\":" + type(it.type()) + ",\"aborts\":" + aborts(it) + "}";
             case Core.LetIn it -> letIn(it, bindings);
             case Core.If it -> "{\"core\":\"if\",\"cond\":" + core(it.cond(), bindings)
                     + ",\"then\":" + core(it.then(), bindings)
                     + ",\"else\":" + core(it.els(), bindings)
-                    + ",\"type\":" + type(it.type()) + "}";
+                    + ",\"type\":" + type(it.type()) + ",\"aborts\":" + aborts(it) + "}";
 
             case Core.Decimal it -> throw notYet("a decimal literal", it);
             case Core.Temporal it -> throw notYet("a temporal literal", it);
@@ -700,16 +715,18 @@ public final class ProgramWriter {
         return "{\"core\":\"let\",\"binding\":" + number
                 + ",\"value\":" + value
                 + ",\"body\":" + core(it.body(), bindings)
-                + ",\"type\":" + type(it.type()) + "}";
+                + ",\"type\":" + type(it.type()) + ",\"aborts\":" + aborts(it) + "}";
     }
 
     /**
      * A call, and what it reaches.
      *
-     * <p>What a residual call reaches is one of three things and the checker has already decided
-     * which: a definition the module holds, a value that runs where it is declared, or a behavior.
-     * A kernel is what the language implements rather than what a program holds, and nothing here
-     * runs one yet.
+     * <p>What a residual call reaches is one of four things and the checker has already decided
+     * which: a definition the module holds, a value that runs where it is declared, a behavior, or
+     * a kernel the language itself implements. A kernel crosses the same as any other reach — its
+     * identity, written out — because whether this backend can lower it is a question for the half
+     * that lowers, not for this one: keeping a list here of which kernels the driver already
+     * answers would be the second table {@link ProgramWriter}'s own class doc rules out.
      */
     private String call(Core.Call it, Bindings bindings) {
         StringJoiner arguments = new StringJoiner(",", "[", "]");
@@ -731,14 +748,14 @@ public final class ProgramWriter {
             case Core.Reached.OfPublishedValue target ->
                     "\"reaches\":\"value\",\"declared\":" + quoted(reached(target.denotes()));
             case Core.Reached.OfKernel target ->
-                    throw notYet("a call to " + target.kernel(), it);
+                    "\"reaches\":\"kernel\",\"kernel\":" + quoted(target.kernel().key());
             // An operation this compiler mints after everything is resolved, which no source can
             // write and which stands for a shape a backend knows how to lower.
             case Core.Emitted target -> throw notYet("the operation " + target, it);
         };
         return "{\"core\":\"call\"," + reaches
                 + ",\"arguments\":" + arguments
-                + ",\"type\":" + type(it.type()) + "}";
+                + ",\"type\":" + type(it.type()) + ",\"aborts\":" + aborts(it) + "}";
     }
 
     /**
@@ -772,7 +789,8 @@ public final class ProgramWriter {
                     + ",\"body\":" + core(arm.body(), bindings) + "}");
         }
         return "{\"core\":\"match\",\"subject\":" + core(it.scrutinee(), bindings)
-                + ",\"arms\":" + arms + ",\"type\":" + type(it.type()) + "}";
+                + ",\"arms\":" + arms + ",\"type\":" + type(it.type())
+                + ",\"aborts\":" + aborts(it) + "}";
     }
 
     /** What one case of an arm tests for, and what it leaves to be read. */
@@ -818,6 +836,40 @@ public final class ProgramWriter {
             case DIV -> "DIV";
             case CONCAT -> "CONCAT";
         };
+    }
+
+    /** How a reason a run ends without a value is spelt on the wire, for the same reason and in the
+     *  same way. */
+    private static String abort(AbortKind kind) {
+        return switch (kind) {
+            case INVARIANT_NOT_HELD -> "INVARIANT_NOT_HELD";
+            case ENSURES_NOT_HELD -> "ENSURES_NOT_HELD";
+            case UNREACHABLE_REACHED -> "UNREACHABLE_REACHED";
+            case DIVISION_BY_ZERO -> "DIVISION_BY_ZERO";
+            case REQUIRED_FORM_HAS_NO_PLACE -> "REQUIRED_FORM_HAS_NO_PLACE";
+            case INVALID_BOUNDS -> "INVALID_BOUNDS";
+        };
+    }
+
+    /**
+     * Every reason {@code node} can end without a value for, read off the program rather than
+     * re-derived from what kind of node it is or what it does — the same programme {@link #op} and
+     * {@link #prim} follow, applied to a question upstream now answers instead of one this writer
+     * would otherwise have to.
+     *
+     * <p>Written for every node this walk successfully crosses and not only the ones that plainly
+     * can abort, so that an empty array here is this writer's own answer and not silence a reader
+     * could mistake for a question nobody asked. In {@link AbortKind}'s own order, so two programs
+     * that abort the same way write the same document.
+     */
+    private String aborts(Core node) {
+        StringJoiner kinds = new StringJoiner(",", "[", "]");
+        for (AbortKind kind : AbortKind.values()) {
+            if (program.abortsAt(node).contains(kind)) {
+                kinds.add(quoted(abort(kind)));
+            }
+        }
+        return kinds.toString();
     }
 
     /** How a primitive is spelt on the wire, for the same reason and in the same way. */

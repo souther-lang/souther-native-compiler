@@ -18,7 +18,7 @@ use serde::Deserialize;
 
 /// What this side reads. A document written to say anything else is refused rather than read as
 /// much of as happens to parse.
-pub const TRANSPORT_VERSION: u32 = 4;
+pub const TRANSPORT_VERSION: u32 = 5;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -420,17 +420,20 @@ pub enum Node {
         value: i64,
         #[serde(rename = "type")]
         ty: Ty,
+        aborts: Vec<AbortKind>,
     },
     /// The number the document knows a binding by, counted where the binder was written.
     Read {
         binding: usize,
         #[serde(rename = "type")]
         ty: Ty,
+        aborts: Vec<AbortKind>,
     },
     Bool {
         value: bool,
         #[serde(rename = "type")]
         ty: Ty,
+        aborts: Vec<AbortKind>,
     },
     /// The text a literal spells, already in the form the language keeps it in.
     ///
@@ -445,6 +448,7 @@ pub enum Node {
         value: String,
         #[serde(rename = "type")]
         ty: Ty,
+        aborts: Vec<AbortKind>,
     },
     Binary {
         op: Op,
@@ -452,11 +456,13 @@ pub enum Node {
         right: Box<Node>,
         #[serde(rename = "type")]
         ty: Ty,
+        aborts: Vec<AbortKind>,
     },
     Neg {
         operand: Box<Node>,
         #[serde(rename = "type")]
         ty: Ty,
+        aborts: Vec<AbortKind>,
     },
     /// A name for a value, and what is written under it. The number is the document's, given where
     /// the binder is written.
@@ -466,6 +472,7 @@ pub enum Node {
         body: Box<Node>,
         #[serde(rename = "type")]
         ty: Ty,
+        aborts: Vec<AbortKind>,
     },
     If {
         cond: Box<Node>,
@@ -474,12 +481,14 @@ pub enum Node {
         els: Box<Node>,
         #[serde(rename = "type")]
         ty: Ty,
+        aborts: Vec<AbortKind>,
     },
     /// A value of a type with nothing in it. It still says which type it is: that is what it is.
     Unit {
         declared: String,
         #[serde(rename = "type")]
         ty: Ty,
+        aborts: Vec<AbortKind>,
     },
     /// Every declared field, in declaration order, which is also the order they are worked out in.
     Construct {
@@ -487,46 +496,63 @@ pub enum Node {
         values: Vec<Node>,
         #[serde(rename = "type")]
         ty: Ty,
+        aborts: Vec<AbortKind>,
     },
     Field {
         target: Box<Node>,
         field: String,
         #[serde(rename = "type")]
         ty: Ty,
+        aborts: Vec<AbortKind>,
     },
     Match {
         subject: Box<Node>,
         arms: Vec<Arm>,
         #[serde(rename = "type")]
         ty: Ty,
+        aborts: Vec<AbortKind>,
     },
     Some {
         value: Box<Node>,
         #[serde(rename = "type")]
         ty: Ty,
+        aborts: Vec<AbortKind>,
     },
     None {
         #[serde(rename = "type")]
         ty: Ty,
+        aborts: Vec<AbortKind>,
     },
     Tuple {
         members: Vec<Node>,
         #[serde(rename = "type")]
         ty: Ty,
+        aborts: Vec<AbortKind>,
     },
     Member {
         tuple: Box<Node>,
         at: usize,
         #[serde(rename = "type")]
         ty: Ty,
+        aborts: Vec<AbortKind>,
     },
     /// A call, and what the checker settled it reaches.
+    ///
+    /// `declared` is carried for every reach but a kernel's, and `kernel` for a kernel's alone —
+    /// which of the two is present is exactly what `reaches` already says, so neither is read
+    /// without matching it first. `kernel` crosses as the key the standard library declares it
+    /// under (`"int.add"`) and not as a closed enum here: which kernels exist is the language's
+    /// question and this side's only question is which of them it can lower, answered by
+    /// `NotLowered` at the one place that tries, not by a vocabulary this file would have to keep
+    /// in step with every kernel the language ever adds.
     Call {
         reaches: Reaches,
-        declared: String,
+        declared: Option<String>,
+        kernel: Option<String>,
         arguments: Vec<Node>,
         #[serde(rename = "type")]
         ty: Ty,
+        aborts: Vec<AbortKind>,
     },
 }
 
@@ -540,6 +566,8 @@ pub enum Reaches {
     Value,
     /// A behavior, whether this program answers it or whoever links the object does.
     Behavior,
+    /// An operation the language itself implements. `Node::Call::kernel` names which.
+    Kernel,
 }
 
 /// One arm of a fork on what a value is.
@@ -648,4 +676,27 @@ impl Op {
             Op::Concat => "++",
         }
     }
+}
+
+/// A way a Souther computation ends without a value, named by the reason the language gives for
+/// it — the checker's own closed set, spelt on the wire the same way `Op` and `Prim` are.
+///
+/// This is not this side's to reclassify. A site's `Node::aborts` is `program.abortsAt(site)`
+/// read off the checker, so which member goes with which machine condition is answered once, by
+/// whoever maps a member of this to `souther_native_abi`'s own encoding — never re-derived from
+/// what a node looks like here.
+#[derive(Debug, Deserialize, PartialEq, Eq, Clone, Copy)]
+pub enum AbortKind {
+    #[serde(rename = "INVARIANT_NOT_HELD")]
+    InvariantNotHeld,
+    #[serde(rename = "ENSURES_NOT_HELD")]
+    EnsuresNotHeld,
+    #[serde(rename = "UNREACHABLE_REACHED")]
+    UnreachableReached,
+    #[serde(rename = "DIVISION_BY_ZERO")]
+    DivisionByZero,
+    #[serde(rename = "REQUIRED_FORM_HAS_NO_PLACE")]
+    RequiredFormHasNoPlace,
+    #[serde(rename = "INVALID_BOUNDS")]
+    InvalidBounds,
 }

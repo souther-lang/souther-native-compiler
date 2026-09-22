@@ -18,26 +18,68 @@ use cranelift::frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use cranelift::module::{DataDescription, DataId, FuncId, Linkage, Module, default_libcall_names};
 use cranelift::object::{ObjectBuilder, ObjectModule};
 use souther_native_abi::{
-    ALLOCATE, HELD, NOTHING, SLOT, STRING_COMPARE, STRING_CONCAT, TEXT_BYTES, TEXT_LENGTH, TOKEN,
-    WHICH, behavior_symbol, example_symbol, field_at, held_symbol, member_at, room_for_fields,
-    room_for_held, room_for_members, room_for_text, type_symbol,
+    ALLOCATE, ANSWERED, HELD, NOTHING, SLOT, STRING_COMPARE, STRING_CONCAT, Status, TEXT_BYTES,
+    TEXT_LENGTH, TOKEN, WHICH, behavior_symbol, example_symbol, field_at, held_symbol, member_at,
+    room_for_fields, room_for_held, room_for_members, room_for_text, type_symbol,
 };
 use std::collections::HashMap;
 use std::fmt;
 use transport::{
-    Answers, Arm, Declaration, DeclaredBy, Definition, Node, Op, Prim, Program, Publication,
-    Reaches, Routing, Selects, Stage, TRANSPORT_VERSION, Target, Ty,
+    AbortKind, Answers, Arm, Declaration, DeclaredBy, Definition, Node, Op, Prim, Program,
+    Publication, Reaches, Routing, Selects, Stage, TRANSPORT_VERSION, Target, Ty,
 };
 
-/// An `Int` overflowing is an abort and not an answer, so the arithmetic traps rather than
-/// wrapping. Which abort it was is not said here: nothing yet carries a reason out of a native run,
-/// and a number invented at this end would be a second answer to a question Souther has not
-/// answered once.
-const OVERFLOWED: u8 = 1;
-
 /// A fork that ran out of arms, which is this compiler having emitted the wrong test rather than
-/// anything a program can be written as: the checker settles that a fork always answers.
+/// anything a program can be written as: the checker settles that a fork always answers. Still a
+/// trap and not a status: this is this compiler's own invariant failing, not a Souther computation
+/// ending without a value, and the two are told apart by which channel answers for them.
 const NO_ARM: u8 = 2;
+
+/// Every reason a Souther computation ends without a value, mapped to the wire number a generated
+/// function's status answers with — `souther_native_abi::ANSWERED` reserves zero, so every member
+/// here gets one of what is left.
+///
+/// No default arm, for the reason `KernelContracts::abortsOf` on the Java side has none: a member
+/// `AbortKind` adds and this does not answer for is a mapping nobody wrote rather than one that
+/// silently agrees with the last one written for something else. What number a member gets is a
+/// decision of this crate's alone — the `abi` crate states the wire's width and its one reserved
+/// value and nothing about what any other value of it means.
+fn native_status(kind: AbortKind) -> Status {
+    match kind {
+        AbortKind::InvariantNotHeld => 1,
+        AbortKind::EnsuresNotHeld => 2,
+        AbortKind::UnreachableReached => 3,
+        AbortKind::DivisionByZero => 4,
+        AbortKind::RequiredFormHasNoPlace => 5,
+        AbortKind::InvalidBounds => 6,
+    }
+}
+
+/// The one status an arithmetic site that may leave the range its type holds jumps to the abort
+/// block with, or `None` where the checker says this site never does.
+///
+/// Read off the site's own `aborts` — `program.abortsAt(site)`'s answer, carried on the `Node` —
+/// rather than assumed from which operator or which kernel this is: what a machine condition here
+/// means is a fact `CheckedProgram` already settled, and asking the transport for it instead of
+/// deciding it again here is the one thing issue #9 exists to change. `NONE` is answered the same
+/// way a nonempty answer is: trusted, not second-guessed against what this backend's own sign-bit
+/// check would say on its own account — a site the checker says never aborts gets no check emitted
+/// for it at all, even where this backend's machine condition could fire, because emitting one
+/// anyway would be exactly the re-derivation issue #9 exists to rule out. (`Core.Neg` is such a
+/// site today — see souther-lang/souther#1878, filed once this asymmetry with `Core.Binary`'s own
+/// arithmetic surfaced here.) An arithmetic site the checker gave more than one reason for is the
+/// two halves disagreeing about what kind of site this is, not a case this backend can pick one of.
+fn overflow_status(aborts: &[AbortKind]) -> Result<Option<Status>> {
+    match aborts {
+        [] => Ok(None),
+        [only] => Ok(Some(native_status(*only))),
+        _ => bail!(
+            "an arithmetic site that may leave its type's range names {} reasons for ending \
+             without a value, and this backend answers only where there is at most one",
+            aborts.len()
+        ),
+    }
+}
 
 /// Something the language admits and this driver does not lower yet.
 ///
@@ -678,12 +720,23 @@ impl Lowering<'_> {
     }
 }
 
+/// A generated function's signature, in the `status + out` shape every one of them shares.
+///
+/// The value crosses through one more parameter than a caller reading only `takes` and `answers`
+/// would expect — a pointer the answer is written through — and the return says whether it is
+/// there to read: `ANSWERED` if so, a language abort's wire number if not. A plain return of the
+/// answer can only ever say the first of those, which is exactly the gap issue #9 closes; see
+/// `define`'s own doc for the rest of the shape this signature is half of.
 fn signature_over(takes: &[Ty], answers: &Ty, call_conv: CallConv) -> Result<ir::Signature> {
     let mut signature = ir::Signature::new(call_conv);
     for taken in takes {
         signature.params.push(AbiParam::new(machine_type(taken)?));
     }
-    signature.returns.push(AbiParam::new(machine_type(answers)?));
+    // Validated for the same reason it always was — a primitive with no representation is refused
+    // here — even though its width no longer decides what this function returns.
+    machine_type(answers)?;
+    signature.params.push(AbiParam::new(POINTER));
+    signature.returns.push(AbiParam::new(types::I32));
     Ok(signature)
 }
 
@@ -817,6 +870,21 @@ fn out_of_slot(builder: &mut FunctionBuilder, held: ir::Value, wanted: types::Ty
     }
 }
 
+/// A behavior's or a helper's body, lowered to the one shape every generated function shares:
+/// `takes` ordinary parameters, one more the answer is written through, and a status answered in
+/// place of the value itself.
+///
+/// The block this makes room for beside the entry — `abort` — is where every way this function's
+/// body ends without a value meets: an arithmetic site leaving its type's range jumps to it
+/// directly, and a call this body makes that itself answers a status other than `ANSWERED` is
+/// forwarded to it by `call_reached` rather than read as a value. Sharing the one block is what
+/// keeps a calling convention or an abort ABI that changes a change made once, in `call_reached`'s
+/// own words — every site that can end without a value reaches this the same way, a jump with the
+/// status as its argument, so nothing downstream has to know which of them it was.
+///
+/// Not sealed until the whole body is lowered, because a block sealed before every jump that
+/// reaches it is written is a block Cranelift has already closed the door on — and which sites
+/// jump here is exactly what lowering the body decides.
 fn define(
     function: &mut Function,
     shapes: &mut FunctionBuilderContext,
@@ -839,9 +907,21 @@ fn define(
         builder.def_var(variable, given);
         bindings.at(at, variable);
     }
+    let out = builder.block_params(entry)[takes.len()];
 
-    let answer = lower(&mut builder, lowering, module, &mut bindings, body)?;
-    builder.ins().return_(&[answer]);
+    let abort = builder.create_block();
+    builder.append_block_param(abort, types::I32);
+
+    let answer = lower(&mut builder, lowering, module, &mut bindings, abort, body)?;
+    builder.ins().store(TRUSTED, answer, out, 0);
+    let ok = builder.ins().iconst(types::I32, i64::from(ANSWERED));
+    builder.ins().return_(&[ok]);
+
+    builder.seal_block(abort);
+    builder.switch_to_block(abort);
+    let status = builder.block_params(abort)[0];
+    builder.ins().return_(&[status]);
+
     builder.finalize(frontend);
     Ok(())
 }
@@ -872,6 +952,10 @@ fn define_composed(
     builder.append_block_params_for_function_params(entry);
     builder.switch_to_block(entry);
     builder.seal_block(entry);
+    let out = builder.block_params(entry)[takes];
+
+    let abort = builder.create_block();
+    builder.append_block_param(abort, types::I32);
 
     let (first, rest) = stages
         .split_first()
@@ -879,14 +963,17 @@ fn define_composed(
     let arguments: Vec<ir::Value> = builder.block_params(entry)[..takes].to_vec();
     let mut running = {
         let reached = lowering.reachable.of_behavior_named(&first.behavior)?;
-        call_reached(&mut builder, module, reached, &first.behavior, &arguments)?
+        let answers = machine_type(&first.answers)?;
+        call_reached(&mut builder, module, abort, reached, answers, &arguments)?
     };
 
     for stage in rest {
         match &stage.routing {
             Routing::Always => {
                 let reached = lowering.reachable.of_behavior_named(&stage.behavior)?;
-                running = call_reached(&mut builder, module, reached, &stage.behavior, &[running])?;
+                let answers = machine_type(&stage.answers)?;
+                running =
+                    call_reached(&mut builder, module, abort, reached, answers, &[running])?;
             }
             Routing::OnCases { accepted } => {
                 let accepts =
@@ -900,16 +987,28 @@ fn define_composed(
                 // What left the main line is answered here, at the stage that did not accept it,
                 // rather than carried along to be tested against a stage further on.
                 builder.switch_to_block(leave);
-                builder.ins().return_(&[running]);
+                builder.ins().store(TRUSTED, running, out, 0);
+                let ok = builder.ins().iconst(types::I32, i64::from(ANSWERED));
+                builder.ins().return_(&[ok]);
 
                 builder.switch_to_block(offer);
                 let reached = lowering.reachable.of_behavior_named(&stage.behavior)?;
-                running = call_reached(&mut builder, module, reached, &stage.behavior, &[running])?;
+                let answers = machine_type(&stage.answers)?;
+                running =
+                    call_reached(&mut builder, module, abort, reached, answers, &[running])?;
             }
         }
     }
 
-    builder.ins().return_(&[running]);
+    builder.ins().store(TRUSTED, running, out, 0);
+    let ok = builder.ins().iconst(types::I32, i64::from(ANSWERED));
+    builder.ins().return_(&[ok]);
+
+    builder.seal_block(abort);
+    builder.switch_to_block(abort);
+    let status = builder.block_params(abort)[0];
+    builder.ins().return_(&[status]);
+
     builder.finalize(frontend);
     Ok(())
 }
@@ -920,19 +1019,49 @@ fn define_composed(
 /// FuncId already resolved, arguments already lowered. Neither writes the call twice, so a
 /// calling convention or an abort ABI that changes moves once and not at every site that reaches
 /// out.
+///
+/// Every generated function answers `status + out` (see `signature_over`'s own doc), so every call
+/// here hands over one more argument than `arguments` shows — room on this function's own stack
+/// the answer is written through — and reads the status back before trusting what is in it. A
+/// status other than `ANSWERED` is not this call's to interpret: it already went through
+/// `native_status` once, at whichever site first left its range or ran out of representation, and
+/// asking what it means a second time here would be the reclassification issue #9 exists to rule
+/// out. So it is not read; it is forwarded, to `abort`, exactly as it arrived — which is what makes
+/// a callee's abort cross a call boundary the same way an answer does, transparently, all the way
+/// out to whichever caller first receives a status that is not zero.
 fn call_reached(
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
+    abort: ir::Block,
     reached: FuncId,
-    declared: &str,
+    answers: types::Type,
     arguments: &[ir::Value],
 ) -> Result<ir::Value> {
     let reaching = module.declare_func_in_func(reached, builder.func);
-    let answered = builder.ins().call(reaching, arguments);
-    let answers = builder.inst_results(answered);
-    Ok(*answers
-        .first()
-        .ok_or_else(|| anyhow!("a call to {declared} came back with no value"))?)
+    let slot = builder.create_sized_stack_slot(ir::StackSlotData::new(
+        ir::StackSlotKind::ExplicitSlot,
+        SLOT as u32,
+        0,
+    ));
+    let out = builder.ins().stack_addr(POINTER, slot, 0);
+    let mut given = arguments.to_vec();
+    given.push(out);
+    let called = builder.ins().call(reaching, &given);
+    let status = builder.inst_results(called)[0];
+
+    let ok = builder.create_block();
+    let bad = builder.create_block();
+    let answered = builder.ins().iconst(types::I32, i64::from(ANSWERED));
+    let is_ok = builder.ins().icmp(IntCC::Equal, status, answered);
+    builder.ins().brif(is_ok, ok, &[], bad, &[]);
+    builder.seal_block(ok);
+    builder.seal_block(bad);
+
+    builder.switch_to_block(bad);
+    builder.ins().jump(abort, &[status.into()]);
+
+    builder.switch_to_block(ok);
+    Ok(builder.ins().load(answers, TRUSTED, out, 0))
 }
 
 /// What the document's numbers for a behavior's bindings stand for here.
@@ -967,18 +1096,19 @@ fn lower(
     lowering: &Lowering,
     module: &mut ObjectModule,
     bindings: &mut Bindings,
+    abort: ir::Block,
     node: &Node,
 ) -> Result<ir::Value> {
     Ok(match node {
-        Node::Int { value, ty } => builder.ins().iconst(machine_type(ty)?, *value),
+        Node::Int { value, ty, .. } => builder.ins().iconst(machine_type(ty)?, *value),
         Node::Read { binding, .. } => {
             let variable = bindings.of(*binding)?;
             builder.use_var(variable)
         }
-        Node::Neg { operand, .. } => {
-            let held = lower(builder, lowering, module, bindings, operand)?;
+        Node::Neg { operand, aborts, .. } => {
+            let held = lower(builder, lowering, module, bindings, abort, operand)?;
             let nought = builder.ins().iconst(machine_type(operand.ty())?, 0);
-            difference(builder, nought, held)
+            difference(builder, abort, overflow_status(aborts)?, nought, held)?
         }
         Node::Let {
             binding,
@@ -986,27 +1116,31 @@ fn lower(
             body,
             ..
         } => {
-            let held = lower(builder, lowering, module, bindings, value)?;
+            let held = lower(builder, lowering, module, bindings, abort, value)?;
             let variable = builder.declare_var(machine_type(value.ty())?);
             builder.def_var(variable, held);
             bindings.at(*binding, variable);
-            lower(builder, lowering, module, bindings, body)?
+            lower(builder, lowering, module, bindings, abort, body)?
         }
-        Node::Bool { value, ty } => builder.ins().iconst(machine_type(ty)?, i64::from(*value)),
+        Node::Bool { value, ty, .. } => builder.ins().iconst(machine_type(ty)?, i64::from(*value)),
         Node::Str { value, .. } => text_in_the_object(builder, module, value)?,
         Node::Binary {
-            op, left, right, ..
-        } => binary(builder, lowering, module, bindings, *op, left, right)?,
+            op, left, right, aborts, ..
+        } => binary(
+            builder, lowering, module, bindings, abort, *op,
+            Operands { left, right, aborts },
+        )?,
         Node::If {
             cond,
             then,
             els,
             ty,
+            ..
         } => {
-            let asked = lower(builder, lowering, module, bindings, cond)?;
+            let asked = lower(builder, lowering, module, bindings, abort, cond)?;
             let answers = machine_type(ty)?;
             fork(builder, asked, answers, |builder, taken| {
-                lower(builder, lowering, module, bindings, if taken { then } else { els })
+                lower(builder, lowering, module, bindings, abort, if taken { then } else { els })
             })?
         }
         Node::Unit { declared, .. } => {
@@ -1040,7 +1174,7 @@ fn lower(
             // take room of its own and what is half-written is not a value.
             let mut held = Vec::with_capacity(values.len());
             for value in values {
-                let answered = lower(builder, lowering, module, bindings, value)?;
+                let answered = lower(builder, lowering, module, bindings, abort, value)?;
                 held.push(into_slot(builder, answered));
             }
             let flags = TRUSTED;
@@ -1054,7 +1188,7 @@ fn lower(
             }
             value
         }
-        Node::Field { target, field, ty } => {
+        Node::Field { target, field, ty, .. } => {
             let of = target.ty();
             let Ty::Declared { declared } = of else {
                 bail!("a field of {}, which holds no fields", of.spelt());
@@ -1063,19 +1197,22 @@ fn lower(
             let at = shape
                 .position_of(field)
                 .ok_or_else(|| anyhow!("{declared} declares no field {field}"))?;
-            let value = lower(builder, lowering, module, bindings, target)?;
+            let value = lower(builder, lowering, module, bindings, abort, target)?;
             let flags = TRUSTED;
             let held = builder
                 .ins()
                 .load(types::I64, flags, value, field_at(at) as i32);
             out_of_slot(builder, held, machine_type(ty)?)
         }
-        Node::Match { subject, arms, ty } => {
-            let value = lower(builder, lowering, module, bindings, subject)?;
-            fork_on_what_it_is(builder, lowering, module, bindings, value, arms, machine_type(ty)?)?
+        Node::Match { subject, arms, ty, .. } => {
+            let value = lower(builder, lowering, module, bindings, abort, subject)?;
+            fork_on_what_it_is(
+                builder, lowering, module, bindings, abort, value,
+                ForkArms { arms, answers: machine_type(ty)? },
+            )?
         }
         Node::Some { value, .. } => {
-            let held = lower(builder, lowering, module, bindings, value)?;
+            let held = lower(builder, lowering, module, bindings, abort, value)?;
             let held = into_slot(builder, held);
             let flags = TRUSTED;
             let holding = lowering.room(builder, module, room_for_held());
@@ -1086,7 +1223,7 @@ fn lower(
         Node::Tuple { members, .. } => {
             let mut held = Vec::with_capacity(members.len());
             for member in members {
-                let answered = lower(builder, lowering, module, bindings, member)?;
+                let answered = lower(builder, lowering, module, bindings, abort, member)?;
                 held.push(into_slot(builder, answered));
             }
             let flags = TRUSTED;
@@ -1099,28 +1236,58 @@ fn lower(
         Node::Call {
             reaches,
             declared,
+            kernel,
             arguments,
-            ..
-        } => {
-            let reached = match reaches {
-                // The copy this module holds, and not another module's copy of the same
-                // declaration: a module carries every definition it reaches.
-                Reaches::Helper => lowering.reachable.of_held(lowering.carrier, declared)?,
-                Reaches::Behavior => lowering.reachable.of_behavior_named(declared)?,
-                Reaches::Value => {
-                    return Err(not_lowered(format!(
-                        "a call to {declared}, which runs in the module that declares it"
-                    )));
+            ty,
+            aborts,
+        } => match reaches {
+            // The copy this module holds, and not another module's copy of the same declaration:
+            // a module carries every definition it reaches.
+            Reaches::Helper | Reaches::Behavior => {
+                let declared = declared.as_deref().expect(
+                    "a call the writer said reaches a helper or a behavior names which one",
+                );
+                let reached = match reaches {
+                    Reaches::Helper => lowering.reachable.of_held(lowering.carrier, declared)?,
+                    Reaches::Behavior => lowering.reachable.of_behavior_named(declared)?,
+                    Reaches::Value | Reaches::Kernel => unreachable!(),
+                };
+                let mut given = Vec::with_capacity(arguments.len());
+                for argument in arguments {
+                    given.push(lower(builder, lowering, module, bindings, abort, argument)?);
                 }
-            };
-            let mut given = Vec::with_capacity(arguments.len());
-            for argument in arguments {
-                given.push(lower(builder, lowering, module, bindings, argument)?);
+                call_reached(builder, module, abort, reached, machine_type(ty)?, &given)?
             }
-            call_reached(builder, module, reached, declared, &given)?
-        }
-        Node::Member { tuple, at, ty } => {
-            let value = lower(builder, lowering, module, bindings, tuple)?;
+            Reaches::Value => {
+                return Err(not_lowered(
+                    "a call to a value, which runs in the module that declares it",
+                ));
+            }
+            // Which kernels this backend already answers instructions for is this match's own
+            // list and nowhere else's — kept short on purpose, so a kernel this has not met yet
+            // falls straight through to NotLowered rather than a table here claiming to know.
+            Reaches::Kernel => {
+                let kernel = kernel
+                    .as_deref()
+                    .expect("a call the writer said reaches a kernel names which one");
+                match kernel {
+                    "int.add" if arguments.len() == 2 => {
+                        let a = Held::of(
+                            &arguments[0],
+                            lower(builder, lowering, module, bindings, abort, &arguments[0])?,
+                        );
+                        let b = Held::of(
+                            &arguments[1],
+                            lower(builder, lowering, module, bindings, abort, &arguments[1])?,
+                        );
+                        arithmetic(builder, abort, Op::Add, a, b, aborts)?
+                    }
+                    _ => return Err(not_lowered(format!("a call to the kernel {kernel}"))),
+                }
+            }
+        },
+        Node::Member { tuple, at, ty, .. } => {
+            let value = lower(builder, lowering, module, bindings, abort, tuple)?;
             let flags = TRUSTED;
             let held = builder
                 .ins()
@@ -1138,15 +1305,25 @@ fn lower(
 ///
 /// Running out of arms is this compiler having emitted the wrong test: the checker settles that a
 /// fork always answers, so nothing a program can be written as reaches the end of this.
+/// What `fork_on_what_it_is` asks over, beyond the four it already threads through every call a
+/// lowering makes: which arms, and the width the fork as a whole answers at. Bundled so this stays
+/// within the width every function here is held to instead of adding a sixth thing this and
+/// `lower` would otherwise both have to keep passing down separately.
+struct ForkArms<'a> {
+    arms: &'a [Arm],
+    answers: types::Type,
+}
+
 fn fork_on_what_it_is(
     builder: &mut FunctionBuilder,
     lowering: &Lowering,
     module: &mut ObjectModule,
     bindings: &mut Bindings,
+    abort: ir::Block,
     value: ir::Value,
-    arms: &[Arm],
-    answers: types::Type,
+    over: ForkArms,
 ) -> Result<ir::Value> {
+    let ForkArms { arms, answers } = over;
     let after = builder.create_block();
     builder.append_block_param(after, answers);
 
@@ -1169,7 +1346,7 @@ fn fork_on_what_it_is(
             builder.def_var(variable, held);
             bindings.at(number, variable);
         }
-        let answered = lower(builder, lowering, module, bindings, &arm.body)?;
+        let answered = lower(builder, lowering, module, bindings, abort, &arm.body)?;
         builder.ins().jump(after, &[answered.into()]);
 
         builder.switch_to_block(next);
@@ -1310,15 +1487,26 @@ where
 ///
 /// The operands are lowered here and not before, because two of these decide whether the right one
 /// runs at all.
+/// The two operands of a binary operator, plus the one fact `arithmetic` needs and no other arm
+/// of `op` does: which reason (if any) this exact site may end without a value for. Bundled with
+/// the operands rather than threaded as a fourth thing beside them, since a caller already has all
+/// three off one `Node::Binary`.
+struct Operands<'a> {
+    left: &'a Node,
+    right: &'a Node,
+    aborts: &'a [AbortKind],
+}
+
 fn binary(
     builder: &mut FunctionBuilder,
     lowering: &Lowering,
     module: &mut ObjectModule,
     bindings: &mut Bindings,
+    abort: ir::Block,
     op: Op,
-    left: &Node,
-    right: &Node,
+    operands: Operands,
 ) -> Result<ir::Value> {
+    let Operands { left, right, aborts } = operands;
     match op {
         // `&&` and `||` stop as soon as the answer is settled, and which operands run is part of
         // what they mean rather than something a backend decides: a condition narrows what its
@@ -1326,7 +1514,7 @@ fn binary(
         // condition exists to exclude.
         Op::And | Op::Or => {
             let settles_it = matches!(op, Op::Or);
-            let asked = lower(builder, lowering, module, bindings, left)?;
+            let asked = lower(builder, lowering, module, bindings, abort, left)?;
             // What the left one is, which is what the whole of it is: a condition answers what its
             // operands answer, and reading that off the operand rather than knowing it here keeps
             // the width a fact that crossed.
@@ -1335,7 +1523,7 @@ fn binary(
                 if taken == settles_it {
                     Ok(builder.ins().iconst(answers, i64::from(settles_it)))
                 } else {
-                    lower(builder, lowering, module, bindings, right)
+                    lower(builder, lowering, module, bindings, abort, right)
                 }
             })
         }
@@ -1346,10 +1534,10 @@ fn binary(
             // `amount == 0` is; a case value compared with its sum is two declared types that are
             // not the same one. Read off the left alone, both of those are whatever the left one
             // happened to be.
-            let a = Held::of(left, lower(builder, lowering, module, bindings, left)?);
-            let b = Held::of(right, lower(builder, lowering, module, bindings, right)?);
+            let a = Held::of(left, lower(builder, lowering, module, bindings, abort, left)?);
+            let b = Held::of(right, lower(builder, lowering, module, bindings, abort, right)?);
             match op {
-                Op::Add | Op::Sub | Op::Mul => arithmetic(builder, op, a, b),
+                Op::Add | Op::Sub | Op::Mul => arithmetic(builder, abort, op, a, b, aborts),
                 Op::Eq | Op::Ne | Op::Lt | Op::Le | Op::Gt | Op::Ge => {
                     compare(builder, lowering, module, op, a, b)
                 }
@@ -1487,7 +1675,14 @@ fn compare(
 /// to the wrapped number and not to the value. So the operands are two `Int`s by the time this
 /// reads them. That is the checker's arrangement and not this driver's, which is why anything else
 /// is the two halves disagreeing rather than a lowering that is still to be written.
-fn arithmetic(builder: &mut FunctionBuilder, op: Op, left: Held, right: Held) -> Result<ir::Value> {
+fn arithmetic(
+    builder: &mut FunctionBuilder,
+    abort: ir::Block,
+    op: Op,
+    left: Held,
+    right: Held,
+    aborts: &[AbortKind],
+) -> Result<ir::Value> {
     let (a, b) = (left.value, right.value);
     match (left.ty, right.ty) {
         (Ty::Prim { prim }, Ty::Prim { prim: also }) if prim == also => match prim {
@@ -1496,11 +1691,11 @@ fn arithmetic(builder: &mut FunctionBuilder, op: Op, left: Held, right: Held) ->
                     let sum = builder.ins().iadd(a, b);
                     let past = builder.ins().bxor(a, sum);
                     let also = builder.ins().bxor(b, sum);
-                    trap_where_the_sign_bit_is_set(builder, past, also);
+                    abort_where_the_sign_bit_is_set(builder, abort, overflow_status(aborts)?, past, also);
                     Ok(sum)
                 }
-                Op::Sub => Ok(difference(builder, a, b)),
-                Op::Mul => Ok(product(builder, a, b)),
+                Op::Sub => difference(builder, abort, overflow_status(aborts)?, a, b),
+                Op::Mul => product(builder, abort, overflow_status(aborts)?, a, b),
                 _ => unreachable!("reached from a sum, a difference or a product and nothing else"),
             },
             Prim::Decimal => Err(not_lowered(format!(
@@ -1628,12 +1823,18 @@ fn as_a_whole_number(op: Op) -> IntCC {
 /// The operands disagreeing in sign and the answer disagreeing with the left one is what that is.
 /// A negation is this against nought, which is why the two are one function: negating the smallest
 /// `Int` there is leaves the range exactly as any other subtraction does.
-fn difference(builder: &mut FunctionBuilder, a: ir::Value, b: ir::Value) -> ir::Value {
+fn difference(
+    builder: &mut FunctionBuilder,
+    abort: ir::Block,
+    status: Option<Status>,
+    a: ir::Value,
+    b: ir::Value,
+) -> Result<ir::Value> {
     let difference = builder.ins().isub(a, b);
     let apart = builder.ins().bxor(a, b);
     let moved = builder.ins().bxor(a, difference);
-    trap_where_the_sign_bit_is_set(builder, apart, moved);
-    difference
+    abort_where_the_sign_bit_is_set(builder, abort, status, apart, moved);
+    Ok(difference)
 }
 
 /// A product that left the range an `Int` holds ends the computation.
@@ -1641,27 +1842,68 @@ fn difference(builder: &mut FunctionBuilder, a: ir::Value, b: ir::Value) -> ir::
 /// Worked out at twice the width and held to what comes back when it is narrowed: the two agree
 /// exactly when the product is one an `Int` holds. Said this way rather than as a division, which
 /// has an operand pair of its own that no `Int` answers for.
-fn product(builder: &mut FunctionBuilder, a: ir::Value, b: ir::Value) -> ir::Value {
+fn product(
+    builder: &mut FunctionBuilder,
+    abort: ir::Block,
+    status: Option<Status>,
+    a: ir::Value,
+    b: ir::Value,
+) -> Result<ir::Value> {
     let a_wide = builder.ins().sextend(types::I128, a);
     let b_wide = builder.ins().sextend(types::I128, b);
     let wide = builder.ins().imul(a_wide, b_wide);
     let held = builder.ins().ireduce(types::I64, wide);
     let back = builder.ins().sextend(types::I128, held);
     let past = builder.ins().icmp(IntCC::NotEqual, wide, back);
-    builder
-        .ins()
-        .trapnz(past, TrapCode::user(OVERFLOWED).expect("a trap code of its own"));
-    held
+    abort_where(builder, abort, status, past);
+    Ok(held)
 }
 
 /// Ends the computation where both of these have their sign bit set.
 ///
 /// What leaving the range looks like is two facts about signs holding at once, and which two
 /// depends on the operation. Each caller works out its own pair and this is what they end on.
-fn trap_where_the_sign_bit_is_set(builder: &mut FunctionBuilder, one: ir::Value, other: ir::Value) {
+fn abort_where_the_sign_bit_is_set(
+    builder: &mut FunctionBuilder,
+    abort: ir::Block,
+    status: Option<Status>,
+    one: ir::Value,
+    other: ir::Value,
+) {
     let both = builder.ins().band(one, other);
     let past = builder.ins().ushr_imm_u(both, 63);
-    builder
-        .ins()
-        .trapnz(past, TrapCode::user(OVERFLOWED).expect("a trap code of its own"));
+    abort_where(builder, abort, status, past);
+}
+
+/// A machine condition that leaves an `Int` outside the range it holds is this backend's own
+/// invariant answering rather than the language's — the checker already settled that the site
+/// carries exactly this one reason (see `overflow_status`) — so what happens when `condition` is
+/// true is a jump to `abort` with that reason's status, and lowering carries on in a fresh block
+/// for the case it is false. Not a trap: a trap is this compiler's own bug answering, and a Souther
+/// `Int` leaving its range is not that — it is the language's own answer to the computation, and
+/// `abort` is the one place every such answer in this function leaves through.
+fn abort_where(
+    builder: &mut FunctionBuilder,
+    abort: ir::Block,
+    status: Option<Status>,
+    condition: ir::Value,
+) {
+    let Some(status) = status else {
+        // The checker says this site never ends without a value, so no check is emitted for it
+        // at all — not even the machine condition this backend could otherwise test `condition`
+        // for. See `overflow_status`'s own doc for why trusting `NONE` here, rather than checking
+        // anyway, is the point.
+        return;
+    };
+    let past = builder.create_block();
+    let ok = builder.create_block();
+    builder.ins().brif(condition, past, &[], ok, &[]);
+    builder.seal_block(past);
+    builder.seal_block(ok);
+
+    builder.switch_to_block(past);
+    let code = builder.ins().iconst(types::I32, i64::from(status));
+    builder.ins().jump(abort, &[code.into()]);
+
+    builder.switch_to_block(ok);
 }

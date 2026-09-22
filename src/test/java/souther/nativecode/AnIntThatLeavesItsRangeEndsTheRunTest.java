@@ -1,6 +1,7 @@
 package souther.nativecode;
 
 import org.junit.jupiter.api.Test;
+import souther.compiler.abort.AbortKind;
 import souther.compiler.observe.ObservedValue;
 import souther.compiler.program.CheckedBehavior;
 import souther.compiler.program.CheckedModule;
@@ -23,7 +24,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  * beside the nearest pair that answers, through the same executable: the pair that answers is what
  * says the ending was this computation's and not the arrangement around it.
  *
- * <p>Which abort it was is not asked. Nothing carries a reason out of a native run.
+ * <p>Since issue #9, which abort it was is asked, and it is always {@code
+ * REQUIRED_FORM_HAS_NO_PLACE} — the one law the specification states for an {@code Int} leaving
+ * the range it holds, whichever of these four operations reaches it.
  */
 class AnIntThatLeavesItsRangeEndsTheRunTest {
 
@@ -63,10 +66,31 @@ class AnIntThatLeavesItsRangeEndsTheRunTest {
         assertEndsButItsNeighbourAnswers("less", List.of(MOST, -1L), List.of(MOST, 0L), MOST);
     }
 
-    /** Turning the smallest `Int` around is a subtraction from nought like any other. */
+    /**
+     * Turning the smallest {@code Int} around is a subtraction from nought like any other, and
+     * mathematically overflows exactly as much as {@code Int.MIN - 1} does. It does not end the
+     * run here, though: {@code CheckedProgram#abortsAt} answers {@code AbortSet.NONE} for
+     * {@code Core.Neg} today, and this backend trusts that rather than checking on its own account
+     * — the whole point of reading it off the checker instead of re-deriving it (see
+     * {@code overflow_status}'s own doc in the driver crate). So this wraps, silently, the same way
+     * the JVM backend's {@code lneg} does — which is the asymmetry with {@code +}/{@code -}/{@code
+     * *} filed as souther-lang/souther#1878. Once that lands, this test's expectation flips back to
+     * an abort and the shared helper above covers it like the other three.
+     */
     @Test
-    void theSmallestIntTurnedAroundEndsTheRunAndTheNextOneAlongAnswers() throws Exception {
-        assertEndsButItsNeighbourAnswers("flip", List.of(LEAST), List.of(LEAST + 1), MOST);
+    void theSmallestIntTurnedAroundWrapsRatherThanEndingTheRunPendingSoutherIssue1878()
+            throws Exception {
+        CheckedProgram program = CheckedProgram.of(List.of(SOURCE));
+        try (Running running = Running.of(program)) {
+            CheckedModule module = program.modules().getFirst();
+            CheckedBehavior flip = module.behaviors().stream()
+                    .filter(it -> it.name().name().equals("flip"))
+                    .findFirst()
+                    .orElseThrow(() -> new AssertionError("no behavior flip"));
+
+            assertThat(running.answeredOrEnded(module, flip, given(List.of(LEAST))))
+                    .isEqualTo(new RunOutcome.Answered(new ObservedValue.Integer(LEAST)));
+        }
     }
 
     @Test
@@ -88,11 +112,11 @@ class AnIntThatLeavesItsRangeEndsTheRunTest {
 
             assertThat(running.answeredOrEnded(module, reached, given(ends)))
                     .as("%s handed %s", behavior, ends)
-                    .isEmpty();
+                    .isEqualTo(new RunOutcome.Aborted(AbortKind.REQUIRED_FORM_HAS_NO_PLACE));
             assertThat(running.answeredOrEnded(module, reached, given(answers)))
                     .as("%s handed %s, which is the control the ending above is read against",
                             behavior, answers)
-                    .contains(new ObservedValue.Integer(with));
+                    .isEqualTo(new RunOutcome.Answered(new ObservedValue.Integer(with)));
         }
     }
 

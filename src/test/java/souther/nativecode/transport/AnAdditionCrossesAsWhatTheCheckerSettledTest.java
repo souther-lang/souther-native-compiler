@@ -36,16 +36,16 @@ class AnAdditionCrossesAsWhatTheCheckerSettledTest {
         String written = ProgramWriter.written(CheckedProgram.of(List.of(ADDING)));
 
         assertThat(written).isEqualTo("""
-                {"transport":4,"declarations":[],\
+                {"transport":5,"declarations":[],\
                 "behaviors":[{"module":"calculation","name":"add","is":"body",\
                 "takes":[{"prim":"INT"},{"prim":"INT"}],"answers":{"prim":"INT"}}],\
                 "modules":[{"name":"calculation","helpers":[],\
                 "definitions":[{"is":"body","declared":"calculation.add","parameters":["a","b"],\
                 "publication":"published",\
                 "body":{"core":"binary","op":"ADD",\
-                "left":{"core":"read","binding":0,"type":{"prim":"INT"}},\
-                "right":{"core":"read","binding":1,"type":{"prim":"INT"}},\
-                "type":{"prim":"INT"}}}],"examples":[]}]}""");
+                "left":{"core":"read","binding":0,"type":{"prim":"INT"},"aborts":[]},\
+                "right":{"core":"read","binding":1,"type":{"prim":"INT"},"aborts":[]},\
+                "type":{"prim":"INT"},"aborts":["REQUIRED_FORM_HAS_NO_PLACE"]}}],"examples":[]}]}""");
     }
 
     /** What the driver compiles is what this writer wrote, and not a second thing like it. */

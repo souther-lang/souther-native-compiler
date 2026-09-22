@@ -18,7 +18,9 @@
 //! brings this down until this side answers for it too.
 
 use serde::Deserialize;
-use souther_native_driver::transport::{DeclaredBy, Op, Prim, Publication, TRANSPORT_VERSION};
+use souther_native_driver::transport::{
+    AbortKind, DeclaredBy, Op, Prim, Publication, TRANSPORT_VERSION,
+};
 
 /// The document the writer wrote, and the one its own test holds it to.
 const VOCABULARIES: &str = include_str!("vocabularies.transport.json");
@@ -33,6 +35,7 @@ struct Vocabularies {
     prim: Vec<Prim>,
     publication: Vec<Publication>,
     declaredby: Vec<DeclaredBy>,
+    abort: Vec<AbortKind>,
 }
 
 fn read() -> Vocabularies {
@@ -113,6 +116,24 @@ fn every_provenance_is_read_as_the_provenance_it_names() {
             DeclaredBy::AModule,
             DeclaredBy::TheLanguage,
             DeclaredBy::OnThePath,
+        ]
+    );
+}
+
+/// Every reason a run ends without a value, including the ones no site this driver reads yet ever
+/// answers with. What a member means is the checker's; whether any site here can reach it is a
+/// separate question this does not ask.
+#[test]
+fn every_abort_kind_is_read_as_the_abort_kind_it_names() {
+    assert_eq!(
+        read().abort,
+        vec![
+            AbortKind::InvariantNotHeld,
+            AbortKind::EnsuresNotHeld,
+            AbortKind::UnreachableReached,
+            AbortKind::DivisionByZero,
+            AbortKind::RequiredFormHasNoPlace,
+            AbortKind::InvalidBounds,
         ]
     );
 }

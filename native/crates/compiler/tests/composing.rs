@@ -37,7 +37,7 @@ const HARNESS: &str = r#"
 #include <stdio.h>
 #include <stdlib.h>
 
-extern int64_t pipeline(int64_t) __asm__("PREFIXsouther.routing.pipeline");
+extern uint32_t pipeline(int64_t, int64_t *) __asm__("PREFIXsouther.routing.pipeline");
 extern uint8_t tokenOfB __asm__("PREFIXsouther$type$routing$B");
 extern uint8_t tokenOfC __asm__("PREFIXsouther$type$routing$C");
 
@@ -46,7 +46,13 @@ int main(int argc, char **argv) {
         return 2;
     }
     int64_t n = strtoll(argv[1], NULL, 10);
-    int64_t *answered = (int64_t *) pipeline(n);
+    int64_t out;
+    uint32_t status = pipeline(n, &out);
+    if (status != 0) {
+        printf("aborted %u\n", status);
+        return 0;
+    }
+    int64_t *answered = (int64_t *) out;
     int64_t which = answered[0];
     int64_t field = answered[1];
     const char *tag = "?";
