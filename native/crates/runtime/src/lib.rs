@@ -11,7 +11,7 @@
 //! exists and not before: until then there is nothing to tell a shared meaning from a shared
 //! spelling.
 
-use souther_native_abi::{SLOT, TEXT_BYTES, TEXT_LENGTH};
+use souther_native_abi::{SLOT, TEXT_BYTES, TEXT_LENGTH, room_for_text};
 use std::cell::RefCell;
 use std::cmp::Ordering;
 
@@ -154,13 +154,16 @@ unsafe fn text<'a>(at: *const u8) -> &'a [u8] {
 }
 
 /// Room for a string of `bytes` bytes, with the count written and the text left to the caller.
-fn room_for_text(bytes: usize) -> *mut u8 {
-    let wanted = i64::try_from(SLOT as usize + bytes).expect("a string is smaller than an Int");
+///
+/// How much that is comes from the crate that says where the text starts. Worked out here as a
+/// slot and the bytes, it would be right only while the text happened to start one slot in — and
+/// the day it did not, this would take less room than it then writes into.
+fn room_for_a_string(bytes: usize) -> *mut u8 {
+    let bytes = i64::try_from(bytes).expect("a string is smaller than an Int");
+    let wanted = room_for_text(bytes);
     let at = souther_alloc(wanted);
     unsafe {
-        at.offset(TEXT_LENGTH as isize)
-            .cast::<i64>()
-            .write(bytes as i64)
+        at.offset(TEXT_LENGTH as isize).cast::<i64>().write(bytes)
     };
     at
 }
@@ -196,7 +199,7 @@ pub unsafe extern "C" fn souther_string_compare(left: *const u8, right: *const u
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_string_concat(left: *const u8, right: *const u8) -> *mut u8 {
     let (before, after) = unsafe { (text(left), text(right)) };
-    let at = room_for_text(before.len() + after.len());
+    let at = room_for_a_string(before.len() + after.len());
     unsafe {
         let text = at.offset(TEXT_BYTES as isize);
         text.copy_from_nonoverlapping(before.as_ptr(), before.len());
@@ -221,20 +224,24 @@ pub unsafe extern "C" fn souther_string_concat(left: *const u8, right: *const u8
 ///
 /// # Safety
 ///
-/// `bytes` points at `length` bytes, and those bytes are valid UTF-8 already in the form Souther
-/// keeps text in.
+/// `bytes` points at `length` bytes that may be read.
 ///
-/// Bytes that are neither are not a memory fault: the decoding reads no byte the length does not
-/// cover, so what comes of them is a comparison answering something meaningless rather than an
-/// access going where it should not. They are a precondition because the answer would mean
-/// nothing, and not because the run would fall over.
+/// # Contract
+///
+/// Those bytes are valid UTF-8, already in the form Souther keeps text in.
+///
+/// Apart from the safety above, and not folded into it, because breaking it is not a memory fault:
+/// the decoding reads no byte the length does not cover, so bytes that are neither make a
+/// comparison answer something meaningless rather than send an access where it should not go. What
+/// is owed to Rust and what is owed to the language are two different debts, and writing them as
+/// one would make the second look like it had teeth it does not have.
 /// # Panics
 ///
 /// Where the length is below nought.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_string_of_utf8(bytes: *const u8, length: i64) -> *mut u8 {
     let held = usize::try_from(length).expect("text is handed over as bytes, and never fewer than 0");
-    let at = room_for_text(held);
+    let at = room_for_a_string(held);
     unsafe { at.offset(TEXT_BYTES as isize).copy_from_nonoverlapping(bytes, held) };
     at
 }

@@ -19,7 +19,8 @@ use cranelift::module::{DataDescription, DataId, FuncId, Linkage, Module, defaul
 use cranelift::object::{ObjectBuilder, ObjectModule};
 use souther_native_abi::{
     ALLOCATE, HELD, NOTHING, SLOT, STRING_COMPARE, STRING_CONCAT, TEXT_BYTES, TEXT_LENGTH, TOKEN,
-    WHICH, behavior_symbol, example_symbol, field_at, held_symbol, member_at, type_symbol,
+    WHICH, behavior_symbol, example_symbol, field_at, held_symbol, member_at, room_for_fields,
+    room_for_held, room_for_members, room_for_text, type_symbol,
 };
 use std::collections::HashMap;
 use std::fmt;
@@ -503,15 +504,20 @@ struct Lowering<'a> {
 }
 
 impl Lowering<'_> {
-    /// Room for `slots` slots, from the arena the caller brackets.
+    /// Room for `bytes` bytes, from the arena the caller brackets.
+    ///
+    /// Bytes and not slots, because how many slots a value is made of is a fact about its layout
+    /// and the layout is stated in the `abi` crate. A caller counting slots here would be working
+    /// out for itself where the fields start, which is the other half of a fact it is already
+    /// reading from there.
     fn room(
         &self,
         builder: &mut FunctionBuilder,
         module: &mut ObjectModule,
-        slots: usize,
+        bytes: i64,
     ) -> ir::Value {
         let taking = module.declare_func_in_func(self.allocate, builder.func);
-        let size = builder.ins().iconst(types::I64, SLOT * slots as i64);
+        let size = builder.ins().iconst(types::I64, bytes);
         let taken = builder.ins().call(taking, &[size]);
         builder.inst_results(taken)[0]
     }
@@ -761,7 +767,7 @@ fn lower(
         }
         Node::Unit { declared, .. } => {
             let flags = TRUSTED;
-            let value = lowering.room(builder, module,1);
+            let value = lowering.room(builder, module, room_for_fields(0));
             let which = tag_of(builder, lowering, module, declared)?;
             builder.ins().store(flags, which, value, WHICH as i32);
             value
@@ -794,7 +800,7 @@ fn lower(
                 held.push(into_slot(builder, answered));
             }
             let flags = TRUSTED;
-            let value = lowering.room(builder, module,1 + values.len());
+            let value = lowering.room(builder, module, room_for_fields(values.len()));
             let which = tag_of(builder, lowering, module, declared)?;
             builder.ins().store(flags, which, value, WHICH as i32);
             for (at, field) in held.into_iter().enumerate() {
@@ -828,7 +834,7 @@ fn lower(
             let held = lower(builder, lowering, module, bindings, value)?;
             let held = into_slot(builder, held);
             let flags = TRUSTED;
-            let holding = lowering.room(builder, module,1);
+            let holding = lowering.room(builder, module, room_for_held());
             builder.ins().store(flags, held, holding, HELD as i32);
             holding
         }
@@ -840,7 +846,7 @@ fn lower(
                 held.push(into_slot(builder, answered));
             }
             let flags = TRUSTED;
-            let value = lowering.room(builder, module, members.len());
+            let value = lowering.room(builder, module, room_for_members(members.len()));
             for (at, member) in held.into_iter().enumerate() {
                 builder.ins().store(flags, member, value, member_at(at) as i32);
             }
@@ -1320,8 +1326,8 @@ fn text_in_the_object(
     module: &mut ObjectModule,
     value: &str,
 ) -> Result<ir::Value> {
-    let mut written = vec![0u8; TEXT_BYTES as usize + value.len()];
     let length = i64::try_from(value.len()).expect("a literal is shorter than an Int");
+    let mut written = vec![0u8; room_for_text(length) as usize];
     written[TEXT_LENGTH as usize..][..SLOT as usize].copy_from_slice(&length.to_ne_bytes());
     written[TEXT_BYTES as usize..].copy_from_slice(value.as_bytes());
 

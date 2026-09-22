@@ -126,15 +126,64 @@ pub const WHICH: i64 = 0;
 pub const FIRST_FIELD: i64 = SLOT;
 
 /// The offset of a field of a declared type, by its position in the declaration.
-pub fn field_at(position: usize) -> i64 {
+pub const fn field_at(position: usize) -> i64 {
     FIRST_FIELD + SLOT * position as i64
 }
 
 /// The offset of a tuple's member. A tuple says which type it is nowhere: it is not a declared
 /// type and nothing matches on one, so its members start where they are.
-pub fn member_at(position: usize) -> i64 {
+pub const fn member_at(position: usize) -> i64 {
     SLOT * position as i64
 }
+
+/// How much room a value of a declared type takes, by how many fields it has.
+///
+/// Here and not worked out by whoever takes the room, which is the whole point of this crate: an
+/// offset and the room it has to fall inside are one fact, and a caller that added up slots for
+/// itself would be holding a copy of half of it. The two have gone out of step once already.
+pub const fn room_for_fields(fields: usize) -> i64 {
+    FIRST_FIELD + SLOT * fields as i64
+}
+
+/// How much room a tuple of this many members takes.
+pub const fn room_for_members(members: usize) -> i64 {
+    member_at(members)
+}
+
+/// How much room an `Option` holding a value takes.
+pub const fn room_for_held() -> i64 {
+    HELD + SLOT
+}
+
+/// How much room a string carrying this many bytes of text takes.
+pub const fn room_for_text(bytes: i64) -> i64 {
+    TEXT_BYTES + bytes
+}
+
+/// That every offset falls inside the room its value is given.
+///
+/// Held here rather than by a test, because both sides of each of these are constants and a test
+/// could only fail after one of them had already been changed. What it stops is a layout moved at
+/// one of the two places it is read: an offset that moved past the room would be a value written
+/// off the end of what was taken for it, which is not something the run would report.
+const _: () = {
+    let mut fields = 0;
+    while fields < 16 {
+        assert!(field_at(fields) + SLOT <= room_for_fields(fields + 1));
+        assert!(member_at(fields) + SLOT <= room_for_members(fields + 1));
+        fields += 1;
+    }
+    assert!(WHICH + SLOT <= room_for_fields(0));
+    assert!(HELD + SLOT <= room_for_held());
+    assert!(TEXT_LENGTH + SLOT <= room_for_text(0));
+};
+
+/// That a string's count of bytes is as wide as a slot.
+///
+/// Both halves write and read it as an `i64`, which is this and not something either of them
+/// decided. Were a slot to be made wider, that is two readings to change and a build that stops
+/// until they are.
+const _: () = assert!(SLOT as usize == size_of::<i64>());
 
 /// What an `Option` holding nothing is.
 ///
@@ -164,12 +213,6 @@ pub const TEXT_LENGTH: i64 = 0;
 /// One slot along, so the text starts aligned as everything the arena answers does, and so what
 /// stands before it is read as a slot like any other.
 pub const TEXT_BYTES: i64 = SLOT;
-
-/// A string's text never stands where its count does, whatever either of them is moved to.
-///
-/// Held at compile time and not by a test, because both sides of it are constants: a test could
-/// only fail after someone had already changed one of them, and this stops the change instead.
-const _: () = assert!(TEXT_BYTES >= TEXT_LENGTH + SLOT);
 
 /// The symbol two strings are compared through.
 ///
