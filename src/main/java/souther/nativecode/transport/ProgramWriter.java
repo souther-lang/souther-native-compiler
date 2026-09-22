@@ -1,5 +1,6 @@
 package souther.nativecode.transport;
 
+import souther.compiler.core.Composition;
 import souther.compiler.core.Core;
 import souther.compiler.core.ValueShape;
 import souther.compiler.observe.ObservedValue;
@@ -66,7 +67,7 @@ public final class ProgramWriter {
      * written moves, so that a driver and a writer that disagree say so rather than producing an
      * object that is wrong quietly.
      */
-    public static final int TRANSPORT_VERSION = 3;
+    public static final int TRANSPORT_VERSION = 4;
 
     private final CheckedProgram program;
 
@@ -275,10 +276,17 @@ public final class ProgramWriter {
     }
 
     private String module(CheckedModule module) {
-        StringJoiner bodies = new StringJoiner(",", "[", "]");
+        StringJoiner definitions = new StringJoiner(",", "[", "]");
         for (CheckedBehavior behavior : module.behaviors()) {
-            if (behavior.implementation() instanceof CheckedImplementation.Body written) {
-                bodies.add(body(module, behavior, written));
+            switch (behavior.implementation()) {
+                case CheckedImplementation.Body written -> definitions.add(body(module, behavior, written));
+                case CheckedImplementation.Composed written -> definitions.add(composed(module, behavior, written));
+                // Named in the table of targets and not defined by this object: what answers it
+                // is supplied from outside, implemented by another build, or not written at all,
+                // and none of those is a definition this module holds.
+                case CheckedImplementation.Injected ignored -> { }
+                case CheckedImplementation.ImplementedElsewhere ignored -> { }
+                case CheckedImplementation.Unwritten ignored -> { }
             }
         }
         StringJoiner helpers = new StringJoiner(",", "[", "]");
@@ -297,7 +305,7 @@ public final class ProgramWriter {
         }
         return "{\"name\":" + quoted(module.name())
                 + ",\"helpers\":" + helpers
-                + ",\"bodies\":" + bodies
+                + ",\"definitions\":" + definitions
                 + ",\"examples\":" + examples + "}";
     }
 
@@ -509,11 +517,69 @@ public final class ProgramWriter {
             bindings.number(parameter.binding());
             parameters.add(quoted(parameter.name()));
         }
-        return "{\"declared\":" + quoted(module.name() + "." + behavior.name().name())
+        return "{\"is\":\"body\",\"declared\":" + quoted(module.name() + "." + behavior.name().name())
                 + ",\"parameters\":" + parameters
                 + ",\"publication\":" + quoted(publication(module.publicationOf(behavior.name())))
                 + ",\"body\":" + core(written.body(), bindings)
                 + "}";
+    }
+
+    /**
+     * A behavior written as {@code >->}: the stages, and what each is offered.
+     *
+     * <p>What {@link Composition} carries is the decision and not a plan for carrying it out, and
+     * that is exactly what crosses — stage for stage, in the order the checker walked them. A
+     * lowering that turned this into a pseudo-{@link Core} of calls and matches first would be a
+     * second place the routing was decided, which is the mistake this composition exists to rule
+     * out.
+     *
+     * <p>Registered the way a body's calls are: a stage's behavior may be one nothing in this
+     * document's bodies ever calls — a composition's own signature is enough to name it — so it is
+     * met here or nowhere, the same as a body's {@link Core.Call} meets what it reaches.
+     */
+    private String composed(CheckedModule module, CheckedBehavior behavior,
+                            CheckedImplementation.Composed written) {
+        Composition composition = written.composition();
+        StringJoiner stages = new StringJoiner(",", "[", "]");
+        for (Composition.Stage stage : composition.stages()) {
+            stages.add(stage(stage));
+        }
+        return "{\"is\":\"composed\",\"declared\":"
+                + quoted(module.name() + "." + behavior.name().name())
+                + ",\"publication\":" + quoted(publication(module.publicationOf(behavior.name())))
+                + ",\"stages\":" + stages
+                + ",\"answers\":" + type(composition.answers())
+                + "}";
+    }
+
+    /** One stage of a composition: the behavior it applies, what it answers, and when. */
+    private String stage(Composition.Stage stage) {
+        behaviorsMet.add(stage.behavior());
+        return "{\"behavior\":" + quoted(reached(stage.behavior()))
+                + ",\"answers\":" + type(stage.answers())
+                + ",\"routing\":" + routing(stage.routing())
+                + "}";
+    }
+
+    /**
+     * When a stage is applied to the running value.
+     *
+     * <p>The cases a routing tests are declarations, the same as an arm's, so what a case
+     * resolves to is met the way {@link #selects} meets one — which is what lets the routing
+     * closure a stage adds into {@link #declarationsMet} reach the same {@code tag_of} a
+     * {@code match} arm already resolves on the far side.
+     */
+    private String routing(Composition.Routing routing) {
+        return switch (routing) {
+            case Composition.Routing.Always ignored -> "{\"is\":\"always\"}";
+            case Composition.Routing.OnCases it -> {
+                StringJoiner accepted = new StringJoiner(",", "[", "]");
+                for (TypeSymbol type : it.accepted()) {
+                    accepted.add(quoted(symbol(type)));
+                }
+                yield "{\"is\":\"oncases\",\"accepted\":" + accepted + "}";
+            }
+        };
     }
 
     /** How the module's answer about a name is spelt on the wire, member by member. */

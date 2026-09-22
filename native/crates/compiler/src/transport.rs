@@ -18,7 +18,7 @@ use serde::Deserialize;
 
 /// What this side reads. A document written to say anything else is refused rather than read as
 /// much of as happens to parse.
-pub const TRANSPORT_VERSION: u32 = 3;
+pub const TRANSPORT_VERSION: u32 = 4;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -171,22 +171,90 @@ impl Declaration {
 pub struct Module {
     pub name: String,
     pub helpers: Vec<Held>,
-    /// What this object puts under a name. A behavior that answers some other way is in the table
-    /// above and nowhere here.
-    pub bodies: Vec<Body>,
+    /// What this object puts under a name. A behavior that answers some other way — supplied from
+    /// outside, implemented by another build, or not written — is in the table above and nowhere
+    /// here.
+    pub definitions: Vec<Definition>,
     /// The `example` rows of this module's behaviors that the object runs.
     pub examples: Vec<Example>,
 }
 
-/// A behavior's body, under the name the table of targets knows it by.
+/// What an object defines under a behavior's name: a body of {@link Core}, or a composition of
+/// other behaviors.
+///
+/// Both are local definitions and neither is a body the other can be read as: a composition has no
+/// Core to fall back to and a body has no stages. A definition added upstream stops this
+/// compiling, for the reason every closed set here does — a third way of defining a name would
+/// otherwise arrive as whichever of these two it happened to resemble.
+#[derive(Debug, Deserialize)]
+#[serde(tag = "is", rename_all = "lowercase", deny_unknown_fields)]
+pub enum Definition {
+    /// Written as a `let`: the checker's Core for it.
+    Body {
+        declared: String,
+        parameters: Vec<String>,
+        /// What the module declaring it says about the name.
+        publication: Publication,
+        body: Node,
+    },
+    /// Written as `>->`: the stages, and what each is offered (spec §type-routing). Carried
+    /// whole and not translated into a plan for running it — how the routing between stages is
+    /// realised is this side's to decide, and none of it is written down upstream.
+    Composed {
+        declared: String,
+        /// What the module declaring it says about the name.
+        publication: Publication,
+        stages: Vec<Stage>,
+        answers: Ty,
+    },
+}
+
+impl Definition {
+    /// What a call reaching this definition writes, which is the two halves joined the one way.
+    pub fn declared(&self) -> &str {
+        match self {
+            Definition::Body { declared, .. } | Definition::Composed { declared, .. } => declared,
+        }
+    }
+
+    /// What the module declaring it says about the name.
+    pub fn publication(&self) -> Publication {
+        match self {
+            Definition::Body { publication, .. } | Definition::Composed { publication, .. } => {
+                *publication
+            }
+        }
+    }
+}
+
+/// One stage of a composition: the behavior it applies, what that behavior answers, and when it
+/// is applied to the running value (spec §type-routing).
+///
+/// `answers` is the stage's own output and not the running value after it: the two differ exactly
+/// where the stage was offered part of what was running, and what leaves the main line is not
+/// offered to what follows.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Body {
-    pub declared: String,
-    pub parameters: Vec<String>,
-    /// What the module declaring it says about the name.
-    pub publication: Publication,
-    pub body: Node,
+pub struct Stage {
+    pub behavior: String,
+    pub answers: Ty,
+    pub routing: Routing,
+}
+
+/// When a stage is applied to the running value (spec §type-routing).
+///
+/// A closed set and a tagged union for the reason `Selects` is one: `accepted = []` and no routing
+/// at all are two different facts, and a `bool` or an `Option<Vec<_>>` would make one of them
+/// unrepresentable while inventing a third state nothing upstream ever means.
+#[derive(Debug, Deserialize)]
+#[serde(tag = "is", rename_all = "lowercase", deny_unknown_fields)]
+pub enum Routing {
+    /// The first stage, which takes the composition's own arguments, and any stage whose running
+    /// value carries no cases to tell apart.
+    Always,
+    /// Only where the running value is one of `accepted`. Anything else has left the main line,
+    /// and the composition answers with it rather than offering it to what follows.
+    OnCases { accepted: Vec<String> },
 }
 
 /// Whether the module that declares a behavior publishes it under that name, or keeps it.
