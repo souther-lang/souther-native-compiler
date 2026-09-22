@@ -37,7 +37,7 @@ const HARNESS: &str = r#"
 #include <stdio.h>
 #include <stdlib.h>
 
-extern uint32_t adding(int64_t, int64_t, int64_t *) __asm__("PREFIXsouther.calculation.add");
+extern uint32_t adding(int64_t, int64_t, int64_t *) __asm__("PREFIXsouther2.calculation.add");
 
 int main(int argc, char **argv) {
     if (argc != 3) {

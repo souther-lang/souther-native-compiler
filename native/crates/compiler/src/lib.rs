@@ -44,7 +44,15 @@ const NO_ARM: u8 = 2;
 /// silently agrees with the last one written for something else. What number a member gets is a
 /// decision of this crate's alone — the `abi` crate states the wire's width and its one reserved
 /// value and nothing about what any other value of it means.
-fn native_status(kind: AbortKind) -> Status {
+///
+/// `pub`, and not only for `lower`'s own sake: `Running`'s Java test harness reads a status this
+/// answers back off a compiled run and has to turn it back into the `AbortKind` it came from to
+/// assert anything about it, which means it holds a second, hand-written copy of this same table.
+/// `tests/abort_status.rs` is what keeps the two from drifting apart unnoticed — the same role
+/// `vocabularies.rs` plays for `Op`, `Prim` and the rest, and the same reason: a member spelt
+/// (here, numbered) differently on the two sides reads without complaint and means something
+/// other than what either side thinks it does.
+pub fn native_status(kind: AbortKind) -> Status {
     match kind {
         AbortKind::InvariantNotHeld => 1,
         AbortKind::EnsuresNotHeld => 2,
@@ -56,26 +64,26 @@ fn native_status(kind: AbortKind) -> Status {
 }
 
 /// The one status an arithmetic site that may leave the range its type holds jumps to the abort
-/// block with, or `None` where the checker says this site never does.
+/// block with.
 ///
 /// Read off the site's own `aborts` — `program.abortsAt(site)`'s answer, carried on the `Node` —
 /// rather than assumed from which operator or which kernel this is: what a machine condition here
 /// means is a fact `CheckedProgram` already settled, and asking the transport for it instead of
-/// deciding it again here is the one thing issue #9 exists to change. `NONE` is answered the same
-/// way a nonempty answer is: trusted, not second-guessed against what this backend's own sign-bit
-/// check would say on its own account — a site the checker says never aborts gets no check emitted
-/// for it at all, even where this backend's machine condition could fire, because emitting one
-/// anyway would be exactly the re-derivation issue #9 exists to rule out. (`Core.Neg` is such a
-/// site today — see souther-lang/souther#1878, filed once this asymmetry with `Core.Binary`'s own
-/// arithmetic surfaced here.) An arithmetic site the checker gave more than one reason for is the
-/// two halves disagreeing about what kind of site this is, not a case this backend can pick one of.
-fn overflow_status(aborts: &[AbortKind]) -> Result<Option<Status>> {
+/// deciding it again here is the one thing issue #9 exists to change.
+///
+/// An arithmetic site the checker gave zero or more than one reason for is refused rather than
+/// trusted blindly: a machine condition this backend can fire and a checker answer of zero
+/// reasons for it are the two halves disagreeing about what kind of site this is, and answering a
+/// wrong value because the checker said `NONE` would be worse than refusing the program.
+/// `Core.Neg` is such a site today (souther-lang/souther#1878) — its own caller in `lower` checks
+/// `aborts` before this is reached and refuses with `NotLowered` rather than asking this to fabricate
+/// a status for an empty answer.
+fn overflow_status(aborts: &[AbortKind]) -> Result<Status> {
     match aborts {
-        [] => Ok(None),
-        [only] => Ok(Some(native_status(*only))),
+        [only] => Ok(native_status(*only)),
         _ => bail!(
             "an arithmetic site that may leave its type's range names {} reasons for ending \
-             without a value, and this backend answers only where there is at most one",
+             without a value, and this backend answers only where there is exactly one",
             aborts.len()
         ),
     }
@@ -1105,7 +1113,42 @@ fn lower(
             let variable = bindings.of(*binding)?;
             builder.use_var(variable)
         }
+        Node::Neg { operand, .. } if matches!(operand.as_ref(), Node::Int { .. }) => {
+            // A negated literal — `-5` crosses as `Neg(Int(5))` rather than folded, because
+            // ProgramWriter projects the checker's Core node for node and a literal's own sign
+            // is not something a writer decides. Every `$row` helper the checker builds for a
+            // negative example value is one of these (see `ProgramWriter`'s own doc on what a
+            // helper is), so this is not a rare shape: refusing it would refuse most programs
+            // with a negative literal anywhere in an `example`, for a reason that has nothing to
+            // do with the runtime overflow question below.
+            //
+            // It needs no check and no trust in program.abortsAt either way: what the parser
+            // wrote as a literal's magnitude is already an i64 in range, and negating anything in
+            // [0, i64::MAX] is an i64 in range too — the one value this could not represent,
+            // `-Int.MIN`, is not one this literal's own token could have named in the first
+            // place. So this folds it here rather than routing a compile-time fact through a
+            // runtime sign-bit check.
+            let Node::Int { value, ty, .. } = operand.as_ref() else {
+                unreachable!("matched above");
+            };
+            builder.ins().iconst(machine_type(ty)?, -*value)
+        }
         Node::Neg { operand, aborts, .. } => {
+            // `program.abortsAt` answers AbortSet.NONE for Core.Neg today (souther-lang/souther
+            // #1878), citing only the JVM backend's own codegen — which is exactly the kind of
+            // backend-specific re-derivation issue #9 exists to stop this file from doing on its
+            // own account. So this does not trust it the way every other arithmetic site here
+            // trusts what it is given: `-Int.MIN` overflows for the same representational reason
+            // `Int.MIN - 1` does, and answering it as though it did not would be a wrong value
+            // returned as a right one — worse than refusing a program this backend can lower
+            // correctly once #1878 is resolved. (A literal operand does not reach here at all —
+            // see the arm above — so this is only ever a variable's own value.)
+            if aborts.is_empty() {
+                return Err(not_lowered(
+                    "a negation of something other than a literal, whose overflow this backend \
+                     does not yet trust program.abortsAt for — see souther-lang/souther#1878",
+                ));
+            }
             let held = lower(builder, lowering, module, bindings, abort, operand)?;
             let nought = builder.ins().iconst(machine_type(operand.ty())?, 0);
             difference(builder, abort, overflow_status(aborts)?, nought, held)?
@@ -1235,22 +1278,21 @@ fn lower(
         }
         Node::Call {
             reaches,
-            declared,
-            kernel,
             arguments,
             ty,
             aborts,
         } => match reaches {
             // The copy this module holds, and not another module's copy of the same declaration:
             // a module carries every definition it reaches.
-            Reaches::Helper | Reaches::Behavior => {
-                let declared = declared.as_deref().expect(
-                    "a call the writer said reaches a helper or a behavior names which one",
-                );
+            Reaches::Helper { declared } | Reaches::Behavior { declared } => {
                 let reached = match reaches {
-                    Reaches::Helper => lowering.reachable.of_held(lowering.carrier, declared)?,
-                    Reaches::Behavior => lowering.reachable.of_behavior_named(declared)?,
-                    Reaches::Value | Reaches::Kernel => unreachable!(),
+                    Reaches::Helper { .. } => {
+                        lowering.reachable.of_held(lowering.carrier, declared)?
+                    }
+                    Reaches::Behavior { .. } => {
+                        lowering.reachable.of_behavior_named(declared)?
+                    }
+                    Reaches::Value { .. } | Reaches::Kernel { .. } => unreachable!(),
                 };
                 let mut given = Vec::with_capacity(arguments.len());
                 for argument in arguments {
@@ -1258,7 +1300,7 @@ fn lower(
                 }
                 call_reached(builder, module, abort, reached, machine_type(ty)?, &given)?
             }
-            Reaches::Value => {
+            Reaches::Value { .. } => {
                 return Err(not_lowered(
                     "a call to a value, which runs in the module that declares it",
                 ));
@@ -1266,25 +1308,20 @@ fn lower(
             // Which kernels this backend already answers instructions for is this match's own
             // list and nowhere else's — kept short on purpose, so a kernel this has not met yet
             // falls straight through to NotLowered rather than a table here claiming to know.
-            Reaches::Kernel => {
-                let kernel = kernel
-                    .as_deref()
-                    .expect("a call the writer said reaches a kernel names which one");
-                match kernel {
-                    "int.add" if arguments.len() == 2 => {
-                        let a = Held::of(
-                            &arguments[0],
-                            lower(builder, lowering, module, bindings, abort, &arguments[0])?,
-                        );
-                        let b = Held::of(
-                            &arguments[1],
-                            lower(builder, lowering, module, bindings, abort, &arguments[1])?,
-                        );
-                        arithmetic(builder, abort, Op::Add, a, b, aborts)?
-                    }
-                    _ => return Err(not_lowered(format!("a call to the kernel {kernel}"))),
+            Reaches::Kernel { kernel } => match kernel.as_str() {
+                "int.add" if arguments.len() == 2 => {
+                    let a = Held::of(
+                        &arguments[0],
+                        lower(builder, lowering, module, bindings, abort, &arguments[0])?,
+                    );
+                    let b = Held::of(
+                        &arguments[1],
+                        lower(builder, lowering, module, bindings, abort, &arguments[1])?,
+                    );
+                    arithmetic(builder, abort, Op::Add, a, b, aborts)?
                 }
-            }
+                _ => return Err(not_lowered(format!("a call to the kernel {kernel}"))),
+            },
         },
         Node::Member { tuple, at, ty, .. } => {
             let value = lower(builder, lowering, module, bindings, abort, tuple)?;
@@ -1826,7 +1863,7 @@ fn as_a_whole_number(op: Op) -> IntCC {
 fn difference(
     builder: &mut FunctionBuilder,
     abort: ir::Block,
-    status: Option<Status>,
+    status: Status,
     a: ir::Value,
     b: ir::Value,
 ) -> Result<ir::Value> {
@@ -1845,7 +1882,7 @@ fn difference(
 fn product(
     builder: &mut FunctionBuilder,
     abort: ir::Block,
-    status: Option<Status>,
+    status: Status,
     a: ir::Value,
     b: ir::Value,
 ) -> Result<ir::Value> {
@@ -1866,7 +1903,7 @@ fn product(
 fn abort_where_the_sign_bit_is_set(
     builder: &mut FunctionBuilder,
     abort: ir::Block,
-    status: Option<Status>,
+    status: Status,
     one: ir::Value,
     other: ir::Value,
 ) {
@@ -1885,16 +1922,9 @@ fn abort_where_the_sign_bit_is_set(
 fn abort_where(
     builder: &mut FunctionBuilder,
     abort: ir::Block,
-    status: Option<Status>,
+    status: Status,
     condition: ir::Value,
 ) {
-    let Some(status) = status else {
-        // The checker says this site never ends without a value, so no check is emitted for it
-        // at all — not even the machine condition this backend could otherwise test `condition`
-        // for. See `overflow_status`'s own doc for why trusting `NONE` here, rather than checking
-        // anyway, is the point.
-        return;
-    };
     let past = builder.create_block();
     let ok = builder.create_block();
     builder.ins().brif(condition, past, &[], ok, &[]);

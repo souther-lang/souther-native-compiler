@@ -5,10 +5,26 @@
 //! neither side's tests can see. Nothing about Souther's meaning belongs here — only the names,
 //! layouts and encodings a target decides.
 
+/// The generation of calling convention every function symbol below answers to.
+///
+/// Embedded in the symbol itself rather than left for a caller to somehow already know, because a
+/// symbol is exactly what a linker resolves by name and nothing else: two objects agreeing on a
+/// function's name while disagreeing about how a call to it works — one answering `T` directly,
+/// the other `status`, with the value through a pointer neither declared — is undefined behaviour
+/// a link step that only checks the name cannot see. Bumping this the day that calling convention
+/// changes turns that silent mismatch into an undefined-symbol error instead: an object built
+/// before the bump and one built after no longer resolve to one another's definition of a name at
+/// all. `souther-native-compiler#19` is `2`; `1` was every function answering its value as a plain
+/// return, with no generation written into the symbol because there was only ever the one.
+///
+/// Not part of [`type_symbol`]: a declared type's token is data, not a call, and nothing about how
+/// a call is made changes what a value of one looks like.
+const ABI: &str = "2";
+
 /// The symbol a behavior is reached by.
 ///
-/// `souther.<module>.<behavior>`, with the module written as it is declared. Both ELF and Mach-O
-/// carry a dot in a symbol name, so nothing is replaced on the way.
+/// `souther<abi>.<module>.<behavior>`, with the module written as it is declared. Both ELF and
+/// Mach-O carry a dot in a symbol name, so nothing is replaced on the way.
 ///
 /// What makes the spelling unambiguous is that the behavior is the last segment, and that holds
 /// only while a behavior's name carries no dot. That is checked here rather than stated: it is a
@@ -23,7 +39,7 @@ pub fn behavior_symbol(module: &str, behavior: &str) -> String {
         !behavior.contains('.'),
         "a behavior's name carries no dot, and the symbol's last segment is the behavior: {behavior}"
     );
-    format!("souther.{module}.{behavior}")
+    format!("souther{ABI}.{module}.{behavior}")
 }
 
 /// The symbol a definition a module holds is reached by.
@@ -41,7 +57,7 @@ pub fn held_symbol(carrier: &str, declared: &str) -> String {
         !carrier.contains('$'),
         "a module's name carries no dollar, and the symbol is split on one: {carrier}"
     );
-    format!("souther.{carrier}${declared}")
+    format!("souther{ABI}.{carrier}${declared}")
 }
 
 /// The symbol the object carries for one of a behavior's `example` rows.
@@ -76,8 +92,8 @@ pub fn example_symbol(module: &str, behavior: &str, at: usize) -> String {
 /// already what makes a call reach a definition.
 ///
 /// `souther$type$<module>$<name>`. The dollar after `souther` is what keeps this out of the way of
-/// a behavior's symbol, which starts `souther.`; the one before the name is what tells the two
-/// segments apart, since a module's name carries dots and a type's carries none.
+/// a behavior's symbol, which starts `souther<abi>.`; the one before the name is what tells the
+/// two segments apart, since a module's name carries dots and a type's carries none.
 ///
 /// # Panics
 ///
@@ -278,12 +294,12 @@ mod tests {
 
     #[test]
     fn a_behavior_is_reached_by_its_module_and_its_name() {
-        assert_eq!(behavior_symbol("calculation", "add"), "souther.calculation.add");
+        assert_eq!(behavior_symbol("calculation", "add"), "souther2.calculation.add");
     }
 
     #[test]
     fn a_dotted_module_keeps_its_dots() {
-        assert_eq!(behavior_symbol("lib.pub", "bill"), "souther.lib.pub.bill");
+        assert_eq!(behavior_symbol("lib.pub", "bill"), "souther2.lib.pub.bill");
     }
 
     /// What the reading rests on. Were this admitted, `a.b` / `c` and `a` / `b.c` would be spelt
@@ -317,7 +333,7 @@ mod tests {
     fn each_row_of_a_behavior_is_its_own_symbol() {
         assert_eq!(
             example_symbol("calculation", "add", 0),
-            "souther.calculation.add$example$0"
+            "souther2.calculation.add$example$0"
         );
         assert_ne!(
             example_symbol("calculation", "add", 0),

@@ -44,6 +44,17 @@ import java.util.StringJoiner;
  */
 final class Running implements AutoCloseable {
 
+    /**
+     * The generation of calling convention a function symbol answers to, held to {@code
+     * souther_native_abi::ABI} the way every other spelling written here a second time is: this
+     * harness declares and calls symbols in C, which cannot reach a Rust crate constant, so this
+     * is the one place it is written by hand instead. Bumped beside that constant, not on its
+     * own — a harness compiled against a generation the object it links does not answer to is
+     * exactly the silent ABI mismatch embedding this in the symbol exists to turn into a linker
+     * error instead.
+     */
+    private static final String ABI = "2";
+
     private final CheckedProgram program;
     private final Path into;
     private final Path object;
@@ -128,7 +139,7 @@ final class Running implements AutoCloseable {
         published(module, behavior);
         CheckedSignature signature = behavior.signature();
         String reached = module.name() + "." + behavior.name().name();
-        Path executable = linked(reached, "souther." + reached, signature.answers(),
+        Path executable = linked(reached, "souther" + ABI + "." + reached, signature.answers(),
                 signature.takes(), standIns);
         return ran(executable, signature.answers(), inputs);
     }
@@ -156,7 +167,7 @@ final class Running implements AutoCloseable {
                                   int at, List<StandsIn> standIns)
             throws IOException, InterruptedException {
         String named = module.name() + "." + behavior.name().name() + ".example." + at;
-        String symbol = "souther." + module.name() + "." + behavior.name().name()
+        String symbol = "souther" + ABI + "." + module.name() + "." + behavior.name().name()
                 + "$example$" + at;
         Path executable = linked(named, symbol, behavior.signature().answers(), List.of(),
                 standIns);
@@ -220,8 +231,12 @@ final class Running implements AutoCloseable {
      * No default arm, so a member {@link AbortKind} adds and this driver's own mapping answers for
      * stops this compiling rather than this test reading it as whichever member happened to sit at
      * that number last.
+     *
+     * <p>Package-visible rather than private so {@code AbortStatusNumbersAgreeAcrossTheDriverAndTheHarnessTest}
+     * can hold it to the fixture {@code native/crates/compiler/tests/abort_status.rs} writes it
+     * against — the one place this copy and {@code native_status}'s own are checked to agree.
      */
-    private static AbortKind abortKindOf(int status) {
+    static AbortKind abortKindOf(int status) {
         return switch (status) {
             case 1 -> AbortKind.INVARIANT_NOT_HELD;
             case 2 -> AbortKind.ENSURES_NOT_HELD;
@@ -439,7 +454,8 @@ final class Running implements AutoCloseable {
             };
         }
 
-        String symbol = PREFIX + "souther." + dependency.module() + "." + dependency.name();
+        String symbol = PREFIX + "souther" + ABI + "." + dependency.module() + "."
+                + dependency.name();
         return "uint32_t %s(%s) __asm__(\"%s\");\nuint32_t %s(%s) {\n%s%s}"
                 .formatted(reached, parameters, symbol, reached, parameters, answering, otherwise);
     }

@@ -37,7 +37,7 @@ const HARNESS: &str = r#"
 #include <stdio.h>
 #include <stdlib.h>
 
-extern uint32_t pipeline(int64_t, int64_t *) __asm__("PREFIXsouther.routing.pipeline");
+extern uint32_t pipeline(int64_t, int64_t *) __asm__("PREFIXsouther2.routing.pipeline");
 extern uint8_t tokenOfB __asm__("PREFIXsouther$type$routing$B");
 extern uint8_t tokenOfC __asm__("PREFIXsouther$type$routing$C");
 

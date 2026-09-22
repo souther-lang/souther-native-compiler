@@ -366,8 +366,8 @@ public final class ProgramWriter {
         // No Core.Call stands behind this one for program.abortsAt to ask of — a row is a value the
         // checker already observed the behavior answering with, never one it aborted for, so NONE
         // is this call's own fact and not a default filled in for want of a site to ask.
-        return "{\"core\":\"call\",\"reaches\":\"behavior\""
-                + ",\"declared\":" + quoted(module.name() + "." + behavior.name().name())
+        return "{\"core\":\"call\",\"reaches\":{\"is\":\"behavior\",\"declared\":"
+                + quoted(module.name() + "." + behavior.name().name()) + "}"
                 + ",\"arguments\":" + arguments
                 + ",\"type\":" + type(behavior.signature().answers())
                 + ",\"aborts\":[]}";
@@ -728,6 +728,12 @@ public final class ProgramWriter {
      * identity, written out — because whether this backend can lower it is a question for the half
      * that lowers, not for this one: keeping a list here of which kernels the driver already
      * answers would be the second table {@link ProgramWriter}'s own class doc rules out.
+     *
+     * <p>{@code reaches} is one nested object and not {@code declared}/{@code kernel} written as
+     * siblings of {@code arguments} and {@code type}: which of the two a reach carries is exactly
+     * what {@code is} already says, so a document naming both, or naming {@code is:"kernel"} with
+     * no {@code kernel} at all, is a shape the driver's own reader does not parse as a call rather
+     * than one it parses and then has to notice is missing something.
      */
     private String call(Core.Call it, Bindings bindings) {
         StringJoiner arguments = new StringJoiner(",", "[", "]");
@@ -737,24 +743,24 @@ public final class ProgramWriter {
         String reaches = switch (it.fn()) {
             case Core.Reached.OfDeclaration target -> switch (target.reaches()) {
                 case Core.Reaches.AHelper held ->
-                        "\"reaches\":\"helper\",\"declared\":" + quoted(reached(held.declaration()));
+                        "{\"is\":\"helper\",\"declared\":" + quoted(reached(held.declaration())) + "}";
                 case Core.Reaches.APublishedValue held ->
-                        "\"reaches\":\"value\",\"declared\":" + quoted(reached(held.declaration()));
+                        "{\"is\":\"value\",\"declared\":" + quoted(reached(held.declaration())) + "}";
                 case Core.Reaches.ABehavior held -> {
                     behaviorsMet.add(held.behavior());
-                    yield "\"reaches\":\"behavior\",\"declared\":"
-                            + quoted(reached(held.declaration()));
+                    yield "{\"is\":\"behavior\",\"declared\":"
+                            + quoted(reached(held.declaration())) + "}";
                 }
             };
             case Core.Reached.OfPublishedValue target ->
-                    "\"reaches\":\"value\",\"declared\":" + quoted(reached(target.denotes()));
+                    "{\"is\":\"value\",\"declared\":" + quoted(reached(target.denotes())) + "}";
             case Core.Reached.OfKernel target ->
-                    "\"reaches\":\"kernel\",\"kernel\":" + quoted(target.kernel().key());
+                    "{\"is\":\"kernel\",\"kernel\":" + quoted(target.kernel().key()) + "}";
             // An operation this compiler mints after everything is resolved, which no source can
             // write and which stands for a shape a backend knows how to lower.
             case Core.Emitted target -> throw notYet("the operation " + target, it);
         };
-        return "{\"core\":\"call\"," + reaches
+        return "{\"core\":\"call\",\"reaches\":" + reaches
                 + ",\"arguments\":" + arguments
                 + ",\"type\":" + type(it.type()) + ",\"aborts\":" + aborts(it) + "}";
     }

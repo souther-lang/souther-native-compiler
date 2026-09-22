@@ -56,8 +56,8 @@ class WhatTheObjectMakesReachableTest {
 
         assertThat(table)
                 .as("what the object carries: %s", table)
-                .containsEntry("souther.surfaced.shown", "T")
-                .containsEntry("souther.surfaced.hidden", "t");
+                .containsEntry("souther2.surfaced.shown", "T")
+                .containsEntry("souther2.surfaced.hidden", "t");
     }
 
     /**
@@ -113,8 +113,8 @@ class WhatTheObjectMakesReachableTest {
         Map<String, String> table = named(CheckedProgram.of(List.of(SURFACE)));
 
         assertThat(table)
-                .containsEntry("souther.surfaced.hidden$example$0", "T")
-                .containsEntry("souther.surfaced.hidden$example$1", "T");
+                .containsEntry("souther2.surfaced.hidden$example$0", "T")
+                .containsEntry("souther2.surfaced.hidden$example$1", "T");
     }
 
     private static CheckedBehavior behaviorOf(CheckedModule module, String name) {

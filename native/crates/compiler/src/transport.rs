@@ -537,18 +537,8 @@ pub enum Node {
         aborts: Vec<AbortKind>,
     },
     /// A call, and what the checker settled it reaches.
-    ///
-    /// `declared` is carried for every reach but a kernel's, and `kernel` for a kernel's alone —
-    /// which of the two is present is exactly what `reaches` already says, so neither is read
-    /// without matching it first. `kernel` crosses as the key the standard library declares it
-    /// under (`"int.add"`) and not as a closed enum here: which kernels exist is the language's
-    /// question and this side's only question is which of them it can lower, answered by
-    /// `NotLowered` at the one place that tries, not by a vocabulary this file would have to keep
-    /// in step with every kernel the language ever adds.
     Call {
         reaches: Reaches,
-        declared: Option<String>,
-        kernel: Option<String>,
         arguments: Vec<Node>,
         #[serde(rename = "type")]
         ty: Ty,
@@ -557,17 +547,30 @@ pub enum Node {
 }
 
 /// What a call reaches, which the checker decided and nothing here works out again.
-#[derive(Debug, Deserialize, PartialEq, Eq, Clone, Copy)]
-#[serde(rename_all = "lowercase")]
+///
+/// A nested object — `{"is":"behavior","declared":"..."}` — and not `declared`/`kernel` beside
+/// `reaches` as siblings of `Node::Call`'s own fields: a document naming `kernel` beside
+/// `is:"behavior"`, or naming `is:"kernel"` with no `kernel` at all, does not parse as one of
+/// these rather than parsing and leaving `lower` to find out with an `.expect()` at the one place
+/// it is read. (An adjacently-nested object rather than `#[serde(flatten)]` on a sibling of
+/// `Node::Call`'s own fields, deliberately — `flatten` inside a `Node` whose own variants are
+/// chosen by an internal tag (`"core"`) asks serde to buffer the same map twice over, which it
+/// does not support and fails at every call site rather than only the ambiguous ones.) `kernel`
+/// itself crosses as the key the standard library declares it under (`"int.add"`) and not as a
+/// closed enum here: which kernels exist is the language's question and this side's only question
+/// is which of them it can lower, answered by `NotLowered` at the one place that tries, not by a
+/// vocabulary this file would have to keep in step with every kernel the language ever adds.
+#[derive(Debug, Deserialize, PartialEq, Eq, Clone)]
+#[serde(tag = "is", rename_all = "lowercase", deny_unknown_fields)]
 pub enum Reaches {
     /// A definition the calling module holds, which is a copy of its own.
-    Helper,
+    Helper { declared: String },
     /// A value that runs in the module that declares it, wherever it is named.
-    Value,
+    Value { declared: String },
     /// A behavior, whether this program answers it or whoever links the object does.
-    Behavior,
-    /// An operation the language itself implements. `Node::Call::kernel` names which.
-    Kernel,
+    Behavior { declared: String },
+    /// An operation the language itself implements.
+    Kernel { kernel: String },
 }
 
 /// One arm of a fork on what a value is.
