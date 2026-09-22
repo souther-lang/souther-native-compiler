@@ -24,6 +24,22 @@ jobs:
           java-version: '25'
           cache: maven
 
+      # A pinned commit and not `develop`: souther's own published SNAPSHOT lags behind what
+      # this build needs from time to time — as it does today, for issue #9's own AbortKind and
+      # CheckedProgram#abortsAt — and a runner that fell back to whatever central-snapshots
+      # happens to hold would be a build depending on the two repos' publish timing agreeing
+      # rather than on a fact this repo states. Bumped by hand when this project starts reading
+      # something souther publishes later than this SHA.
+      - uses: actions/checkout@v5
+        with:
+          repository: souther-lang/souther
+          ref: ccc076190046648d4171a57c067eda1304869f05
+          path: souther
+
+      # Only souther-compiler and what it needs to build, not the whole reactor: the lsp, the
+      # cli, the bench harness and the architecture test have nothing this project reads.
+      - run: mvn --batch-mode -f souther/pom.xml -pl souther-compiler -am install -DskipTests
+
       # The toolchain comes from rust-toolchain.toml, which rustup reads when cargo is first run
       # in the checkout. Nothing here names a version, so there is one place it is written.
       - uses: Swatinem/rust-cache@v2

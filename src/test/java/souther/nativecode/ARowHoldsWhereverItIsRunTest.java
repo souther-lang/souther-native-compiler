@@ -128,11 +128,13 @@ class ARowHoldsWhereverItIsRunTest {
                 | "the right one decides" : (-3) -> true
             """;
 
+    /**
+     * {@code flip} is not here. It was, but {@code Core.Neg} does not compile on this backend
+     * today (souther-lang/souther#1878, {@link AnIntThatLeavesItsRangeEndsTheRunTest}) and a
+     * module that failed to compile at all would take {@code spread} down with it.
+     */
     private static final String NAMING = """
             module naming
-
-            behavior flip : (a: Int) -> Int
-            let flip (a) = -a
 
             behavior spread : (a: Int, b: Int) -> Int
             let spread (a, b) = {
@@ -140,11 +142,6 @@ class ARowHoldsWhereverItIsRunTest {
                 let high = if a > b then a else b
                 high - low
             }
-
-            example flip
-                | "above nought" : (7) -> -7
-                | "below it" : (-7) -> 7
-                | "nought itself" : (0) -> 0
 
             example spread
                 | "the left one is larger" : (40, 2) -> 38

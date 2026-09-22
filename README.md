@@ -48,14 +48,18 @@ anything there.
 
 ## What compiles today
 
-Over `Int` and `Bool`: `+`, `-`, `*`, unary `-`, the six comparisons, `&&` and `||`, `if`, and a
-name for a value. `/` answers the exact quotient, which is a `Rational` and has no representation
-here.
+Over `Int` and `Bool`: `+`, `-`, `*`, the six comparisons, `&&` and `||`, `if`, and a name for a
+value. `/` answers the exact quotient, which is a `Rational` and has no representation here. Unary
+`-` of a literal compiles — it is folded at compile time and needs no overflow check either way —
+but `-` of anything else does not yet: `CheckedProgram#abortsAt` answers wrong for what a runtime
+negation can end without a value for (souther-lang/souther#1878), and this backend refuses rather
+than trust a known-wrong answer or decide the question itself.
 
-Text: a literal, the six comparisons, and `++`. What a comparison of two strings compares is
-neither of the two addresses and not the bytes either — the language orders text by UTF-16 code
-unit, and says so of every carrier whatever one stores a string as. Everything else a program does
-with text — a length, a slice, a split — is reached through a kernel, and a kernel is still ahead.
+An operation the language implements as a kernel: `Int.add` today, reusing the same instructions
+`+` does. Every other kernel is still ahead — including everything a program does with text beyond
+a literal, the six comparisons and `++`, which the language reaches through one. What a comparison
+of two strings compares is neither of the two addresses and not the bytes either — the language
+orders text by UTF-16 code unit, and says so of every carrier whatever one stores a string as.
 
 A model's own types: a product, a newtype, a unit, a sum, a value that may be absent, and several
 values carried as one. Built, read a field off, and forked on which case a value is.
@@ -85,8 +89,8 @@ does not cross, and the signature is where that is said.
 A type that states what its values owe is not built: a construction runs those clauses and stops at
 the first that does not hold, and nothing here runs one.
 
-Still ahead: a `Decimal`, the collections, a function value, a kernel the language
-implements, a value that runs in the module declaring it, and a composition.
+Still ahead: a `Decimal`, the collections, a function value, every kernel but `Int.add`, a value
+that runs in the module declaring it, and negating anything other than a literal.
 
 
 ## Where a value lives

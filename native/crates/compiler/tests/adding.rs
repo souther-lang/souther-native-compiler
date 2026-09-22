@@ -25,41 +25,76 @@ const PREFIX: &str = if cfg!(target_vendor = "apple") { "_" } else { "" };
 /// Written in the width the object actually answers in. `long` is that width on the platforms this
 /// builds on today and is not the same thing: what the behavior takes and answers is an `Int`, and
 /// an `Int` is sixty-four bits wherever it is.
+///
+/// Every generated function answers `status + out` (see `signature_over`'s own doc in the crate
+/// this is a test of): a status this harness prints on its own line, and — only where that status
+/// is `ANSWERED` (zero) — the value written through the pointer this hands over, on the line under
+/// it. A caller that read the second line without checking the first would be reading whatever was
+/// last in the room the pointer names, answer or not.
 const HARNESS: &str = r#"
 #include <inttypes.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 
-extern int64_t adding(int64_t, int64_t) __asm__("PREFIXsouther.calculation.add");
+extern uint32_t adding(int64_t, int64_t, int64_t *) __asm__("PREFIXsouther2.calculation.add");
 
 int main(int argc, char **argv) {
     if (argc != 3) {
         return 2;
     }
-    printf("%" PRId64 "\n", adding(strtoll(argv[1], NULL, 10), strtoll(argv[2], NULL, 10)));
+    int64_t answer;
+    uint32_t status = adding(strtoll(argv[1], NULL, 10), strtoll(argv[2], NULL, 10), &answer);
+    printf("%u\n", status);
+    if (status == 0) {
+        printf("%" PRId64 "\n", answer);
+    }
     return 0;
 }
 "#;
 
+/// What issue #9 adds: not just whether a run answered, but which of a fixed set of reasons it did
+/// not, read straight off the process's own output rather than guessed from whether it crashed.
+struct Answered {
+    status: u32,
+    value: Option<i64>,
+}
+
+fn answered(output: &Output) -> Answered {
+    assert!(output.status.success(), "the process itself failed: {output:?}");
+    let said = String::from_utf8_lossy(&output.stdout);
+    let mut lines = said.lines();
+    let status: u32 = lines
+        .next()
+        .expect("a status on the first line")
+        .parse()
+        .expect("a status this harness wrote as a number");
+    let value = lines.next().map(|it| it.parse().expect("an Int on the second line"));
+    Answered { status, value }
+}
+
 #[test]
 fn an_addition_of_two_numbers_answers_their_sum() {
     let (_swept, built) = build();
-    let answered = run(&built, "2", "40");
+    let answered = answered(&run(&built, "2", "40"));
 
-    assert!(answered.status.success(), "the run ended: {answered:?}");
-    assert_eq!(String::from_utf8_lossy(&answered.stdout).trim(), "42");
+    assert_eq!(answered.status, 0, "ANSWERED");
+    assert_eq!(answered.value, Some(42));
 }
 
-/// An `Int` that leaves the range it holds is an abort and not an answer. Which abort it was is
-/// not asked here: nothing carries a reason out of a native run yet.
+/// An `Int` that leaves the range it holds is a language abort and not an answer — and, since
+/// issue #9, one this harness can read the reason for rather than only that the run did not
+/// answer. `5` is `REQUIRED_FORM_HAS_NO_PLACE`'s wire number (`native_status` in the crate this
+/// tests), the one member of `AbortSet` the checker gives an `Int` `+` over — a fact this test
+/// pins down rather than leaves to a comment, since a status this backend answers and a status
+/// upstream meant are two different claims and only a running program checks that they agree.
 #[test]
-fn a_sum_past_what_an_int_holds_ends_the_run() {
+fn a_sum_past_what_an_int_holds_answers_required_form_has_no_place() {
     let (_swept, built) = build();
-    let answered = run(&built, "9223372036854775807", "1");
+    let answered = answered(&run(&built, "9223372036854775807", "1"));
 
-    assert!(!answered.status.success(), "it answered: {answered:?}");
-    assert_eq!(String::from_utf8_lossy(&answered.stdout).trim(), "");
+    assert_eq!(answered.status, 5, "REQUIRED_FORM_HAS_NO_PLACE");
+    assert_eq!(answered.value, None);
 }
 
 /// Compiles the document, links what came out, and answers where the executable is.

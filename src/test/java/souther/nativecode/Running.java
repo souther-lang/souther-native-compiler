@@ -1,5 +1,6 @@
 package souther.nativecode;
 
+import souther.compiler.abort.AbortKind;
 import souther.compiler.observe.ObservedValue;
 import souther.compiler.observe.StoodIn;
 import souther.compiler.program.CheckedBehavior;
@@ -22,7 +23,6 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.StringJoiner;
 
 /**
@@ -43,6 +43,17 @@ import java.util.StringJoiner;
  * a C declaration is the only other thing that has to say it, and it has to say it in C.
  */
 final class Running implements AutoCloseable {
+
+    /**
+     * The generation of calling convention a function symbol answers to, held to {@code
+     * souther_native_abi::ABI} the way every other spelling written here a second time is: this
+     * harness declares and calls symbols in C, which cannot reach a Rust crate constant, so this
+     * is the one place it is written by hand instead. Bumped beside that constant, not on its
+     * own — a harness compiled against a generation the object it links does not answer to is
+     * exactly the silent ABI mismatch embedding this in the symbol exists to turn into a linker
+     * error instead.
+     */
+    private static final String ABI = "2";
 
     private final CheckedProgram program;
     private final Path into;
@@ -89,9 +100,8 @@ final class Running implements AutoCloseable {
     /**
      * What the behavior answers when it is handed these values.
      *
-     * <p>An abort is not an answer and does not come back as one: the run ends, and what a caller
-     * of this is holding is a row that states a value, so the run ending is that row not holding
-     * rather than a value to compare.
+     * <p>An abort is not an answer and does not come back as one: a caller expecting a row's stated
+     * value throws rather than reads a {@link RunOutcome.Aborted} as though it were one.
      */
     ObservedValue answering(CheckedModule module, CheckedBehavior behavior,
                             List<ObservedValue> inputs) throws IOException, InterruptedException {
@@ -101,32 +111,35 @@ final class Running implements AutoCloseable {
     ObservedValue answering(CheckedModule module, CheckedBehavior behavior,
                             List<ObservedValue> inputs, List<StandsIn> standIns)
             throws IOException, InterruptedException {
-        return answeredOrEnded(module, behavior, inputs, standIns).orElseThrow(
-                () -> new AssertionError("the run ended rather than answering: " + behavior.name()
-                        + " of " + module.name() + ", handed " + inputs));
+        return switch (answeredOrEnded(module, behavior, inputs, standIns)) {
+            case RunOutcome.Answered it -> it.value();
+            case RunOutcome.Aborted it -> throw new AssertionError(
+                    "the run ended with " + it.kind() + " rather than answering: "
+                            + behavior.name() + " of " + module.name() + ", handed " + inputs);
+        };
     }
 
     /**
-     * What the behavior answered, or nothing where the run ended instead.
+     * What the behavior answered, or the reason the run ended without one.
      *
-     * <p>For a caller whose question is which of the two happened. A run ending is an answer to
-     * that question and not the absence of one, so it comes back as a value rather than as a
-     * failure — and a caller asking it is expected to have a pair of runs where one of each
-     * happens, since a run that ends says nothing on its own about why.
+     * <p>For a caller whose question is which of the two happened, and — since issue #9 — which
+     * {@link AbortKind} it was where the run ended. A caller asking it is expected to have a pair
+     * of runs where one of each happens, since an ended run says nothing on its own about whether
+     * the neighbour it is read beside answers instead by chance or by the check this exists for.
      */
-    Optional<ObservedValue> answeredOrEnded(CheckedModule module, CheckedBehavior behavior,
-                                            List<ObservedValue> inputs)
+    RunOutcome answeredOrEnded(CheckedModule module, CheckedBehavior behavior,
+                               List<ObservedValue> inputs)
             throws IOException, InterruptedException {
         return answeredOrEnded(module, behavior, inputs, List.of());
     }
 
-    Optional<ObservedValue> answeredOrEnded(CheckedModule module, CheckedBehavior behavior,
-                                            List<ObservedValue> inputs, List<StandsIn> standIns)
+    RunOutcome answeredOrEnded(CheckedModule module, CheckedBehavior behavior,
+                               List<ObservedValue> inputs, List<StandsIn> standIns)
             throws IOException, InterruptedException {
         published(module, behavior);
         CheckedSignature signature = behavior.signature();
         String reached = module.name() + "." + behavior.name().name();
-        Path executable = linked(reached, "souther." + reached, signature.answers(),
+        Path executable = linked(reached, "souther" + ABI + "." + reached, signature.answers(),
                 signature.takes(), standIns);
         return ran(executable, signature.answers(), inputs);
     }
@@ -134,9 +147,12 @@ final class Running implements AutoCloseable {
     /** What the behavior answered when this one of its rows was run. */
     ObservedValue rowAnswering(CheckedModule module, CheckedBehavior behavior, int at,
                                List<StandsIn> standIns) throws IOException, InterruptedException {
-        return rowAnsweredOrEnded(module, behavior, at, standIns).orElseThrow(
-                () -> new AssertionError("the run ended rather than answering row " + at + " of "
-                        + behavior.name() + " of " + module.name()));
+        return switch (rowAnsweredOrEnded(module, behavior, at, standIns)) {
+            case RunOutcome.Answered it -> it.value();
+            case RunOutcome.Aborted it -> throw new AssertionError(
+                    "row " + at + " of " + behavior.name() + " of " + module.name()
+                            + " ended with " + it.kind() + " rather than answering");
+        };
     }
 
     /**
@@ -147,18 +163,24 @@ final class Running implements AutoCloseable {
      * is what lets a row of a name the module keeps be run at all — a module's surface is what the
      * behavior's own symbol answers to, and a row is a different question.
      */
-    Optional<ObservedValue> rowAnsweredOrEnded(CheckedModule module, CheckedBehavior behavior,
-                                               int at, List<StandsIn> standIns)
+    RunOutcome rowAnsweredOrEnded(CheckedModule module, CheckedBehavior behavior,
+                                  int at, List<StandsIn> standIns)
             throws IOException, InterruptedException {
         String named = module.name() + "." + behavior.name().name() + ".example." + at;
-        String symbol = "souther." + module.name() + "." + behavior.name().name()
+        String symbol = "souther" + ABI + "." + module.name() + "." + behavior.name().name()
                 + "$example$" + at;
         Path executable = linked(named, symbol, behavior.signature().answers(), List.of(),
                 standIns);
         return ran(executable, behavior.signature().answers(), List.of());
     }
 
-    private Optional<ObservedValue> ran(Path executable, Type answers, List<ObservedValue> inputs)
+    /**
+     * What the harness's own two lines say: a status on the first, and — only where it is
+     * {@code ANSWERED} — the value on the second. A process that failed on its own account, before
+     * it could write either line, is neither {@link RunOutcome} case: it is this harness's own
+     * failure and not a Souther computation's, so it is thrown rather than folded into one of them.
+     */
+    private RunOutcome ran(Path executable, Type answers, List<ObservedValue> inputs)
             throws IOException, InterruptedException {
         List<String> command = new ArrayList<>();
         command.add(executable.toString());
@@ -171,9 +193,60 @@ final class Running implements AutoCloseable {
                 .start();
         String said = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
         if (process.waitFor() != 0) {
-            return Optional.empty();
+            throw new AssertionError("the harness itself failed rather than answering a status: "
+                    + said);
         }
-        return Optional.of(read(answers, said.strip()));
+        // Not said.strip().lines(): a value written on the second line can itself be empty — an
+        // empty string's hex is no digits at all, just the newline writeText always ends on — and
+        // stripping the whole blob first collapses that trailing empty line away before lines()
+        // ever sees it, reading ANSWERED "" as though nothing had been written at all.
+        List<String> lines = said.lines().toList();
+        if (lines.isEmpty()) {
+            throw new AssertionError("the harness wrote no status: " + said);
+        }
+        int status = Integer.parseInt(lines.get(0).strip());
+        if (status == ANSWERED) {
+            if (lines.size() < 2) {
+                throw new AssertionError("ANSWERED with no value on the line under it: " + said);
+            }
+            return new RunOutcome.Answered(read(answers, lines.get(1)));
+        }
+        return new RunOutcome.Aborted(abortKindOf(status));
+    }
+
+    /**
+     * The one status a generated function's status answers with when the pointer it was handed
+     * holds the value. Written here a second time for the reason the C declaration in
+     * {@link #harnessFor} is — {@code souther_native_abi::ANSWERED} is what generated code and the
+     * native runtime agree on, and a test harness is a third party to that agreement that has to
+     * say it in C and, to read it back, in Java.
+     */
+    private static final int ANSWERED = 0;
+
+    /**
+     * The wire number a status this harness read that is not {@link #ANSWERED} maps back to, held
+     * to {@code native_status} in {@code souther-native-driver} the way {@link #ANSWERED} is held
+     * to {@code souther_native_abi}: written here a second time because a test reading a native
+     * run's own answer is, like the harness itself, on the far side of that crate's own boundary.
+     * No default arm, so a member {@link AbortKind} adds and this driver's own mapping answers for
+     * stops this compiling rather than this test reading it as whichever member happened to sit at
+     * that number last.
+     *
+     * <p>Package-visible rather than private so {@code AbortStatusNumbersAgreeAcrossTheDriverAndTheHarnessTest}
+     * can hold it to the fixture {@code native/crates/compiler/tests/abort_status.rs} writes it
+     * against — the one place this copy and {@code native_status}'s own are checked to agree.
+     */
+    static AbortKind abortKindOf(int status) {
+        return switch (status) {
+            case 1 -> AbortKind.INVARIANT_NOT_HELD;
+            case 2 -> AbortKind.ENSURES_NOT_HELD;
+            case 3 -> AbortKind.UNREACHABLE_REACHED;
+            case 4 -> AbortKind.DIVISION_BY_ZERO;
+            case 5 -> AbortKind.REQUIRED_FORM_HAS_NO_PLACE;
+            case 6 -> AbortKind.INVALID_BOUNDS;
+            default -> throw new AssertionError("a status this harness has no AbortKind for: "
+                    + status);
+        };
     }
 
     /**
@@ -256,6 +329,10 @@ final class Running implements AutoCloseable {
             taken.add(cType(takes.get(at)));
             given.add(read(takes.get(at), at + 1));
         }
+        // One more parameter than the Souther signature shows, the same as every generated
+        // function: room the answer is written through, in place of a plain return.
+        taken.add(cType(answers) + " *");
+        given.add("&answered");
 
         // Every name the object left undefined, and not only the ones this row states. The object
         // is the whole program, so what it names is what the linker wants whichever behavior is
@@ -279,7 +356,7 @@ final class Running implements AutoCloseable {
 
                 %s%s
 
-                extern %s reached(%s) __asm__("%s%s");
+                extern uint32_t reached(%s) __asm__("%s%s");
                 extern int64_t souther_mark(void);
                 extern void souther_reset(int64_t);
 
@@ -288,15 +365,18 @@ final class Running implements AutoCloseable {
                         return 2;
                     }
                     int64_t mark = souther_mark();
-                    %s answered = reached(%s);
-                    %s
+                    %s answered;
+                    uint32_t status = reached(%s);
+                    printf("%%u\\n", status);
+                    if (status == 0) {
+                        %s
+                    }
                     souther_reset(mark);
                     return 0;
                 }
                 """.formatted(
                 textCrossesHere(answers, takes) ? TEXT_CROSSING : "",
                 supplied.toString(),
-                cType(answers),
                 takenIn(taken),
                 PREFIX, symbol,
                 takes.size() + 1,
@@ -350,6 +430,10 @@ final class Running implements AutoCloseable {
         for (int at = 0; at < takes.size(); at++) {
             taken.add(cType(takes.get(at)) + " a" + at);
         }
+        // One more than the Souther signature shows, the same as every generated function: this
+        // stands in for a symbol a generated object calls through call_reached, which hands every
+        // callee room for the answer and reads a status back rather than trusting a plain return.
+        taken.add(cType(signature.answers()) + " *out");
         String parameters = takenIn(taken);
 
         StringBuilder answering = new StringBuilder();
@@ -361,19 +445,19 @@ final class Running implements AutoCloseable {
                 for (int at = 0; at < entry.arguments().size(); at++) {
                     asked.add("a" + at + " == " + asC(entry.arguments().get(at)));
                 }
-                answering.append("    if (%s) { return %s; }\n"
+                answering.append("    if (%s) { *out = %s; return 0; }\n"
                         .formatted(everyOneOf(asked), asC(entry.answer())));
             }
             otherwise = switch (stated.otherwise()) {
-                case StoodIn.Otherwise.Answer it -> "    return " + asC(it.value()) + ";\n";
+                case StoodIn.Otherwise.Answer it -> "    *out = " + asC(it.value()) + ";\n    return 0;\n";
                 case StoodIn.Otherwise.NothingStated it -> "    exit(3);\n";
             };
         }
 
-        String symbol = PREFIX + "souther." + dependency.module() + "." + dependency.name();
-        return "%s %s(%s) __asm__(\"%s\");\n%s %s(%s) {\n%s%s}"
-                .formatted(cType(signature.answers()), reached, parameters, symbol,
-                        cType(signature.answers()), reached, parameters, answering, otherwise);
+        String symbol = PREFIX + "souther" + ABI + "." + dependency.module() + "."
+                + dependency.name();
+        return "uint32_t %s(%s) __asm__(\"%s\");\nuint32_t %s(%s) {\n%s%s}"
+                .formatted(reached, parameters, symbol, reached, parameters, answering, otherwise);
     }
 
     /**

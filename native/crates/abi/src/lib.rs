@@ -5,10 +5,40 @@
 //! neither side's tests can see. Nothing about Souther's meaning belongs here — only the names,
 //! layouts and encodings a target decides.
 
+/// The generation of *wire contract* every function symbol below answers to — not only the
+/// calling convention, but what a `status` other than `ANSWERED` means once it crosses an object
+/// boundary.
+///
+/// Embedded in the symbol itself rather than left for a caller to somehow already know, because a
+/// symbol is exactly what a linker resolves by name and nothing else: two objects agreeing on a
+/// function's name while disagreeing about how a call to it works — one answering `T` directly,
+/// the other `status`, with the value through a pointer neither declared — is undefined behaviour
+/// a link step that only checks the name cannot see. Bumping this the day that changes turns that
+/// silent mismatch into an undefined-symbol error instead: an object built before the bump and
+/// one built after no longer resolve to one another's definition of a name at all.
+///
+/// Two different questions are both "the day that changes", not only the shape of the call:
+///
+/// - The calling convention itself — `souther-native-compiler#19` is `2`; `1` was every function
+///   answering its value as a plain return, with no generation written into the symbol because
+///   there was only ever the one.
+/// - What a non-`ANSWERED` `status` *means*. This crate reserves `ANSWERED` and nothing else —
+///   which wire number a language abort gets is `native_status` in `souther-native-driver`'s own
+///   exhaustive mapping, kept apart from this crate for the reason this file's own doc gives. Two
+///   objects built by drivers whose `native_status` disagrees about what `4` is are exactly as
+///   incompatible as two objects with different calling conventions; they just still link, because
+///   nothing about the *shape* of the call changed. A renumbering there bumps this the same as a
+///   calling-convention change does — see `abort-status-abi2.json` in the driver crate's own
+///   tests, named for the generation it is a fixture of.
+///
+/// Not part of [`type_symbol`]: a declared type's token is data, not a call, and nothing about how
+/// a call is made or what its status means changes what a value of one looks like.
+const ABI: &str = "2";
+
 /// The symbol a behavior is reached by.
 ///
-/// `souther.<module>.<behavior>`, with the module written as it is declared. Both ELF and Mach-O
-/// carry a dot in a symbol name, so nothing is replaced on the way.
+/// `souther<abi>.<module>.<behavior>`, with the module written as it is declared. Both ELF and
+/// Mach-O carry a dot in a symbol name, so nothing is replaced on the way.
 ///
 /// What makes the spelling unambiguous is that the behavior is the last segment, and that holds
 /// only while a behavior's name carries no dot. That is checked here rather than stated: it is a
@@ -23,7 +53,7 @@ pub fn behavior_symbol(module: &str, behavior: &str) -> String {
         !behavior.contains('.'),
         "a behavior's name carries no dot, and the symbol's last segment is the behavior: {behavior}"
     );
-    format!("souther.{module}.{behavior}")
+    format!("souther{ABI}.{module}.{behavior}")
 }
 
 /// The symbol a definition a module holds is reached by.
@@ -41,7 +71,7 @@ pub fn held_symbol(carrier: &str, declared: &str) -> String {
         !carrier.contains('$'),
         "a module's name carries no dollar, and the symbol is split on one: {carrier}"
     );
-    format!("souther.{carrier}${declared}")
+    format!("souther{ABI}.{carrier}${declared}")
 }
 
 /// The symbol the object carries for one of a behavior's `example` rows.
@@ -76,8 +106,8 @@ pub fn example_symbol(module: &str, behavior: &str, at: usize) -> String {
 /// already what makes a call reach a definition.
 ///
 /// `souther$type$<module>$<name>`. The dollar after `souther` is what keeps this out of the way of
-/// a behavior's symbol, which starts `souther.`; the one before the name is what tells the two
-/// segments apart, since a module's name carries dots and a type's carries none.
+/// a behavior's symbol, which starts `souther<abi>.`; the one before the name is what tells the
+/// two segments apart, since a module's name carries dots and a type's carries none.
 ///
 /// # Panics
 ///
@@ -248,6 +278,27 @@ pub const MARK: &str = "souther_mark";
 /// The symbol a caller gives a mark back to, dropping everything taken since.
 pub const RESET: &str = "souther_reset";
 
+/// What a generated function answers with instead of its value directly.
+///
+/// A Souther computation ends with a value or without one, and a plain return can only ever say
+/// the first — which is why every generated function takes one more parameter than its signature
+/// shows a caller, a pointer the value is written through, and answers this instead. `ANSWERED`
+/// says the pointer holds it; any other code is a language abort's wire number and the pointer was
+/// never written.
+///
+/// What number a member of `souther_compiler`'s `AbortKind` gets is not here. This crate is the
+/// wire's width and its one reserved value, both facts a target decides; which reason gets which
+/// of the numbers left over is `souther_native_driver`'s own exhaustive mapping, kept apart from
+/// this crate for the reason this file's own doc gives — nothing about what Souther means belongs
+/// here, and an abort's reason is exactly that.
+pub type Status = u32;
+
+/// The one code this crate reserves: the pointer holds the answer.
+///
+/// Every other value of [`Status`] is a language abort, and which is which is
+/// `souther_native_driver`'s to say — this crate answers only for the one case that is not one.
+pub const ANSWERED: Status = 0;
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -257,12 +308,12 @@ mod tests {
 
     #[test]
     fn a_behavior_is_reached_by_its_module_and_its_name() {
-        assert_eq!(behavior_symbol("calculation", "add"), "souther.calculation.add");
+        assert_eq!(behavior_symbol("calculation", "add"), "souther2.calculation.add");
     }
 
     #[test]
     fn a_dotted_module_keeps_its_dots() {
-        assert_eq!(behavior_symbol("lib.pub", "bill"), "souther.lib.pub.bill");
+        assert_eq!(behavior_symbol("lib.pub", "bill"), "souther2.lib.pub.bill");
     }
 
     /// What the reading rests on. Were this admitted, `a.b` / `c` and `a` / `b.c` would be spelt
@@ -296,7 +347,7 @@ mod tests {
     fn each_row_of_a_behavior_is_its_own_symbol() {
         assert_eq!(
             example_symbol("calculation", "add", 0),
-            "souther.calculation.add$example$0"
+            "souther2.calculation.add$example$0"
         );
         assert_ne!(
             example_symbol("calculation", "add", 0),
