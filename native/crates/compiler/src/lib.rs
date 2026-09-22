@@ -754,7 +754,7 @@ fn define_composed(
     let (first, rest) = stages
         .split_first()
         .ok_or_else(|| anyhow!("a composition composes something"))?;
-    let arguments: Vec<ir::Value> = (0..takes).map(|at| builder.block_params(entry)[at]).collect();
+    let arguments: Vec<ir::Value> = builder.block_params(entry)[..takes].to_vec();
     let mut running = {
         let reached = lowering.reachable.of_behavior_named(&first.behavior)?;
         call_reached(&mut builder, module, reached, &first.behavior, &arguments)?
