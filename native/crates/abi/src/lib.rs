@@ -126,15 +126,64 @@ pub const WHICH: i64 = 0;
 pub const FIRST_FIELD: i64 = SLOT;
 
 /// The offset of a field of a declared type, by its position in the declaration.
-pub fn field_at(position: usize) -> i64 {
+pub const fn field_at(position: usize) -> i64 {
     FIRST_FIELD + SLOT * position as i64
 }
 
 /// The offset of a tuple's member. A tuple says which type it is nowhere: it is not a declared
 /// type and nothing matches on one, so its members start where they are.
-pub fn member_at(position: usize) -> i64 {
+pub const fn member_at(position: usize) -> i64 {
     SLOT * position as i64
 }
+
+/// How much room a value of a declared type takes, by how many fields it has.
+///
+/// Here and not worked out by whoever takes the room, which is the whole point of this crate: an
+/// offset and the room it has to fall inside are one fact, and a caller that added up slots for
+/// itself would be holding a copy of half of it. The two have gone out of step once already.
+pub const fn room_for_fields(fields: usize) -> i64 {
+    FIRST_FIELD + SLOT * fields as i64
+}
+
+/// How much room a tuple of this many members takes.
+pub const fn room_for_members(members: usize) -> i64 {
+    member_at(members)
+}
+
+/// How much room an `Option` holding a value takes.
+pub const fn room_for_held() -> i64 {
+    HELD + SLOT
+}
+
+/// How much room a string carrying this many bytes of text takes.
+pub const fn room_for_text(bytes: i64) -> i64 {
+    TEXT_BYTES + bytes
+}
+
+/// That every offset falls inside the room its value is given.
+///
+/// Held here rather than by a test, because both sides of each of these are constants and a test
+/// could only fail after one of them had already been changed. What it stops is a layout moved at
+/// one of the two places it is read: an offset that moved past the room would be a value written
+/// off the end of what was taken for it, which is not something the run would report.
+const _: () = {
+    let mut fields = 0;
+    while fields < 16 {
+        assert!(field_at(fields) + SLOT <= room_for_fields(fields + 1));
+        assert!(member_at(fields) + SLOT <= room_for_members(fields + 1));
+        fields += 1;
+    }
+    assert!(WHICH + SLOT <= room_for_fields(0));
+    assert!(HELD + SLOT <= room_for_held());
+    assert!(TEXT_LENGTH + SLOT <= room_for_text(0));
+};
+
+/// That a string's count of bytes is as wide as a slot.
+///
+/// Both halves write and read it as an `i64`, which is this and not something either of them
+/// decided. Were a slot to be made wider, that is two readings to change and a build that stops
+/// until they are.
+const _: () = assert!(SLOT as usize == size_of::<i64>());
 
 /// What an `Option` holding nothing is.
 ///
@@ -146,6 +195,45 @@ pub const NOTHING: i64 = 0;
 
 /// Where an `Option`'s value is, once it is known to be holding one.
 pub const HELD: i64 = 0;
+
+/// Where a string says how many bytes of text it carries.
+///
+/// A count of bytes, not of code points. What the language counts a string in is code points — a
+/// length, an index and a range all do — and nothing here answers any of those: they are reached
+/// through a kernel. What this side needs is where the text ends, which is what a comparison and a
+/// join read, and a second count would be room spent on a question nothing yet asks.
+///
+/// Nought, as a declared type's [`WHICH`] is, and the two are not one fact. A string is not a
+/// declared type and nothing matches on one, so it carries no tag; what stands first is the only
+/// thing standing before the text.
+pub const TEXT_LENGTH: i64 = 0;
+
+/// Where a string's text begins, as UTF-8 and in no other encoding.
+///
+/// One slot along, so the text starts aligned as everything the arena answers does, and so what
+/// stands before it is read as a slot like any other.
+pub const TEXT_BYTES: i64 = SLOT;
+
+/// The symbol two strings are compared through.
+///
+/// Answers a number below, at or above nought, as the left one comes before, at, or after the
+/// right one. One symbol for all six comparisons: the six differ in what they do with the answer
+/// and not in what they ask, and a symbol each would be six chances to order text six ways.
+pub const STRING_COMPARE: &str = "souther_string_compare";
+
+/// The symbol two strings are joined through. Answers a new string and touches neither operand.
+pub const STRING_CONCAT: &str = "souther_string_concat";
+
+/// The symbol a caller outside a Souther program makes a string with, from bytes it holds.
+///
+/// Here rather than left to whoever writes such a caller, for the reason [`MARK`] is: the layout
+/// above is between this crate and the runtime, and a caller that built a string from it would be
+/// a third party to a two-party contract.
+pub const STRING_OF_UTF8: &str = "souther_string_of_utf8";
+
+/// The symbols such a caller reads a string back through.
+pub const STRING_LENGTH: &str = "souther_string_length";
+pub const STRING_BYTES: &str = "souther_string_bytes";
 
 /// The symbol generated code takes room from.
 ///

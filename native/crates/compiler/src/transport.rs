@@ -364,6 +364,20 @@ pub enum Node {
         #[serde(rename = "type")]
         ty: Ty,
     },
+    /// The text a literal spells, already in the form the language keeps it in.
+    ///
+    /// Normalized to NFC on the way in, by the compiler that read the source. Two canonically
+    /// equivalent spellings are one text by Unicode's definition and two by a comparison of code
+    /// units, and which of them an editor wrote is not something the author chose — so the folding
+    /// belongs where text arrives from outside, and that is not here. Nothing on this side
+    /// normalizes, and a driver that did would be folding a second time whatever had already
+    /// crossed.
+    #[serde(rename = "string")]
+    Str {
+        value: String,
+        #[serde(rename = "type")]
+        ty: Ty,
+    },
     Binary {
         op: Op,
         left: Box<Node>,
@@ -499,6 +513,7 @@ impl Node {
             Node::Int { ty, .. }
             | Node::Read { ty, .. }
             | Node::Bool { ty, .. }
+            | Node::Str { ty, .. }
             | Node::Binary { ty, .. }
             | Node::Neg { ty, .. }
             | Node::Let { ty, .. }

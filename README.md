@@ -52,6 +52,11 @@ Over `Int` and `Bool`: `+`, `-`, `*`, unary `-`, the six comparisons, `&&` and `
 name for a value. `/` answers the exact quotient, which is a `Rational` and has no representation
 here.
 
+Text: a literal, the six comparisons, and `++`. What a comparison of two strings compares is
+neither of the two addresses and not the bytes either — the language orders text by UTF-16 code
+unit, and says so of every carrier whatever one stores a string as. Everything else a program does
+with text — a length, a slice, a split — is reached through a kernel, and a kernel is still ahead.
+
 A model's own types: a product, a newtype, a unit, a sum, a value that may be absent, and several
 values carried as one. Built, read a field off, and forked on which case a value is.
 
@@ -71,8 +76,8 @@ or by another Souther build's object. The two are different questions: a module'
 is its surface in the language, and an object that read that as its own answer would be publishing
 whatever surface suited the shape it happened to be built in.
 
-A behavior the object does not define is reached over numbers, truths, and values of a model's own
-types. A value of a declared type says which type it is with the address of a byte its declaration
+A behavior the object does not define is reached over numbers, truths, text, and values of a
+model's own types. A value of a declared type says which type it is with the address of a byte its declaration
 owns, under a name the linker resolves, so a fork in one object over a value built in another
 compares what the linker resolved for both. A type whose representation is still to be designed
 does not cross, and the signature is where that is said.
@@ -80,7 +85,7 @@ does not cross, and the signature is where that is said.
 A type that states what its values owe is not built: a construction runs those clauses and stops at
 the first that does not hold, and nothing here runs one.
 
-Still ahead: a `String`, a `Decimal`, the collections, a function value, a kernel the language
+Still ahead: a `Decimal`, the collections, a function value, a kernel the language
 implements, a value that runs in the module declaring it, and a composition.
 
 
@@ -89,6 +94,11 @@ implements, a value that runs in the module declaring it, and a composition.
 In an arena the caller brackets. Nothing frees a Souther value on its own: what a run makes is
 dropped in one go by whoever bracketed the call, so generated code takes room and never gives any
 back, and nothing it emits has to know what owns what.
+
+A string a literal spells lives in the object rather than the arena, because it says the same text
+every run and nothing about it is worked out. What a value holds either way is an address, and
+nothing at it says which of the two it is: a join reads a literal the way it reads what a run made,
+and a comparison never asks.
 
 A value of a declared type carries which type it is, so a fork on what a value is reads a slot
 rather than asking where the value came from. Everything a value is made of sits in a slot of one

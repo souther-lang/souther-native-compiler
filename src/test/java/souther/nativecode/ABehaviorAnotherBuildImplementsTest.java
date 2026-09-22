@@ -33,7 +33,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  *
  * <p>Both objects are built here and the linker is given the pair, which is the only way to put
  * what two builds agree on to anything. Over numbers and truths there is nothing to agree: a
- * number is a number in either object. A value of a declared type says which type it is, and what
+ * number is a number in either object, and a string is a count of bytes and then that many bytes
+ * for the same reason — the layout is stated in the crate both halves of this backend read, so no
+ * name is left for a linker to resolve and no two builds can have worked one out differently. A value of a declared type says which type it is, and what
  * it says has to mean the same thing to a fork in the other object — so the pair is where an
  * identity one object worked out for itself stops working, and where one the linker settles is the
  * whole of the answer.
@@ -42,7 +44,7 @@ class ABehaviorAnotherBuildImplementsTest {
 
     private static final String BUILT_BEFORE = """
             module lib.rates exposing ( Rate, Shape, Round, Square, spin, tally, twice, rounded,
-                                        squared )
+                                        squared, shout )
 
             data Rate = Int
 
@@ -68,6 +70,9 @@ class ABehaviorAnotherBuildImplementsTest {
 
             behavior twice : (a: Int) -> Int
             let twice (a) = a * 2
+
+            behavior shout : (a: String) -> String
+            let shout (a) = a ++ "!"
             """;
 
     private static final String REACHING_IT = """
@@ -242,6 +247,42 @@ class ABehaviorAnotherBuildImplementsTest {
             assertThat(running.answering(module, fourTimes,
                     List.of(new ObservedValue.Integer(3))))
                     .isEqualTo(new ObservedValue.Integer(12));
+        }
+    }
+
+    /**
+     * Text made in one object and joined and compared in another.
+     *
+     * <p>A string is an address and what is at it is made where the run that made it was, so the
+     * pair is where a representation one object invented for itself would come apart. Both
+     * directions are put to it: what the other object answered is joined here, and what this
+     * object built is compared against what came back.
+     */
+    @Test
+    void textCrossesOutOfTheObjectItWasMadeIn() throws Exception {
+        CheckedProgram program = compiled("""
+                module app.says exposing ( twiceOver, agrees )
+                import lib.rates ( shout )
+
+                behavior twiceOver : (a: String) -> String
+                let twiceOver (a) = shout(shout(a))
+
+                behavior agrees : (a: String) -> Bool
+                let agrees (a) = shout(a) == (a ++ "!")
+                """);
+        byte[] before = NativeCompiler.compile(builtBefore());
+
+        try (Running running = Running.of(program, List.of(before))) {
+            CheckedModule module = program.modules().getFirst();
+            var twiceOver = module.behavior(new ValueName.Behavior("app.says", "twiceOver"));
+            var agrees = module.behavior(new ValueName.Behavior("app.says", "agrees"));
+
+            assertThat(running.answering(module, twiceOver,
+                    List.of(new ObservedValue.Text("hi"))))
+                    .isEqualTo(new ObservedValue.Text("hi!!"));
+            assertThat(running.answering(module, agrees,
+                    List.of(new ObservedValue.Text("hi"))))
+                    .isEqualTo(new ObservedValue.Bool(true));
         }
     }
 

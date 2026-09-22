@@ -375,6 +375,9 @@ public final class ProgramWriter {
                     "{\"core\":\"int\",\"value\":" + it.value() + ",\"type\":" + type(at) + "}";
             case ObservedValue.Bool it when at == Type.Prim.BOOL ->
                     "{\"core\":\"bool\",\"value\":" + it.value() + ",\"type\":" + type(at) + "}";
+            case ObservedValue.Text it when at == Type.Prim.STRING ->
+                    "{\"core\":\"string\",\"value\":" + quoted(it.value())
+                            + ",\"type\":" + type(at) + "}";
 
             case ObservedValue.Integer it -> throw notStated(it, at);
             case ObservedValue.Bool it -> throw notStated(it, at);
@@ -560,6 +563,11 @@ public final class ProgramWriter {
                     + ",\"type\":" + type(it.type()) + "}";
             case Core.Bool it -> "{\"core\":\"bool\",\"value\":" + it.value()
                     + ",\"type\":" + type(it.type()) + "}";
+            // The text as the compiler read it, which is the text normalized to NFC. Nothing here
+            // folds it a second time: where text arrives from outside is where that is done, and a
+            // source file is one of the two places it arrives.
+            case Core.Str it -> "{\"core\":\"string\",\"value\":" + quoted(it.value())
+                    + ",\"type\":" + type(it.type()) + "}";
             case Core.Binary it -> "{\"core\":\"binary\",\"op\":" + quoted(op(it.op()))
                     + ",\"left\":" + core(it.left(), bindings)
                     + ",\"right\":" + core(it.right(), bindings)
@@ -600,7 +608,6 @@ public final class ProgramWriter {
                     + ",\"type\":" + type(it.type()) + "}";
 
             case Core.Decimal it -> throw notYet("a decimal literal", it);
-            case Core.Str it -> throw notYet("a string literal", it);
             case Core.Temporal it -> throw notYet("a temporal literal", it);
             case Core.MaterialisedValue it -> throw notYet("a value read from its module", it);
             case Core.Call it -> call(it, bindings);

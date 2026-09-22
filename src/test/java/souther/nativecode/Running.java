@@ -275,8 +275,9 @@ final class Running implements AutoCloseable {
                 #include <stdint.h>
                 #include <stdio.h>
                 #include <stdlib.h>
+                #include <string.h>
 
-                %s
+                %s%s
 
                 extern %s reached(%s) __asm__("%s%s");
                 extern int64_t souther_mark(void);
@@ -288,11 +289,12 @@ final class Running implements AutoCloseable {
                     }
                     int64_t mark = souther_mark();
                     %s answered = reached(%s);
-                    printf("%s\\n", answered);
+                    %s
                     souther_reset(mark);
                     return 0;
                 }
                 """.formatted(
+                textCrossesHere(answers, takes) ? TEXT_CROSSING : "",
                 supplied.toString(),
                 cType(answers),
                 takenIn(taken),
@@ -300,7 +302,7 @@ final class Running implements AutoCloseable {
                 takes.size() + 1,
                 cType(answers),
                 String.join(", ", given),
-                format(answers));
+                writing(answers));
     }
 
     /**
@@ -357,13 +359,13 @@ final class Running implements AutoCloseable {
             for (StoodIn.Entry entry : stated.entries()) {
                 List<String> asked = new ArrayList<>();
                 for (int at = 0; at < entry.arguments().size(); at++) {
-                    asked.add("a" + at + " == " + written(entry.arguments().get(at)));
+                    asked.add("a" + at + " == " + asC(entry.arguments().get(at)));
                 }
                 answering.append("    if (%s) { return %s; }\n"
-                        .formatted(everyOneOf(asked), written(entry.answer())));
+                        .formatted(everyOneOf(asked), asC(entry.answer())));
             }
             otherwise = switch (stated.otherwise()) {
-                case StoodIn.Otherwise.Answer it -> "    return " + written(it.value()) + ";\n";
+                case StoodIn.Otherwise.Answer it -> "    return " + asC(it.value()) + ";\n";
                 case StoodIn.Otherwise.NothingStated it -> "    exit(3);\n";
             };
         }
@@ -411,18 +413,74 @@ final class Running implements AutoCloseable {
     private static final String PREFIX =
             System.getProperty("os.name", "").toLowerCase().contains("mac") ? "_" : "";
 
+    /** Whether this harness has a string to make or to write out. */
+    private static boolean textCrossesHere(Type answers, List<Type> takes) {
+        if (prim(answers) == Type.Prim.STRING) {
+            return true;
+        }
+        for (Type taken : takes) {
+            if (prim(taken) == Type.Prim.STRING) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * What this harness makes a string with and writes one back as.
+     *
+     * <p>Hex both ways, which is not for anyone to read. A string is bytes and a Souther one may
+     * hold a newline or a nought; handed over as itself it would be cut short by the first nought
+     * and read back wrongly at the first newline, and neither would look like a string being
+     * mishandled — it would look like the program having answered something else.
+     *
+     * <p>The layout is nowhere here. A string is made and taken apart through the runtime, which
+     * is the one place besides the {@code abi} crate that says what one is made of.
+     */
+    private static final String TEXT_CROSSING = """
+            extern const uint8_t *souther_string_of_utf8(const uint8_t *, int64_t);
+            extern int64_t souther_string_length(const uint8_t *);
+            extern const uint8_t *souther_string_bytes(const uint8_t *);
+
+            static const uint8_t *readText(const char *hex) {
+                size_t length = strlen(hex) / 2;
+                uint8_t *bytes = malloc(length + 1);
+                for (size_t at = 0; at < length; at++) {
+                    unsigned byte;
+                    sscanf(hex + 2 * at, "%2x", &byte);
+                    bytes[at] = (uint8_t) byte;
+                }
+                const uint8_t *held = souther_string_of_utf8(bytes, (int64_t) length);
+                free(bytes);
+                return held;
+            }
+
+            static void writeText(const uint8_t *held) {
+                int64_t length = souther_string_length(held);
+                const uint8_t *bytes = souther_string_bytes(held);
+                for (int64_t at = 0; at < length; at++) {
+                    printf("%02x", bytes[at]);
+                }
+                printf("\\n");
+            }
+
+            """;
+
+    /** What the harness does with what came back, which is not one statement for every type. */
+    private static String writing(Type answers) {
+        return switch (prim(answers)) {
+            case INT -> "printf(\"%\" PRId64 \"\\n\", answered);";
+            case BOOL -> "printf(\"%d\\n\", answered);";
+            case STRING -> "writeText(answered);";
+            default -> throw new AssertionError("no harness writes a " + answers + " yet");
+        };
+    }
+
     private static String cType(Type type) {
         return switch (prim(type)) {
             case INT -> "int64_t";
             case BOOL -> "int8_t";
-            default -> throw new AssertionError("no harness writes a " + type + " yet");
-        };
-    }
-
-    private static String format(Type type) {
-        return switch (prim(type)) {
-            case INT -> "%\" PRId64 \"";
-            case BOOL -> "%d";
+            case STRING -> "const uint8_t *";
             default -> throw new AssertionError("no harness writes a " + type + " yet");
         };
     }
@@ -431,24 +489,62 @@ final class Running implements AutoCloseable {
         return switch (prim(type)) {
             case INT -> "strtoll(argv[" + at + "], NULL, 10)";
             case BOOL -> "(int8_t) (strtoll(argv[" + at + "], NULL, 10) != 0)";
+            case STRING -> "readText(argv[" + at + "])";
             default -> throw new AssertionError("no harness reads a " + type + " yet");
         };
     }
 
+    /** A value as the command line carries it, which is where a run is handed what it takes. */
     private static String written(ObservedValue given) {
         return switch (given) {
             case ObservedValue.Integer it -> Long.toString(it.value());
             case ObservedValue.Bool it -> it.value() ? "1" : "0";
+            case ObservedValue.Text it -> hex(it.value().getBytes(StandardCharsets.UTF_8));
             default -> throw new AssertionError("no harness hands over a " + given + " yet");
         };
+    }
+
+    /**
+     * The same value as a C expression, which is a different question.
+     *
+     * <p>A stand-in is a table written into the harness rather than values handed to a process, so
+     * what it takes is what C spells and not what a command line carries. The two agree for a
+     * number and for a truth, and a string is where they stop agreeing: it is made rather than
+     * written, and two of them are compared through the runtime rather than with {@code ==}. No
+     * row here needs one yet, and a spelling invented for a row that does not exist would be
+     * checked by nothing.
+     */
+    private static String asC(ObservedValue given) {
+        return switch (given) {
+            case ObservedValue.Integer it -> Long.toString(it.value());
+            case ObservedValue.Bool it -> it.value() ? "1" : "0";
+            default -> throw new AssertionError("no harness stands in over a " + given + " yet");
+        };
+    }
+
+    private static String hex(byte[] bytes) {
+        StringBuilder out = new StringBuilder(bytes.length * 2);
+        for (byte each : bytes) {
+            out.append("%02x".formatted(each & 0xff));
+        }
+        return out.toString();
     }
 
     private static ObservedValue read(Type answers, String said) {
         return switch (prim(answers)) {
             case INT -> new ObservedValue.Integer(Long.parseLong(said));
             case BOOL -> new ObservedValue.Bool(!"0".equals(said));
+            case STRING -> new ObservedValue.Text(text(said));
             default -> throw new AssertionError("no harness reads a " + answers + " back yet");
         };
+    }
+
+    private static String text(String hex) {
+        byte[] bytes = new byte[hex.length() / 2];
+        for (int at = 0; at < bytes.length; at++) {
+            bytes[at] = (byte) Integer.parseInt(hex.substring(2 * at, 2 * at + 2), 16);
+        }
+        return new String(bytes, StandardCharsets.UTF_8);
     }
 
     private static Type.Prim prim(Type type) {

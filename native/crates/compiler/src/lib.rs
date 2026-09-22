@@ -18,8 +18,9 @@ use cranelift::frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use cranelift::module::{DataDescription, DataId, FuncId, Linkage, Module, default_libcall_names};
 use cranelift::object::{ObjectBuilder, ObjectModule};
 use souther_native_abi::{
-    ALLOCATE, HELD, NOTHING, SLOT, TOKEN, WHICH, behavior_symbol, example_symbol, field_at,
-    held_symbol, member_at, type_symbol,
+    ALLOCATE, HELD, NOTHING, SLOT, STRING_COMPARE, STRING_CONCAT, TEXT_BYTES, TEXT_LENGTH, TOKEN,
+    WHICH, behavior_symbol, example_symbol, field_at, held_symbol, member_at, room_for_fields,
+    room_for_held, room_for_members, room_for_text, type_symbol,
 };
 use std::collections::HashMap;
 use std::fmt;
@@ -107,6 +108,19 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
     taking_room.params.push(AbiParam::new(types::I64));
     taking_room.returns.push(AbiParam::new(POINTER));
     let allocate = module.declare_function(ALLOCATE, Linkage::Import, &taking_room)?;
+
+    // What two strings are compared and joined through. Neither is emitted here: a comparison of
+    // text is a walk over two runs of bytes, and one written into every site that says `==` would
+    // be the same walk written as many times as the program says it.
+    let mut over_two_strings = ir::Signature::new(call_conv);
+    over_two_strings.params.push(AbiParam::new(POINTER));
+    over_two_strings.params.push(AbiParam::new(POINTER));
+    let mut comparing = over_two_strings.clone();
+    comparing.returns.push(AbiParam::new(types::I64));
+    let compare_text = module.declare_function(STRING_COMPARE, Linkage::Import, &comparing)?;
+    let mut joining = over_two_strings;
+    joining.returns.push(AbiParam::new(POINTER));
+    let join_text = module.declare_function(STRING_CONCAT, Linkage::Import, &joining)?;
 
     let declared = Declared::of(&program.declarations)?;
 
@@ -211,6 +225,8 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
                 reachable: &reachable,
                 carrier: &written.name,
                 allocate,
+                compare_text,
+                join_text,
             };
             define(
                 &mut context.func,
@@ -236,6 +252,8 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
                 reachable: &reachable,
                 carrier: &written.name,
                 allocate,
+                compare_text,
+                join_text,
             };
             define(
                 &mut context.func,
@@ -261,6 +279,8 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
                 reachable: &reachable,
                 carrier: &written.name,
                 allocate,
+                compare_text,
+                join_text,
             };
             // Taking nothing: what the row states is written into the body, so an entry with
             // parameters would be a row whose values came from whoever ran it.
@@ -447,6 +467,31 @@ fn tag_of(
     Ok(builder.ins().symbol_value(POINTER, named))
 }
 
+/// A value the lowering has made, and what the language says it is.
+///
+/// The two travel together because apart they are what a wrong answer is made of. An `Int` and
+/// every address are both `i64` here, so an instruction chosen from the machine value alone cannot
+/// tell a number from where a value is kept, and Cranelift has nothing to object to: the widths
+/// agree. What went wrong once already was a comparison emitted from one operand's type while the
+/// other was something else, and it emitted an `icmp` over a number and an address.
+///
+/// Made from a node and what that node lowered to, so the type cannot have come from somewhere
+/// other than the value did.
+#[derive(Clone, Copy)]
+struct Held<'a> {
+    value: ir::Value,
+    ty: &'a Ty,
+}
+
+impl<'a> Held<'a> {
+    fn of(node: &'a Node, value: ir::Value) -> Held<'a> {
+        Held {
+            value,
+            ty: node.ty(),
+        }
+    }
+}
+
 /// What the lowering of one function needs besides the function itself.
 struct Lowering<'a> {
     declared: &'a Declared<'a>,
@@ -454,18 +499,25 @@ struct Lowering<'a> {
     /// The module whose copy of a definition a call from here reaches.
     carrier: &'a str,
     allocate: FuncId,
+    compare_text: FuncId,
+    join_text: FuncId,
 }
 
 impl Lowering<'_> {
-    /// Room for `slots` slots, from the arena the caller brackets.
+    /// Room for `bytes` bytes, from the arena the caller brackets.
+    ///
+    /// Bytes and not slots, because how many slots a value is made of is a fact about its layout
+    /// and the layout is stated in the `abi` crate. A caller counting slots here would be working
+    /// out for itself where the fields start, which is the other half of a fact it is already
+    /// reading from there.
     fn room(
         &self,
         builder: &mut FunctionBuilder,
         module: &mut ObjectModule,
-        slots: usize,
+        bytes: i64,
     ) -> ir::Value {
         let taking = module.declare_func_in_func(self.allocate, builder.func);
-        let size = builder.ins().iconst(types::I64, SLOT * slots as i64);
+        let size = builder.ins().iconst(types::I64, bytes);
         let taken = builder.ins().call(taking, &[size]);
         builder.inst_results(taken)[0]
     }
@@ -496,8 +548,11 @@ fn machine_type(ty: &Ty) -> Result<types::Type> {
         Ty::Prim { prim } => match prim {
             Prim::Int => Ok(types::I64),
             Prim::Bool => Ok(types::I8),
-            Prim::String
-            | Prim::Decimal
+            // The address of a count of bytes and the text that follows it. Where that stands —
+            // the object, for a literal, or the arena, for one a run worked out — is not something
+            // the value says, and nothing that reads one has to ask.
+            Prim::String => Ok(POINTER),
+            Prim::Decimal
             | Prim::Rational
             | Prim::Date
             | Prim::Time
@@ -541,8 +596,12 @@ fn means_the_same_elsewhere(ty: &Ty) -> bool {
         // since what this decides is whether a value of it may leave the object.
         Ty::Prim { prim } => match prim {
             Prim::Int | Prim::Bool => true,
-            Prim::String
-            | Prim::Decimal
+            // A count of bytes and then that many bytes of text, at an address. The layout is
+            // stated in the crate both halves of this backend read, so two objects it built agree
+            // about it for the reason they agree that an `Int` is sixty-four bits wide. No linker
+            // is involved: there is no name here for one to resolve.
+            Prim::String => true,
+            Prim::Decimal
             | Prim::Rational
             | Prim::Date
             | Prim::Time
@@ -690,6 +749,7 @@ fn lower(
             lower(builder, lowering, module, bindings, body)?
         }
         Node::Bool { value, ty } => builder.ins().iconst(machine_type(ty)?, i64::from(*value)),
+        Node::Str { value, .. } => text_in_the_object(builder, module, value)?,
         Node::Binary {
             op, left, right, ..
         } => binary(builder, lowering, module, bindings, *op, left, right)?,
@@ -707,7 +767,7 @@ fn lower(
         }
         Node::Unit { declared, .. } => {
             let flags = TRUSTED;
-            let value = lowering.room(builder, module,1);
+            let value = lowering.room(builder, module, room_for_fields(0));
             let which = tag_of(builder, lowering, module, declared)?;
             builder.ins().store(flags, which, value, WHICH as i32);
             value
@@ -740,7 +800,7 @@ fn lower(
                 held.push(into_slot(builder, answered));
             }
             let flags = TRUSTED;
-            let value = lowering.room(builder, module,1 + values.len());
+            let value = lowering.room(builder, module, room_for_fields(values.len()));
             let which = tag_of(builder, lowering, module, declared)?;
             builder.ins().store(flags, which, value, WHICH as i32);
             for (at, field) in held.into_iter().enumerate() {
@@ -774,7 +834,7 @@ fn lower(
             let held = lower(builder, lowering, module, bindings, value)?;
             let held = into_slot(builder, held);
             let flags = TRUSTED;
-            let holding = lowering.room(builder, module,1);
+            let holding = lowering.room(builder, module, room_for_held());
             builder.ins().store(flags, held, holding, HELD as i32);
             holding
         }
@@ -786,7 +846,7 @@ fn lower(
                 held.push(into_slot(builder, answered));
             }
             let flags = TRUSTED;
-            let value = lowering.room(builder, module, members.len());
+            let value = lowering.room(builder, module, room_for_members(members.len()));
             for (at, member) in held.into_iter().enumerate() {
                 builder.ins().store(flags, member, value, member_at(at) as i32);
             }
@@ -1025,18 +1085,17 @@ fn binary(
             // `amount == 0` is; a case value compared with its sum is two declared types that are
             // not the same one. Read off the left alone, both of those are whatever the left one
             // happened to be.
-            let (left_ty, right_ty) = (left.ty(), right.ty());
-            let a = lower(builder, lowering, module, bindings, left)?;
-            let b = lower(builder, lowering, module, bindings, right)?;
+            let a = Held::of(left, lower(builder, lowering, module, bindings, left)?);
+            let b = Held::of(right, lower(builder, lowering, module, bindings, right)?);
             match op {
-                Op::Add | Op::Sub | Op::Mul => arithmetic(builder, op, left_ty, right_ty, a, b),
+                Op::Add | Op::Sub | Op::Mul => arithmetic(builder, op, a, b),
                 Op::Eq | Op::Ne | Op::Lt | Op::Le | Op::Gt | Op::Ge => {
-                    compare(builder, op, left_ty, right_ty, a, b)
+                    compare(builder, lowering, module, op, a, b)
                 }
                 // `/` answers the exact quotient, which is not a whole number and has no
                 // representation here yet.
                 Op::Div => Err(not_lowered(format!("the operator {}", op.spelt()))),
-                Op::Concat => Err(not_lowered(format!("the operator {}", op.spelt()))),
+                Op::Concat => join(builder, lowering, module, a, b),
                 Op::And | Op::Or => unreachable!("answered above, where the right side may not run"),
             }
         }
@@ -1063,13 +1122,14 @@ fn binary(
 /// than left. An object that links and answers is what a wrong answer comes out of.
 fn compare(
     builder: &mut FunctionBuilder,
+    lowering: &Lowering,
+    module: &mut ObjectModule,
     op: Op,
-    left: &Ty,
-    right: &Ty,
-    a: ir::Value,
-    b: ir::Value,
+    left: Held,
+    right: Held,
 ) -> Result<ir::Value> {
-    match (left, right) {
+    let (a, b) = (left.value, right.value);
+    match (left.ty, right.ty) {
         // Every primitive is named, for the reason `machine_type` names them: one added to the
         // language would otherwise arrive here and be compared as whatever it is held as.
         (Ty::Prim { prim }, Ty::Prim { prim: also }) if prim == also => match prim {
@@ -1085,8 +1145,18 @@ fn compare(
                     op.spelt()
                 ),
             },
-            Prim::String
-            | Prim::Decimal
+            // One call and then the six operators over what it answered. What text is ordered by
+            // is the runtime's to say and it is a walk, not a comparison of the two addresses and
+            // not a comparison of the bytes either.
+            Prim::String => {
+                let comparing = module.declare_func_in_func(lowering.compare_text, builder.func);
+                let compared = builder.ins().call(comparing, &[a, b]);
+                let answered = builder.inst_results(compared)[0];
+                Ok(builder
+                    .ins()
+                    .icmp_imm_s(as_a_whole_number(op), answered, 0))
+            }
+            Prim::Decimal
             | Prim::Rational
             | Prim::Date
             | Prim::Time
@@ -1112,8 +1182,8 @@ fn compare(
             Err(not_lowered(format!(
                 "a comparison of {} against {}, which is what they are made of compared rather \
                  than where they are",
-                left.spelt(),
-                right.spelt()
+                left.ty.spelt(),
+                right.ty.spelt()
             )))
         }
         // An optional and a tuple have equality and no order: what the language orders is a number,
@@ -1124,12 +1194,12 @@ fn compare(
             Op::Eq | Op::Ne => Err(not_lowered(format!(
                 "a comparison of {} against {}, which is what they hold compared rather than \
                  where they are",
-                left.spelt(),
-                right.spelt()
+                left.ty.spelt(),
+                right.ty.spelt()
             ))),
             _ => bail!(
                 "{} is not ordered, and {} is written over two of them here",
-                left.spelt(),
+                left.ty.spelt(),
                 op.spelt()
             ),
         },
@@ -1138,8 +1208,8 @@ fn compare(
         // two ways that is widened — a bare literal and a case value — are both answered above.
         _ => bail!(
             "{} is compared with {} here, which the language does not compare",
-            left.spelt(),
-            right.spelt()
+            left.ty.spelt(),
+            right.ty.spelt()
         ),
     }
 }
@@ -1156,15 +1226,9 @@ fn compare(
 /// to the wrapped number and not to the value. So the operands are two `Int`s by the time this
 /// reads them. That is the checker's arrangement and not this driver's, which is why anything else
 /// is the two halves disagreeing rather than a lowering that is still to be written.
-fn arithmetic(
-    builder: &mut FunctionBuilder,
-    op: Op,
-    left: &Ty,
-    right: &Ty,
-    a: ir::Value,
-    b: ir::Value,
-) -> Result<ir::Value> {
-    match (left, right) {
+fn arithmetic(builder: &mut FunctionBuilder, op: Op, left: Held, right: Held) -> Result<ir::Value> {
+    let (a, b) = (left.value, right.value);
+    match (left.ty, right.ty) {
         (Ty::Prim { prim }, Ty::Prim { prim: also }) if prim == also => match prim {
             Prim::Int => match op {
                 Op::Add => {
@@ -1202,10 +1266,81 @@ fn arithmetic(
             "{} is written over {} and {}, which reaches this driver as arithmetic over what they \
              are made of or does not reach it at all",
             op.spelt(),
-            left.spelt(),
-            right.spelt()
+            left.ty.spelt(),
+            right.ty.spelt()
         ),
     }
+}
+
+/// Two values joined, which the language writes over two strings and over two lists.
+///
+/// A list has no type this writer can name yet, so nothing but two strings reaches here; the rest
+/// is the two halves disagreeing rather than a join that is still to be written.
+fn join(
+    builder: &mut FunctionBuilder,
+    lowering: &Lowering,
+    module: &mut ObjectModule,
+    left: Held,
+    right: Held,
+) -> Result<ir::Value> {
+    let (a, b) = (left.value, right.value);
+    match (left.ty, right.ty) {
+        (Ty::Prim { prim }, Ty::Prim { prim: also }) if prim == also => match prim {
+            Prim::String => {
+                let joining = module.declare_func_in_func(lowering.join_text, builder.func);
+                let joined = builder.ins().call(joining, &[a, b]);
+                Ok(builder.inst_results(joined)[0])
+            }
+            Prim::Int
+            | Prim::Bool
+            | Prim::Decimal
+            | Prim::Rational
+            | Prim::Date
+            | Prim::Time
+            | Prim::DateTime
+            | Prim::Instant
+            | Prim::Raw => bail!(
+                "two values of type {} are joined here, which the language does not join",
+                prim.spelt()
+            ),
+        },
+        _ => bail!(
+            "{} is joined with {} here, which the language does not join",
+            left.ty.spelt(),
+            right.ty.spelt()
+        ),
+    }
+}
+
+/// A string the object carries, and the address of it.
+///
+/// A literal says the same text every run, so it is written into the object rather than worked out
+/// into the arena. What comes back is the address of a string like any other: a comparison and a
+/// join read it the way they read one a run made, and nothing in the value says which of the two
+/// it is. That is what keeps where a string is kept out of what a string means.
+///
+/// One data object per literal, anonymous because nothing outside this object reaches one and two
+/// spellings of one text are not a thing anything has to agree about.
+fn text_in_the_object(
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    value: &str,
+) -> Result<ir::Value> {
+    let length = i64::try_from(value.len()).expect("a literal is shorter than an Int");
+    let mut written = vec![0u8; room_for_text(length) as usize];
+    written[TEXT_LENGTH as usize..][..SLOT as usize].copy_from_slice(&length.to_ne_bytes());
+    written[TEXT_BYTES as usize..].copy_from_slice(value.as_bytes());
+
+    let mut held = DataDescription::new();
+    held.define(written.into_boxed_slice());
+    // Aligned as everything the arena answers is. The count before the text is read as a slot, and
+    // every access this emits says the address is aligned rather than checking that it is.
+    held.set_align(SLOT as u64);
+    let id = module.declare_anonymous_data(false, false)?;
+    module.define_data(id, &held)?;
+
+    let named = module.declare_data_in_func(id, builder.func);
+    Ok(builder.ins().symbol_value(POINTER, named))
 }
 
 /// Which machine condition one of the six comparisons is, over a signed whole number.
