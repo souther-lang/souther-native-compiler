@@ -33,6 +33,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.StringJoiner;
+import java.util.function.Function;
 
 /**
  * A checked program written out for the half that lowers it.
@@ -87,6 +88,43 @@ public final class ProgramWriter {
     /** The whole program as one document. */
     public static String written(CheckedProgram program) {
         return new ProgramWriter(program).document();
+    }
+
+    /**
+     * Every spelling this writer can write, for each vocabulary both halves hold a copy of.
+     *
+     * <p>A vocabulary the language closed is spelt twice: once here, and once by the driver that
+     * reads it. Neither copy holds the other to anything. A member spelt differently on the two
+     * sides is loud — the driver refuses a word it does not read, and says the two halves disagree
+     * rather than that the backend is behind — but a member spelt as another member of the same
+     * vocabulary is not: the document reads, and the program means something other than it says.
+     *
+     * <p>So this is written out to a document the driver's own test reads back, which is what the
+     * addition fixture already is: the two halves meet at something one of them produced instead of
+     * at two readings of the same prose. The order is the upstream enum's, and it is the
+     * correspondence — the driver's test names the member it expects at each place, so a spelling
+     * that moves on either side is red on the other.
+     *
+     * <p>Four vocabularies and not six. What a behavior does instead of carrying a body, and what a
+     * call reaches, are switches over shapes rather than over an enum, so there is no member to ask
+     * for the spelling of without an instance of one to hand. Those cross under a real program or
+     * not at all.
+     */
+    public static String vocabularies() {
+        return "{\"transport\":" + TRANSPORT_VERSION
+                + ",\"op\":" + spellings(BinOp.values(), ProgramWriter::op)
+                + ",\"prim\":" + spellings(Type.Prim.values(), ProgramWriter::prim)
+                + ",\"publication\":" + spellings(Publication.values(), ProgramWriter::publication)
+                + ",\"declaredby\":" + spellings(DeclaredBy.values(), ProgramWriter::by)
+                + "}";
+    }
+
+    private static <A> String spellings(A[] members, Function<A, String> spelt) {
+        StringJoiner words = new StringJoiner(",", "[", "]");
+        for (A member : members) {
+            words.add(quoted(spelt.apply(member)));
+        }
+        return words.toString();
     }
 
     /**
@@ -166,6 +204,11 @@ public final class ProgramWriter {
      * built from the two, and that symbol is what a linker resolves. Everywhere else a type is
      * named the document carries the key that reaches this — so the two halves are joined in one
      * place and split in none.
+     *
+     * <p>What is not written is whether the module publishes the type. That is the same question
+     * the object already asks of a behavior, and {@link CheckedModule#publicationOf} answers it for
+     * a behavior and for nothing else, so there is nothing here to project. Until there is, an
+     * object exports the token of every type it declares, including one the module keeps.
      */
     private String declaration(TypeSymbol.AtModule name, Declared declared) {
         // What a field holds is a type too, and it may be one nothing else in the document has
@@ -205,17 +248,17 @@ public final class ProgramWriter {
     /**
      * Who declared a type, as the checker answered it.
      *
-     * <p>What it decides on the far side is who defines the type's identity: the build that checked
-     * the module is where the declaration is at home, and every other object that names the type
-     * reaches that one. Written out word by word rather than taken from the name the enum carries,
-     * for the reason an operator is.
+     * <p>What it decides on the far side is who defines the token a value of the type is tagged by:
+     * the build that checked the module is where the declaration is at home, and every other object
+     * that names the type reaches that one. Written out word by word rather than taken from the name
+     * the enum carries, for the reason an operator is.
      *
      * <p>A provenance added upstream stops this compiling, which is what keeps this a report of
      * the checker's answer. A writer that worked the answer out instead — by asking whether the
      * module is one this document carries — would be right about two of these three and file the
      * language's own declarations under the one they are not.
      */
-    private String by(DeclaredBy who) {
+    private static String by(DeclaredBy who) {
         return switch (who) {
             case A_MODULE -> "amodule";
             case A_MODULE_ON_THE_PATH -> "onthepath";
@@ -471,7 +514,7 @@ public final class ProgramWriter {
     }
 
     /** How the module's answer about a name is spelt on the wire, member by member. */
-    private String publication(Publication published) {
+    private static String publication(Publication published) {
         return switch (published) {
             case PUBLISHED -> "published";
             case KEPT -> "kept";
@@ -686,7 +729,7 @@ public final class ProgramWriter {
      * to the language would cross to a reader that has never heard of it, and the first thing to
      * notice would be the far side failing to parse a document this side thought it had written.
      */
-    private String op(BinOp op) {
+    private static String op(BinOp op) {
         return switch (op) {
             case EQ -> "EQ";
             case NE -> "NE";
@@ -705,7 +748,7 @@ public final class ProgramWriter {
     }
 
     /** How a primitive is spelt on the wire, for the same reason and in the same way. */
-    private String prim(Type.Prim prim) {
+    private static String prim(Type.Prim prim) {
         return switch (prim) {
             case INT -> "INT";
             case STRING -> "STRING";
@@ -760,7 +803,7 @@ public final class ProgramWriter {
         return new NotLowered(what);
     }
 
-    private String quoted(String text) {
+    private static String quoted(String text) {
         StringBuilder out = new StringBuilder(text.length() + 2).append('"');
         for (int i = 0; i < text.length(); i++) {
             char c = text.charAt(i);

@@ -31,7 +31,7 @@ pub struct Program {
     pub modules: Vec<Module>,
 }
 
-/// Who declared a type, which is what decides who defines its identity.
+/// Who declared a type, which is what decides who defines the byte its values are tagged with.
 ///
 /// The checker's answer and not one worked out here. This side could ask whether the declaration's
 /// module is one the document carries and get the same answer for two of these three, which is the
@@ -41,9 +41,9 @@ pub struct Program {
 #[serde(rename_all = "lowercase")]
 pub enum DeclaredBy {
     /// A module this compile checked. The declaration is at home in this object, which is what
-    /// defines its identity for whoever links it.
+    /// defines its token for whoever links it.
     AModule,
-    /// A module this compile read off the path, already built. That build defined the identity and
+    /// A module this compile read off the path, already built. That build defined the token and
     /// this object names it, so the linker is what brings the two together.
     OnThePath,
     /// The language, in its own namespace and in no module of any compilation. Nothing here ships
@@ -90,8 +90,10 @@ pub enum Declaration {
     /// A sum is never built. What it says is which types stand as its cases, and a case may be a
     /// sum again — which is why an arm tests the leaves it resolved to rather than this list.
     ///
-    /// No value is ever one, so no value is ever tagged with one and a sum has no identity to be
-    /// tagged with.
+    /// No value is ever one, so nothing is ever tagged with a sum and no object defines a token
+    /// for one. Which is not to say a sum has no identity: it has the one every declaration has,
+    /// its module and its name, and that is here. What it has no need of is a byte for a value to
+    /// carry the address of.
     Sum {
         module: String,
         name: String,

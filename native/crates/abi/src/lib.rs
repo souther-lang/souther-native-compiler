@@ -61,13 +61,16 @@ pub fn example_symbol(module: &str, behavior: &str, at: usize) -> String {
     format!("{}$example${at}", behavior_symbol(module, behavior))
 }
 
-/// The symbol a declared type's identity is.
+/// The symbol whose address a value of a declared type carries as its tag.
 ///
-/// One data object per declaration, and its address is the identity. Two objects naming one
-/// declaration reach one address because the linker resolved one name, which is the property a
-/// number counted in a document does not have: two documents number their declarations
-/// differently, and a value tagged with one object's count compared against another's is two
-/// answers to a question neither was asked.
+/// One data object per declaration. Two objects naming one declaration reach one address because
+/// the linker resolved one name, which is the property a number counted in a document does not
+/// have: two documents number their declarations differently, and a value tagged with one object's
+/// count compared against another's is two answers to a question neither was asked.
+///
+/// Not the whole of what a declared type's identity is. That is its module and its name, which
+/// every declaration has and which the document carries; this is the one representation of it a
+/// value can hold in a slot, and it exists for values to be told apart by.
 ///
 /// So the agreement is not between two builds. It is between each build and the linker, which is
 /// already what makes a call reach a definition.
@@ -97,8 +100,7 @@ pub fn type_symbol(module: &str, name: &str) -> String {
 ///
 /// One byte, whose value means nothing and which nothing ever reads. What the token is for is its
 /// address, and a byte is what gives it one of its own: two symbols with no bytes between them may
-/// be laid at one address, and an identity that is an address would then be two declarations'
-/// identity at once.
+/// be laid at one address, and two declarations would then be tagged the same way.
 pub const TOKEN: &[u8] = &[0];
 
 /// How wide a slot is, and so what a value made of slots is measured in.
@@ -226,18 +228,18 @@ mod tests {
         );
     }
 
-    /// Two declarations of one name in different modules are two identities, and one declaration
+    /// Two declarations of one name in different modules are two symbols, and one declaration
     /// named from two objects is one.
     #[test]
-    fn a_type_of_one_name_in_two_modules_is_two_identities() {
+    fn a_type_of_one_name_in_two_modules_is_two_symbols() {
         assert_ne!(type_symbol("pricing", "Round"), type_symbol("shapes", "Round"));
         assert_eq!(type_symbol("shapes", "Round"), type_symbol("shapes", "Round"));
     }
 
-    /// A type's identity is never a behavior's, whatever either is called. Both spellings are
-    /// built here, so what keeps them apart is asserted rather than described.
+    /// A type's symbol is never a behavior's, whatever either is called. Both spellings are built
+    /// here, so what keeps them apart is asserted rather than described.
     #[test]
-    fn a_types_identity_is_not_a_behaviors_symbol() {
+    fn a_types_symbol_is_not_a_behaviors() {
         assert_ne!(type_symbol("lib.rates", "Rate"), behavior_symbol("lib.rates", "Rate"));
         assert_ne!(type_symbol("lib", "rates"), behavior_symbol("lib", "rates"));
         assert_ne!(type_symbol("pricing", "taxed"), held_symbol("pricing", "pricing.taxed"));
@@ -251,8 +253,8 @@ mod tests {
         let _ = type_symbol("a", "b.C");
     }
 
-    /// An identity that is an address needs a storage location of its own, and nothing with no
-    /// bytes in it has one it does not share.
+    /// A tag that is an address needs a storage location of its own, and nothing with no bytes in
+    /// it has one it does not share.
     #[test]
     fn a_token_is_at_least_one_byte() {
         assert!(!TOKEN.is_empty());

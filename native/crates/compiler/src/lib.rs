@@ -110,13 +110,14 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
 
     let declared = Declared::of(&program.declarations)?;
 
-    // The identity of every declaration at home in this object, defined whether anything here
-    // builds a value of one or not. A declaration has one home and it is the object of the build
-    // that checked its module, so what another build's object names is resolved here or nowhere.
+    // The token every declaration at home in this object is tagged by, defined whether anything
+    // here builds a value of one or not. A declaration has one home and it is the object of the
+    // build that checked its module, so what another build's object names is resolved here or
+    // nowhere.
     //
-    // A sum is skipped because no value is ever one: an arm tests the leaves a case resolved to,
-    // and a token nothing is tagged with would be a name in the table standing for a value that
-    // cannot exist.
+    // A sum is skipped because nothing is ever tagged with one: an arm tests the leaves a case
+    // resolved to, and a token nothing is tagged with would be a name in the table standing for a
+    // value that cannot exist.
     let mut token = DataDescription::new();
     token.define(TOKEN.into());
     for declaration in &program.declarations {
@@ -125,7 +126,7 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
         {
             continue;
         }
-        let id = declared.identity(&mut module, &declaration.key())?;
+        let id = declared.tag(&mut module, &declaration.key())?;
         module.define_data(id, &token)?;
     }
 
@@ -370,7 +371,8 @@ impl Reachable {
 /// takes. The second used to be answered out of the first — a declaration's position among the
 /// ones one document happened to bring — and that is exactly what made it this object's own.
 ///
-/// So the identity is not here. It is a symbol, and what resolves it is the linker.
+/// So what a value is tagged with is not held here. It is a symbol, and what resolves it is the
+/// linker; this resolves a key to the declaration that says what the symbol is called.
 struct Declared<'a> {
     shapes: HashMap<String, &'a Declaration>,
 }
@@ -394,7 +396,7 @@ impl<'a> Declared<'a> {
             .ok_or_else(|| anyhow!("a value of {declared}, which no declaration crossed for"))
     }
 
-    /// The token whose address a value of this type carries, as this object names it.
+    /// The token a value of this type is tagged by, as this object names it.
     ///
     /// Asked for by the key, and the symbol built from what the declaration carries — never from
     /// the key itself. The key is how a reference reaches a declaration; splitting one back up
@@ -406,12 +408,12 @@ impl<'a> Declared<'a> {
     /// here builds a value of it or not — that is what being its home means — and one from another
     /// build is named only by the object that builds or forks on a value of it. Asking twice is
     /// asking once: a declaration is one symbol and Cranelift answers with the one it already has.
-    fn identity(&self, module: &mut ObjectModule, declared: &str) -> Result<DataId> {
+    fn tag(&self, module: &mut ObjectModule, declared: &str) -> Result<DataId> {
         let declaration = self.shape(declared)?;
         if let Declaration::Sum { .. } = declaration {
             bail!(
-                "the identity of {declared}, which is a sum: no value is one, so an arm tests the \
-                 leaves it resolved to and nothing is ever tagged with this"
+                "a tag for {declared}, which is a sum: nothing is ever tagged with one, since an \
+                 arm tests the leaves a case resolved to"
             );
         }
         let linkage = match declaration.by() {
@@ -434,13 +436,13 @@ impl<'a> Declared<'a> {
 }
 
 /// The address of the declaration's token, as a value of it says which type it is.
-fn identity_of(
+fn tag_of(
     builder: &mut FunctionBuilder,
     lowering: &Lowering,
     module: &mut ObjectModule,
     declared: &str,
 ) -> Result<ir::Value> {
-    let token = lowering.declared.identity(module, declared)?;
+    let token = lowering.declared.tag(module, declared)?;
     let named = module.declare_data_in_func(token, builder.func);
     Ok(builder.ins().symbol_value(POINTER, named))
 }
@@ -551,6 +553,12 @@ fn means_the_same_elsewhere(ty: &Ty) -> bool {
         // A value of a declared type says which type it is with the address of its declaration's
         // token, which the linker resolves. Two objects naming one declaration reach one address,
         // so the comparison a fork makes is about the same thing on either side.
+        //
+        // Which is what a value says it is, and not where its fields are. Both objects read the
+        // field order off their own copy of the declaration, so they agree while they were checked
+        // against the one build of the module that declares it — and whether the object handed to
+        // the linker is that build is not something an object can ask. That is a separate
+        // question, and answering it here would be answering it with the wrong thing.
         Ty::Declared { .. } => true,
         // Written nowhere at run time: what holds a union holds one of its members, and each of
         // those says which type it is.
@@ -700,7 +708,7 @@ fn lower(
         Node::Unit { declared, .. } => {
             let flags = TRUSTED;
             let value = lowering.room(builder, module,1);
-            let which = identity_of(builder, lowering, module, declared)?;
+            let which = tag_of(builder, lowering, module, declared)?;
             builder.ins().store(flags, which, value, WHICH as i32);
             value
         }
@@ -733,7 +741,7 @@ fn lower(
             }
             let flags = TRUSTED;
             let value = lowering.room(builder, module,1 + values.len());
-            let which = identity_of(builder, lowering, module, declared)?;
+            let which = tag_of(builder, lowering, module, declared)?;
             builder.ins().store(flags, which, value, WHICH as i32);
             for (at, field) in held.into_iter().enumerate() {
                 builder
@@ -899,7 +907,7 @@ fn tests(
                 let which = builder.ins().load(POINTER, flags, value, WHICH as i32);
                 let mut any: Option<ir::Value> = None;
                 for atom in atoms {
-                    let expected = identity_of(builder, lowering, module, atom)?;
+                    let expected = tag_of(builder, lowering, module, atom)?;
                     let same = builder.ins().icmp(IntCC::Equal, which, expected);
                     any = Some(match any {
                         None => same,
