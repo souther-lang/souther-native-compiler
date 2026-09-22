@@ -10,16 +10,25 @@ use souther_native_driver::{NotLowered, object_for};
 /// One behavior over one primitive, joined by one operator — the smallest document that reaches
 /// the lowering, with the two things under test as its only variables.
 fn document(op: &str, ty: &str) -> String {
-    over(op, &format!(r#"{{"prim":"{ty}"}}"#))
+    let prim = format!(r#"{{"prim":"{ty}"}}"#);
+    over(op, &prim, &prim)
 }
 
-/// The same over any type the writer can name, for the ones no Souther source reaches this way.
-fn over(op: &str, prim: &str) -> String {
-    let read = |at: u32| format!(r#"{{"core":"read","binding":{at},"type":{prim}}}"#);
-    let body =
-        format!(r#"{{"core":"binary","op":"{op}","left":{},"right":{},"type":{prim}}}"#, read(0), read(1));
+/// The same over any pair of types the writer can name, for the ones no Souther source reaches
+/// this way.
+///
+/// A pair and not one type, because an operator here is not given two values of one type: a bare
+/// literal takes the newtype of what it is compared with, and a case value is a value of its sum.
+/// A builder that wrote one type twice could not say what either of those looks like on the wire.
+fn over(op: &str, left: &str, right: &str) -> String {
+    let read = |at: u32, ty: &str| format!(r#"{{"core":"read","binding":{at},"type":{ty}}}"#);
+    let body = format!(
+        r#"{{"core":"binary","op":"{op}","left":{},"right":{},"type":{left}}}"#,
+        read(0, left),
+        read(1, right)
+    );
     let target = format!(
-        r#"{{"module":"calculation","name":"f","is":"body","takes":[{prim},{prim}],"answers":{prim}}}"#
+        r#"{{"module":"calculation","name":"f","is":"body","takes":[{left},{right}],"answers":{left}}}"#
     );
     let held = format!(
         r#"{{"declared":"calculation.f","parameters":["a","b"],"publication":"published","body":{body}}}"#
@@ -64,7 +73,8 @@ fn a_primitive_with_no_representation_is_not_lowered() {
 /// have answered an address that points at neither.
 #[test]
 fn a_sum_of_two_addresses_is_the_halves_disagreeing() {
-    let document = over("ADD", r#"{"declared":"counting.Amount"}"#);
+    let amount = r#"{"declared":"counting.Amount"}"#;
+    let document = over("ADD", amount, amount);
 
     let refused = object_for(&document).expect_err("nothing here adds two addresses");
 
@@ -73,6 +83,64 @@ fn a_sum_of_two_addresses_is_the_halves_disagreeing() {
         "the halves disagreeing is not the backend being behind: {refused}"
     );
     assert!(refused.to_string().contains("counting.Amount"), "{refused}");
+}
+
+/// The same with a number on one side, which is the pair a reading of the left operand alone lets
+/// through. Both orders, because a reading that answered from either one of them answers one of
+/// these and not the other.
+#[test]
+fn a_sum_of_a_number_and_an_address_is_the_halves_disagreeing_whichever_side_it_is_on() {
+    let amount = r#"{"declared":"counting.Amount"}"#;
+    let number = r#"{"prim":"INT"}"#;
+
+    for document in [over("ADD", number, amount), over("ADD", amount, number)] {
+        let refused = object_for(&document).expect_err("nothing here adds a number to an address");
+
+        assert!(
+            refused.downcast_ref::<NotLowered>().is_none(),
+            "the halves disagreeing is not the backend being behind: {refused}"
+        );
+    }
+}
+
+/// An ordering over two tuples, and over two optionals.
+///
+/// What the language orders is a number, text, an amount, a moment, an enumeration and a newtype
+/// over one of those. A tuple and an optional have equality and no order, so `<` over either is
+/// the halves disagreeing — the same answer a `Bool` gets, and the reason is the same.
+///
+/// Written by hand because the checker refuses both, which is what makes them the disagreement
+/// they are read as here.
+#[test]
+fn an_ordering_over_what_has_equality_and_no_order_is_the_halves_disagreeing() {
+    let pair = r#"{"tuple":[{"prim":"INT"},{"prim":"INT"}]}"#;
+    let held = r#"{"option":{"prim":"INT"}}"#;
+
+    for ty in [pair, held] {
+        let refused = object_for(&over("LT", ty, ty)).expect_err("nothing orders these");
+
+        assert!(
+            refused.downcast_ref::<NotLowered>().is_none(),
+            "the halves disagreeing is not the backend being behind: {refused}"
+        );
+    }
+}
+
+/// And equality over the same two, which is a comparison still to be written rather than a
+/// disagreement: the language does compare them, by what they hold.
+#[test]
+fn equality_over_what_has_equality_and_no_order_is_a_lowering_this_has_not_got() {
+    let pair = r#"{"tuple":[{"prim":"INT"},{"prim":"INT"}]}"#;
+    let held = r#"{"option":{"prim":"INT"}}"#;
+
+    for ty in [pair, held] {
+        let refused = object_for(&over("EQ", ty, ty)).expect_err("no comparison for these yet");
+
+        assert!(
+            refused.downcast_ref::<NotLowered>().is_some(),
+            "the backend being behind is not the halves disagreeing: {refused}"
+        );
+    }
 }
 
 /// An ordering over two truths, which is not a program the language admits: `Bool` is not one of

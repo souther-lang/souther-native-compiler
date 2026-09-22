@@ -1019,16 +1019,19 @@ fn binary(
             })
         }
         _ => {
-            // What the operands are in Souther, which is what decides how they are joined. Read
-            // off the left one, as the width of a condition's answer is: an operator is given two
-            // values of one type, so either of them says it.
-            let ty = left.ty();
+            // Both of the operands' types, because one of them does not say what the other is.
+            // A bare literal takes the newtype of the value it is compared with, so `0 == amount`
+            // is an `Int` against a declared type and is as much a comparison of two amounts as
+            // `amount == 0` is; a case value compared with its sum is two declared types that are
+            // not the same one. Read off the left alone, both of those are whatever the left one
+            // happened to be.
+            let (left_ty, right_ty) = (left.ty(), right.ty());
             let a = lower(builder, lowering, module, bindings, left)?;
             let b = lower(builder, lowering, module, bindings, right)?;
             match op {
-                Op::Add | Op::Sub | Op::Mul => arithmetic(builder, op, ty, a, b),
+                Op::Add | Op::Sub | Op::Mul => arithmetic(builder, op, left_ty, right_ty, a, b),
                 Op::Eq | Op::Ne | Op::Lt | Op::Le | Op::Gt | Op::Ge => {
-                    compare(builder, op, ty, a, b)
+                    compare(builder, op, left_ty, right_ty, a, b)
                 }
                 // `/` answers the exact quotient, which is not a whole number and has no
                 // representation here yet.
@@ -1042,26 +1045,34 @@ fn binary(
 
 /// What a comparison compares.
 ///
-/// Decided by the type the operands have in Souther and not by the width they are held in. The two
-/// agree for an `Int` and for a `Bool`, and that agreement is the whole reason every comparison
+/// Decided by the types the operands have in Souther and not by the widths they are held in. The
+/// two agree for an `Int` and for a `Bool`, and that agreement is the whole reason every comparison
 /// could be one `icmp` until now. It does not hold past them. A value of a declared type is held as
 /// the address of what it is made of, and Souther's `==` over one of those is its fields compared
 /// one by one — so an `icmp` over the two addresses answers whether they are the same value rather
 /// than whether they are equal, and says false of two that were built separately.
+///
+/// Both types and not the left one, because an operator here is not given two values of one type.
+/// A bare literal takes the newtype of the operand it is compared with, and a case value is a value
+/// of its sum, so a legitimate comparison arrives with `Int` on one side and a declared type on the
+/// other, or with two declared types that are not the same one. Read off the left alone, `0 ==
+/// amount` would be compared as two `Int`s — one of which is an address — while `amount == 0`
+/// was refused, and which of the two a program got would be the order its author wrote them in.
 ///
 /// So what is refused here was being answered wrongly before, which is why it is refused rather
 /// than left. An object that links and answers is what a wrong answer comes out of.
 fn compare(
     builder: &mut FunctionBuilder,
     op: Op,
-    ty: &Ty,
+    left: &Ty,
+    right: &Ty,
     a: ir::Value,
     b: ir::Value,
 ) -> Result<ir::Value> {
-    match ty {
+    match (left, right) {
         // Every primitive is named, for the reason `machine_type` names them: one added to the
         // language would otherwise arrive here and be compared as whatever it is held as.
-        Ty::Prim { prim } => match prim {
+        (Ty::Prim { prim }, Ty::Prim { prim: also }) if prim == also => match prim {
             Prim::Int => Ok(builder.ins().icmp(as_a_whole_number(op), a, b)),
             // Two truths are equal or they are not, and nothing orders them. `<` over a `Bool` is
             // not a program the language admits, so one arriving is the two halves disagreeing
@@ -1086,30 +1097,54 @@ fn compare(
                 prim.spelt()
             ))),
         },
-        // `==` over a value of a declared type is its fields compared one by one, and an
-        // enumeration is ordered by the order its cases are declared in. Neither is written here,
-        // and the address a value is held as answers neither question.
-        Ty::Declared { declared } => Err(not_lowered(format!(
-            "a comparison of two values of {declared}, which is what they are made of compared \
-             rather than where they are"
-        ))),
-        // What holds a union holds one of its members, and each of those is a value of a declared
-        // type. So this is the question above and not a smaller one.
-        Ty::Union { .. } => Err(not_lowered(
-            "a comparison of two values of a union, which is a comparison of whichever member each \
-             of them is",
-        )),
-        Ty::Option { .. } => Err(not_lowered(
-            "a comparison of two optionals, which holds where both hold nothing and where both \
-             hold values that compare equal",
-        )),
-        Ty::Tuple { .. } => Err(not_lowered(
-            "a comparison of two tuples, which is their members compared one by one",
-        )),
+        // A declared type on either side, which covers every legitimate comparison whose operands
+        // are not two values of one primitive: two values of one declared type, a value against a
+        // bare literal of what its newtype wraps, and a sum against one of its cases. What each of
+        // them comes to is the fields compared one by one, the wrapped value compared, or which
+        // case the value is — and none of those is written here, while the address a value is held
+        // as answers none of them.
+        //
+        // Named together rather than told apart, because what tells them apart is not in the
+        // document: a newtype says what it is called and what its field is called, and not what it
+        // wraps. A reading that guessed would be this side deciding a question the checker has
+        // already answered.
+        (Ty::Declared { .. } | Ty::Union { .. }, _) | (_, Ty::Declared { .. } | Ty::Union { .. }) => {
+            Err(not_lowered(format!(
+                "a comparison of {} against {}, which is what they are made of compared rather \
+                 than where they are",
+                left.spelt(),
+                right.spelt()
+            )))
+        }
+        // An optional and a tuple have equality and no order: what the language orders is a number,
+        // text, an amount, a moment, an enumeration, and a newtype over one of those. So `==` here
+        // is a comparison still to be written, and `<` is the two halves disagreeing — the same
+        // pair of answers a `Bool` gets, and for the same reason.
+        (Ty::Option { .. }, Ty::Option { .. }) | (Ty::Tuple { .. }, Ty::Tuple { .. }) => match op {
+            Op::Eq | Op::Ne => Err(not_lowered(format!(
+                "a comparison of {} against {}, which is what they hold compared rather than \
+                 where they are",
+                left.spelt(),
+                right.spelt()
+            ))),
+            _ => bail!(
+                "{} is not ordered, and {} is written over two of them here",
+                left.spelt(),
+                op.spelt()
+            ),
+        },
+        // Two values the language does not compare at all: two primitives that are not one
+        // primitive, or a tuple against an optional. Only values of one type are compared, and the
+        // two ways that is widened — a bare literal and a case value — are both answered above.
+        _ => bail!(
+            "{} is compared with {} here, which the language does not compare",
+            left.spelt(),
+            right.spelt()
+        ),
     }
 }
 
-/// A sum, a difference or a product, over the type the operands have in Souther.
+/// A sum, a difference or a product, over the types the operands have in Souther.
 ///
 /// The same question the comparisons ask, asked of the arithmetic because the answer is not
 /// obviously the same. The language admits `+` and `-` over a single-value newtype, and a value of
@@ -1117,18 +1152,20 @@ fn compare(
 /// two of them would answer an address that points at neither.
 ///
 /// One does not arrive: what crosses for `a + b` over a newtype is already a construction of the
-/// newtype over the sum of the two wrapped numbers, so the operands are `Int` by the time this
-/// reads them. That is the checker's arrangement and not this driver's, which is why an operand of
-/// any other type is the two halves disagreeing rather than a lowering that is still to be written.
+/// newtype over the sum of what the two wrap, and that holds of `a + 1` too — the literal is added
+/// to the wrapped number and not to the value. So the operands are two `Int`s by the time this
+/// reads them. That is the checker's arrangement and not this driver's, which is why anything else
+/// is the two halves disagreeing rather than a lowering that is still to be written.
 fn arithmetic(
     builder: &mut FunctionBuilder,
     op: Op,
-    ty: &Ty,
+    left: &Ty,
+    right: &Ty,
     a: ir::Value,
     b: ir::Value,
 ) -> Result<ir::Value> {
-    match ty {
-        Ty::Prim { prim } => match prim {
+    match (left, right) {
+        (Ty::Prim { prim }, Ty::Prim { prim: also }) if prim == also => match prim {
             Prim::Int => match op {
                 Op::Add => {
                     let sum = builder.ins().iadd(a, b);
@@ -1161,11 +1198,12 @@ fn arithmetic(
                 prim.spelt()
             ),
         },
-        Ty::Declared { .. } | Ty::Union { .. } | Ty::Option { .. } | Ty::Tuple { .. } => bail!(
-            "{} is written over two values of {}, which reaches this driver as arithmetic over \
-             what they are made of or does not reach it at all",
+        _ => bail!(
+            "{} is written over {} and {}, which reaches this driver as arithmetic over what they \
+             are made of or does not reach it at all",
             op.spelt(),
-            ty.spelt()
+            left.spelt(),
+            right.spelt()
         ),
     }
 }
