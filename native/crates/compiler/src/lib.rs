@@ -1019,9 +1019,154 @@ fn binary(
             })
         }
         _ => {
+            // Both of the operands' types, because one of them does not say what the other is.
+            // A bare literal takes the newtype of the value it is compared with, so `0 == amount`
+            // is an `Int` against a declared type and is as much a comparison of two amounts as
+            // `amount == 0` is; a case value compared with its sum is two declared types that are
+            // not the same one. Read off the left alone, both of those are whatever the left one
+            // happened to be.
+            let (left_ty, right_ty) = (left.ty(), right.ty());
             let a = lower(builder, lowering, module, bindings, left)?;
             let b = lower(builder, lowering, module, bindings, right)?;
             match op {
+                Op::Add | Op::Sub | Op::Mul => arithmetic(builder, op, left_ty, right_ty, a, b),
+                Op::Eq | Op::Ne | Op::Lt | Op::Le | Op::Gt | Op::Ge => {
+                    compare(builder, op, left_ty, right_ty, a, b)
+                }
+                // `/` answers the exact quotient, which is not a whole number and has no
+                // representation here yet.
+                Op::Div => Err(not_lowered(format!("the operator {}", op.spelt()))),
+                Op::Concat => Err(not_lowered(format!("the operator {}", op.spelt()))),
+                Op::And | Op::Or => unreachable!("answered above, where the right side may not run"),
+            }
+        }
+    }
+}
+
+/// What a comparison compares.
+///
+/// Decided by the types the operands have in Souther and not by the widths they are held in. The
+/// two agree for an `Int` and for a `Bool`, and that agreement is the whole reason every comparison
+/// could be one `icmp` until now. It does not hold past them. A value of a declared type is held as
+/// the address of what it is made of, and Souther's `==` over one of those is its fields compared
+/// one by one — so an `icmp` over the two addresses answers whether they are the same value rather
+/// than whether they are equal, and says false of two that were built separately.
+///
+/// Both types and not the left one, because an operator here is not given two values of one type.
+/// A bare literal takes the newtype of the operand it is compared with, and a case value is a value
+/// of its sum, so a legitimate comparison arrives with `Int` on one side and a declared type on the
+/// other, or with two declared types that are not the same one. Read off the left alone, `0 ==
+/// amount` would be compared as two `Int`s — one of which is an address — while `amount == 0`
+/// was refused, and which of the two a program got would be the order its author wrote them in.
+///
+/// So what is refused here was being answered wrongly before, which is why it is refused rather
+/// than left. An object that links and answers is what a wrong answer comes out of.
+fn compare(
+    builder: &mut FunctionBuilder,
+    op: Op,
+    left: &Ty,
+    right: &Ty,
+    a: ir::Value,
+    b: ir::Value,
+) -> Result<ir::Value> {
+    match (left, right) {
+        // Every primitive is named, for the reason `machine_type` names them: one added to the
+        // language would otherwise arrive here and be compared as whatever it is held as.
+        (Ty::Prim { prim }, Ty::Prim { prim: also }) if prim == also => match prim {
+            Prim::Int => Ok(builder.ins().icmp(as_a_whole_number(op), a, b)),
+            // Two truths are equal or they are not, and nothing orders them. `<` over a `Bool` is
+            // not a program the language admits, so one arriving is the two halves disagreeing
+            // about what they are saying to each other rather than this backend being behind.
+            Prim::Bool => match op {
+                Op::Eq => Ok(builder.ins().icmp(IntCC::Equal, a, b)),
+                Op::Ne => Ok(builder.ins().icmp(IntCC::NotEqual, a, b)),
+                _ => bail!(
+                    "a Bool is not ordered, and {} is written over two of them here",
+                    op.spelt()
+                ),
+            },
+            Prim::String
+            | Prim::Decimal
+            | Prim::Rational
+            | Prim::Date
+            | Prim::Time
+            | Prim::DateTime
+            | Prim::Instant
+            | Prim::Raw => Err(not_lowered(format!(
+                "a comparison of two values of type {}",
+                prim.spelt()
+            ))),
+        },
+        // A declared type on either side, which covers every legitimate comparison whose operands
+        // are not two values of one primitive: two values of one declared type, a value against a
+        // bare literal of what its newtype wraps, and a sum against one of its cases. What each of
+        // them comes to is the fields compared one by one, the wrapped value compared, or which
+        // case the value is — and none of those is written here, while the address a value is held
+        // as answers none of them.
+        //
+        // Named together rather than told apart, because what tells them apart is not in the
+        // document: a newtype says what it is called and what its field is called, and not what it
+        // wraps. A reading that guessed would be this side deciding a question the checker has
+        // already answered.
+        (Ty::Declared { .. } | Ty::Union { .. }, _) | (_, Ty::Declared { .. } | Ty::Union { .. }) => {
+            Err(not_lowered(format!(
+                "a comparison of {} against {}, which is what they are made of compared rather \
+                 than where they are",
+                left.spelt(),
+                right.spelt()
+            )))
+        }
+        // An optional and a tuple have equality and no order: what the language orders is a number,
+        // text, an amount, a moment, an enumeration, and a newtype over one of those. So `==` here
+        // is a comparison still to be written, and `<` is the two halves disagreeing — the same
+        // pair of answers a `Bool` gets, and for the same reason.
+        (Ty::Option { .. }, Ty::Option { .. }) | (Ty::Tuple { .. }, Ty::Tuple { .. }) => match op {
+            Op::Eq | Op::Ne => Err(not_lowered(format!(
+                "a comparison of {} against {}, which is what they hold compared rather than \
+                 where they are",
+                left.spelt(),
+                right.spelt()
+            ))),
+            _ => bail!(
+                "{} is not ordered, and {} is written over two of them here",
+                left.spelt(),
+                op.spelt()
+            ),
+        },
+        // Two values the language does not compare at all: two primitives that are not one
+        // primitive, or a tuple against an optional. Only values of one type are compared, and the
+        // two ways that is widened — a bare literal and a case value — are both answered above.
+        _ => bail!(
+            "{} is compared with {} here, which the language does not compare",
+            left.spelt(),
+            right.spelt()
+        ),
+    }
+}
+
+/// A sum, a difference or a product, over the types the operands have in Souther.
+///
+/// The same question the comparisons ask, asked of the arithmetic because the answer is not
+/// obviously the same. The language admits `+` and `-` over a single-value newtype, and a value of
+/// one is held here as the address of what it is made of — so were one to arrive, an `iadd` over
+/// two of them would answer an address that points at neither.
+///
+/// One does not arrive: what crosses for `a + b` over a newtype is already a construction of the
+/// newtype over the sum of what the two wrap, and that holds of `a + 1` too — the literal is added
+/// to the wrapped number and not to the value. So the operands are two `Int`s by the time this
+/// reads them. That is the checker's arrangement and not this driver's, which is why anything else
+/// is the two halves disagreeing rather than a lowering that is still to be written.
+fn arithmetic(
+    builder: &mut FunctionBuilder,
+    op: Op,
+    left: &Ty,
+    right: &Ty,
+    a: ir::Value,
+    b: ir::Value,
+) -> Result<ir::Value> {
+    match (left, right) {
+        (Ty::Prim { prim }, Ty::Prim { prim: also }) if prim == also => match prim {
+            Prim::Int => match op {
                 Op::Add => {
                     let sum = builder.ins().iadd(a, b);
                     let past = builder.ins().bxor(a, sum);
@@ -1031,18 +1176,53 @@ fn binary(
                 }
                 Op::Sub => Ok(difference(builder, a, b)),
                 Op::Mul => Ok(product(builder, a, b)),
-                Op::Eq => Ok(builder.ins().icmp(IntCC::Equal, a, b)),
-                Op::Ne => Ok(builder.ins().icmp(IntCC::NotEqual, a, b)),
-                Op::Lt => Ok(builder.ins().icmp(IntCC::SignedLessThan, a, b)),
-                Op::Le => Ok(builder.ins().icmp(IntCC::SignedLessThanOrEqual, a, b)),
-                Op::Gt => Ok(builder.ins().icmp(IntCC::SignedGreaterThan, a, b)),
-                Op::Ge => Ok(builder.ins().icmp(IntCC::SignedGreaterThanOrEqual, a, b)),
-                // `/` answers the exact quotient, which is not a whole number and has no
-                // representation here yet.
-                Op::Div => Err(not_lowered(format!("the operator {}", op.spelt()))),
-                Op::Concat => Err(not_lowered(format!("the operator {}", op.spelt()))),
-                Op::And | Op::Or => unreachable!("answered above, where the right side may not run"),
-            }
+                _ => unreachable!("reached from a sum, a difference or a product and nothing else"),
+            },
+            Prim::Decimal => Err(not_lowered(format!(
+                "{} over two values of type {}",
+                op.spelt(),
+                prim.spelt()
+            ))),
+            // The language writes no arithmetic over any of these, so one arriving is the two
+            // halves disagreeing rather than a representation that is still to be designed.
+            Prim::Bool
+            | Prim::String
+            | Prim::Rational
+            | Prim::Date
+            | Prim::Time
+            | Prim::DateTime
+            | Prim::Instant
+            | Prim::Raw => bail!(
+                "{} is written over two values of type {}, which the language does not add",
+                op.spelt(),
+                prim.spelt()
+            ),
+        },
+        _ => bail!(
+            "{} is written over {} and {}, which reaches this driver as arithmetic over what they \
+             are made of or does not reach it at all",
+            op.spelt(),
+            left.spelt(),
+            right.spelt()
+        ),
+    }
+}
+
+/// Which machine condition one of the six comparisons is, over a signed whole number.
+///
+/// Every operator is named rather than the six being picked out and the rest left to an arm
+/// standing for them, for the reason the primitives are named: one added to the language would
+/// otherwise be answered for here by an arm written for something else.
+fn as_a_whole_number(op: Op) -> IntCC {
+    match op {
+        Op::Eq => IntCC::Equal,
+        Op::Ne => IntCC::NotEqual,
+        Op::Lt => IntCC::SignedLessThan,
+        Op::Le => IntCC::SignedLessThanOrEqual,
+        Op::Gt => IntCC::SignedGreaterThan,
+        Op::Ge => IntCC::SignedGreaterThanOrEqual,
+        Op::And | Op::Or | Op::Add | Op::Sub | Op::Mul | Op::Div | Op::Concat => {
+            unreachable!("reached from a comparison and nothing else")
         }
     }
 }

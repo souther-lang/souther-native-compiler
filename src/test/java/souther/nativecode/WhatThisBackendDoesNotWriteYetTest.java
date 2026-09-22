@@ -137,6 +137,108 @@ class WhatThisBackendDoesNotWriteYetTest {
                 .hasMessageContaining("souther.decimal.HALF_UP");
     }
 
+    /**
+     * Two values of a declared type compared, which is what they are made of and not where they
+     * are.
+     *
+     * <p>Souther's {@code ==} over a value of a declared type is its fields compared one by one, so
+     * two built separately out of the same field values are equal. A value here is held as the
+     * address of what it is made of, and a comparison of the two addresses answers a different
+     * question — one whose answer is false for exactly the pair the language calls equal.
+     *
+     * <p>So the refusal is the point. An object that compared the addresses would link, run, and
+     * answer, and nothing downstream would have anything to notice.
+     */
+    @Test
+    void twoValuesOfADeclaredTypeAreNotComparedByWhereTheyAre() {
+        assertThatThrownBy(() -> NativeCompiler.compile(CheckedProgram.of(List.of("""
+                module comparing
+
+                data Employee = { id: Int }
+
+                behavior same : (a: Employee, b: Employee) -> Bool
+                let same (a, b) = a == b
+                """))))
+                .isInstanceOf(NotLowered.class)
+                .hasMessageContaining("comparing.Employee");
+    }
+
+    /**
+     * A value of a newtype compared with a bare literal, which is a comparison of what it wraps.
+     *
+     * <p>Both orders, and the order is the point. The language lets a bare literal take the
+     * newtype of the operand it is compared with, so `0 == amount` crosses with an `Int` on the
+     * left and a declared type on the right — and a lowering that read the left operand alone
+     * would compare two `Int`s, one of which is an address. It would then refuse `amount == 0`,
+     * which means the same thing, and which of the two a program got would be the order its author
+     * wrote them in.
+     */
+    @Test
+    void aNewtypeComparedWithABareLiteralIsNotComparedByWhereItIs() {
+        for (String body : List.of("0 == a", "a == 0", "100 <= a", "a >= 100")) {
+            assertThatThrownBy(() -> NativeCompiler.compile(CheckedProgram.of(List.of("""
+                    module comparing
+
+                    data Amount = Int
+
+                    behavior asked : (a: Amount) -> Bool
+                    let asked (a) = %s
+                    """.formatted(body)))))
+                    .as("`%s`", body)
+                    .isInstanceOf(NotLowered.class)
+                    .hasMessageContaining("comparing.Amount");
+        }
+    }
+
+    /**
+     * A sum compared with one of its cases, which is two declared types that are not one type.
+     *
+     * <p>A case value is a value of its sum, so this is as legitimate as comparing two values of
+     * one type — and it arrives with a different declaration named on each side. What it comes to
+     * is which case the value is, which is not written here either.
+     */
+    @Test
+    void aSumComparedWithOneOfItsCasesIsNotComparedByWhereItIs() {
+        assertThatThrownBy(() -> NativeCompiler.compile(CheckedProgram.of(List.of("""
+                module staging
+
+                data Prospecting
+                data Won
+                data Stage = Prospecting | Won
+
+                behavior done : (s: Stage) -> Bool
+                let done (s) = s == Won
+                """))))
+                .isInstanceOf(NotLowered.class)
+                .hasMessageContaining("staging.Stage");
+    }
+
+    /**
+     * The same of an optional, which is equal where both hold nothing and where both hold values
+     * that compare equal.
+     *
+     * <p>Written out rather than taken as covered by the declared type above: an optional holding
+     * nothing is a null pointer here, so two of those do compare equal by address, and a check that
+     * only ever compared absent ones would be green over the half of the question that happens to
+     * agree.
+     *
+     * <p>Reached through a field because that is where the language admits one: an optional is
+     * written on a data field or inferred, and never named on a behavior's own signature.
+     */
+    @Test
+    void twoOptionalsAreNotComparedByWhereTheyAre() {
+        assertThatThrownBy(() -> NativeCompiler.compile(CheckedProgram.of(List.of("""
+                module comparing
+
+                data Employee = { manager: Int? }
+
+                behavior same : (a: Employee, b: Employee) -> Bool
+                let same (a, b) = a.manager == b.manager
+                """))))
+                .isInstanceOf(NotLowered.class)
+                .hasMessageContaining("an Option of Int");
+    }
+
     @Test
     void theDriverSaysItIsOneThisBackendHasNotGotRoundTo() {
         assertThatThrownBy(() -> NativeCompiler.compile(CheckedProgram.of(List.of(OVER_A_STRING))))
