@@ -92,13 +92,13 @@ class AnAdditionCrossesAsWhatTheCheckerSettledTest {
         CheckedProgram program = CheckedProgram.of(List.of("""
                 module calculation
 
-                behavior greet : (a: Int) -> String
+                behavior rate : (a: Int) -> Decimal
 
-                let greet (a) = "hello"
+                let rate (a) = 1.5m
                 """));
 
         assertThatThrownBy(() -> ProgramWriter.written(program))
                 .isInstanceOf(NotLowered.class)
-                .hasMessageContaining("a string literal");
+                .hasMessageContaining("a decimal literal");
     }
 }

@@ -18,8 +18,8 @@ use cranelift::frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use cranelift::module::{DataDescription, DataId, FuncId, Linkage, Module, default_libcall_names};
 use cranelift::object::{ObjectBuilder, ObjectModule};
 use souther_native_abi::{
-    ALLOCATE, HELD, NOTHING, SLOT, TOKEN, WHICH, behavior_symbol, example_symbol, field_at,
-    held_symbol, member_at, type_symbol,
+    ALLOCATE, HELD, NOTHING, SLOT, STRING_COMPARE, STRING_CONCAT, TEXT_BYTES, TEXT_LENGTH, TOKEN,
+    WHICH, behavior_symbol, example_symbol, field_at, held_symbol, member_at, type_symbol,
 };
 use std::collections::HashMap;
 use std::fmt;
@@ -107,6 +107,19 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
     taking_room.params.push(AbiParam::new(types::I64));
     taking_room.returns.push(AbiParam::new(POINTER));
     let allocate = module.declare_function(ALLOCATE, Linkage::Import, &taking_room)?;
+
+    // What two strings are compared and joined through. Neither is emitted here: a comparison of
+    // text is a walk over two runs of bytes, and one written into every site that says `==` would
+    // be the same walk written as many times as the program says it.
+    let mut over_two_strings = ir::Signature::new(call_conv);
+    over_two_strings.params.push(AbiParam::new(POINTER));
+    over_two_strings.params.push(AbiParam::new(POINTER));
+    let mut comparing = over_two_strings.clone();
+    comparing.returns.push(AbiParam::new(types::I64));
+    let compare_text = module.declare_function(STRING_COMPARE, Linkage::Import, &comparing)?;
+    let mut joining = over_two_strings;
+    joining.returns.push(AbiParam::new(POINTER));
+    let join_text = module.declare_function(STRING_CONCAT, Linkage::Import, &joining)?;
 
     let declared = Declared::of(&program.declarations)?;
 
@@ -211,6 +224,8 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
                 reachable: &reachable,
                 carrier: &written.name,
                 allocate,
+                compare_text,
+                join_text,
             };
             define(
                 &mut context.func,
@@ -236,6 +251,8 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
                 reachable: &reachable,
                 carrier: &written.name,
                 allocate,
+                compare_text,
+                join_text,
             };
             define(
                 &mut context.func,
@@ -261,6 +278,8 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
                 reachable: &reachable,
                 carrier: &written.name,
                 allocate,
+                compare_text,
+                join_text,
             };
             // Taking nothing: what the row states is written into the body, so an entry with
             // parameters would be a row whose values came from whoever ran it.
@@ -454,6 +473,8 @@ struct Lowering<'a> {
     /// The module whose copy of a definition a call from here reaches.
     carrier: &'a str,
     allocate: FuncId,
+    compare_text: FuncId,
+    join_text: FuncId,
 }
 
 impl Lowering<'_> {
@@ -496,8 +517,11 @@ fn machine_type(ty: &Ty) -> Result<types::Type> {
         Ty::Prim { prim } => match prim {
             Prim::Int => Ok(types::I64),
             Prim::Bool => Ok(types::I8),
-            Prim::String
-            | Prim::Decimal
+            // The address of a count of bytes and the text that follows it. Where that stands —
+            // the object, for a literal, or the arena, for one a run worked out — is not something
+            // the value says, and nothing that reads one has to ask.
+            Prim::String => Ok(POINTER),
+            Prim::Decimal
             | Prim::Rational
             | Prim::Date
             | Prim::Time
@@ -541,8 +565,12 @@ fn means_the_same_elsewhere(ty: &Ty) -> bool {
         // since what this decides is whether a value of it may leave the object.
         Ty::Prim { prim } => match prim {
             Prim::Int | Prim::Bool => true,
-            Prim::String
-            | Prim::Decimal
+            // A count of bytes and then that many bytes of text, at an address. The layout is
+            // stated in the crate both halves of this backend read, so two objects it built agree
+            // about it for the reason they agree that an `Int` is sixty-four bits wide. No linker
+            // is involved: there is no name here for one to resolve.
+            Prim::String => true,
+            Prim::Decimal
             | Prim::Rational
             | Prim::Date
             | Prim::Time
@@ -690,6 +718,7 @@ fn lower(
             lower(builder, lowering, module, bindings, body)?
         }
         Node::Bool { value, ty } => builder.ins().iconst(machine_type(ty)?, i64::from(*value)),
+        Node::Str { value, .. } => text_in_the_object(builder, module, value)?,
         Node::Binary {
             op, left, right, ..
         } => binary(builder, lowering, module, bindings, *op, left, right)?,
@@ -1031,12 +1060,12 @@ fn binary(
             match op {
                 Op::Add | Op::Sub | Op::Mul => arithmetic(builder, op, left_ty, right_ty, a, b),
                 Op::Eq | Op::Ne | Op::Lt | Op::Le | Op::Gt | Op::Ge => {
-                    compare(builder, op, left_ty, right_ty, a, b)
+                    compare(builder, lowering, module, op, left_ty, right_ty, a, b)
                 }
                 // `/` answers the exact quotient, which is not a whole number and has no
                 // representation here yet.
                 Op::Div => Err(not_lowered(format!("the operator {}", op.spelt()))),
-                Op::Concat => Err(not_lowered(format!("the operator {}", op.spelt()))),
+                Op::Concat => join(builder, lowering, module, left_ty, right_ty, a, b),
                 Op::And | Op::Or => unreachable!("answered above, where the right side may not run"),
             }
         }
@@ -1063,6 +1092,8 @@ fn binary(
 /// than left. An object that links and answers is what a wrong answer comes out of.
 fn compare(
     builder: &mut FunctionBuilder,
+    lowering: &Lowering,
+    module: &mut ObjectModule,
     op: Op,
     left: &Ty,
     right: &Ty,
@@ -1085,8 +1116,18 @@ fn compare(
                     op.spelt()
                 ),
             },
-            Prim::String
-            | Prim::Decimal
+            // One call and then the six operators over what it answered. What text is ordered by
+            // is the runtime's to say and it is a walk, not a comparison of the two addresses and
+            // not a comparison of the bytes either.
+            Prim::String => {
+                let comparing = module.declare_func_in_func(lowering.compare_text, builder.func);
+                let compared = builder.ins().call(comparing, &[a, b]);
+                let answered = builder.inst_results(compared)[0];
+                Ok(builder
+                    .ins()
+                    .icmp_imm_s(as_a_whole_number(op), answered, 0))
+            }
+            Prim::Decimal
             | Prim::Rational
             | Prim::Date
             | Prim::Time
@@ -1206,6 +1247,78 @@ fn arithmetic(
             right.spelt()
         ),
     }
+}
+
+/// Two values joined, which the language writes over two strings and over two lists.
+///
+/// A list has no type this writer can name yet, so nothing but two strings reaches here; the rest
+/// is the two halves disagreeing rather than a join that is still to be written.
+fn join(
+    builder: &mut FunctionBuilder,
+    lowering: &Lowering,
+    module: &mut ObjectModule,
+    left: &Ty,
+    right: &Ty,
+    a: ir::Value,
+    b: ir::Value,
+) -> Result<ir::Value> {
+    match (left, right) {
+        (Ty::Prim { prim }, Ty::Prim { prim: also }) if prim == also => match prim {
+            Prim::String => {
+                let joining = module.declare_func_in_func(lowering.join_text, builder.func);
+                let joined = builder.ins().call(joining, &[a, b]);
+                Ok(builder.inst_results(joined)[0])
+            }
+            Prim::Int
+            | Prim::Bool
+            | Prim::Decimal
+            | Prim::Rational
+            | Prim::Date
+            | Prim::Time
+            | Prim::DateTime
+            | Prim::Instant
+            | Prim::Raw => bail!(
+                "two values of type {} are joined here, which the language does not join",
+                prim.spelt()
+            ),
+        },
+        _ => bail!(
+            "{} is joined with {} here, which the language does not join",
+            left.spelt(),
+            right.spelt()
+        ),
+    }
+}
+
+/// A string the object carries, and the address of it.
+///
+/// A literal says the same text every run, so it is written into the object rather than worked out
+/// into the arena. What comes back is the address of a string like any other: a comparison and a
+/// join read it the way they read one a run made, and nothing in the value says which of the two
+/// it is. That is what keeps where a string is kept out of what a string means.
+///
+/// One data object per literal, anonymous because nothing outside this object reaches one and two
+/// spellings of one text are not a thing anything has to agree about.
+fn text_in_the_object(
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    value: &str,
+) -> Result<ir::Value> {
+    let mut written = vec![0u8; TEXT_BYTES as usize + value.len()];
+    let length = i64::try_from(value.len()).expect("a literal is shorter than an Int");
+    written[TEXT_LENGTH as usize..][..SLOT as usize].copy_from_slice(&length.to_ne_bytes());
+    written[TEXT_BYTES as usize..].copy_from_slice(value.as_bytes());
+
+    let mut held = DataDescription::new();
+    held.define(written.into_boxed_slice());
+    // Aligned as everything the arena answers is. The count before the text is read as a slot, and
+    // every access this emits says the address is aligned rather than checking that it is.
+    held.set_align(SLOT as u64);
+    let id = module.declare_anonymous_data(false, false)?;
+    module.define_data(id, &held)?;
+
+    let named = module.declare_data_in_func(id, builder.func);
+    Ok(builder.ins().symbol_value(POINTER, named))
 }
 
 /// Which machine condition one of the six comparisons is, over a signed whole number.

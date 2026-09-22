@@ -25,10 +25,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 class WhatThisBackendDoesNotWriteYetTest {
 
-    private static final String OVER_A_STRING = """
+    private static final String OVER_A_DECIMAL = """
             module calculation
 
-            behavior widen : (a: String) -> String
+            behavior widen : (a: Decimal) -> Decimal
 
             let widen (a) = a
             """;
@@ -47,9 +47,9 @@ class WhatThisBackendDoesNotWriteYetTest {
      */
     @Test
     void aTypeWithNoRepresentationStillCrosses() {
-        String written = ProgramWriter.written(CheckedProgram.of(List.of(OVER_A_STRING)));
+        String written = ProgramWriter.written(CheckedProgram.of(List.of(OVER_A_DECIMAL)));
 
-        assertThat(written).contains("\"prim\":\"STRING\"");
+        assertThat(written).contains("\"prim\":\"DECIMAL\"");
     }
 
     /**
@@ -241,15 +241,15 @@ class WhatThisBackendDoesNotWriteYetTest {
 
     @Test
     void theDriverSaysItIsOneThisBackendHasNotGotRoundTo() {
-        assertThatThrownBy(() -> NativeCompiler.compile(CheckedProgram.of(List.of(OVER_A_STRING))))
+        assertThatThrownBy(() -> NativeCompiler.compile(CheckedProgram.of(List.of(OVER_A_DECIMAL))))
                 .isInstanceOf(NotLowered.class)
-                .hasMessageContaining("String");
+                .hasMessageContaining("Decimal");
     }
 
     @Test
     void theCommandLineSaysTheBackendIsBehindAndNotThatTheCommandWasWrong() throws Exception {
         Path source = Files.createTempDirectory("souther-native-test").resolve("calculation.sou");
-        Files.writeString(source, OVER_A_STRING, StandardCharsets.UTF_8);
+        Files.writeString(source, OVER_A_DECIMAL, StandardCharsets.UTF_8);
         ByteArrayOutputStream problems = new ByteArrayOutputStream();
 
         int ended = Main.run(

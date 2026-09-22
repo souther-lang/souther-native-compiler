@@ -55,13 +55,13 @@ fn an_operator_with_no_lowering_is_not_lowered_rather_than_unreadable() {
 /// has not got, not a document it failed to understand.
 #[test]
 fn a_primitive_with_no_representation_is_not_lowered() {
-    let refused = object_for(&document("ADD", "STRING")).expect_err("no representation for it");
+    let refused = object_for(&document("ADD", "DECIMAL")).expect_err("no representation for it");
 
     assert!(
         refused.downcast_ref::<NotLowered>().is_some(),
         "read as something other than a lowering this driver has not got: {refused}"
     );
-    assert!(refused.to_string().contains("String"), "{refused}");
+    assert!(refused.to_string().contains("Decimal"), "{refused}");
 }
 
 /// A sum of two values of a declared type, which is the address each of them is held as.

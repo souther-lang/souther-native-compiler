@@ -147,6 +147,45 @@ pub const NOTHING: i64 = 0;
 /// Where an `Option`'s value is, once it is known to be holding one.
 pub const HELD: i64 = 0;
 
+/// Where a string says how many bytes of text it carries.
+///
+/// A count of bytes, not of code points. What the language counts a string in is code points — a
+/// length, an index and a range all do — and nothing here answers any of those: they are reached
+/// through a kernel. What this side needs is where the text ends, which is what a comparison and a
+/// join read, and a second count would be room spent on a question nothing yet asks.
+///
+/// Nought, as a declared type's [`WHICH`] is, and the two are not one fact. A string is not a
+/// declared type and nothing matches on one, so it carries no tag; what stands first is the only
+/// thing standing before the text.
+pub const TEXT_LENGTH: i64 = 0;
+
+/// Where a string's text begins, as UTF-8 and in no other encoding.
+///
+/// One slot along, so the text starts aligned as everything the arena answers does, and so what
+/// stands before it is read as a slot like any other.
+pub const TEXT_BYTES: i64 = SLOT;
+
+/// The symbol two strings are compared through.
+///
+/// Answers a number below, at or above nought, as the left one comes before, at, or after the
+/// right one. One symbol for all six comparisons: the six differ in what they do with the answer
+/// and not in what they ask, and a symbol each would be six chances to order text six ways.
+pub const STRING_COMPARE: &str = "souther_string_compare";
+
+/// The symbol two strings are joined through. Answers a new string and touches neither operand.
+pub const STRING_CONCAT: &str = "souther_string_concat";
+
+/// The symbol a caller outside a Souther program makes a string with, from bytes it holds.
+///
+/// Here rather than left to whoever writes such a caller, for the reason [`MARK`] is: the layout
+/// above is between this crate and the runtime, and a caller that built a string from it would be
+/// a third party to a two-party contract.
+pub const STRING_OF_UTF8: &str = "souther_string_of_utf8";
+
+/// The symbols such a caller reads a string back through.
+pub const STRING_LENGTH: &str = "souther_string_length";
+pub const STRING_BYTES: &str = "souther_string_bytes";
+
 /// The symbol generated code takes room from.
 ///
 /// It answers a pointer to `size` bytes that stay valid until the mark below them is reset. A
@@ -163,8 +202,8 @@ pub const RESET: &str = "souther_reset";
 #[cfg(test)]
 mod tests {
     use super::{
-        FIRST_FIELD, SLOT, TOKEN, WHICH, behavior_symbol, example_symbol, field_at, held_symbol,
-        member_at, type_symbol,
+        FIRST_FIELD, SLOT, TEXT_BYTES, TEXT_LENGTH, TOKEN, WHICH, behavior_symbol, example_symbol,
+        field_at, held_symbol, member_at, type_symbol,
     };
 
     #[test]
@@ -258,6 +297,12 @@ mod tests {
     #[test]
     fn a_token_is_at_least_one_byte() {
         assert!(!TOKEN.is_empty());
+    }
+
+    /// A string's text never stands where its count does, whatever either of them is moved to.
+    #[test]
+    fn no_text_begins_where_a_string_says_how_long_it_is() {
+        assert!(TEXT_BYTES >= TEXT_LENGTH + SLOT);
     }
 
     #[test]
