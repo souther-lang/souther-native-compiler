@@ -1,6 +1,7 @@
 package souther.nativecode.transport;
 
 import souther.compiler.abort.AbortKind;
+import souther.compiler.abort.AbortSet;
 import souther.compiler.core.Composition;
 import souther.compiler.core.Core;
 import souther.compiler.core.Kernel;
@@ -863,9 +864,13 @@ public final class ProgramWriter {
      * that abort the same way write the same document.
      */
     private String aborts(Core node) {
+        // Asked once and held rather than asked once per member below: abortsAt is a lookup this
+        // writer would otherwise repeat AbortKind.values().length times for one node, and every
+        // node this walk crosses asks it.
+        AbortSet at = program.abortsAt(node);
         StringJoiner kinds = new StringJoiner(",", "[", "]");
         for (AbortKind kind : AbortKind.values()) {
-            if (program.abortsAt(node).contains(kind)) {
+            if (at.contains(kind)) {
                 kinds.add(quoted(abort(kind)));
             }
         }
