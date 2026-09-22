@@ -32,14 +32,25 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * <p>Nor is this carriers compared against each other. Holding two of them to one statement is not
  * running both and comparing what came back.
  *
+ * <p>A row is run through the entry the object carries for it, which is what the object does with
+ * the row rather than something arranged out here: the values the row states were written into the
+ * object when the program crossed. So what runs is the same whether the module publishes the
+ * behavior or keeps it, and a corpus of kept names is not a corpus this test had to leave out.
+ *
  * <p>Whether an answer is the one a row states is asked of the row. A test deciding that for itself
  * would be a second reading of what a row means, and the two carriers would then agree only as far
  * as this file agreed with the language.
  */
 class ARowHoldsWhereverItIsRunTest {
 
+    /**
+     * A behavior the module publishes, so that what the object exports is among what runs here as
+     * well as what it keeps. Every other corpus below writes no {@code exposing} clause, which is
+     * a module that publishes nothing — and a row of a name nobody outside the module may reach is
+     * run the same way as any other, through the entry the object carries for it.
+     */
     private static final String ARITHMETIC = """
-            module calculation
+            module calculation exposing ( add )
 
             behavior add : (a: Int, b: Int) -> Int
             let add (a, b) = a + b
@@ -229,6 +240,157 @@ class ARowHoldsWhereverItIsRunTest {
                 | "holding nothing" : (true, false) -> false
             """;
 
+    /** A definition the module holds and reaches, including one that reaches itself. */
+    private static final String REACHING = """
+            module reaching
+
+            partial let countDown (n: Int): Int = if n <= 0 then 0 else n + countDown(n - 1)
+
+            behavior total : (a: Int) -> Int
+            let total (a) = countDown(a)
+
+            example total
+                | "three of them" : (3) -> 6
+                | "none of them" : (0) -> 0
+                | "one" : (1) -> 1
+            """;
+
+    /**
+     * One published definition, held by two modules, reached by each.
+     *
+     * <p>A module carries every definition it reaches, so a copy each — and a call reaching the
+     * other module's copy would be one module's answer standing for another's wherever the two
+     * came to differ.
+     */
+    private static final String COUNTING = """
+            module lib.counting exposing ( downTo )
+
+            partial let downTo (n: Int): Int = if n <= 0 then 0 else n + downTo(n - 1)
+            """;
+
+    private static final String ONE = """
+            module one
+            import lib.counting ( downTo )
+
+            behavior summed : (a: Int) -> Int
+            let summed (a) = downTo(a)
+
+            example summed
+                | "three of them" : (3) -> 6
+            """;
+
+    private static final String TWO = """
+            module two
+            import lib.counting ( downTo )
+
+            behavior doubled : (a: Int) -> Int
+            let doubled (a) = downTo(a) * 2
+
+            example doubled
+                | "three of them, twice" : (3) -> 12
+            """;
+
+    /**
+     * A behavior the object names and does not define, and one that reaches it.
+     *
+     * <p>What answers it is settled where the object is linked, so the row's stand-in is the
+     * definition the linker was missing rather than something arranged around the run.
+     */
+    private static final String DEPENDING = """
+            module depending
+
+            behavior lookUp : (a: Int) -> Int
+
+            behavior twice : (a: Int) -> Int
+                depends on lookUp
+            let twice (a, lookUp) = lookUp(a) * 2
+
+            // A dependency asked one way and no other. What stands in for it states the arguments
+            // of that one call, and there are none of them.
+            behavior enabled : () -> Bool
+
+            behavior allowed : (a: Int) -> Bool
+                depends on enabled
+            let allowed (a, enabled) = enabled() && a > 0
+
+            fake lookUp
+                | (1) -> 21
+                | _ -> 0
+
+            fake enabled
+                | () -> true
+
+            example twice
+                | "what the dependency answered, doubled" : (1) -> 42
+                | "what it answers for anything else" : (2) -> 0
+
+            example allowed
+                | "allowed and above nought" : (1) -> true
+                | "allowed and not above nought" : (0) -> false
+            """;
+
+    /**
+     * Two modules, each declaring a dependency of one name, and one of them takes and answers
+     * something the other does not.
+     *
+     * <p>Two behaviors, as the language says and as the object says: the symbols are apart. What
+     * has to be apart with them is whatever supplies them, because the object is the whole program
+     * and so every name it leaves open is a name the linker wants whichever row is being run.
+     */
+    private static final String PRICING = """
+            module pricing
+
+            behavior lookUp : (a: Int) -> Int
+
+            behavior twice : (a: Int) -> Int
+                depends on lookUp
+            let twice (a, lookUp) = lookUp(a) * 2
+
+            fake lookUp
+                | (1) -> 21
+
+            example twice
+                | "what the dependency answered, doubled" : (1) -> 42
+            """;
+
+    private static final String INVENTORY = """
+            module inventory
+
+            behavior lookUp : (a: Bool) -> Bool
+
+            behavior turnedRound : (a: Bool) -> Bool
+                depends on lookUp
+            let turnedRound (a, lookUp) = lookUp(a) == false
+
+            fake lookUp
+                | (true) -> false
+
+            example turnedRound
+                | "what the dependency answered, turned round" : (true) -> true
+            """;
+
+    /**
+     * A module that names neither of them, which is the row that says what the population is.
+     *
+     * <p>Its row states no stand-in and reaches no dependency, and the object still leaves both of
+     * those names open — so what runs this row has to supply both of them all the same. A run
+     * arranged around what a row mentions would never meet the pair at all.
+     */
+    private static final String PLAINLY = """
+            module plainly
+
+            behavior doubled : (a: Int) -> Int
+            let doubled (a) = a * 2
+
+            example doubled
+                | "twice" : (21) -> 42
+            """;
+
+    @Test
+    void twoModulesNamingOneDependencyApartAreSuppliedApart() throws Exception {
+        assertEveryRowHolds(PRICING, INVENTORY, PLAINLY);
+    }
+
     @Test
     void everyRowOfEveryBehaviorHoldsWhenTheNativeObjectAnswersIt() throws Exception {
         assertEveryRowHolds(ARITHMETIC);
@@ -237,6 +399,9 @@ class ARowHoldsWhereverItIsRunTest {
         assertEveryRowHolds(NAMING);
         assertEveryRowHolds(SHAPES);
         assertEveryRowHolds(HOLDING);
+        assertEveryRowHolds(REACHING);
+        assertEveryRowHolds(DEPENDING);
+        assertEveryRowHolds(COUNTING, ONE, TWO);
     }
 
     /**
@@ -267,29 +432,38 @@ class ARowHoldsWhereverItIsRunTest {
      * which is the one thing a count of what it did compare could never tell it. Said as a switch
      * with no arm standing for the rest, so a way of arriving added later has to be answered here.
      */
-    static void assertEveryRowHolds(String source) throws Exception {
-        CheckedProgram program = CheckedProgram.of(List.of(source));
+    static void assertEveryRowHolds(String... sources) throws Exception {
+        CheckedProgram program = CheckedProgram.of(List.of(sources));
         int asked = 0;
         try (Running running = Running.of(program)) {
             for (CheckedModule module : program.modules()) {
                 for (CheckedBehavior behavior : module.behaviors()) {
-                    for (CheckedRow row : behavior.rows()) {
+                    List<CheckedRow> rows = behavior.rows();
+                    for (int at = 0; at < rows.size(); at++) {
+                        CheckedRow row = rows.get(at);
                         String where = row.identity() + " of " + behavior.name();
                         switch (row.statement()) {
                             case CheckedRow.SelfContained states -> {
-                                List<ObservedValue> inputs = states.states().inputs();
                                 ObservedValue answered =
-                                        running.answering(module, behavior, inputs);
+                                        running.rowAnswering(module, behavior, at, List.of());
 
                                 assertThat(states.holds(answered))
-                                        .as("%s, handed %s, answered %s", where, inputs, answered)
+                                        .as("%s answered %s", where, answered)
                                         .isInstanceOf(Verdict.Held.class);
                                 asked++;
                             }
-                            // Nothing in this corpus depends on anything or owes its answer, and a
-                            // row that did is one nobody put the two carriers to.
-                            case CheckedRow.WithStandIns states -> throw new AssertionError(
-                                    where + " needs something stood in for: " + states.standsIn());
+                            // A behavior that depends on another is run with what the row says
+                            // that other one answers, which is the object's undefined symbol being
+                            // given a definition rather than the run being arranged around it.
+                            case CheckedRow.WithStandIns states -> {
+                                ObservedValue answered = running.rowAnswering(
+                                        module, behavior, at, states.standsIn());
+
+                                assertThat(states.holds(answered))
+                                        .as("%s answered %s", where, answered)
+                                        .isInstanceOf(Verdict.Held.class);
+                                asked++;
+                            }
                             case CheckedRow.AnswerOwed states -> throw new AssertionError(
                                     where + " states no answer to hold anything to: " + states);
                             // The compile did not run it, and says why. Left out silently, this

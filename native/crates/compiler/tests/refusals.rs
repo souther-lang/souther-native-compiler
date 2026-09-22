@@ -14,11 +14,14 @@ fn document(op: &str, ty: &str) -> String {
     let read = |at: u32| format!(r#"{{"core":"read","binding":{at},"type":{prim}}}"#);
     let body =
         format!(r#"{{"core":"binary","op":"{op}","left":{},"right":{},"type":{prim}}}"#, read(0), read(1));
-    let behavior = format!(
-        r#"{{"name":"f","parameters":["a","b"],"takes":[{prim},{prim}],"answers":{prim},"body":{body}}}"#
+    let target = format!(
+        r#"{{"module":"calculation","name":"f","is":"body","takes":[{prim},{prim}],"answers":{prim}}}"#
+    );
+    let held = format!(
+        r#"{{"declared":"calculation.f","parameters":["a","b"],"publication":"published","body":{body}}}"#
     );
     format!(
-        r#"{{"transport":1,"declarations":[],"modules":[{{"name":"calculation","behaviors":[{behavior}]}}]}}"#
+        r#"{{"transport":2,"declarations":[],"behaviors":[{target}],"modules":[{{"name":"calculation","helpers":[],"bodies":[{held}],"examples":[]}}]}}"#
     )
 }
 
@@ -69,9 +72,9 @@ fn a_field_this_driver_does_not_know_is_refused_rather_than_skipped() {
 /// would be reading a document written to mean something else.
 #[test]
 fn a_transport_from_another_version_is_refused() {
-    let later = document("ADD", "INT").replace(r#""transport":1"#, r#""transport":2"#);
+    let later = document("ADD", "INT").replace(r#""transport":2"#, r#""transport":3"#);
 
     let refused = object_for(&later).expect_err("a version this does not read");
 
-    assert!(refused.to_string().contains('2'), "{refused}");
+    assert!(refused.to_string().contains('3'), "{refused}");
 }

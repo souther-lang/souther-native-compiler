@@ -16,7 +16,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class AnAdditionCrossesAsWhatTheCheckerSettledTest {
 
     private static final String ADDING = """
-            module calculation
+            module calculation exposing ( add )
 
             behavior add : (a: Int, b: Int) -> Int
 
@@ -36,13 +36,16 @@ class AnAdditionCrossesAsWhatTheCheckerSettledTest {
         String written = ProgramWriter.written(CheckedProgram.of(List.of(ADDING)));
 
         assertThat(written).isEqualTo("""
-                {"transport":1,"declarations":[],"modules":[{"name":"calculation","behaviors":[\
-                {"name":"add","parameters":["a","b"],\
-                "takes":[{"prim":"INT"},{"prim":"INT"}],"answers":{"prim":"INT"},\
+                {"transport":2,"declarations":[],\
+                "behaviors":[{"module":"calculation","name":"add","is":"body",\
+                "takes":[{"prim":"INT"},{"prim":"INT"}],"answers":{"prim":"INT"}}],\
+                "modules":[{"name":"calculation","helpers":[],\
+                "bodies":[{"declared":"calculation.add","parameters":["a","b"],\
+                "publication":"published",\
                 "body":{"core":"binary","op":"ADD",\
                 "left":{"core":"read","binding":0,"type":{"prim":"INT"}},\
                 "right":{"core":"read","binding":1,"type":{"prim":"INT"}},\
-                "type":{"prim":"INT"}}}]}]}""");
+                "type":{"prim":"INT"}}}],"examples":[]}]}""");
     }
 
     /** What the driver compiles is what this writer wrote, and not a second thing like it. */
@@ -50,6 +53,32 @@ class AnAdditionCrossesAsWhatTheCheckerSettledTest {
     void theFixtureTheDriverIsTestedAgainstIsWhatThisWrites() throws IOException {
         assertThat(Files.readString(FIXTURE, StandardCharsets.UTF_8).strip())
                 .isEqualTo(ProgramWriter.written(CheckedProgram.of(List.of(ADDING))));
+    }
+
+    /**
+     * A type nothing in a body names still has to be in the document.
+     *
+     * <p>It is named by a signature and by nothing else, so it is found while the behaviors are
+     * being written — after the declarations would be finished, if the two were finished one at a
+     * time. The document would then name a type it says nothing about.
+     */
+    @Test
+    void aTypeOnlyASignatureNamesIsStillDeclared() {
+        String written = ProgramWriter.written(CheckedProgram.of(List.of("""
+                module demo
+
+                data Inner = Int
+                data Token = { held: Inner }
+
+                behavior ignore : (token: Token) -> Int
+                let ignore (token) = 42
+                """)));
+
+        assertThat(written).contains("\"takes\":[{\"declared\":\"demo.Token\"}]");
+        assertThat(written).contains("{\"declared\":\"demo.Token\",\"is\":\"product\"");
+        // And what that one holds, which nothing but its declaration names: found while the
+        // declarations were being written, after the behaviors were finished.
+        assertThat(written).contains("{\"declared\":\"demo.Inner\",\"is\":\"newtype\"");
     }
 
     /**

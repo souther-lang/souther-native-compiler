@@ -30,8 +30,13 @@ class AnIntThatLeavesItsRangeEndsTheRunTest {
     private static final long MOST = Long.MAX_VALUE;
     private static final long LEAST = Long.MIN_VALUE;
 
+    /**
+     * Published, because what is reached here is the behavior itself and not one of its rows: the
+     * values are the ends of the range and no row states them. A name the module kept would be
+     * local to the object and reached by nothing out here.
+     */
     private static final String SOURCE = """
-            module edges
+            module edges exposing ( add, less, times, flip )
 
             behavior add : (a: Int, b: Int) -> Int
             let add (a, b) = a + b

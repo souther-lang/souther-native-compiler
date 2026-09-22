@@ -18,13 +18,16 @@ use serde::Deserialize;
 
 /// What this side reads. A document written to say anything else is refused rather than read as
 /// much of as happens to parse.
-pub const TRANSPORT_VERSION: u32 = 1;
+pub const TRANSPORT_VERSION: u32 = 2;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Program {
     pub transport: u32,
     pub declarations: Vec<Declaration>,
+    /// Every behavior the program names, which is wider than what it emits: a body may reach a
+    /// behavior a module read off the path declares, and that module is not one of these.
+    pub behaviors: Vec<Target>,
     pub modules: Vec<Module>,
 }
 
@@ -104,18 +107,107 @@ impl Declaration {
 #[serde(deny_unknown_fields)]
 pub struct Module {
     pub name: String,
-    pub behaviors: Vec<Behavior>,
+    pub helpers: Vec<Held>,
+    /// What this object puts under a name. A behavior that answers some other way is in the table
+    /// above and nowhere here.
+    pub bodies: Vec<Body>,
+    /// The `example` rows of this module's behaviors that the object runs.
+    pub examples: Vec<Example>,
 }
 
+/// A behavior's body, under the name the table of targets knows it by.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Behavior {
+pub struct Body {
+    pub declared: String,
+    pub parameters: Vec<String>,
+    /// What the module declaring it says about the name.
+    pub publication: Publication,
+    pub body: Node,
+}
+
+/// Whether the module that declares a behavior publishes it under that name, or keeps it.
+///
+/// The language's answer about the module's surface, which is not the same question as what this
+/// object's symbol table carries. That one is the object's own, worked out from this together with
+/// what the object is for.
+///
+/// Carried by a body and not by a target, because it is the declaring module's answer and a
+/// target is answered for a behavior of a module this compile never checked.
+#[derive(Debug, Deserialize, PartialEq, Eq, Clone, Copy)]
+#[serde(rename_all = "lowercase")]
+pub enum Publication {
+    Published,
+    Kept,
+}
+
+/// One `example` row of a behavior of this module, as the object runs it.
+///
+/// The values the row states are written into the entry rather than handed to it, so the entry
+/// takes nothing and what it does is the one call the row is. Numbered by where the row stands
+/// among the behavior's rows, so a row the writer carried nothing for leaves its number unused
+/// rather than moving every row after it.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Example {
+    pub behavior: String,
+    pub at: usize,
+    pub body: Node,
+}
+
+/// A behavior as a caller reaches it.
+///
+/// The module and the name apart, because that is what a behavior's identity is made of and it is
+/// what the symbol is built from. Written as one string and split back, the two halves would be
+/// recovered from a spelling rather than carried, and a module's name carries dots.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Target {
+    pub module: String,
     pub name: String,
+    pub is: Answers,
+    pub takes: Vec<Ty>,
+    pub answers: Ty,
+}
+
+impl Target {
+    /// What a call reaching this behavior writes, which is the two halves joined the one way.
+    pub fn declared(&self) -> String {
+        format!("{}.{}", self.module, self.name)
+    }
+}
+
+/// How a behavior comes to answer.
+#[derive(Debug, Deserialize, PartialEq, Eq, Clone, Copy)]
+#[serde(rename_all = "lowercase")]
+pub enum Answers {
+    /// Code this object holds, which is emitted.
+    Body,
+    /// Supplied by whoever runs the program. The object names it and defines nothing for it.
+    Injected,
+    /// Implemented by another build. The same call to whoever reaches in, and a different thing to
+    /// whoever links.
+    Elsewhere,
+    /// By running other behaviors in an order the composition states.
+    Composed,
+    /// Not written, which the language admits and nothing can run.
+    Unwritten,
+}
+
+/// A definition the module holds as one of its own.
+///
+/// Named by where it was declared, held by the module that reaches it. Two modules reaching one
+/// definition hold a copy each.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Held {
+    pub declared: String,
     pub parameters: Vec<String>,
     pub takes: Vec<Ty>,
     pub answers: Ty,
     pub body: Node,
 }
+
 
 #[derive(Debug, Deserialize, PartialEq, Eq, Clone, Copy)]
 pub enum Prim {
@@ -280,6 +372,26 @@ pub enum Node {
         #[serde(rename = "type")]
         ty: Ty,
     },
+    /// A call, and what the checker settled it reaches.
+    Call {
+        reaches: Reaches,
+        declared: String,
+        arguments: Vec<Node>,
+        #[serde(rename = "type")]
+        ty: Ty,
+    },
+}
+
+/// What a call reaches, which the checker decided and nothing here works out again.
+#[derive(Debug, Deserialize, PartialEq, Eq, Clone, Copy)]
+#[serde(rename_all = "lowercase")]
+pub enum Reaches {
+    /// A definition the calling module holds, which is a copy of its own.
+    Helper,
+    /// A value that runs in the module that declares it, wherever it is named.
+    Value,
+    /// A behavior, whether this program answers it or whoever links the object does.
+    Behavior,
 }
 
 /// One arm of a fork on what a value is.
@@ -331,7 +443,8 @@ impl Node {
             | Node::Some { ty, .. }
             | Node::None { ty, .. }
             | Node::Tuple { ty, .. }
-            | Node::Member { ty, .. } => ty,
+            | Node::Member { ty, .. }
+            | Node::Call { ty, .. } => ty,
         }
     }
 }

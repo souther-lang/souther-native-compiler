@@ -15,14 +15,18 @@ use cranelift::codegen::isa::{CallConv, TargetFrontendConfig};
 use cranelift::codegen::settings::{self, Configurable};
 use cranelift::codegen::{Context, ir};
 use cranelift::frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
-use cranelift::module::{Linkage, Module, default_libcall_names};
+use cranelift::module::{FuncId, Linkage, Module, default_libcall_names};
 use cranelift::object::{ObjectBuilder, ObjectModule};
 use souther_native_abi::{
-    ALLOCATE, HELD, NOTHING, SLOT, WHICH, behavior_symbol, field_at, member_at,
+    ALLOCATE, HELD, NOTHING, SLOT, WHICH, behavior_symbol, example_symbol, field_at, held_symbol,
+    member_at,
 };
 use std::collections::HashMap;
 use std::fmt;
-use transport::{Arm, Behavior, Declaration, Node, Op, Prim, Program, Selects, TRANSPORT_VERSION, Ty};
+use transport::{
+    Answers, Arm, Declaration, Node, Op, Prim, Program, Publication, Reaches, Selects,
+    TRANSPORT_VERSION, Target, Ty,
+};
 
 /// An `Int` overflowing is an abort and not an answer, so the arithmetic traps rather than
 /// wrapping. Which abort it was is not said here: nothing yet carries a reason out of a native run,
@@ -106,25 +110,238 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
 
     let declared = Declared::of(&program.declarations)?;
 
+    // What the declaring module says about each name this object defines. Read off the bodies
+    // because that is where the answer crossed: it is the module's own, and a module this compile
+    // never checked has no answer here to read.
+    let mut publications: HashMap<&str, Publication> = HashMap::new();
     for written in &program.modules {
-        for behavior in &written.behaviors {
-            let symbol = behavior_symbol(&written.name, &behavior.name);
-            let signature = signature_of(behavior, call_conv)?;
-            let id = module.declare_function(&symbol, Linkage::Export, &signature)?;
+        for body in &written.bodies {
+            publications.insert(body.declared.as_str(), body.publication);
+        }
+    }
 
+    // Every function is declared before any is defined, because a body may reach one written
+    // after it — a definition that calls itself reaches itself, and two that call each other
+    // reach one another. Nothing here orders the program to make that go away.
+    let mut reachable = Reachable::default();
+    // The row entries, which nothing reaches: they are what the object offers to whoever runs its
+    // rows, so they are held by their symbol rather than beside what a call can reach.
+    let mut entries: HashMap<String, FuncId> = HashMap::new();
+    for target in &program.behaviors {
+        let symbol = behavior_symbol(&target.module, &target.name);
+        let signature = signature_over(&target.takes, &target.answers, call_conv)?;
+        let linkage = match target.is {
+            // Defined here, so what the table carries for it is this object's answer about a name
+            // the declaring module has already decided. A body with no such answer is a body of a
+            // module this document does not carry, which is the two halves disagreeing rather than
+            // something to fall back from.
+            Answers::Body => {
+                let declared = target.declared();
+                let published = publications.get(declared.as_str()).copied().ok_or_else(|| {
+                    anyhow!("{declared} answers with a body no module of this document carries")
+                })?;
+                linkage_of(published)
+            }
+            // Named and not defined. What answers it is settled where the object is linked, and
+            // the two reasons a body is absent are one call to whoever reaches in.
+            Answers::Injected | Answers::Elsewhere => {
+                crosses_objects(target)?;
+                Linkage::Import
+            }
+            Answers::Composed => {
+                return Err(not_lowered(format!("the composition {}", target.declared())));
+            }
+            Answers::Unwritten => {
+                return Err(not_lowered(format!(
+                    "the unwritten behavior {}",
+                    target.declared()
+                )));
+            }
+        };
+        let id = module.declare_function(&symbol, linkage, &signature)?;
+        reachable.behavior(&target.declared(), id)?;
+    }
+    for written in &program.modules {
+        for held in &written.helpers {
+            let symbol = held_symbol(&written.name, &held.declared);
+            let signature = signature_over(&held.takes, &held.answers, call_conv)?;
+            // Held and not exported: a definition a module holds is that module's copy, and
+            // nothing outside the object reaches one.
+            let id = module.declare_function(&symbol, Linkage::Local, &signature)?;
+            reachable.held(&written.name, &held.declared, id)?;
+        }
+        for example in &written.examples {
+            let signature = running_a_row(&program, &written.name, &example.behavior, call_conv)?;
+            let symbol = example_symbol(&written.name, &example.behavior, example.at);
+            // Reached from outside whatever the module says about the behavior's own name: what
+            // this runs is a row, and a row of a kept name is as much a row as any other.
+            let id = module.declare_function(&symbol, Linkage::Export, &signature)?;
+            entries.insert(symbol, id);
+        }
+    }
+
+    for written in &program.modules {
+        for held in &written.helpers {
+            let signature = signature_over(&held.takes, &held.answers, call_conv)?;
+            let id = reachable.of_held(&written.name, &held.declared)?;
             context.clear();
             context.func = Function::with_name_signature(UserFuncName::default(), signature);
-            let taking = module.declare_func_in_func(allocate, &mut context.func);
             let lowering = Lowering {
                 declared: &declared,
-                taking,
+                reachable: &reachable,
+                carrier: &written.name,
+                allocate,
             };
-            define(&mut context.func, &mut shapes, behavior, frontend, &lowering)?;
+            define(
+                &mut context.func,
+                &mut shapes,
+                &held.takes,
+                &held.body,
+                frontend,
+                &lowering,
+                &mut module,
+            )?;
+            module.define_function(id, &mut context)?;
+        }
+        for held in &written.bodies {
+            let target = target_for(&program, &held.declared)?;
+            let takes = &target.takes;
+            let body = &held.body;
+            let signature = signature_over(&target.takes, &target.answers, call_conv)?;
+            let id = reachable.of_behavior_named(&held.declared)?;
+            context.clear();
+            context.func = Function::with_name_signature(UserFuncName::default(), signature);
+            let lowering = Lowering {
+                declared: &declared,
+                reachable: &reachable,
+                carrier: &written.name,
+                allocate,
+            };
+            define(
+                &mut context.func,
+                &mut shapes,
+                takes,
+                body,
+                frontend,
+                &lowering,
+                &mut module,
+            )?;
+            module.define_function(id, &mut context)?;
+        }
+        for example in &written.examples {
+            let signature = running_a_row(&program, &written.name, &example.behavior, call_conv)?;
+            let symbol = example_symbol(&written.name, &example.behavior, example.at);
+            let id = *entries
+                .get(&symbol)
+                .ok_or_else(|| anyhow!("no entry was declared for {symbol}"))?;
+            context.clear();
+            context.func = Function::with_name_signature(UserFuncName::default(), signature);
+            let lowering = Lowering {
+                declared: &declared,
+                reachable: &reachable,
+                carrier: &written.name,
+                allocate,
+            };
+            // Taking nothing: what the row states is written into the body, so an entry with
+            // parameters would be a row whose values came from whoever ran it.
+            define(
+                &mut context.func,
+                &mut shapes,
+                &[],
+                &example.body,
+                frontend,
+                &lowering,
+                &mut module,
+            )?;
             module.define_function(id, &mut context)?;
         }
     }
 
     Ok(module.finish().emit()?)
+}
+
+/// The behavior a name in this document reaches, as the table of targets says it.
+fn target_for<'a>(program: &'a Program, declared: &str) -> Result<&'a Target> {
+    program
+        .behaviors
+        .iter()
+        .find(|it| it.declared() == declared)
+        .ok_or_else(|| anyhow!("{declared}, which no target names"))
+}
+
+/// What an entry that runs one of a behavior's rows takes and answers.
+///
+/// Nothing, and what the behavior answers. The answer's type is read off the behavior's target
+/// rather than off the row, because what a behavior answers is the behavior's and a row that said
+/// it too would be a second place it was written down.
+fn running_a_row(
+    program: &Program,
+    module: &str,
+    behavior: &str,
+    call_conv: CallConv,
+) -> Result<ir::Signature> {
+    let target = target_for(program, &format!("{module}.{behavior}"))?;
+    signature_over(&[], &target.answers, call_conv)
+}
+
+/// What the object makes reachable, from what the module says together with what the object is
+/// for.
+///
+/// Two questions and not one. What a module publishes is its surface in the language; what a
+/// symbol table carries is this artifact's answer. An object that read the first as the second
+/// would be publishing whatever surface suited the shape it happened to be built in.
+///
+/// This object is one whole program. A name the module keeps is named by that module alone and
+/// every module of the program is in here, so it is reached in here and nowhere else. A name the
+/// module publishes may be reached by a host linking this in or by another Souther build's object,
+/// and neither of those reaches a symbol the table does not carry.
+fn linkage_of(published: Publication) -> Linkage {
+    match published {
+        Publication::Published => Linkage::Export,
+        Publication::Kept => Linkage::Local,
+    }
+}
+
+/// Everything a body can reach, by the name the document reaches it under.
+///
+/// A definition a module holds is keyed by both modules — the one holding it and the one that
+/// declared it — because two modules holding one declaration hold a copy each and a call reaches
+/// the copy its own module holds.
+#[derive(Default)]
+struct Reachable {
+    held: HashMap<(String, String), FuncId>,
+    behaviors: HashMap<String, FuncId>,
+}
+
+impl Reachable {
+    fn held(&mut self, carrier: &str, declared: &str, id: FuncId) -> Result<()> {
+        let key = (carrier.to_string(), declared.to_string());
+        if self.held.insert(key, id).is_some() {
+            bail!("{carrier} holds two definitions both called {declared}");
+        }
+        Ok(())
+    }
+
+    fn behavior(&mut self, declared: &str, id: FuncId) -> Result<()> {
+        if self.behaviors.insert(declared.to_string(), id).is_some() {
+            bail!("two behaviors are both written {declared}");
+        }
+        Ok(())
+    }
+
+    fn of_held(&self, carrier: &str, declared: &str) -> Result<FuncId> {
+        self.held
+            .get(&(carrier.to_string(), declared.to_string()))
+            .copied()
+            .ok_or_else(|| anyhow!("{carrier} reaches {declared}, which it holds no copy of"))
+    }
+
+    fn of_behavior_named(&self, declared: &str) -> Result<FuncId> {
+        self.behaviors
+            .get(declared)
+            .copied()
+            .ok_or_else(|| anyhow!("a call reaching {declared}, which the program does not name"))
+    }
 }
 
 /// What every declared type of the program is, and which number stands for it.
@@ -170,26 +387,33 @@ impl<'a> Declared<'a> {
 /// What the lowering of one function needs besides the function itself.
 struct Lowering<'a> {
     declared: &'a Declared<'a>,
-    taking: ir::FuncRef,
+    reachable: &'a Reachable,
+    /// The module whose copy of a definition a call from here reaches.
+    carrier: &'a str,
+    allocate: FuncId,
 }
 
 impl Lowering<'_> {
     /// Room for `slots` slots, from the arena the caller brackets.
-    fn room(&self, builder: &mut FunctionBuilder, slots: usize) -> ir::Value {
+    fn room(
+        &self,
+        builder: &mut FunctionBuilder,
+        module: &mut ObjectModule,
+        slots: usize,
+    ) -> ir::Value {
+        let taking = module.declare_func_in_func(self.allocate, builder.func);
         let size = builder.ins().iconst(types::I64, SLOT * slots as i64);
-        let taken = builder.ins().call(self.taking, &[size]);
+        let taken = builder.ins().call(taking, &[size]);
         builder.inst_results(taken)[0]
     }
 }
 
-fn signature_of(behavior: &Behavior, call_conv: CallConv) -> Result<ir::Signature> {
+fn signature_over(takes: &[Ty], answers: &Ty, call_conv: CallConv) -> Result<ir::Signature> {
     let mut signature = ir::Signature::new(call_conv);
-    for taken in &behavior.takes {
+    for taken in takes {
         signature.params.push(AbiParam::new(machine_type(taken)?));
     }
-    signature
-        .returns
-        .push(AbiParam::new(machine_type(&behavior.answers)?));
+    signature.returns.push(AbiParam::new(machine_type(answers)?));
     Ok(signature)
 }
 
@@ -200,11 +424,68 @@ fn signature_of(behavior: &Behavior, call_conv: CallConv) -> Result<ir::Signatur
 /// is decided by giving it a width here.
 fn machine_type(ty: &Ty) -> Result<types::Type> {
     match ty {
-        Ty::Prim { prim: Prim::Int } => Ok(types::I64),
-        Ty::Prim { prim: Prim::Bool } => Ok(types::I8),
-        Ty::Declared { .. } | Ty::Union { .. } | Ty::Option { .. } | Ty::Tuple { .. } => Ok(POINTER),
-        other => Err(not_lowered(format!("a value of type {}", other.spelt()))),
+        Ty::Declared { .. } | Ty::Union { .. } | Ty::Option { .. } | Ty::Tuple { .. } => {
+            Ok(POINTER)
+        }
+        // Every primitive is named. A set the language closed is one this has to answer for member
+        // by member: caught by an arm standing for the rest, a primitive added to the language
+        // would arrive here as something with no representation and nothing would have said so.
+        Ty::Prim { prim } => match prim {
+            Prim::Int => Ok(types::I64),
+            Prim::Bool => Ok(types::I8),
+            Prim::String
+            | Prim::Decimal
+            | Prim::Rational
+            | Prim::Date
+            | Prim::Time
+            | Prim::DateTime
+            | Prim::Instant
+            | Prim::Raw => Err(not_lowered(format!("a value of type {}", prim.spelt()))),
+        },
     }
+}
+
+/// Holds the signature of a behavior the object does not define to what may cross an object.
+///
+/// A value of a declared type says which type it is with a number this object counted, so the same
+/// declaration is a different number in an object built from a different document. Two objects
+/// exchanging such a value would compare numbers that were never about each other: both valid,
+/// both compared without complaint, and the arm taken whichever the two happened to agree on.
+///
+/// So the representations that cross are the ones that are nobody's count — a number and a truth.
+/// The rest cross when a declared type has an identity a linker settles rather than one an object
+/// counts, and not before. Said here, where the signature is declared, because that is the one
+/// place the two scopes meet.
+fn crosses_objects(target: &Target) -> Result<()> {
+    for ty in target.takes.iter().chain([&target.answers]) {
+        let nobodys_count = match ty {
+            // Named member by member for the same reason the widths are: a primitive added to the
+            // language must be answered for here rather than admitted by an arm standing for the
+            // rest, since what this decides is whether a value of it may leave the object.
+            Ty::Prim { prim } => match prim {
+                Prim::Int | Prim::Bool => true,
+                Prim::String
+                | Prim::Decimal
+                | Prim::Rational
+                | Prim::Date
+                | Prim::Time
+                | Prim::DateTime
+                | Prim::Instant
+                | Prim::Raw => false,
+            },
+            Ty::Declared { .. } | Ty::Union { .. } | Ty::Option { .. } | Ty::Tuple { .. } => false,
+        };
+        if !nobodys_count {
+            return Err(not_lowered(format!(
+                "{}.{} takes or answers {}, whose representation is this object's own, and it is \
+                 reached across objects",
+                target.module,
+                target.name,
+                ty.spelt()
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// What holds the address of a value made of fields.
@@ -245,9 +526,11 @@ fn out_of_slot(builder: &mut FunctionBuilder, held: ir::Value, wanted: types::Ty
 fn define(
     function: &mut Function,
     shapes: &mut FunctionBuilderContext,
-    behavior: &Behavior,
+    takes: &[Ty],
+    body: &Node,
     frontend: TargetFrontendConfig,
     lowering: &Lowering,
+    module: &mut ObjectModule,
 ) -> Result<()> {
     let mut builder = FunctionBuilder::new(function, shapes);
     let entry = builder.create_block();
@@ -256,14 +539,14 @@ fn define(
     builder.seal_block(entry);
 
     let mut bindings = Bindings::default();
-    for (at, taken) in behavior.takes.iter().enumerate() {
+    for (at, taken) in takes.iter().enumerate() {
         let variable = builder.declare_var(machine_type(taken)?);
         let given = builder.block_params(entry)[at];
         builder.def_var(variable, given);
         bindings.at(at, variable);
     }
 
-    let answer = lower(&mut builder, lowering, &mut bindings, &behavior.body)?;
+    let answer = lower(&mut builder, lowering, module, &mut bindings, body)?;
     builder.ins().return_(&[answer]);
     builder.finalize(frontend);
     Ok(())
@@ -299,6 +582,7 @@ impl Bindings {
 fn lower(
     builder: &mut FunctionBuilder,
     lowering: &Lowering,
+    module: &mut ObjectModule,
     bindings: &mut Bindings,
     node: &Node,
 ) -> Result<ir::Value> {
@@ -309,7 +593,7 @@ fn lower(
             builder.use_var(variable)
         }
         Node::Neg { operand, .. } => {
-            let held = lower(builder, lowering, bindings, operand)?;
+            let held = lower(builder, lowering, module, bindings, operand)?;
             let nought = builder.ins().iconst(machine_type(operand.ty())?, 0);
             difference(builder, nought, held)
         }
@@ -319,31 +603,31 @@ fn lower(
             body,
             ..
         } => {
-            let held = lower(builder, lowering, bindings, value)?;
+            let held = lower(builder, lowering, module, bindings, value)?;
             let variable = builder.declare_var(machine_type(value.ty())?);
             builder.def_var(variable, held);
             bindings.at(*binding, variable);
-            lower(builder, lowering, bindings, body)?
+            lower(builder, lowering, module, bindings, body)?
         }
         Node::Bool { value, ty } => builder.ins().iconst(machine_type(ty)?, i64::from(*value)),
         Node::Binary {
             op, left, right, ..
-        } => binary(builder, lowering, bindings, *op, left, right)?,
+        } => binary(builder, lowering, module, bindings, *op, left, right)?,
         Node::If {
             cond,
             then,
             els,
             ty,
         } => {
-            let asked = lower(builder, lowering, bindings, cond)?;
+            let asked = lower(builder, lowering, module, bindings, cond)?;
             let answers = machine_type(ty)?;
             fork(builder, asked, answers, |builder, taken| {
-                lower(builder, lowering, bindings, if taken { then } else { els })
+                lower(builder, lowering, module, bindings, if taken { then } else { els })
             })?
         }
         Node::Unit { declared, .. } => {
             let flags = TRUSTED;
-            let value = lowering.room(builder, 1);
+            let value = lowering.room(builder, module,1);
             let which = builder
                 .ins()
                 .iconst(types::I64, lowering.declared.number(declared)?);
@@ -374,11 +658,11 @@ fn lower(
             // take room of its own and what is half-written is not a value.
             let mut held = Vec::with_capacity(values.len());
             for value in values {
-                let answered = lower(builder, lowering, bindings, value)?;
+                let answered = lower(builder, lowering, module, bindings, value)?;
                 held.push(into_slot(builder, answered));
             }
             let flags = TRUSTED;
-            let value = lowering.room(builder, 1 + values.len());
+            let value = lowering.room(builder, module,1 + values.len());
             let which = builder
                 .ins()
                 .iconst(types::I64, lowering.declared.number(declared)?);
@@ -399,7 +683,7 @@ fn lower(
             let at = shape
                 .position_of(field)
                 .ok_or_else(|| anyhow!("{declared} declares no field {field}"))?;
-            let value = lower(builder, lowering, bindings, target)?;
+            let value = lower(builder, lowering, module, bindings, target)?;
             let flags = TRUSTED;
             let held = builder
                 .ins()
@@ -407,14 +691,14 @@ fn lower(
             out_of_slot(builder, held, machine_type(ty)?)
         }
         Node::Match { subject, arms, ty } => {
-            let value = lower(builder, lowering, bindings, subject)?;
-            fork_on_what_it_is(builder, lowering, bindings, value, arms, machine_type(ty)?)?
+            let value = lower(builder, lowering, module, bindings, subject)?;
+            fork_on_what_it_is(builder, lowering, module, bindings, value, arms, machine_type(ty)?)?
         }
         Node::Some { value, .. } => {
-            let held = lower(builder, lowering, bindings, value)?;
+            let held = lower(builder, lowering, module, bindings, value)?;
             let held = into_slot(builder, held);
             let flags = TRUSTED;
-            let holding = lowering.room(builder, 1);
+            let holding = lowering.room(builder, module,1);
             builder.ins().store(flags, held, holding, HELD as i32);
             holding
         }
@@ -422,18 +706,46 @@ fn lower(
         Node::Tuple { members, .. } => {
             let mut held = Vec::with_capacity(members.len());
             for member in members {
-                let answered = lower(builder, lowering, bindings, member)?;
+                let answered = lower(builder, lowering, module, bindings, member)?;
                 held.push(into_slot(builder, answered));
             }
             let flags = TRUSTED;
-            let value = lowering.room(builder, members.len().max(1));
+            let value = lowering.room(builder, module, members.len());
             for (at, member) in held.into_iter().enumerate() {
                 builder.ins().store(flags, member, value, member_at(at) as i32);
             }
             value
         }
+        Node::Call {
+            reaches,
+            declared,
+            arguments,
+            ..
+        } => {
+            let reached = match reaches {
+                // The copy this module holds, and not another module's copy of the same
+                // declaration: a module carries every definition it reaches.
+                Reaches::Helper => lowering.reachable.of_held(lowering.carrier, declared)?,
+                Reaches::Behavior => lowering.reachable.of_behavior_named(declared)?,
+                Reaches::Value => {
+                    return Err(not_lowered(format!(
+                        "a call to {declared}, which runs in the module that declares it"
+                    )));
+                }
+            };
+            let mut given = Vec::with_capacity(arguments.len());
+            for argument in arguments {
+                given.push(lower(builder, lowering, module, bindings, argument)?);
+            }
+            let reaching = module.declare_func_in_func(reached, builder.func);
+            let answered = builder.ins().call(reaching, &given);
+            let answers = builder.inst_results(answered);
+            *answers
+                .first()
+                .ok_or_else(|| anyhow!("a call to {declared} came back with no value"))?
+        }
         Node::Member { tuple, at, ty } => {
-            let value = lower(builder, lowering, bindings, tuple)?;
+            let value = lower(builder, lowering, module, bindings, tuple)?;
             let flags = TRUSTED;
             let held = builder
                 .ins()
@@ -454,6 +766,7 @@ fn lower(
 fn fork_on_what_it_is(
     builder: &mut FunctionBuilder,
     lowering: &Lowering,
+    module: &mut ObjectModule,
     bindings: &mut Bindings,
     value: ir::Value,
     arms: &[Arm],
@@ -481,7 +794,7 @@ fn fork_on_what_it_is(
             builder.def_var(variable, held);
             bindings.at(number, variable);
         }
-        let answered = lower(builder, lowering, bindings, &arm.body)?;
+        let answered = lower(builder, lowering, module, bindings, &arm.body)?;
         builder.ins().jump(after, &[answered.into()]);
 
         builder.switch_to_block(next);
@@ -596,6 +909,7 @@ where
 fn binary(
     builder: &mut FunctionBuilder,
     lowering: &Lowering,
+    module: &mut ObjectModule,
     bindings: &mut Bindings,
     op: Op,
     left: &Node,
@@ -608,7 +922,7 @@ fn binary(
         // condition exists to exclude.
         Op::And | Op::Or => {
             let settles_it = matches!(op, Op::Or);
-            let asked = lower(builder, lowering, bindings, left)?;
+            let asked = lower(builder, lowering, module, bindings, left)?;
             // What the left one is, which is what the whole of it is: a condition answers what its
             // operands answer, and reading that off the operand rather than knowing it here keeps
             // the width a fact that crossed.
@@ -617,13 +931,13 @@ fn binary(
                 if taken == settles_it {
                     Ok(builder.ins().iconst(answers, i64::from(settles_it)))
                 } else {
-                    lower(builder, lowering, bindings, right)
+                    lower(builder, lowering, module, bindings, right)
                 }
             })
         }
         _ => {
-            let a = lower(builder, lowering, bindings, left)?;
-            let b = lower(builder, lowering, bindings, right)?;
+            let a = lower(builder, lowering, module, bindings, left)?;
+            let b = lower(builder, lowering, module, bindings, right)?;
             match op {
                 Op::Add => {
                     let sum = builder.ins().iadd(a, b);

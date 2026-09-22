@@ -53,16 +53,35 @@ name for a value. `/` answers the exact quotient, which is a `Rational` and has 
 here.
 
 A model's own types: a product, a newtype, a unit, a sum, a value that may be absent, and several
-values carried as one. Built, read a field off, and forked on which case a value is. A helper that
-does not call itself arrives already written into the body that calls it, so a model that factors
-its arithmetic out compiles without anything here knowing what a call is; one that does call itself
-is carried to its reader as a definition, and the call to it is still a call.
+values carried as one. Built, read a field off, and forked on which case a value is.
+
+Calls. A helper that does not call itself arrives already written into the body that calls it; one
+that does is a definition the module holds, and every module that reaches it holds a copy, which is
+what the language says a published helper is. A behavior reaching a behavior is a call whether this
+program answers it or not: a behavior with no body is a name the object leaves for whoever links
+it, so what answers a dependency is settled at the link and not arranged around the run.
+
+What a call may reach is wider than what the object defines — a body may name a behavior, or a
+type, that a module built before this one declares — so the document says the two apart.
+
+What the object's symbol table carries is what the declaring module publishes, read together with
+what this object is for. The object is one whole program, so a name the module keeps is reached
+inside it and nowhere else, and a name it publishes may be reached by a host linking the object in
+or by another Souther build's object. The two are different questions: a module's `exposing` clause
+is its surface in the language, and an object that read that as its own answer would be publishing
+whatever surface suited the shape it happened to be built in.
+
+A behavior the object does not define is reached over numbers and truths alone. A value of a
+declared type says which type it is with a number this object counted, so two objects exchanging
+one would compare numbers that were never about each other; that is refused until a declared type
+has an identity a linker settles.
 
 A type that states what its values owe is not built: a construction runs those clauses and stops at
 the first that does not hold, and nothing here runs one.
 
-Still ahead: a `String`, a `Decimal`, the collections, a function value, a kernel, and reaching a
-behavior another build implements.
+Still ahead: a `String`, a `Decimal`, the collections, a function value, a kernel the language
+implements, a value that runs in the module declaring it, and a composition.
+
 
 ## Where a value lives
 
@@ -97,6 +116,13 @@ no second reading of what a row means either.
 
 A row the compile did not run arrives saying so and carrying why. Those are not skipped: skipping
 them is how a check goes on being green over fewer and fewer rows.
+
+The object carries an entry per row, which is what runs one. The values the row states are written
+into the entry when the program crosses, so running a row is the object doing something with the
+row and not the behavior being reached with values from outside — which is what lets a row of a
+name the module keeps be run at all. A row stating a value this backend has no expression for
+refuses the build rather than being left out of the object, for the same reason: an object missing
+an entry would link and answer every row it did carry.
 
 This is not the two carriers compared against each other. Holding both to one statement is not
 running both and comparing what came back, and running a program on every carrier and comparing the

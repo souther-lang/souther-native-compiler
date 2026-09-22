@@ -72,6 +72,35 @@ class WhatThisBackendDoesNotWriteYetTest {
                 .hasMessageContaining("owing.Amount");
     }
 
+    /**
+     * A row states its values and the object carries an entry that runs them, so a value with no
+     * expression to make it is a row the object cannot run.
+     *
+     * <p>Refused rather than left out. An object missing an entry would still link and still
+     * answer every row it did carry, so what a check of the rows compared would shrink by however
+     * many rows had values like this one — and it would go on being green over the ones that were
+     * left.
+     */
+    @Test
+    void aRowStatingAValueWithNoExpressionToMakeItIsRefusedRatherThanLeftOut() {
+        CheckedProgram program = CheckedProgram.of(List.of("""
+                module owing
+
+                data Amount = { value: Int }
+
+                behavior tally : (a: Amount) -> Int
+                let tally (a) = a.value
+
+                example tally
+                    | "a value of it" : (Amount { value = 7 }) -> 7
+                """));
+
+        assertThatThrownBy(() -> ProgramWriter.written(program))
+                .isInstanceOf(NotLowered.class)
+                .hasMessageContaining("a row stating")
+                .hasMessageContaining("owing.Amount");
+    }
+
     @Test
     void theDriverSaysItIsOneThisBackendHasNotGotRoundTo() {
         assertThatThrownBy(() -> NativeCompiler.compile(CheckedProgram.of(List.of(OVER_A_STRING))))

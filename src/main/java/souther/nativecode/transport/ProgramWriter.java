@@ -2,22 +2,34 @@ package souther.nativecode.transport;
 
 import souther.compiler.core.Core;
 import souther.compiler.core.ValueShape;
+import souther.compiler.observe.ObservedValue;
+import souther.compiler.observe.RowStatement;
+import souther.compiler.program.BehaviorTarget;
 import souther.compiler.program.CheckedBehavior;
 import souther.compiler.program.CheckedData;
+import souther.compiler.program.CheckedHelper;
 import souther.compiler.program.CheckedImplementation;
 import souther.compiler.program.CheckedModule;
 import souther.compiler.program.CheckedProgram;
+import souther.compiler.program.CheckedRow;
+import souther.compiler.program.Publication;
 import souther.compiler.types.BinOp;
 import souther.compiler.types.BindingId;
 import souther.compiler.types.Refinement;
 import souther.compiler.types.ResolvedCase;
 import souther.compiler.types.Type;
 import souther.compiler.types.TypeSymbol;
+import souther.compiler.types.ValueName;
 import souther.nativecode.NotLowered;
 
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.StringJoiner;
 
 /**
@@ -51,24 +63,92 @@ public final class ProgramWriter {
      * written moves, so that a driver and a writer that disagree say so rather than producing an
      * object that is wrong quietly.
      */
-    public static final int TRANSPORT_VERSION = 1;
+    public static final int TRANSPORT_VERSION = 2;
 
-    private ProgramWriter() {
+    private final CheckedProgram program;
+
+    /**
+     * What this walk has met, which is not what the program emits.
+     *
+     * <p>A body names a behavior and a type, and either may be one a module read off the path
+     * declares — a module this compile did not check and does not emit. What a call can reach is
+     * therefore a wider question than what is emitted, and taking one list for both answers leaves
+     * a call reaching a name nothing in the document says anything about.
+     */
+    private final Set<ValueName.Behavior> behaviorsMet = new LinkedHashSet<>();
+    private final Set<TypeSymbol.AtModule> declarationsMet = new LinkedHashSet<>();
+
+    private ProgramWriter(CheckedProgram program) {
+        this.program = program;
     }
 
     /** The whole program as one document. */
     public static String written(CheckedProgram program) {
-        StringJoiner declarations = new StringJoiner(",", "[", "]");
+        return new ProgramWriter(program).document();
+    }
+
+    /**
+     * What the object defines and what it may reach, written apart.
+     *
+     * <p>The bodies are walked first, because walking one is what says which behaviors and which
+     * declarations the document has to carry. Each of those is then asked of the program, which is
+     * the one thing that knows — a reader working a callee's signature out from the arguments at a
+     * call would be rebuilding a decision out of less than it was made from.
+     */
+    private String document() {
         StringJoiner modules = new StringJoiner(",", "[", "]");
         for (CheckedModule module : program.modules()) {
-            for (CheckedData declared : module.data()) {
-                declarations.add(declaration(declared));
+            for (CheckedBehavior behavior : module.behaviors()) {
+                behaviorsMet.add(behavior.name());
             }
             modules.add(module(module));
         }
+
+        Map<ValueName.Behavior, String> behaviors = new LinkedHashMap<>();
+        Map<TypeSymbol.AtModule, String> declarations = new LinkedHashMap<>();
+        close(behaviors, declarations);
+
         return "{\"transport\":" + TRANSPORT_VERSION
-                + ",\"declarations\":" + declarations
+                + ",\"declarations\":" + joined(declarations.values())
+                + ",\"behaviors\":" + joined(behaviors.values())
                 + ",\"modules\":" + modules + "}";
+    }
+
+    /**
+     * Writes both tables until neither has anything left to write.
+     *
+     * <p>Together, because each is where the other's entries come from: writing a behavior's
+     * signature names a type, writing a type's fields names more types, and one of those may be a
+     * behavior's parameter that no body ever reads. Finished one at a time, whichever went first
+     * would be closed over a set the second was still adding to — and which went first would be
+     * the order two expressions happen to be written in rather than anything about the program.
+     */
+    private void close(Map<ValueName.Behavior, String> behaviors,
+                       Map<TypeSymbol.AtModule, String> declarations) {
+        while (true) {
+            boolean grew = false;
+            for (ValueName.Behavior name : new ArrayList<>(behaviorsMet)) {
+                if (!behaviors.containsKey(name)) {
+                    behaviors.put(name, target(name, program.behavior(name)));
+                    grew = true;
+                }
+            }
+            for (TypeSymbol.AtModule name : new ArrayList<>(declarationsMet)) {
+                if (!declarations.containsKey(name)) {
+                    declarations.put(name, declaration(program.declaration(name).data()));
+                    grew = true;
+                }
+            }
+            if (!grew) {
+                return;
+            }
+        }
+    }
+
+    private String joined(Collection<String> written) {
+        StringJoiner out = new StringJoiner(",", "[", "]");
+        written.forEach(out::add);
+        return out.toString();
     }
 
     /**
@@ -79,7 +159,15 @@ public final class ProgramWriter {
      * A writer that started saying where a field goes would be deciding the representation from the
      * side that never emits one.
      */
-    private static String declaration(CheckedData declared) {
+    private String declaration(CheckedData declared) {
+        // What a field holds is a type too, and it may be one nothing else in the document has
+        // named. Met here rather than left to whoever reads the field, because a declaration is
+        // where a type stops being reachable from anything but itself.
+        if (declared instanceof CheckedData.WithFields held) {
+            for (ValueShape.Field field : held.fields()) {
+                type(field.type());
+            }
+        }
         return switch (declared) {
             case CheckedData.Product it -> "{\"declared\":" + quoted(named(it.name()))
                     + ",\"is\":\"product\",\"fields\":" + fieldNames(it.fields())
@@ -104,7 +192,7 @@ public final class ProgramWriter {
         };
     }
 
-    private static String fieldNames(List<ValueShape.Field> fields) {
+    private String fieldNames(List<ValueShape.Field> fields) {
         StringJoiner names = new StringJoiner(",", "[", "]");
         for (ValueShape.Field field : fields) {
             names.add(quoted(field.name()));
@@ -112,12 +200,161 @@ public final class ProgramWriter {
         return names.toString();
     }
 
-    private static String module(CheckedModule module) {
-        StringJoiner behaviors = new StringJoiner(",", "[", "]");
+    private String module(CheckedModule module) {
+        StringJoiner bodies = new StringJoiner(",", "[", "]");
         for (CheckedBehavior behavior : module.behaviors()) {
-            behaviors.add(behavior(behavior));
+            if (behavior.implementation() instanceof CheckedImplementation.Body written) {
+                bodies.add(body(module, behavior, written));
+            }
         }
-        return "{\"name\":" + quoted(module.name()) + ",\"behaviors\":" + behaviors + "}";
+        StringJoiner helpers = new StringJoiner(",", "[", "]");
+        for (CheckedHelper helper : module.helpers()) {
+            helpers.add(helper(helper));
+        }
+        StringJoiner examples = new StringJoiner(",", "[", "]");
+        for (CheckedBehavior behavior : module.behaviors()) {
+            List<CheckedRow> rows = behavior.rows();
+            for (int at = 0; at < rows.size(); at++) {
+                String entry = example(module, behavior, at, rows.get(at));
+                if (entry != null) {
+                    examples.add(entry);
+                }
+            }
+        }
+        return "{\"name\":" + quoted(module.name())
+                + ",\"helpers\":" + helpers
+                + ",\"bodies\":" + bodies
+                + ",\"examples\":" + examples + "}";
+    }
+
+    /**
+     * An entry that runs one of a behavior's rows, or nothing where the row states no values.
+     *
+     * <p>Numbered by where the row stands among the behavior's rows and not by how many entries
+     * have been written, so a row the compile could not read leaves its number unused rather than
+     * moving every row after it onto a number that was somebody else's.
+     *
+     * <p>A row the compile could not read is the one case with no entry, and it is the one case
+     * where there is nothing to run: the values it would hand over were never read. Every other
+     * row is written, and a value this writer cannot make an expression for refuses the program
+     * the same way a body it cannot write does — the language admits the program and this backend
+     * does not write it yet.
+     */
+    private String example(CheckedModule module, CheckedBehavior behavior, int at, CheckedRow row) {
+        RowStatement.Stated states = switch (row.statement()) {
+            case CheckedRow.SelfContained it -> it.states();
+            case CheckedRow.WithStandIns it -> it.states();
+            // Its answer is owed, which is a row nothing holds an answer to and still a row whose
+            // values were read. The entry runs it; what the run answers is nobody's claim yet.
+            case CheckedRow.AnswerOwed it -> it.states();
+            case CheckedRow.NotReproducible it -> null;
+        };
+        if (states == null) {
+            return null;
+        }
+        return "{\"behavior\":" + quoted(behavior.name().name())
+                + ",\"at\":" + at
+                + ",\"body\":" + applied(module, behavior, states) + "}";
+    }
+
+    /**
+     * The one call a row is: the behavior, handed the values the row states.
+     *
+     * <p>A call and not a shape of its own, so that what an entry does is lowered by whatever
+     * lowers a call and the two cannot come apart. What the behavior answers is read off its
+     * signature, which is also where the arguments' types come from — a row states values and the
+     * signature is what says at which type each of them is handed over.
+     */
+    private String applied(CheckedModule module, CheckedBehavior behavior,
+                           RowStatement.Stated states) {
+        List<Type> takes = behavior.signature().takes();
+        List<ObservedValue> inputs = states.inputs();
+        if (inputs.size() != takes.size()) {
+            throw notYet("a row of `" + behavior.name() + "` stating " + inputs.size()
+                    + " values where the behavior takes " + takes.size());
+        }
+        StringJoiner arguments = new StringJoiner(",", "[", "]");
+        for (int at = 0; at < takes.size(); at++) {
+            arguments.add(given(inputs.get(at), takes.get(at)));
+        }
+        return "{\"core\":\"call\",\"reaches\":\"behavior\""
+                + ",\"declared\":" + quoted(module.name() + "." + behavior.name().name())
+                + ",\"arguments\":" + arguments
+                + ",\"type\":" + type(behavior.signature().answers()) + "}";
+    }
+
+    /**
+     * A value a row states, written as the expression that makes it.
+     *
+     * <p>At the type it is handed over at as well as by what it is, because the value does not say
+     * on its own: a number handed to a parameter of a type that holds one is a different expression
+     * from the same number handed to an {@code Int}, and a writer reading only the value would
+     * write the second where the first was meant.
+     *
+     * <p>Every kind of value a row can state is answered for, and the ones with no expression here
+     * say so. Caught by an arm standing for the rest, a value a row can state would cross as
+     * whatever it resembled.
+     */
+    private String given(ObservedValue value, Type at) {
+        return switch (value) {
+            case ObservedValue.Integer it when at == Type.Prim.INT ->
+                    "{\"core\":\"int\",\"value\":" + it.value() + ",\"type\":" + type(at) + "}";
+            case ObservedValue.Bool it when at == Type.Prim.BOOL ->
+                    "{\"core\":\"bool\",\"value\":" + it.value() + ",\"type\":" + type(at) + "}";
+
+            case ObservedValue.Integer it -> throw notStated(it, at);
+            case ObservedValue.Bool it -> throw notStated(it, at);
+            case ObservedValue.Decimal it -> throw notStated(it, at);
+            case ObservedValue.Text it -> throw notStated(it, at);
+            case ObservedValue.Temporal it -> throw notStated(it, at);
+            case ObservedValue.Unit it -> throw notStated(it, at);
+            case ObservedValue.Constructed it -> throw notStated(it, at);
+            case ObservedValue.Sequence it -> throw notStated(it, at);
+            case ObservedValue.Mapping it -> throw notStated(it, at);
+            case ObservedValue.Absent it -> throw notStated(it, at);
+            case ObservedValue.Unknown it -> throw notStated(it, at);
+            case ObservedValue.Truncated it -> throw notStated(it, at);
+        };
+    }
+
+    private static NotLowered notStated(ObservedValue value, Type at) {
+        return new NotLowered("a row stating " + value + " at " + at);
+    }
+
+    /**
+     * A definition the module holds as one of its own.
+     *
+     * <p>A module carries every helper it reaches, including one another module declares, so what
+     * a helper is called here is where it is declared and what it is holding is which module is
+     * holding it. Two modules holding one helper hold a copy each, which is what the language says
+     * a published helper is.
+     */
+    private String helper(CheckedHelper helper) {
+        Bindings bindings = new Bindings();
+        StringJoiner parameters = new StringJoiner(",", "[", "]");
+        StringJoiner takes = new StringJoiner(",", "[", "]");
+        for (CheckedHelper.Parameter parameter : helper.parameters()) {
+            bindings.number(parameter.binder().binding());
+            parameters.add(quoted(parameter.binder().name()));
+            takes.add(type(parameter.type()));
+        }
+        return "{\"declared\":" + quoted(reached(helper.declares()))
+                + ",\"parameters\":" + parameters
+                + ",\"takes\":" + takes
+                + ",\"answers\":" + type(helper.body().type())
+                + ",\"body\":" + core(helper.body(), bindings)
+                + "}";
+    }
+
+    /** How a definition of a module is named on the wire: its module, then its own name. */
+    private String reached(ValueName name) {
+        return switch (name) {
+            case ValueName.OfAModule it -> it.module() + "." + it.name();
+            // A name that is in scope where it stands, and one the standard library declares.
+            // Neither is a definition a module holds, and nothing here reaches one.
+            case ValueName.InScope it -> throw notYet("a call reaching " + it.name());
+            case ValueName.Stdlib it -> throw notYet("a call reaching " + it.name());
+        };
     }
 
     /**
@@ -126,12 +363,13 @@ public final class ProgramWriter {
      * <p>Its module and then its own name. A module's name carries dots and a type's carries none,
      * so the last segment is the type and no two declarations are spelt the same way.
      */
-    private static String named(TypeSymbol.AtModule name) {
+    private String named(TypeSymbol.AtModule name) {
+        declarationsMet.add(name);
         return name.module() + "." + name.name();
     }
 
     /** The same for a name that may not be a module's, which is refused rather than guessed at. */
-    private static String symbol(TypeSymbol name) {
+    private String symbol(TypeSymbol name) {
         return switch (name) {
             case TypeSymbol.AtModule it -> named(it);
             // A primitive standing as a case of a union, and a case the language gives. Both are
@@ -141,26 +379,66 @@ public final class ProgramWriter {
         };
     }
 
-    private static String behavior(CheckedBehavior behavior) {
-        if (!(behavior.implementation() instanceof CheckedImplementation.Body written)) {
-            throw new NotLowered("a behavior implemented other than by a body: " + behavior.name());
+    /**
+     * A behavior, and how it comes to answer.
+     *
+     * <p>A body is emitted. The rest are ways of answering that are not code this program holds —
+     * supplied by the caller, implemented by another build, composed out of other behaviors, or
+     * not written at all — and which of them it is crosses, because it decides what the object
+     * says about the name rather than what it puts under it.
+     */
+    private String target(ValueName.Behavior name, BehaviorTarget behavior) {
+        String how = switch (behavior.implementation()) {
+            case CheckedImplementation.Body it -> "body";
+            case CheckedImplementation.Injected it -> "injected";
+            case CheckedImplementation.ImplementedElsewhere it -> "elsewhere";
+            case CheckedImplementation.Composed it -> "composed";
+            case CheckedImplementation.Unwritten it -> "unwritten";
+        };
+        StringJoiner takes = new StringJoiner(",", "[", "]");
+        for (Type type : behavior.signature().takes()) {
+            takes.add(type(type));
         }
+        // The module and the name apart, which is what an identity is made of and what a symbol is
+        // built from. Joined into one string it would have to be split back, and a module's name
+        // carries dots.
+        return "{\"module\":" + quoted(name.module())
+                + ",\"name\":" + quoted(name.name())
+                + ",\"is\":" + quoted(how)
+                + ",\"takes\":" + takes
+                + ",\"answers\":" + type(behavior.signature().answers())
+                + "}";
+    }
+
+    /**
+     * The body of a behavior this object emits, under the name the table above knows it by.
+     *
+     * <p>What the module says about the name crosses with the body, which is the one place it is
+     * this compile's to answer: the module declaring it is one this compile checked. What an
+     * artifact then makes reachable is a different question and the artifact's own, and a body is
+     * where the two meet.
+     */
+    private String body(CheckedModule module, CheckedBehavior behavior,
+                        CheckedImplementation.Body written) {
         Bindings bindings = new Bindings();
         StringJoiner parameters = new StringJoiner(",", "[", "]");
         for (Core.Binder parameter : written.parameters()) {
             bindings.number(parameter.binding());
             parameters.add(quoted(parameter.name()));
         }
-        StringJoiner takes = new StringJoiner(",", "[", "]");
-        for (Type type : behavior.signature().takes()) {
-            takes.add(type(type));
-        }
-        return "{\"name\":" + quoted(behavior.name().name())
+        return "{\"declared\":" + quoted(module.name() + "." + behavior.name().name())
                 + ",\"parameters\":" + parameters
-                + ",\"takes\":" + takes
-                + ",\"answers\":" + type(behavior.signature().answers())
+                + ",\"publication\":" + quoted(publication(module.publicationOf(behavior.name())))
                 + ",\"body\":" + core(written.body(), bindings)
                 + "}";
+    }
+
+    /** How the module's answer about a name is spelt on the wire, member by member. */
+    private String publication(Publication published) {
+        return switch (published) {
+            case PUBLISHED -> "published";
+            case KEPT -> "kept";
+        };
     }
 
     /**
@@ -173,8 +451,15 @@ public final class ProgramWriter {
 
         private final Map<BindingId, Integer> numbered = new HashMap<>();
 
+        private int counted;
+
         int number(BindingId binding) {
-            return numbered.computeIfAbsent(binding, it -> numbered.size());
+            Integer already = numbered.get(binding);
+            if (already != null) {
+                return already;
+            }
+            numbered.put(binding, counted);
+            return counted++;
         }
 
         int of(BindingId binding, String name) {
@@ -186,7 +471,7 @@ public final class ProgramWriter {
         }
     }
 
-    private static String core(Core node, Bindings bindings) {
+    private String core(Core node, Bindings bindings) {
         return switch (node) {
             case Core.Int it -> "{\"core\":\"int\",\"value\":" + it.value()
                     + ",\"type\":" + type(it.type()) + "}";
@@ -238,7 +523,7 @@ public final class ProgramWriter {
             case Core.Str it -> throw notYet("a string literal", it);
             case Core.Temporal it -> throw notYet("a temporal literal", it);
             case Core.MaterialisedValue it -> throw notYet("a value read from its module", it);
-            case Core.Call it -> throw notYet("a call", it);
+            case Core.Call it -> call(it, bindings);
             case Core.PreservedCall it -> throw notYet("a call kept for what it says", it);
             case Core.Apply it -> throw notYet("an application of a function value", it);
             case Core.IfConstructed it -> throw notYet("an attempted construction", it);
@@ -256,12 +541,50 @@ public final class ProgramWriter {
      * way round, a value mentioning a name the binder shadows would cross as a read of the binder
      * it is still being computed for.
      */
-    private static String letIn(Core.LetIn it, Bindings bindings) {
+    private String letIn(Core.LetIn it, Bindings bindings) {
         String value = core(it.value(), bindings);
         int number = bindings.number(it.binder().binding());
         return "{\"core\":\"let\",\"binding\":" + number
                 + ",\"value\":" + value
                 + ",\"body\":" + core(it.body(), bindings)
+                + ",\"type\":" + type(it.type()) + "}";
+    }
+
+    /**
+     * A call, and what it reaches.
+     *
+     * <p>What a residual call reaches is one of three things and the checker has already decided
+     * which: a definition the module holds, a value that runs where it is declared, or a behavior.
+     * A kernel is what the language implements rather than what a program holds, and nothing here
+     * runs one yet.
+     */
+    private String call(Core.Call it, Bindings bindings) {
+        StringJoiner arguments = new StringJoiner(",", "[", "]");
+        for (Core argument : it.args()) {
+            arguments.add(core(argument, bindings));
+        }
+        String reaches = switch (it.fn()) {
+            case Core.Reached.OfDeclaration target -> switch (target.reaches()) {
+                case Core.Reaches.AHelper held ->
+                        "\"reaches\":\"helper\",\"declared\":" + quoted(reached(held.declaration()));
+                case Core.Reaches.APublishedValue held ->
+                        "\"reaches\":\"value\",\"declared\":" + quoted(reached(held.declaration()));
+                case Core.Reaches.ABehavior held -> {
+                    behaviorsMet.add(held.behavior());
+                    yield "\"reaches\":\"behavior\",\"declared\":"
+                            + quoted(reached(held.declaration()));
+                }
+            };
+            case Core.Reached.OfPublishedValue target ->
+                    "\"reaches\":\"value\",\"declared\":" + quoted(reached(target.denotes()));
+            case Core.Reached.OfKernel target ->
+                    throw notYet("a call to " + target.kernel(), it);
+            // An operation this compiler mints after everything is resolved, which no source can
+            // write and which stands for a shape a backend knows how to lower.
+            case Core.Emitted target -> throw notYet("the operation " + target, it);
+        };
+        return "{\"core\":\"call\"," + reaches
+                + ",\"arguments\":" + arguments
                 + ",\"type\":" + type(it.type()) + "}";
     }
 
@@ -276,7 +599,7 @@ public final class ProgramWriter {
      * <p>The binder is numbered before the body is written, because the body reads it. An arm that
      * binds nothing has no number, which is a different thing from binding something nothing reads.
      */
-    private static String match(Core.Match it, Bindings bindings) {
+    private String match(Core.Match it, Bindings bindings) {
         StringJoiner arms = new StringJoiner(",", "[", "]");
         for (Core.Case arm : it.cases()) {
             StringJoiner selects = new StringJoiner(",", "[", "]");
@@ -300,7 +623,7 @@ public final class ProgramWriter {
     }
 
     /** What one case of an arm tests for, and what it leaves to be read. */
-    private static String selects(ResolvedCase selected) {
+    private String selects(ResolvedCase selected) {
         return switch (selected.refinement()) {
             case Refinement.Direct it -> {
                 StringJoiner atoms = new StringJoiner(",", "[", "]");
@@ -326,7 +649,7 @@ public final class ProgramWriter {
      * to the language would cross to a reader that has never heard of it, and the first thing to
      * notice would be the far side failing to parse a document this side thought it had written.
      */
-    private static String op(BinOp op) {
+    private String op(BinOp op) {
         return switch (op) {
             case EQ -> "EQ";
             case NE -> "NE";
@@ -345,7 +668,7 @@ public final class ProgramWriter {
     }
 
     /** How a primitive is spelt on the wire, for the same reason and in the same way. */
-    private static String prim(Type.Prim prim) {
+    private String prim(Type.Prim prim) {
         return switch (prim) {
             case INT -> "INT";
             case STRING -> "STRING";
@@ -360,7 +683,7 @@ public final class ProgramWriter {
         };
     }
 
-    private static String type(Type type) {
+    private String type(Type type) {
         return switch (type) {
             case Type.Prim it -> "{\"prim\":" + quoted(prim(it)) + "}";
 
@@ -400,7 +723,7 @@ public final class ProgramWriter {
         return new NotLowered(what);
     }
 
-    private static String quoted(String text) {
+    private String quoted(String text) {
         StringBuilder out = new StringBuilder(text.length() + 2).append('"');
         for (int i = 0; i < text.length(); i++) {
             char c = text.charAt(i);
