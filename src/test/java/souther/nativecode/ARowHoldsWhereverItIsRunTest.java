@@ -294,13 +294,28 @@ class ARowHoldsWhereverItIsRunTest {
                 depends on lookUp
             let twice (a, lookUp) = lookUp(a) * 2
 
+            // A dependency asked one way and no other. What stands in for it states the arguments
+            // of that one call, and there are none of them.
+            behavior enabled : () -> Bool
+
+            behavior allowed : (a: Int) -> Bool
+                depends on enabled
+            let allowed (a, enabled) = enabled() && a > 0
+
             fake lookUp
                 | (1) -> 21
                 | _ -> 0
 
+            fake enabled
+                | () -> true
+
             example twice
                 | "what the dependency answered, doubled" : (1) -> 42
                 | "what it answers for anything else" : (2) -> 0
+
+            example allowed
+                | "allowed and above nought" : (1) -> true
+                | "allowed and not above nought" : (0) -> false
             """;
 
     @Test
