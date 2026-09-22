@@ -43,7 +43,7 @@ const ALL: [AbortKind; 6] = [
 ];
 
 /// The fixture both this test and the Java harness read.
-const FIXTURE: &str = include_str!("abort-status.json");
+const FIXTURE: &str = include_str!("abort-status-abi2.json");
 
 #[test]
 fn the_fixture_the_java_harness_is_held_to_is_what_native_status_answers_today() {

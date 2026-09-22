@@ -5,20 +5,34 @@
 //! neither side's tests can see. Nothing about Souther's meaning belongs here — only the names,
 //! layouts and encodings a target decides.
 
-/// The generation of calling convention every function symbol below answers to.
+/// The generation of *wire contract* every function symbol below answers to — not only the
+/// calling convention, but what a `status` other than `ANSWERED` means once it crosses an object
+/// boundary.
 ///
 /// Embedded in the symbol itself rather than left for a caller to somehow already know, because a
 /// symbol is exactly what a linker resolves by name and nothing else: two objects agreeing on a
 /// function's name while disagreeing about how a call to it works — one answering `T` directly,
 /// the other `status`, with the value through a pointer neither declared — is undefined behaviour
-/// a link step that only checks the name cannot see. Bumping this the day that calling convention
-/// changes turns that silent mismatch into an undefined-symbol error instead: an object built
-/// before the bump and one built after no longer resolve to one another's definition of a name at
-/// all. `souther-native-compiler#19` is `2`; `1` was every function answering its value as a plain
-/// return, with no generation written into the symbol because there was only ever the one.
+/// a link step that only checks the name cannot see. Bumping this the day that changes turns that
+/// silent mismatch into an undefined-symbol error instead: an object built before the bump and
+/// one built after no longer resolve to one another's definition of a name at all.
+///
+/// Two different questions are both "the day that changes", not only the shape of the call:
+///
+/// - The calling convention itself — `souther-native-compiler#19` is `2`; `1` was every function
+///   answering its value as a plain return, with no generation written into the symbol because
+///   there was only ever the one.
+/// - What a non-`ANSWERED` `status` *means*. This crate reserves `ANSWERED` and nothing else —
+///   which wire number a language abort gets is `native_status` in `souther-native-driver`'s own
+///   exhaustive mapping, kept apart from this crate for the reason this file's own doc gives. Two
+///   objects built by drivers whose `native_status` disagrees about what `4` is are exactly as
+///   incompatible as two objects with different calling conventions; they just still link, because
+///   nothing about the *shape* of the call changed. A renumbering there bumps this the same as a
+///   calling-convention change does — see `abort-status-abi2.json` in the driver crate's own
+///   tests, named for the generation it is a fixture of.
 ///
 /// Not part of [`type_symbol`]: a declared type's token is data, not a call, and nothing about how
-/// a call is made changes what a value of one looks like.
+/// a call is made or what its status means changes what a value of one looks like.
 const ABI: &str = "2";
 
 /// The symbol a behavior is reached by.

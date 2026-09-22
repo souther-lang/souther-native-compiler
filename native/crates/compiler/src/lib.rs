@@ -1308,8 +1308,22 @@ fn lower(
             // Which kernels this backend already answers instructions for is this match's own
             // list and nowhere else's — kept short on purpose, so a kernel this has not met yet
             // falls straight through to NotLowered rather than a table here claiming to know.
+            //
+            // A kernel this arm does recognise but that arrived with the wrong number of
+            // arguments is not that: the language does not admit `int.add` at any arity but two,
+            // so a document naming one anyway is not the language ahead of this backend — it is
+            // this driver's own reading of the transport disagreeing with what `KernelContract`
+            // declared, the same halves-disagreeing failure every other shape mismatch here bails
+            // on rather than reports as this backend not having gotten round to a program yet.
             Reaches::Kernel { kernel } => match kernel.as_str() {
-                "int.add" if arguments.len() == 2 => {
+                "int.add" => {
+                    if arguments.len() != 2 {
+                        bail!(
+                            "the kernel int.add reached this driver with {} arguments rather \
+                             than the two its own contract declares",
+                            arguments.len()
+                        );
+                    }
                     let a = Held::of(
                         &arguments[0],
                         lower(builder, lowering, module, bindings, abort, &arguments[0])?,
