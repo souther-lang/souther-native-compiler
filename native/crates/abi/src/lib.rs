@@ -61,6 +61,46 @@ pub fn example_symbol(module: &str, behavior: &str, at: usize) -> String {
     format!("{}$example${at}", behavior_symbol(module, behavior))
 }
 
+/// The symbol a declared type's identity is.
+///
+/// One data object per declaration, and its address is the identity. Two objects naming one
+/// declaration reach one address because the linker resolved one name, which is the property a
+/// number counted in a document does not have: two documents number their declarations
+/// differently, and a value tagged with one object's count compared against another's is two
+/// answers to a question neither was asked.
+///
+/// So the agreement is not between two builds. It is between each build and the linker, which is
+/// already what makes a call reach a definition.
+///
+/// `souther$type$<module>$<name>`. The dollar after `souther` is what keeps this out of the way of
+/// a behavior's symbol, which starts `souther.`; the one before the name is what tells the two
+/// segments apart, since a module's name carries dots and a type's carries none.
+///
+/// # Panics
+///
+/// Where either name carries a dollar, or the type's name carries a dot, since the spelling is
+/// read on both.
+pub fn type_symbol(module: &str, name: &str) -> String {
+    assert!(
+        !module.contains('$'),
+        "a module's name carries no dollar, and the symbol is split on one: {module}"
+    );
+    assert!(
+        !name.contains('$') && !name.contains('.'),
+        "a declared type's name carries neither dollar nor dot, and the symbol is split on \
+         both: {name}"
+    );
+    format!("souther$type${module}${name}")
+}
+
+/// What stands under a declared type's symbol.
+///
+/// One byte, whose value means nothing and which nothing ever reads. What the token is for is its
+/// address, and a byte is what gives it one of its own: two symbols with no bytes between them may
+/// be laid at one address, and an identity that is an address would then be two declarations'
+/// identity at once.
+pub const TOKEN: &[u8] = &[0];
+
 /// How wide a slot is, and so what a value made of slots is measured in.
 ///
 /// One width for every slot, whatever it holds. A layout that packed a `Bool` into a byte would
@@ -70,10 +110,14 @@ pub const SLOT: i64 = 8;
 
 /// Where a value of a declared type says which type it is.
 ///
-/// Every constructed value carries it, including one of a type no sum has a case for. A value's
-/// own type is what it is, not what it is being read as, so writing the number only where someone
-/// was going to match on it would make the representation depend on a use rather than on the
-/// value — and a value built in one behavior and matched in another has no such use to read.
+/// The address of the declaration's token, which [`type_symbol`] names. Every constructed value
+/// carries it, including one of a type no sum has a case for. A value's own type is what it is,
+/// not what it is being read as, so writing it only where someone was going to match on it would
+/// make the representation depend on a use rather than on the value — and a value built in one
+/// behavior and matched in another has no such use to read.
+///
+/// One slot, as it was when it held a count. What the slot means is what moved: from where the
+/// declaration stood among the ones one document brought, to what the linker resolved its name to.
 pub const WHICH: i64 = 0;
 
 /// Where a constructed value's first field is. Its fields follow in declaration order.
@@ -117,8 +161,8 @@ pub const RESET: &str = "souther_reset";
 #[cfg(test)]
 mod tests {
     use super::{
-        FIRST_FIELD, SLOT, WHICH, behavior_symbol, example_symbol, field_at, held_symbol,
-        member_at,
+        FIRST_FIELD, SLOT, TOKEN, WHICH, behavior_symbol, example_symbol, field_at, held_symbol,
+        member_at, type_symbol,
     };
 
     #[test]
@@ -172,6 +216,46 @@ mod tests {
             example_symbol("calculation", "add", 0),
             behavior_symbol("calculation", "add")
         );
+    }
+
+    #[test]
+    fn a_declared_type_is_reached_by_its_module_and_its_name() {
+        assert_eq!(
+            type_symbol("lib.rates", "Rate"),
+            "souther$type$lib.rates$Rate"
+        );
+    }
+
+    /// Two declarations of one name in different modules are two identities, and one declaration
+    /// named from two objects is one.
+    #[test]
+    fn a_type_of_one_name_in_two_modules_is_two_identities() {
+        assert_ne!(type_symbol("pricing", "Round"), type_symbol("shapes", "Round"));
+        assert_eq!(type_symbol("shapes", "Round"), type_symbol("shapes", "Round"));
+    }
+
+    /// A type's identity is never a behavior's, whatever either is called. Both spellings are
+    /// built here, so what keeps them apart is asserted rather than described.
+    #[test]
+    fn a_types_identity_is_not_a_behaviors_symbol() {
+        assert_ne!(type_symbol("lib.rates", "Rate"), behavior_symbol("lib.rates", "Rate"));
+        assert_ne!(type_symbol("lib", "rates"), behavior_symbol("lib", "rates"));
+        assert_ne!(type_symbol("pricing", "taxed"), held_symbol("pricing", "pricing.taxed"));
+    }
+
+    /// What the reading rests on, as it is for a behavior: were this admitted, `a.b` / `C` and
+    /// `a` / `b.C` would be spelt the same way.
+    #[test]
+    #[should_panic(expected = "neither dollar nor dot")]
+    fn a_declared_type_whose_name_carries_a_dot_is_refused() {
+        let _ = type_symbol("a", "b.C");
+    }
+
+    /// An identity that is an address needs a storage location of its own, and nothing with no
+    /// bytes in it has one it does not share.
+    #[test]
+    fn a_token_is_at_least_one_byte() {
+        assert!(!TOKEN.is_empty());
     }
 
     #[test]

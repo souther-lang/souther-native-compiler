@@ -12,6 +12,8 @@ import souther.compiler.program.CheckedImplementation;
 import souther.compiler.program.CheckedModule;
 import souther.compiler.program.CheckedProgram;
 import souther.compiler.program.CheckedRow;
+import souther.compiler.program.Declared;
+import souther.compiler.program.DeclaredBy;
 import souther.compiler.program.Publication;
 import souther.compiler.types.BinOp;
 import souther.compiler.types.BindingId;
@@ -63,7 +65,7 @@ public final class ProgramWriter {
      * written moves, so that a driver and a writer that disagree say so rather than producing an
      * object that is wrong quietly.
      */
-    public static final int TRANSPORT_VERSION = 2;
+    public static final int TRANSPORT_VERSION = 3;
 
     private final CheckedProgram program;
 
@@ -135,7 +137,7 @@ public final class ProgramWriter {
             }
             for (TypeSymbol.AtModule name : new ArrayList<>(declarationsMet)) {
                 if (!declarations.containsKey(name)) {
-                    declarations.put(name, declaration(program.declaration(name).data()));
+                    declarations.put(name, declaration(name, program.declaration(name)));
                     grew = true;
                 }
             }
@@ -152,32 +154,41 @@ public final class ProgramWriter {
     }
 
     /**
-     * What a declared type is made of.
+     * What a declared type is made of, and who declared it.
      *
      * <p>The shape and not the layout: how many fields there are and what they are called, which is
      * the declaration's own answer, while what a field costs and where it sits is the lowering's.
      * A writer that started saying where a field goes would be deciding the representation from the
      * side that never emits one.
+     *
+     * <p>Its module and its own name apart, because this is the one place in the document a
+     * declared type's identity is owned: a value of the type says which type it is with a symbol
+     * built from the two, and that symbol is what a linker resolves. Everywhere else a type is
+     * named the document carries the key that reaches this — so the two halves are joined in one
+     * place and split in none.
      */
-    private String declaration(CheckedData declared) {
+    private String declaration(TypeSymbol.AtModule name, Declared declared) {
         // What a field holds is a type too, and it may be one nothing else in the document has
         // named. Met here rather than left to whoever reads the field, because a declaration is
         // where a type stops being reachable from anything but itself.
-        if (declared instanceof CheckedData.WithFields held) {
+        if (declared.data() instanceof CheckedData.WithFields held) {
             for (ValueShape.Field field : held.fields()) {
                 type(field.type());
             }
         }
-        return switch (declared) {
-            case CheckedData.Product it -> "{\"declared\":" + quoted(named(it.name()))
+        String identity = "{\"module\":" + quoted(name.module())
+                + ",\"name\":" + quoted(name.name())
+                + ",\"by\":" + quoted(by(declared.declaredBy()));
+        return switch (declared.data()) {
+            case CheckedData.Product it -> identity
                     + ",\"is\":\"product\",\"fields\":" + fieldNames(it.fields())
                     + ",\"invariants\":" + it.invariants().size() + "}";
             // A newtype holds one value and is told apart from a product of one field by what may
             // be written of it, which is the checker's business and settled before this.
-            case CheckedData.Newtype it -> "{\"declared\":" + quoted(named(it.name()))
+            case CheckedData.Newtype it -> identity
                     + ",\"is\":\"newtype\",\"fields\":" + fieldNames(it.fields())
                     + ",\"invariants\":" + it.invariants().size() + "}";
-            case CheckedData.Unit it -> "{\"declared\":" + quoted(named(it.name()))
+            case CheckedData.Unit it -> identity
                     + ",\"is\":\"unit\",\"fields\":[],\"invariants\":0}";
             // A sum is never built, so it has no fields of its own; what it says is which types
             // stand as its cases, and a case may be a sum again.
@@ -186,9 +197,29 @@ public final class ProgramWriter {
                 for (TypeSymbol held : it.cases()) {
                     cases.add(quoted(symbol(held)));
                 }
-                yield "{\"declared\":" + quoted(named(it.name()))
-                        + ",\"is\":\"sum\",\"cases\":" + cases + "}";
+                yield identity + ",\"is\":\"sum\",\"cases\":" + cases + "}";
             }
+        };
+    }
+
+    /**
+     * Who declared a type, as the checker answered it.
+     *
+     * <p>What it decides on the far side is who defines the type's identity: the build that checked
+     * the module is where the declaration is at home, and every other object that names the type
+     * reaches that one. Written out word by word rather than taken from the name the enum carries,
+     * for the reason an operator is.
+     *
+     * <p>A provenance added upstream stops this compiling, which is what keeps this a report of
+     * the checker's answer. A writer that worked the answer out instead — by asking whether the
+     * module is one this document carries — would be right about two of these three and file the
+     * language's own declarations under the one they are not.
+     */
+    private String by(DeclaredBy who) {
+        return switch (who) {
+            case A_MODULE -> "amodule";
+            case A_MODULE_ON_THE_PATH -> "onthepath";
+            case THE_LANGUAGE -> "thelanguage";
         };
     }
 
@@ -358,10 +389,16 @@ public final class ProgramWriter {
     }
 
     /**
-     * How a declared type is named on the wire.
+     * How a declared type is referred to on the wire.
      *
      * <p>Its module and then its own name. A module's name carries dots and a type's carries none,
      * so the last segment is the type and no two declarations are spelt the same way.
+     *
+     * <p>A key and not an identity. What the key reaches is the declaration, which carries the
+     * module and the name apart; this is the one place the two are joined, and neither half of the
+     * compiler splits one back up. Written the other way round, every reader of a type name would
+     * be recovering an identity from a spelling — which is what the same convention already says
+     * a behavior's identity must not be.
      */
     private String named(TypeSymbol.AtModule name) {
         declarationsMet.add(name);
