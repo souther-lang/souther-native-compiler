@@ -1292,7 +1292,9 @@ fn lower(
                     Reaches::Behavior { .. } => {
                         lowering.reachable.of_behavior_named(declared)?
                     }
-                    Reaches::Value { .. } | Reaches::Kernel { .. } => unreachable!(),
+                    Reaches::Value { .. }
+                    | Reaches::PublishedValue { .. }
+                    | Reaches::Kernel { .. } => unreachable!(),
                 };
                 let mut given = Vec::with_capacity(arguments.len());
                 for argument in arguments {
@@ -1300,10 +1302,20 @@ fn lower(
                 }
                 call_reached(builder, module, abort, reached, machine_type(ty)?, &given)?
             }
-            Reaches::Value { .. } => {
-                return Err(not_lowered(
-                    "a call to a value, which runs in the module that declares it",
-                ));
+            // A value's once semantics need a stable allocation domain this backend does not have
+            // yet (souther-lang/souther-native-compiler#10) — carried here with the identity split
+            // rather than joined, so a future lowering does not have to split it back up.
+            Reaches::Value { module, name } => {
+                return Err(not_lowered(format!(
+                    "a call to the value {module}.{name}, which runs once in the module that \
+                     declares it"
+                )));
+            }
+            Reaches::PublishedValue { module, name } => {
+                return Err(not_lowered(format!(
+                    "a call to the published value {module}.{name}, reached through another \
+                     module's entry"
+                )));
             }
             // Which kernels this backend already answers instructions for is this match's own
             // list and nowhere else's — kept short on purpose, so a kernel this has not met yet
