@@ -31,10 +31,10 @@ fn over(op: &str, left: &str, right: &str) -> String {
         r#"{{"module":"calculation","name":"f","is":"body","takes":[{left},{right}],"answers":{left}}}"#
     );
     let held = format!(
-        r#"{{"declared":"calculation.f","parameters":["a","b"],"publication":"published","body":{body}}}"#
+        r#"{{"is":"body","declared":"calculation.f","parameters":["a","b"],"publication":"published","body":{body}}}"#
     );
     format!(
-        r#"{{"transport":3,"declarations":[],"behaviors":[{target}],"modules":[{{"name":"calculation","helpers":[],"bodies":[{held}],"examples":[]}}]}}"#
+        r#"{{"transport":4,"declarations":[],"behaviors":[{target}],"modules":[{{"name":"calculation","helpers":[],"definitions":[{held}],"examples":[]}}]}}"#
     )
 }
 
@@ -183,9 +183,165 @@ fn a_field_this_driver_does_not_know_is_refused_rather_than_skipped() {
 /// would be reading a document written to mean something else.
 #[test]
 fn a_transport_from_another_version_is_refused() {
-    let later = document("ADD", "INT").replace(r#""transport":3"#, r#""transport":4"#);
+    let later = document("ADD", "INT").replace(r#""transport":4"#, r#""transport":5"#);
 
     let refused = object_for(&later).expect_err("a version this does not read");
 
-    assert!(refused.to_string().contains('4'), "{refused}");
+    assert!(refused.to_string().contains('5'), "{refused}");
+}
+
+/// The smallest composition this driver can be handed: one behavior with a body, one composed of
+/// a single stage reaching it, and every fact the two of them share stated once so each of the
+/// tests below has one place to make disagree with the other.
+fn composed_document() -> String {
+    concat!(
+        r#"{"transport":4,"declarations":[],"#,
+        r#""behaviors":[{"module":"m","name":"inner","is":"body","takes":[{"prim":"INT"}],"answers":{"prim":"INT"}},"#,
+        r#"{"module":"m","name":"outer","is":"composed","takes":[{"prim":"INT"}],"answers":{"prim":"INT"}}],"#,
+        r#""modules":[{"name":"m","helpers":[],"definitions":["#,
+        r#"{"is":"body","declared":"m.inner","parameters":["a"],"publication":"kept","body":{"core":"read","binding":0,"type":{"prim":"INT"}}},"#,
+        r#"{"is":"composed","declared":"m.outer","publication":"published","stages":["#,
+        r#"{"behavior":"m.inner","answers":{"prim":"INT"},"routing":{"is":"always"}}],"answers":{"prim":"INT"}}"#,
+        r#"],"examples":[]}]}"#,
+    )
+    .to_string()
+}
+
+/// A composition's own document validates: this is the control every test below makes one fact
+/// of disagree with another, so a failure there is a failure of the setup and not of what is
+/// under test.
+#[test]
+fn the_composed_document_the_other_tests_perturb_is_itself_well_formed() {
+    object_for(&composed_document()).expect("a document where nothing has been made to disagree");
+}
+
+/// What a target says a name answers with — `body` or `composed` — and what its local definition
+/// actually is are two readings of one fact once a composition is a local definition beside a
+/// body. A document where they disagree is the two halves disagreeing, the same as any other
+/// closed set spelt one way in one place and another elsewhere.
+#[test]
+fn a_target_and_its_local_definition_disagreeing_about_which_it_is_is_the_halves_disagreeing() {
+    let document = composed_document().replace(
+        r#""name":"outer","is":"composed""#,
+        r#""name":"outer","is":"body""#,
+    );
+
+    let refused = object_for(&document)
+        .expect_err("a target saying `body` where its local definition is a composition");
+
+    assert!(
+        refused.downcast_ref::<NotLowered>().is_none(),
+        "the halves disagreeing is not the backend being behind: {refused}"
+    );
+    assert!(refused.to_string().contains("m.outer"), "{refused}");
+}
+
+/// The same disagreement, the other way round: a target saying a name is `injected`, `elsewhere`
+/// or (as here) `unwritten` has no local definition to speak of — and one sitting under its name
+/// regardless is not this backend being behind on a program the language admits. `Unwritten` is
+/// Souther's own answer for a behavior nobody has written, and a composition sitting under that
+/// name says the opposite: the two halves disagree about whether this object defines the name at
+/// all, which is checked from the local definition's side and not left for whichever branch of
+/// the declaration loop the target's own `is` happens to route through.
+#[test]
+fn a_local_definition_whose_target_says_unwritten_is_the_halves_disagreeing() {
+    let document = composed_document().replace(
+        r#""name":"outer","is":"composed""#,
+        r#""name":"outer","is":"unwritten""#,
+    );
+
+    let refused = object_for(&document)
+        .expect_err("a composition sitting under a name its target says is unwritten");
+
+    assert!(
+        refused.downcast_ref::<NotLowered>().is_none(),
+        "the halves disagreeing is not the backend admitting a program it has not gotten round \
+         to: {refused}"
+    );
+    assert!(refused.to_string().contains("m.outer"), "{refused}");
+}
+
+/// A composition's own `answers` and its target's `answers` are the same fact, crossed twice —
+/// once as what the composition itself carries, once as what every caller reaching it by name is
+/// told. A document where they disagree is refused rather than read as whichever one happened to
+/// be asked.
+#[test]
+fn a_compositions_own_answer_disagreeing_with_its_target_is_the_halves_disagreeing() {
+    let document = composed_document().replace(
+        r#"],"answers":{"prim":"INT"}}],"examples":[]}]}"#,
+        r#"],"answers":{"prim":"BOOL"}}],"examples":[]}]}"#,
+    );
+
+    let refused = object_for(&document)
+        .expect_err("a composition answering BOOL where its target answers INT");
+
+    assert!(
+        refused.downcast_ref::<NotLowered>().is_none(),
+        "the halves disagreeing is not the backend being behind: {refused}"
+    );
+    assert!(refused.to_string().contains("m.outer"), "{refused}");
+}
+
+/// A stage's own `answers` and the `answers` of the target it names are likewise one fact crossed
+/// twice. Nothing here recomputes a stage's answer from its behavior — the checker already
+/// settled it — but a stage that spelt it differently from the target it reaches is not read as
+/// either spelling; it is refused.
+#[test]
+fn a_stages_own_answer_disagreeing_with_the_target_it_reaches_is_the_halves_disagreeing() {
+    let document = composed_document().replace(
+        r#""behavior":"m.inner","answers":{"prim":"INT"}"#,
+        r#""behavior":"m.inner","answers":{"prim":"BOOL"}"#,
+    );
+
+    let refused = object_for(&document)
+        .expect_err("a stage answering BOOL where the target it reaches answers INT");
+
+    assert!(
+        refused.downcast_ref::<NotLowered>().is_none(),
+        "the halves disagreeing is not the backend being behind: {refused}"
+    );
+    assert!(refused.to_string().contains("m.inner"), "{refused}");
+}
+
+/// The first stage of a composition takes the composition's own arguments, so nothing is routed
+/// into it (spec §sequential-composition) — every composition a real checker settles carries
+/// `Routing::Always` there. A document that carries something else for it is not a program this
+/// backend has not gotten round to; it is a document this driver does not read as a composition at
+/// all, because reading past it would mean working the first stage's routing out again rather
+/// than reading what the checker wrote.
+#[test]
+fn a_compositions_first_stage_routed_rather_than_always_applied_is_the_halves_disagreeing() {
+    let document = composed_document().replace(
+        r#""routing":{"is":"always"}"#,
+        r#""routing":{"is":"oncases","accepted":["m.Nothing"]}"#,
+    );
+
+    let refused = object_for(&document).expect_err("a first stage that is routed rather than always applied");
+
+    assert!(
+        refused.downcast_ref::<NotLowered>().is_none(),
+        "the halves disagreeing is not the backend being behind: {refused}"
+    );
+    assert!(refused.to_string().contains("m.outer"), "{refused}");
+}
+
+/// A composition takes whatever its first stage takes (spec §sequential-composition) — that is
+/// where a composition's own parameters are read off in the first place — so a composition's own
+/// `takes` and its first stage's target's `takes` are one fact as well. A document where they
+/// disagree names two different arities for what is, upstream, a single signature.
+#[test]
+fn a_compositions_own_takes_disagreeing_with_its_first_stages_target_is_the_halves_disagreeing() {
+    let document = composed_document().replace(
+        r#""name":"outer","is":"composed","takes":[{"prim":"INT"}]"#,
+        r#""name":"outer","is":"composed","takes":[{"prim":"INT"},{"prim":"INT"}]"#,
+    );
+
+    let refused = object_for(&document)
+        .expect_err("a composition taking two `Int`s where its first stage's target takes one");
+
+    assert!(
+        refused.downcast_ref::<NotLowered>().is_none(),
+        "the halves disagreeing is not the backend being behind: {refused}"
+    );
+    assert!(refused.to_string().contains("m.outer"), "{refused}");
 }
