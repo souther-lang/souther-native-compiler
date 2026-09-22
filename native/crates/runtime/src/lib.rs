@@ -268,11 +268,16 @@ pub unsafe extern "C" fn souther_string_bytes(at: *const u8) -> *const u8 {
 
 /// Two runs of text, compared by UTF-16 code unit.
 ///
-/// Which is not the order the bytes are in, and not the order the code points are in either. A code
-/// point past the basic plane is two units beginning at D800, and a unit from E000 up is one — so
-/// `𠮷` (U+20BB7) comes before `￥` (U+FFE5) here and after it by either of the other two readings.
-/// That is what Souther's `<` over two strings answers, and it is what the JVM answers, which is
-/// what a row recorded before a native run was ever put to it.
+/// Which is what the language says text is ordered by, and it is said there rather than worked out
+/// here: `<` `<=` `>` `>=` compare lexicographically over UTF-16 code units, and a carrier that
+/// stores a string some other way orders it as if it were that sequence regardless — the
+/// representation is this carrier's to choose and the order is not (spec §equality).
+///
+/// It is not the order the bytes are in, and not the order the code points are in either, which are
+/// the same order as each other. A code point past the basic plane is two units beginning at D800
+/// and a unit from E000 up is one, so `𠮷` (U+20BB7) comes before `￥` (U+FFE5) here and after it by
+/// either of the other two readings. Before the language said which, what held this to the answer
+/// was the rows: the JVM had answered them, and a row that ran recorded what it answered.
 ///
 /// Said as a run of bytes and nothing else, so that the day the wasm runtime's copy of this and
 /// this one are the same algorithm, what moves is a function over two slices — no arena, no

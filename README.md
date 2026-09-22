@@ -53,11 +53,9 @@ name for a value. `/` answers the exact quotient, which is a `Rational` and has 
 here.
 
 Text: a literal, the six comparisons, and `++`. What a comparison of two strings compares is
-neither of the two addresses and not the bytes either — the order is by UTF-16 code unit, which is
-what the JVM answers and so what a row recorded before a native run was ever put to it. That the
-specification says "lexicographic" without saying the unit is asked at souther-lang/souther#1869.
-Everything else a program does with text — a length, a slice, a split — is reached through a kernel,
-and a kernel is still ahead.
+neither of the two addresses and not the bytes either — the language orders text by UTF-16 code
+unit, and says so of every carrier whatever one stores a string as. Everything else a program does
+with text — a length, a slice, a split — is reached through a kernel, and a kernel is still ahead.
 
 A model's own types: a product, a newtype, a unit, a sum, a value that may be absent, and several
 values carried as one. Built, read a field off, and forked on which case a value is.
