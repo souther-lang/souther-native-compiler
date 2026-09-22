@@ -144,14 +144,21 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
         module.define_data(id, &token)?;
     }
 
-    // What the declaring module says about each name this object defines. Read off the local
-    // definitions because that is where the answer crossed: it is the module's own, and a module
-    // this compile never checked has no answer here to read. A body and a composition are both
-    // local definitions and both carry it the same way.
-    let mut publications: HashMap<&str, Publication> = HashMap::new();
+    // Every behavior the document names, by the key a reference to it says. Built once so a
+    // lookup here is one hash rather than a walk over every target the document carries — which
+    // repeating for every local definition, and now for every composition's every stage, would
+    // make quadratic in nothing this document did.
+    let targets = Targets::of(&program.behaviors);
+
+    // Every local definition this object holds, by the name it defines — not only what the
+    // module declaring it says about the name, but the definition itself, because what a target
+    // says a name answers with and what its local definition actually is are two readings of one
+    // fact once `Composed` is a local definition too, and this driver reads a document strictly:
+    // the two are checked against each other below rather than one of them read on trust.
+    let mut locals: HashMap<&str, &Definition> = HashMap::new();
     for written in &program.modules {
         for definition in &written.definitions {
-            publications.insert(definition.declared(), definition.publication());
+            locals.insert(definition.declared(), definition);
         }
     }
 
@@ -172,13 +179,14 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
             // two halves disagreeing rather than something to fall back from.
             Answers::Body | Answers::Composed => {
                 let declared = target.declared();
-                let published = publications.get(declared.as_str()).copied().ok_or_else(|| {
+                let local = locals.get(declared.as_str()).copied().ok_or_else(|| {
                     anyhow!(
                         "{declared} answers with a local definition no module of this document \
                          carries"
                     )
                 })?;
-                linkage_of(published)
+                agrees_with_its_target(&declared, target, local, &targets)?;
+                linkage_of(local.publication())
             }
             // Named and not defined. What answers it is settled where the object is linked, and
             // the two reasons a body is absent are one call to whoever reaches in.
@@ -206,7 +214,7 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
             reachable.held(&written.name, &held.declared, id)?;
         }
         for example in &written.examples {
-            let signature = running_a_row(&program, &written.name, &example.behavior, call_conv)?;
+            let signature = running_a_row(&targets, &written.name, &example.behavior, call_conv)?;
             let symbol = example_symbol(&written.name, &example.behavior, example.at);
             // Reached from outside whatever the module says about the behavior's own name: what
             // this runs is a row, and a row of a kept name is as much a row as any other.
@@ -243,7 +251,7 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
         for local in &written.definitions {
             match local {
                 Definition::Body { declared: name, body, .. } => {
-                    let target = target_for(&program, name)?;
+                    let target = targets.named(name)?;
                     let takes = &target.takes;
                     let signature = signature_over(&target.takes, &target.answers, call_conv)?;
                     let id = reachable.of_behavior_named(name)?;
@@ -273,7 +281,7 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
                     stages,
                     ..
                 } => {
-                    let target = target_for(&program, name)?;
+                    let target = targets.named(name)?;
                     let signature = signature_over(&target.takes, &target.answers, call_conv)?;
                     let id = reachable.of_behavior_named(name)?;
                     context.clear();
@@ -300,7 +308,7 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
             }
         }
         for example in &written.examples {
-            let signature = running_a_row(&program, &written.name, &example.behavior, call_conv)?;
+            let signature = running_a_row(&targets, &written.name, &example.behavior, call_conv)?;
             let symbol = example_symbol(&written.name, &example.behavior, example.at);
             let id = *entries
                 .get(&symbol)
@@ -333,13 +341,113 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
     Ok(module.finish().emit()?)
 }
 
-/// The behavior a name in this document reaches, as the table of targets says it.
-fn target_for<'a>(program: &'a Program, declared: &str) -> Result<&'a Target> {
-    program
-        .behaviors
-        .iter()
-        .find(|it| it.declared() == declared)
-        .ok_or_else(|| anyhow!("{declared}, which no target names"))
+/// Every behavior the document names, by the key a reference to it says.
+///
+/// Built once and read by a hash rather than a walk, because a behavior a call reaches is asked
+/// for by more than one caller of this — a held definition, an entry for a row, a composition's
+/// every stage — and a document with many of any of those would make a walk over every target
+/// quadratic in nothing about the program itself.
+struct Targets<'a> {
+    by_name: HashMap<String, &'a Target>,
+}
+
+impl<'a> Targets<'a> {
+    fn of(behaviors: &'a [Target]) -> Self {
+        let mut by_name = HashMap::with_capacity(behaviors.len());
+        for target in behaviors {
+            by_name.insert(target.declared(), target);
+        }
+        Targets { by_name }
+    }
+
+    /// The behavior a name in this document reaches, as the table of targets says it.
+    fn named(&self, declared: &str) -> Result<&'a Target> {
+        self.by_name
+            .get(declared)
+            .copied()
+            .ok_or_else(|| anyhow!("{declared}, which no target names"))
+    }
+}
+
+/// That a local definition is the one thing its own target says it is.
+///
+/// Once `Composed` was a local definition beside `Body`, what a name answers with and what its
+/// local definition actually is became two readings of one fact — a `Target.is` written by one
+/// pass over the checker's program and a `Definition`'s own tag written by another — and nothing
+/// upstream holds them to each other the way one Java value holding both would. So this reads a
+/// document strictly, the way every other closed set here does: the two halves are checked against
+/// each other rather than one of them taken on trust because the other named it.
+///
+/// A composition carries three more readings of facts its own stages and its own target already
+/// answer, so those are checked here too: a stage's own answer against the target it names, the
+/// first stage's routing against what the language settles it always is (spec
+/// §sequential-composition — the first stage takes the composition's own arguments, so nothing is
+/// routed into it), and the first stage's target against what the composition itself is declared
+/// to take, since that is where a composition's own parameters are read off (spec
+/// §sequential-composition — "the pipeline takes whatever its first stage takes").
+fn agrees_with_its_target(
+    name: &str,
+    target: &Target,
+    local: &Definition,
+    targets: &Targets,
+) -> Result<()> {
+    match (target.is, local) {
+        (Answers::Body, Definition::Body { .. }) => Ok(()),
+        (Answers::Composed, Definition::Composed { answers, stages, .. }) => {
+            if answers != &target.answers {
+                bail!(
+                    "{name} answers {} as a composition and {} at the target that reaches it: \
+                     the two halves disagree about what it answers",
+                    answers.spelt(),
+                    target.answers.spelt()
+                );
+            }
+            let first = stages.first().ok_or_else(|| {
+                anyhow!("{name} is a composition composing nothing")
+            })?;
+            if !matches!(first.routing, Routing::Always) {
+                bail!(
+                    "{name}'s first stage is routed rather than always applied: the first stage \
+                     of a composition takes the composition's own arguments, and nothing is \
+                     routed into it"
+                );
+            }
+            let leads = targets.named(&first.behavior)?;
+            if leads.takes != target.takes {
+                bail!(
+                    "{name} takes {} and its first stage {} takes {}: a composition takes \
+                     whatever its first stage takes, and the two halves disagree about what \
+                     that is",
+                    spelt(&target.takes),
+                    first.behavior,
+                    spelt(&leads.takes)
+                );
+            }
+            for stage in stages {
+                let reached = targets.named(&stage.behavior)?;
+                if stage.answers != reached.answers {
+                    bail!(
+                        "{}'s stage naming {} answers {} on the wire and {} at the target it \
+                         reaches: the two halves disagree",
+                        name,
+                        stage.behavior,
+                        stage.answers.spelt(),
+                        reached.answers.spelt()
+                    );
+                }
+            }
+            Ok(())
+        }
+        (is, _) => bail!(
+            "{name} crosses as {is:?} in the table of targets, and as a different kind of local \
+             definition: the two halves disagree about how it is defined"
+        ),
+    }
+}
+
+/// Several types, spelt the way one reads a diagnostic naming a signature.
+fn spelt(types: &[Ty]) -> String {
+    types.iter().map(Ty::spelt).collect::<Vec<_>>().join(", ")
 }
 
 /// What an entry that runs one of a behavior's rows takes and answers.
@@ -348,12 +456,12 @@ fn target_for<'a>(program: &'a Program, declared: &str) -> Result<&'a Target> {
 /// rather than off the row, because what a behavior answers is the behavior's and a row that said
 /// it too would be a second place it was written down.
 fn running_a_row(
-    program: &Program,
+    targets: &Targets,
     module: &str,
     behavior: &str,
     call_conv: CallConv,
 ) -> Result<ir::Signature> {
-    let target = target_for(program, &format!("{module}.{behavior}"))?;
+    let target = targets.named(&format!("{module}.{behavior}"))?;
     signature_over(&[], &target.answers, call_conv)
 }
 
