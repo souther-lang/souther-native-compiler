@@ -1,3 +1,7 @@
 [toolchain]
 channel = "1.95.0"
 profile = "minimal"
+# Clippy, because one of its correctness lints is what holds a rule this project has already
+# broken once: a public function that reads through a raw pointer it was handed has to be
+# `unsafe`, whatever its documentation says about how to call it.
+components = ["clippy"]

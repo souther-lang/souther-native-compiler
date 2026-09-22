@@ -165,6 +165,12 @@ pub const TEXT_LENGTH: i64 = 0;
 /// stands before it is read as a slot like any other.
 pub const TEXT_BYTES: i64 = SLOT;
 
+/// A string's text never stands where its count does, whatever either of them is moved to.
+///
+/// Held at compile time and not by a test, because both sides of it are constants: a test could
+/// only fail after someone had already changed one of them, and this stops the change instead.
+const _: () = assert!(TEXT_BYTES >= TEXT_LENGTH + SLOT);
+
 /// The symbol two strings are compared through.
 ///
 /// Answers a number below, at or above nought, as the left one comes before, at, or after the
@@ -202,8 +208,8 @@ pub const RESET: &str = "souther_reset";
 #[cfg(test)]
 mod tests {
     use super::{
-        FIRST_FIELD, SLOT, TEXT_BYTES, TEXT_LENGTH, TOKEN, WHICH, behavior_symbol, example_symbol,
-        field_at, held_symbol, member_at, type_symbol,
+        FIRST_FIELD, SLOT, TOKEN, WHICH, behavior_symbol, example_symbol, field_at, held_symbol,
+        member_at, type_symbol,
     };
 
     #[test]
@@ -297,12 +303,6 @@ mod tests {
     #[test]
     fn a_token_is_at_least_one_byte() {
         assert!(!TOKEN.is_empty());
-    }
-
-    /// A string's text never stands where its count does, whatever either of them is moved to.
-    #[test]
-    fn no_text_begins_where_a_string_says_how_long_it_is() {
-        assert!(TEXT_BYTES >= TEXT_LENGTH + SLOT);
     }
 
     #[test]

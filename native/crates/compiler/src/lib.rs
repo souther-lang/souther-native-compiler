@@ -466,6 +466,31 @@ fn tag_of(
     Ok(builder.ins().symbol_value(POINTER, named))
 }
 
+/// A value the lowering has made, and what the language says it is.
+///
+/// The two travel together because apart they are what a wrong answer is made of. An `Int` and
+/// every address are both `i64` here, so an instruction chosen from the machine value alone cannot
+/// tell a number from where a value is kept, and Cranelift has nothing to object to: the widths
+/// agree. What went wrong once already was a comparison emitted from one operand's type while the
+/// other was something else, and it emitted an `icmp` over a number and an address.
+///
+/// Made from a node and what that node lowered to, so the type cannot have come from somewhere
+/// other than the value did.
+#[derive(Clone, Copy)]
+struct Held<'a> {
+    value: ir::Value,
+    ty: &'a Ty,
+}
+
+impl<'a> Held<'a> {
+    fn of(node: &'a Node, value: ir::Value) -> Held<'a> {
+        Held {
+            value,
+            ty: node.ty(),
+        }
+    }
+}
+
 /// What the lowering of one function needs besides the function itself.
 struct Lowering<'a> {
     declared: &'a Declared<'a>,
@@ -1054,18 +1079,17 @@ fn binary(
             // `amount == 0` is; a case value compared with its sum is two declared types that are
             // not the same one. Read off the left alone, both of those are whatever the left one
             // happened to be.
-            let (left_ty, right_ty) = (left.ty(), right.ty());
-            let a = lower(builder, lowering, module, bindings, left)?;
-            let b = lower(builder, lowering, module, bindings, right)?;
+            let a = Held::of(left, lower(builder, lowering, module, bindings, left)?);
+            let b = Held::of(right, lower(builder, lowering, module, bindings, right)?);
             match op {
-                Op::Add | Op::Sub | Op::Mul => arithmetic(builder, op, left_ty, right_ty, a, b),
+                Op::Add | Op::Sub | Op::Mul => arithmetic(builder, op, a, b),
                 Op::Eq | Op::Ne | Op::Lt | Op::Le | Op::Gt | Op::Ge => {
-                    compare(builder, lowering, module, op, left_ty, right_ty, a, b)
+                    compare(builder, lowering, module, op, a, b)
                 }
                 // `/` answers the exact quotient, which is not a whole number and has no
                 // representation here yet.
                 Op::Div => Err(not_lowered(format!("the operator {}", op.spelt()))),
-                Op::Concat => join(builder, lowering, module, left_ty, right_ty, a, b),
+                Op::Concat => join(builder, lowering, module, a, b),
                 Op::And | Op::Or => unreachable!("answered above, where the right side may not run"),
             }
         }
@@ -1095,12 +1119,11 @@ fn compare(
     lowering: &Lowering,
     module: &mut ObjectModule,
     op: Op,
-    left: &Ty,
-    right: &Ty,
-    a: ir::Value,
-    b: ir::Value,
+    left: Held,
+    right: Held,
 ) -> Result<ir::Value> {
-    match (left, right) {
+    let (a, b) = (left.value, right.value);
+    match (left.ty, right.ty) {
         // Every primitive is named, for the reason `machine_type` names them: one added to the
         // language would otherwise arrive here and be compared as whatever it is held as.
         (Ty::Prim { prim }, Ty::Prim { prim: also }) if prim == also => match prim {
@@ -1153,8 +1176,8 @@ fn compare(
             Err(not_lowered(format!(
                 "a comparison of {} against {}, which is what they are made of compared rather \
                  than where they are",
-                left.spelt(),
-                right.spelt()
+                left.ty.spelt(),
+                right.ty.spelt()
             )))
         }
         // An optional and a tuple have equality and no order: what the language orders is a number,
@@ -1165,12 +1188,12 @@ fn compare(
             Op::Eq | Op::Ne => Err(not_lowered(format!(
                 "a comparison of {} against {}, which is what they hold compared rather than \
                  where they are",
-                left.spelt(),
-                right.spelt()
+                left.ty.spelt(),
+                right.ty.spelt()
             ))),
             _ => bail!(
                 "{} is not ordered, and {} is written over two of them here",
-                left.spelt(),
+                left.ty.spelt(),
                 op.spelt()
             ),
         },
@@ -1179,8 +1202,8 @@ fn compare(
         // two ways that is widened — a bare literal and a case value — are both answered above.
         _ => bail!(
             "{} is compared with {} here, which the language does not compare",
-            left.spelt(),
-            right.spelt()
+            left.ty.spelt(),
+            right.ty.spelt()
         ),
     }
 }
@@ -1197,15 +1220,9 @@ fn compare(
 /// to the wrapped number and not to the value. So the operands are two `Int`s by the time this
 /// reads them. That is the checker's arrangement and not this driver's, which is why anything else
 /// is the two halves disagreeing rather than a lowering that is still to be written.
-fn arithmetic(
-    builder: &mut FunctionBuilder,
-    op: Op,
-    left: &Ty,
-    right: &Ty,
-    a: ir::Value,
-    b: ir::Value,
-) -> Result<ir::Value> {
-    match (left, right) {
+fn arithmetic(builder: &mut FunctionBuilder, op: Op, left: Held, right: Held) -> Result<ir::Value> {
+    let (a, b) = (left.value, right.value);
+    match (left.ty, right.ty) {
         (Ty::Prim { prim }, Ty::Prim { prim: also }) if prim == also => match prim {
             Prim::Int => match op {
                 Op::Add => {
@@ -1243,8 +1260,8 @@ fn arithmetic(
             "{} is written over {} and {}, which reaches this driver as arithmetic over what they \
              are made of or does not reach it at all",
             op.spelt(),
-            left.spelt(),
-            right.spelt()
+            left.ty.spelt(),
+            right.ty.spelt()
         ),
     }
 }
@@ -1257,12 +1274,11 @@ fn join(
     builder: &mut FunctionBuilder,
     lowering: &Lowering,
     module: &mut ObjectModule,
-    left: &Ty,
-    right: &Ty,
-    a: ir::Value,
-    b: ir::Value,
+    left: Held,
+    right: Held,
 ) -> Result<ir::Value> {
-    match (left, right) {
+    let (a, b) = (left.value, right.value);
+    match (left.ty, right.ty) {
         (Ty::Prim { prim }, Ty::Prim { prim: also }) if prim == also => match prim {
             Prim::String => {
                 let joining = module.declare_func_in_func(lowering.join_text, builder.func);
@@ -1284,8 +1300,8 @@ fn join(
         },
         _ => bail!(
             "{} is joined with {} here, which the language does not join",
-            left.spelt(),
-            right.spelt()
+            left.ty.spelt(),
+            right.ty.spelt()
         ),
     }
 }

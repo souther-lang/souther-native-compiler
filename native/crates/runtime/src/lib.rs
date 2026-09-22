@@ -169,9 +169,14 @@ fn room_for_text(bytes: usize) -> *mut u8 {
 ///
 /// # Safety
 ///
-/// Both pointers are ones a string stands at.
+/// Both pointers are ones a string stands at, and the mark below each of them still stands.
+///
+/// Every one of these is `unsafe` and not a safe function with a note about how to call it. What a
+/// safe function promises is that no way of calling it from safe code is a memory fault, and these
+/// read through what they are handed — so a caller reaching this crate as a Rust library, which it
+/// is built as, could otherwise hand one of them anything at all and still be writing safe code.
 #[unsafe(no_mangle)]
-pub extern "C" fn souther_string_compare(left: *const u8, right: *const u8) -> i64 {
+pub unsafe extern "C" fn souther_string_compare(left: *const u8, right: *const u8) -> i64 {
     let ordering = unsafe { compare_utf8_as_utf16(text(left), text(right)) };
     match ordering {
         Ordering::Less => -1,
@@ -189,7 +194,7 @@ pub extern "C" fn souther_string_compare(left: *const u8, right: *const u8) -> i
 ///
 /// As [`souther_string_compare`].
 #[unsafe(no_mangle)]
-pub extern "C" fn souther_string_concat(left: *const u8, right: *const u8) -> *mut u8 {
+pub unsafe extern "C" fn souther_string_concat(left: *const u8, right: *const u8) -> *mut u8 {
     let (before, after) = unsafe { (text(left), text(right)) };
     let at = room_for_text(before.len() + after.len());
     unsafe {
@@ -208,14 +213,26 @@ pub extern "C" fn souther_string_concat(left: *const u8, right: *const u8) -> *m
 /// than written by each such host so that the layout stays between this crate and the one that
 /// states it.
 ///
+/// Not a boundary, and the difference matters. Text arriving from outside a Souther program is
+/// canonicalized to NFC where it arrives — a decoder, or the compiler reading a literal — and what
+/// reaches this is a Souther string's text being put into the form this carrier holds it in.
+/// Nothing here folds it and nothing here reads it for sense, which is why the caller is the one
+/// who has to have done both.
+///
 /// # Safety
 ///
-/// `bytes` points at `length` bytes.
+/// `bytes` points at `length` bytes, and those bytes are valid UTF-8 already in the form Souther
+/// keeps text in.
+///
+/// Bytes that are neither are not a memory fault: the decoding reads no byte the length does not
+/// cover, so what comes of them is a comparison answering something meaningless rather than an
+/// access going where it should not. They are a precondition because the answer would mean
+/// nothing, and not because the run would fall over.
 /// # Panics
 ///
 /// Where the length is below nought.
 #[unsafe(no_mangle)]
-pub extern "C" fn souther_string_of_utf8(bytes: *const u8, length: i64) -> *mut u8 {
+pub unsafe extern "C" fn souther_string_of_utf8(bytes: *const u8, length: i64) -> *mut u8 {
     let held = usize::try_from(length).expect("text is handed over as bytes, and never fewer than 0");
     let at = room_for_text(held);
     unsafe { at.offset(TEXT_BYTES as isize).copy_from_nonoverlapping(bytes, held) };
@@ -228,7 +245,7 @@ pub extern "C" fn souther_string_of_utf8(bytes: *const u8, length: i64) -> *mut 
 ///
 /// As [`souther_string_compare`].
 #[unsafe(no_mangle)]
-pub extern "C" fn souther_string_length(at: *const u8) -> i64 {
+pub unsafe extern "C" fn souther_string_length(at: *const u8) -> i64 {
     unsafe { length(at) as i64 }
 }
 
@@ -238,7 +255,7 @@ pub extern "C" fn souther_string_length(at: *const u8) -> i64 {
 ///
 /// As [`souther_string_compare`]. What is answered is good for as long as the string is.
 #[unsafe(no_mangle)]
-pub extern "C" fn souther_string_bytes(at: *const u8) -> *const u8 {
+pub unsafe extern "C" fn souther_string_bytes(at: *const u8) -> *const u8 {
     unsafe { at.offset(TEXT_BYTES as isize) }
 }
 
@@ -336,8 +353,21 @@ mod tests {
     use souther_native_abi::SLOT;
 
     /// A string holding this text, as a host outside a Souther program would hand one over.
+    ///
+    /// What the call owes is said here and not at every row below: the bytes are a `str`'s, so
+    /// there are as many of them as this says and they are valid UTF-8; and every string these
+    /// tests make is given back before the mark they were made under is reset.
     fn made(text: &str) -> *mut u8 {
-        souther_string_of_utf8(text.as_ptr(), text.len() as i64)
+        unsafe { souther_string_of_utf8(text.as_ptr(), text.len() as i64) }
+    }
+
+    /// The two compared, and the two joined, under what [`made`] already owes.
+    fn compared(one: *const u8, other: *const u8) -> i64 {
+        unsafe { souther_string_compare(one, other) }
+    }
+
+    fn joined_text(one: *const u8, other: *const u8) -> *mut u8 {
+        unsafe { souther_string_concat(one, other) }
     }
 
     /// What the string says, read back the way a host reads one.
@@ -471,16 +501,16 @@ mod tests {
         let other = made("hello");
 
         assert_ne!(one, other);
-        assert_eq!(souther_string_compare(one, other), 0);
+        assert_eq!(compared(one, other), 0);
         souther_reset(mark);
     }
 
     #[test]
     fn a_string_that_begins_another_comes_before_it() {
         let mark = souther_mark();
-        assert_eq!(souther_string_compare(made("ab"), made("abc")), -1);
-        assert_eq!(souther_string_compare(made("abc"), made("ab")), 1);
-        assert_eq!(souther_string_compare(made(""), made("a")), -1);
+        assert_eq!(compared(made("ab"), made("abc")), -1);
+        assert_eq!(compared(made("abc"), made("ab")), 1);
+        assert_eq!(compared(made(""), made("a")), -1);
         souther_reset(mark);
     }
 
@@ -498,7 +528,7 @@ mod tests {
         let astral = "\u{20bb7}";
         let basic = "\u{ffe5}";
 
-        assert_eq!(souther_string_compare(made(astral), made(basic)), -1);
+        assert_eq!(compared(made(astral), made(basic)), -1);
         assert!(astral.as_bytes() > basic.as_bytes());
         assert!(astral.chars().next() > basic.chars().next());
         souther_reset(mark);
@@ -507,9 +537,9 @@ mod tests {
     #[test]
     fn two_strings_joined_say_one_and_then_the_other() {
         let mark = souther_mark();
-        assert_eq!(said(souther_string_concat(made("ab"), made("cd"))), "abcd");
-        assert_eq!(said(souther_string_concat(made(""), made("cd"))), "cd");
-        assert_eq!(said(souther_string_concat(made("ab"), made(""))), "ab");
+        assert_eq!(said(joined_text(made("ab"), made("cd"))), "abcd");
+        assert_eq!(said(joined_text(made(""), made("cd"))), "cd");
+        assert_eq!(said(joined_text(made("ab"), made(""))), "ab");
         souther_reset(mark);
     }
 
@@ -522,7 +552,7 @@ mod tests {
         let before = made("ab");
         let after = made("cd");
 
-        let joined = souther_string_concat(before, after);
+        let joined = joined_text(before, after);
 
         assert_eq!(said(joined), "abcd");
         assert_eq!(said(before), "ab");
@@ -534,10 +564,10 @@ mod tests {
     #[test]
     fn a_joined_string_is_one_that_can_be_joined_and_compared_again() {
         let mark = souther_mark();
-        let joined = souther_string_concat(made("ab"), made("cd"));
+        let joined = joined_text(made("ab"), made("cd"));
 
-        assert_eq!(souther_string_compare(joined, made("abcd")), 0);
-        assert_eq!(said(souther_string_concat(joined, made("ef"))), "abcdef");
+        assert_eq!(compared(joined, made("abcd")), 0);
+        assert_eq!(said(joined_text(joined, made("ef"))), "abcdef");
         souther_reset(mark);
     }
 }
