@@ -329,6 +329,68 @@ class ARowHoldsWhereverItIsRunTest {
                 | "allowed and not above nought" : (0) -> false
             """;
 
+    /**
+     * Two modules, each declaring a dependency of one name, and one of them takes and answers
+     * something the other does not.
+     *
+     * <p>Two behaviors, as the language says and as the object says: the symbols are apart. What
+     * has to be apart with them is whatever supplies them, because the object is the whole program
+     * and so every name it leaves open is a name the linker wants whichever row is being run.
+     */
+    private static final String PRICING = """
+            module pricing
+
+            behavior lookUp : (a: Int) -> Int
+
+            behavior twice : (a: Int) -> Int
+                depends on lookUp
+            let twice (a, lookUp) = lookUp(a) * 2
+
+            fake lookUp
+                | (1) -> 21
+
+            example twice
+                | "what the dependency answered, doubled" : (1) -> 42
+            """;
+
+    private static final String INVENTORY = """
+            module inventory
+
+            behavior lookUp : (a: Bool) -> Bool
+
+            behavior turnedRound : (a: Bool) -> Bool
+                depends on lookUp
+            let turnedRound (a, lookUp) = lookUp(a) == false
+
+            fake lookUp
+                | (true) -> false
+
+            example turnedRound
+                | "what the dependency answered, turned round" : (true) -> true
+            """;
+
+    /**
+     * A module that names neither of them, which is the row that says what the population is.
+     *
+     * <p>Its row states no stand-in and reaches no dependency, and the object still leaves both of
+     * those names open — so what runs this row has to supply both of them all the same. A run
+     * arranged around what a row mentions would never meet the pair at all.
+     */
+    private static final String PLAINLY = """
+            module plainly
+
+            behavior doubled : (a: Int) -> Int
+            let doubled (a) = a * 2
+
+            example doubled
+                | "twice" : (21) -> 42
+            """;
+
+    @Test
+    void twoModulesNamingOneDependencyApartAreSuppliedApart() throws Exception {
+        assertEveryRowHolds(PRICING, INVENTORY, PLAINLY);
+    }
+
     @Test
     void everyRowOfEveryBehaviorHoldsWhenTheNativeObjectAnswersIt() throws Exception {
         assertEveryRowHolds(ARITHMETIC);

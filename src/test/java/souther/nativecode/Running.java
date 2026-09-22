@@ -233,9 +233,13 @@ final class Running implements AutoCloseable {
         // is the whole program, so what it names is what the linker wants whichever behavior is
         // being run — a dependency this row says nothing about is still a symbol with nothing
         // under it.
+        //
+        // What each of them is called in C is counted out here, so that nothing downstream has a
+        // Souther identity to make a C identifier from.
         StringJoiner supplied = new StringJoiner("\n");
+        int counted = 0;
         for (Map.Entry<ValueName.Behavior, StandsIn> named : leftUndefined(standIns).entrySet()) {
-            supplied.add(standingIn(named.getKey(), named.getValue()));
+            supplied.add(standingIn("standsIn" + counted++, named.getKey(), named.getValue()));
         }
 
         return """
@@ -299,7 +303,17 @@ final class Running implements AutoCloseable {
         return supplied;
     }
 
-    private String standingIn(ValueName.Behavior dependency, StandsIn standsIn) {
+    /**
+     * A C definition for one behavior the object names and does not define.
+     *
+     * <p>What it is called in C is handed in, and it is a physical name that means nothing. The
+     * whole of what this definition is for is in the {@code __asm__} string, which carries a
+     * Souther identity entire — a module and a name. A C identifier made here out of part of one
+     * would be that identity written twice, once whole and once with the module dropped, and two
+     * modules declaring a dependency of one name would collide in a translation unit that holds
+     * every undefined name the object left. Which is every one of them, whatever this row states.
+     */
+    private String standingIn(String reached, ValueName.Behavior dependency, StandsIn standsIn) {
         CheckedSignature signature = program.behavior(dependency).signature();
         List<Type> takes = signature.takes();
         List<String> taken = new ArrayList<>();
@@ -326,7 +340,6 @@ final class Running implements AutoCloseable {
             };
         }
 
-        String reached = "standsIn_" + dependency.name();
         String symbol = PREFIX + "souther." + dependency.module() + "." + dependency.name();
         return "%s %s(%s) __asm__(\"%s\");\n%s %s(%s) {\n%s%s}"
                 .formatted(cType(signature.answers()), reached, parameters, symbol,
