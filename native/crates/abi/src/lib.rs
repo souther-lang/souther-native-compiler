@@ -74,6 +74,36 @@ pub fn held_symbol(carrier: &str, declared: &str) -> String {
     format!("souther{ABI}.{carrier}${declared}")
 }
 
+/// The symbol the entry a module publishes for one of its values is reached by.
+///
+/// Not a value's own executable home: a value has exactly one, in the module that declares it
+/// (spec ADR-0074), and nothing outside that module ever reaches it directly — a call from
+/// elsewhere goes through this entry instead, which is why this alone, and not the home, needs a
+/// name a linker resolves. The home is this object's own business and is free to be named however
+/// [`held_symbol`] or a plain internal spelling already names a local definition.
+///
+/// `souther<abi>.<module>$value$<name>`, carrying the ABI generation the same way
+/// [`behavior_symbol`] does: an entry is an ordinary call across an object boundary and a
+/// calling-convention change is exactly as breaking for one as it is for a behavior. The `$value$`
+/// segment is what keeps this apart from `souther<abi>.<module>.<name>`, which is a behavior's own
+/// spelling and not this one's to collide with.
+///
+/// # Panics
+///
+/// Where either name carries a dollar, or the value's name carries a dot, for the reason
+/// [`type_symbol`] gives.
+pub fn value_symbol(module: &str, value: &str) -> String {
+    assert!(
+        !module.contains('$'),
+        "a module's name carries no dollar, and the symbol is split on one: {module}"
+    );
+    assert!(
+        !value.contains('$') && !value.contains('.'),
+        "a value's name carries neither dollar nor dot, and the symbol is split on both: {value}"
+    );
+    format!("souther{ABI}.{module}$value${value}")
+}
+
 /// The symbol the object carries for one of a behavior's `example` rows.
 ///
 /// A row states the values to hand over, so what stands under this name takes nothing: the values
@@ -303,7 +333,7 @@ pub const ANSWERED: Status = 0;
 mod tests {
     use super::{
         FIRST_FIELD, SLOT, TOKEN, WHICH, behavior_symbol, example_symbol, field_at, held_symbol,
-        member_at, type_symbol,
+        member_at, type_symbol, value_symbol,
     };
 
     #[test]
@@ -404,5 +434,34 @@ mod tests {
         assert_eq!(field_at(1) - field_at(0), SLOT);
         assert_eq!(member_at(0), 0);
         assert_eq!(member_at(3) - member_at(2), SLOT);
+    }
+
+    #[test]
+    fn a_published_value_is_reached_by_its_module_and_its_name() {
+        assert_eq!(value_symbol("pricing", "standard"), "souther2.pricing$value$standard");
+    }
+
+    /// A value's own entry is never a behavior's symbol, whatever either is called — the two share
+    /// a module's dot-carrying prefix and nothing else.
+    #[test]
+    fn a_values_entry_is_not_a_behaviors_symbol() {
+        assert_ne!(value_symbol("pricing", "standard"), behavior_symbol("pricing", "standard"));
+        assert_ne!(
+            value_symbol("pricing", "standard"),
+            held_symbol("pricing", "pricing.standard")
+        );
+    }
+
+    /// Two modules each publishing a value of one name publish two symbols, the same as two
+    /// modules declaring a behavior of one name do.
+    #[test]
+    fn a_value_of_one_name_in_two_modules_is_two_symbols() {
+        assert_ne!(value_symbol("pricing", "standard"), value_symbol("shipping", "standard"));
+    }
+
+    #[test]
+    #[should_panic(expected = "neither dollar nor dot")]
+    fn a_published_values_name_carrying_a_dot_is_refused() {
+        let _ = value_symbol("a", "b.c");
     }
 }
