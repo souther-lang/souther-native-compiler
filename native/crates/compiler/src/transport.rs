@@ -18,7 +18,7 @@ use serde::Deserialize;
 
 /// What this side reads. A document written to say anything else is refused rather than read as
 /// much of as happens to parse.
-pub const TRANSPORT_VERSION: u32 = 7;
+pub const TRANSPORT_VERSION: u32 = 8;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -485,6 +485,25 @@ pub enum Ty {
     Union { union: Vec<String> },
     Option { option: Box<Ty> },
     Tuple { tuple: Vec<Ty> },
+    /// A function value: what it takes and what it answers, nothing about what a value of it is
+    /// made of. That is a representation question and this side's own — see `machine_type` and
+    /// `means_the_same_elsewhere` in the crate root — not a fact the checker states, so no field
+    /// here ever names a capture.
+    Fn {
+        #[serde(rename = "fn")]
+        fn_: FnSignature,
+    },
+}
+
+/// What a function type takes and what it answers, nested under `"fn"` rather than written as
+/// `takes`/`answers` siblings of it — the same reason [`Reaches`]'s own shape is nested: a reader
+/// telling a function type apart from every other [`Ty`] shape by which key is present must not
+/// also have to notice a document naming `fn` beside `option` or `tuple` on the same object.
+#[derive(Debug, Deserialize, PartialEq, Eq, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct FnSignature {
+    pub takes: Vec<Ty>,
+    pub answers: Box<Ty>,
 }
 
 impl Ty {
@@ -495,6 +514,11 @@ impl Ty {
             Ty::Union { union } => union.join(" | "),
             Ty::Option { option } => format!("an Option of {}", option.spelt()),
             Ty::Tuple { tuple } => format!("a tuple of {} members", tuple.len()),
+            Ty::Fn { fn_ } => format!(
+                "a function taking {} and answering {}",
+                fn_.takes.iter().map(Ty::spelt).collect::<Vec<_>>().join(", "),
+                fn_.answers.spelt()
+            ),
         }
     }
 }
@@ -630,6 +654,43 @@ pub enum Node {
         ty: Ty,
         aborts: Vec<AbortKind>,
     },
+    /// A function value: its own parameters, and the body they are bound in — written whole and
+    /// not closure-converted on the wire. What of the body's free bindings this side has to carry
+    /// forward as runtime state, and how, is this driver's own representation question; see
+    /// `closures` in the crate root.
+    ///
+    /// `site` is this document's own number for where the block stands, minted by `ProgramWriter`
+    /// so a lifted function can be declared under it before this side has decided anything about
+    /// what that function closes over — the same role a binding's number plays for a read, and
+    /// counted the same way: document-wide, where the block is written.
+    Block {
+        site: usize,
+        parameters: Vec<Parameter>,
+        body: Box<Node>,
+        #[serde(rename = "type")]
+        ty: Ty,
+        aborts: Vec<AbortKind>,
+    },
+    /// A function value applied to arguments — a value the body holds, and not a call to something
+    /// declared elsewhere ([`Node::Call`]'s own `reaches`). `function` is a [`Node::Read`] every
+    /// time souther's checker builds one (`Core.Apply`'s own contract), read the same way any
+    /// other operand's is rather than reduced to a binding number bare beside `arguments`.
+    Apply {
+        function: Box<Node>,
+        arguments: Vec<Node>,
+        #[serde(rename = "type")]
+        ty: Ty,
+        aborts: Vec<AbortKind>,
+    },
+}
+
+/// One parameter of a [`Node::Block`], numbered the way any other binder on the wire is: where it
+/// is written, by `ProgramWriter`'s own counter.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Parameter {
+    pub binding: usize,
+    pub name: String,
 }
 
 /// What a call reaches, which the checker decided and nothing here works out again.
@@ -728,7 +789,9 @@ impl Node {
             | Node::None { ty, .. }
             | Node::Tuple { ty, .. }
             | Node::Member { ty, .. }
-            | Node::Call { ty, .. } => ty,
+            | Node::Call { ty, .. }
+            | Node::Block { ty, .. }
+            | Node::Apply { ty, .. } => ty,
         }
     }
 }
