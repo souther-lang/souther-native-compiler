@@ -1942,13 +1942,26 @@ fn lower(
             // own arguments and own type) are independent statements of one fact, the same way a
             // `Node::Block`'s own type, parameters and body are (see `closures`'s own doc) — and
             // this one is never checked before now, since nothing builds a `Site` for an `Apply`.
-            // Checked at the machine representation only, not full `Ty` equality: this is not the
-            // place to re-implement the language's own assignability rules, only to refuse handing
-            // Cranelift an indirect-call ABI its own operands disagree about, which is silent wrong
-            // code — a store at one width and a load at another through the same `out` slot — and
-            // not a crash this backend would otherwise notice on its own. Checked before any of
-            // this node's own operands are lowered, so a document that fails this never leaves
-            // behind half-lowered IR for it.
+            // Checked before any of this node's own operands are lowered, so a document that fails
+            // this never leaves behind half-lowered IR for it.
+            //
+            // The answer and the arguments are held to two different standards, on purpose. `ty`
+            // is not this call's own decision the way an ordinary call's answer type is derived
+            // from a signature elsewhere — souther's checker builds `Core.Apply`'s own `type`
+            // straight from the applied local's `Type.FnOf`, through `applySignature()`'s result,
+            // with no assignability in between (`Core.Apply`'s own construction upstream). So
+            // `fn_.answers` and `ty` are one type fact written twice, exactly the way a
+            // `Node::Block`'s own `answers` and its `body`'s type are — held to full `Ty` equality
+            // there and held to it here for the same reason. An argument against a parameter is a
+            // different question: the language's own assignability may legitimately hand a wider
+            // argument type to a narrower parameter, which this backend has no business
+            // re-deciding, so those are checked at machine representation only — the one thing an
+            // indirect call's own ABI actually needs to agree about. Loosening the answer check to
+            // machine representation, the way the arguments are, would let two different declared
+            // types that happen to share one representation (both `POINTER`) pass a document where
+            // they disagree: the closure would store one type's address into `out` and the caller
+            // would read it back as the other — not a crash, since Cranelift has nothing to object
+            // to, just the wrong type read from a real address from then on.
             if fn_.takes.len() != arguments.len() {
                 bail!(
                     "an application naming {} arguments to a function type taking {}: `Apply`'s \
@@ -1958,11 +1971,10 @@ fn lower(
                     fn_.takes.len()
                 );
             }
-            if machine_type(&fn_.answers)? != machine_type(ty)? {
+            if fn_.answers.as_ref() != ty {
                 bail!(
                     "an application answering {} at its function's own type and {} at its own \
-                     type: the two have no representation in common, and this document's two \
-                     statements of what this answers disagree",
+                     type: the two are statements of one fact and this document's disagree",
                     fn_.answers.spelt(),
                     ty.spelt()
                 );

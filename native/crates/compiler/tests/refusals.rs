@@ -400,3 +400,38 @@ fn a_compositions_own_takes_disagreeing_with_its_first_stages_target_is_the_halv
     );
     assert!(refused.to_string().contains("m.outer"), "{refused}");
 }
+
+/// A hand-written document where an `Apply`'s own applied function answers one declared type and
+/// the `Apply` node itself is typed as a different one — both `Ty::Declared`, so both share one
+/// machine representation (`POINTER`). A check at machine representation alone, the same as
+/// `Apply`'s own arguments are held to, would pass this silently: the closure would store one
+/// type's address into `out` and the caller would read the same address back as the other type,
+/// which is not a crash — Cranelift has nothing to object to — just the wrong type read from a
+/// real address from then on. Souther's checker never writes this (`Core.Apply`'s own `type` is
+/// built straight from the applied value's `Type.FnOf` result, with no assignability in between),
+/// so this is exactly the kind of malformed or version-skewed document this strict reader exists
+/// to refuse rather than execute.
+#[test]
+fn an_applys_answer_disagreeing_with_its_functions_own_type_is_the_halves_disagreeing_even_though_both_are_pointers() {
+    let document = concat!(
+        r#"{"transport":8,"declarations":["#,
+        r#"{"module":"m","name":"A","by":"amodule","is":"unit","fields":[],"invariants":0},"#,
+        r#"{"module":"m","name":"B","by":"amodule","is":"unit","fields":[],"invariants":0}],"#,
+        r#""behaviors":[{"module":"m","name":"f","is":"body","#,
+        r#""takes":[{"fn":{"takes":[],"answers":{"declared":"m.A"}}}],"answers":{"declared":"m.B"}}],"#,
+        r#""modules":[{"name":"m","helpers":[],"values":[],"entries":[],"#,
+        r#""definitions":[{"is":"body","declared":"m.f","parameters":["f"],"publication":"published","#,
+        r#""body":{"core":"apply","function":{"core":"read","binding":0,"#,
+        r#""type":{"fn":{"takes":[],"answers":{"declared":"m.A"}}},"aborts":[]},"#,
+        r#""arguments":[],"type":{"declared":"m.B"},"aborts":[]}}],"examples":[]}]}"#,
+    );
+
+    let refused = object_for(document)
+        .expect_err("an Apply answering a different declared type than its own function's type");
+
+    assert!(
+        refused.downcast_ref::<NotLowered>().is_none(),
+        "the halves disagreeing is not the backend being behind: {refused}"
+    );
+    assert!(refused.to_string().contains("m.B") || refused.to_string().contains("m.A"), "{refused}");
+}
