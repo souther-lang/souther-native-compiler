@@ -10,7 +10,6 @@ import souther.compiler.program.CheckedProgram;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * The ends of what an `Int` holds, where the checks this backend writes are decided.
@@ -28,6 +27,14 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * <p>Since issue #9, which abort it was is asked, and it is always {@code
  * REQUIRED_FORM_HAS_NO_PLACE} — the one law the specification states for an {@code Int} leaving
  * the range it holds, whichever of these four operations reaches it.
+ *
+ * <p>{@code flip} joined the other three once souther-lang/souther#1878 landed: {@code
+ * CheckedProgram#abortsAt} used to answer {@code AbortSet.NONE} for {@code Core.Neg}, a
+ * known-wrong answer since negation overflows for the same representational reason
+ * {@code +}/{@code -}/{@code *} do, and this backend refused the program rather than trust a
+ * machine condition it could see firing over a checker answer of no reason at all. #1878 now
+ * classifies {@code Core.Neg} as an abort site, so it is exampled here the same as the other
+ * three.
  */
 class AnIntThatLeavesItsRangeEndsTheRunTest {
 
@@ -40,7 +47,7 @@ class AnIntThatLeavesItsRangeEndsTheRunTest {
      * local to the object and reached by nothing out here.
      */
     private static final String SOURCE = """
-            module edges exposing ( add, less, times )
+            module edges exposing ( add, less, times, flip )
 
             behavior add : (a: Int, b: Int) -> Int
             let add (a, b) = a + b
@@ -50,16 +57,6 @@ class AnIntThatLeavesItsRangeEndsTheRunTest {
 
             behavior times : (a: Int, b: Int) -> Int
             let times (a, b) = a * b
-            """;
-
-    /**
-     * A module of its own, kept apart from {@link #SOURCE}: {@code flip} does not compile on this
-     * backend today, and a module that failed to compile at all would take {@code add}, {@code
-     * less} and {@code times} down with it — they are one object, and {@link Running#of} builds
-     * the whole of it or none of it.
-     */
-    private static final String FLIPPING = """
-            module flipping exposing ( flip )
 
             behavior flip : (a: Int) -> Int
             let flip (a) = -a
@@ -79,25 +76,13 @@ class AnIntThatLeavesItsRangeEndsTheRunTest {
 
     /**
      * Turning the smallest {@code Int} around is a subtraction from nought like any other, and
-     * mathematically overflows exactly as much as {@code Int.MIN - 1} does. {@code
-     * CheckedProgram#abortsAt} answers {@code AbortSet.NONE} for {@code Core.Neg} today, though
-     * (souther-lang/souther#1878) — a known-wrong answer, since negation overflows for the same
-     * representational reason {@code +}/{@code -}/{@code *} do. This backend trusts {@code
-     * abortsAt} everywhere else, which is the whole point of reading it off the checker instead of
-     * re-deriving it (see {@code overflow_status}'s own doc in the driver crate), but a machine
-     * condition it can already see firing and a checker answer of no reason at all is exactly the
-     * two halves disagreeing about what kind of site this is — so rather than trust it into
-     * answering {@code Int.MIN} back as though nothing had happened, this refuses the program.
-     * {@code NotLowered} and not a wrong value: once #1878 lands this behaves like the other three
-     * and the shared helper above covers it.
+     * mathematically overflows exactly as much as {@code Int.MIN - 1} does: {@code -Int.MIN} is
+     * {@code Int.MAX + 1}, which the type does not hold. Its neighbour, {@code Int.MIN + 1}, turns
+     * around to exactly {@code Int.MAX}.
      */
     @Test
-    void theSmallestIntTurnedAroundIsNotLoweredPendingSoutherIssue1878() {
-        CheckedProgram program = CheckedProgram.of(List.of(FLIPPING));
-
-        assertThatThrownBy(() -> Running.of(program))
-                .isInstanceOf(NotLowered.class)
-                .hasMessageContaining("souther-lang/souther#1878");
+    void aNegationPastTheEndEndsTheRunAndTheOneBesideItAnswers() throws Exception {
+        assertEndsButItsNeighbourAnswers("flip", List.of(LEAST), List.of(LEAST + 1), MOST);
     }
 
     @Test

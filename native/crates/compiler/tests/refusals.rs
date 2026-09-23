@@ -34,7 +34,7 @@ fn over(op: &str, left: &str, right: &str) -> String {
         r#"{{"is":"body","declared":"calculation.f","parameters":["a","b"],"publication":"published","body":{body}}}"#
     );
     format!(
-        r#"{{"transport":5,"declarations":[],"behaviors":[{target}],"modules":[{{"name":"calculation","helpers":[],"definitions":[{held}],"examples":[]}}]}}"#
+        r#"{{"transport":7,"declarations":[],"behaviors":[{target}],"modules":[{{"name":"calculation","helpers":[],"values":[],"entries":[],"definitions":[{held}],"examples":[]}}]}}"#
     )
 }
 
@@ -183,11 +183,11 @@ fn a_field_this_driver_does_not_know_is_refused_rather_than_skipped() {
 /// would be reading a document written to mean something else.
 #[test]
 fn a_transport_from_another_version_is_refused() {
-    let later = document("ADD", "INT").replace(r#""transport":5"#, r#""transport":6"#);
+    let later = document("ADD", "INT").replace(r#""transport":7"#, r#""transport":8"#);
 
     let refused = object_for(&later).expect_err("a version this does not read");
 
-    assert!(refused.to_string().contains('6'), "{refused}");
+    assert!(refused.to_string().contains('8'), "{refused}");
 }
 
 /// The smallest composition this driver can be handed: one behavior with a body, one composed of
@@ -195,10 +195,10 @@ fn a_transport_from_another_version_is_refused() {
 /// tests below has one place to make disagree with the other.
 fn composed_document() -> String {
     concat!(
-        r#"{"transport":5,"declarations":[],"#,
+        r#"{"transport":7,"declarations":[],"#,
         r#""behaviors":[{"module":"m","name":"inner","is":"body","takes":[{"prim":"INT"}],"answers":{"prim":"INT"}},"#,
         r#"{"module":"m","name":"outer","is":"composed","takes":[{"prim":"INT"}],"answers":{"prim":"INT"}}],"#,
-        r#""modules":[{"name":"m","helpers":[],"definitions":["#,
+        r#""modules":[{"name":"m","helpers":[],"values":[],"entries":[],"definitions":["#,
         r#"{"is":"body","declared":"m.inner","parameters":["a"],"publication":"kept","body":{"core":"read","binding":0,"type":{"prim":"INT"},"aborts":[]}},"#,
         r#"{"is":"composed","declared":"m.outer","publication":"published","stages":["#,
         r#"{"behavior":"m.inner","answers":{"prim":"INT"},"routing":{"is":"always"}}],"answers":{"prim":"INT"}}"#,

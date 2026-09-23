@@ -16,6 +16,8 @@ import souther.compiler.program.CheckedImplementation;
 import souther.compiler.program.CheckedModule;
 import souther.compiler.program.CheckedProgram;
 import souther.compiler.program.CheckedRow;
+import souther.compiler.program.CheckedValue;
+import souther.compiler.program.CheckedValueEntry;
 import souther.compiler.program.Declared;
 import souther.compiler.program.DeclaredBy;
 import souther.compiler.program.Publication;
@@ -70,7 +72,7 @@ public final class ProgramWriter {
      * written moves, so that a driver and a writer that disagree say so rather than producing an
      * object that is wrong quietly.
      */
-    public static final int TRANSPORT_VERSION = 5;
+    public static final int TRANSPORT_VERSION = 7;
 
     private final CheckedProgram program;
 
@@ -297,6 +299,14 @@ public final class ProgramWriter {
         for (CheckedHelper helper : module.helpers()) {
             helpers.add(helper(helper));
         }
+        StringJoiner values = new StringJoiner(",", "[", "]");
+        for (CheckedValue value : module.values()) {
+            values.add(value(value));
+        }
+        StringJoiner entries = new StringJoiner(",", "[", "]");
+        for (CheckedValueEntry entry : module.valueEntries()) {
+            entries.add(entry(entry));
+        }
         StringJoiner examples = new StringJoiner(",", "[", "]");
         for (CheckedBehavior behavior : module.behaviors()) {
             List<CheckedRow> rows = behavior.rows();
@@ -309,6 +319,8 @@ public final class ProgramWriter {
         }
         return "{\"name\":" + quoted(module.name())
                 + ",\"helpers\":" + helpers
+                + ",\"values\":" + values
+                + ",\"entries\":" + entries
                 + ",\"definitions\":" + definitions
                 + ",\"examples\":" + examples + "}";
     }
@@ -440,6 +452,62 @@ public final class ProgramWriter {
                 + ",\"takes\":" + takes
                 + ",\"answers\":" + type(helper.body().type())
                 + ",\"body\":" + core(helper.body(), bindings)
+                + "}";
+    }
+
+    /**
+     * A value this module declares: the one place it runs.
+     *
+     * <p>Its identity crosses split, module and name apart, the way a behavior's does
+     * ({@link Target}) and a helper's does not: {@code value_symbol(module, name)} is built from the
+     * two, and a joined spelling would have to be split back up to get there.
+     *
+     * <p>What its method is handed is not a parameter but a handover: another value this one's root
+     * region names, built already and passed rather than rebuilt. A reader wanting what a call to
+     * this value's home has to supply reads {@code handovers}, never {@code parameters.isEmpty()} —
+     * a value takes none.
+     *
+     * <p>Not written with a {@code publication} of its own. {@link CheckedModule}'s constructor
+     * already holds "published ⇔ has a {@link CheckedValueEntry} among {@link
+     * CheckedModule#valueEntries()}" as an invariant, so a field here would be the same fact
+     * written twice — and a reader wanting to know would ask {@link CheckedModule#valueEntries()}
+     * or {@link CheckedModule#publicationOfValue}, never this.
+     */
+    private String value(CheckedValue value) {
+        Bindings bindings = new Bindings();
+        StringJoiner handovers = new StringJoiner(",", "[", "]");
+        for (CheckedValue.Handover handover : value.handovers()) {
+            bindings.number(handover.binder().binding());
+            handovers.add("{\"parameter\":" + quoted(handover.binder().name())
+                    + ",\"type\":" + type(handover.type())
+                    + ",\"carries\":{\"module\":" + quoted(handover.carries().module())
+                    + ",\"name\":" + quoted(handover.carries().name()) + "}}");
+        }
+        return "{\"module\":" + quoted(value.name().module())
+                + ",\"name\":" + quoted(value.name().name())
+                + ",\"handovers\":" + handovers
+                + ",\"answers\":" + type(value.answers())
+                + ",\"body\":" + core(value.body(), bindings)
+                + "}";
+    }
+
+    /**
+     * The entry this module publishes for a value: the nullary bridge another module calls in place
+     * of holding a copy of the value (ADR-0074).
+     *
+     * <p>{@code body} is a reference to the value and nothing else — a call reaching
+     * {@link Core.Reached.OfValue}, written the same way any other reach to the value is, and never
+     * a fresh node kind this writer has to design for. Not written with {@code publication}: every
+     * entry this module holds is for a value it publishes, which
+     * {@link CheckedModule#valueEntries()}'s own invariant already guarantees, so a reader has
+     * nothing to ask here that {@code module.publicationOfValue(entry.value())} would not answer
+     * {@code PUBLISHED} to unconditionally.
+     */
+    private String entry(CheckedValueEntry entry) {
+        Bindings bindings = new Bindings();
+        return "{\"value\":{\"module\":" + quoted(entry.value().module())
+                + ",\"name\":" + quoted(entry.value().name()) + "}"
+                + ",\"body\":" + core(entry.body(), bindings)
                 + "}";
     }
 
@@ -744,16 +812,30 @@ public final class ProgramWriter {
             case Core.Reached.OfDeclaration target -> switch (target.reaches()) {
                 case Core.Reaches.AHelper held ->
                         "{\"is\":\"helper\",\"declared\":" + quoted(reached(held.declaration())) + "}";
-                case Core.Reaches.APublishedValue held ->
-                        "{\"is\":\"value\",\"declared\":" + quoted(reached(held.declaration())) + "}";
                 case Core.Reaches.ABehavior held -> {
                     behaviorsMet.add(held.behavior());
                     yield "{\"is\":\"behavior\",\"declared\":"
                             + quoted(reached(held.declaration())) + "}";
                 }
+                // A helper or a behavior is the only two `Reaches` `OfDeclaration#reaches` ever
+                // settles to; a value's own reference is `OfValue` or `OfPublishedValue` below,
+                // never one this compilation resolved a plain declaration to.
+                case Core.Reaches.AValue held -> throw new IllegalStateException(
+                        "a declaration's reference resolved to the value " + held.declaration());
+                case Core.Reaches.APublishedValue held -> throw new IllegalStateException(
+                        "a declaration's reference resolved to the published value "
+                                + held.declaration());
             };
-            case Core.Reached.OfPublishedValue target ->
-                    "{\"is\":\"value\",\"declared\":" + quoted(reached(target.denotes())) + "}";
+            // A value that runs where it is declared, and this module is that module: the method
+            // it runs as is a local definition, so its identity crosses the way a value's does and
+            // not the way a helper's does — split, so `value_symbol` never has to be split back out
+            // of a joined spelling.
+            case Core.Reached.OfValue target -> value(it, target.denotes());
+            // A value another module declares, reached through the entry that module publishes for
+            // it. Split identity for the same reason, and its own wire tag: nothing of this
+            // value's body or the types it is built from is this module's to write, so a reader
+            // must not read it as the same kind of reach a local value is.
+            case Core.Reached.OfPublishedValue target -> publishedValue(it, target.denotes());
             case Core.Reached.OfKernel target ->
                     "{\"is\":\"kernel\",\"kernel\":" + quoted(target.kernel().key()) + "}";
             // An operation this compiler mints after everything is resolved, which no source can
@@ -763,6 +845,31 @@ public final class ProgramWriter {
         return "{\"core\":\"call\",\"reaches\":" + reaches
                 + ",\"arguments\":" + arguments
                 + ",\"type\":" + type(it.type()) + ",\"aborts\":" + aborts(it) + "}";
+    }
+
+    /** A call reaching the value {@code denotes}, split into the module that declares it and its
+     *  own name — what a native `value_symbol` is built from. */
+    private String value(Core.Call it, ValueName denotes) {
+        ValueName.Helper value = valueDenoted(it, denotes);
+        return "{\"is\":\"value\",\"module\":" + quoted(value.module())
+                + ",\"name\":" + quoted(value.name()) + "}";
+    }
+
+    /** As {@link #value}, for a call reaching another module's published entry for a value. */
+    private String publishedValue(Core.Call it, ValueName denotes) {
+        ValueName.Helper value = valueDenoted(it, denotes);
+        return "{\"is\":\"publishedvalue\",\"module\":" + quoted(value.module())
+                + ",\"name\":" + quoted(value.name()) + "}";
+    }
+
+    /** What a value's reference denotes. Never anything else: {@link Core.Reached.OfValue} and
+     *  {@link Core.Reached.OfPublishedValue} both refuse to be built over a reference that does
+     *  not resolve to one. */
+    private static ValueName.Helper valueDenoted(Core.Call it, ValueName denotes) {
+        if (denotes instanceof ValueName.Helper value) {
+            return value;
+        }
+        throw new IllegalStateException("a value's reference resolved to " + denotes + ": " + it);
     }
 
     /**

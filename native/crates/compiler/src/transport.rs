@@ -18,7 +18,7 @@ use serde::Deserialize;
 
 /// What this side reads. A document written to say anything else is refused rather than read as
 /// much of as happens to parse.
-pub const TRANSPORT_VERSION: u32 = 5;
+pub const TRANSPORT_VERSION: u32 = 7;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -171,12 +171,94 @@ impl Declaration {
 pub struct Module {
     pub name: String,
     pub helpers: Vec<Held>,
+    /// The values this module declares: the one place each of them runs.
+    pub values: Vec<Value>,
+    /// The entries this module publishes, one per published value — the nullary bridge another
+    /// module calls in place of holding a copy of the value (ADR-0074).
+    pub entries: Vec<ValueEntry>,
     /// What this object puts under a name. A behavior that answers some other way — supplied from
     /// outside, implemented by another build, or not written — is in the table above and nowhere
     /// here.
     pub definitions: Vec<Definition>,
     /// The `example` rows of this module's behaviors that the object runs.
     pub examples: Vec<Example>,
+}
+
+/// A value this module declares: the one place it runs.
+///
+/// Not a `Held`. A helper is a copy a module carries because a call to it was left standing, and
+/// two modules holding one hold a copy each; a value has one executable home, the module that
+/// declares it (spec ADR-0074), and this is that home. Its identity crosses split — `module` and
+/// `name` apart, the way a behavior's [`Target`] does and a helper's `declared` does not —
+/// because `value_symbol(module, name)` is built from the two, and a joined spelling would have
+/// to be split back up to get there, which is a decision this side is not handed to make.
+///
+/// What its method is handed is not an argument: a value takes none. `handovers` is what its root
+/// region demands — other values this one names, built already — so nothing here has to be built
+/// twice.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Value {
+    pub module: String,
+    pub name: String,
+    /// Whether this module publishes it is not carried here: souther's own `CheckedModule`
+    /// constructor already holds "published ⇔ has a `ValueEntry` among [`Module::entries`]" as an
+    /// invariant, so a `publication` field beside this one would be the same fact stated twice —
+    /// and the two would agree only until whichever consumer reads `entries` and whichever reads
+    /// `publication` were updated on different days. A value's own publication is asked by looking
+    /// it up in `entries`, never by a field here.
+    pub handovers: Vec<Handover>,
+    pub answers: Ty,
+    pub body: Node,
+}
+
+impl Value {
+    /// What a reference to this value in the document says, which is the two halves joined the one
+    /// way.
+    pub fn declared(&self) -> String {
+        format!("{}.{}", self.module, self.name)
+    }
+}
+
+/// The entry a module publishes for one of its values: the nullary bridge another module calls in
+/// place of holding a copy of the value (ADR-0074).
+///
+/// Not the value's own body — `body` here is a reference to the value and nothing else, a call
+/// reaching [`Reaches::Value`], written the same way any other reach to it is. Present for exactly
+/// the values a module publishes; a value it keeps has no entry, because nothing outside the module
+/// may call through one.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ValueEntry {
+    pub value: ValueRef,
+    pub body: Node,
+}
+
+/// What the method a value runs as is handed: another value its root region names, already built.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Handover {
+    pub parameter: String,
+    #[serde(rename = "type")]
+    pub ty: Ty,
+    /// The value this handover carries, split the same way [`Value`]'s own identity is.
+    pub carries: ValueRef,
+}
+
+/// The module and the name of a value, apart — what a `value_symbol` is built from.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct ValueRef {
+    pub module: String,
+    pub name: String,
+}
+
+impl ValueRef {
+    /// What a reference to this value in the document says, which is the two halves joined the
+    /// one way.
+    pub fn declared(&self) -> String {
+        format!("{}.{}", self.module, self.name)
+    }
 }
 
 /// What an object defines under a behavior's name: a body of {@link Core}, or a composition of
@@ -565,8 +647,19 @@ pub enum Node {
 pub enum Reaches {
     /// A definition the calling module holds, which is a copy of its own.
     Helper { declared: String },
-    /// A value that runs in the module that declares it, wherever it is named.
-    Value { declared: String },
+    /// A value that runs where it is declared, and this module is that module: a call reaching the
+    /// method this object runs the value as. Split identity, and not `declared` joined the way
+    /// [`Helper`](Reaches::Helper)'s and [`Behavior`](Reaches::Behavior)'s are — `value_symbol` is
+    /// built from the two apart, and this side must not split a joined spelling back up to get
+    /// there.
+    Value { module: String, name: String },
+    /// A value another module declares, reached through the entry that module publishes for it —
+    /// never a method of the emitting module. Its own tag and not [`Value`](Reaches::Value): the
+    /// two are different runtime semantics (one runs here, once, in this object; the other calls
+    /// out to whoever the declaring module's object is), and collapsing them here would hand the
+    /// half that lowers a call it cannot tell apart without asking again what only the checker
+    /// already knew.
+    PublishedValue { module: String, name: String },
     /// A behavior, whether this program answers it or whoever links the object does.
     Behavior { declared: String },
     /// An operation the language itself implements.
