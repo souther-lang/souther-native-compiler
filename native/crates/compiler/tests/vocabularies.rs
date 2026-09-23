@@ -19,7 +19,7 @@
 
 use serde::Deserialize;
 use souther_native_driver::transport::{
-    AbortKind, DeclaredBy, Op, Prim, Publication, TRANSPORT_VERSION,
+    AbortKind, DeclaredBy, LanguageCase, LeafScalar, Op, Prim, Publication, TRANSPORT_VERSION,
 };
 
 /// The document the writer wrote, and the one its own test holds it to.
@@ -36,6 +36,8 @@ struct Vocabularies {
     publication: Vec<Publication>,
     declaredby: Vec<DeclaredBy>,
     abort: Vec<AbortKind>,
+    leafscalar: Vec<LeafScalar>,
+    languagecase: Vec<LanguageCase>,
 }
 
 fn read() -> Vocabularies {
@@ -134,6 +136,40 @@ fn every_abort_kind_is_read_as_the_abort_kind_it_names() {
             AbortKind::DivisionByZero,
             AbortKind::RequiredFormHasNoPlace,
             AbortKind::InvalidBounds,
+        ]
+    );
+}
+
+#[test]
+fn every_leaf_scalar_is_read_as_the_scalar_it_names() {
+    assert_eq!(
+        read().leafscalar,
+        vec![
+            LeafScalar::String,
+            LeafScalar::Int,
+            LeafScalar::Bool,
+            LeafScalar::Decimal,
+            LeafScalar::Date,
+            LeafScalar::Time,
+            LeafScalar::DateTime,
+            LeafScalar::Instant,
+        ]
+    );
+}
+
+#[test]
+fn every_case_the_language_gives_is_read_as_the_case_it_names() {
+    assert_eq!(
+        read().languagecase,
+        vec![
+            LanguageCase::Some,
+            LanguageCase::None,
+            LanguageCase::DivisionByZero,
+            LanguageCase::NotANumber,
+            LanguageCase::NotADate,
+            LanguageCase::NotATime,
+            LanguageCase::NotWhole,
+            LanguageCase::NotAFiniteDecimal,
         ]
     );
 }

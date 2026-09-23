@@ -18,7 +18,7 @@ use serde::Deserialize;
 
 /// What this side reads. A document written to say anything else is refused rather than read as
 /// much of as happens to parse.
-pub const TRANSPORT_VERSION: u32 = 8;
+pub const TRANSPORT_VERSION: u32 = 9;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -68,7 +68,7 @@ pub enum Declaration {
         module: String,
         name: String,
         by: DeclaredBy,
-        fields: Vec<String>,
+        fields: Vec<Field>,
         /// How many clauses every construction of this type owes. Nothing here checks one, so a
         /// type that states any is one no value can be built of yet.
         invariants: usize,
@@ -77,14 +77,14 @@ pub enum Declaration {
         module: String,
         name: String,
         by: DeclaredBy,
-        fields: Vec<String>,
+        fields: Vec<Field>,
         invariants: usize,
     },
     Unit {
         module: String,
         name: String,
         by: DeclaredBy,
-        fields: Vec<String>,
+        fields: Vec<Field>,
         invariants: usize,
     },
     /// A sum is never built. What it says is which types stand as its cases, and a case may be a
@@ -98,7 +98,8 @@ pub enum Declaration {
         module: String,
         name: String,
         by: DeclaredBy,
-        cases: Vec<String>,
+        cases: Vec<Case>,
+        form: AlternativesForm,
     },
 }
 
@@ -141,7 +142,7 @@ impl Declaration {
         match self {
             Declaration::Product { fields, .. }
             | Declaration::Newtype { fields, .. }
-            | Declaration::Unit { fields, .. } => fields.iter().position(|it| it == field),
+            | Declaration::Unit { fields, .. } => fields.iter().position(|it| it.name == field),
             Declaration::Sum { .. } => None,
         }
     }
@@ -340,7 +341,7 @@ pub enum Routing {
     Always,
     /// Only where the running value is one of `accepted`. Anything else has left the main line,
     /// and the composition answers with it rather than offering it to what follows.
-    OnCases { accepted: Vec<String> },
+    OnCases { accepted: Vec<Case> },
 }
 
 /// Whether the module that declares a behavior publishes it under that name, or keeps it.
@@ -383,8 +384,8 @@ pub struct Target {
     pub module: String,
     pub name: String,
     pub is: Answers,
-    pub takes: Vec<Ty>,
-    pub answers: Ty,
+    pub inputs: Vec<BoundaryInput>,
+    pub output: BoundaryOutput,
 }
 
 impl Target {
@@ -392,7 +393,225 @@ impl Target {
     pub fn declared(&self) -> String {
         format!("{}.{}", self.module, self.name)
     }
+
+    /// What it takes, read off what each parameter can arrive as. Every boundary shape stands for
+    /// a type, so this answers for all of them; whether a value of one can be laid out here is
+    /// asked of the type afterwards, and is a different question.
+    pub fn takes(&self) -> Vec<Ty> {
+        self.inputs.iter().map(BoundaryInput::ty).collect()
+    }
+
+    /// What it answers, read off what the answer can leave as.
+    pub fn answers(&self) -> Ty {
+        self.output.ty()
+    }
 }
+
+/// One of the closed set of scalars a boundary writes as themselves.
+#[derive(Debug, Deserialize, PartialEq, Eq, Clone, Copy)]
+pub enum LeafScalar {
+    #[serde(rename = "STRING")]
+    String,
+    #[serde(rename = "INT")]
+    Int,
+    #[serde(rename = "BOOL")]
+    Bool,
+    #[serde(rename = "DECIMAL")]
+    Decimal,
+    #[serde(rename = "DATE")]
+    Date,
+    #[serde(rename = "TIME")]
+    Time,
+    #[serde(rename = "DATETIME")]
+    DateTime,
+    #[serde(rename = "INSTANT")]
+    Instant,
+}
+
+impl LeafScalar {
+    pub fn prim(self) -> Prim {
+        match self {
+            LeafScalar::String => Prim::String,
+            LeafScalar::Int => Prim::Int,
+            LeafScalar::Bool => Prim::Bool,
+            LeafScalar::Decimal => Prim::Decimal,
+            LeafScalar::Date => Prim::Date,
+            LeafScalar::Time => Prim::Time,
+            LeafScalar::DateTime => Prim::DateTime,
+            LeafScalar::Instant => Prim::Instant,
+        }
+    }
+}
+
+/// What a parameter can arrive as, as the checker settled it.
+#[derive(Debug, Deserialize, PartialEq, Eq, Clone)]
+#[serde(tag = "is", rename_all = "lowercase", deny_unknown_fields)]
+pub enum BoundaryInput {
+    Scalar { scalar: LeafScalar },
+    Nominal { declared: String },
+    ListOf { element: Box<BoundaryInput> },
+    SetOf { element: Box<BoundaryInput> },
+    MapOf { key: MapKey, value: Box<BoundaryInput> },
+}
+
+impl BoundaryInput {
+    pub fn ty(&self) -> Ty {
+        match self {
+            BoundaryInput::Scalar { scalar } => Ty::Prim { prim: scalar.prim() },
+            BoundaryInput::Nominal { declared } => Ty::Declared { declared: declared.clone() },
+            BoundaryInput::ListOf { element } => Ty::List { list: Box::new(element.ty()) },
+            BoundaryInput::SetOf { element } => Ty::Set { set: Box::new(element.ty()) },
+            BoundaryInput::MapOf { key, value } => Ty::Map {
+                map: MapTy { key: Box::new(key.ty()), value: Box::new(value.ty()) },
+            },
+        }
+    }
+}
+
+/// What an answer can leave as, as the checker settled it.
+#[derive(Debug, Deserialize, PartialEq, Eq, Clone)]
+#[serde(tag = "is", rename_all = "lowercase", deny_unknown_fields)]
+pub enum BoundaryOutput {
+    Scalar { scalar: LeafScalar },
+    Nominal { declared: String },
+    ListOf { element: Box<BoundaryOutput> },
+    SetOf { element: Box<BoundaryOutput> },
+    MapOf { key: MapKey, value: Box<BoundaryOutput> },
+    /// A union nobody named: the type exactly as its members were written, beside the cases the
+    /// boundary descended to, which are not the same answer.
+    Cases {
+        #[serde(rename = "type")]
+        ty: Ty,
+        cases: Vec<Case>,
+        form: AlternativesForm,
+    },
+}
+
+impl BoundaryOutput {
+    pub fn ty(&self) -> Ty {
+        match self {
+            BoundaryOutput::Scalar { scalar } => Ty::Prim { prim: scalar.prim() },
+            BoundaryOutput::Nominal { declared } => Ty::Declared { declared: declared.clone() },
+            BoundaryOutput::ListOf { element } => Ty::List { list: Box::new(element.ty()) },
+            BoundaryOutput::SetOf { element } => Ty::Set { set: Box::new(element.ty()) },
+            BoundaryOutput::MapOf { key, value } => Ty::Map {
+                map: MapTy { key: Box::new(key.ty()), value: Box::new(value.ty()) },
+            },
+            BoundaryOutput::Cases { ty, .. } => ty.clone(),
+        }
+    }
+}
+
+/// What a boundary map's key is written as.
+#[derive(Debug, Deserialize, PartialEq, Eq, Clone)]
+#[serde(tag = "is", rename_all = "lowercase", deny_unknown_fields)]
+pub enum MapKey {
+    Text,
+    Date,
+    Time,
+    DateTime,
+    Instant,
+    NamedKey { declared: String },
+}
+
+impl MapKey {
+    pub fn ty(&self) -> Ty {
+        match self {
+            MapKey::Text => Ty::Prim { prim: Prim::String },
+            MapKey::Date => Ty::Prim { prim: Prim::Date },
+            MapKey::Time => Ty::Prim { prim: Prim::Time },
+            MapKey::DateTime => Ty::Prim { prim: Prim::DateTime },
+            MapKey::Instant => Ty::Prim { prim: Prim::Instant },
+            MapKey::NamedKey { declared } => Ty::Declared { declared: declared.clone() },
+        }
+    }
+}
+
+/// How a set of alternatives travels. Both keys of a discriminated form cross, so nothing on
+/// this side spells either of them.
+#[derive(Debug, Deserialize, PartialEq, Eq, Clone)]
+#[serde(tag = "is", rename_all = "lowercase", deny_unknown_fields)]
+pub enum AlternativesForm {
+    Enumeration,
+    Discriminated { tag: String, contents: String },
+}
+
+/// What a field carries across the boundary, as the check derived it for where it stands.
+#[derive(Debug, Deserialize, PartialEq, Eq, Clone)]
+#[serde(tag = "is", rename_all = "lowercase", deny_unknown_fields)]
+pub enum CodecShape {
+    Scalar { scalar: LeafScalar },
+    Named { declared: String },
+    ListOf { element: Box<CodecShape> },
+    SetOf { element: Box<CodecShape> },
+    MapOf { key: MapKey, value: Box<CodecShape> },
+    OptionOf { present: Box<CodecShape> },
+}
+
+/// A field of a declaration and what it carries across the boundary, held together.
+#[derive(Debug, Deserialize, PartialEq, Eq, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct Field {
+    pub name: String,
+    pub codec: CodecShape,
+}
+
+/// Which case a name is: one a module declares, a primitive standing as a case, or one the
+/// language gives. The identity only — how a case is written is read off what it reaches.
+#[derive(Debug, Deserialize, PartialEq, Eq, Clone)]
+#[serde(tag = "is", rename_all = "lowercase", deny_unknown_fields)]
+pub enum Case {
+    Declared { declared: String },
+    Primitive { prim: Prim },
+    Language { case: LanguageCase },
+}
+
+impl Case {
+    pub fn spelt(&self) -> String {
+        match self {
+            Case::Declared { declared } => declared.clone(),
+            Case::Primitive { prim } => prim.spelt().to_string(),
+            Case::Language { case } => case.spelt().to_string(),
+        }
+    }
+}
+
+/// The cases the language itself gives, a closed set.
+#[derive(Debug, Deserialize, PartialEq, Eq, Clone, Copy)]
+pub enum LanguageCase {
+    #[serde(rename = "SOME")]
+    Some,
+    #[serde(rename = "NONE")]
+    None,
+    #[serde(rename = "DIVISION_BY_ZERO")]
+    DivisionByZero,
+    #[serde(rename = "NOT_A_NUMBER")]
+    NotANumber,
+    #[serde(rename = "NOT_A_DATE")]
+    NotADate,
+    #[serde(rename = "NOT_A_TIME")]
+    NotATime,
+    #[serde(rename = "NOT_WHOLE")]
+    NotWhole,
+    #[serde(rename = "NOT_A_FINITE_DECIMAL")]
+    NotAFiniteDecimal,
+}
+
+impl LanguageCase {
+    pub fn spelt(self) -> &'static str {
+        match self {
+            LanguageCase::Some => "Some",
+            LanguageCase::None => "None",
+            LanguageCase::DivisionByZero => "DivisionByZero",
+            LanguageCase::NotANumber => "NotANumber",
+            LanguageCase::NotADate => "NotADate",
+            LanguageCase::NotATime => "NotATime",
+            LanguageCase::NotWhole => "NotWhole",
+            LanguageCase::NotAFiniteDecimal => "NotAFiniteDecimal",
+        }
+    }
+}
+
 
 /// How a behavior comes to answer.
 #[derive(Debug, Deserialize, PartialEq, Eq, Clone, Copy)]
@@ -482,7 +701,7 @@ pub enum Ty {
     Declared { declared: String },
     /// Several declared types, any one of which a value here may be. Each of them says which type
     /// it is, so a union is written nowhere at run time: what holds it is what holds one of them.
-    Union { union: Vec<String> },
+    Union { union: Vec<Case> },
     Option { option: Box<Ty> },
     Tuple { tuple: Vec<Ty> },
     /// A function value: what it takes and what it answers, nothing about what a value of it is
@@ -493,6 +712,16 @@ pub enum Ty {
         #[serde(rename = "fn")]
         fn_: FnSignature,
     },
+    List { list: Box<Ty> },
+    Set { set: Box<Ty> },
+    Map { map: MapTy },
+}
+
+#[derive(Debug, Deserialize, PartialEq, Eq, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct MapTy {
+    pub key: Box<Ty>,
+    pub value: Box<Ty>,
 }
 
 /// What a function type takes and what it answers, nested under `"fn"` rather than written as
@@ -511,7 +740,7 @@ impl Ty {
         match self {
             Ty::Prim { prim } => prim.spelt().to_string(),
             Ty::Declared { declared } => declared.clone(),
-            Ty::Union { union } => union.join(" | "),
+            Ty::Union { union } => union.iter().map(Case::spelt).collect::<Vec<_>>().join(" | "),
             Ty::Option { option } => format!("an Option of {}", option.spelt()),
             Ty::Tuple { tuple } => format!("a tuple of {} members", tuple.len()),
             Ty::Fn { fn_ } => format!(
@@ -519,6 +748,9 @@ impl Ty {
                 fn_.takes.iter().map(Ty::spelt).collect::<Vec<_>>().join(", "),
                 fn_.answers.spelt()
             ),
+            Ty::List { list } => format!("a List of {}", list.spelt()),
+            Ty::Set { set } => format!("a Set of {}", set.spelt()),
+            Ty::Map { map } => format!("a Map from {} to {}", map.key.spelt(), map.value.spelt()),
         }
     }
 }
@@ -760,7 +992,7 @@ pub enum Selects {
     /// The value's own type is one of these. The atoms are the leaves the checker resolved the
     /// case to, so a case that is a sum arrives as the several types it stands for — and each of
     /// them by the key that reaches its declaration, which is where its identity is.
-    Which { atoms: Vec<String> },
+    Which { atoms: Vec<Case> },
     Held,
     Nothing,
 }

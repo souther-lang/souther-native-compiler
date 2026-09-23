@@ -27,7 +27,7 @@ use closures::{ClosureSites, Site};
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use transport::{
-    AbortKind, Answers, Arm, Declaration, DeclaredBy, Definition, Node, Op, Prim, Program,
+    Case, AbortKind, Answers, Arm, Declaration, DeclaredBy, Definition, Node, Op, Prim, Program,
     Publication, Reaches, Routing, Selects, Stage, TRANSPORT_VERSION, Target, Ty,
 };
 
@@ -253,7 +253,7 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
     let mut entries: HashMap<String, FuncId> = HashMap::new();
     for target in &program.behaviors {
         let symbol = behavior_symbol(&target.module, &target.name);
-        let signature = signature_over(&target.takes, &target.answers, call_conv)?;
+        let signature = signature_over(&target.takes(), &target.answers(), call_conv)?;
         let linkage = match target.is {
             // Defined here, so what the table carries for it is this object's answer about a name
             // the declaring module has already decided. A body or a composition with no such
@@ -445,8 +445,8 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
             match local {
                 Definition::Body { declared: behavior_name, body, .. } => {
                     let target = targets.named(behavior_name)?;
-                    let takes = &target.takes;
-                    let signature = signature_over(&target.takes, &target.answers, call_conv)?;
+                    let takes = &target.takes();
+                    let signature = signature_over(&target.takes(), &target.answers(), call_conv)?;
                     let id = reachable.of_behavior_named(behavior_name)?;
                     context.clear();
                     context.func = Function::with_name_signature(UserFuncName::default(), signature);
@@ -477,7 +477,7 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
                     ..
                 } => {
                     let target = targets.named(behavior_name)?;
-                    let signature = signature_over(&target.takes, &target.answers, call_conv)?;
+                    let signature = signature_over(&target.takes(), &target.answers(), call_conv)?;
                     let id = reachable.of_behavior_named(behavior_name)?;
                     context.clear();
                     context.func = Function::with_name_signature(UserFuncName::default(), signature);
@@ -494,7 +494,7 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
                     define_composed(
                         &mut context.func,
                         &mut shapes,
-                        target.takes.len(),
+                        target.takes().len(),
                         stages,
                         frontend,
                         &lowering,
@@ -618,12 +618,12 @@ fn agrees_with_its_target(
     match (target.is, local) {
         (Answers::Body, Definition::Body { .. }) => Ok(()),
         (Answers::Composed, Definition::Composed { answers, stages, .. }) => {
-            if answers != &target.answers {
+            if answers != &target.answers() {
                 bail!(
                     "{name} answers {} as a composition and {} at the target that reaches it: \
                      the two halves disagree about what it answers",
                     answers.spelt(),
-                    target.answers.spelt()
+                    target.answers().spelt()
                 );
             }
             let first = stages.first().ok_or_else(|| {
@@ -637,26 +637,26 @@ fn agrees_with_its_target(
                 );
             }
             let leads = targets.named(&first.behavior)?;
-            if leads.takes != target.takes {
+            if leads.takes() != target.takes() {
                 bail!(
                     "{name} takes {} and its first stage {} takes {}: a composition takes \
                      whatever its first stage takes, and the two halves disagree about what \
                      that is",
-                    spelt(&target.takes),
+                    spelt(&target.takes()),
                     first.behavior,
-                    spelt(&leads.takes)
+                    spelt(&leads.takes())
                 );
             }
             for stage in stages {
                 let reached = targets.named(&stage.behavior)?;
-                if stage.answers != reached.answers {
+                if stage.answers != reached.answers() {
                     bail!(
                         "{}'s stage naming {} answers {} on the wire and {} at the target it \
                          reaches: the two halves disagree",
                         name,
                         stage.behavior,
                         stage.answers.spelt(),
-                        reached.answers.spelt()
+                        reached.answers().spelt()
                     );
                 }
             }
@@ -686,7 +686,7 @@ fn running_a_row(
     call_conv: CallConv,
 ) -> Result<ir::Signature> {
     let target = targets.named(&format!("{module}.{behavior}"))?;
-    signature_over(&[], &target.answers, call_conv)
+    signature_over(&[], &target.answers(), call_conv)
 }
 
 /// What the object makes reachable, from what the module says together with what the object is
@@ -1117,8 +1117,23 @@ fn lifted_signature(takes: &[Ty], answers: &Ty, call_conv: CallConv) -> Result<i
 /// is decided by giving it a width here.
 fn machine_type(ty: &Ty) -> Result<types::Type> {
     match ty {
-        Ty::Declared { .. } | Ty::Union { .. } | Ty::Option { .. } | Ty::Tuple { .. } => {
-            Ok(POINTER)
+        Ty::Declared { .. } | Ty::Option { .. } | Ty::Tuple { .. } => Ok(POINTER),
+        // What holds a union holds one of its members, and says which by the token at the front of
+        // it. A primitive or a case the language gives carries no token, so a union with one among
+        // its members has no representation here yet: the members would not say which they are.
+        Ty::Union { union } => match union.iter().find(|it| !matches!(it, Case::Declared { .. })) {
+            None => Ok(POINTER),
+            Some(case) => Err(not_lowered(format!(
+                "a value of {}, whose case {} carries no token to say which case it is",
+                ty.spelt(),
+                case.spelt()
+            ))),
+        },
+        // A collection is a value with a layout to design, and none is designed yet. Read whole
+        // off the wire all the same: whether a type crosses and whether it can be laid out here
+        // are two questions, and only this one is this backend's.
+        Ty::List { .. } | Ty::Set { .. } | Ty::Map { .. } => {
+            Err(not_lowered(format!("a value of type {}", ty.spelt())))
         }
         // A flat closure: one pointer, the same as every other compound value. Slot 0 holds the
         // lifted function's code address and every slot after it a capture — see `closures` — but
@@ -1151,7 +1166,7 @@ fn machine_type(ty: &Ty) -> Result<types::Type> {
 ///
 /// Said here, where the signature is declared, because that is the one place the two scopes meet.
 fn crosses_objects(target: &Target) -> Result<()> {
-    for ty in target.takes.iter().chain([&target.answers]) {
+    for ty in target.takes().iter().chain([&target.answers()]) {
         crosses_object(&format!("{}.{} takes or answers", target.module, target.name), ty)?;
     }
     Ok(())
@@ -1217,8 +1232,10 @@ fn means_the_same_elsewhere(ty: &Ty) -> bool {
         Ty::Declared { .. } => true,
         // Written nowhere at run time: what holds a union holds one of its members, and each of
         // those says which type it is.
-        Ty::Union { .. } => true,
+        Ty::Union { union } => union.iter().all(|it| matches!(it, Case::Declared { .. })),
         Ty::Option { option } => means_the_same_elsewhere(option),
+        // No layout, so nothing another object could read the same way.
+        Ty::List { .. } | Ty::Set { .. } | Ty::Map { .. } => false,
         Ty::Tuple { tuple } => tuple.iter().all(means_the_same_elsewhere),
         // Unconditionally, and not by asking whether its parameters and its answer do: what a
         // closure's pointer holds — a code address, and after it whatever it captured — is a
@@ -2121,13 +2138,19 @@ fn is_one_of_declared_cases(
     lowering: &Lowering,
     module: &mut ObjectModule,
     value: ir::Value,
-    cases: &[String],
+    cases: &[Case],
 ) -> Result<ir::Value> {
     let flags = TRUSTED;
     let which = builder.ins().load(POINTER, flags, value, WHICH as i32);
     let mut any: Option<ir::Value> = None;
     for case in cases {
-        let expected = tag_of(builder, lowering, module, case)?;
+        let Case::Declared { declared } = case else {
+            return Err(not_lowered(format!(
+                "a test for the case {}, which carries no token to compare",
+                case.spelt()
+            )));
+        };
+        let expected = tag_of(builder, lowering, module, declared)?;
         let same = builder.ins().icmp(IntCC::Equal, which, expected);
         any = Some(match any {
             None => same,
