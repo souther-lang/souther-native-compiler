@@ -20,6 +20,13 @@
 //!   are both free in the inner block and nowhere else; the outer's own capture list carries the
 //!   outer parameter `a` forward for the inner block's sake alone, since nothing in the outer's own
 //!   body reads it except by handing it to the inner closure.
+//! - `handed_over`: every behavior above builds and applies its own closure in the one generated
+//!   function its own body lowers to. This is the one shape that hands a closure to a *different*
+//!   generated function and applies it there: `apply_n` is a recursive helper — the one shape this
+//!   language leaves un-inlined as a method of its own (a function type cannot cross a behavior's
+//!   own declared boundary at all, E1311, so a helper's own parameter is how this is reached in
+//!   practice) — taking `f` as an ordinary machine parameter and calling `f(x)` inside a body that
+//!   never built the closure, then recursing with the same `f` handed on again.
 
 use souther_native_driver::object_for;
 use std::fs;
@@ -50,6 +57,7 @@ extern uint32_t with_struct(int8_t, int64_t *, int64_t, int64_t *) __asm__("PREF
 extern uint32_t aborting(int8_t, int64_t, int64_t *) __asm__("PREFIXsouther2.closures.aborting");
 extern uint32_t adder(int64_t, int8_t, int64_t, int64_t *) __asm__("PREFIXsouther2.closures.adder");
 extern uint32_t nested(int64_t, int8_t, int8_t, int64_t *) __asm__("PREFIXsouther2.closures.nested");
+extern uint32_t handed_over(int8_t, int64_t, int64_t *) __asm__("PREFIXsouther2.closures.handed_over");
 
 int main(int argc, char **argv) {
     if (argc != 2) {
@@ -83,6 +91,10 @@ int main(int argc, char **argv) {
         status = nested(2, 1, 0, &out);
     } else if (strcmp(which, "nested_false") == 0) {
         status = nested(2, 0, 1, &out);
+    } else if (strcmp(which, "handed_over_true") == 0) {
+        status = handed_over(1, 10, &out);
+    } else if (strcmp(which, "handed_over_false") == 0) {
+        status = handed_over(0, 10, &out);
     } else {
         return 2;
     }
@@ -165,6 +177,20 @@ fn a_closure_nested_inside_another_closure_carries_the_outer_scope_all_the_way_i
     assert_eq!(answered(&run(&built, "nested_true_false")).value, Some(1200));
     // c1 = false: outer = x -> x; outer(5) = 5, whatever a and c2 are
     assert_eq!(answered(&run(&built, "nested_false")).value, Some(5));
+}
+
+/// A closure handed over as an ordinary machine parameter to a *different* generated function
+/// (`apply_n`, a recursive helper) and applied there, three times over via that helper's own
+/// recursion — not built and applied inside the one function that built it, the way every closure
+/// above is. `signature_over`'s `Ty::Fn -> POINTER` mapping is exercised here as a plain parameter
+/// type on an otherwise-ordinary local definition, not only by the closure's own site machinery.
+#[test]
+fn a_closure_handed_over_as_a_parameter_is_applied_by_the_function_it_was_handed_to() {
+    let (_swept, built) = build();
+    // f = y -> y + 1; apply_n(f, 3, 10) = f(f(f(10))) = 13
+    assert_eq!(answered(&run(&built, "handed_over_true")).value, Some(13));
+    // f = y -> y * 2; apply_n(f, 3, 10) = f(f(f(10))) = 80
+    assert_eq!(answered(&run(&built, "handed_over_false")).value, Some(80));
 }
 
 fn build() -> (TempDir, PathBuf) {

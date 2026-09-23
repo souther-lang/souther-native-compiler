@@ -29,12 +29,21 @@ import static org.assertj.core.api.Assertions.assertThat;
  * capture list: what a block reaches outside its own boundary is this backend's own question,
  * answered in {@code souther_native_driver::closures}, not the checker's to state and not this
  * writer's to project.
+ *
+ * <p>Every behavior but the last builds and applies its own closure in the one generated function
+ * its own body lowers to. {@code handed_over} is the exception: a function type cannot cross a
+ * behavior's own declared boundary (E1311), so the way this language actually hands one to a
+ * different generated function is a helper's own parameter — a helper survives as a method of its
+ * own, rather than being inlined at its call site, exactly where it recurses (see
+ * {@code CheckedHelper}'s own javadoc), so {@code apply_n} is written {@code partial} and calls
+ * itself. That makes {@code f} cross as an ordinary machine parameter of {@code apply_n}'s own
+ * generated function, applied inside a body that never built it.
  */
 class AFunctionValueCrossesWholeWithNoCaptureListTest {
 
     private static final String MODULE = """
             module closures exposing (
-                no_capture, with_struct, aborting, adder, nested, Box
+                no_capture, with_struct, aborting, adder, nested, handed_over, Box
             )
 
             data Box = { n: Int }
@@ -44,6 +53,7 @@ class AFunctionValueCrossesWholeWithNoCaptureListTest {
             behavior aborting : (c: Bool, x: Int) -> Int
             behavior adder : (a: Int, c: Bool, x: Int) -> Int
             behavior nested : (a: Int, c1: Bool, c2: Bool) -> Int
+            behavior handed_over : (c: Bool, x: Int) -> Int
 
             let no_capture (c, x) = {
                 let f = if c then (y) -> y + 1 else (y) -> y - 1
@@ -74,6 +84,14 @@ class AFunctionValueCrossesWholeWithNoCaptureListTest {
                     }
                     else (x) -> x
                 outer(5)
+            }
+
+            partial let apply_n (f: (Int) -> Int, n: Int, x: Int): Int =
+                if n <= 0 then x else apply_n(f, n - 1, f(x))
+
+            let handed_over (c, x) = {
+                let f: (Int) -> Int = if c then (y) -> y + 1 else (y) -> y * 2
+                apply_n(f, 3, x)
             }
             """;
 
