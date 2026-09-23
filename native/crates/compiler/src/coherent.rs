@@ -31,6 +31,21 @@
 //!
 //! So a document that disagrees anywhere is never reported as a program this backend is behind on,
 //! whichever of its bodies happened to be read first.
+//!
+//! What is held is what the checker's own objects hold and the document still states both sides
+//! of: what a module owns (`CheckedModule`: its helpers, its values, entries for those values, the
+//! behaviors it declares), that every name a type or a reach writes is one the document carries,
+//! that a name can stand in a symbol, what every operator node answers whatever it is written
+//! over, and every relation between a node's type and what its value is made from. What is not
+//! held, because the document does not carry the checker's side of it:
+//!
+//! - which pairs an operator may be written over, and what it makes of two different ones
+//!   (souther-lang/souther#1919). A pair the checker would refuse and one this backend has no
+//!   lowering for are both refused as not lowered;
+//! - where a value is let stand as a wider type. That is asked of [`Declared::fits`], which copies
+//!   the part of the checker's rule for the types laid out here (souther-lang/souther#1916);
+//! - what the writer drops: which values a module publishes beyond the entries it has, what a row
+//!   expects, what a kernel call settled.
 
 use crate::closures::ClosureSites;
 use crate::index;
@@ -40,6 +55,7 @@ use crate::transport::{
 };
 use crate::{Declared, Targets, not_lowered, spelt};
 use anyhow::{Result, anyhow, bail};
+use souther_native_abi::{spells_a_module, spells_a_name};
 use std::collections::HashMap;
 
 /// A document every relation of which holds, and what reading it built.
@@ -69,24 +85,46 @@ impl<'a> Coherent<'a> {
         let mut locals: HashMap<&str, &Definition> = HashMap::new();
         for written in &program.modules {
             for definition in &written.definitions {
-                index::once(&mut locals, definition.declared(), definition, || {
-                    format!(
-                        "two local definitions are both written {}",
-                        definition.declared()
-                    )
+                let name = definition.declared();
+                // A module defines its own behaviors and no other module's.
+                let target = targets.named(name)?;
+                if target.module != written.name {
+                    bail!(
+                        "{} defines {name}, which {} declares: a module defines the behaviors it \
+                         declares",
+                        written.name,
+                        target.module
+                    );
+                }
+                index::once(&mut locals, name, definition, || {
+                    format!("two local definitions are both written {name}")
                 })?;
             }
         }
-        // A name defined here from both sides: what a target says a local definition is (below,
-        // exhaustively over the local definitions), and that a target saying it is defined here
-        // has one at all.
         for target in &program.behaviors {
-            let declared = target.declared();
+            let name = target.declared();
+            if !spells_a_module(&target.module) || !spells_a_name(&target.name) {
+                bail!("a behavior is written {name}, which no symbol can carry");
+            }
+            for ty in target.takes().iter().chain([&target.answers()]) {
+                declared.resolves(&name, ty)?;
+            }
+            // A name defined here from both sides: what a target says a local definition is
+            // (below, exhaustively over the local definitions), and that a target saying it is
+            // defined here has one at all.
             if matches!(target.is, Answers::Body | Answers::Composed)
-                && !locals.contains_key(declared.as_str())
+                && !locals.contains_key(name.as_str())
+            {
+                bail!("{name} answers with a local definition no module of this document carries");
+            }
+            // Implemented by another build, which is a module this document does not build.
+            if target.is == Answers::Elsewhere
+                && reached.modules.contains_key(target.module.as_str())
             {
                 bail!(
-                    "{declared} answers with a local definition no module of this document carries"
+                    "{name} is implemented by another build, and its module {} is one this \
+                     document builds",
+                    target.module
                 );
             }
         }
@@ -201,8 +239,11 @@ impl Owed {
     }
 }
 
-/// Every definition a call can reach by name, by the key the call writes it under.
+/// Every definition a call can reach by name, by the key the call writes it under, and what each
+/// module of the document owns.
 struct Reached<'a> {
+    /// The modules this document builds, by name.
+    modules: HashMap<&'a str, ()>,
     /// A helper, by the module holding the copy and the name it was declared under.
     helpers: HashMap<(&'a str, &'a str), &'a Held>,
     /// A value's home, by the module it runs in and its joined name.
@@ -213,70 +254,82 @@ struct Reached<'a> {
 }
 
 impl<'a> Reached<'a> {
-    /// Refusing a module, a helper a module holds, a value, an entry or a row written twice: each
-    /// is reached by the name it is written under, and a second one under the same name would be
-    /// checked or compiled in place of the first.
+    /// What each module owns, as `CheckedModule` holds it to: a helper it holds once; a value it
+    /// declares, once, and not also as a helper; an entry for a value it builds, once; and a row
+    /// once at each place. Each is reached by the name it is written under and by the module that
+    /// owns it, so a second one under the name, or one under a module that does not own it, would
+    /// be compiled where the checker put nothing.
     fn of(program: &'a Program) -> Result<Self> {
         let mut reached = Reached {
+            modules: HashMap::new(),
             helpers: HashMap::new(),
             values: HashMap::new(),
             entries: HashMap::new(),
         };
-        let mut modules = HashMap::new();
         let mut rows = HashMap::new();
         for written in &program.modules {
-            index::once(&mut modules, written.name.as_str(), (), || {
-                format!("two modules are both written {}", written.name)
+            let module = written.name.as_str();
+            if !spells_a_module(module) {
+                bail!("a module is written {module}, which no symbol can carry");
+            }
+            index::once(&mut reached.modules, module, (), || {
+                format!("two modules are both written {module}")
             })?;
             for held in &written.helpers {
                 index::once(
                     &mut reached.helpers,
-                    (written.name.as_str(), held.declared.as_str()),
+                    (module, held.declared.as_str()),
                     held,
-                    || {
-                        format!(
-                            "{} holds two helpers both written {}",
-                            written.name, held.declared
-                        )
-                    },
+                    || format!("{module} holds two helpers both written {}", held.declared),
                 )?;
             }
             for value in &written.values {
+                let declared = value.declared();
+                // A value runs in the module that declares it and in no other (ADR-0074).
+                if value.module != module {
+                    bail!(
+                        "{module} builds the value {declared}, which {} declares: a value runs in \
+                         the module that declares it",
+                        value.module
+                    );
+                }
+                if !spells_a_name(&value.name) {
+                    bail!("a value is written {declared}, which no symbol can carry");
+                }
+                if reached.helpers.contains_key(&(module, declared.as_str())) {
+                    bail!("{module} holds {declared} both as a helper and as a value");
+                }
                 index::once(
                     &mut reached.values,
-                    (written.name.as_str(), value.declared()),
+                    (module, declared.clone()),
                     value,
-                    || {
-                        format!(
-                            "{} builds two values both written {}",
-                            written.name,
-                            value.declared()
-                        )
-                    },
+                    || format!("{module} builds two values both written {declared}"),
                 )?;
             }
             for entry in &written.entries {
+                let declared = entry.value.declared();
+                if !reached.values.contains_key(&(module, declared.clone())) {
+                    bail!(
+                        "{module} publishes an entry for {declared}, which is not a value it \
+                         builds"
+                    );
+                }
                 index::once(
                     &mut reached.entries,
                     (entry.value.module.as_str(), entry.value.name.as_str()),
                     &entry.body,
-                    || {
-                        format!(
-                            "two entries are both written for {}",
-                            entry.value.declared()
-                        )
-                    },
+                    || format!("two entries are both written for {declared}"),
                 )?;
             }
             for example in &written.examples {
                 index::once(
                     &mut rows,
-                    (written.name.as_str(), example.behavior.as_str(), example.at),
+                    (module, example.behavior.as_str(), example.at),
                     (),
                     || {
                         format!(
-                            "{}.{} has two rows both written at {}",
-                            written.name, example.behavior, example.at
+                            "{module}.{} has two rows both written at {}",
+                            example.behavior, example.at
                         )
                     },
                 )?;
@@ -337,6 +390,10 @@ impl<'a> Walk<'_, 'a> {
     /// `node` read with each of `bindings` in force at its type, and whatever they shadowed put
     /// back afterwards.
     fn under(&mut self, bindings: Vec<(usize, Ty)>, node: &'a Node) -> Result<()> {
+        for (binding, ty) in &bindings {
+            self.declared
+                .resolves(&format!("{}: binding {binding}", self.owner), ty)?;
+        }
         let shadowed: Vec<(usize, Option<Ty>)> = bindings
             .into_iter()
             .map(|(binding, ty)| (binding, self.scope(binding, Some(ty))))
@@ -364,6 +421,7 @@ impl<'a> Walk<'_, 'a> {
     /// No arm standing for the rest: a node added upstream is a node whose value this has not
     /// yet said the source of, and the lowering would read its type on trust.
     fn node(&mut self, node: &'a Node) -> Result<()> {
+        self.declared.resolves(&self.owner, node.ty())?;
         let bool_ = Ty::Prim { prim: Prim::Bool };
         match node {
             Node::Int { ty, .. } => self.same(
@@ -500,6 +558,7 @@ impl<'a> Walk<'_, 'a> {
             } => {
                 self.node(operand)?;
                 self.same("a negation", ty, operand.ty(), "what it negates")?;
+                self.number("a negation", ty)?;
                 // A literal's sign is folded, and nothing else about one can leave the range.
                 if !matches!(operand.as_ref(), Node::Int { .. }) {
                     if aborts.is_empty() {
@@ -709,15 +768,17 @@ impl<'a> Walk<'_, 'a> {
         leaves(self.declared, &format!("{}: {what}", self.owner), cases)
     }
 
-    /// An operator against what it is written over and what it says it answers.
+    /// An operator against what it says it answers.
     ///
-    /// What the checker lets an operator be written over is its own rule, and nothing here states
-    /// it again. What is held is the other side: pairs the language never writes an operator over
-    /// are refused as the two halves disagreeing (a truth ordered, a number compared with text,
-    /// text added), and what the lowering of an operator answers — a truth for a comparison, the
-    /// type of its operands for arithmetic over one type — is what the node says it answers.
-    /// Pairs the language does write and this backend has no lowering for pass here, and are
-    /// refused as not lowered where the lowering meets them.
+    /// Only what holds of every operator node the checker builds, whatever it was written over:
+    /// a comparison and a truth operator answer a truth, and a truth operator asks two; `/` answers
+    /// a `Rational`; and `+`, `-`, `*` and `++` over two operands of one type answer that type.
+    /// Which pairs an operator may be written over, and what it makes of two different ones, is
+    /// `ArithmeticCheck`'s and `BinaryElaborator`'s to say, and the checked tree does not record
+    /// what they said (souther-lang/souther#1919). Answering it again here would be a copy of the
+    /// checker's rule, wrong at its edges, so a pair the checker would refuse is not told apart
+    /// here from one this backend has no lowering for: both are refused as not lowered where the
+    /// lowering meets them.
     fn operator(
         &mut self,
         op: Op,
@@ -728,16 +789,6 @@ impl<'a> Walk<'_, 'a> {
     ) -> Result<()> {
         let truth = Ty::Prim { prim: Prim::Bool };
         let what = format!("what {} answers", op.spelt());
-        let never = |this: &Self| -> Result<()> {
-            bail!(
-                "{}: {} is written over {} and {}, which the language never writes it over: the \
-                 two halves disagree",
-                this.owner,
-                op.spelt(),
-                left.spelt(),
-                right.spelt()
-            )
-        };
         match op {
             Op::And | Op::Or => {
                 self.same("a side of a truth operator", left, &truth, "what it asks")?;
@@ -745,54 +796,49 @@ impl<'a> Walk<'_, 'a> {
                 self.same(&what, ty, &truth, "what the operator answers")
             }
             Op::Eq | Op::Ne | Op::Lt | Op::Le | Op::Gt | Op::Ge => {
-                self.same(&what, ty, &truth, "what the operator answers")?;
-                let orders = !matches!(op, Op::Eq | Op::Ne);
-                match (left, right) {
-                    (Ty::Prim { prim }, Ty::Prim { prim: also }) if prim == also => {
-                        if orders && *prim == Prim::Bool {
-                            return never(self);
-                        }
-                        Ok(())
-                    }
-                    (Ty::Declared { .. } | Ty::Union { .. }, _)
-                    | (_, Ty::Declared { .. } | Ty::Union { .. }) => Ok(()),
-                    (Ty::Option { .. }, Ty::Option { .. })
-                    | (Ty::Tuple { .. }, Ty::Tuple { .. })
-                        if !orders =>
-                    {
-                        Ok(())
-                    }
-                    _ => never(self),
-                }
+                self.same(&what, ty, &truth, "what the operator answers")
             }
-            Op::Add | Op::Sub | Op::Mul | Op::Div => {
-                let number = |ty: &Ty| {
-                    matches!(
-                        ty,
-                        Ty::Prim {
-                            prim: Prim::Int | Prim::Decimal | Prim::Rational
-                        }
-                    )
-                };
-                if !number(left) || !number(right) {
-                    return never(self);
+            Op::Div => self.same(
+                &what,
+                ty,
+                &Ty::Prim {
+                    prim: Prim::Rational,
+                },
+                "what a quotient is",
+            ),
+            Op::Add | Op::Sub | Op::Mul | Op::Concat if left == right => {
+                if op != Op::Concat {
+                    self.number(&what, ty)?;
                 }
-                if left == right && op != Op::Div {
-                    self.same(&what, ty, left, "what its operands are")?;
-                    if matches!(left, Ty::Prim { prim: Prim::Int }) {
-                        self.overflows(&format!("{} over two Ints", op.spelt()), aborts)?;
-                    }
+                self.same(&what, ty, left, "what its operands are")?;
+                if op != Op::Concat && matches!(left, Ty::Prim { prim: Prim::Int }) {
+                    self.overflows(&format!("{} over two Ints", op.spelt()), aborts)?;
                 }
                 Ok(())
             }
-            Op::Concat => match (left, right) {
-                (Ty::Prim { prim: Prim::String }, Ty::Prim { prim: Prim::String }) => {
-                    self.same(&what, ty, left, "what its operands are")
-                }
-                (Ty::List { .. }, Ty::List { .. }) => Ok(()),
-                _ => never(self),
-            },
+            Op::Add | Op::Sub | Op::Mul => self.number(&what, ty),
+            Op::Concat => Ok(()),
         }
+    }
+
+    /// Refuses arithmetic answering what is not a number: whatever it is written over, a sum, a
+    /// difference, a product or a negation answers an `Int`, a `Decimal` or a `Rational`
+    /// (`AbortSites` holds every one it classifies to that). Arithmetic over a newtype crosses as a
+    /// construction over arithmetic on what it wraps.
+    fn number(&self, what: &str, ty: &Ty) -> Result<()> {
+        if !matches!(
+            ty,
+            Ty::Prim {
+                prim: Prim::Int | Prim::Decimal | Prim::Rational
+            }
+        ) {
+            bail!(
+                "{}: {what} is typed {}, where arithmetic answers a number",
+                self.owner,
+                ty.spelt()
+            );
+        }
+        Ok(())
     }
 
     /// Refuses a site that can leave its type's range and does not name exactly one reason for
@@ -944,6 +990,12 @@ impl<'a> Walk<'_, 'a> {
                 )
             }
             Reaches::PublishedValue { module, name } => {
+                if !spells_a_module(module) || !spells_a_name(name) {
+                    bail!(
+                        "{}: a call of {module}.{name}, which no symbol can carry",
+                        self.owner
+                    );
+                }
                 self.arity(
                     &format!("a call of `{module}`'s published value {name}"),
                     arguments.len(),

@@ -26,8 +26,8 @@ use cranelift::object::{ObjectBuilder, ObjectModule};
 use souther_native_abi::{
     ALLOCATE, ANSWERED, HELD, NOTHING, SLOT, STRING_COMPARE, STRING_CONCAT, Status, TEXT_BYTES,
     TEXT_LENGTH, TOKEN, WHICH, behavior_symbol, boundary_symbol, example_symbol, field_at,
-    held_symbol, member_at, room_for_fields, room_for_held, room_for_members, room_for_text,
-    type_symbol, value_symbol,
+    held_symbol, home_symbol, member_at, room_for_fields, room_for_held, room_for_members,
+    room_for_text, spells_a_module, spells_a_name, type_symbol, value_symbol,
 };
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
@@ -309,7 +309,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
             // whether outside this object's other modules or another object altogether. A caller
             // elsewhere goes through the entry declared below instead.
             let takes = handover_types(value);
-            let symbol = held_symbol(name, &value.declared());
+            let symbol = home_symbol(&value.module, &value.name);
             let signature = signature_over(&takes, value.answers(), call_conv)?;
             let id = accepted(module.declare_function(&symbol, Linkage::Local, &signature));
             reachable.value(name, &value.declared(), id);
@@ -942,11 +942,65 @@ impl<'a> Declared<'a> {
         }
         let declared = Declared { shapes };
         for declaration in declarations {
+            let key = declaration.key();
+            if !spells_a_module(declaration.module()) || !spells_a_name(declaration.name()) {
+                bail!("a declaration is written {key}, which no symbol can carry");
+            }
+            // What the language itself declares is a set of alternatives or a single value
+            // (`CheckedProgramAssembler`), and nothing it declares is built from fields.
+            if declaration.by() == DeclaredBy::TheLanguage
+                && !matches!(
+                    declaration,
+                    Declaration::Sum { .. } | Declaration::Unit { .. }
+                )
+            {
+                bail!("{key} is declared by the language and has fields, which none of its has");
+            }
+            for field in declaration.fields() {
+                declared.resolves(&format!("{key}'s field {}", field.name), &field.codec.ty())?;
+            }
             if let Declaration::Sum { cases, form, .. } = declaration {
-                declared.settled(&declaration.key(), cases, form)?;
+                declared.settled(&key, cases, form)?;
             }
         }
         Ok(declared)
+    }
+
+    /// Refuses a type naming a declaration no declaration of the document is, at any depth: every
+    /// key a type names is one the checker declared, and the document carries every declaration
+    /// anything in it names.
+    fn resolves(&self, owner: &str, ty: &Ty) -> Result<()> {
+        let named = |declared: &str| {
+            self.shape(declared)
+                .map(|_| ())
+                .map_err(|missing| anyhow!("{owner}: {missing}"))
+        };
+        match ty {
+            Ty::Prim { .. } => Ok(()),
+            Ty::Declared { declared } => named(declared),
+            Ty::Union { union } => {
+                for case in union {
+                    if let Case::Declared { declared } = case {
+                        named(declared)?;
+                    }
+                }
+                Ok(())
+            }
+            Ty::Option { option } => self.resolves(owner, option),
+            Ty::List { list } => self.resolves(owner, list),
+            Ty::Set { set } => self.resolves(owner, set),
+            Ty::Map { map } => {
+                self.resolves(owner, &map.key)?;
+                self.resolves(owner, &map.value)
+            }
+            Ty::Tuple { tuple } => tuple.iter().try_for_each(|it| self.resolves(owner, it)),
+            Ty::Fn { fn_ } => {
+                for taken in &fn_.takes {
+                    self.resolves(owner, taken)?;
+                }
+                self.resolves(owner, &fn_.answers)
+            }
+        }
     }
 
     /// Refuses a set of alternatives the checker could not have settled, as the two halves
@@ -2498,12 +2552,12 @@ fn compare(
         (Ty::Prim { prim }, Ty::Prim { prim: also }) if prim == also => match prim {
             Prim::Int => Ok(builder.ins().icmp(as_a_whole_number(op), a, b)),
             // Two truths are equal or they are not, and nothing orders them. `<` over a `Bool` is
-            // not a program the language admits, so one arriving is the two halves disagreeing
-            // about what they are saying to each other rather than this backend being behind.
+            // one the checker never writes, and without its decision on the node it is refused the
+            // way every other pair this has no lowering for is (`unlowered_operator`).
             Prim::Bool => match op {
                 Op::Eq => Ok(builder.ins().icmp(IntCC::Equal, a, b)),
                 Op::Ne => Ok(builder.ins().icmp(IntCC::NotEqual, a, b)),
-                _ => unreachable!("`Coherent` refused a truth written under an ordering"),
+                _ => Err(unlowered_operator(op, &left, &right)),
             },
             // One call and then the six operators over what it answered. What text is ordered by
             // is the runtime's to say and it is a walk, not a comparison of the two addresses and
@@ -2545,8 +2599,8 @@ fn compare(
         ))),
         // An optional and a tuple have equality and no order: what the language orders is a number,
         // text, an amount, a moment, an enumeration, and a newtype over one of those. So `==` here
-        // is a comparison still to be written, and `<` is the two halves disagreeing — the same
-        // pair of answers a `Bool` gets, and for the same reason.
+        // is a comparison still to be written, and `<` is one the checker never writes, refused
+        // as a `Bool`'s is.
         (Ty::Option { .. }, Ty::Option { .. }) | (Ty::Tuple { .. }, Ty::Tuple { .. }) => match op {
             Op::Eq | Op::Ne => Err(not_lowered(format!(
                 "a comparison of {} against {}, which is what they hold compared rather than \
@@ -2554,12 +2608,9 @@ fn compare(
                 left.ty.spelt(),
                 right.ty.spelt()
             ))),
-            _ => unreachable!("`Coherent` refused an optional or a tuple under an ordering"),
+            _ => Err(unlowered_operator(op, &left, &right)),
         },
-        // Two values the language does not compare at all: two primitives that are not one
-        // primitive, or a tuple against an optional. Only values of one type are compared, and the
-        // two ways that is widened — a bare literal and a case value — are both answered above.
-        _ => unreachable!("`Coherent` refused a comparison of what the language does not compare"),
+        _ => Err(unlowered_operator(op, &left, &right)),
     }
 }
 
@@ -2604,33 +2655,38 @@ fn arithmetic(
                 Op::Mul => product(builder, abort, overflow_status(aborts), a, b),
                 _ => unreachable!("reached from a sum, a difference or a product and nothing else"),
             },
-            Prim::Decimal | Prim::Rational => Err(not_lowered(format!(
-                "{} over two values of type {}",
-                op.spelt(),
-                prim.spelt()
-            ))),
-            Prim::Bool
+            Prim::Decimal
+            | Prim::Rational
+            | Prim::Bool
             | Prim::String
             | Prim::Date
             | Prim::Time
             | Prim::DateTime
             | Prim::Instant
-            | Prim::Raw => unreachable!("`Coherent` refused arithmetic over what is not a number"),
+            | Prim::Raw => Err(unlowered_operator(op, &left, &right)),
         },
-        // Two numbers of different types, which the checker answers a `Rational` for.
-        _ => Err(not_lowered(format!(
-            "{} over {} and {}",
-            op.spelt(),
-            left.ty.spelt(),
-            right.ty.spelt()
-        ))),
+        _ => Err(unlowered_operator(op, &left, &right)),
     }
+}
+
+/// An operator over a pair this backend has no lowering for.
+///
+/// Not told apart from a pair the checker would never have written: which pairs an operator is
+/// written over, and what it makes of them, is the checker's rule, and the checked tree does not
+/// record what it decided (souther-lang/souther#1919). Telling the two apart here would take a
+/// copy of that rule.
+fn unlowered_operator(op: Op, left: &Held, right: &Held) -> NotLowered {
+    not_lowered(format!(
+        "{} over {} and {}, which this backend has no lowering for",
+        op.spelt(),
+        left.ty.spelt(),
+        right.ty.spelt()
+    ))
 }
 
 /// Two values joined, which the language writes over two strings and over two lists.
 ///
-/// Two strings are joined here. Two lists are a join still to be written, and anything else
-/// `Coherent` refused.
+/// Two strings are joined here. Anything else is refused as not lowered.
 fn join(
     builder: &mut FunctionBuilder,
     lowering: &Lowering,
@@ -2654,14 +2710,9 @@ fn join(
             | Prim::Time
             | Prim::DateTime
             | Prim::Instant
-            | Prim::Raw => unreachable!("`Coherent` refused a join of what is not text"),
+            | Prim::Raw => Err(unlowered_operator(Op::Concat, &left, &right)),
         },
-        // Two lists, which is the only other join the language writes.
-        _ => Err(not_lowered(format!(
-            "a join of {} and {}",
-            left.ty.spelt(),
-            right.ty.spelt()
-        ))),
+        _ => Err(unlowered_operator(Op::Concat, &left, &right)),
     }
 }
 

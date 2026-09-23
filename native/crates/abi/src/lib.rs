@@ -39,6 +39,22 @@
 /// a call is made or what its status means changes what a value of one looks like.
 const ABI: &str = "2";
 
+/// Whether a module's name can stand in a symbol: it carries no `$`, which is what every symbol
+/// below is split on. A module's name carries dots.
+///
+/// Asked here and by whoever reads the names a symbol is built from, so that a name the symbols
+/// cannot spell is refused where it is read and not where a symbol is being built from it.
+pub fn spells_a_module(name: &str) -> bool {
+    !name.is_empty() && !name.contains('$')
+}
+
+/// Whether the name a module gives a behavior, a value or a type can stand in a symbol: it
+/// carries neither a dot, since the module's own name does and the last segment is this, nor a
+/// `$`, which the symbols are split on.
+pub fn spells_a_name(name: &str) -> bool {
+    !name.is_empty() && !name.contains('.') && !name.contains('$')
+}
+
 /// The symbol a behavior is reached by.
 ///
 /// `souther<abi>.<module>.<behavior>`, with the module written as it is declared. Both ELF and
@@ -51,11 +67,17 @@ const ABI: &str = "2";
 ///
 /// # Panics
 ///
-/// Where the behavior's name carries a dot.
+/// Where the module's name or the behavior's does not stand in a symbol ([`spells_a_module`],
+/// [`spells_a_name`]).
 pub fn behavior_symbol(module: &str, behavior: &str) -> String {
     assert!(
-        !behavior.contains('.'),
-        "a behavior's name carries no dot, and the symbol's last segment is the behavior: {behavior}"
+        spells_a_module(module),
+        "a module's name carries no dollar, and the symbol is split on one: {module}"
+    );
+    assert!(
+        spells_a_name(behavior),
+        "a behavior's name carries neither dot nor dollar, and it is the symbol's last \
+         segment: {behavior}"
     );
     format!("souther{ABI}.{module}.{behavior}")
 }
@@ -70,12 +92,38 @@ pub fn behavior_symbol(module: &str, behavior: &str) -> String {
 /// Nothing outside the object reaches one of these, so what this has to be is unambiguous here and
 /// nowhere else. The `$` is what keeps it so: a module's name carries dots and a declaration's
 /// carries them too, and neither carries this.
+///
+/// # Panics
+///
+/// Where the carrier's name does not stand in a symbol ([`spells_a_module`]).
 pub fn held_symbol(carrier: &str, declared: &str) -> String {
     assert!(
-        !carrier.contains('$'),
+        spells_a_module(carrier),
         "a module's name carries no dollar, and the symbol is split on one: {carrier}"
     );
     format!("souther{ABI}.{carrier}${declared}")
+}
+
+/// The symbol a value's home is reached by, inside the object of the module that declares it.
+///
+/// Not [`held_symbol`], although both are a module's own and nothing outside the object reaches
+/// either: a helper and a value are two kinds of definition, and one spelling for both would make
+/// a helper and a value of one name one symbol. The language never names the two alike, and the
+/// symbols do not rely on it.
+///
+/// # Panics
+///
+/// Where the module's name or the value's does not stand in a symbol.
+pub fn home_symbol(module: &str, value: &str) -> String {
+    assert!(
+        spells_a_module(module),
+        "a module's name carries no dollar, and the symbol is split on one: {module}"
+    );
+    assert!(
+        spells_a_name(value),
+        "a value's name carries neither dollar nor dot, and the symbol is split on both: {value}"
+    );
+    format!("souther{ABI}.{module}$home${value}")
 }
 
 /// The symbol the entry a module publishes for one of its values is reached by.
@@ -83,8 +131,7 @@ pub fn held_symbol(carrier: &str, declared: &str) -> String {
 /// Not a value's own executable home: a value has exactly one, in the module that declares it
 /// (spec ADR-0074), and nothing outside that module ever reaches it directly — a call from
 /// elsewhere goes through this entry instead, which is why this alone, and not the home, needs a
-/// name a linker resolves. The home is this object's own business and is free to be named however
-/// [`held_symbol`] or a plain internal spelling already names a local definition.
+/// name a linker resolves. The home is this object's own business, named by [`home_symbol`].
 ///
 /// `souther<abi>.<module>$value$<name>`, carrying the ABI generation the same way
 /// [`behavior_symbol`] does: an entry is an ordinary call across an object boundary and a
@@ -98,11 +145,11 @@ pub fn held_symbol(carrier: &str, declared: &str) -> String {
 /// [`type_symbol`] gives.
 pub fn value_symbol(module: &str, value: &str) -> String {
     assert!(
-        !module.contains('$'),
+        spells_a_module(module),
         "a module's name carries no dollar, and the symbol is split on one: {module}"
     );
     assert!(
-        !value.contains('$') && !value.contains('.'),
+        spells_a_name(value),
         "a value's name carries neither dollar nor dot, and the symbol is split on both: {value}"
     );
     format!("souther{ABI}.{module}$value${value}")
@@ -149,11 +196,11 @@ pub fn example_symbol(module: &str, behavior: &str, at: usize) -> String {
 /// read on both.
 pub fn type_symbol(module: &str, name: &str) -> String {
     assert!(
-        !module.contains('$'),
+        spells_a_module(module),
         "a module's name carries no dollar, and the symbol is split on one: {module}"
     );
     assert!(
-        !name.contains('$') && !name.contains('.'),
+        spells_a_name(name),
         "a declared type's name carries neither dollar nor dot, and the symbol is split on \
          both: {name}"
     );
@@ -384,7 +431,7 @@ pub const ANSWERED: Status = 0;
 mod tests {
     use super::{
         FIRST_FIELD, SLOT, TOKEN, WHICH, behavior_symbol, boundary_symbol, example_symbol,
-        field_at, held_symbol, member_at, type_symbol, value_symbol,
+        field_at, held_symbol, home_symbol, member_at, type_symbol, value_symbol,
     };
 
     #[test]
@@ -403,7 +450,7 @@ mod tests {
     /// What the reading rests on. Were this admitted, `a.b` / `c` and `a` / `b.c` would be spelt
     /// the same way, and a caller reaching one would reach the other.
     #[test]
-    #[should_panic(expected = "carries no dot")]
+    #[should_panic(expected = "neither dot nor dollar")]
     fn a_behavior_whose_name_carries_a_dot_is_refused() {
         let _ = behavior_symbol("a", "b.c");
     }
@@ -427,6 +474,11 @@ mod tests {
     }
 
     /// A row's entry is reached by neither the behavior's name nor another row's.
+    #[test]
+    fn a_helper_and_a_value_of_one_name_are_two_symbols() {
+        assert_ne!(held_symbol("m", "m.v"), home_symbol("m", "v"));
+    }
+
     #[test]
     fn each_row_of_a_behavior_is_its_own_symbol() {
         assert_eq!(

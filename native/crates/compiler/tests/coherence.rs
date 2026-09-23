@@ -685,20 +685,41 @@ fn another_builds_value_called_at_two_types_is_refused_before_anything_is_lowere
     is_the_halves_disagreeing(&calls(BOOL), "`other`'s published value v");
 }
 
-/// A truth ordered is not an operator the language writes, and is refused as that wherever in the
-/// document it stands, before a `Decimal` elsewhere is found to have no layout.
+/// A quotient is a `Rational` whatever it divides, so a `/` typed as anything else is refused as
+/// that, before the `Decimal` elsewhere is found to have no layout.
 #[test]
-fn an_operator_the_language_never_writes_is_refused_before_anything_is_lowered() {
-    let ordered = node(
-        "binary",
-        &format!(
-            r#""op":"LT","left":{},"right":{}"#,
-            truth(true),
-            truth(false)
-        ),
-        BOOL,
-    );
-    is_the_halves_disagreeing(&helpers(&[behind(), h(&[], &ordered)]), "m.h");
+fn a_quotient_is_a_rational() {
+    let divided = |ty: &str| {
+        node(
+            "binary",
+            &format!(r#""op":"DIV","left":{},"right":{}"#, int(1), int(2)),
+            ty,
+        )
+    };
+    is_the_halves_disagreeing(&helpers(&[behind(), h(&[], &divided(INT))]), "m.h");
+    is_the_halves_disagreeing(&helpers(&[behind(), h(&[], &divided(BOOL))]), "m.h");
+}
+
+/// Two numbers of two types: `Int + Rational` is one the checker writes and `Int + Decimal` is one
+/// it refuses. Neither has a lowering here, and which of the two a pair is would take the checker's
+/// decision, which the checked tree does not record (souther-lang/souther#1919); so both are not
+/// lowered, and neither is refused as something the checker could not have written.
+#[test]
+fn numbers_of_two_types_are_not_told_apart_until_the_checker_says() {
+    let rational = r#"{"prim":"RATIONAL"}"#;
+    for other in [DECIMAL, rational] {
+        let added = node(
+            "binary",
+            &format!(
+                r#""op":"ADD","left":{},"right":{}"#,
+                read(0, INT),
+                read(1, other)
+            ),
+            rational,
+        );
+        let refused = object_for(&helpers(&[h(&[INT, other], &added)])).expect_err("no lowering");
+        assert!(refused.downcast_ref::<NotLowered>().is_some(), "{refused}");
+    }
 }
 
 /// Arithmetic over two `Int`s can leave their range, and names the one reason it ends without a
@@ -786,4 +807,162 @@ fn a_sum_standing_as_a_case_of_a_sum_is_the_halves_disagreeing() {
         r#""cases":[{"is":"declared","declared":"m.A"},{"is":"declared","declared":"m.S"}]"#,
     );
     is_the_halves_disagreeing(&document, "m.S");
+}
+
+/// `m`'s values and entries replaced by those given.
+fn owning(document: &str, values: &[String], entries: &[String]) -> String {
+    for none in [r#""values":[]"#, r#""entries":[]"#] {
+        assert_eq!(
+            document.matches(none).count(),
+            1,
+            "one module to put them in"
+        );
+    }
+    document
+        .replace(
+            r#""values":[]"#,
+            &format!(r#""values":[{}]"#, values.join(",")),
+        )
+        .replace(
+            r#""entries":[]"#,
+            &format!(r#""entries":[{}]"#, entries.join(",")),
+        )
+}
+
+fn value(module: &str, name: &str) -> String {
+    format!(
+        r#"{{"module":"{module}","name":"{name}","handovers":[],"body":{}}}"#,
+        int(1)
+    )
+}
+
+fn entry(module: &str, name: &str) -> String {
+    let reaches = format!(r#"{{"is":"value","module":"{module}","name":"{name}"}}"#);
+    format!(
+        r#"{{"value":{{"module":"{module}","name":"{name}"}},"body":{}}}"#,
+        call(&reaches, &[], INT)
+    )
+}
+
+/// A value runs in the module that declares it and in no other (ADR-0074), so `m` building a value
+/// `other` declares would put a home in `m`'s object for what `m` does not own.
+#[test]
+fn a_module_builds_only_the_values_it_declares() {
+    reads_whole(&owning(
+        &helpers(&[behind()]).replace(&behind(), ""),
+        &[value("m", "v")],
+        &[],
+    ));
+    is_the_halves_disagreeing(
+        &owning(&helpers(&[behind()]), &[value("other", "v")], &[]),
+        "other.v",
+    );
+}
+
+/// An entry is for a value its module builds. One for a value `m` does not build, whatever its
+/// body answers, would export `m.v`'s symbol with nothing of `m`'s behind it.
+#[test]
+fn a_module_publishes_entries_only_for_the_values_it_builds() {
+    let answering = format!(
+        r#"{{"value":{{"module":"m","name":"v"}},"body":{}}}"#,
+        int(1)
+    );
+    reads_whole(&owning(
+        &helpers(&[]),
+        &[value("m", "v")],
+        &[entry("m", "v")],
+    ));
+    is_the_halves_disagreeing(&owning(&helpers(&[]), &[], &[answering]), "m.v");
+}
+
+/// A helper and a value are two kinds of definition, and a module holds none of one name as both.
+/// Refused as that, before anything is declared in the object.
+#[test]
+fn a_module_holds_no_name_as_both_a_helper_and_a_value() {
+    let document = owning(
+        &helpers(&[behind(), helper("m.v", &[], &int(1))]),
+        &[value("m", "v")],
+        &[],
+    );
+    is_the_halves_disagreeing(&document, "m.v");
+}
+
+/// A module defines the behaviors it declares. `m` defining `other.b` would put `other`'s behavior
+/// in `m`'s object.
+#[test]
+fn a_module_defines_only_the_behaviors_it_declares() {
+    let target = r#"{"module":"other","name":"b","is":"body","inputs":[],"output":{"is":"scalar","scalar":"INT"}}"#;
+    let body = format!(
+        r#"{{"is":"body","declared":"other.b","parameters":[],"publication":"kept","body":{}}}"#,
+        int(1)
+    );
+    is_the_halves_disagreeing(
+        &document(&[target.to_string()], &[behind()], &[body]),
+        "other.b",
+    );
+}
+
+/// A behavior another build implements is one of a module this document does not build.
+#[test]
+fn a_behavior_implemented_elsewhere_is_of_a_module_this_document_does_not_build() {
+    let target = |module: &str| {
+        format!(
+            r#"{{"module":"{module}","name":"b","is":"elsewhere","inputs":[],"output":{{"is":"scalar","scalar":"INT"}}}}"#
+        )
+    };
+    reads_whole(&document(&[target("other")], &[], &[]));
+    is_the_halves_disagreeing(&document(&[target("m")], &[behind()], &[]), "m.b");
+}
+
+/// What the language itself declares is a set of alternatives or a single value.
+#[test]
+fn the_language_declares_nothing_built_from_fields() {
+    let document = helpers(&[behind()]).replace(
+        r#"{"module":"m","name":"P","by":"amodule","is":"product""#,
+        r#"{"module":"m","name":"P","by":"thelanguage","is":"product""#,
+    );
+    is_the_halves_disagreeing(&document, "m.P");
+}
+
+/// Every declaration a type names, at any depth, is one the document carries: a field's codec, a
+/// node's type, a binding's.
+#[test]
+fn every_declaration_a_type_names_is_one_the_document_carries() {
+    let missing = r#"{"declared":"m.Missing"}"#;
+    let codec = helpers(&[behind()]).replace(
+        r#""codec":{"is":"named","declared":"m.S"}"#,
+        r#""codec":{"is":"named","declared":"m.Missing"}"#,
+    );
+    is_the_halves_disagreeing(&codec, "m.Missing");
+    let deep = option_of(&tuple_of(&[INT, missing]));
+    is_the_halves_disagreeing(
+        &helpers(&[behind(), h(&[&deep], &read(0, &deep))]),
+        "m.Missing",
+    );
+}
+
+/// A name a symbol cannot carry is refused where it is read, and not where a symbol is built from
+/// it, which would be after the document was held to be whole.
+#[test]
+fn a_name_no_symbol_can_carry_is_refused_where_it_is_read() {
+    let dotted_type = helpers(&[behind()]).replace(
+        r#"{"module":"m","name":"A","by":"amodule","is":"unit"}"#,
+        r#"{"module":"m","name":"A.x","by":"amodule","is":"unit"}"#,
+    );
+    is_the_halves_disagreeing(&dotted_type, "m.A.x");
+    let dollar_module =
+        helpers(&[behind()]).replace(r#""name":"m","helpers""#, r#""name":"m$","helpers""#);
+    is_the_halves_disagreeing(&dollar_module, "m$");
+    let dotted_behavior = r#"{"module":"other","name":"b.c","is":"elsewhere","inputs":[],"output":{"is":"scalar","scalar":"INT"}}"#;
+    is_the_halves_disagreeing(
+        &document(&[dotted_behavior.to_string()], &[behind()], &[]),
+        "other.b.c",
+    );
+}
+
+/// A negation answers a number, as every arithmetic does.
+#[test]
+fn a_negation_answers_a_number() {
+    let negated = node("neg", &format!(r#""operand":{}"#, read(0, BOOL)), BOOL);
+    is_the_halves_disagreeing(&helpers(&[behind(), h(&[BOOL], &negated)]), "a number");
 }
