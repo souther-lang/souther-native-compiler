@@ -18,15 +18,17 @@
 //! top-level body, the binding is simply a live value already in scope there. Which of those it is
 //! is not asked here — this only says what each site reaches, in the order it was first reached.
 //!
-//! A `Node::Block`'s own type, its own parameters and its own body's type are three statements of
-//! one fact on the wire, and `coherent` holds them to each other, with every read in the body held to
-//! the binder it reads, before this runs. So a capture's type read off a free read here is the type
-//! its binder was bound at. A document naming two sites under one `site` ordinal is refused here:
-//! `ProgramWriter` promises the number is document-wide unique, but a promise from the other
-//! language is not a check on this side of the wire, and the earlier site's plan would otherwise
-//! answer for both.
+//! These plans are made inside `coherent`, before it reads the bodies, and nothing here checks
+//! whether a block's own type, its parameters and its body's type agree, or whether a read is typed
+//! as its binder. `coherent` does, after this, and hands the plans on only for a document where
+//! every one of those holds. So a capture's type, which a plan takes off a free read, is the type
+//! its binder was bound at by the time anything lowers it. A document naming two sites under one
+//! `site` ordinal is refused here: `ProgramWriter` promises the number is document-wide unique, but
+//! a promise from the other language is not a check on this side of the wire, and the earlier
+//! site's plan would otherwise answer for both.
 
-use crate::transport::{Definition, FnSignature, Node, Parameter, Program, Ty};
+use crate::index;
+use crate::transport::{FnSignature, Node, Parameter, Program, Ty};
 use anyhow::{Result, bail};
 use std::collections::{BTreeMap, HashSet};
 
@@ -49,7 +51,8 @@ pub struct Site<'a> {
     pub parameters: &'a [Parameter],
     pub body: &'a Node,
     /// What this site takes and answers, unwrapped from the block's own `Ty::Fn` once, here. That
-    /// it agrees with `parameters` and with `body`'s own type is established by `coherent`.
+    /// it agrees with `parameters` and with `body`'s own type is held by `coherent` before the plan
+    /// leaves it.
     pub signature: &'a FnSignature,
     /// In first-reached order — the order a closure's slots are laid out in, and the order the
     /// lifted function reads them back in.
@@ -65,24 +68,8 @@ pub struct ClosureSites<'a> {
 impl<'a> ClosureSites<'a> {
     pub fn of_program(program: &'a Program) -> Result<Self> {
         let mut sites = ClosureSites::default();
-        for written in &program.modules {
-            for held in &written.helpers {
-                Planner::new(&mut sites, &written.name).free(&held.body, &mut HashSet::new())?;
-            }
-            for value in &written.values {
-                Planner::new(&mut sites, &written.name).free(&value.body, &mut HashSet::new())?;
-            }
-            for entry in &written.entries {
-                Planner::new(&mut sites, &written.name).free(&entry.body, &mut HashSet::new())?;
-            }
-            for local in &written.definitions {
-                // A composition names no `Core` of its own — its stages reach other behaviors by
-                // name, never by a function value the body holds — so nothing here is a closure
-                // site, and only `Body` is walked.
-                if let Definition::Body { body, .. } = local {
-                    Planner::new(&mut sites, &written.name).free(body, &mut HashSet::new())?;
-                }
-            }
+        for body in program.bodies() {
+            Planner::new(&mut sites, body.module).free(body.node, &mut HashSet::new())?;
         }
         Ok(sites)
     }
@@ -160,34 +147,25 @@ impl<'p, 'a> Planner<'p, 'a> {
                     );
                 };
 
-                let already_there = self
-                    .sites
-                    .by_site
-                    .insert(
-                        *site,
-                        Site {
-                            module: self.module,
-                            parameters,
-                            body,
-                            signature: fn_,
-                            captures: captures
-                                .iter()
-                                .map(|(binding, ty)| Capture {
-                                    binding: *binding,
-                                    ty: ty.clone(),
-                                })
-                                .collect(),
-                        },
-                    )
-                    .is_some();
-                if already_there {
-                    bail!(
-                        "two `Node::Block`s both claim closure site {site}: `ProgramWriter` \
-                         promises this number is unique across the whole document, and this reader \
-                         does not take that on trust — a duplicate would otherwise let the first \
-                         block's lifted function and captures silently answer for the second's too"
-                    );
-                }
+                let planned = Site {
+                    module: self.module,
+                    parameters,
+                    body,
+                    signature: fn_,
+                    captures: captures
+                        .iter()
+                        .map(|(binding, ty)| Capture {
+                            binding: *binding,
+                            ty: ty.clone(),
+                        })
+                        .collect(),
+                };
+                // `ProgramWriter` promises this number is unique across the whole document, and
+                // this reader does not take that on trust: a duplicate would let the first block's
+                // lifted function and captures answer for the second's too.
+                index::once(&mut self.sites.by_site, *site, planned, || {
+                    format!("two `Node::Block`s both claim closure site {site}")
+                })?;
 
                 for (binding, ty) in captures {
                     if !bound.contains(&binding) && seen.insert(binding) {

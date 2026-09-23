@@ -33,9 +33,10 @@
 //! whichever of its bodies happened to be read first.
 
 use crate::closures::ClosureSites;
+use crate::index;
 use crate::transport::{
-    Answers, Case, Definition, Held, Node, Op, Prim, Program, Reaches, Routing, Selects, Target,
-    Ty, Value,
+    AbortKind, Answers, Case, Definition, Held, Node, Op, Owner, Prim, Program, Reaches, Routing,
+    Selects, Target, Ty, Value,
 };
 use crate::{Declared, Targets, not_lowered, spelt};
 use anyhow::{Result, anyhow, bail};
@@ -63,66 +64,74 @@ impl<'a> Coherent<'a> {
         }
         let closures = ClosureSites::of_program(program)?;
 
+        let reached = Reached::of(program)?;
+
         let mut locals: HashMap<&str, &Definition> = HashMap::new();
         for written in &program.modules {
             for definition in &written.definitions {
-                if locals.insert(definition.declared(), definition).is_some() {
-                    bail!(
+                index::once(&mut locals, definition.declared(), definition, || {
+                    format!(
                         "two local definitions are both written {}",
                         definition.declared()
-                    );
-                }
+                    )
+                })?;
+            }
+        }
+        // A name defined here from both sides: what a target says a local definition is (below,
+        // exhaustively over the local definitions), and that a target saying it is defined here
+        // has one at all.
+        for target in &program.behaviors {
+            let declared = target.declared();
+            if matches!(target.is, Answers::Body | Answers::Composed)
+                && !locals.contains_key(declared.as_str())
+            {
+                bail!(
+                    "{declared} answers with a local definition no module of this document carries"
+                );
             }
         }
 
         let mut owed = Owed::default();
-        // From the local definition's side, exhaustively. The declaration loop in `object_for` asks
-        // the other direction — that a target answering `Body` or `Composed` has a local
-        // definition at all — which is existence and not kind; a target answering `Injected`,
-        // `Elsewhere` or `Unwritten` with a local definition under its name anyway never reaches
-        // that loop's arm for one.
         for (&name, &local) in &locals {
             let target = targets.named(name)?;
             agrees_with_its_target(name, target, local, &targets, &declared, &mut owed)?;
         }
 
-        let reached = Reached::of(program);
-        for written in &program.modules {
-            let mut read = Reading {
-                carrier: &written.name,
+        for body in program.bodies() {
+            let (owner, takes) = match body.owner {
+                Owner::Helper(held) => (held.declared.clone(), held.takes()),
+                Owner::Value(value) => (
+                    value.declared(),
+                    value.handovers.iter().map(|it| it.ty.clone()).collect(),
+                ),
+                Owner::Entry(entry) => (
+                    format!("the entry for {}", entry.value.declared()),
+                    Vec::new(),
+                ),
+                Owner::Definition(declared) => {
+                    (declared.to_string(), targets.named(declared)?.takes())
+                }
+                Owner::Example(example) => {
+                    let behavior = format!("{}.{}", body.module, example.behavior);
+                    let owner = format!("row {} of {behavior}", example.at);
+                    owed.fits(
+                        format!("{owner} answers what its behavior answers"),
+                        body.node.ty(),
+                        &targets.named(&behavior)?.answers(),
+                    );
+                    (owner, Vec::new())
+                }
+            };
+            Walk {
+                owner,
+                carrier: body.module,
                 targets: &targets,
                 declared: &declared,
                 reached: &reached,
+                bound: HashMap::new(),
                 owed: &mut owed,
-            };
-            for held in &written.helpers {
-                read.body(held.declared.clone(), held.takes(), &held.body)?;
             }
-            for value in &written.values {
-                let handed = value.handovers.iter().map(|it| it.ty.clone()).collect();
-                read.body(value.declared(), handed, &value.body)?;
-            }
-            for entry in &written.entries {
-                let owner = format!("the entry for {}", entry.value.declared());
-                read.body(owner, Vec::new(), &entry.body)?;
-            }
-            for local in &written.definitions {
-                if let Definition::Body { declared, body, .. } = local {
-                    let target = targets.named(declared)?;
-                    read.body(declared.clone(), target.takes(), body)?;
-                }
-            }
-            for example in &written.examples {
-                let behavior = format!("{}.{}", written.name, example.behavior);
-                let target = targets.named(&behavior)?;
-                let owner = format!("row {} of {behavior}", example.at);
-                read.body(owner.clone(), Vec::new(), &example.body)?;
-                read.owed.fits(
-                    format!("{owner} answers what its behavior answers"),
-                    example.body.ty(),
-                    &target.answers(),
-                );
-            }
+            .under(takes.into_iter().enumerate().collect(), body.node)?;
         }
 
         owed.settle(&declared)?;
@@ -144,6 +153,9 @@ struct Owed {
     /// What this backend has no lowering for, found while reading and refused only once nothing
     /// in the document disagrees.
     not_lowered: Vec<String>,
+    /// What a call of another build's published value stands at, by the value, as the first call
+    /// read says it: one declaration answers one way, so every other call is held to this.
+    published: HashMap<(String, String), Ty>,
 }
 
 struct Owing {
@@ -183,7 +195,7 @@ impl Owed {
             }
         }
         if let Some(first) = self.not_lowered.into_iter().chain(undecided).next() {
-            return Err(not_lowered(first));
+            return Err(not_lowered(first).into());
         }
         Ok(())
     }
@@ -201,55 +213,76 @@ struct Reached<'a> {
 }
 
 impl<'a> Reached<'a> {
-    fn of(program: &'a Program) -> Self {
+    /// Refusing a module, a helper a module holds, a value, an entry or a row written twice: each
+    /// is reached by the name it is written under, and a second one under the same name would be
+    /// checked or compiled in place of the first.
+    fn of(program: &'a Program) -> Result<Self> {
         let mut reached = Reached {
             helpers: HashMap::new(),
             values: HashMap::new(),
             entries: HashMap::new(),
         };
+        let mut modules = HashMap::new();
+        let mut rows = HashMap::new();
         for written in &program.modules {
+            index::once(&mut modules, written.name.as_str(), (), || {
+                format!("two modules are both written {}", written.name)
+            })?;
             for held in &written.helpers {
-                reached
-                    .helpers
-                    .insert((&written.name, &held.declared), held);
+                index::once(
+                    &mut reached.helpers,
+                    (written.name.as_str(), held.declared.as_str()),
+                    held,
+                    || {
+                        format!(
+                            "{} holds two helpers both written {}",
+                            written.name, held.declared
+                        )
+                    },
+                )?;
             }
             for value in &written.values {
-                reached
-                    .values
-                    .insert((&written.name, value.declared()), value);
+                index::once(
+                    &mut reached.values,
+                    (written.name.as_str(), value.declared()),
+                    value,
+                    || {
+                        format!(
+                            "{} builds two values both written {}",
+                            written.name,
+                            value.declared()
+                        )
+                    },
+                )?;
             }
             for entry in &written.entries {
-                reached
-                    .entries
-                    .insert((&entry.value.module, &entry.value.name), &entry.body);
+                index::once(
+                    &mut reached.entries,
+                    (entry.value.module.as_str(), entry.value.name.as_str()),
+                    &entry.body,
+                    || {
+                        format!(
+                            "two entries are both written for {}",
+                            entry.value.declared()
+                        )
+                    },
+                )?;
+            }
+            for example in &written.examples {
+                index::once(
+                    &mut rows,
+                    (written.name.as_str(), example.behavior.as_str(), example.at),
+                    (),
+                    || {
+                        format!(
+                            "{}.{} has two rows both written at {}",
+                            written.name, example.behavior, example.at
+                        )
+                    },
+                )?;
             }
         }
-        reached
-    }
-}
-
-/// What reading any body of one module needs.
-struct Reading<'w, 'a> {
-    carrier: &'a str,
-    targets: &'w Targets<'a>,
-    declared: &'w Declared<'a>,
-    reached: &'w Reached<'a>,
-    owed: &'w mut Owed,
-}
-
-impl<'a> Reading<'_, 'a> {
-    /// A top-level body, its parameters bound under the numbers their positions say.
-    fn body(&mut self, owner: String, takes: Vec<Ty>, body: &'a Node) -> Result<()> {
-        Walk {
-            owner,
-            carrier: self.carrier,
-            targets: self.targets,
-            declared: self.declared,
-            reached: self.reached,
-            bound: takes.into_iter().enumerate().collect(),
-            owed: self.owed,
-        }
-        .node(body)
+        Ok(reached)
     }
 }
 
@@ -301,15 +334,31 @@ impl<'a> Walk<'_, 'a> {
         Ok(())
     }
 
-    /// `node` read with `binding` in force at `ty`, and whatever it shadowed back afterwards.
-    fn under(&mut self, binding: usize, ty: &Ty, node: &'a Node) -> Result<()> {
-        let shadowed = self.bound.insert(binding, ty.clone());
+    /// `node` read with each of `bindings` in force at its type, and whatever they shadowed put
+    /// back afterwards.
+    fn under(&mut self, bindings: Vec<(usize, Ty)>, node: &'a Node) -> Result<()> {
+        let shadowed: Vec<(usize, Option<Ty>)> = bindings
+            .into_iter()
+            .map(|(binding, ty)| (binding, self.scope(binding, Some(ty))))
+            .collect();
         let read = self.node(node);
-        match shadowed {
-            Some(before) => self.bound.insert(binding, before),
-            None => self.bound.remove(&binding),
-        };
+        for (binding, before) in shadowed.into_iter().rev() {
+            self.scope(binding, before);
+        }
         read
+    }
+
+    /// `binding` in force at `ty`, or at nothing, answering what it was in force at before.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a binder shadows whatever an enclosing one bound under its number, on purpose, \
+                  and `under` puts it back when the scope closes"
+    )]
+    fn scope(&mut self, binding: usize, ty: Option<Ty>) -> Option<Ty> {
+        match ty {
+            Some(ty) => self.bound.insert(binding, ty),
+            None => self.bound.remove(&binding),
+        }
     }
 
     /// No arm standing for the rest: a node added upstream is a node whose value this has not
@@ -344,14 +393,25 @@ impl<'a> Walk<'_, 'a> {
                     "the binder",
                 )
             }
-            Node::Unit { declared, ty, .. } => self.same(
-                &format!("the unit {declared}"),
-                ty,
-                &Ty::Declared {
-                    declared: declared.clone(),
-                },
-                "what it names",
-            ),
+            Node::Unit { declared, ty, .. } => {
+                if !matches!(
+                    self.declared.shape(declared)?,
+                    crate::transport::Declaration::Unit { .. }
+                ) {
+                    bail!(
+                        "{}: {declared} is written as a unit's value and is not declared a unit",
+                        self.owner
+                    );
+                }
+                self.same(
+                    &format!("the unit {declared}"),
+                    ty,
+                    &Ty::Declared {
+                        declared: declared.clone(),
+                    },
+                    "what it names",
+                )
+            }
             Node::Construct {
                 declared,
                 values,
@@ -367,6 +427,16 @@ impl<'a> Walk<'_, 'a> {
                     "what it builds",
                 )?;
                 let shape = self.declared.shape(declared)?;
+                if !matches!(
+                    shape,
+                    crate::transport::Declaration::Product { .. }
+                        | crate::transport::Declaration::Newtype { .. }
+                ) {
+                    bail!(
+                        "{}: {declared} is constructed and is not declared with fields to build",
+                        self.owner
+                    );
+                }
                 if shape.field_count() != values.len() {
                     bail!(
                         "{}: {declared} is declared with {} fields and is built here from {}",
@@ -417,35 +487,35 @@ impl<'a> Walk<'_, 'a> {
                 left,
                 right,
                 ty,
-                ..
+                aborts,
             } => {
                 self.node(left)?;
                 self.node(right)?;
-                let (l, r) = (left.ty(), right.ty());
-                let what = format!("what {} answers", op.spelt());
-                match op {
-                    Op::And | Op::Or => {
-                        self.same("a side of a truth operator", l, &bool_, "what it asks")?;
-                        self.same("a side of a truth operator", r, &bool_, "what it asks")?;
-                        self.same(&what, ty, &bool_, "what the operator answers")
-                    }
-                    Op::Eq | Op::Ne | Op::Lt | Op::Le | Op::Gt | Op::Ge => {
-                        self.same(&what, ty, &bool_, "what the operator answers")
-                    }
-                    // What is added to what, and whether the two may differ, is the checker's; what
-                    // this holds is only what a lowering of two values of one type answers.
-                    Op::Add | Op::Sub | Op::Mul if l == r => {
-                        self.same(&what, ty, l, "what its operands are")
-                    }
-                    Op::Concat if matches!(l, Ty::Prim { prim: Prim::String }) && l == r => {
-                        self.same(&what, ty, l, "what its operands are")
-                    }
-                    Op::Add | Op::Sub | Op::Mul | Op::Div | Op::Concat => Ok(()),
-                }
+                self.operator(*op, left.ty(), right.ty(), ty, aborts)
             }
-            Node::Neg { operand, ty, .. } => {
+            Node::Neg {
+                operand,
+                ty,
+                aborts,
+            } => {
                 self.node(operand)?;
-                self.same("a negation", ty, operand.ty(), "what it negates")
+                self.same("a negation", ty, operand.ty(), "what it negates")?;
+                // A literal's sign is folded, and nothing else about one can leave the range.
+                if !matches!(operand.as_ref(), Node::Int { .. }) {
+                    if aborts.is_empty() {
+                        // souther-lang/souther#1878: the checker answers no reason for a negation,
+                        // and this backend does not answer one on its behalf.
+                        self.not_lowered(
+                            "a negation of something other than a literal, whose overflow this \
+                             backend does not yet trust program.abortsAt for — see \
+                             souther-lang/souther#1878"
+                                .to_string(),
+                        );
+                    } else {
+                        self.overflows("a negation", aborts)?;
+                    }
+                }
+                Ok(())
             }
             Node::Let {
                 binding,
@@ -462,7 +532,7 @@ impl<'a> Walk<'_, 'a> {
                     value.ty(),
                     binds,
                 );
-                self.under(*binding, binds, body)?;
+                self.under(vec![(*binding, binds.clone())], body)?;
                 self.fits("what a let answers", body.ty(), ty);
                 Ok(())
             }
@@ -486,6 +556,14 @@ impl<'a> Walk<'_, 'a> {
             } => {
                 self.node(subject)?;
                 for arm in arms {
+                    if arm.selects.is_empty() {
+                        bail!("{}: an arm tests for nothing", self.owner);
+                    }
+                    for selects in &arm.selects {
+                        if let Selects::Which { atoms } = selects {
+                            self.leaves("an arm", atoms)?;
+                        }
+                    }
                     match (arm.binding, &arm.binds) {
                         (None, _) => self.node(&arm.body)?,
                         (Some(_), None) => bail!(
@@ -494,7 +572,7 @@ impl<'a> Walk<'_, 'a> {
                         ),
                         (Some(binding), Some(binds)) => {
                             self.arm_binds(subject.ty(), &arm.selects, binds)?;
-                            self.under(binding, binds, &arm.body)?;
+                            self.under(vec![(binding, binds.clone())], &arm.body)?;
                         }
                     }
                     self.fits("what a match arm answers", arm.body.ty(), ty);
@@ -553,12 +631,12 @@ impl<'a> Walk<'_, 'a> {
                 reaches,
                 arguments,
                 ty,
-                ..
+                aborts,
             } => {
                 for argument in arguments {
                     self.node(argument)?;
                 }
-                self.call(reaches, arguments, ty)
+                self.call(reaches, arguments, ty, aborts)
             }
             Node::Block {
                 site,
@@ -579,21 +657,12 @@ impl<'a> Walk<'_, 'a> {
                     parameters.len(),
                     fn_.takes.len(),
                 )?;
-                let mut shadowed = Vec::with_capacity(parameters.len());
-                for (parameter, taken) in parameters.iter().zip(&fn_.takes) {
-                    shadowed.push((
-                        parameter.binding,
-                        self.bound.insert(parameter.binding, taken.clone()),
-                    ));
-                }
-                let read = self.node(body);
-                for (binding, before) in shadowed.into_iter().rev() {
-                    match before {
-                        Some(before) => self.bound.insert(binding, before),
-                        None => self.bound.remove(&binding),
-                    };
-                }
-                read?;
+                let bound = parameters
+                    .iter()
+                    .zip(&fn_.takes)
+                    .map(|(parameter, taken)| (parameter.binding, taken.clone()))
+                    .collect();
+                self.under(bound, body)?;
                 self.same(
                     &format!("what closure site {site} answers"),
                     &fn_.answers,
@@ -631,6 +700,114 @@ impl<'a> Walk<'_, 'a> {
                 Ok(())
             }
         }
+    }
+
+    /// Refuses a test naming no case, or a case that is a sum: what a value is tagged with is one
+    /// of the leaves a case resolved to, and the checker answers those, so a sum here would be a
+    /// test this side had to descend itself.
+    fn leaves(&self, what: &str, cases: &[Case]) -> Result<()> {
+        leaves(self.declared, &format!("{}: {what}", self.owner), cases)
+    }
+
+    /// An operator against what it is written over and what it says it answers.
+    ///
+    /// What the checker lets an operator be written over is its own rule, and nothing here states
+    /// it again. What is held is the other side: pairs the language never writes an operator over
+    /// are refused as the two halves disagreeing (a truth ordered, a number compared with text,
+    /// text added), and what the lowering of an operator answers — a truth for a comparison, the
+    /// type of its operands for arithmetic over one type — is what the node says it answers.
+    /// Pairs the language does write and this backend has no lowering for pass here, and are
+    /// refused as not lowered where the lowering meets them.
+    fn operator(
+        &mut self,
+        op: Op,
+        left: &Ty,
+        right: &Ty,
+        ty: &Ty,
+        aborts: &[AbortKind],
+    ) -> Result<()> {
+        let truth = Ty::Prim { prim: Prim::Bool };
+        let what = format!("what {} answers", op.spelt());
+        let never = |this: &Self| -> Result<()> {
+            bail!(
+                "{}: {} is written over {} and {}, which the language never writes it over: the \
+                 two halves disagree",
+                this.owner,
+                op.spelt(),
+                left.spelt(),
+                right.spelt()
+            )
+        };
+        match op {
+            Op::And | Op::Or => {
+                self.same("a side of a truth operator", left, &truth, "what it asks")?;
+                self.same("a side of a truth operator", right, &truth, "what it asks")?;
+                self.same(&what, ty, &truth, "what the operator answers")
+            }
+            Op::Eq | Op::Ne | Op::Lt | Op::Le | Op::Gt | Op::Ge => {
+                self.same(&what, ty, &truth, "what the operator answers")?;
+                let orders = !matches!(op, Op::Eq | Op::Ne);
+                match (left, right) {
+                    (Ty::Prim { prim }, Ty::Prim { prim: also }) if prim == also => {
+                        if orders && *prim == Prim::Bool {
+                            return never(self);
+                        }
+                        Ok(())
+                    }
+                    (Ty::Declared { .. } | Ty::Union { .. }, _)
+                    | (_, Ty::Declared { .. } | Ty::Union { .. }) => Ok(()),
+                    (Ty::Option { .. }, Ty::Option { .. })
+                    | (Ty::Tuple { .. }, Ty::Tuple { .. })
+                        if !orders =>
+                    {
+                        Ok(())
+                    }
+                    _ => never(self),
+                }
+            }
+            Op::Add | Op::Sub | Op::Mul | Op::Div => {
+                let number = |ty: &Ty| {
+                    matches!(
+                        ty,
+                        Ty::Prim {
+                            prim: Prim::Int | Prim::Decimal | Prim::Rational
+                        }
+                    )
+                };
+                if !number(left) || !number(right) {
+                    return never(self);
+                }
+                if left == right && op != Op::Div {
+                    self.same(&what, ty, left, "what its operands are")?;
+                    if matches!(left, Ty::Prim { prim: Prim::Int }) {
+                        self.overflows(&format!("{} over two Ints", op.spelt()), aborts)?;
+                    }
+                }
+                Ok(())
+            }
+            Op::Concat => match (left, right) {
+                (Ty::Prim { prim: Prim::String }, Ty::Prim { prim: Prim::String }) => {
+                    self.same(&what, ty, left, "what its operands are")
+                }
+                (Ty::List { .. }, Ty::List { .. }) => Ok(()),
+                _ => never(self),
+            },
+        }
+    }
+
+    /// Refuses a site that can leave its type's range and does not name exactly one reason for
+    /// ending without a value: the checker and this backend would disagree about what kind of site
+    /// it is, and answering a wrong value because the checker said none would be worse.
+    fn overflows(&self, what: &str, aborts: &[AbortKind]) -> Result<()> {
+        if aborts.len() != 1 {
+            bail!(
+                "{}: {what} may leave its type's range and names {} reasons for ending without a \
+                 value, where it has exactly one",
+                self.owner,
+                aborts.len()
+            );
+        }
+        Ok(())
     }
 
     /// What an arm reads the value it forks on as, against what reaches the arm.
@@ -687,7 +864,13 @@ impl<'a> Walk<'_, 'a> {
     }
 
     /// A call's type against what it reaches answers, and its arguments against what that takes.
-    fn call(&mut self, reaches: &Reaches, arguments: &[Node], ty: &Ty) -> Result<()> {
+    fn call(
+        &mut self,
+        reaches: &Reaches,
+        arguments: &[Node],
+        ty: &Ty,
+        aborts: &[AbortKind],
+    ) -> Result<()> {
         match reaches {
             Reaches::Behavior { declared } => {
                 let target = self.targets.named(declared)?;
@@ -774,13 +957,28 @@ impl<'a> Walk<'_, 'a> {
                         "what its entry answers",
                     ),
                     // Another build's, and held only to every other call of it.
-                    None => Ok(()),
+                    None => {
+                        let key = (module.clone(), name.clone());
+                        match self.owed.published.get(&key).cloned() {
+                            Some(first) => self.same(
+                                &format!("a call of `{module}`'s published value {name}"),
+                                ty,
+                                &first,
+                                "another call of it",
+                            ),
+                            None => {
+                                self.owed.published.entry(key).or_insert_with(|| ty.clone());
+                                Ok(())
+                            }
+                        }
+                    }
                 }
             }
             Reaches::Kernel { kernel } => match kernel.as_str() {
                 "int.add" => {
                     let int = Ty::Prim { prim: Prim::Int };
                     self.arity("a call of int.add", arguments.len(), 2)?;
+                    self.overflows("a call of int.add", aborts)?;
                     for argument in arguments {
                         self.same(
                             "an argument of int.add",
@@ -908,6 +1106,11 @@ fn composes(
                 &taken,
             ),
             Routing::OnCases { accepted } => {
+                leaves(
+                    declared,
+                    &format!("{name}'s stage {}", stage.behavior),
+                    accepted,
+                )?;
                 let running_cases = declared.cases_of(&running)?.ok_or_else(|| {
                     anyhow!(
                         "{name}'s stage {} is offered cases of {}, which has none",
@@ -958,5 +1161,24 @@ fn composes(
         &running,
         &answers,
     );
+    Ok(())
+}
+
+/// Refuses a test naming no case, or naming a sum where the checker answers the leaves it descends
+/// to.
+fn leaves(declared: &Declared, what: &str, cases: &[Case]) -> Result<()> {
+    if cases.is_empty() {
+        bail!("{what} tests for no case");
+    }
+    for case in cases {
+        if let Case::Declared { declared: key } = case
+            && let crate::transport::Declaration::Sum { .. } = declared.shape(key)?
+        {
+            bail!(
+                "{what} tests for {key}, which is a sum, where the checker answers the cases a sum \
+                 descends to: the two halves disagree"
+            );
+        }
+    }
     Ok(())
 }

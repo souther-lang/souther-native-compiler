@@ -31,6 +31,80 @@ pub struct Program {
     pub modules: Vec<Module>,
 }
 
+impl Program {
+    /// Every body of `Core` the document holds, with the module it stands in and what owns it.
+    ///
+    /// The one enumeration of them. Every pass that has to see every body — to find its closure
+    /// sites, the published values it calls, whether its types hold together — walks this, so a
+    /// body one of them skips is a body all of them skip. `Module` is taken apart whole, so a field
+    /// it starts carrying tomorrow does not compile here until it is said whether it holds a body.
+    pub fn bodies(&self) -> impl Iterator<Item = Body<'_>> {
+        self.modules.iter().flat_map(|written| {
+            let Module {
+                name,
+                helpers,
+                values,
+                entries,
+                definitions,
+                examples,
+            } = written;
+            let module = name.as_str();
+            let helpers = helpers.iter().map(move |it| Body {
+                module,
+                owner: Owner::Helper(it),
+                node: &it.body,
+            });
+            let values = values.iter().map(move |it| Body {
+                module,
+                owner: Owner::Value(it),
+                node: &it.body,
+            });
+            let entries = entries.iter().map(move |it| Body {
+                module,
+                owner: Owner::Entry(it),
+                node: &it.body,
+            });
+            let definitions = definitions.iter().filter_map(move |it| match it {
+                Definition::Body { declared, body, .. } => Some(Body {
+                    module,
+                    owner: Owner::Definition(declared),
+                    node: body,
+                }),
+                // Stages reach other behaviors by name, and there is no `Core` of its own.
+                Definition::Composed { .. } => None,
+            });
+            let examples = examples.iter().map(move |it| Body {
+                module,
+                owner: Owner::Example(it),
+                node: &it.body,
+            });
+            helpers
+                .chain(values)
+                .chain(entries)
+                .chain(definitions)
+                .chain(examples)
+        })
+    }
+}
+
+/// One body of `Core`, where it stands, and what owns it.
+pub struct Body<'p> {
+    /// The module it stands in, whose copy of a helper a call from it reaches.
+    pub module: &'p str,
+    pub owner: Owner<'p>,
+    pub node: &'p Node,
+}
+
+/// What a body is the body of.
+pub enum Owner<'p> {
+    Helper(&'p Held),
+    Value(&'p Value),
+    Entry(&'p ValueEntry),
+    /// A behavior's own body, by the name it defines.
+    Definition(&'p str),
+    Example(&'p Example),
+}
+
 /// Who declared a type, which is what decides who defines the byte its values are tagged with.
 ///
 /// The checker's answer and not one worked out here. This side could ask whether the declaration's

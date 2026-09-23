@@ -565,3 +565,225 @@ fn a_second_statement_transport_10_dropped_is_not_read() {
         assert!(refused.to_string().contains("unknown field"), "{refused}");
     }
 }
+
+/// The same document with `m`'s rows replaced by those given.
+fn with_rows(document: &str, rows: &[String]) -> String {
+    let none = r#""examples":[]"#;
+    assert_eq!(
+        document.matches(none).count(),
+        1,
+        "one module to put rows in"
+    );
+    document.replace(none, &format!(r#""examples":[{}]"#, rows.join(",")))
+}
+
+fn row(behavior: &str, at: usize, body: &str) -> String {
+    format!(r#"{{"behavior":"{behavior}","at":{at},"body":{body}}}"#)
+}
+
+/// `m.b`, taking nothing and answering an `Int` its body makes.
+fn b() -> (String, String) {
+    (
+        r#"{"module":"m","name":"b","is":"body","inputs":[],"output":{"is":"scalar","scalar":"INT"}}"#
+            .to_string(),
+        format!(
+            r#"{{"is":"body","declared":"m.b","parameters":[],"publication":"kept","body":{}}}"#,
+            int(1)
+        ),
+    )
+}
+
+/// A helper with no layout here, which on its own is refused as not lowered.
+fn behind() -> String {
+    helper("m.behind", &[DECIMAL], &read(0, DECIMAL))
+}
+
+#[test]
+fn a_helper_this_backend_is_behind_on_is_on_its_own_not_lowered() {
+    let refused = object_for(&helpers(&[behind()])).expect_err("no layout for a Decimal");
+    assert!(refused.downcast_ref::<NotLowered>().is_some(), "{refused}");
+}
+
+/// Two helpers one module holds under one name: whichever was read last would be checked, and
+/// whichever was declared first compiled. Refused as the name written twice, and not as the first
+/// copy's `Decimal`, which a backend reading the document in another order would never have met.
+#[test]
+fn a_helper_written_twice_is_refused_before_either_is_lowered() {
+    let first = helper("m.g", &[DECIMAL], &read(0, DECIMAL));
+    let second = helper("m.g", &[INT], &read(0, INT));
+    is_the_halves_disagreeing(&helpers(&[first, second]), "m.g");
+}
+
+/// A value, an entry and a module written twice are the same mistake, refused the same way.
+#[test]
+fn a_value_an_entry_or_a_module_written_twice_is_the_halves_disagreeing() {
+    let values = include_str!("values.transport.json");
+    let twice = |from: &str, to: &str| {
+        let at = values.find(from).expect("the fixture this perturbs moved");
+        let end = at
+            + values[at..]
+                .find(to)
+                .expect("the fixture this perturbs moved");
+        let once = &values[at..end];
+        values.replacen(once, &format!("{once},{once}"), 1)
+    };
+    is_the_halves_disagreeing(
+        &twice(
+            r#"{"module":"m","name":"ks""#,
+            r#",{"module":"m","name":"ys""#,
+        ),
+        "m.ks",
+    );
+    is_the_halves_disagreeing(
+        &twice(
+            r#"{"value":{"module":"m","name":"ys"}"#,
+            r#"],"definitions""#,
+        ),
+        "m.ys",
+    );
+    let module = |helpers: &str| {
+        format!(
+            r#"{{"name":"m","helpers":[{helpers}],"values":[],"entries":[],"definitions":[],"examples":[]}}"#
+        )
+    };
+    let document = helpers(&[]).replace(
+        &module(""),
+        &format!("{},{}", module(&behind()), module("")),
+    );
+    is_the_halves_disagreeing(&document, "two modules");
+}
+
+/// Two rows of one behavior at one place.
+#[test]
+fn a_row_written_twice_is_the_halves_disagreeing() {
+    let (target, body) = b();
+    let document = document(&[target], &[behind()], &[body]);
+    let rows = [row("b", 0, &int(1)), row("b", 0, &int(2))];
+    is_the_halves_disagreeing(&with_rows(&document, &rows), "m.b");
+}
+
+/// A target saying a name is defined here, with no local definition under the name, is refused
+/// as that, and not as the target's `Decimal` having no layout.
+#[test]
+fn a_target_defined_here_with_nothing_defining_it_is_refused_before_its_signature_is_asked() {
+    let target = r#"{"module":"m","name":"b","is":"body","inputs":[],"output":{"is":"scalar","scalar":"DECIMAL"}}"#;
+    is_the_halves_disagreeing(&document(&[target.to_string()], &[], &[]), "m.b");
+}
+
+/// Two calls of another build's published value, at two types: one declaration answers one way.
+#[test]
+fn another_builds_value_called_at_two_types_is_refused_before_anything_is_lowered() {
+    let reaches = r#"{"is":"publishedvalue","module":"other","name":"v"}"#;
+    let calls = |second: &str| {
+        helpers(&[
+            behind(),
+            helper("m.g", &[], &call(reaches, &[], INT)),
+            h(&[], &call(reaches, &[], second)),
+        ])
+    };
+    reads_whole(&calls(INT).replace(&format!("{},", behind()), ""));
+    is_the_halves_disagreeing(&calls(BOOL), "`other`'s published value v");
+}
+
+/// A truth ordered is not an operator the language writes, and is refused as that wherever in the
+/// document it stands, before a `Decimal` elsewhere is found to have no layout.
+#[test]
+fn an_operator_the_language_never_writes_is_refused_before_anything_is_lowered() {
+    let ordered = node(
+        "binary",
+        &format!(
+            r#""op":"LT","left":{},"right":{}"#,
+            truth(true),
+            truth(false)
+        ),
+        BOOL,
+    );
+    is_the_halves_disagreeing(&helpers(&[behind(), h(&[], &ordered)]), "m.h");
+}
+
+/// Arithmetic over two `Int`s can leave their range, and names the one reason it ends without a
+/// value; naming none is the checker and this backend disagreeing about what kind of site it is.
+#[test]
+fn arithmetic_that_can_overflow_names_one_reason() {
+    let added = |aborts: &str| {
+        node(
+            "binary",
+            &format!(r#""op":"ADD","left":{},"right":{}"#, int(1), int(2)),
+            INT,
+        )
+        .replace(r#""aborts":[]}"#, &format!(r#""aborts":[{aborts}]}}"#))
+    };
+    reads_whole(&helpers(&[h(
+        &[],
+        &added(r#""REQUIRED_FORM_HAS_NO_PLACE""#),
+    )]));
+    is_the_halves_disagreeing(&helpers(&[behind(), h(&[], &added(""))]), "reasons");
+}
+
+/// A row is a body like any other: a published value it calls is declared, and a closure it
+/// builds is planned, the same as in a behavior's body.
+#[test]
+fn a_rows_body_is_read_as_every_other_body_is() {
+    let (target, body) = b();
+    let calling = call(
+        r#"{"is":"publishedvalue","module":"other","name":"v"}"#,
+        &[],
+        INT,
+    );
+    let block = node(
+        "block",
+        &format!(r#""site":0,"parameters":[],"body":{}"#, int(1)),
+        &fn_of(&[], INT),
+    );
+    let applied = node(
+        "apply",
+        &format!(r#""function":{block},"arguments":[]"#),
+        INT,
+    );
+    let document = document(&[target], &[], &[body]);
+    reads_whole(&with_rows(
+        &document,
+        &[row("b", 0, &calling), row("b", 1, &applied)],
+    ));
+}
+
+/// What a unit value names is a unit, and what a construction builds has fields.
+#[test]
+fn a_unit_or_a_construction_names_the_kind_of_declaration_it_makes() {
+    let unit_of_a_product = node("unit", r#""declared":"m.P""#, P);
+    is_the_halves_disagreeing(&helpers(&[h(&[], &unit_of_a_product)]), "m.P");
+    let building_a_unit = node("construct", r#""declared":"m.A","values":[]"#, A);
+    is_the_halves_disagreeing(&helpers(&[h(&[], &building_a_unit)]), "m.A");
+}
+
+/// An arm tests the leaves a case resolved to, and at least one of them.
+#[test]
+fn an_arm_tests_at_least_one_leaf() {
+    let fork = |selects: &str| {
+        node(
+            "match",
+            &format!(
+                r#""subject":{},"arms":[{}]"#,
+                read(0, S),
+                arm(selects, None, &unit("m.A"))
+            ),
+            A,
+        )
+    };
+    reads_whole(&helpers(&[h(&[S], &fork(&which(&["m.A", "m.B"])))]));
+    is_the_halves_disagreeing(&helpers(&[h(&[S], &fork(&which(&["m.S"])))]), "m.S");
+    is_the_halves_disagreeing(&helpers(&[h(&[S], &fork(&which(&[])))]), "no case");
+    let testing_nothing = fork("");
+    is_the_halves_disagreeing(&helpers(&[h(&[S], &testing_nothing)]), "nothing");
+}
+
+/// A sum's cases are the leaves it descends to, so a sum standing as one is a set of cases this
+/// side would have to descend itself.
+#[test]
+fn a_sum_standing_as_a_case_of_a_sum_is_the_halves_disagreeing() {
+    let document = helpers(&[]).replace(
+        r#""cases":[{"is":"declared","declared":"m.A"},{"is":"declared","declared":"m.B"}]"#,
+        r#""cases":[{"is":"declared","declared":"m.A"},{"is":"declared","declared":"m.S"}]"#,
+    );
+    is_the_halves_disagreeing(&document, "m.S");
+}
