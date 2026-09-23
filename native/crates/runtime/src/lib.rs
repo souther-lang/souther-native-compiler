@@ -168,9 +168,7 @@ fn room_for_a_string(bytes: usize) -> *mut u8 {
     let bytes = i64::try_from(bytes).expect("a string is smaller than an Int");
     let wanted = room_for_text(bytes);
     let at = souther_alloc(wanted);
-    unsafe {
-        at.offset(TEXT_LENGTH as isize).cast::<i64>().write(bytes)
-    };
+    unsafe { at.offset(TEXT_LENGTH as isize).cast::<i64>().write(bytes) };
     at
 }
 
@@ -246,9 +244,13 @@ pub unsafe extern "C" fn souther_string_concat(left: *const u8, right: *const u8
 /// Where the length is below nought.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_string_of_utf8(bytes: *const u8, length: i64) -> *mut u8 {
-    let held = usize::try_from(length).expect("text is handed over as bytes, and never fewer than 0");
+    let held =
+        usize::try_from(length).expect("text is handed over as bytes, and never fewer than 0");
     let at = room_for_a_string(held);
-    unsafe { at.offset(TEXT_BYTES as isize).copy_from_nonoverlapping(bytes, held) };
+    unsafe {
+        at.offset(TEXT_BYTES as isize)
+            .copy_from_nonoverlapping(bytes, held)
+    };
     at
 }
 
@@ -391,10 +393,7 @@ mod tests {
     /// What the string says, read back the way a host reads one.
     fn said(at: *const u8) -> String {
         let bytes = unsafe {
-            std::slice::from_raw_parts(
-                souther_string_bytes(at),
-                souther_string_length(at) as usize,
-            )
+            std::slice::from_raw_parts(souther_string_bytes(at), souther_string_length(at) as usize)
         };
         String::from_utf8(bytes.to_vec()).expect("a string carries the text it was made from")
     }

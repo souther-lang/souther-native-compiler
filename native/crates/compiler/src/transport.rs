@@ -448,22 +448,44 @@ impl LeafScalar {
 #[derive(Debug, Deserialize, PartialEq, Eq, Clone)]
 #[serde(tag = "is", rename_all = "lowercase", deny_unknown_fields)]
 pub enum BoundaryInput {
-    Scalar { scalar: LeafScalar },
-    Nominal { declared: String },
-    ListOf { element: Box<BoundaryInput> },
-    SetOf { element: Box<BoundaryInput> },
-    MapOf { key: MapKey, value: Box<BoundaryInput> },
+    Scalar {
+        scalar: LeafScalar,
+    },
+    Nominal {
+        declared: String,
+    },
+    ListOf {
+        element: Box<BoundaryInput>,
+    },
+    SetOf {
+        element: Box<BoundaryInput>,
+    },
+    MapOf {
+        key: MapKey,
+        value: Box<BoundaryInput>,
+    },
 }
 
 impl BoundaryInput {
     pub fn ty(&self) -> Ty {
         match self {
-            BoundaryInput::Scalar { scalar } => Ty::Prim { prim: scalar.prim() },
-            BoundaryInput::Nominal { declared } => Ty::Declared { declared: declared.clone() },
-            BoundaryInput::ListOf { element } => Ty::List { list: Box::new(element.ty()) },
-            BoundaryInput::SetOf { element } => Ty::Set { set: Box::new(element.ty()) },
+            BoundaryInput::Scalar { scalar } => Ty::Prim {
+                prim: scalar.prim(),
+            },
+            BoundaryInput::Nominal { declared } => Ty::Declared {
+                declared: declared.clone(),
+            },
+            BoundaryInput::ListOf { element } => Ty::List {
+                list: Box::new(element.ty()),
+            },
+            BoundaryInput::SetOf { element } => Ty::Set {
+                set: Box::new(element.ty()),
+            },
             BoundaryInput::MapOf { key, value } => Ty::Map {
-                map: MapTy { key: Box::new(key.ty()), value: Box::new(value.ty()) },
+                map: MapTy {
+                    key: Box::new(key.ty()),
+                    value: Box::new(value.ty()),
+                },
             },
         }
     }
@@ -473,11 +495,22 @@ impl BoundaryInput {
 #[derive(Debug, Deserialize, PartialEq, Eq, Clone)]
 #[serde(tag = "is", rename_all = "lowercase", deny_unknown_fields)]
 pub enum BoundaryOutput {
-    Scalar { scalar: LeafScalar },
-    Nominal { declared: String },
-    ListOf { element: Box<BoundaryOutput> },
-    SetOf { element: Box<BoundaryOutput> },
-    MapOf { key: MapKey, value: Box<BoundaryOutput> },
+    Scalar {
+        scalar: LeafScalar,
+    },
+    Nominal {
+        declared: String,
+    },
+    ListOf {
+        element: Box<BoundaryOutput>,
+    },
+    SetOf {
+        element: Box<BoundaryOutput>,
+    },
+    MapOf {
+        key: MapKey,
+        value: Box<BoundaryOutput>,
+    },
     /// A union nobody named: the type exactly as its members were written, beside the cases the
     /// boundary descended to, which are not the same answer.
     Cases {
@@ -491,12 +524,23 @@ pub enum BoundaryOutput {
 impl BoundaryOutput {
     pub fn ty(&self) -> Ty {
         match self {
-            BoundaryOutput::Scalar { scalar } => Ty::Prim { prim: scalar.prim() },
-            BoundaryOutput::Nominal { declared } => Ty::Declared { declared: declared.clone() },
-            BoundaryOutput::ListOf { element } => Ty::List { list: Box::new(element.ty()) },
-            BoundaryOutput::SetOf { element } => Ty::Set { set: Box::new(element.ty()) },
+            BoundaryOutput::Scalar { scalar } => Ty::Prim {
+                prim: scalar.prim(),
+            },
+            BoundaryOutput::Nominal { declared } => Ty::Declared {
+                declared: declared.clone(),
+            },
+            BoundaryOutput::ListOf { element } => Ty::List {
+                list: Box::new(element.ty()),
+            },
+            BoundaryOutput::SetOf { element } => Ty::Set {
+                set: Box::new(element.ty()),
+            },
             BoundaryOutput::MapOf { key, value } => Ty::Map {
-                map: MapTy { key: Box::new(key.ty()), value: Box::new(value.ty()) },
+                map: MapTy {
+                    key: Box::new(key.ty()),
+                    value: Box::new(value.ty()),
+                },
             },
             BoundaryOutput::Cases { ty, .. } => ty.clone(),
         }
@@ -521,9 +565,15 @@ impl MapKey {
             MapKey::Text => Ty::Prim { prim: Prim::String },
             MapKey::Date => Ty::Prim { prim: Prim::Date },
             MapKey::Time => Ty::Prim { prim: Prim::Time },
-            MapKey::DateTime => Ty::Prim { prim: Prim::DateTime },
-            MapKey::Instant => Ty::Prim { prim: Prim::Instant },
-            MapKey::NamedKey { declared } => Ty::Declared { declared: declared.clone() },
+            MapKey::DateTime => Ty::Prim {
+                prim: Prim::DateTime,
+            },
+            MapKey::Instant => Ty::Prim {
+                prim: Prim::Instant,
+            },
+            MapKey::NamedKey { declared } => Ty::Declared {
+                declared: declared.clone(),
+            },
         }
     }
 }
@@ -569,33 +619,56 @@ impl TryFrom<FormOnTheWire> for AlternativesForm {
 #[derive(Debug, Deserialize, PartialEq, Eq, Clone)]
 #[serde(tag = "is", rename_all = "lowercase", deny_unknown_fields)]
 pub enum CodecShape {
-    Scalar { scalar: LeafScalar },
-    Named { declared: String },
-    ListOf { element: Box<CodecShape> },
-    SetOf { element: Box<CodecShape> },
-    MapOf { key: MapKey, value: Box<CodecShape> },
+    Scalar {
+        scalar: LeafScalar,
+    },
+    Named {
+        declared: String,
+    },
+    ListOf {
+        element: Box<CodecShape>,
+    },
+    SetOf {
+        element: Box<CodecShape>,
+    },
+    MapOf {
+        key: MapKey,
+        value: Box<CodecShape>,
+    },
     /// What an optional holds, which is never an optional again: absence has one form wherever it
     /// stands, so the checker has no shape for an optional of one, and neither does this.
-    OptionOf { present: Box<Bare> },
+    OptionOf {
+        present: Box<Bare>,
+    },
 }
 
 impl CodecShape {
     /// The type a value standing at this shape is, which is what says how it is held in a slot.
     pub fn ty(&self) -> Ty {
         match self {
-            CodecShape::Scalar { scalar } => Ty::Prim { prim: scalar.prim() },
-            CodecShape::Named { declared } => Ty::Declared { declared: declared.clone() },
-            CodecShape::ListOf { element } => Ty::List { list: Box::new(element.ty()) },
-            CodecShape::SetOf { element } => Ty::Set { set: Box::new(element.ty()) },
-            CodecShape::MapOf { key, value } => Ty::Map {
-                map: MapTy { key: Box::new(key.ty()), value: Box::new(value.ty()) },
+            CodecShape::Scalar { scalar } => Ty::Prim {
+                prim: scalar.prim(),
             },
-            CodecShape::OptionOf { present } => {
-                Ty::Option { option: Box::new(present.shape().ty()) }
-            }
+            CodecShape::Named { declared } => Ty::Declared {
+                declared: declared.clone(),
+            },
+            CodecShape::ListOf { element } => Ty::List {
+                list: Box::new(element.ty()),
+            },
+            CodecShape::SetOf { element } => Ty::Set {
+                set: Box::new(element.ty()),
+            },
+            CodecShape::MapOf { key, value } => Ty::Map {
+                map: MapTy {
+                    key: Box::new(key.ty()),
+                    value: Box::new(value.ty()),
+                },
+            },
+            CodecShape::OptionOf { present } => Ty::Option {
+                option: Box::new(present.shape().ty()),
+            },
         }
     }
-
 }
 
 /// A shape that is not an optional: what an optional holds (`CheckedCodecShape.Bare`).
@@ -772,18 +845,28 @@ impl Prim {
 #[derive(Debug, Deserialize, PartialEq, Eq, Clone)]
 #[serde(untagged, deny_unknown_fields)]
 pub enum Ty {
-    Prim { prim: Prim },
+    Prim {
+        prim: Prim,
+    },
     /// A declaration of the document, by the key that reaches one. The key is what a reference
     /// says and not what a declaration is made of: the module and the name apart are carried by
     /// the declaration, and this finds it.
-    Declared { declared: String },
+    Declared {
+        declared: String,
+    },
     /// Several cases, any one of which a value here may be. A declared one says which it is, so a
     /// union of those is written nowhere at run time: what holds it is what holds one of them. A
     /// primitive or a case the language gives says nothing of the kind, and a union with one
     /// among its members is read and not laid out.
-    Union { union: Vec<Case> },
-    Option { option: Box<Ty> },
-    Tuple { tuple: Vec<Ty> },
+    Union {
+        union: Vec<Case>,
+    },
+    Option {
+        option: Box<Ty>,
+    },
+    Tuple {
+        tuple: Vec<Ty>,
+    },
     /// A function value: what it takes and what it answers, nothing about what a value of it is
     /// made of. That is a representation question and this side's own — see `machine_type` and
     /// `means_the_same_elsewhere` in the crate root — not a fact the checker states, so no field
@@ -792,9 +875,15 @@ pub enum Ty {
         #[serde(rename = "fn")]
         fn_: FnSignature,
     },
-    List { list: Box<Ty> },
-    Set { set: Box<Ty> },
-    Map { map: MapTy },
+    List {
+        list: Box<Ty>,
+    },
+    Set {
+        set: Box<Ty>,
+    },
+    Map {
+        map: MapTy,
+    },
 }
 
 #[derive(Debug, Deserialize, PartialEq, Eq, Clone)]
@@ -820,12 +909,20 @@ impl Ty {
         match self {
             Ty::Prim { prim } => prim.spelt().to_string(),
             Ty::Declared { declared } => declared.clone(),
-            Ty::Union { union } => union.iter().map(Case::spelt).collect::<Vec<_>>().join(" | "),
+            Ty::Union { union } => union
+                .iter()
+                .map(Case::spelt)
+                .collect::<Vec<_>>()
+                .join(" | "),
             Ty::Option { option } => format!("an Option of {}", option.spelt()),
             Ty::Tuple { tuple } => format!("a tuple of {} members", tuple.len()),
             Ty::Fn { fn_ } => format!(
                 "a function taking {} and answering {}",
-                fn_.takes.iter().map(Ty::spelt).collect::<Vec<_>>().join(", "),
+                fn_.takes
+                    .iter()
+                    .map(Ty::spelt)
+                    .collect::<Vec<_>>()
+                    .join(", "),
                 fn_.answers.spelt()
             ),
             Ty::List { list } => format!("a List of {}", list.spelt()),
@@ -1072,7 +1169,9 @@ pub enum Selects {
     /// The value's own type is one of these. The atoms are the leaves the checker resolved the
     /// case to, so a case that is a sum arrives as the several types it stands for — each as the
     /// case identity it is, and a declared one by the key that reaches its declaration.
-    Which { atoms: Vec<Case> },
+    Which {
+        atoms: Vec<Case>,
+    },
     Held,
     Nothing,
 }

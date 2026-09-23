@@ -389,7 +389,10 @@ mod tests {
 
     #[test]
     fn a_behavior_is_reached_by_its_module_and_its_name() {
-        assert_eq!(behavior_symbol("calculation", "add"), "souther2.calculation.add");
+        assert_eq!(
+            behavior_symbol("calculation", "add"),
+            "souther2.calculation.add"
+        );
     }
 
     #[test]
@@ -463,17 +466,29 @@ mod tests {
     /// named from two objects is one.
     #[test]
     fn a_type_of_one_name_in_two_modules_is_two_symbols() {
-        assert_ne!(type_symbol("pricing", "Round"), type_symbol("shapes", "Round"));
-        assert_eq!(type_symbol("shapes", "Round"), type_symbol("shapes", "Round"));
+        assert_ne!(
+            type_symbol("pricing", "Round"),
+            type_symbol("shapes", "Round")
+        );
+        assert_eq!(
+            type_symbol("shapes", "Round"),
+            type_symbol("shapes", "Round")
+        );
     }
 
     /// A type's symbol is never a behavior's, whatever either is called. Both spellings are built
     /// here, so what keeps them apart is asserted rather than described.
     #[test]
     fn a_types_symbol_is_not_a_behaviors() {
-        assert_ne!(type_symbol("lib.rates", "Rate"), behavior_symbol("lib.rates", "Rate"));
+        assert_ne!(
+            type_symbol("lib.rates", "Rate"),
+            behavior_symbol("lib.rates", "Rate")
+        );
         assert_ne!(type_symbol("lib", "rates"), behavior_symbol("lib", "rates"));
-        assert_ne!(type_symbol("pricing", "taxed"), held_symbol("pricing", "pricing.taxed"));
+        assert_ne!(
+            type_symbol("pricing", "taxed"),
+            held_symbol("pricing", "pricing.taxed")
+        );
     }
 
     /// What the reading rests on, as it is for a behavior: were this admitted, `a.b` / `C` and
@@ -500,14 +515,20 @@ mod tests {
 
     #[test]
     fn a_published_value_is_reached_by_its_module_and_its_name() {
-        assert_eq!(value_symbol("pricing", "standard"), "souther2.pricing$value$standard");
+        assert_eq!(
+            value_symbol("pricing", "standard"),
+            "souther2.pricing$value$standard"
+        );
     }
 
     /// A value's own entry is never a behavior's symbol, whatever either is called — the two share
     /// a module's dot-carrying prefix and nothing else.
     #[test]
     fn a_values_entry_is_not_a_behaviors_symbol() {
-        assert_ne!(value_symbol("pricing", "standard"), behavior_symbol("pricing", "standard"));
+        assert_ne!(
+            value_symbol("pricing", "standard"),
+            behavior_symbol("pricing", "standard")
+        );
         assert_ne!(
             value_symbol("pricing", "standard"),
             held_symbol("pricing", "pricing.standard")
@@ -518,7 +539,10 @@ mod tests {
     /// modules declaring a behavior of one name do.
     #[test]
     fn a_value_of_one_name_in_two_modules_is_two_symbols() {
-        assert_ne!(value_symbol("pricing", "standard"), value_symbol("shipping", "standard"));
+        assert_ne!(
+            value_symbol("pricing", "standard"),
+            value_symbol("shipping", "standard")
+        );
     }
 
     #[test]

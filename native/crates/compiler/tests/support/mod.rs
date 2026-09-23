@@ -17,7 +17,13 @@ pub fn runtime() -> &'static Path {
     BUILT.get_or_init(|| {
         let into = Path::new(env!("CARGO_TARGET_TMPDIR")).join("runtime");
         let built = Command::new(env!("CARGO"))
-            .args(["build", "--quiet", "-p", "souther-native-runtime", "--target-dir"])
+            .args([
+                "build",
+                "--quiet",
+                "-p",
+                "souther-native-runtime",
+                "--target-dir",
+            ])
             .arg(&into)
             .current_dir(env!("CARGO_MANIFEST_DIR"))
             .status()

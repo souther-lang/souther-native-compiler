@@ -64,7 +64,15 @@ pub(crate) fn define(emitting: Emitting, boundaries: &[Boundary]) -> Result<()> 
     if boundaries.is_empty() {
         return Ok(());
     }
-    let Emitting { module, context, shapes, frontend, call_conv, declared, literals } = emitting;
+    let Emitting {
+        module,
+        context,
+        shapes,
+        frontend,
+        call_conv,
+        declared,
+        literals,
+    } = emitting;
     let externals = Externals::declare(module, call_conv)?;
     let mut encoders = Encoders::new(call_conv);
 
@@ -90,7 +98,14 @@ pub(crate) fn define(emitting: Emitting, boundaries: &[Boundary]) -> Result<()> 
         let abort = builder.create_block();
         builder.append_block_param(abort, types::I32);
         let answers = machine_type(&boundary.output.ty())?;
-        let answer = call_reached(&mut builder, module, abort, boundary.runs, answers, arguments)?;
+        let answer = call_reached(
+            &mut builder,
+            module,
+            abort,
+            boundary.runs,
+            answers,
+            arguments,
+        )?;
 
         let mut writing = Writing {
             builder: &mut builder,
@@ -188,7 +203,11 @@ struct Encoders {
 
 impl Encoders {
     fn new(call_conv: CallConv) -> Self {
-        Encoders { call_conv, ids: BTreeMap::new(), pending: Vec::new() }
+        Encoders {
+            call_conv,
+            ids: BTreeMap::new(),
+            pending: Vec::new(),
+        }
     }
 
     fn signature(&self) -> ir::Signature {
@@ -278,7 +297,10 @@ impl Writing<'_, '_> {
             Prim::Int => Ok(self.call(self.externals.int, &[value])),
             Prim::Bool => Ok(self.call(self.externals.truth, &[value])),
             Prim::String => Ok(self.call(self.externals.string, &[value])),
-            other => Err(not_lowered(format!("a {} written at a boundary", other.spelt()))),
+            other => Err(not_lowered(format!(
+                "a {} written at a boundary",
+                other.spelt()
+            ))),
         }
     }
 
@@ -312,14 +334,20 @@ impl Writing<'_, '_> {
                 self.builder.switch_to_block(written);
                 Ok(self.builder.block_params(written)[0])
             }
-            CodecShape::ListOf { .. } | CodecShape::SetOf { .. } | CodecShape::MapOf { .. } => {
-                Err(not_lowered(format!("{} written at a boundary", shape.ty().spelt())))
-            }
+            CodecShape::ListOf { .. } | CodecShape::SetOf { .. } | CodecShape::MapOf { .. } => Err(
+                not_lowered(format!("{} written at a boundary", shape.ty().spelt())),
+            ),
         }
     }
 
     /// A field of an object, which has a second way of holding nothing: not being there.
-    fn field(&mut self, object: ir::Value, name: &str, shape: &CodecShape, slot: ir::Value) -> Result<()> {
+    fn field(
+        &mut self,
+        object: ir::Value,
+        name: &str,
+        shape: &CodecShape,
+        slot: ir::Value,
+    ) -> Result<()> {
         let CodecShape::OptionOf { present } = shape else {
             let value = out_of_slot(self.builder, slot, machine_type(&shape.ty())?);
             let form = self.value(shape, value)?;
@@ -342,15 +370,25 @@ impl Writing<'_, '_> {
 
     /// What a present optional holds, read out of its slot the way any value is.
     fn held(&mut self, present: &CodecShape, holding: ir::Value) -> Result<ir::Value> {
-        let slot = self.builder.ins().load(types::I64, TRUSTED, holding, HELD as i32);
-        Ok(out_of_slot(self.builder, slot, machine_type(&present.ty())?))
+        let slot = self
+            .builder
+            .ins()
+            .load(types::I64, TRUSTED, holding, HELD as i32);
+        Ok(out_of_slot(
+            self.builder,
+            slot,
+            machine_type(&present.ty())?,
+        ))
     }
 
     /// Every field of a value, put into an object this function made, in the order they are laid
     /// out.
     fn fields_into(&mut self, object: ir::Value, fields: &[Field], value: ir::Value) -> Result<()> {
         for (at, field) in fields.iter().enumerate() {
-            let slot = self.builder.ins().load(types::I64, TRUSTED, value, field_at(at) as i32);
+            let slot = self
+                .builder
+                .ins()
+                .load(types::I64, TRUSTED, value, field_at(at) as i32);
             self.field(object, &field.name, &field.codec, slot)?;
         }
         Ok(())
@@ -365,7 +403,10 @@ impl Writing<'_, '_> {
                 Ok(object)
             }
             Declaration::Newtype { field, .. } => {
-                let slot = self.builder.ins().load(types::I64, TRUSTED, value, field_at(0) as i32);
+                let slot = self
+                    .builder
+                    .ins()
+                    .load(types::I64, TRUSTED, value, field_at(0) as i32);
                 let inner = out_of_slot(self.builder, slot, machine_type(&field.codec.ty())?);
                 self.value(&field.codec, inner)
             }
@@ -376,8 +417,16 @@ impl Writing<'_, '_> {
 
     /// One of a set of alternatives, told apart by the token at the front of the value and written
     /// in the form the set travels in.
-    fn alternatives(&mut self, cases: &[Case], form: &AlternativesForm, value: ir::Value) -> Result<ir::Value> {
-        let which = self.builder.ins().load(POINTER, TRUSTED, value, WHICH as i32);
+    fn alternatives(
+        &mut self,
+        cases: &[Case],
+        form: &AlternativesForm,
+        value: ir::Value,
+    ) -> Result<ir::Value> {
+        let which = self
+            .builder
+            .ins()
+            .load(POINTER, TRUSTED, value, WHICH as i32);
         let written = self.builder.create_block();
         self.builder.append_block_param(written, POINTER);
 

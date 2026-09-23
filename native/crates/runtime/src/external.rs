@@ -226,7 +226,10 @@ mod tests {
         assert_eq!(json(souther_external_bool(1)), "true");
         assert_eq!(json(souther_external_bool(0)), "false");
         assert_eq!(json(souther_external_int(42)), "42");
-        assert_eq!(json(unsafe { souther_external_string(string("abc")) }), "\"abc\"");
+        assert_eq!(
+            json(unsafe { souther_external_string(string("abc")) }),
+            "\"abc\""
+        );
         assert_eq!(json(souther_external_array()), "[]");
         assert_eq!(json(souther_external_object()), "{}");
         souther_reset(mark);

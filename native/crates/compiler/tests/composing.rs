@@ -25,7 +25,11 @@ mod support;
 const COMPOSING: &str = include_str!("composing.transport.json");
 
 /// What the linker on this platform calls a symbol the object names.
-const PREFIX: &str = if cfg!(target_vendor = "apple") { "_" } else { "" };
+const PREFIX: &str = if cfg!(target_vendor = "apple") {
+    "_"
+} else {
+    ""
+};
 
 /// What generated code takes room from, needed here because `g` and `h` each construct a value.
 fn runtime() -> &'static std::path::Path {

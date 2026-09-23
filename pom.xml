@@ -124,6 +124,24 @@
                     <!-- Before the build, because what it holds is a rule about what the Rust
                          half is allowed to say, and a build that had already produced the object
                          would be reporting it after the fact. -->
+                    <!-- Before the lint, for the same reason: a layout is a rule about what the Rust
+                         half says, and rustfmt is what states it. Checked and not applied, so a
+                         build never rewrites what a contributor wrote without their seeing it. -->
+                    <execution>
+                        <id>cargo-format</id>
+                        <phase>process-classes</phase>
+                        <goals>
+                            <goal>exec</goal>
+                        </goals>
+                        <configuration>
+                            <executable>cargo</executable>
+                            <arguments>
+                                <argument>fmt</argument>
+                                <argument>--all</argument>
+                                <argument>--check</argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
                     <execution>
                         <id>cargo-lint</id>
                         <phase>process-classes</phase>

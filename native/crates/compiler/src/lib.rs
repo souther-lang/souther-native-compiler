@@ -9,6 +9,7 @@ mod closures;
 pub mod transport;
 
 use anyhow::{Result, anyhow, bail};
+use closures::{ClosureSites, Site};
 use cranelift::codegen::ir::condcodes::IntCC;
 use cranelift::codegen::ir::{
     AbiParam, Function, InstBuilder, MemFlagsData, TrapCode, UserFuncName, types,
@@ -21,16 +22,17 @@ use cranelift::module::{DataDescription, DataId, FuncId, Linkage, Module, defaul
 use cranelift::object::{ObjectBuilder, ObjectModule};
 use souther_native_abi::{
     ALLOCATE, ANSWERED, HELD, NOTHING, SLOT, STRING_COMPARE, STRING_CONCAT, Status, TEXT_BYTES,
-    TEXT_LENGTH, TOKEN, WHICH, behavior_symbol, boundary_symbol, example_symbol, field_at, held_symbol, member_at,
-    room_for_fields, room_for_held, room_for_members, room_for_text, type_symbol, value_symbol,
+    TEXT_LENGTH, TOKEN, WHICH, behavior_symbol, boundary_symbol, example_symbol, field_at,
+    held_symbol, member_at, room_for_fields, room_for_held, room_for_members, room_for_text,
+    type_symbol, value_symbol,
 };
-use closures::{ClosureSites, Site};
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use transport::{
-    AlternativesForm, Case, CodecShape, AbortKind, Answers, Arm, Declaration, DeclaredBy, Definition, Node, Op, Prim, Program,
-    Publication, Reaches, Routing, Selects, Stage, TRANSPORT_VERSION, Target, Ty,
+    AbortKind, AlternativesForm, Answers, Arm, Case, CodecShape, Declaration, DeclaredBy,
+    Definition, Node, Op, Prim, Program, Publication, Reaches, Routing, Selects, Stage,
+    TRANSPORT_VERSION, Target, Ty,
 };
 
 /// A fork that ran out of arms, which is this compiler having emitted the wrong test rather than
@@ -190,8 +192,7 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
     let mut token = DataDescription::new();
     token.define(TOKEN.into());
     for declaration in &program.declarations {
-        if matches!(declaration, Declaration::Sum { .. })
-            || declaration.by() != DeclaredBy::AModule
+        if matches!(declaration, Declaration::Sum { .. }) || declaration.by() != DeclaredBy::AModule
         {
             continue;
         }
@@ -300,8 +301,14 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
         // tomorrow is a compile error at this one destructure until it is given a home below.
         // `Module::entries` (a module's own published-value entries) is bound to `value_entries`
         // rather than `entries`, which stays free for this loop's own row-entry table below.
-        let transport::Module { name, helpers, values, entries: value_entries, definitions: _, examples } =
-            written;
+        let transport::Module {
+            name,
+            helpers,
+            values,
+            entries: value_entries,
+            definitions: _,
+            examples,
+        } = written;
         for held in helpers {
             let symbol = held_symbol(name, &held.declared);
             let signature = signature_over(&held.takes, &held.answers, call_conv)?;
@@ -366,8 +373,14 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
     }
 
     for written in &program.modules {
-        let transport::Module { name, helpers, values, entries: value_entries, definitions, examples } =
-            written;
+        let transport::Module {
+            name,
+            helpers,
+            values,
+            entries: value_entries,
+            definitions,
+            examples,
+        } = written;
         for held in helpers {
             let signature = signature_over(&held.takes, &held.answers, call_conv)?;
             let id = reachable.of_held(name, &held.declared)?;
@@ -455,13 +468,18 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
         }
         for local in definitions {
             match local {
-                Definition::Body { declared: behavior_name, body, .. } => {
+                Definition::Body {
+                    declared: behavior_name,
+                    body,
+                    ..
+                } => {
                     let target = targets.named(behavior_name)?;
                     let takes = &target.takes();
                     let signature = signature_over(&target.takes(), &target.answers(), call_conv)?;
                     let id = reachable.of_behavior_named(behavior_name)?;
                     context.clear();
-                    context.func = Function::with_name_signature(UserFuncName::default(), signature);
+                    context.func =
+                        Function::with_name_signature(UserFuncName::default(), signature);
                     let lowering = Lowering {
                         declared: &declared,
                         reachable: &reachable,
@@ -493,7 +511,8 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
                     let signature = signature_over(&target.takes(), &target.answers(), call_conv)?;
                     let id = reachable.of_behavior_named(behavior_name)?;
                     context.clear();
-                    context.func = Function::with_name_signature(UserFuncName::default(), signature);
+                    context.func =
+                        Function::with_name_signature(UserFuncName::default(), signature);
                     let lowering = Lowering {
                         declared: &declared,
                         reachable: &reachable,
@@ -576,7 +595,14 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
             lifted: &lifted,
             literals: &literals,
         };
-        define_closure(&mut context.func, &mut shapes, plan, frontend, &lowering, &mut module)?;
+        define_closure(
+            &mut context.func,
+            &mut shapes,
+            plan,
+            frontend,
+            &lowering,
+            &mut module,
+        )?;
         module.define_function(id, &mut context)?;
     }
 
@@ -589,10 +615,9 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
             continue;
         }
         let declared = target.declared();
-        let local = locals
-            .get(declared.as_str())
-            .copied()
-            .ok_or_else(|| anyhow!("{declared} answers with a local definition no module carries"))?;
+        let local = locals.get(declared.as_str()).copied().ok_or_else(|| {
+            anyhow!("{declared} answers with a local definition no module carries")
+        })?;
         if local.publication() != Publication::Published {
             continue;
         }
@@ -689,7 +714,12 @@ fn agrees_with_its_target(
         // A body's parameters are the target's inputs, one for one, and what the body answers is
         // a value of what the target says it answers — the same type, or a case of it. Each is a
         // fact crossed twice, and the boundary writes the answer by the target's reading of it.
-        (Answers::Body, Definition::Body { parameters, body, .. }) => {
+        (
+            Answers::Body,
+            Definition::Body {
+                parameters, body, ..
+            },
+        ) => {
             if parameters.len() != target.inputs.len() {
                 bail!(
                     "{name} names {} parameters in its body and takes {} at the target that \
@@ -700,7 +730,12 @@ fn agrees_with_its_target(
             }
             answers_as_its_target_says(name, body, target, declared)
         }
-        (Answers::Composed, Definition::Composed { answers, stages, .. }) => {
+        (
+            Answers::Composed,
+            Definition::Composed {
+                answers, stages, ..
+            },
+        ) => {
             if answers != &target.answers() {
                 bail!(
                     "{name} answers {} as a composition and {} at the target that reaches it: \
@@ -709,9 +744,9 @@ fn agrees_with_its_target(
                     target.answers().spelt()
                 );
             }
-            let first = stages.first().ok_or_else(|| {
-                anyhow!("{name} is a composition composing nothing")
-            })?;
+            let first = stages
+                .first()
+                .ok_or_else(|| anyhow!("{name} is a composition composing nothing"))?;
             if !matches!(first.routing, Routing::Always) {
                 bail!(
                     "{name}'s first stage is routed rather than always applied: the first stage \
@@ -866,7 +901,8 @@ impl Reachable {
     /// declaring one as an import, so a value this program's own modules publish is never given a
     /// second, importing declaration of the same symbol.
     fn is_published(&self, module: &str, name: &str) -> bool {
-        self.published_values.contains_key(&(module.to_string(), name.to_string()))
+        self.published_values
+            .contains_key(&(module.to_string(), name.to_string()))
     }
 
     fn of_held(&self, carrier: &str, declared: &str) -> Result<FuncId> {
@@ -897,8 +933,10 @@ impl Reachable {
             .get(&(module.to_string(), name.to_string()))
             .copied()
             .ok_or_else(|| {
-                anyhow!("a call reaching `{module}`'s published value {name}, which no entry was \
-                         declared for")
+                anyhow!(
+                    "a call reaching `{module}`'s published value {name}, which no entry was \
+                         declared for"
+                )
             })
     }
 }
@@ -907,7 +945,11 @@ impl Reachable {
 /// `ProgramWriter` numbered their binders — the same order [`define`]'s own `takes`/binding
 /// convention already expects, so nothing here has to renumber anything.
 fn handover_types(value: &transport::Value) -> Vec<Ty> {
-    value.handovers.iter().map(|handover| handover.ty.clone()).collect()
+    value
+        .handovers
+        .iter()
+        .map(|handover| handover.ty.clone())
+        .collect()
 }
 
 /// Every published value a call anywhere in this document reaches, by the module and the name the
@@ -955,7 +997,12 @@ fn published_value_calls(program: &Program) -> Result<BTreeMap<(String, String),
 /// declaring a value's import symbol exists to end.
 fn walk_calls(node: &Node, found: &mut BTreeMap<(String, String), Ty>) -> Result<()> {
     match node {
-        Node::Call { reaches, arguments, ty, .. } => {
+        Node::Call {
+            reaches,
+            arguments,
+            ty,
+            ..
+        } => {
             if let Reaches::PublishedValue { module, name } = reaches {
                 match found.get(&(module.clone(), name.clone())) {
                     Some(already) if already != ty => {
@@ -985,7 +1032,9 @@ fn walk_calls(node: &Node, found: &mut BTreeMap<(String, String), Ty>) -> Result
             walk_calls(value, found)?;
             walk_calls(body, found)?;
         }
-        Node::If { cond, then, els, .. } => {
+        Node::If {
+            cond, then, els, ..
+        } => {
             walk_calls(cond, found)?;
             walk_calls(then, found)?;
             walk_calls(els, found)?;
@@ -1010,7 +1059,11 @@ fn walk_calls(node: &Node, found: &mut BTreeMap<(String, String), Ty>) -> Result
         }
         Node::Member { tuple, .. } => walk_calls(tuple, found)?,
         Node::Block { body, .. } => walk_calls(body, found)?,
-        Node::Apply { function, arguments, .. } => {
+        Node::Apply {
+            function,
+            arguments,
+            ..
+        } => {
             walk_calls(function, found)?;
             for argument in arguments {
                 walk_calls(argument, found)?;
@@ -1096,7 +1149,9 @@ impl<'a> Declared<'a> {
             AlternativesForm::Enumeration => Ok(()),
             AlternativesForm::Discriminated { tag, .. } => {
                 for case in cases {
-                    let Case::Declared { declared } = case else { continue };
+                    let Case::Declared { declared } = case else {
+                        continue;
+                    };
                     if let Declaration::Product { fields, .. } = self.shape(declared)?
                         && fields.iter().any(|field| field.name == *tag)
                     {
@@ -1118,7 +1173,10 @@ impl<'a> Declared<'a> {
     /// and nothing is worked out again from the type for writing.
     fn descends_to(&self, owner: &str, ty: &Ty, cases: &[Case]) -> Result<()> {
         let Ty::Union { union } = ty else {
-            bail!("{owner} answers cases under {}, which is not a union", ty.spelt());
+            bail!(
+                "{owner} answers cases under {}, which is not a union",
+                ty.spelt()
+            );
         };
         let walked = self.leaves_of(union)?;
         if walked != cases {
@@ -1126,7 +1184,11 @@ impl<'a> Declared<'a> {
                 "{owner} answers {} and is written by the cases {}: the two halves disagree about \
                  what it answers",
                 ty.spelt(),
-                cases.iter().map(Case::spelt).collect::<Vec<_>>().join(" | ")
+                cases
+                    .iter()
+                    .map(Case::spelt)
+                    .collect::<Vec<_>>()
+                    .join(" | ")
             );
         }
         Ok(())
@@ -1172,9 +1234,9 @@ impl<'a> Declared<'a> {
 
     fn cases_of(&self, ty: &Ty) -> Result<Option<Vec<Case>>> {
         Ok(match ty {
-            Ty::Declared { declared } => {
-                Some(self.leaves_of(&[Case::Declared { declared: declared.clone() }])?)
-            }
+            Ty::Declared { declared } => Some(self.leaves_of(&[Case::Declared {
+                declared: declared.clone(),
+            }])?),
             Ty::Union { union } => Some(self.leaves_of(union)?),
             _ => None,
         })
@@ -1184,9 +1246,12 @@ impl<'a> Declared<'a> {
     fn carries(&self, codec: &CodecShape, actual: &Ty) -> Result<bool> {
         Ok(match (codec, actual) {
             (CodecShape::Scalar { scalar }, Ty::Prim { prim }) => scalar.prim() == *prim,
-            (CodecShape::Named { declared }, Ty::Declared { .. } | Ty::Union { .. }) => {
-                self.fits(actual, &Ty::Declared { declared: declared.clone() })?
-            }
+            (CodecShape::Named { declared }, Ty::Declared { .. } | Ty::Union { .. }) => self.fits(
+                actual,
+                &Ty::Declared {
+                    declared: declared.clone(),
+                },
+            )?,
             (CodecShape::OptionOf { present }, Ty::Option { option }) => {
                 self.carries(present.shape(), option)?
             }
@@ -1419,7 +1484,10 @@ fn machine_type(ty: &Ty) -> Result<types::Type> {
 /// Said here, where the signature is declared, because that is the one place the two scopes meet.
 fn crosses_objects(target: &Target) -> Result<()> {
     for ty in target.takes().iter().chain([&target.answers()]) {
-        crosses_object(&format!("{}.{} takes or answers", target.module, target.name), ty)?;
+        crosses_object(
+            &format!("{}.{} takes or answers", target.module, target.name),
+            ty,
+        )?;
     }
     Ok(())
 }
@@ -1645,12 +1713,9 @@ fn define_closure(
     let mut bindings = Bindings::default();
     for (position, capture) in site.captures.iter().enumerate() {
         let wanted = machine_type(&capture.ty)?;
-        let held = builder.ins().load(
-            types::I64,
-            TRUSTED,
-            closure,
-            capture_at(position) as i32,
-        );
+        let held = builder
+            .ins()
+            .load(types::I64, TRUSTED, closure, capture_at(position) as i32);
         let restored = out_of_slot(&mut builder, held, wanted);
         let variable = builder.declare_var(wanted);
         builder.def_var(variable, restored);
@@ -1669,7 +1734,14 @@ fn define_closure(
     let abort = builder.create_block();
     builder.append_block_param(abort, types::I32);
 
-    let answer = lower(&mut builder, lowering, module, &mut bindings, abort, site.body)?;
+    let answer = lower(
+        &mut builder,
+        lowering,
+        module,
+        &mut bindings,
+        abort,
+        site.body,
+    )?;
     builder.ins().store(TRUSTED, answer, out, 0);
     let ok = builder.ins().iconst(types::I32, i64::from(ANSWERED));
     builder.ins().return_(&[ok]);
@@ -1729,8 +1801,7 @@ fn define_composed(
             Routing::Always => {
                 let reached = lowering.reachable.of_behavior_named(&stage.behavior)?;
                 let answers = machine_type(&stage.answers)?;
-                running =
-                    call_reached(&mut builder, module, abort, reached, answers, &[running])?;
+                running = call_reached(&mut builder, module, abort, reached, answers, &[running])?;
             }
             Routing::OnCases { accepted } => {
                 let accepts =
@@ -1751,8 +1822,7 @@ fn define_composed(
                 builder.switch_to_block(offer);
                 let reached = lowering.reachable.of_behavior_named(&stage.behavior)?;
                 let answers = machine_type(&stage.answers)?;
-                running =
-                    call_reached(&mut builder, module, abort, reached, answers, &[running])?;
+                running = call_reached(&mut builder, module, abort, reached, answers, &[running])?;
             }
         }
     }
@@ -1943,7 +2013,9 @@ fn lower(
             };
             builder.ins().iconst(machine_type(ty)?, -*value)
         }
-        Node::Neg { operand, aborts, .. } => {
+        Node::Neg {
+            operand, aborts, ..
+        } => {
             // `program.abortsAt` answers AbortSet.NONE for Core.Neg today (souther-lang/souther
             // #1878), citing only the JVM backend's own codegen — which is exactly the kind of
             // backend-specific re-derivation issue #9 exists to stop this file from doing on its
@@ -1978,10 +2050,23 @@ fn lower(
         Node::Bool { value, ty, .. } => builder.ins().iconst(machine_type(ty)?, i64::from(*value)),
         Node::Str { value, .. } => text_in_the_object(builder, module, lowering.literals, value)?,
         Node::Binary {
-            op, left, right, aborts, ..
+            op,
+            left,
+            right,
+            aborts,
+            ..
         } => binary(
-            builder, lowering, module, bindings, abort, *op,
-            Operands { left, right, aborts },
+            builder,
+            lowering,
+            module,
+            bindings,
+            abort,
+            *op,
+            Operands {
+                left,
+                right,
+                aborts,
+            },
         )?,
         Node::If {
             cond,
@@ -1993,7 +2078,14 @@ fn lower(
             let asked = lower(builder, lowering, module, bindings, abort, cond)?;
             let answers = machine_type(ty)?;
             fork(builder, asked, answers, |builder, taken| {
-                lower(builder, lowering, module, bindings, abort, if taken { then } else { els })
+                lower(
+                    builder,
+                    lowering,
+                    module,
+                    bindings,
+                    abort,
+                    if taken { then } else { els },
+                )
             })?
         }
         Node::Unit { declared, .. } => {
@@ -2055,7 +2147,9 @@ fn lower(
             }
             value
         }
-        Node::Field { target, field, ty, .. } => {
+        Node::Field {
+            target, field, ty, ..
+        } => {
             let of = target.ty();
             let Ty::Declared { declared } = of else {
                 bail!("a field of {}, which holds no fields", of.spelt());
@@ -2080,11 +2174,21 @@ fn lower(
                 .load(types::I64, flags, value, field_at(at) as i32);
             out_of_slot(builder, held, machine_type(ty)?)
         }
-        Node::Match { subject, arms, ty, .. } => {
+        Node::Match {
+            subject, arms, ty, ..
+        } => {
             let value = lower(builder, lowering, module, bindings, abort, subject)?;
             fork_on_what_it_is(
-                builder, lowering, module, bindings, abort, value,
-                ForkArms { arms, answers: machine_type(ty)? },
+                builder,
+                lowering,
+                module,
+                bindings,
+                abort,
+                value,
+                ForkArms {
+                    arms,
+                    answers: machine_type(ty)?,
+                },
             )?
         }
         Node::Some { value, .. } => {
@@ -2105,7 +2209,9 @@ fn lower(
             let flags = TRUSTED;
             let value = lowering.room(builder, module, room_for_members(members.len()));
             for (at, member) in held.into_iter().enumerate() {
-                builder.ins().store(flags, member, value, member_at(at) as i32);
+                builder
+                    .ins()
+                    .store(flags, member, value, member_at(at) as i32);
             }
             value
         }
@@ -2196,10 +2302,9 @@ fn lower(
                 .closures
                 .site(*site)
                 .ok_or_else(|| anyhow!("closure site {site}, which nothing planned"))?;
-            let code_id = *lowering
-                .lifted
-                .get(site)
-                .ok_or_else(|| anyhow!("closure site {site}, which no lifted function was declared for"))?;
+            let code_id = *lowering.lifted.get(site).ok_or_else(|| {
+                anyhow!("closure site {site}, which no lifted function was declared for")
+            })?;
 
             let flags = TRUSTED;
             let value = lowering.room(builder, module, room_for_closure(plan.captures.len()));
@@ -2341,10 +2446,9 @@ fn fork_on_what_it_is(
 
         builder.switch_to_block(taken);
         if let Some(number) = arm.binding {
-            let read_as = arm
-                .binds
-                .as_ref()
-                .ok_or_else(|| anyhow!("an arm binds a value and does not say what it reads it as"))?;
+            let read_as = arm.binds.as_ref().ok_or_else(|| {
+                anyhow!("an arm binds a value and does not say what it reads it as")
+            })?;
             let held = binds(builder, value, &arm.selects, machine_type(read_as)?);
             let variable = builder.declare_var(machine_type(read_as)?);
             builder.def_var(variable, held);
@@ -2516,7 +2620,11 @@ fn binary(
     op: Op,
     operands: Operands,
 ) -> Result<ir::Value> {
-    let Operands { left, right, aborts } = operands;
+    let Operands {
+        left,
+        right,
+        aborts,
+    } = operands;
     match op {
         // `&&` and `||` stop as soon as the answer is settled, and which operands run is part of
         // what they mean rather than something a backend decides: a condition narrows what its
@@ -2544,8 +2652,14 @@ fn binary(
             // `amount == 0` is; a case value compared with its sum is two declared types that are
             // not the same one. Read off the left alone, both of those are whatever the left one
             // happened to be.
-            let a = Held::of(left, lower(builder, lowering, module, bindings, abort, left)?);
-            let b = Held::of(right, lower(builder, lowering, module, bindings, abort, right)?);
+            let a = Held::of(
+                left,
+                lower(builder, lowering, module, bindings, abort, left)?,
+            );
+            let b = Held::of(
+                right,
+                lower(builder, lowering, module, bindings, abort, right)?,
+            );
             match op {
                 Op::Add | Op::Sub | Op::Mul => arithmetic(builder, abort, op, a, b, aborts),
                 Op::Eq | Op::Ne | Op::Lt | Op::Le | Op::Gt | Op::Ge => {
@@ -2555,7 +2669,9 @@ fn binary(
                 // representation here yet.
                 Op::Div => Err(not_lowered(format!("the operator {}", op.spelt()))),
                 Op::Concat => join(builder, lowering, module, a, b),
-                Op::And | Op::Or => unreachable!("answered above, where the right side may not run"),
+                Op::And | Op::Or => {
+                    unreachable!("answered above, where the right side may not run")
+                }
             }
         }
     }
@@ -2611,9 +2727,7 @@ fn compare(
                 let comparing = module.declare_func_in_func(lowering.compare_text, builder.func);
                 let compared = builder.ins().call(comparing, &[a, b]);
                 let answered = builder.inst_results(compared)[0];
-                Ok(builder
-                    .ins()
-                    .icmp_imm_s(as_a_whole_number(op), answered, 0))
+                Ok(builder.ins().icmp_imm_s(as_a_whole_number(op), answered, 0))
             }
             Prim::Decimal
             | Prim::Rational
@@ -2637,14 +2751,13 @@ fn compare(
         // document: a newtype says what it is called and what its field is called, and not what it
         // wraps. A reading that guessed would be this side deciding a question the checker has
         // already answered.
-        (Ty::Declared { .. } | Ty::Union { .. }, _) | (_, Ty::Declared { .. } | Ty::Union { .. }) => {
-            Err(not_lowered(format!(
-                "a comparison of {} against {}, which is what they are made of compared rather \
+        (Ty::Declared { .. } | Ty::Union { .. }, _)
+        | (_, Ty::Declared { .. } | Ty::Union { .. }) => Err(not_lowered(format!(
+            "a comparison of {} against {}, which is what they are made of compared rather \
                  than where they are",
-                left.ty.spelt(),
-                right.ty.spelt()
-            )))
-        }
+            left.ty.spelt(),
+            right.ty.spelt()
+        ))),
         // An optional and a tuple have equality and no order: what the language orders is a number,
         // text, an amount, a moment, an enumeration, and a newtype over one of those. So `==` here
         // is a comparison still to be written, and `<` is the two halves disagreeing — the same
@@ -2701,7 +2814,13 @@ fn arithmetic(
                     let sum = builder.ins().iadd(a, b);
                     let past = builder.ins().bxor(a, sum);
                     let also = builder.ins().bxor(b, sum);
-                    abort_where_the_sign_bit_is_set(builder, abort, overflow_status(aborts)?, past, also);
+                    abort_where_the_sign_bit_is_set(
+                        builder,
+                        abort,
+                        overflow_status(aborts)?,
+                        past,
+                        also,
+                    );
                     Ok(sum)
                 }
                 Op::Sub => difference(builder, abort, overflow_status(aborts)?, a, b),

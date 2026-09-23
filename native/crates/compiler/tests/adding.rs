@@ -22,7 +22,11 @@ const ADDING: &str = include_str!("adding.transport.json");
 /// Mach-O writes an underscore before every one and ELF writes none. The object carries whichever
 /// its format takes, so what needs saying here is only what a C declaration has to be written with
 /// to reach it.
-const PREFIX: &str = if cfg!(target_vendor = "apple") { "_" } else { "" };
+const PREFIX: &str = if cfg!(target_vendor = "apple") {
+    "_"
+} else {
+    ""
+};
 
 /// What the object calls that is not its own code. A published behavior is also an entry a host
 /// reaches for its answer as the language writes it, and writing that is the runtime's.
@@ -96,7 +100,10 @@ struct Answered {
 }
 
 fn answered(output: &Output) -> Answered {
-    assert!(output.status.success(), "the process itself failed: {output:?}");
+    assert!(
+        output.status.success(),
+        "the process itself failed: {output:?}"
+    );
     let said = String::from_utf8_lossy(&output.stdout);
     let mut lines = said.lines();
     let status: u32 = lines
@@ -104,7 +111,9 @@ fn answered(output: &Output) -> Answered {
         .expect("a status on the first line")
         .parse()
         .expect("a status this harness wrote as a number");
-    let value = lines.next().map(|it| it.parse().expect("an Int on the second line"));
+    let value = lines
+        .next()
+        .map(|it| it.parse().expect("an Int on the second line"));
     Answered { status, value }
 }
 

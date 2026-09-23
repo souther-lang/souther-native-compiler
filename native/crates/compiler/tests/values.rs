@@ -20,7 +20,11 @@ const VALUES: &str = include_str!("values.transport.json");
 const PUBLISHED_VALUE: &str = include_str!("published_value.transport.json");
 
 /// What the linker on this platform calls a symbol the object names.
-const PREFIX: &str = if cfg!(target_vendor = "apple") { "_" } else { "" };
+const PREFIX: &str = if cfg!(target_vendor = "apple") {
+    "_"
+} else {
+    ""
+};
 
 /// What generated code takes room from, needed here because both documents construct a value.
 fn runtime() -> &'static std::path::Path {
@@ -33,8 +37,16 @@ fn a_value_and_its_handover_read_back_as_the_checker_wrote_them() {
     let module = &program.modules[0];
 
     assert_eq!(module.values.len(), 2, "ks and ys");
-    let ks = module.values.iter().find(|it| it.name == "ks").expect("ks is a value");
-    let ys = module.values.iter().find(|it| it.name == "ys").expect("ys is a value");
+    let ks = module
+        .values
+        .iter()
+        .find(|it| it.name == "ks")
+        .expect("ks is a value");
+    let ys = module
+        .values
+        .iter()
+        .find(|it| it.name == "ys")
+        .expect("ys is a value");
 
     assert!(ks.handovers.is_empty(), "ks is handed nothing");
     assert_eq!(ys.handovers.len(), 1, "ys names ks at its root");
@@ -82,10 +94,14 @@ fn a_published_values_entry_answers_with_what_it_names() {
 /// occurrence of each back.
 #[test]
 fn a_local_value_reach_and_a_published_one_read_as_different_variants() {
-    let program: Program = serde_json::from_str(PUBLISHED_VALUE)
-        .expect("every field this carries reads");
+    let program: Program =
+        serde_json::from_str(PUBLISHED_VALUE).expect("every field this carries reads");
 
-    let publisher = program.modules.iter().find(|it| it.name == "publisher").unwrap();
+    let publisher = program
+        .modules
+        .iter()
+        .find(|it| it.name == "publisher")
+        .unwrap();
     let entry = &publisher.entries[0];
     // The entry's own body reaches ks and then ys, both same-module: Reaches::Value.
     let mut local_reaches = 0;
@@ -100,7 +116,11 @@ fn a_local_value_reach_and_a_published_one_read_as_different_variants() {
     });
     assert_eq!(local_reaches, 2, "the entry builds ks, then ys");
 
-    let reader = program.modules.iter().find(|it| it.name == "reader").unwrap();
+    let reader = program
+        .modules
+        .iter()
+        .find(|it| it.name == "reader")
+        .unwrap();
     let mut published_reaches = 0;
     for definition in &reader.definitions {
         walk(definition_body(definition), &mut |reaches| {
@@ -115,7 +135,10 @@ fn a_local_value_reach_and_a_published_one_read_as_different_variants() {
             );
         });
     }
-    assert_eq!(published_reaches, 1, "reader.g reaches publisher.ys across the boundary");
+    assert_eq!(
+        published_reaches, 1,
+        "reader.g reaches publisher.ys across the boundary"
+    );
 }
 
 /// `reader.g` reaches `publisher.ys` across the two objects' shared boundary — here, one object
@@ -178,7 +201,10 @@ fn build(object_name: &str, document: &str, harness: &str) -> (TempDir, PathBuf)
 }
 
 fn run(executable: &Path, args: &[&str]) -> Output {
-    Command::new(executable).args(args).output().expect("the executable to run")
+    Command::new(executable)
+        .args(args)
+        .output()
+        .expect("the executable to run")
 }
 
 fn definition_body(
@@ -197,7 +223,9 @@ fn definition_body(
 fn walk(node: &souther_native_driver::transport::Node, into: &mut impl FnMut(&Reaches)) {
     use souther_native_driver::transport::Node;
     match node {
-        Node::Call { reaches, arguments, .. } => {
+        Node::Call {
+            reaches, arguments, ..
+        } => {
             into(reaches);
             for argument in arguments {
                 walk(argument, into);

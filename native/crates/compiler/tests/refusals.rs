@@ -24,7 +24,8 @@ fn document(op: &str, ty: &str) -> String {
 /// Held by a helper and not a behavior. A behavior's parameters are boundary shapes, and a tuple
 /// or an optional is not one; a helper takes any type, and is lowered by the same walk.
 fn over(op: &str, left: &str, right: &str) -> String {
-    let read = |at: u32, ty: &str| format!(r#"{{"core":"read","binding":{at},"type":{ty},"aborts":[]}}"#);
+    let read =
+        |at: u32, ty: &str| format!(r#"{{"core":"read","binding":{at},"type":{ty},"aborts":[]}}"#);
     let body = format!(
         r#"{{"core":"binary","op":"{op}","left":{},"right":{},"type":{left},"aborts":[]}}"#,
         read(0, left),
@@ -414,7 +415,8 @@ fn a_compositions_first_stage_routed_rather_than_always_applied_is_the_halves_di
         r#""routing":{"is":"oncases","accepted":[{"is":"declared","declared":"m.Nothing"}]}"#,
     );
 
-    let refused = object_for(&document).expect_err("a first stage that is routed rather than always applied");
+    let refused =
+        object_for(&document).expect_err("a first stage that is routed rather than always applied");
 
     assert!(
         refused.downcast_ref::<NotLowered>().is_none(),
@@ -457,7 +459,8 @@ fn a_compositions_own_takes_disagreeing_with_its_first_stages_target_is_the_halv
 /// function can be handed over: a behavior's parameters are boundary shapes and a function is not
 /// one.
 #[test]
-fn an_applys_answer_disagreeing_with_its_functions_own_type_is_the_halves_disagreeing_even_though_both_are_pointers() {
+fn an_applys_answer_disagreeing_with_its_functions_own_type_is_the_halves_disagreeing_even_though_both_are_pointers()
+ {
     let document = concat!(
         r#"{"transport":9,"declarations":["#,
         r#"{"module":"m","name":"A","by":"amodule","is":"unit"},"#,
@@ -479,7 +482,10 @@ fn an_applys_answer_disagreeing_with_its_functions_own_type_is_the_halves_disagr
         refused.downcast_ref::<NotLowered>().is_none(),
         "the halves disagreeing is not the backend being behind: {refused}"
     );
-    assert!(refused.to_string().contains("m.B") || refused.to_string().contains("m.A"), "{refused}");
+    assert!(
+        refused.to_string().contains("m.B") || refused.to_string().contains("m.A"),
+        "{refused}"
+    );
 }
 
 /// A field whose scalar has no representation here refuses the boundary that would write it, and
@@ -556,7 +562,10 @@ fn an_enumeration_over_a_case_with_fields_is_the_halves_disagreeing() {
 /// would leave whichever was written second.
 #[test]
 fn a_discriminated_form_with_one_key_for_tag_and_contents_is_the_halves_disagreeing() {
-    let document = answering_a_sum("[]", r#"{"is":"discriminated","tag":"type","contents":"type"}"#);
+    let document = answering_a_sum(
+        "[]",
+        r#"{"is":"discriminated","tag":"type","contents":"type"}"#,
+    );
 
     let refused = object_for(&document).expect_err("one key for the tag and the contents");
 
@@ -623,7 +632,9 @@ fn building(codec: &str, value: &str) -> String {
 }
 
 fn unit(declared: &str) -> String {
-    format!(r#"{{"core":"unit","declared":"{declared}","type":{{"declared":"{declared}"}},"aborts":[]}}"#)
+    format!(
+        r#"{{"core":"unit","declared":"{declared}","type":{{"declared":"{declared}"}},"aborts":[]}}"#
+    )
 }
 
 /// A field naming one declaration given a value of an unrelated one. Both are pointers, so the
@@ -649,8 +660,8 @@ fn a_field_of_a_sum_given_a_value_of_one_of_its_cases_is_built() {
     let named_sum = r#"{"is":"named","declared":"m.S"}"#;
 
     object_for(&building(named_sum, &unit("m.B"))).expect("m.B is a case of m.S");
-    let refused = object_for(&building(named_sum, &unit("m.U")))
-        .expect_err("m.U is no case of m.S");
+    let refused =
+        object_for(&building(named_sum, &unit("m.U"))).expect_err("m.U is no case of m.S");
     assert!(refused.downcast_ref::<NotLowered>().is_none(), "{refused}");
 }
 
@@ -661,7 +672,7 @@ fn a_field_of_a_sum_given_a_value_of_one_of_its_cases_is_built() {
 fn a_shape_the_checker_cannot_build_is_not_a_document_this_driver_reads() {
     let option_of_option = building(
         r#"{"is":"optionof","present":{"is":"optionof","present":{"is":"scalar","scalar":"INT"}}}"#,
-        r#"{"core":"none","type":{"option":{"option":{"prim":"INT"}}},"aborts":[]}"#
+        r#"{"core":"none","type":{"option":{"option":{"prim":"INT"}}},"aborts":[]}"#,
     );
     let newtype_of_two = building(r#"{"is":"scalar","scalar":"INT"}"#, &unit("m.U")).replace(
         r#"{"module":"m","name":"U","by":"amodule","is":"unit"}"#,
