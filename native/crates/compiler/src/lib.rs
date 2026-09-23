@@ -138,6 +138,30 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
         );
     }
 
+    // Every field a module carries gets a home below or a refusal here — named out in full, and
+    // not `..`'d away, so a field transport.rs starts carrying tomorrow is a compile error at this
+    // one destructure until it is given one of the two. A struct does not hold the two loops below
+    // to that the way `Reaches`'s own match arms hold `lower` to it: nothing stops `helpers` or
+    // `definitions` from growing a sibling that both loops quietly never look at, which is
+    // (souther-lang/souther-native-compiler#10, review of #20) exactly how `values` and `entries`
+    // went unread once transport carried them before this backend built anything for them.
+    for written in &program.modules {
+        let transport::Module {
+            name,
+            helpers: _,
+            values,
+            entries,
+            definitions: _,
+            examples: _,
+        } = written;
+        if !values.is_empty() || !entries.is_empty() {
+            return Err(not_lowered(format!(
+                "the module {name} carries a value or a published entry, which this backend does \
+                 not build yet"
+            )));
+        }
+    }
+
     let mut flags = settings::builder();
     // A call out of this object reaches its callee the way the platform's linker expects, which on
     // both of the hosts this runs on means position-independent. Said here rather than left to the
