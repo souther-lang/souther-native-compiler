@@ -208,17 +208,10 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
     // (a closure returned from one function and applied by another), so nothing about defining a
     // body may assume every site it itself needs was already declared by the time it runs; all of
     // them are, because this runs before any of them does.
-    let closures = ClosureSites::of_program(&program);
+    let closures = ClosureSites::of_program(&program)?;
     let mut lifted: BTreeMap<usize, FuncId> = BTreeMap::new();
     for (&site, plan) in closures.iter() {
-        let fn_ = plan.signature()?;
-        if fn_.takes.len() != plan.parameters.len() {
-            bail!(
-                "a closure site declared with {} parameters and a type naming {}",
-                plan.parameters.len(),
-                fn_.takes.len()
-            );
-        }
+        let fn_ = plan.signature;
         let signature = lifted_signature(&fn_.takes, &fn_.answers, call_conv)?;
         let symbol = format!("$closure${site}");
         let id = module.declare_function(&symbol, Linkage::Local, &signature)?;
@@ -548,7 +541,7 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
     // a nested site, or reach one returned from elsewhere, and every one of them was declared
     // above regardless of which body it is nested under.
     for (&site, plan) in closures.iter() {
-        let fn_ = plan.signature()?;
+        let fn_ = plan.signature;
         let signature = lifted_signature(&fn_.takes, &fn_.answers, call_conv)?;
         let id = *lifted
             .get(&site)
@@ -1395,7 +1388,7 @@ fn define_closure(
         bindings.at(capture.binding, variable);
     }
 
-    let takes = &site.signature()?.takes;
+    let takes = &site.signature.takes;
     for (at, parameter) in site.parameters.iter().enumerate() {
         let variable = builder.declare_var(machine_type(&takes[at])?);
         let given = builder.block_params(entry)[1 + at];
@@ -1939,17 +1932,57 @@ fn lower(
             ty,
             ..
         } => {
-            let closure = lower(builder, lowering, module, bindings, abort, function)?;
-            let mut given = Vec::with_capacity(arguments.len());
-            for argument in arguments {
-                given.push(lower(builder, lowering, module, bindings, abort, argument)?);
-            }
             let Ty::Fn { fn_ } = function.ty() else {
                 bail!(
                     "an application of {}, which is not a function type",
                     function.ty().spelt()
                 );
             };
+            // `fn_` (the applied function's own type) and `arguments`/`ty` (this `Apply` node's
+            // own arguments and own type) are independent statements of one fact, the same way a
+            // `Node::Block`'s own type, parameters and body are (see `closures`'s own doc) — and
+            // this one is never checked before now, since nothing builds a `Site` for an `Apply`.
+            // Checked at the machine representation only, not full `Ty` equality: this is not the
+            // place to re-implement the language's own assignability rules, only to refuse handing
+            // Cranelift an indirect-call ABI its own operands disagree about, which is silent wrong
+            // code — a store at one width and a load at another through the same `out` slot — and
+            // not a crash this backend would otherwise notice on its own. Checked before any of
+            // this node's own operands are lowered, so a document that fails this never leaves
+            // behind half-lowered IR for it.
+            if fn_.takes.len() != arguments.len() {
+                bail!(
+                    "an application naming {} arguments to a function type taking {}: `Apply`'s \
+                     own arguments and its function's own type are two statements of one fact and \
+                     this document's disagree",
+                    arguments.len(),
+                    fn_.takes.len()
+                );
+            }
+            if machine_type(&fn_.answers)? != machine_type(ty)? {
+                bail!(
+                    "an application answering {} at its function's own type and {} at its own \
+                     type: the two have no representation in common, and this document's two \
+                     statements of what this answers disagree",
+                    fn_.answers.spelt(),
+                    ty.spelt()
+                );
+            }
+            for (at, taken) in fn_.takes.iter().enumerate() {
+                if machine_type(taken)? != machine_type(arguments[at].ty())? {
+                    bail!(
+                        "an application's argument {at} is {} at its function's own type and {} \
+                         where it is written: the two have no representation in common, and this \
+                         document's two statements of what is handed over disagree",
+                        taken.spelt(),
+                        arguments[at].ty().spelt()
+                    );
+                }
+            }
+            let closure = lower(builder, lowering, module, bindings, abort, function)?;
+            let mut given = Vec::with_capacity(arguments.len());
+            for argument in arguments {
+                given.push(lower(builder, lowering, module, bindings, abort, argument)?);
+            }
             let call_conv = module.isa().default_call_conv();
             call_indirect_reached(
                 builder,
