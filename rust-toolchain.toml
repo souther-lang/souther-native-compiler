@@ -4,4 +4,6 @@ profile = "minimal"
 # Clippy, because one of its correctness lints is what holds a rule this project has already
 # broken once: a public function that reads through a raw pointer it was handed has to be
 # `unsafe`, whatever its documentation says about how to call it.
-components = ["clippy"]
+# Rustfmt, because a layout nobody checks is one that drifts with whoever last wrote a line, and
+# the build is what checks it.
+components = ["clippy", "rustfmt"]

@@ -89,8 +89,23 @@ does not cross, and the signature is where that is said.
 A type that states what its values owe is not built: a construction runs those clauses and stops at
 the first that does not hold, and nothing here runs one.
 
+An answer at the boundary, written as the language writes it. Every behavior the object defines
+and publishes, and every row, has a second entry that runs it and hands back its answer as JSON:
+a number, a truth, text, a newtype as what it wraps, a product as an object of its fields with an
+absent optional left out, a unit as an empty object, and a set of alternatives as a bare name or
+discriminated under its tag. None of that is decided here. What each position writes is what the
+checker settled for it and the program carries — the codec shape of every field, and the form a
+set of alternatives travels in with both of its keys — and whether a case takes the tag into its
+own object or is wrapped beside it is read off the arm it was declared in. The encoder is compiled
+per declaration, so nothing about a declaration is kept for run time to interpret, and the runtime
+only holds the tree it is handed and writes it out. Which case a value is comes from the token the
+linker resolved, and is never what the case is written as.
+
 Still ahead: a `Decimal`, the collections, a function value, every kernel but `Int.add`, a value
-that runs in the module declaring it, and negating anything other than a literal.
+that runs in the module declaring it, and negating anything other than a literal. A collection and
+a `Decimal` are read off the program whole and refused where one would be laid out or written: how
+every carrier orders a set's members, spells a map's keys and writes a decimal is for the language
+to state before a backend writes one.
 
 
 ## Where a value lives

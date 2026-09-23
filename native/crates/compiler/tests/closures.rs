@@ -34,16 +34,23 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use tempfile::{TempDir, tempdir};
 
+mod support;
+
 /// The document the Java half wrote, and the one its own test holds it to.
 const CLOSURES: &str = include_str!("closures.transport.json");
 
 /// What the linker on this platform calls a symbol the object names.
-const PREFIX: &str = if cfg!(target_vendor = "apple") { "_" } else { "" };
+const PREFIX: &str = if cfg!(target_vendor = "apple") {
+    "_"
+} else {
+    ""
+};
 
 /// What generated code takes room from — needed here because every closure this fixture builds is
 /// allocated through it, the same as any other compound value.
-const RUNTIME: &str =
-    concat!(env!("CARGO_MANIFEST_DIR"), "/../../target/debug/libsouther_native_runtime.a");
+fn runtime() -> &'static std::path::Path {
+    support::runtime()
+}
 
 const HARNESS: &str = r#"
 #include <inttypes.h>
@@ -113,10 +120,17 @@ struct Answered {
 }
 
 fn answered(output: &Output) -> Answered {
-    assert!(output.status.success(), "the process itself failed: {output:?}");
+    assert!(
+        output.status.success(),
+        "the process itself failed: {output:?}"
+    );
     let said = String::from_utf8_lossy(&output.stdout);
     let mut lines = said.lines();
-    let status: u32 = lines.next().expect("a status").parse().expect("a status as a number");
+    let status: u32 = lines
+        .next()
+        .expect("a status")
+        .parse()
+        .expect("a status as a number");
     let value = lines.next().map(|it| it.parse().expect("an Int"));
     Answered { status, value }
 }
@@ -144,8 +158,16 @@ fn a_closure_over_a_declared_value_reads_its_field_through_the_capture() {
 #[test]
 fn both_branches_of_an_if_choosing_a_closure_answer_correctly_whichever_is_taken() {
     let (_swept, built) = build();
-    assert_eq!(answered(&run(&built, "adder_true")).value, Some(15), "10 + 5");
-    assert_eq!(answered(&run(&built, "adder_false")).value, Some(50), "10 * 5");
+    assert_eq!(
+        answered(&run(&built, "adder_true")).value,
+        Some(15),
+        "10 + 5"
+    );
+    assert_eq!(
+        answered(&run(&built, "adder_false")).value,
+        Some(50),
+        "10 * 5"
+    );
 }
 
 /// A closure whose body leaves `Int`'s range: the abort has to reach the caller through the
@@ -174,7 +196,10 @@ fn a_closure_nested_inside_another_closure_carries_the_outer_scope_all_the_way_i
     // b = x + 1 = 6; inner = y -> y + a + b; inner(100) = 100 + 2 + 6
     assert_eq!(answered(&run(&built, "nested_true_true")).value, Some(108));
     // inner = y -> y * a * b; inner(100) = 100 * 2 * 6
-    assert_eq!(answered(&run(&built, "nested_true_false")).value, Some(1200));
+    assert_eq!(
+        answered(&run(&built, "nested_true_false")).value,
+        Some(1200)
+    );
     // c1 = false: outer = x -> x; outer(5) = 5, whatever a and c2 are
     assert_eq!(answered(&run(&built, "nested_false")).value, Some(5));
 }
@@ -209,7 +234,7 @@ fn build() -> (TempDir, PathBuf) {
         .arg(&executable)
         .arg(&harness)
         .arg(&object)
-        .arg(RUNTIME)
+        .arg(runtime())
         .output()
         .expect("a C compiler to link with");
     assert!(

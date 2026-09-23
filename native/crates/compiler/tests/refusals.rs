@@ -20,21 +20,22 @@ fn document(op: &str, ty: &str) -> String {
 /// A pair and not one type, because an operator here is not given two values of one type: a bare
 /// literal takes the newtype of what it is compared with, and a case value is a value of its sum.
 /// A builder that wrote one type twice could not say what either of those looks like on the wire.
+///
+/// Held by a helper and not a behavior. A behavior's parameters are boundary shapes, and a tuple
+/// or an optional is not one; a helper takes any type, and is lowered by the same walk.
 fn over(op: &str, left: &str, right: &str) -> String {
-    let read = |at: u32, ty: &str| format!(r#"{{"core":"read","binding":{at},"type":{ty},"aborts":[]}}"#);
+    let read =
+        |at: u32, ty: &str| format!(r#"{{"core":"read","binding":{at},"type":{ty},"aborts":[]}}"#);
     let body = format!(
         r#"{{"core":"binary","op":"{op}","left":{},"right":{},"type":{left},"aborts":[]}}"#,
         read(0, left),
         read(1, right)
     );
-    let target = format!(
-        r#"{{"module":"calculation","name":"f","is":"body","takes":[{left},{right}],"answers":{left}}}"#
-    );
     let held = format!(
-        r#"{{"is":"body","declared":"calculation.f","parameters":["a","b"],"publication":"published","body":{body}}}"#
+        r#"{{"declared":"calculation.f","parameters":["a","b"],"takes":[{left},{right}],"answers":{left},"body":{body}}}"#
     );
     format!(
-        r#"{{"transport":8,"declarations":[],"behaviors":[{target}],"modules":[{{"name":"calculation","helpers":[],"values":[],"entries":[],"definitions":[{held}],"examples":[]}}]}}"#
+        r#"{{"transport":9,"declarations":[],"behaviors":[],"modules":[{{"name":"calculation","helpers":[{held}],"values":[],"entries":[],"definitions":[],"examples":[]}}]}}"#
     )
 }
 
@@ -183,36 +184,79 @@ fn a_field_this_driver_does_not_know_is_refused_rather_than_skipped() {
 /// would be reading a document written to mean something else.
 #[test]
 fn a_transport_from_another_version_is_refused() {
-    let later = document("ADD", "INT").replace(r#""transport":8"#, r#""transport":9"#);
+    let later = document("ADD", "INT").replace(r#""transport":9"#, r#""transport":10"#);
 
     let refused = object_for(&later).expect_err("a version this does not read");
 
-    assert!(refused.to_string().contains('9'), "{refused}");
+    assert!(refused.to_string().contains("10"), "{refused}");
 }
 
-/// A function value reaches no further than the object that built it: `means_the_same_elsewhere`
-/// answers `false` for `Ty::Fn` unconditionally, so a behavior naming one at a boundary this
-/// backend admits crossing — here, one the host supplies (`injected`) — is refused rather than
-/// declared. Nothing about which types the function itself takes or answers changes that: the
-/// closure header and the invocation convention behind a function value's own pointer are not yet
-/// a contract this backend has published for another object to read, whatever the function's own
-/// signature is built from (souther-lang/souther-native-compiler#11).
+/// A behavior's parameter is a boundary shape, and a function is not one: the language gives a
+/// function no external representation, so nothing the checker settles puts one at a behavior's
+/// boundary. A document that does is not a program this backend is behind on; it is one this
+/// driver does not read.
 #[test]
-fn a_function_value_at_an_injected_behaviors_boundary_is_not_lowered() {
+fn a_function_at_a_behaviors_boundary_is_not_a_document_this_driver_reads() {
     let document = concat!(
-        r#"{"transport":8,"declarations":[],"#,
-        r#""behaviors":[{"module":"m","name":"choose","is":"injected","takes":["#,
-        r#"{"fn":{"takes":[{"prim":"INT"}],"answers":{"prim":"INT"}}}],"answers":{"prim":"INT"}}],"#,
+        r#"{"transport":9,"declarations":[],"#,
+        r#""behaviors":[{"module":"m","name":"choose","is":"injected","inputs":["#,
+        r#"{"fn":{"takes":[{"prim":"INT"}],"answers":{"prim":"INT"}}}],"#,
+        r#""output":{"is":"scalar","scalar":"INT"}}],"#,
         r#""modules":[{"name":"m","helpers":[],"values":[],"entries":[],"definitions":[],"examples":[]}]}"#,
     );
 
-    let refused = object_for(document).expect_err("a function value at an object boundary");
+    let refused = object_for(document).expect_err("a function at a behavior's boundary");
+
+    assert!(
+        refused.downcast_ref::<NotLowered>().is_none(),
+        "a shape the boundary has no word for is the halves disagreeing: {refused}"
+    );
+}
+
+/// What a behavior answers crosses whole, and a collection is one of the things it can answer.
+/// Reading it is not laying it out: a `List` has no representation here yet, which is this
+/// backend being behind and not the document being unreadable.
+#[test]
+fn an_answer_that_is_a_list_is_read_and_not_lowered() {
+    let document = concat!(
+        r#"{"transport":9,"declarations":[],"#,
+        r#""behaviors":[{"module":"m","name":"many","is":"injected","inputs":[],"#,
+        r#""output":{"is":"listof","element":{"is":"scalar","scalar":"INT"}}}],"#,
+        r#""modules":[{"name":"m","helpers":[],"values":[],"entries":[],"definitions":[],"examples":[]}]}"#,
+    );
+
+    let refused = object_for(document).expect_err("no layout for a list");
 
     assert!(
         refused.downcast_ref::<NotLowered>().is_some(),
-        "a function value reaching no further than this object is the backend not yet publishing \
-         a contract for it, not the two halves disagreeing: {refused}"
+        "a list read whole and not laid out is the backend being behind: {refused}"
     );
+    assert!(refused.to_string().contains("List"), "{refused}");
+}
+
+/// A primitive standing as a member of an answer is a case the transport carries. What holds a
+/// union here says which member it is by a token, and an `Int` carries none, so a value of that
+/// union has no representation yet.
+#[test]
+fn an_answer_with_a_primitive_among_its_cases_is_read_and_not_lowered() {
+    let document = concat!(
+        r#"{"transport":9,"declarations":["#,
+        r#"{"module":"m","name":"NotFound","by":"amodule","is":"unit"}],"#,
+        r#""behaviors":[{"module":"m","name":"lengthOf","is":"injected","inputs":[],"#,
+        r#""output":{"is":"cases","type":{"union":[{"is":"primitive","prim":"INT"},"#,
+        r#"{"is":"declared","declared":"m.NotFound"}]},"#,
+        r#""cases":[{"is":"primitive","prim":"INT"},{"is":"declared","declared":"m.NotFound"}],"#,
+        r#""form":{"is":"discriminated","tag":"type","contents":"value"}}}],"#,
+        r#""modules":[{"name":"m","helpers":[],"values":[],"entries":[],"definitions":[],"examples":[]}]}"#,
+    );
+
+    let refused = object_for(document).expect_err("no token for an Int to say which case it is");
+
+    assert!(
+        refused.downcast_ref::<NotLowered>().is_some(),
+        "a union read whole and not laid out is the backend being behind: {refused}"
+    );
+    assert!(refused.to_string().contains("Int"), "{refused}");
 }
 
 /// Two calls reaching one published value at two different types is not a document this backend
@@ -223,9 +267,9 @@ fn a_function_value_at_an_injected_behaviors_boundary_is_not_lowered() {
 #[test]
 fn a_published_value_reached_at_two_different_types_is_the_halves_disagreeing() {
     let document = concat!(
-        r#"{"transport":8,"declarations":[],"#,
-        r#""behaviors":[{"module":"m","name":"f","is":"body","takes":[],"answers":{"prim":"INT"}},"#,
-        r#"{"module":"m","name":"g","is":"body","takes":[],"answers":{"prim":"BOOL"}}],"#,
+        r#"{"transport":9,"declarations":[],"#,
+        r#""behaviors":[{"module":"m","name":"f","is":"body","inputs":[],"output":{"is":"scalar","scalar":"INT"}},"#,
+        r#"{"module":"m","name":"g","is":"body","inputs":[],"output":{"is":"scalar","scalar":"BOOL"}}],"#,
         r#""modules":[{"name":"m","helpers":[],"values":[],"entries":[],"definitions":["#,
         r#"{"is":"body","declared":"m.f","parameters":[],"publication":"kept","#,
         r#""body":{"core":"call","reaches":{"is":"publishedvalue","module":"other","name":"x"},"#,
@@ -250,9 +294,9 @@ fn a_published_value_reached_at_two_different_types_is_the_halves_disagreeing() 
 /// tests below has one place to make disagree with the other.
 fn composed_document() -> String {
     concat!(
-        r#"{"transport":8,"declarations":[],"#,
-        r#""behaviors":[{"module":"m","name":"inner","is":"body","takes":[{"prim":"INT"}],"answers":{"prim":"INT"}},"#,
-        r#"{"module":"m","name":"outer","is":"composed","takes":[{"prim":"INT"}],"answers":{"prim":"INT"}}],"#,
+        r#"{"transport":9,"declarations":[],"#,
+        r#""behaviors":[{"module":"m","name":"inner","is":"body","inputs":[{"is":"scalar","scalar":"INT"}],"output":{"is":"scalar","scalar":"INT"}},"#,
+        r#"{"module":"m","name":"outer","is":"composed","inputs":[{"is":"scalar","scalar":"INT"}],"output":{"is":"scalar","scalar":"INT"}}],"#,
         r#""modules":[{"name":"m","helpers":[],"values":[],"entries":[],"definitions":["#,
         r#"{"is":"body","declared":"m.inner","parameters":["a"],"publication":"kept","body":{"core":"read","binding":0,"type":{"prim":"INT"},"aborts":[]}},"#,
         r#"{"is":"composed","declared":"m.outer","publication":"published","stages":["#,
@@ -368,10 +412,11 @@ fn a_stages_own_answer_disagreeing_with_the_target_it_reaches_is_the_halves_disa
 fn a_compositions_first_stage_routed_rather_than_always_applied_is_the_halves_disagreeing() {
     let document = composed_document().replace(
         r#""routing":{"is":"always"}"#,
-        r#""routing":{"is":"oncases","accepted":["m.Nothing"]}"#,
+        r#""routing":{"is":"oncases","accepted":[{"is":"declared","declared":"m.Nothing"}]}"#,
     );
 
-    let refused = object_for(&document).expect_err("a first stage that is routed rather than always applied");
+    let refused =
+        object_for(&document).expect_err("a first stage that is routed rather than always applied");
 
     assert!(
         refused.downcast_ref::<NotLowered>().is_none(),
@@ -387,8 +432,8 @@ fn a_compositions_first_stage_routed_rather_than_always_applied_is_the_halves_di
 #[test]
 fn a_compositions_own_takes_disagreeing_with_its_first_stages_target_is_the_halves_disagreeing() {
     let document = composed_document().replace(
-        r#""name":"outer","is":"composed","takes":[{"prim":"INT"}]"#,
-        r#""name":"outer","is":"composed","takes":[{"prim":"INT"},{"prim":"INT"}]"#,
+        r#""name":"outer","is":"composed","inputs":[{"is":"scalar","scalar":"INT"}]"#,
+        r#""name":"outer","is":"composed","inputs":[{"is":"scalar","scalar":"INT"},{"is":"scalar","scalar":"INT"}]"#,
     );
 
     let refused = object_for(&document)
@@ -410,20 +455,24 @@ fn a_compositions_own_takes_disagreeing_with_its_first_stages_target_is_the_halv
 /// real address from then on. Souther's checker never writes this (`Core.Apply`'s own `type` is
 /// built straight from the applied value's `Type.FnOf` result, with no assignability in between),
 /// so this is exactly the kind of malformed or version-skewed document this strict reader exists
-/// to refuse rather than execute.
+/// to refuse rather than execute. The function arrives as a helper's parameter, the one place a
+/// function can be handed over: a behavior's parameters are boundary shapes and a function is not
+/// one.
 #[test]
-fn an_applys_answer_disagreeing_with_its_functions_own_type_is_the_halves_disagreeing_even_though_both_are_pointers() {
+fn an_applys_answer_disagreeing_with_its_functions_own_type_is_the_halves_disagreeing_even_though_both_are_pointers()
+ {
     let document = concat!(
-        r#"{"transport":8,"declarations":["#,
-        r#"{"module":"m","name":"A","by":"amodule","is":"unit","fields":[],"invariants":0},"#,
-        r#"{"module":"m","name":"B","by":"amodule","is":"unit","fields":[],"invariants":0}],"#,
-        r#""behaviors":[{"module":"m","name":"f","is":"body","#,
-        r#""takes":[{"fn":{"takes":[],"answers":{"declared":"m.A"}}}],"answers":{"declared":"m.B"}}],"#,
-        r#""modules":[{"name":"m","helpers":[],"values":[],"entries":[],"#,
-        r#""definitions":[{"is":"body","declared":"m.f","parameters":["f"],"publication":"published","#,
+        r#"{"transport":9,"declarations":["#,
+        r#"{"module":"m","name":"A","by":"amodule","is":"unit"},"#,
+        r#"{"module":"m","name":"B","by":"amodule","is":"unit"}],"#,
+        r#""behaviors":[],"#,
+        r#""modules":[{"name":"m","#,
+        r#""helpers":[{"declared":"m.f","parameters":["f"],"#,
+        r#""takes":[{"fn":{"takes":[],"answers":{"declared":"m.A"}}}],"answers":{"declared":"m.B"},"#,
         r#""body":{"core":"apply","function":{"core":"read","binding":0,"#,
         r#""type":{"fn":{"takes":[],"answers":{"declared":"m.A"}}},"aborts":[]},"#,
-        r#""arguments":[],"type":{"declared":"m.B"},"aborts":[]}}],"examples":[]}]}"#,
+        r#""arguments":[],"type":{"declared":"m.B"},"aborts":[]}}],"#,
+        r#""values":[],"entries":[],"definitions":[],"examples":[]}]}"#,
     );
 
     let refused = object_for(document)
@@ -433,5 +482,286 @@ fn an_applys_answer_disagreeing_with_its_functions_own_type_is_the_halves_disagr
         refused.downcast_ref::<NotLowered>().is_none(),
         "the halves disagreeing is not the backend being behind: {refused}"
     );
-    assert!(refused.to_string().contains("m.B") || refused.to_string().contains("m.A"), "{refused}");
+    assert!(
+        refused.to_string().contains("m.B") || refused.to_string().contains("m.A"),
+        "{refused}"
+    );
+}
+
+/// A field whose scalar has no representation here refuses the boundary that would write it, and
+/// not the behavior: the value itself only passes through, and nothing lowers a `Decimal` until the
+/// entry that has to write one out.
+#[test]
+fn a_published_answer_with_a_decimal_field_is_not_lowered_where_it_is_written() {
+    let document = concat!(
+        r#"{"transport":9,"declarations":["#,
+        r#"{"module":"m","name":"Priced","by":"amodule","is":"product","#,
+        r#""fields":[{"name":"amount","codec":{"is":"scalar","scalar":"DECIMAL"}}],"invariants":0}],"#,
+        r#""behaviors":[{"module":"m","name":"same","is":"body","#,
+        r#""inputs":[{"is":"nominal","declared":"m.Priced"}],"#,
+        r#""output":{"is":"nominal","declared":"m.Priced"}}],"#,
+        r#""modules":[{"name":"m","helpers":[],"values":[],"entries":[],"definitions":["#,
+        r#"{"is":"body","declared":"m.same","parameters":["p"],"publication":"published","#,
+        r#""body":{"core":"read","binding":0,"type":{"declared":"m.Priced"},"aborts":[]}}"#,
+        r#"],"examples":[]}]}"#,
+    );
+
+    let refused = object_for(document).expect_err("no way yet to write a Decimal out");
+
+    assert!(
+        refused.downcast_ref::<NotLowered>().is_some(),
+        "a scalar this backend cannot write yet is the backend being behind: {refused}"
+    );
+    assert!(refused.to_string().contains("Decimal"), "{refused}");
+
+    let kept = document.replace(r#""publication":"published""#, r#""publication":"kept""#);
+    object_for(&kept).expect("a kept behavior has no boundary, so nothing is written out");
+}
+
+/// A published behavior answering `m.S`, whose one case `m.C` is declared with the fields and
+/// alternatives form given. The smallest document that makes a boundary write a sum.
+fn answering_a_sum(case_fields: &str, form: &str) -> String {
+    format!(
+        concat!(
+            r#"{{"transport":9,"declarations":["#,
+            r#"{{"module":"m","name":"C","by":"amodule","is":"product","fields":{},"invariants":0}},"#,
+            r#"{{"module":"m","name":"S","by":"amodule","is":"sum","#,
+            r#""cases":[{{"is":"declared","declared":"m.C"}}],"form":{}}}],"#,
+            r#""behaviors":[{{"module":"m","name":"same","is":"body","#,
+            r#""inputs":[{{"is":"nominal","declared":"m.S"}}],"#,
+            r#""output":{{"is":"nominal","declared":"m.S"}}}}],"#,
+            r#""modules":[{{"name":"m","helpers":[],"values":[],"entries":[],"definitions":["#,
+            r#"{{"is":"body","declared":"m.same","parameters":["s"],"publication":"published","#,
+            r#""body":{{"core":"read","binding":0,"type":{{"declared":"m.S"}},"aborts":[]}}}}"#,
+            r#"],"examples":[]}}]}}"#
+        ),
+        case_fields, form
+    )
+}
+
+/// An enumeration is a set of alternatives that carry nothing but which one they are, so a case
+/// carrying fields under one is the two halves disagreeing. Written as a bare name, its fields
+/// would be dropped without a word.
+#[test]
+fn an_enumeration_over_a_case_with_fields_is_the_halves_disagreeing() {
+    let document = answering_a_sum(
+        r#"[{"name":"n","codec":{"is":"scalar","scalar":"INT"}}]"#,
+        r#"{"is":"enumeration"}"#,
+    );
+
+    let refused = object_for(&document).expect_err("a case with fields in an enumeration");
+
+    assert!(
+        refused.downcast_ref::<NotLowered>().is_none(),
+        "the halves disagreeing is not the backend being behind: {refused}"
+    );
+    assert!(refused.to_string().contains("m.C"), "{refused}");
+}
+
+/// The tag and a wrapped case's contents stand side by side in one object, so one key for both
+/// would leave whichever was written second.
+#[test]
+fn a_discriminated_form_with_one_key_for_tag_and_contents_is_the_halves_disagreeing() {
+    let document = answering_a_sum(
+        "[]",
+        r#"{"is":"discriminated","tag":"type","contents":"type"}"#,
+    );
+
+    let refused = object_for(&document).expect_err("one key for the tag and the contents");
+
+    assert!(
+        refused.downcast_ref::<NotLowered>().is_none(),
+        "the halves disagreeing is not the backend being behind: {refused}"
+    );
+    assert!(refused.to_string().contains("type"), "{refused}");
+}
+
+/// What a field carries and what a construction puts in it are one fact crossed twice: the
+/// encoder reads the slot as the codec says, and the construction wrote it as its value is. An
+/// `Int` and a `String` are both one slot wide, so nothing about the machine would notice the two
+/// disagreeing; the value would be written out as whatever the codec took it for.
+#[test]
+fn a_construction_disagreeing_with_what_its_field_carries_is_the_halves_disagreeing() {
+    let document = concat!(
+        r#"{"transport":9,"declarations":["#,
+        r#"{"module":"m","name":"P","by":"amodule","is":"product","#,
+        r#""fields":[{"name":"n","codec":{"is":"scalar","scalar":"STRING"}}],"invariants":0}],"#,
+        r#""behaviors":[{"module":"m","name":"make","is":"body","inputs":[],"#,
+        r#""output":{"is":"nominal","declared":"m.P"}}],"#,
+        r#""modules":[{"name":"m","helpers":[],"values":[],"entries":[],"definitions":["#,
+        r#"{"is":"body","declared":"m.make","parameters":[],"publication":"kept","#,
+        r#""body":{"core":"construct","declared":"m.P","#,
+        r#""values":[{"core":"int","value":42,"type":{"prim":"INT"},"aborts":[]}],"#,
+        r#""type":{"declared":"m.P"},"aborts":[]}}"#,
+        r#"],"examples":[]}]}"#,
+    );
+
+    let refused = object_for(document).expect_err("an Int put where the field carries a String");
+
+    assert!(
+        refused.downcast_ref::<NotLowered>().is_none(),
+        "the halves disagreeing is not the backend being behind: {refused}"
+    );
+    assert!(refused.to_string().contains("m.P"), "{refused}");
+}
+
+/// A product `m.P` with one field carrying `codec`, built in a kept behavior's body from `value`,
+/// beside the sum `m.S = m.A | m.B` and the unrelated unit `m.U`.
+fn building(codec: &str, value: &str) -> String {
+    format!(
+        concat!(
+            r#"{{"transport":9,"declarations":["#,
+            r#"{{"module":"m","name":"A","by":"amodule","is":"unit"}},"#,
+            r#"{{"module":"m","name":"B","by":"amodule","is":"unit"}},"#,
+            r#"{{"module":"m","name":"U","by":"amodule","is":"unit"}},"#,
+            r#"{{"module":"m","name":"S","by":"amodule","is":"sum","#,
+            r#""cases":[{{"is":"declared","declared":"m.A"}},{{"is":"declared","declared":"m.B"}}],"#,
+            r#""form":{{"is":"enumeration"}}}},"#,
+            r#"{{"module":"m","name":"P","by":"amodule","is":"product","#,
+            r#""fields":[{{"name":"f","codec":{}}}],"invariants":0}}],"#,
+            r#""behaviors":[{{"module":"m","name":"make","is":"body","inputs":[],"#,
+            r#""output":{{"is":"nominal","declared":"m.P"}}}}],"#,
+            r#""modules":[{{"name":"m","helpers":[],"values":[],"entries":[],"definitions":["#,
+            r#"{{"is":"body","declared":"m.make","parameters":[],"publication":"kept","#,
+            r#""body":{{"core":"construct","declared":"m.P","values":[{}],"#,
+            r#""type":{{"declared":"m.P"}},"aborts":[]}}}}"#,
+            r#"],"examples":[]}}]}}"#
+        ),
+        codec, value
+    )
+}
+
+fn unit(declared: &str) -> String {
+    format!(
+        r#"{{"core":"unit","declared":"{declared}","type":{{"declared":"{declared}"}},"aborts":[]}}"#
+    )
+}
+
+/// A field naming one declaration given a value of an unrelated one. Both are pointers, so the
+/// machine would not tell them apart; the encoder would read the value's slots as the other
+/// declaration lays its fields out.
+#[test]
+fn a_field_of_one_declaration_given_a_value_of_another_is_the_halves_disagreeing() {
+    let document = building(r#"{"is":"named","declared":"m.A"}"#, &unit("m.U"));
+
+    let refused = object_for(&document).expect_err("m.U put where the field carries m.A");
+
+    assert!(
+        refused.downcast_ref::<NotLowered>().is_none(),
+        "the halves disagreeing is not the backend being behind: {refused}"
+    );
+    assert!(refused.to_string().contains("m.P"), "{refused}");
+}
+
+/// A field of a sum is given a value of one of its cases, which is the same field and the same
+/// value as far as the language is concerned. What is refused is a value no case of the sum is.
+#[test]
+fn a_field_of_a_sum_given_a_value_of_one_of_its_cases_is_built() {
+    let named_sum = r#"{"is":"named","declared":"m.S"}"#;
+
+    object_for(&building(named_sum, &unit("m.B"))).expect("m.B is a case of m.S");
+    let refused =
+        object_for(&building(named_sum, &unit("m.U"))).expect_err("m.U is no case of m.S");
+    assert!(refused.downcast_ref::<NotLowered>().is_none(), "{refused}");
+}
+
+/// Shapes the checker has no way to build are not values on this side either: an optional of an
+/// optional, a newtype of two fields, a unit with a field. Each is refused as a document this
+/// driver does not read, before anything is asked of it.
+#[test]
+fn a_shape_the_checker_cannot_build_is_not_a_document_this_driver_reads() {
+    let option_of_option = building(
+        r#"{"is":"optionof","present":{"is":"optionof","present":{"is":"scalar","scalar":"INT"}}}"#,
+        r#"{"core":"none","type":{"option":{"option":{"prim":"INT"}}},"aborts":[]}"#,
+    );
+    let newtype_of_two = building(r#"{"is":"scalar","scalar":"INT"}"#, &unit("m.U")).replace(
+        r#"{"module":"m","name":"U","by":"amodule","is":"unit"}"#,
+        r#"{"module":"m","name":"U","by":"amodule","is":"newtype","fields":[],"invariants":0}"#,
+    );
+    let unit_with_a_field = building(r#"{"is":"scalar","scalar":"INT"}"#, &unit("m.U")).replace(
+        r#"{"module":"m","name":"U","by":"amodule","is":"unit"}"#,
+        r#"{"module":"m","name":"U","by":"amodule","is":"unit","fields":[],"invariants":0}"#,
+    );
+
+    for document in [option_of_option, newtype_of_two, unit_with_a_field] {
+        let refused = object_for(&document).expect_err("a shape nothing settles");
+        assert!(
+            refused.downcast_ref::<NotLowered>().is_none(),
+            "a shape the checker cannot build is the halves disagreeing: {refused}"
+        );
+        assert!(
+            refused.to_string().contains("line") || refused.to_string().contains("optional"),
+            "refused where it was read: {refused}"
+        );
+    }
+}
+
+fn is_the_halves_disagreeing(document: &str, naming: &str) {
+    let refused = object_for(document).expect_err("a document the checker could not have written");
+    assert!(
+        refused.downcast_ref::<NotLowered>().is_none(),
+        "the halves disagreeing is not the backend being behind: {refused}"
+    );
+    assert!(refused.to_string().contains(naming), "{refused}");
+}
+
+/// Enumeration exactly when every case is a unit, in both directions: a set of units written
+/// discriminated would put `{"type":"A"}` where the checker settled `"A"`.
+#[test]
+fn a_discriminated_form_over_nothing_but_units_is_the_halves_disagreeing() {
+    let document = building(r#"{"is":"scalar","scalar":"INT"}"#, &unit("m.U")).replace(
+        r#""form":{"is":"enumeration"}"#,
+        r#""form":{"is":"discriminated","tag":"type","contents":"value"}"#,
+    );
+    is_the_halves_disagreeing(&document, "m.S");
+}
+
+/// A product case's fields stand in the object that carries the tag, so a field under the tag's
+/// key would leave two members of one name — the checker refuses the field, and so is a document
+/// that has one.
+#[test]
+fn a_case_with_a_field_under_the_tags_key_is_the_halves_disagreeing() {
+    let document = answering_a_sum(
+        r#"[{"name":"type","codec":{"is":"scalar","scalar":"INT"}}]"#,
+        r#"{"is":"discriminated","tag":"type","contents":"value"}"#,
+    );
+    is_the_halves_disagreeing(&document, "m.C");
+}
+
+/// What an answer union's type is and which cases it is written by are two crossings of one
+/// answer. A case the type has and the cases leave out would be a value the boundary has no arm
+/// for.
+#[test]
+fn an_answer_whose_cases_are_not_what_its_type_descends_to_is_the_halves_disagreeing() {
+    let document = concat!(
+        r#"{"transport":9,"declarations":["#,
+        r#"{"module":"m","name":"A","by":"amodule","is":"unit"},"#,
+        r#"{"module":"m","name":"B","by":"amodule","is":"unit"}],"#,
+        r#""behaviors":[{"module":"m","name":"either","is":"injected","inputs":[],"#,
+        r#""output":{"is":"cases","type":{"union":[{"is":"declared","declared":"m.A"},"#,
+        r#"{"is":"declared","declared":"m.B"}]},"#,
+        r#""cases":[{"is":"declared","declared":"m.A"}],"form":{"is":"enumeration"}}}],"#,
+        r#""modules":[{"name":"m","helpers":[],"values":[],"entries":[],"definitions":[],"examples":[]}]}"#,
+    );
+    is_the_halves_disagreeing(document, "m.either");
+}
+
+/// A body's parameters and its target's inputs are one list crossed twice.
+#[test]
+fn a_body_naming_more_parameters_than_its_target_takes_is_the_halves_disagreeing() {
+    let document = composed_document().replace(
+        r#""declared":"m.inner","parameters":["a"]"#,
+        r#""declared":"m.inner","parameters":["a","b"]"#,
+    );
+    is_the_halves_disagreeing(&document, "m.inner");
+}
+
+/// What a body answers is a value of what its target answers, which the boundary writes it as.
+#[test]
+fn a_body_answering_other_than_its_target_is_the_halves_disagreeing() {
+    let document = building(r#"{"is":"named","declared":"m.A"}"#, &unit("m.A")).replace(
+        r#""output":{"is":"nominal","declared":"m.P"}"#,
+        r#""output":{"is":"nominal","declared":"m.U"}"#,
+    );
+    is_the_halves_disagreeing(&document, "m.make");
 }

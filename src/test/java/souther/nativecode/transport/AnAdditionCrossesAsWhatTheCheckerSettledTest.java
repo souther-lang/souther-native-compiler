@@ -36,9 +36,10 @@ class AnAdditionCrossesAsWhatTheCheckerSettledTest {
         String written = ProgramWriter.written(CheckedProgram.of(List.of(ADDING)));
 
         assertThat(written).isEqualTo("""
-                {"transport":8,"declarations":[],\
+                {"transport":9,"declarations":[],\
                 "behaviors":[{"module":"calculation","name":"add","is":"body",\
-                "takes":[{"prim":"INT"},{"prim":"INT"}],"answers":{"prim":"INT"}}],\
+                "inputs":[{"is":"scalar","scalar":"INT"},{"is":"scalar","scalar":"INT"}],\
+                "output":{"is":"scalar","scalar":"INT"}}],\
                 "modules":[{"name":"calculation","helpers":[],"values":[],"entries":[],\
                 "definitions":[{"is":"body","declared":"calculation.add","parameters":["a","b"],\
                 "publication":"published",\
@@ -74,7 +75,7 @@ class AnAdditionCrossesAsWhatTheCheckerSettledTest {
                 let ignore (token) = 42
                 """)));
 
-        assertThat(written).contains("\"takes\":[{\"declared\":\"demo.Token\"}]");
+        assertThat(written).contains("\"inputs\":[{\"is\":\"nominal\",\"declared\":\"demo.Token\"}]");
         assertThat(written).contains(
                 "{\"module\":\"demo\",\"name\":\"Token\",\"by\":\"amodule\",\"is\":\"product\"");
         // And what that one holds, which nothing but its declaration names: found while the

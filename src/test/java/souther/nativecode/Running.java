@@ -12,6 +12,8 @@ import souther.compiler.program.Publication;
 import souther.compiler.program.StandsIn;
 import souther.compiler.types.Type;
 import souther.compiler.types.ValueName;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -136,12 +138,43 @@ final class Running implements AutoCloseable {
     RunOutcome answeredOrEnded(CheckedModule module, CheckedBehavior behavior,
                                List<ObservedValue> inputs, List<StandsIn> standIns)
             throws IOException, InterruptedException {
+        return observed(atItsBoundary(module, behavior, inputs, standIns));
+    }
+
+    /**
+     * What the behavior answers when it is handed these values, as the JSON value its boundary
+     * wrote — the external form itself, for a caller whose question is what the language writes
+     * the answer as.
+     */
+    JsonNode externalAnswer(CheckedModule module, CheckedBehavior behavior,
+                            List<ObservedValue> inputs) throws IOException, InterruptedException {
+        return switch (atItsBoundary(module, behavior, inputs, List.of())) {
+            case BoundaryOutcome.Answered it -> it.written();
+            case BoundaryOutcome.Aborted it -> throw new AssertionError(
+                    "the run ended with " + it.kind() + " rather than answering: "
+                            + behavior.name() + " of " + module.name() + ", handed " + inputs);
+        };
+    }
+
+    /** What one of the behavior's rows answers, as the JSON value its boundary wrote. */
+    JsonNode rowExternalAnswer(CheckedModule module, CheckedBehavior behavior, int at,
+                               List<StandsIn> standIns) throws IOException, InterruptedException {
+        return switch (rowAtItsBoundary(module, behavior, at, standIns)) {
+            case BoundaryOutcome.Answered it -> it.written();
+            case BoundaryOutcome.Aborted it -> throw new AssertionError(
+                    "row " + at + " of " + behavior.name() + " of " + module.name()
+                            + " ended with " + it.kind() + " rather than answering");
+        };
+    }
+
+    private BoundaryOutcome atItsBoundary(CheckedModule module, CheckedBehavior behavior,
+                                          List<ObservedValue> inputs, List<StandsIn> standIns)
+            throws IOException, InterruptedException {
         published(module, behavior);
-        CheckedSignature signature = behavior.signature();
         String reached = module.name() + "." + behavior.name().name();
-        Path executable = linked(reached, "souther" + ABI + "." + reached, signature.answers(),
-                signature.takes(), standIns);
-        return ran(executable, signature.answers(), inputs);
+        Path executable = linked(reached, "souther" + ABI + "." + reached,
+                behavior.signature().takes(), standIns);
+        return ran(executable, inputs);
     }
 
     /** What the behavior answered when this one of its rows was run. */
@@ -166,13 +199,62 @@ final class Running implements AutoCloseable {
     RunOutcome rowAnsweredOrEnded(CheckedModule module, CheckedBehavior behavior,
                                   int at, List<StandsIn> standIns)
             throws IOException, InterruptedException {
+        return observed(rowAtItsBoundary(module, behavior, at, standIns));
+    }
+
+    private BoundaryOutcome rowAtItsBoundary(CheckedModule module, CheckedBehavior behavior,
+                                             int at, List<StandsIn> standIns)
+            throws IOException, InterruptedException {
         String named = module.name() + "." + behavior.name().name() + ".example." + at;
         String symbol = "souther" + ABI + "." + module.name() + "." + behavior.name().name()
                 + "$example$" + at;
-        Path executable = linked(named, symbol, behavior.signature().answers(), List.of(),
-                standIns);
-        return ran(executable, behavior.signature().answers(), List.of());
+        Path executable = linked(named, symbol, List.of(), standIns);
+        return ran(executable, List.of());
     }
+
+    /**
+     * What a run at a boundary came back with: the JSON value the object wrote, or the reason it
+     * wrote none.
+     *
+     * <p>Kept apart from {@link RunOutcome}, which is what a caller comparing against a row's own
+     * value asks for. That comparison is over scalars today and is read off the JSON value by
+     * {@link #observed}; nothing here reads the value off the Souther type it was declared at.
+     */
+    private sealed interface BoundaryOutcome {
+
+        record Answered(JsonNode written) implements BoundaryOutcome {}
+
+        record Aborted(AbortKind kind) implements BoundaryOutcome {}
+    }
+
+    private static RunOutcome observed(BoundaryOutcome outcome) {
+        return switch (outcome) {
+            case BoundaryOutcome.Answered it -> new RunOutcome.Answered(observed(it.written()));
+            case BoundaryOutcome.Aborted it -> new RunOutcome.Aborted(it.kind());
+        };
+    }
+
+    /**
+     * A scalar the boundary wrote, as the value a row states. Decided by what the JSON value is and
+     * not by the type the answer was declared at, so a boundary that wrote the wrong kind of value
+     * is seen as having written it. Anything but a scalar is compared as the external form it is,
+     * through {@link #externalAnswer}.
+     */
+    private static ObservedValue observed(JsonNode written) {
+        if (written.isIntegralNumber() && written.canConvertToLong()) {
+            return new ObservedValue.Integer(written.longValue());
+        }
+        if (written.isBoolean()) {
+            return new ObservedValue.Bool(written.booleanValue());
+        }
+        if (written.isString()) {
+            return new ObservedValue.Text(written.stringValue());
+        }
+        throw new AssertionError("the boundary wrote " + written
+                + ", which is not a scalar; compare external forms with externalAnswer");
+    }
+
+    private static final JsonMapper JSON = JsonMapper.builder().build();
 
     /**
      * What the harness's own two lines say: a status on the first, and — only where it is
@@ -180,7 +262,7 @@ final class Running implements AutoCloseable {
      * it could write either line, is neither {@link RunOutcome} case: it is this harness's own
      * failure and not a Souther computation's, so it is thrown rather than folded into one of them.
      */
-    private RunOutcome ran(Path executable, Type answers, List<ObservedValue> inputs)
+    private BoundaryOutcome ran(Path executable, List<ObservedValue> inputs)
             throws IOException, InterruptedException {
         List<String> command = new ArrayList<>();
         command.add(executable.toString());
@@ -196,10 +278,8 @@ final class Running implements AutoCloseable {
             throw new AssertionError("the harness itself failed rather than answering a status: "
                     + said);
         }
-        // Not said.strip().lines(): a value written on the second line can itself be empty — an
-        // empty string's hex is no digits at all, just the newline writeText always ends on — and
-        // stripping the whole blob first collapses that trailing empty line away before lines()
-        // ever sees it, reading ANSWERED "" as though nothing had been written at all.
+        // The JSON the boundary wrote is one line: every character JSON cannot hold bare, a
+        // newline among them, is escaped in it.
         List<String> lines = said.lines().toList();
         if (lines.isEmpty()) {
             throw new AssertionError("the harness wrote no status: " + said);
@@ -209,9 +289,9 @@ final class Running implements AutoCloseable {
             if (lines.size() < 2) {
                 throw new AssertionError("ANSWERED with no value on the line under it: " + said);
             }
-            return new RunOutcome.Answered(read(answers, lines.get(1)));
+            return new BoundaryOutcome.Answered(JSON.readTree(lines.get(1)));
         }
-        return new RunOutcome.Aborted(abortKindOf(status));
+        return new BoundaryOutcome.Aborted(abortKindOf(status));
     }
 
     /**
@@ -264,7 +344,7 @@ final class Running implements AutoCloseable {
         }
     }
 
-    private Path linked(String named, String symbol, Type answers, List<Type> takes,
+    private Path linked(String named, String symbol, List<Type> takes,
                         List<StandsIn> standIns) throws IOException {
         // What stands in for a dependency is part of what is linked, so two rows of one behavior
         // that state different stand-ins are two executables and not one reused. The key is what
@@ -279,7 +359,7 @@ final class Running implements AutoCloseable {
         // The file is named by a count because what the key holds is not a file name.
         String name = named + "." + linked.size();
         Path harness = into.resolve(name + ".c");
-        Files.writeString(harness, harnessFor(symbol, answers, takes, standIns),
+        Files.writeString(harness, harnessFor(symbol, takes, standIns),
                 StandardCharsets.UTF_8);
         Path executable = into.resolve(name);
 
@@ -310,7 +390,7 @@ final class Running implements AutoCloseable {
             Path.of("native", "target", "debug", "libsouther_native_runtime.a");
 
     /**
-     * A C program that reaches the one symbol and writes what it answered.
+     * A C program that reaches the one entry at its boundary and writes out what it wrote.
      *
      * <p>Written for what is being reached rather than dispatched at run time: the arity and the
      * widths are what a call is made of, and a harness that took them as data would be making the
@@ -321,17 +401,17 @@ final class Running implements AutoCloseable {
      * where one call is all that happens, because a harness that never gave the room back would be
      * a harness the contract had never been put to.
      */
-    private String harnessFor(String symbol, Type answers, List<Type> takes,
-                              List<StandsIn> standIns) {
+    private String harnessFor(String symbol, List<Type> takes, List<StandsIn> standIns) {
         List<String> taken = new ArrayList<>();
         List<String> given = new ArrayList<>();
         for (int at = 0; at < takes.size(); at++) {
             taken.add(cType(takes.get(at)));
             given.add(read(takes.get(at), at + 1));
         }
-        // One more parameter than the Souther signature shows, the same as every generated
-        // function: room the answer is written through, in place of a plain return.
-        taken.add(cType(answers) + " *");
+        // One more parameter than the Souther signature shows: room the boundary writes its JSON
+        // through, as a string of the runtime's layout. What the answer is written as is the
+        // object's to say, so nothing here depends on the type it was declared at.
+        taken.add("const uint8_t **");
         given.add("&answered");
 
         // Every name the object left undefined, and not only the ones this row states. The object
@@ -356,33 +436,35 @@ final class Running implements AutoCloseable {
 
                 %s%s
 
-                extern uint32_t reached(%s) __asm__("%s%s");
+                extern uint32_t reached(%s) __asm__("%s%s$boundary");
                 extern int64_t souther_mark(void);
                 extern void souther_reset(int64_t);
+                extern int64_t souther_string_length(const uint8_t *);
+                extern const uint8_t *souther_string_bytes(const uint8_t *);
 
                 int main(int argc, char **argv) {
                     if (argc != %d) {
                         return 2;
                     }
                     int64_t mark = souther_mark();
-                    %s answered;
+                    const uint8_t *answered;
                     uint32_t status = reached(%s);
                     printf("%%u\\n", status);
                     if (status == 0) {
-                        %s
+                        fwrite(souther_string_bytes(answered), 1,
+                                (size_t) souther_string_length(answered), stdout);
+                        printf("\\n");
                     }
                     souther_reset(mark);
                     return 0;
                 }
                 """.formatted(
-                textCrossesHere(answers, takes) ? TEXT_CROSSING : "",
+                textCrossesHere(takes) ? TEXT_CROSSING : "",
                 supplied.toString(),
                 takenIn(taken),
                 PREFIX, symbol,
                 takes.size() + 1,
-                cType(answers),
-                String.join(", ", given),
-                writing(answers));
+                String.join(", ", given));
     }
 
     /**
@@ -497,11 +579,8 @@ final class Running implements AutoCloseable {
     private static final String PREFIX =
             System.getProperty("os.name", "").toLowerCase().contains("mac") ? "_" : "";
 
-    /** Whether this harness has a string to make or to write out. */
-    private static boolean textCrossesHere(Type answers, List<Type> takes) {
-        if (prim(answers) == Type.Prim.STRING) {
-            return true;
-        }
+    /** Whether this harness has a string to make. */
+    private static boolean textCrossesHere(List<Type> takes) {
         for (Type taken : takes) {
             if (prim(taken) == Type.Prim.STRING) {
                 return true;
@@ -511,20 +590,18 @@ final class Running implements AutoCloseable {
     }
 
     /**
-     * What this harness makes a string with and writes one back as.
+     * What this harness makes a string with.
      *
-     * <p>Hex both ways, which is not for anyone to read. A string is bytes and a Souther one may
-     * hold a newline or a nought; handed over as itself it would be cut short by the first nought
-     * and read back wrongly at the first newline, and neither would look like a string being
-     * mishandled — it would look like the program having answered something else.
+     * <p>Hex, which is not for anyone to read. A string is bytes and a Souther one may hold a
+     * newline or a nought; handed over as itself on a command line it would be cut short by the
+     * first nought, and that would not look like a string being mishandled — it would look like
+     * the program having answered something else.
      *
      * <p>The layout is nowhere here. A string is made and taken apart through the runtime, which
      * is the one place besides the {@code abi} crate that says what one is made of.
      */
     private static final String TEXT_CROSSING = """
             extern const uint8_t *souther_string_of_utf8(const uint8_t *, int64_t);
-            extern int64_t souther_string_length(const uint8_t *);
-            extern const uint8_t *souther_string_bytes(const uint8_t *);
 
             static const uint8_t *readText(const char *hex) {
                 size_t length = strlen(hex) / 2;
@@ -539,26 +616,7 @@ final class Running implements AutoCloseable {
                 return held;
             }
 
-            static void writeText(const uint8_t *held) {
-                int64_t length = souther_string_length(held);
-                const uint8_t *bytes = souther_string_bytes(held);
-                for (int64_t at = 0; at < length; at++) {
-                    printf("%02x", bytes[at]);
-                }
-                printf("\\n");
-            }
-
             """;
-
-    /** What the harness does with what came back, which is not one statement for every type. */
-    private static String writing(Type answers) {
-        return switch (prim(answers)) {
-            case INT -> "printf(\"%\" PRId64 \"\\n\", answered);";
-            case BOOL -> "printf(\"%d\\n\", answered);";
-            case STRING -> "writeText(answered);";
-            default -> throw new AssertionError("no harness writes a " + answers + " yet");
-        };
-    }
 
     private static String cType(Type type) {
         return switch (prim(type)) {
@@ -612,23 +670,6 @@ final class Running implements AutoCloseable {
             out.append("%02x".formatted(each & 0xff));
         }
         return out.toString();
-    }
-
-    private static ObservedValue read(Type answers, String said) {
-        return switch (prim(answers)) {
-            case INT -> new ObservedValue.Integer(Long.parseLong(said));
-            case BOOL -> new ObservedValue.Bool(!"0".equals(said));
-            case STRING -> new ObservedValue.Text(text(said));
-            default -> throw new AssertionError("no harness reads a " + answers + " back yet");
-        };
-    }
-
-    private static String text(String hex) {
-        byte[] bytes = new byte[hex.length() / 2];
-        for (int at = 0; at < bytes.length; at++) {
-            bytes[at] = (byte) Integer.parseInt(hex.substring(2 * at, 2 * at + 2), 16);
-        }
-        return new String(bytes, StandardCharsets.UTF_8);
     }
 
     private static Type.Prim prim(Type type) {

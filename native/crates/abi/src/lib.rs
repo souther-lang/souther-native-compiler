@@ -5,6 +5,10 @@
 //! neither side's tests can see. Nothing about Souther's meaning belongs here — only the names,
 //! layouts and encodings a target decides.
 
+// Everything here is one half of a contract the other half reads by name, so an item whose doc has
+// slid off it onto a neighbour is a contract nobody states. Refused rather than warned about.
+#![deny(missing_docs)]
+
 /// The generation of *wire contract* every function symbol below answers to — not only the
 /// calling convention, but what a `status` other than `ANSWERED` means once it crosses an object
 /// boundary.
@@ -156,6 +160,17 @@ pub fn type_symbol(module: &str, name: &str) -> String {
     format!("souther$type${module}${name}")
 }
 
+/// Where a host reaches an entry the object answers for — a published behavior, or a row — to be
+/// handed its answer as the external form the language writes it in, rather than as a value laid
+/// out the way this backend lays one out.
+///
+/// The same parameters as the entry it runs, and room for one string in place of room for the
+/// answer: the JSON text, in the arena. The status is the entry's own, and nothing is written
+/// through the room unless it is `ANSWERED`.
+pub fn boundary_symbol(entry: &str) -> String {
+    format!("{entry}$boundary")
+}
+
 /// What stands under a declared type's symbol.
 ///
 /// One byte, whose value means nothing and which nothing ever reads. What the token is for is its
@@ -291,8 +306,9 @@ pub const STRING_CONCAT: &str = "souther_string_concat";
 /// a third party to a two-party contract.
 pub const STRING_OF_UTF8: &str = "souther_string_of_utf8";
 
-/// The symbols such a caller reads a string back through.
+/// The symbols such a caller reads a string back through: first how many bytes it holds.
 pub const STRING_LENGTH: &str = "souther_string_length";
+/// And then where those bytes start.
 pub const STRING_BYTES: &str = "souther_string_bytes";
 
 /// The symbol generated code takes room from.
@@ -307,6 +323,41 @@ pub const MARK: &str = "souther_mark";
 
 /// The symbol a caller gives a mark back to, dropping everything taken since.
 pub const RESET: &str = "souther_reset";
+
+/// The runtime's external form: what a value is written as at a boundary, built as a tree by
+/// generated code and written out as JSON in one step.
+///
+/// The tree is the runtime's own and lives on its heap, not in the arena. Every constructor hands
+/// the caller a form it owns; `EXTERNAL_APPEND` and `EXTERNAL_PUT` take ownership of the item they
+/// are given and leave the container with the caller; `EXTERNAL_JSON` takes the root, drops the
+/// whole tree, and answers a string of the runtime's own layout (`TEXT_LENGTH`, `TEXT_BYTES`) in
+/// the arena. So nothing of the tree outlives the call that writes it, and what `RESET` drops is
+/// only what it always dropped.
+///
+/// A key and a string handed in are strings of that same layout, not NUL-terminated text: a key a
+/// compile writes is a literal in the object, and a string a run worked out is in the arena.
+pub const EXTERNAL_NULL: &str = "souther_external_null";
+/// `(i8) -> form`: any value but 0 is true.
+pub const EXTERNAL_BOOL: &str = "souther_external_bool";
+/// `(i64) -> form`.
+pub const EXTERNAL_INT: &str = "souther_external_int";
+/// `(string) -> form`, the bytes copied.
+pub const EXTERNAL_STRING: &str = "souther_external_string";
+/// `() -> form`, an array with nothing in it.
+pub const EXTERNAL_ARRAY: &str = "souther_external_array";
+/// `(array, item)`: the item is appended and owned by the array from then on.
+pub const EXTERNAL_APPEND: &str = "souther_external_append";
+/// `() -> form`, an object with nothing in it.
+pub const EXTERNAL_OBJECT: &str = "souther_external_object";
+/// `(object, key string, item)`: the member is placed after those already there, and the item
+/// is owned by the object from then on.
+///
+/// `object` must be an object and `EXTERNAL_APPEND`'s `array` an array; handed any other kind of
+/// form, the runtime aborts the process rather than guess. Generated code only ever puts into an
+/// object the same function made, so reaching that is a caller outside this contract.
+pub const EXTERNAL_PUT: &str = "souther_external_put";
+/// `(form) -> string`: the whole tree written as JSON, and dropped.
+pub const EXTERNAL_JSON: &str = "souther_external_json";
 
 /// What a generated function answers with instead of its value directly.
 ///
@@ -332,13 +383,16 @@ pub const ANSWERED: Status = 0;
 #[cfg(test)]
 mod tests {
     use super::{
-        FIRST_FIELD, SLOT, TOKEN, WHICH, behavior_symbol, example_symbol, field_at, held_symbol,
-        member_at, type_symbol, value_symbol,
+        FIRST_FIELD, SLOT, TOKEN, WHICH, behavior_symbol, boundary_symbol, example_symbol,
+        field_at, held_symbol, member_at, type_symbol, value_symbol,
     };
 
     #[test]
     fn a_behavior_is_reached_by_its_module_and_its_name() {
-        assert_eq!(behavior_symbol("calculation", "add"), "souther2.calculation.add");
+        assert_eq!(
+            behavior_symbol("calculation", "add"),
+            "souther2.calculation.add"
+        );
     }
 
     #[test]
@@ -390,6 +444,17 @@ mod tests {
     }
 
     #[test]
+    fn an_entry_and_its_boundary_are_two_symbols() {
+        let entry = behavior_symbol("shop", "quote");
+        assert_eq!(boundary_symbol(&entry), "souther2.shop.quote$boundary");
+        assert_ne!(boundary_symbol(&entry), entry);
+        assert_ne!(
+            boundary_symbol(&example_symbol("shop", "quote", 0)),
+            boundary_symbol(&entry)
+        );
+    }
+
+    #[test]
     fn a_declared_type_is_reached_by_its_module_and_its_name() {
         assert_eq!(
             type_symbol("lib.rates", "Rate"),
@@ -401,17 +466,29 @@ mod tests {
     /// named from two objects is one.
     #[test]
     fn a_type_of_one_name_in_two_modules_is_two_symbols() {
-        assert_ne!(type_symbol("pricing", "Round"), type_symbol("shapes", "Round"));
-        assert_eq!(type_symbol("shapes", "Round"), type_symbol("shapes", "Round"));
+        assert_ne!(
+            type_symbol("pricing", "Round"),
+            type_symbol("shapes", "Round")
+        );
+        assert_eq!(
+            type_symbol("shapes", "Round"),
+            type_symbol("shapes", "Round")
+        );
     }
 
     /// A type's symbol is never a behavior's, whatever either is called. Both spellings are built
     /// here, so what keeps them apart is asserted rather than described.
     #[test]
     fn a_types_symbol_is_not_a_behaviors() {
-        assert_ne!(type_symbol("lib.rates", "Rate"), behavior_symbol("lib.rates", "Rate"));
+        assert_ne!(
+            type_symbol("lib.rates", "Rate"),
+            behavior_symbol("lib.rates", "Rate")
+        );
         assert_ne!(type_symbol("lib", "rates"), behavior_symbol("lib", "rates"));
-        assert_ne!(type_symbol("pricing", "taxed"), held_symbol("pricing", "pricing.taxed"));
+        assert_ne!(
+            type_symbol("pricing", "taxed"),
+            held_symbol("pricing", "pricing.taxed")
+        );
     }
 
     /// What the reading rests on, as it is for a behavior: were this admitted, `a.b` / `C` and
@@ -438,14 +515,20 @@ mod tests {
 
     #[test]
     fn a_published_value_is_reached_by_its_module_and_its_name() {
-        assert_eq!(value_symbol("pricing", "standard"), "souther2.pricing$value$standard");
+        assert_eq!(
+            value_symbol("pricing", "standard"),
+            "souther2.pricing$value$standard"
+        );
     }
 
     /// A value's own entry is never a behavior's symbol, whatever either is called — the two share
     /// a module's dot-carrying prefix and nothing else.
     #[test]
     fn a_values_entry_is_not_a_behaviors_symbol() {
-        assert_ne!(value_symbol("pricing", "standard"), behavior_symbol("pricing", "standard"));
+        assert_ne!(
+            value_symbol("pricing", "standard"),
+            behavior_symbol("pricing", "standard")
+        );
         assert_ne!(
             value_symbol("pricing", "standard"),
             held_symbol("pricing", "pricing.standard")
@@ -456,7 +539,10 @@ mod tests {
     /// modules declaring a behavior of one name do.
     #[test]
     fn a_value_of_one_name_in_two_modules_is_two_symbols() {
-        assert_ne!(value_symbol("pricing", "standard"), value_symbol("shipping", "standard"));
+        assert_ne!(
+            value_symbol("pricing", "standard"),
+            value_symbol("shipping", "standard")
+        );
     }
 
     #[test]

@@ -12,6 +12,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use tempfile::{TempDir, tempdir};
 
+mod support;
+
 /// The document the Java half wrote, and the one its own test holds it to.
 const ADDING: &str = include_str!("adding.transport.json");
 
@@ -20,7 +22,17 @@ const ADDING: &str = include_str!("adding.transport.json");
 /// Mach-O writes an underscore before every one and ELF writes none. The object carries whichever
 /// its format takes, so what needs saying here is only what a C declaration has to be written with
 /// to reach it.
-const PREFIX: &str = if cfg!(target_vendor = "apple") { "_" } else { "" };
+const PREFIX: &str = if cfg!(target_vendor = "apple") {
+    "_"
+} else {
+    ""
+};
+
+/// What the object calls that is not its own code. A published behavior is also an entry a host
+/// reaches for its answer as the language writes it, and writing that is the runtime's.
+fn runtime() -> &'static std::path::Path {
+    support::runtime()
+}
 
 /// Written in the width the object actually answers in. `long` is that width on the platforms this
 /// builds on today and is not the same thing: what the behavior takes and answers is an `Int`, and
@@ -53,6 +65,33 @@ int main(int argc, char **argv) {
 }
 "#;
 
+/// The same behavior reached at its boundary: the answer comes back as the JSON the language
+/// writes an `Int` as, in a string of the runtime's layout, and the harness prints its bytes as
+/// they are.
+const BOUNDARY_HARNESS: &str = r#"
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+extern uint32_t adding(int64_t, int64_t, const uint8_t **) __asm__("PREFIXsouther2.calculation.add$boundary");
+extern int64_t souther_string_length(const uint8_t *);
+extern const uint8_t *souther_string_bytes(const uint8_t *);
+
+int main(int argc, char **argv) {
+    if (argc != 3) {
+        return 2;
+    }
+    const uint8_t *written;
+    uint32_t status = adding(strtoll(argv[1], NULL, 10), strtoll(argv[2], NULL, 10), &written);
+    printf("%u\n", status);
+    if (status == 0) {
+        fwrite(souther_string_bytes(written), 1, (size_t) souther_string_length(written), stdout);
+        printf("\n");
+    }
+    return 0;
+}
+"#;
+
 /// What issue #9 adds: not just whether a run answered, but which of a fixed set of reasons it did
 /// not, read straight off the process's own output rather than guessed from whether it crashed.
 struct Answered {
@@ -61,7 +100,10 @@ struct Answered {
 }
 
 fn answered(output: &Output) -> Answered {
-    assert!(output.status.success(), "the process itself failed: {output:?}");
+    assert!(
+        output.status.success(),
+        "the process itself failed: {output:?}"
+    );
     let said = String::from_utf8_lossy(&output.stdout);
     let mut lines = said.lines();
     let status: u32 = lines
@@ -69,8 +111,25 @@ fn answered(output: &Output) -> Answered {
         .expect("a status on the first line")
         .parse()
         .expect("a status this harness wrote as a number");
-    let value = lines.next().map(|it| it.parse().expect("an Int on the second line"));
+    let value = lines
+        .next()
+        .map(|it| it.parse().expect("an Int on the second line"));
     Answered { status, value }
+}
+
+/// A published behavior is an entry at its boundary as well: what it answers leaves as the JSON
+/// the language writes it as, and a run that ends without a value still ends with its status and
+/// nothing written.
+#[test]
+fn an_addition_reached_at_its_boundary_answers_the_json_of_its_sum() {
+    let (_swept, built) = build_with(BOUNDARY_HARNESS);
+
+    let said = run(&built, "-2", "-40");
+    assert!(said.status.success(), "the process itself failed: {said:?}");
+    assert_eq!(String::from_utf8_lossy(&said.stdout), "0\n-42\n");
+
+    let ended = run(&built, "9223372036854775807", "1");
+    assert_eq!(String::from_utf8_lossy(&ended.stdout), "5\n");
 }
 
 #[test]
@@ -106,6 +165,10 @@ fn a_sum_past_what_an_int_holds_answers_required_form_has_no_place() {
 /// The directory is handed back with the executable so that it outlives the run and is swept up
 /// after it.
 fn build() -> (TempDir, PathBuf) {
+    build_with(HARNESS)
+}
+
+fn build_with(harness_source: &str) -> (TempDir, PathBuf) {
     let into = tempdir().expect("a directory to work in");
     let into_path = into.path().to_path_buf();
 
@@ -113,7 +176,7 @@ fn build() -> (TempDir, PathBuf) {
     fs::write(&object, object_for(ADDING).expect("an object")).expect("the object written");
 
     let harness = into_path.join("harness.c");
-    fs::write(&harness, HARNESS.replace("PREFIX", PREFIX)).expect("the harness written");
+    fs::write(&harness, harness_source.replace("PREFIX", PREFIX)).expect("the harness written");
 
     let executable = into_path.join("adding");
     let linked = Command::new("cc")
@@ -121,6 +184,7 @@ fn build() -> (TempDir, PathBuf) {
         .arg(&executable)
         .arg(&harness)
         .arg(&object)
+        .arg(runtime())
         .output()
         .expect("a C compiler to link with");
     assert!(

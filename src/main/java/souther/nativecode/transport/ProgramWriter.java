@@ -9,6 +9,10 @@ import souther.compiler.core.ValueShape;
 import souther.compiler.observe.ObservedValue;
 import souther.compiler.observe.RowStatement;
 import souther.compiler.program.BehaviorTarget;
+import souther.compiler.program.CheckedAlternativesForm;
+import souther.compiler.program.CheckedBoundaryInput;
+import souther.compiler.program.CheckedBoundaryOutput;
+import souther.compiler.program.CheckedCodecShape;
 import souther.compiler.program.CheckedBehavior;
 import souther.compiler.program.CheckedData;
 import souther.compiler.program.CheckedHelper;
@@ -23,6 +27,9 @@ import souther.compiler.program.DeclaredBy;
 import souther.compiler.program.Publication;
 import souther.compiler.types.BinOp;
 import souther.compiler.types.BindingId;
+import souther.compiler.types.LanguageCaseId;
+import souther.compiler.types.LeafScalar;
+import souther.compiler.types.MapKeyRepresentation;
 import souther.compiler.types.Refinement;
 import souther.compiler.types.ResolvedCase;
 import souther.compiler.types.Type;
@@ -75,7 +82,7 @@ public final class ProgramWriter {
      * written moves, so that a driver and a writer that disagree say so rather than producing an
      * object that is wrong quietly.
      */
-    public static final int TRANSPORT_VERSION = 8;
+    public static final int TRANSPORT_VERSION = 9;
 
     private final CheckedProgram program;
 
@@ -127,7 +134,7 @@ public final class ProgramWriter {
      * correspondence — the driver's test names the member it expects at each place, so a spelling
      * that moves on either side is red on the other.
      *
-     * <p>Five vocabularies and not seven. What a behavior does instead of carrying a body, and what
+     * <p>Seven vocabularies and not nine. What a behavior does instead of carrying a body, and what
      * a call reaches, are switches over shapes rather than over an enum, so there is no member to
      * ask for the spelling of without an instance of one to hand. Those cross under a real program
      * or not at all.
@@ -139,6 +146,8 @@ public final class ProgramWriter {
                 + ",\"publication\":" + spellings(Publication.values(), ProgramWriter::publication)
                 + ",\"declaredby\":" + spellings(DeclaredBy.values(), ProgramWriter::by)
                 + ",\"abort\":" + spellings(AbortKind.values(), ProgramWriter::abort)
+                + ",\"leafscalar\":" + spellings(LeafScalar.values(), ProgramWriter::leaf)
+                + ",\"languagecase\":" + spellings(LanguageCaseId.values(), ProgramWriter::languageCase)
                 + "}";
     }
 
@@ -234,36 +243,33 @@ public final class ProgramWriter {
      * object exports the token of every type it declares, including one the module keeps.
      */
     private String declaration(TypeSymbol.AtModule name, Declared declared) {
-        // What a field holds is a type too, and it may be one nothing else in the document has
-        // named. Met here rather than left to whoever reads the field, because a declaration is
-        // where a type stops being reachable from anything but itself.
-        if (declared.data() instanceof CheckedData.WithFields held) {
-            for (ValueShape.Field field : held.fields()) {
-                type(field.type());
-            }
-        }
         String identity = "{\"module\":" + quoted(name.module())
                 + ",\"name\":" + quoted(name.name())
                 + ",\"by\":" + quoted(by(declared.declaredBy()));
         return switch (declared.data()) {
             case CheckedData.Product it -> identity
-                    + ",\"is\":\"product\",\"fields\":" + fieldNames(it.fields())
+                    + ",\"is\":\"product\",\"fields\":" + fields(it)
                     + ",\"invariants\":" + it.invariants().size() + "}";
             // A newtype holds one value and is told apart from a product of one field by what may
-            // be written of it, which is the checker's business and settled before this.
+            // be written of it, which is the checker's business and settled before this. Its one
+            // field is written as one: a list that happens to hold one would be a shape the reader
+            // has to be told is never longer.
             case CheckedData.Newtype it -> identity
-                    + ",\"is\":\"newtype\",\"fields\":" + fieldNames(it.fields())
+                    + ",\"is\":\"newtype\",\"field\":"
+                    + field(it.fields().getFirst(), it.codecShapes().getFirst())
                     + ",\"invariants\":" + it.invariants().size() + "}";
-            case CheckedData.Unit it -> identity
-                    + ",\"is\":\"unit\",\"fields\":[],\"invariants\":0}";
+            // No field and no clause: a unit has neither, and writing an empty list of each would
+            // be writing a place for them.
+            case CheckedData.Unit it -> identity + ",\"is\":\"unit\"}";
             // A sum is never built, so it has no fields of its own; what it says is which types
             // stand as its cases, and a case may be a sum again.
             case CheckedData.Sum it -> {
                 StringJoiner cases = new StringJoiner(",", "[", "]");
                 for (TypeSymbol held : it.cases()) {
-                    cases.add(quoted(symbol(held)));
+                    cases.add(caseOf(held));
                 }
-                yield identity + ",\"is\":\"sum\",\"cases\":" + cases + "}";
+                yield identity + ",\"is\":\"sum\",\"cases\":" + cases
+                        + ",\"form\":" + form(it.representation()) + "}";
             }
         };
     }
@@ -289,12 +295,143 @@ public final class ProgramWriter {
         };
     }
 
-    private String fieldNames(List<ValueShape.Field> fields) {
-        StringJoiner names = new StringJoiner(",", "[", "]");
-        for (ValueShape.Field field : fields) {
-            names.add(quoted(field.name()));
+    /**
+     * Every field with what it carries across the boundary, bound in one record.
+     *
+     * <p>Not two lists side by side: the codec shape belongs to the field and not to a position,
+     * and a reader pairing two lists by index would be trusting an agreement nothing on the wire
+     * holds it to. What a field carries is also what names the declarations it reaches, so a type
+     * only a field holds is met here — a declaration is where a type stops being reachable from
+     * anything but itself.
+     */
+    private String fields(CheckedData.WithFields held) {
+        List<ValueShape.Field> fields = held.fields();
+        List<CheckedCodecShape> codecs = held.codecShapes();
+        if (fields.size() != codecs.size()) {
+            throw new IllegalStateException(held.name() + " carries " + fields.size()
+                    + " fields and " + codecs.size() + " codec shapes");
         }
-        return names.toString();
+        StringJoiner written = new StringJoiner(",", "[", "]");
+        for (int at = 0; at < fields.size(); at++) {
+            written.add(field(fields.get(at), codecs.get(at)));
+        }
+        return written.toString();
+    }
+
+    private String field(ValueShape.Field field, CheckedCodecShape codec) {
+        return "{\"name\":" + quoted(field.name()) + ",\"codec\":" + codec(codec) + "}";
+    }
+
+    /** What a field carries across the boundary, as the check derived it. */
+    private String codec(CheckedCodecShape shape) {
+        return switch (shape) {
+            case CheckedCodecShape.Scalar it ->
+                    "{\"is\":\"scalar\",\"scalar\":" + quoted(leaf(it.kind())) + "}";
+            case CheckedCodecShape.Named it ->
+                    "{\"is\":\"named\",\"declared\":" + quoted(declaredName(it.name())) + "}";
+            case CheckedCodecShape.ListOf it ->
+                    "{\"is\":\"listof\",\"element\":" + codec(it.element()) + "}";
+            case CheckedCodecShape.SetOf it ->
+                    "{\"is\":\"setof\",\"element\":" + codec(it.element()) + "}";
+            case CheckedCodecShape.MapOf it -> "{\"is\":\"mapof\",\"key\":" + key(it.key())
+                    + ",\"value\":" + codec(it.value()) + "}";
+            case CheckedCodecShape.OptionOf it ->
+                    "{\"is\":\"optionof\",\"present\":" + codec(it.present()) + "}";
+        };
+    }
+
+    /** What a parameter can arrive as. */
+    private String input(CheckedBoundaryInput shape) {
+        return switch (shape) {
+            case CheckedBoundaryInput.Scalar it ->
+                    "{\"is\":\"scalar\",\"scalar\":" + quoted(leaf(it.scalar())) + "}";
+            case CheckedBoundaryInput.Nominal it ->
+                    "{\"is\":\"nominal\",\"declared\":" + quoted(declaredName(it.name())) + "}";
+            case CheckedBoundaryInput.ListOf it ->
+                    "{\"is\":\"listof\",\"element\":" + input(it.element()) + "}";
+            case CheckedBoundaryInput.SetOf it ->
+                    "{\"is\":\"setof\",\"element\":" + input(it.element()) + "}";
+            case CheckedBoundaryInput.MapOf it -> "{\"is\":\"mapof\",\"key\":" + key(it.key())
+                    + ",\"value\":" + input(it.value()) + "}";
+        };
+    }
+
+    /**
+     * What an answer can leave as.
+     *
+     * <p>A union answer carries its type as written beside the cases the boundary descended to,
+     * because the two are different answers: rebuilding the type from the cases would give a union
+     * nobody wrote.
+     */
+    private String output(CheckedBoundaryOutput shape) {
+        return switch (shape) {
+            case CheckedBoundaryOutput.Scalar it ->
+                    "{\"is\":\"scalar\",\"scalar\":" + quoted(leaf(it.scalar())) + "}";
+            case CheckedBoundaryOutput.Nominal it ->
+                    "{\"is\":\"nominal\",\"declared\":" + quoted(declaredName(it.name())) + "}";
+            case CheckedBoundaryOutput.ListOf it ->
+                    "{\"is\":\"listof\",\"element\":" + output(it.element()) + "}";
+            case CheckedBoundaryOutput.SetOf it ->
+                    "{\"is\":\"setof\",\"element\":" + output(it.element()) + "}";
+            case CheckedBoundaryOutput.MapOf it -> "{\"is\":\"mapof\",\"key\":" + key(it.key())
+                    + ",\"value\":" + output(it.value()) + "}";
+            case CheckedBoundaryOutput.Cases it -> {
+                StringJoiner cases = new StringJoiner(",", "[", "]");
+                for (TypeSymbol held : it.cases()) {
+                    cases.add(caseOf(held));
+                }
+                yield "{\"is\":\"cases\",\"type\":" + type(it.type()) + ",\"cases\":" + cases
+                        + ",\"form\":" + form(it.representation()) + "}";
+            }
+        };
+    }
+
+    /** What a boundary map's key is written as. */
+    private String key(MapKeyRepresentation key) {
+        return switch (key) {
+            case MapKeyRepresentation.Text it -> "{\"is\":\"text\"}";
+            case MapKeyRepresentation.Date it -> "{\"is\":\"date\"}";
+            case MapKeyRepresentation.Time it -> "{\"is\":\"time\"}";
+            case MapKeyRepresentation.DateTime it -> "{\"is\":\"datetime\"}";
+            case MapKeyRepresentation.Instant it -> "{\"is\":\"instant\"}";
+            case MapKeyRepresentation.NamedKey it ->
+                    "{\"is\":\"namedkey\",\"declared\":" + quoted(declaredName(it.name())) + "}";
+        };
+    }
+
+    /** How a set of alternatives travels, with both of its keys where it has them. */
+    private static String form(CheckedAlternativesForm form) {
+        return switch (form) {
+            case CheckedAlternativesForm.Enumeration it -> "{\"is\":\"enumeration\"}";
+            case CheckedAlternativesForm.Discriminated it -> "{\"is\":\"discriminated\",\"tag\":"
+                    + quoted(it.tagKey()) + ",\"contents\":" + quoted(it.contentsKey()) + "}";
+        };
+    }
+
+    private static String leaf(LeafScalar leaf) {
+        return switch (leaf) {
+            case STRING -> "STRING";
+            case INT -> "INT";
+            case BOOL -> "BOOL";
+            case DECIMAL -> "DECIMAL";
+            case DATE -> "DATE";
+            case TIME -> "TIME";
+            case DATETIME -> "DATETIME";
+            case INSTANT -> "INSTANT";
+        };
+    }
+
+    private static String languageCase(LanguageCaseId id) {
+        return switch (id) {
+            case SOME -> "SOME";
+            case NONE -> "NONE";
+            case DIVISION_BY_ZERO -> "DIVISION_BY_ZERO";
+            case NOT_A_NUMBER -> "NOT_A_NUMBER";
+            case NOT_A_DATE -> "NOT_A_DATE";
+            case NOT_A_TIME -> "NOT_A_TIME";
+            case NOT_WHOLE -> "NOT_WHOLE";
+            case NOT_A_FINITE_DECIMAL -> "NOT_A_FINITE_DECIMAL";
+        };
     }
 
     private String module(CheckedModule module) {
@@ -555,14 +692,36 @@ public final class ProgramWriter {
         return name.module() + "." + name.name();
     }
 
-    /** The same for a name that may not be a module's, which is refused rather than guessed at. */
-    private String symbol(TypeSymbol name) {
+    /**
+     * The same for a name standing where only a declaration can, which is refused rather than
+     * guessed at: what is built, what a field or a key is named by, what a boundary names.
+     */
+    private String declaredName(TypeSymbol name) {
         return switch (name) {
             case TypeSymbol.AtModule it -> named(it);
-            // A primitive standing as a case of a union, and a case the language gives. Both are
-            // cases with no declaration to be made of, and nothing here builds or reads one yet.
-            case TypeSymbol.Primitive it -> throw notYet("the primitive case " + it.name());
-            case TypeSymbol.LanguageCase it -> throw notYet("the case " + it.name());
+            case TypeSymbol.Primitive it ->
+                    throw notYet("the primitive " + it.name() + " named as a declaration");
+            case TypeSymbol.LanguageCase it ->
+                    throw notYet("the case " + it.name() + " named as a declaration");
+        };
+    }
+
+    /**
+     * Which case a name is, where a case may be any of the three the language has: one a module
+     * declares, a primitive standing as a case, or one the language gives.
+     *
+     * <p>The identity and not the shape. How a case is written at a boundary is read on the far
+     * side off what the identity reaches — a declaration's arm, or a primitive's being one — so
+     * nothing about the shape crosses here that the identity does not already answer.
+     */
+    private String caseOf(TypeSymbol name) {
+        return switch (name) {
+            case TypeSymbol.AtModule it ->
+                    "{\"is\":\"declared\",\"declared\":" + quoted(named(it)) + "}";
+            case TypeSymbol.Primitive it ->
+                    "{\"is\":\"primitive\",\"prim\":" + quoted(prim(it.primitive())) + "}";
+            case TypeSymbol.LanguageCase it ->
+                    "{\"is\":\"language\",\"case\":" + quoted(languageCase(it.id())) + "}";
         };
     }
 
@@ -582,9 +741,9 @@ public final class ProgramWriter {
             case CheckedImplementation.Composed it -> "composed";
             case CheckedImplementation.Unwritten it -> "unwritten";
         };
-        StringJoiner takes = new StringJoiner(",", "[", "]");
-        for (Type type : behavior.signature().takes()) {
-            takes.add(type(type));
+        StringJoiner inputs = new StringJoiner(",", "[", "]");
+        for (CheckedBoundaryInput input : behavior.signature().inputs()) {
+            inputs.add(input(input));
         }
         // The module and the name apart, which is what an identity is made of and what a symbol is
         // built from. Joined into one string it would have to be split back, and a module's name
@@ -592,8 +751,8 @@ public final class ProgramWriter {
         return "{\"module\":" + quoted(name.module())
                 + ",\"name\":" + quoted(name.name())
                 + ",\"is\":" + quoted(how)
-                + ",\"takes\":" + takes
-                + ",\"answers\":" + type(behavior.signature().answers())
+                + ",\"inputs\":" + inputs
+                + ",\"output\":" + output(behavior.signature().output())
                 + "}";
     }
 
@@ -671,7 +830,7 @@ public final class ProgramWriter {
             case Composition.Routing.OnCases it -> {
                 StringJoiner accepted = new StringJoiner(",", "[", "]");
                 for (TypeSymbol type : it.accepted()) {
-                    accepted.add(quoted(symbol(type)));
+                    accepted.add(caseOf(type));
                 }
                 yield "{\"is\":\"oncases\",\"accepted\":" + accepted + "}";
             }
@@ -735,7 +894,7 @@ public final class ProgramWriter {
                     + ",\"right\":" + core(it.right(), bindings)
                     + ",\"type\":" + type(it.type()) + ",\"aborts\":" + aborts(it) + "}";
             case Core.UnitValue it -> "{\"core\":\"unit\",\"declared\":"
-                    + quoted(symbol(it.data())) + ",\"type\":" + type(it.type())
+                    + quoted(declaredName(it.data())) + ",\"type\":" + type(it.type())
                     + ",\"aborts\":" + aborts(it) + "}";
             case Core.Construct it -> {
                 StringJoiner values = new StringJoiner(",", "[", "]");
@@ -977,7 +1136,7 @@ public final class ProgramWriter {
             case Refinement.Direct it -> {
                 StringJoiner atoms = new StringJoiner(",", "[", "]");
                 for (TypeSymbol atom : selected.atoms()) {
-                    atoms.add(quoted(symbol(atom)));
+                    atoms.add(caseOf(atom));
                 }
                 yield "{\"tests\":\"which\",\"atoms\":" + atoms + "}";
             }
@@ -1079,7 +1238,7 @@ public final class ProgramWriter {
             case Type.Erroneous it -> throw notYet("the type " + it);
             case Type.Var it -> throw notYet("a type variable");
             case Type.MetaVar it -> throw notYet("a type this compiler left open");
-            case Type.Ref it -> "{\"declared\":" + quoted(symbol(it.name())) + "}";
+            case Type.Ref it -> "{\"declared\":" + quoted(declaredName(it.name())) + "}";
             case Type.OptionOf it -> "{\"option\":" + type(it.element()) + "}";
             case Type.TupleOf it -> {
                 StringJoiner members = new StringJoiner(",", "[", "]");
@@ -1094,14 +1253,18 @@ public final class ProgramWriter {
             case Type.Union it -> {
                 StringJoiner members = new StringJoiner(",", "[", "]");
                 for (TypeSymbol member : it.members()) {
-                    members.add(quoted(symbol(member)));
+                    members.add(caseOf(member));
                 }
                 yield "{\"union\":" + members + "}";
             }
 
-            case Type.ListOf it -> throw notYet("a list type");
-            case Type.MapOf it -> throw notYet("a map type");
-            case Type.SetOf it -> throw notYet("a set type");
+            // Written whole, as the checker has them. Whether a value of one has a representation
+            // here is the lowering's question, and a writer that refused one would be answering
+            // it from the side that never lays a value out.
+            case Type.ListOf it -> "{\"list\":" + type(it.element()) + "}";
+            case Type.SetOf it -> "{\"set\":" + type(it.element()) + "}";
+            case Type.MapOf it -> "{\"map\":{\"key\":" + type(it.key())
+                    + ",\"value\":" + type(it.value()) + "}}";
             case Type.FnOf it -> {
                 StringJoiner takes = new StringJoiner(",", "[", "]");
                 for (Type param : it.params()) {

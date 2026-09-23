@@ -262,7 +262,9 @@ impl<'p, 'a> Planner<'p, 'a> {
                 self.walk(right, bound, acc, seen)?;
             }
             Node::Neg { operand, .. } => self.walk(operand, bound, acc, seen)?,
-            Node::If { cond, then, els, .. } => {
+            Node::If {
+                cond, then, els, ..
+            } => {
                 self.walk(cond, bound, acc, seen)?;
                 self.walk(then, bound, acc, seen)?;
                 self.walk(els, bound, acc, seen)?;

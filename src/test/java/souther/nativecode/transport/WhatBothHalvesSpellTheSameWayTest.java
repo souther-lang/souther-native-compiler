@@ -5,6 +5,8 @@ import souther.compiler.abort.AbortKind;
 import souther.compiler.program.DeclaredBy;
 import souther.compiler.program.Publication;
 import souther.compiler.types.BinOp;
+import souther.compiler.types.LanguageCaseId;
+import souther.compiler.types.LeafScalar;
 import souther.compiler.types.Type;
 
 import java.io.IOException;
@@ -66,6 +68,8 @@ class WhatBothHalvesSpellTheSameWayTest {
         assertThat(words(written, "publication")).hasSize(Publication.values().length);
         assertThat(words(written, "declaredby")).hasSize(DeclaredBy.values().length);
         assertThat(words(written, "abort")).hasSize(AbortKind.values().length);
+        assertThat(words(written, "leafscalar")).hasSize(LeafScalar.values().length);
+        assertThat(words(written, "languagecase")).hasSize(LanguageCaseId.values().length);
     }
 
     /** No member of one vocabulary is spelt the way another member of it is. */
@@ -73,7 +77,8 @@ class WhatBothHalvesSpellTheSameWayTest {
     void noTwoMembersOfOneVocabularyAreSpeltAlike() {
         String written = ProgramWriter.vocabularies();
 
-        for (String vocabulary : new String[]{"op", "prim", "publication", "declaredby", "abort"}) {
+        for (String vocabulary : new String[]{"op", "prim", "publication", "declaredby", "abort",
+                "leafscalar", "languagecase"}) {
             assertThat(words(written, vocabulary))
                     .as("the spellings of %s in %s", vocabulary, written)
                     .doesNotHaveDuplicates();

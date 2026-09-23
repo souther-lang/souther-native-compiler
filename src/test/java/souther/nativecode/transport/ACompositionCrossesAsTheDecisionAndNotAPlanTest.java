@@ -66,16 +66,17 @@ class ACompositionCrossesAsTheDecisionAndNotAPlanTest {
         assertThat(written).contains("\"stages\":[");
         // The first stage takes the composition's own arguments, so nothing is routed into it.
         assertThat(written).contains(
-                "{\"behavior\":\"routing.f\",\"answers\":{\"union\":[\"routing.A\",\"routing.B\"]},"
+                "{\"behavior\":\"routing.f\",\"answers\":{\"union\":[{\"is\":\"declared\",\"declared\":\"routing.A\"},"
+                        + "{\"is\":\"declared\",\"declared\":\"routing.B\"}]},"
                         + "\"routing\":{\"is\":\"always\"}}");
         // A stage after the first is offered only the cases it accepts, and which cases those are
         // is the checker's answer, read off the stage rather than worked out again here.
         assertThat(written).contains(
                 "{\"behavior\":\"routing.g\",\"answers\":{\"declared\":\"routing.B\"},"
-                        + "\"routing\":{\"is\":\"oncases\",\"accepted\":[\"routing.A\"]}}");
+                        + "\"routing\":{\"is\":\"oncases\",\"accepted\":[{\"is\":\"declared\",\"declared\":\"routing.A\"}]}}");
         assertThat(written).contains(
                 "{\"behavior\":\"routing.h\",\"answers\":{\"declared\":\"routing.C\"},"
-                        + "\"routing\":{\"is\":\"oncases\",\"accepted\":[\"routing.B\"]}}");
+                        + "\"routing\":{\"is\":\"oncases\",\"accepted\":[{\"is\":\"declared\",\"declared\":\"routing.B\"}]}}");
         // What a stage's behavior is closes the document, the same as a body's call does: `g` and
         // `h` are named by no body a `Core.Call` ever reaches, only by a stage.
         assertThat(written).contains("\"module\":\"routing\",\"name\":\"g\",\"is\":\"body\"");

@@ -53,6 +53,65 @@ class WhatThisBackendDoesNotWriteYetTest {
     }
 
     /**
+     * A list crosses whole: the program is read, and what is refused is laying one out, which
+     * nothing here does yet. Its external form waits on the language saying how every carrier
+     * orders and spells what a collection holds.
+     */
+    @Test
+    void anAnswerThatIsAListIsReadAndNotLaidOut() {
+        assertThatThrownBy(() -> NativeCompiler.compile(CheckedProgram.of(List.of("""
+                module listed exposing ( many )
+
+                behavior many : (n: Int) -> List<Int>
+                """))))
+                .isInstanceOf(NotLowered.class)
+                .hasMessageContaining("List");
+    }
+
+    /**
+     * The checker lets a list of a case stand where a list of its sum is answered, and this
+     * backend lays out no list. So the program is not lowered — and it is not the two halves
+     * disagreeing, which is what it would be read as if this side answered the checker's question
+     * about a collection without the checker's rules.
+     */
+    @Test
+    void aListAnsweredCovariantlyIsNotLoweredRatherThanADisagreement() {
+        assertThatThrownBy(() -> NativeCompiler.compile(CheckedProgram.of(List.of("""
+                module demo exposing ( f, Box, A, B, S )
+
+                data A = { v: Int }
+                data B = { v: Int }
+                data S = A | B
+
+                data Box = { xs: List<A> }
+
+                behavior f : (b: Box) -> List<S>
+                let f (b) = b.xs
+                """))))
+                .isInstanceOf(NotLowered.class)
+                .hasMessageContaining("List");
+    }
+
+    /**
+     * A value only passing through is not written, so a behavior handing one back compiles; what
+     * is refused is the boundary that would have to write a {@code Decimal} out, which is where
+     * its canonical form would be decided.
+     */
+    @Test
+    void anAnswerWithADecimalFieldIsRefusedWhereItWouldBeWrittenOut() {
+        assertThatThrownBy(() -> NativeCompiler.compile(CheckedProgram.of(List.of("""
+                module priced exposing ( same, Priced )
+
+                data Priced = { amount: Decimal }
+
+                behavior same : (p: Priced) -> Priced
+                let same (p) = p
+                """))))
+                .isInstanceOf(NotLowered.class)
+                .hasMessageContaining("Decimal");
+    }
+
+    /**
      * A construction runs the type's clauses and stops at the first that does not hold. Nothing
      * here runs one, and building the value anyway would make the type's invariant true of what
      * this emits by leaving it out.
