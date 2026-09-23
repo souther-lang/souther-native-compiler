@@ -211,9 +211,7 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
     let closures = ClosureSites::of_program(&program);
     let mut lifted: BTreeMap<usize, FuncId> = BTreeMap::new();
     for (&site, plan) in closures.iter() {
-        let Ty::Fn { fn_ } = plan.ty else {
-            bail!("a closure site whose own type is not a function type");
-        };
+        let fn_ = plan.signature()?;
         if fn_.takes.len() != plan.parameters.len() {
             bail!(
                 "a closure site declared with {} parameters and a type naming {}",
@@ -550,9 +548,7 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
     // a nested site, or reach one returned from elsewhere, and every one of them was declared
     // above regardless of which body it is nested under.
     for (&site, plan) in closures.iter() {
-        let Ty::Fn { fn_ } = plan.ty else {
-            bail!("a closure site whose own type is not a function type");
-        };
+        let fn_ = plan.signature()?;
         let signature = lifted_signature(&fn_.takes, &fn_.answers, call_conv)?;
         let id = *lifted
             .get(&site)
@@ -1399,9 +1395,9 @@ fn define_closure(
         bindings.at(capture.binding, variable);
     }
 
+    let takes = &site.signature()?.takes;
     for (at, parameter) in site.parameters.iter().enumerate() {
-        let taken = &site_taken(site)?[at];
-        let variable = builder.declare_var(machine_type(taken)?);
+        let variable = builder.declare_var(machine_type(&takes[at])?);
         let given = builder.block_params(entry)[1 + at];
         builder.def_var(variable, given);
         bindings.at(parameter.binding, variable);
@@ -1423,15 +1419,6 @@ fn define_closure(
 
     builder.finalize(frontend);
     Ok(())
-}
-
-/// A site's own parameter types, read off its `Ty::Fn` — the one place they are named, since
-/// [`transport::Parameter`] carries a binding and a name and nothing about a type.
-fn site_taken<'a>(site: &'a Site) -> Result<&'a [Ty]> {
-    let Ty::Fn { fn_ } = site.ty else {
-        bail!("a closure site whose own type is not a function type");
-    };
-    Ok(&fn_.takes)
 }
 
 /// A behavior written as stages applied in order, each offered what the one before answered.

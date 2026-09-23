@@ -18,7 +18,8 @@
 //! top-level body, the binding is simply a live value already in scope there. Which of those it is
 //! is not asked here — this only says what each site reaches, in the order it was first reached.
 
-use crate::transport::{Definition, Node, Parameter, Program, Ty};
+use crate::transport::{Definition, FnSignature, Node, Parameter, Program, Ty};
+use anyhow::{Result, bail};
 use std::collections::{BTreeMap, HashSet};
 
 /// One binding a closure carries forward, and the type it was read at — read off the
@@ -45,6 +46,18 @@ pub struct Site<'a> {
     /// In first-reached order — the order a closure's slots are laid out in, and the order the
     /// lifted function reads them back in.
     pub captures: Vec<Capture>,
+}
+
+impl Site<'_> {
+    /// What this site takes and answers — the one place the `Ty::Fn` a `Node::Block`'s own type is
+    /// always built from is unwrapped, so every caller asking shares one answer (and one message)
+    /// rather than each re-deriving the same fact with its own `bail!`.
+    pub fn signature(&self) -> Result<&FnSignature> {
+        let Ty::Fn { fn_ } = self.ty else {
+            bail!("a closure site whose own type is not a function type");
+        };
+        Ok(fn_)
+    }
 }
 
 /// Every closure site the document holds, found once over the whole program.
