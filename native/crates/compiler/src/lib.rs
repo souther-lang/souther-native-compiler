@@ -22,7 +22,7 @@ use souther_native_abi::{
     TEXT_LENGTH, TOKEN, WHICH, behavior_symbol, example_symbol, field_at, held_symbol, member_at,
     room_for_fields, room_for_held, room_for_members, room_for_text, type_symbol, value_symbol,
 };
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use transport::{
     AbortKind, Answers, Arm, Declaration, DeclaredBy, Definition, Node, Op, Prim, Program,
@@ -320,10 +320,18 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
     // function that calls it is defined, the same two-phase shape every other declaration in this
     // file keeps. A value this program does declare an entry for was just given one above, so
     // only a genuinely foreign one reaches this loop.
-    for ((module_name, value_name), ty) in published_value_calls(&program) {
+    for ((module_name, value_name), ty) in published_value_calls(&program)? {
         if reachable.is_published(&module_name, &value_name) {
             continue;
         }
+        // The same boundary a behavior answering from another object crosses (`crosses_objects`),
+        // and held to the same condition: an entry is an ordinary call across an object boundary,
+        // and a value this backend would refuse a behavior for answering does not become
+        // reachable just because a value happened to answer it instead.
+        crosses_object(
+            &format!("`{module_name}`'s published value {value_name} answers"),
+            &ty,
+        )?;
         let signature = signature_over(&[], &ty, call_conv)?;
         let symbol = value_symbol(&module_name, &value_name);
         let id = module.declare_function(&symbol, Linkage::Import, &signature)?;
@@ -752,75 +760,98 @@ fn handover_types(value: &transport::Value) -> Vec<Ty> {
 /// is defined, which is the two-phase shape (declare, then define) every other function in this
 /// object already keeps.
 ///
+/// A `BTreeMap` and not a `HashMap`, because this is walked to declare symbols in whatever order
+/// it hands them back, and nowhere else in this file lets an unordered map decide an order that
+/// ends up in the object it emits — the token loop above walks `program.declarations` itself for
+/// exactly that reason. A `HashMap` here would make two builds of one document free to declare
+/// these imports in different orders for no reason the source states.
+///
 /// One type per value and not one per call: every call to one value answers with the same type,
-/// since it is one declaration, so the first call site found stands for all of them.
-fn published_value_calls(program: &Program) -> HashMap<(String, String), Ty> {
-    let mut found = HashMap::new();
+/// since it is one declaration. Held to that rather than assumed — a second call site naming a
+/// different type for a value already found is the checker and this reading of its document
+/// disagreeing about something more basic than this side not having built it yet, and is refused
+/// the way every other such disagreement in this file is, rather than silently kept as whichever
+/// type was found first.
+fn published_value_calls(program: &Program) -> Result<BTreeMap<(String, String), Ty>> {
+    let mut found = BTreeMap::new();
     for written in &program.modules {
         for held in &written.helpers {
-            walk_calls(&held.body, &mut found);
+            walk_calls(&held.body, &mut found)?;
         }
         for value in &written.values {
-            walk_calls(&value.body, &mut found);
+            walk_calls(&value.body, &mut found)?;
         }
         for entry in &written.entries {
-            walk_calls(&entry.body, &mut found);
+            walk_calls(&entry.body, &mut found)?;
         }
         for local in &written.definitions {
             if let Definition::Body { body, .. } = local {
-                walk_calls(body, &mut found);
+                walk_calls(body, &mut found)?;
             }
         }
     }
-    found
+    Ok(found)
 }
 
 /// Every `Reaches::PublishedValue` under `node`, depth first. No default arm: a `Node` variant
 /// this misses is a value call this walk silently never finds, which is exactly the silent drop
 /// declaring a value's import symbol exists to end.
-fn walk_calls(node: &Node, found: &mut HashMap<(String, String), Ty>) {
+fn walk_calls(node: &Node, found: &mut BTreeMap<(String, String), Ty>) -> Result<()> {
     match node {
         Node::Call { reaches, arguments, ty, .. } => {
             if let Reaches::PublishedValue { module, name } = reaches {
-                found.entry((module.clone(), name.clone())).or_insert_with(|| ty.clone());
+                match found.get(&(module.clone(), name.clone())) {
+                    Some(already) if already != ty => {
+                        bail!(
+                            "a call reaches `{module}`'s published value {name} as {}, and \
+                             another reaches it as {} — one declaration does not answer two ways",
+                            already.spelt(),
+                            ty.spelt()
+                        );
+                    }
+                    Some(_) => {}
+                    None => {
+                        found.insert((module.clone(), name.clone()), ty.clone());
+                    }
+                }
             }
             for argument in arguments {
-                walk_calls(argument, found);
+                walk_calls(argument, found)?;
             }
         }
         Node::Binary { left, right, .. } => {
-            walk_calls(left, found);
-            walk_calls(right, found);
+            walk_calls(left, found)?;
+            walk_calls(right, found)?;
         }
-        Node::Neg { operand, .. } => walk_calls(operand, found),
+        Node::Neg { operand, .. } => walk_calls(operand, found)?,
         Node::Let { value, body, .. } => {
-            walk_calls(value, found);
-            walk_calls(body, found);
+            walk_calls(value, found)?;
+            walk_calls(body, found)?;
         }
         Node::If { cond, then, els, .. } => {
-            walk_calls(cond, found);
-            walk_calls(then, found);
-            walk_calls(els, found);
+            walk_calls(cond, found)?;
+            walk_calls(then, found)?;
+            walk_calls(els, found)?;
         }
         Node::Construct { values, .. } => {
             for value in values {
-                walk_calls(value, found);
+                walk_calls(value, found)?;
             }
         }
-        Node::Field { target, .. } => walk_calls(target, found),
+        Node::Field { target, .. } => walk_calls(target, found)?,
         Node::Match { subject, arms, .. } => {
-            walk_calls(subject, found);
+            walk_calls(subject, found)?;
             for arm in arms {
-                walk_calls(&arm.body, found);
+                walk_calls(&arm.body, found)?;
             }
         }
-        Node::Some { value, .. } => walk_calls(value, found),
+        Node::Some { value, .. } => walk_calls(value, found)?,
         Node::Tuple { members, .. } => {
             for member in members {
-                walk_calls(member, found);
+                walk_calls(member, found)?;
             }
         }
-        Node::Member { tuple, .. } => walk_calls(tuple, found),
+        Node::Member { tuple, .. } => walk_calls(tuple, found)?,
         Node::Int { .. }
         | Node::Read { .. }
         | Node::Bool { .. }
@@ -828,6 +859,7 @@ fn walk_calls(node: &Node, found: &mut HashMap<(String, String), Ty>) {
         | Node::Unit { .. }
         | Node::None { .. } => {}
     }
+    Ok(())
 }
 
 /// Every declared type of the program, by the key a reference to one says.
@@ -1026,15 +1058,28 @@ fn machine_type(ty: &Ty) -> Result<types::Type> {
 /// Said here, where the signature is declared, because that is the one place the two scopes meet.
 fn crosses_objects(target: &Target) -> Result<()> {
     for ty in target.takes.iter().chain([&target.answers]) {
-        if !means_the_same_elsewhere(ty) {
-            return Err(not_lowered(format!(
-                "{}.{} takes or answers {}, which has no representation an object built from \
-                 another document reads the same way, and it is reached across objects",
-                target.module,
-                target.name,
-                ty.spelt()
-            )));
-        }
+        crosses_object(&format!("{}.{} takes or answers", target.module, target.name), ty)?;
+    }
+    Ok(())
+}
+
+/// Refuses `ty` where a value of it means something different once it has crossed into an object
+/// built from another document — `clause` is read straight into the message, ending just short of
+/// the type, so a caller states what it is asking about (`"m.f takes or answers"`, `` "`m`'s
+/// published value x answers" ``) rather than this function guessing a grammar for every caller.
+///
+/// The one check every cross-object boundary this backend admits is held to, [`crosses_objects`]'s
+/// behaviors and a foreign [`Reaches::PublishedValue`]'s answer alike, so the two cannot drift into
+/// being checked two different ways — which is exactly how a published value answering
+/// `Option<Decimal>` would slip past a check a behavior answering the same type refuses, had this
+/// been written twice instead of shared.
+fn crosses_object(clause: &str, ty: &Ty) -> Result<()> {
+    if !means_the_same_elsewhere(ty) {
+        return Err(not_lowered(format!(
+            "{clause} {}, which has no representation an object built from another document \
+             reads the same way, and it is reached across objects",
+            ty.spelt()
+        )));
     }
     Ok(())
 }
