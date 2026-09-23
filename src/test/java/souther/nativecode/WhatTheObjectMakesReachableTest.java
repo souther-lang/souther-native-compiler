@@ -117,6 +117,23 @@ class WhatTheObjectMakesReachableTest {
                 .containsEntry("souther2.surfaced.hidden$example$1", "T");
     }
 
+    /**
+     * What a host reaches for an answer as the language writes it follows the same line: a
+     * published behavior and every row have a boundary, and a behavior the module keeps has none,
+     * since nothing outside the object reaches it to be answered.
+     */
+    @Test
+    void aBoundaryIsOfferedWhereTheEntryItRunsIsReachedFromOutside() throws Exception {
+        Map<String, String> table = named(CheckedProgram.of(List.of(SURFACE)));
+
+        assertThat(table)
+                .as("what the object carries: %s", table)
+                .containsEntry("souther2.surfaced.shown$boundary", "T")
+                .containsEntry("souther2.surfaced.hidden$example$0$boundary", "T")
+                .containsEntry("souther2.surfaced.hidden$example$1$boundary", "T")
+                .doesNotContainKey("souther2.surfaced.hidden$boundary");
+    }
+
     private static CheckedBehavior behaviorOf(CheckedModule module, String name) {
         return module.behavior(new ValueName.Behavior(module.name(), name));
     }
