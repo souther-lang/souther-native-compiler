@@ -46,9 +46,12 @@ import java.util.function.Function;
  *
  * <p>This decides nothing. What it writes is the shape the checker settled, node for node, and the
  * reason it is a projection rather than a translation is that every question a lowering asks has
- * already been answered upstream — what a call reaches, what an arm binds, what a function
- * captures. A writer that started answering one of them would be a second place the language means
- * something, and the two would come apart.
+ * already been answered upstream — what a call reaches, what an arm binds. A writer that started
+ * answering one of them would be a second place the language means something, and the two would
+ * come apart. What a function value captures is not one of these: a {@link Core.Block} is written
+ * out whole, params and body, and which of its free names a backend has to carry as runtime state
+ * is that backend's own representation question — the same way where a field sits is the
+ * lowering's and not this writer's.
  *
  * <p>So the walk over {@link Core} lists every kind there is. A kind added to the language stops
  * this compiling, which is the point: the alternative is a default arm that lets a new node cross
@@ -72,9 +75,22 @@ public final class ProgramWriter {
      * written moves, so that a driver and a writer that disagree say so rather than producing an
      * object that is wrong quietly.
      */
-    public static final int TRANSPORT_VERSION = 7;
+    public static final int TRANSPORT_VERSION = 8;
 
     private final CheckedProgram program;
+
+    /**
+     * Where a {@link Core.Block} written into the document stands, counted document-wide rather
+     * than per body: two blocks nested in one body and two blocks in different bodies are told
+     * apart the same way, by where each is met walking the document, so the far side can declare
+     * one lifted function per site without asking this writer which body a site belongs to.
+     *
+     * <p>Not a closure layout. What this counts is a site's own identity on the wire, the same kind
+     * of surrogate {@link Bindings} already is for a binding: the far side is where what a site's
+     * function captures, and how, is decided — this only gives each site a number to declare a
+     * function under before that decision is made.
+     */
+    private int blockSites;
 
     /**
      * What this walk has met, which is not what the program emits.
@@ -762,9 +778,9 @@ public final class ProgramWriter {
             case Core.MaterialisedValue it -> throw notYet("a value read from its module", it);
             case Core.Call it -> call(it, bindings);
             case Core.PreservedCall it -> throw notYet("a call kept for what it says", it);
-            case Core.Apply it -> throw notYet("an application of a function value", it);
+            case Core.Apply it -> apply(it, bindings);
             case Core.IfConstructed it -> throw notYet("an attempted construction", it);
-            case Core.Block it -> throw notYet("a function value", it);
+            case Core.Block it -> block(it, bindings);
             case Core.ListLit it -> throw notYet("a list", it);
             case Core.Unreachable it -> throw notYet("an unreachable", it);
         };
@@ -783,6 +799,54 @@ public final class ProgramWriter {
         int number = bindings.number(it.binder().binding());
         return "{\"core\":\"let\",\"binding\":" + number
                 + ",\"value\":" + value
+                + ",\"body\":" + core(it.body(), bindings)
+                + ",\"type\":" + type(it.type()) + ",\"aborts\":" + aborts(it) + "}";
+    }
+
+    /**
+     * A function value applied to arguments: {@link Core.Apply}, and not {@link Core.Call}, because
+     * what is applied is a value the body holds rather than something declared elsewhere.
+     *
+     * <p>{@code function} crosses as whatever {@link Core.Apply#fn()} is — a {@link Core.Read}, the
+     * one thing it is ever built over — written the same way any other read is, rather than reduced
+     * to the binding number alone. A reader wanting the number still finds it, at
+     * {@code function.binding}, but the shape stays the one every other node's operand already has,
+     * so a wider callee this compiler admits later crosses without this method changing.
+     */
+    private String apply(Core.Apply it, Bindings bindings) {
+        StringJoiner arguments = new StringJoiner(",", "[", "]");
+        for (Core argument : it.args()) {
+            arguments.add(core(argument, bindings));
+        }
+        return "{\"core\":\"apply\",\"function\":" + core(it.fn(), bindings)
+                + ",\"arguments\":" + arguments
+                + ",\"type\":" + type(it.type()) + ",\"aborts\":" + aborts(it) + "}";
+    }
+
+    /**
+     * A function value: its own parameters, and the body they are bound in.
+     *
+     * <p>Written whole and not closure-converted here. What of the body's free names a backend has
+     * to carry forward as runtime state, and how, is a representation question and this writer
+     * answers none of those — the same boundary that keeps where a field sits out of a declaration.
+     * {@code site} is this document's own number for where the block stands ({@link #blockSites}),
+     * minted so the far side has something to declare a lifted function under before it has decided
+     * anything about what that function closes over.
+     *
+     * <p>A parameter is numbered the same way any other binder is, through the {@code bindings}
+     * this body already carries — a block's parameters are read inside its own body exactly as a
+     * helper's or a {@code let}'s are, and nothing about being a function value's own parameter
+     * changes what crossing one means.
+     */
+    private String block(Core.Block it, Bindings bindings) {
+        int site = blockSites++;
+        StringJoiner parameters = new StringJoiner(",", "[", "]");
+        for (Core.Binder parameter : it.params()) {
+            int number = bindings.number(parameter.binding());
+            parameters.add("{\"binding\":" + number + ",\"name\":" + quoted(parameter.name()) + "}");
+        }
+        return "{\"core\":\"block\",\"site\":" + site
+                + ",\"parameters\":" + parameters
                 + ",\"body\":" + core(it.body(), bindings)
                 + ",\"type\":" + type(it.type()) + ",\"aborts\":" + aborts(it) + "}";
     }
@@ -1038,7 +1102,13 @@ public final class ProgramWriter {
             case Type.ListOf it -> throw notYet("a list type");
             case Type.MapOf it -> throw notYet("a map type");
             case Type.SetOf it -> throw notYet("a set type");
-            case Type.FnOf it -> throw notYet("a function type");
+            case Type.FnOf it -> {
+                StringJoiner takes = new StringJoiner(",", "[", "]");
+                for (Type param : it.params()) {
+                    takes.add(type(param));
+                }
+                yield "{\"fn\":{\"takes\":" + takes + ",\"answers\":" + type(it.result()) + "}}";
+            }
         };
     }
 

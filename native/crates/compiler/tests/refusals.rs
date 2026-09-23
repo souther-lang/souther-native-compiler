@@ -34,7 +34,7 @@ fn over(op: &str, left: &str, right: &str) -> String {
         r#"{{"is":"body","declared":"calculation.f","parameters":["a","b"],"publication":"published","body":{body}}}"#
     );
     format!(
-        r#"{{"transport":7,"declarations":[],"behaviors":[{target}],"modules":[{{"name":"calculation","helpers":[],"values":[],"entries":[],"definitions":[{held}],"examples":[]}}]}}"#
+        r#"{{"transport":8,"declarations":[],"behaviors":[{target}],"modules":[{{"name":"calculation","helpers":[],"values":[],"entries":[],"definitions":[{held}],"examples":[]}}]}}"#
     )
 }
 
@@ -183,11 +183,36 @@ fn a_field_this_driver_does_not_know_is_refused_rather_than_skipped() {
 /// would be reading a document written to mean something else.
 #[test]
 fn a_transport_from_another_version_is_refused() {
-    let later = document("ADD", "INT").replace(r#""transport":7"#, r#""transport":8"#);
+    let later = document("ADD", "INT").replace(r#""transport":8"#, r#""transport":9"#);
 
     let refused = object_for(&later).expect_err("a version this does not read");
 
-    assert!(refused.to_string().contains('8'), "{refused}");
+    assert!(refused.to_string().contains('9'), "{refused}");
+}
+
+/// A function value reaches no further than the object that built it: `means_the_same_elsewhere`
+/// answers `false` for `Ty::Fn` unconditionally, so a behavior naming one at a boundary this
+/// backend admits crossing — here, one the host supplies (`injected`) — is refused rather than
+/// declared. Nothing about which types the function itself takes or answers changes that: the
+/// closure header and the invocation convention behind a function value's own pointer are not yet
+/// a contract this backend has published for another object to read, whatever the function's own
+/// signature is built from (souther-lang/souther-native-compiler#11).
+#[test]
+fn a_function_value_at_an_injected_behaviors_boundary_is_not_lowered() {
+    let document = concat!(
+        r#"{"transport":8,"declarations":[],"#,
+        r#""behaviors":[{"module":"m","name":"choose","is":"injected","takes":["#,
+        r#"{"fn":{"takes":[{"prim":"INT"}],"answers":{"prim":"INT"}}}],"answers":{"prim":"INT"}}],"#,
+        r#""modules":[{"name":"m","helpers":[],"values":[],"entries":[],"definitions":[],"examples":[]}]}"#,
+    );
+
+    let refused = object_for(document).expect_err("a function value at an object boundary");
+
+    assert!(
+        refused.downcast_ref::<NotLowered>().is_some(),
+        "a function value reaching no further than this object is the backend not yet publishing \
+         a contract for it, not the two halves disagreeing: {refused}"
+    );
 }
 
 /// Two calls reaching one published value at two different types is not a document this backend
@@ -198,7 +223,7 @@ fn a_transport_from_another_version_is_refused() {
 #[test]
 fn a_published_value_reached_at_two_different_types_is_the_halves_disagreeing() {
     let document = concat!(
-        r#"{"transport":7,"declarations":[],"#,
+        r#"{"transport":8,"declarations":[],"#,
         r#""behaviors":[{"module":"m","name":"f","is":"body","takes":[],"answers":{"prim":"INT"}},"#,
         r#"{"module":"m","name":"g","is":"body","takes":[],"answers":{"prim":"BOOL"}}],"#,
         r#""modules":[{"name":"m","helpers":[],"values":[],"entries":[],"definitions":["#,
@@ -225,7 +250,7 @@ fn a_published_value_reached_at_two_different_types_is_the_halves_disagreeing() 
 /// tests below has one place to make disagree with the other.
 fn composed_document() -> String {
     concat!(
-        r#"{"transport":7,"declarations":[],"#,
+        r#"{"transport":8,"declarations":[],"#,
         r#""behaviors":[{"module":"m","name":"inner","is":"body","takes":[{"prim":"INT"}],"answers":{"prim":"INT"}},"#,
         r#"{"module":"m","name":"outer","is":"composed","takes":[{"prim":"INT"}],"answers":{"prim":"INT"}}],"#,
         r#""modules":[{"name":"m","helpers":[],"values":[],"entries":[],"definitions":["#,
@@ -374,4 +399,39 @@ fn a_compositions_own_takes_disagreeing_with_its_first_stages_target_is_the_halv
         "the halves disagreeing is not the backend being behind: {refused}"
     );
     assert!(refused.to_string().contains("m.outer"), "{refused}");
+}
+
+/// A hand-written document where an `Apply`'s own applied function answers one declared type and
+/// the `Apply` node itself is typed as a different one — both `Ty::Declared`, so both share one
+/// machine representation (`POINTER`). A check at machine representation alone, the same as
+/// `Apply`'s own arguments are held to, would pass this silently: the closure would store one
+/// type's address into `out` and the caller would read the same address back as the other type,
+/// which is not a crash — Cranelift has nothing to object to — just the wrong type read from a
+/// real address from then on. Souther's checker never writes this (`Core.Apply`'s own `type` is
+/// built straight from the applied value's `Type.FnOf` result, with no assignability in between),
+/// so this is exactly the kind of malformed or version-skewed document this strict reader exists
+/// to refuse rather than execute.
+#[test]
+fn an_applys_answer_disagreeing_with_its_functions_own_type_is_the_halves_disagreeing_even_though_both_are_pointers() {
+    let document = concat!(
+        r#"{"transport":8,"declarations":["#,
+        r#"{"module":"m","name":"A","by":"amodule","is":"unit","fields":[],"invariants":0},"#,
+        r#"{"module":"m","name":"B","by":"amodule","is":"unit","fields":[],"invariants":0}],"#,
+        r#""behaviors":[{"module":"m","name":"f","is":"body","#,
+        r#""takes":[{"fn":{"takes":[],"answers":{"declared":"m.A"}}}],"answers":{"declared":"m.B"}}],"#,
+        r#""modules":[{"name":"m","helpers":[],"values":[],"entries":[],"#,
+        r#""definitions":[{"is":"body","declared":"m.f","parameters":["f"],"publication":"published","#,
+        r#""body":{"core":"apply","function":{"core":"read","binding":0,"#,
+        r#""type":{"fn":{"takes":[],"answers":{"declared":"m.A"}}},"aborts":[]},"#,
+        r#""arguments":[],"type":{"declared":"m.B"},"aborts":[]}}],"examples":[]}]}"#,
+    );
+
+    let refused = object_for(document)
+        .expect_err("an Apply answering a different declared type than its own function's type");
+
+    assert!(
+        refused.downcast_ref::<NotLowered>().is_none(),
+        "the halves disagreeing is not the backend being behind: {refused}"
+    );
+    assert!(refused.to_string().contains("m.B") || refused.to_string().contains("m.A"), "{refused}");
 }
