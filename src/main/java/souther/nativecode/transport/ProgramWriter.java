@@ -17,6 +17,7 @@ import souther.compiler.program.CheckedModule;
 import souther.compiler.program.CheckedProgram;
 import souther.compiler.program.CheckedRow;
 import souther.compiler.program.CheckedValue;
+import souther.compiler.program.CheckedValueEntry;
 import souther.compiler.program.Declared;
 import souther.compiler.program.DeclaredBy;
 import souther.compiler.program.Publication;
@@ -71,7 +72,7 @@ public final class ProgramWriter {
      * written moves, so that a driver and a writer that disagree say so rather than producing an
      * object that is wrong quietly.
      */
-    public static final int TRANSPORT_VERSION = 6;
+    public static final int TRANSPORT_VERSION = 7;
 
     private final CheckedProgram program;
 
@@ -300,7 +301,11 @@ public final class ProgramWriter {
         }
         StringJoiner values = new StringJoiner(",", "[", "]");
         for (CheckedValue value : module.values()) {
-            values.add(value(value));
+            values.add(value(module, value));
+        }
+        StringJoiner entries = new StringJoiner(",", "[", "]");
+        for (CheckedValueEntry entry : module.valueEntries()) {
+            entries.add(entry(entry));
         }
         StringJoiner examples = new StringJoiner(",", "[", "]");
         for (CheckedBehavior behavior : module.behaviors()) {
@@ -315,6 +320,7 @@ public final class ProgramWriter {
         return "{\"name\":" + quoted(module.name())
                 + ",\"helpers\":" + helpers
                 + ",\"values\":" + values
+                + ",\"entries\":" + entries
                 + ",\"definitions\":" + definitions
                 + ",\"examples\":" + examples + "}";
     }
@@ -460,8 +466,13 @@ public final class ProgramWriter {
      * region names, built already and passed rather than rebuilt. A reader wanting what a call to
      * this value's home has to supply reads {@code handovers}, never {@code parameters.isEmpty()} —
      * a value takes none.
+     *
+     * <p>{@code publication} is asked of the module and not held on {@link CheckedValue} itself, for
+     * the reason {@link CheckedModule#publicationOfValue} is its own question and not an overload of
+     * {@link CheckedModule#publicationOf}: whether this value is published is a fact about the
+     * module's surface, read the same way a behavior's is.
      */
-    private String value(CheckedValue value) {
+    private String value(CheckedModule module, CheckedValue value) {
         Bindings bindings = new Bindings();
         StringJoiner handovers = new StringJoiner(",", "[", "]");
         for (CheckedValue.Handover handover : value.handovers()) {
@@ -473,9 +484,30 @@ public final class ProgramWriter {
         }
         return "{\"module\":" + quoted(value.name().module())
                 + ",\"name\":" + quoted(value.name().name())
+                + ",\"publication\":" + quoted(publication(module.publicationOfValue(value.name())))
                 + ",\"handovers\":" + handovers
                 + ",\"answers\":" + type(value.answers())
                 + ",\"body\":" + core(value.body(), bindings)
+                + "}";
+    }
+
+    /**
+     * The entry this module publishes for a value: the nullary bridge another module calls in place
+     * of holding a copy of the value (ADR-0074).
+     *
+     * <p>{@code body} is a reference to the value and nothing else — a call reaching
+     * {@link Core.Reached.OfValue}, written the same way any other reach to the value is, and never
+     * a fresh node kind this writer has to design for. Not written with {@code publication}: every
+     * entry this module holds is for a value it publishes, which
+     * {@link CheckedModule#valueEntries()}'s own invariant already guarantees, so a reader has
+     * nothing to ask here that {@code module.publicationOfValue(entry.value())} would not answer
+     * {@code PUBLISHED} to unconditionally.
+     */
+    private String entry(CheckedValueEntry entry) {
+        Bindings bindings = new Bindings();
+        return "{\"value\":{\"module\":" + quoted(entry.value().module())
+                + ",\"name\":" + quoted(entry.value().name()) + "}"
+                + ",\"body\":" + core(entry.body(), bindings)
                 + "}";
     }
 

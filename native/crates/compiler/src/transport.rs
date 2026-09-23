@@ -18,7 +18,7 @@ use serde::Deserialize;
 
 /// What this side reads. A document written to say anything else is refused rather than read as
 /// much of as happens to parse.
-pub const TRANSPORT_VERSION: u32 = 6;
+pub const TRANSPORT_VERSION: u32 = 7;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -173,6 +173,9 @@ pub struct Module {
     pub helpers: Vec<Held>,
     /// The values this module declares: the one place each of them runs.
     pub values: Vec<Value>,
+    /// The entries this module publishes, one per published value — the nullary bridge another
+    /// module calls in place of holding a copy of the value (ADR-0074).
+    pub entries: Vec<ValueEntry>,
     /// What this object puts under a name. A behavior that answers some other way — supplied from
     /// outside, implemented by another build, or not written — is in the table above and nowhere
     /// here.
@@ -198,6 +201,9 @@ pub struct Module {
 pub struct Value {
     pub module: String,
     pub name: String,
+    /// Whether the module declaring it publishes it, or keeps it — read off the module's surface,
+    /// the same as a behavior's, and not a fact of the value itself.
+    pub publication: Publication,
     pub handovers: Vec<Handover>,
     pub answers: Ty,
     pub body: Node,
@@ -209,6 +215,20 @@ impl Value {
     pub fn declared(&self) -> String {
         format!("{}.{}", self.module, self.name)
     }
+}
+
+/// The entry a module publishes for one of its values: the nullary bridge another module calls in
+/// place of holding a copy of the value (ADR-0074).
+///
+/// Not the value's own body — `body` here is a reference to the value and nothing else, a call
+/// reaching [`Reaches::Value`], written the same way any other reach to it is. Present for exactly
+/// the values a module publishes; a value it keeps has no entry, because nothing outside the module
+/// may call through one.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ValueEntry {
+    pub value: ValueRef,
+    pub body: Node,
 }
 
 /// What the method a value runs as is handed: another value its root region names, already built.
