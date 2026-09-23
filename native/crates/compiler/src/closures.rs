@@ -18,20 +18,15 @@
 //! top-level body, the binding is simply a live value already in scope there. Which of those it is
 //! is not asked here — this only says what each site reaches, in the order it was first reached.
 //!
-//! A `Node::Block`'s own type, its own parameters and its own body's type are three separate
-//! statements of one fact on the wire — `ProgramWriter` writes all three from one `Core.Block`, but
-//! nothing upstream holds them to each other the way one Java value would. This reads the document
-//! strictly, with the same two checks the crate root's `Read` holds a helper's and a value's
-//! signature to: every site's signature is checked against its own parameters and its own body's
-//! type once, here, at the point the site is built — not left for a lowering three call sites
-//! downstream to each rediscover, and not trusted on the strength of what a well-behaved writer
-//! would send. A document naming two sites under one `site` ordinal is the same kind of wrong:
+//! A `Node::Block`'s own type, its own parameters and its own body's type are three statements of
+//! one fact on the wire, and `coherent` holds them to each other, with every read in the body held to
+//! the binder it reads, before this runs. So a capture's type read off a free read here is the type
+//! its binder was bound at. A document naming two sites under one `site` ordinal is refused here:
 //! `ProgramWriter` promises the number is document-wide unique, but a promise from the other
-//! language is not a check on this side of the wire, so a duplicate is refused here rather than let
-//! the earlier site's plan silently answer for both.
+//! language is not a check on this side of the wire, and the earlier site's plan would otherwise
+//! answer for both.
 
 use crate::transport::{Definition, FnSignature, Node, Parameter, Program, Ty};
-use crate::{answers_what_its_signature_says, takes_what_its_signature_says};
 use anyhow::{Result, bail};
 use std::collections::{BTreeMap, HashSet};
 
@@ -53,10 +48,8 @@ pub struct Site<'a> {
     pub module: &'a str,
     pub parameters: &'a [Parameter],
     pub body: &'a Node,
-    /// What this site takes and answers, unwrapped from the block's own `Ty::Fn` once, here, and
-    /// checked against `parameters` and `body`'s own type at the same time (see this module's own
-    /// doc) — so every later reader of a `Site` reads an established fact instead of an unchecked
-    /// `Ty` it would otherwise have to unwrap and verify itself.
+    /// What this site takes and answers, unwrapped from the block's own `Ty::Fn` once, here. That
+    /// it agrees with `parameters` and with `body`'s own type is established by `coherent`.
     pub signature: &'a FnSignature,
     /// In first-reached order — the order a closure's slots are laid out in, and the order the
     /// lifted function reads them back in.
@@ -166,9 +159,6 @@ impl<'p, 'a> Planner<'p, 'a> {
                          disagree about what a block is"
                     );
                 };
-                let what = format!("closure site {site}");
-                takes_what_its_signature_says(&what, parameters.len(), fn_.takes.len())?;
-                answers_what_its_signature_says(&what, &fn_.answers, body)?;
 
                 let already_there = self
                     .sites

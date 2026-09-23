@@ -36,7 +36,7 @@ class AnAdditionCrossesAsWhatTheCheckerSettledTest {
         String written = ProgramWriter.written(CheckedProgram.of(List.of(ADDING)));
 
         assertThat(written).isEqualTo("""
-                {"transport":9,"declarations":[],\
+                {"transport":10,"declarations":[],\
                 "behaviors":[{"module":"calculation","name":"add","is":"body",\
                 "inputs":[{"is":"scalar","scalar":"INT"},{"is":"scalar","scalar":"INT"}],\
                 "output":{"is":"scalar","scalar":"INT"}}],\

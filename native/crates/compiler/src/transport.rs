@@ -18,7 +18,7 @@ use serde::Deserialize;
 
 /// What this side reads. A document written to say anything else is refused rather than read as
 /// much of as happens to parse.
-pub const TRANSPORT_VERSION: u32 = 9;
+pub const TRANSPORT_VERSION: u32 = 10;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -214,11 +214,15 @@ pub struct Value {
     /// `publication` were updated on different days. A value's own publication is asked by looking
     /// it up in `entries`, never by a field here.
     pub handovers: Vec<Handover>,
-    pub answers: Ty,
     pub body: Node,
 }
 
 impl Value {
+    /// What it answers: its body's type, which is what the checker checked the value as.
+    pub fn answers(&self) -> &Ty {
+        self.body.ty()
+    }
+
     /// What a reference to this value in the document says, which is the two halves joined the one
     /// way.
     pub fn declared(&self) -> String {
@@ -288,12 +292,13 @@ pub enum Definition {
     /// Written as `>->`: the stages, and what each is offered (spec §type-routing). Carried
     /// whole and not translated into a plan for running it — how the routing between stages is
     /// realised is this side's to decide, and none of it is written down upstream.
+    ///
+    /// What it answers is its own target's answer and is not carried here a second time.
     Composed {
         declared: String,
         /// What the module declaring it says about the name.
         publication: Publication,
         stages: Vec<Stage>,
-        answers: Ty,
     },
 }
 
@@ -315,17 +320,15 @@ impl Definition {
     }
 }
 
-/// One stage of a composition: the behavior it applies, what that behavior answers, and when it
-/// is applied to the running value (spec §type-routing).
+/// One stage of a composition: the behavior it applies, and when it is applied to the running
+/// value (spec §type-routing).
 ///
-/// `answers` is the stage's own output and not the running value after it: the two differ exactly
-/// where the stage was offered part of what was running, and what leaves the main line is not
-/// offered to what follows.
+/// What the stage answers is the answer of the behavior it names, which the table of targets
+/// carries, and is not carried here a second time.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Stage {
     pub behavior: String,
-    pub answers: Ty,
     pub routing: Routing,
 }
 
@@ -786,14 +789,36 @@ pub enum Answers {
 ///
 /// Named by where it was declared, held by the module that reaches it. Two modules reaching one
 /// definition hold a copy each.
+///
+/// What it takes is its parameters, each a name and a type together, and what it answers is its
+/// body's type. Neither is carried a second time, so the two cannot disagree.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Held {
     pub declared: String,
-    pub parameters: Vec<String>,
-    pub takes: Vec<Ty>,
-    pub answers: Ty,
+    pub parameters: Vec<HeldParameter>,
     pub body: Node,
+}
+
+impl Held {
+    /// What it takes, in the order its parameters are bound.
+    pub fn takes(&self) -> Vec<Ty> {
+        self.parameters.iter().map(|it| it.ty.clone()).collect()
+    }
+
+    /// What it answers: its body's type.
+    pub fn answers(&self) -> &Ty {
+        self.body.ty()
+    }
+}
+
+/// One parameter of a [`Held`], bound under the number its position says.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HeldParameter {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub ty: Ty,
 }
 
 #[derive(Debug, Deserialize, PartialEq, Eq, Clone, Copy)]
@@ -985,8 +1010,13 @@ pub enum Node {
     },
     /// A name for a value, and what is written under it. The number is the document's, given where
     /// the binder is written.
+    ///
+    /// `binds` is what the name is in force at, which every read of it is typed as. It is not
+    /// `value`'s type: an annotation, or a sum the value is one case of, binds the name wider than
+    /// the value it is given.
     Let {
         binding: usize,
+        binds: Ty,
         value: Box<Node>,
         body: Box<Node>,
         #[serde(rename = "type")]

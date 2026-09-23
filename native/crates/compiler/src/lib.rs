@@ -6,10 +6,12 @@
 
 mod boundary;
 mod closures;
+mod coherent;
 pub mod transport;
 
 use anyhow::{Result, anyhow, bail};
 use closures::{ClosureSites, Site};
+use coherent::Coherent;
 use cranelift::codegen::ir::condcodes::IntCC;
 use cranelift::codegen::ir::{
     AbiParam, Function, InstBuilder, MemFlagsData, TrapCode, UserFuncName, types,
@@ -30,9 +32,8 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use transport::{
-    AbortKind, AlternativesForm, Answers, Arm, Case, CodecShape, Declaration, DeclaredBy,
-    Definition, Node, Op, Prim, Program, Publication, Reaches, Routing, Selects, Stage,
-    TRANSPORT_VERSION, Target, Ty,
+    AbortKind, AlternativesForm, Answers, Arm, Case, Declaration, DeclaredBy, Definition, Node, Op,
+    Prim, Program, Publication, Reaches, Routing, Selects, Stage, TRANSPORT_VERSION, Target, Ty,
 };
 
 /// A fork that ran out of arms, which is this compiler having emitted the wrong test rather than
@@ -143,12 +144,12 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
             program.transport
         );
     }
-    let Read {
+    let Coherent {
         declared,
         targets,
         locals,
         closures,
-    } = Read::of(&program)?;
+    } = Coherent::of(&program)?;
 
     let mut flags = settings::builder();
     // A call out of this object reaches its callee the way the platform's linker expects, which on
@@ -276,7 +277,7 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
         } = written;
         for held in helpers {
             let symbol = held_symbol(name, &held.declared);
-            let signature = signature_over(&held.takes, &held.answers, call_conv)?;
+            let signature = signature_over(&held.takes(), held.answers(), call_conv)?;
             // Held and not exported: a definition a module holds is that module's copy, and
             // nothing outside the object reaches one.
             let id = module.declare_function(&symbol, Linkage::Local, &signature)?;
@@ -289,7 +290,7 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
             // elsewhere goes through the entry declared below instead.
             let takes = handover_types(value);
             let symbol = held_symbol(name, &value.declared());
-            let signature = signature_over(&takes, &value.answers, call_conv)?;
+            let signature = signature_over(&takes, value.answers(), call_conv)?;
             let id = module.declare_function(&symbol, Linkage::Local, &signature)?;
             reachable.value(name, &value.declared(), id)?;
         }
@@ -347,7 +348,7 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
             examples,
         } = written;
         for held in helpers {
-            let signature = signature_over(&held.takes, &held.answers, call_conv)?;
+            let signature = signature_over(&held.takes(), held.answers(), call_conv)?;
             let id = reachable.of_held(name, &held.declared)?;
             context.clear();
             context.func = Function::with_name_signature(UserFuncName::default(), signature);
@@ -360,12 +361,13 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
                 join_text,
                 closures: &closures,
                 lifted: &lifted,
+                targets: &targets,
                 literals: &literals,
             };
             define(
                 &mut context.func,
                 &mut shapes,
-                &held.takes,
+                &held.takes(),
                 &held.body,
                 frontend,
                 &lowering,
@@ -375,7 +377,7 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
         }
         for value in values {
             let takes = handover_types(value);
-            let signature = signature_over(&takes, &value.answers, call_conv)?;
+            let signature = signature_over(&takes, value.answers(), call_conv)?;
             let id = reachable.of_value(name, &value.declared())?;
             context.clear();
             context.func = Function::with_name_signature(UserFuncName::default(), signature);
@@ -388,6 +390,7 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
                 join_text,
                 closures: &closures,
                 lifted: &lifted,
+                targets: &targets,
                 literals: &literals,
             };
             define(
@@ -415,6 +418,7 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
                 join_text,
                 closures: &closures,
                 lifted: &lifted,
+                targets: &targets,
                 literals: &literals,
             };
             // Taking nothing, the same as a row's entry: what a value needs is handed over inside
@@ -454,6 +458,7 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
                         join_text,
                         closures: &closures,
                         lifted: &lifted,
+                        targets: &targets,
                         literals: &literals,
                     };
                     define(
@@ -487,6 +492,7 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
                         join_text,
                         closures: &closures,
                         lifted: &lifted,
+                        targets: &targets,
                         literals: &literals,
                     };
                     define_composed(
@@ -519,6 +525,7 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
                 join_text,
                 closures: &closures,
                 lifted: &lifted,
+                targets: &targets,
                 literals: &literals,
             };
             // Taking nothing: what the row states is written into the body, so an entry with
@@ -556,6 +563,7 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
             join_text,
             closures: &closures,
             lifted: &lifted,
+            targets: &targets,
             literals: &literals,
         };
         define_closure(
@@ -622,124 +630,6 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
     Ok(module.finish().emit()?)
 }
 
-/// A document read strictly: every fact it states more than once held to itself, before anything
-/// is declared in the object or lowered.
-///
-/// The wire states some facts twice on purpose — what a name answers is on its target for every
-/// caller and on its body's root for the lowering, what a helper takes is its parameters and its
-/// `takes` — because a tree written for two readers carries each reader's copy. Upstream the two
-/// were one value; here they are two, and a backend that read one for the signature and the other
-/// for the code would write a function its callers read at another width. So each pair is
-/// checked here, once, and nothing below this asks which of the two to believe.
-///
-/// Checked and not worked out again: what a body answers is read off the body, and whether it is
-/// what its signature says is a comparison of two things the checker wrote, never a type rule of
-/// this side's own.
-///
-/// Before the code generator is even built, so that a document whose halves disagree is refused
-/// as that and not as whichever lowering this backend happens to lack for one of the two readings.
-struct Read<'a> {
-    declared: Declared<'a>,
-    targets: Targets<'a>,
-    /// Every local definition this object holds, by the name it defines.
-    locals: HashMap<&'a str, &'a Definition>,
-    /// Every closure site the document holds, found once over the whole program; each one's own
-    /// type is held to its parameters and its body as it is found.
-    closures: ClosureSites<'a>,
-}
-
-impl<'a> Read<'a> {
-    fn of(program: &'a Program) -> Result<Self> {
-        let declared = Declared::of(&program.declarations)?;
-        let targets = Targets::of(&program.behaviors)?;
-        for target in &program.behaviors {
-            if let transport::BoundaryOutput::Cases { ty, cases, form } = &target.output {
-                declared.settled(&target.declared(), cases, form)?;
-                declared.descends_to(&target.declared(), ty, cases)?;
-            }
-        }
-        let closures = ClosureSites::of_program(program)?;
-
-        let mut locals: HashMap<&str, &Definition> = HashMap::new();
-        for written in &program.modules {
-            for definition in &written.definitions {
-                if locals.insert(definition.declared(), definition).is_some() {
-                    bail!(
-                        "two local definitions are both written {}",
-                        definition.declared()
-                    );
-                }
-            }
-        }
-        // Checked from the local definition's side, exhaustively. The declaration loop in
-        // `object_for` asks the other direction — that a target answering `Body` or `Composed`
-        // has a local definition at all — which is existence and not kind; a target answering
-        // `Injected`, `Elsewhere` or `Unwritten` with a local definition under its name anyway
-        // never reaches that loop's arm for one.
-        for (&name, &local) in &locals {
-            let target = targets.named(name)?;
-            agrees_with_its_target(name, target, local, &targets, &declared)?;
-        }
-
-        for written in &program.modules {
-            for held in &written.helpers {
-                takes_what_its_signature_says(
-                    &held.declared,
-                    held.parameters.len(),
-                    held.takes.len(),
-                )?;
-                answers_what_its_signature_says(&held.declared, &held.answers, &held.body)?;
-            }
-            for value in &written.values {
-                answers_what_its_signature_says(&value.declared(), &value.answers, &value.body)?;
-            }
-            for example in &written.examples {
-                let target = targets.named(&format!("{}.{}", written.name, example.behavior))?;
-                answers_as_its_target_says(&target.declared(), &example.body, target, &declared)?;
-            }
-        }
-
-        Ok(Read {
-            declared,
-            targets,
-            locals,
-            closures,
-        })
-    }
-}
-
-/// Refuses a definition naming a different number of parameters from the types its signature
-/// takes: one list, crossed as names for the body and as types for the signature.
-fn takes_what_its_signature_says(what: &str, parameters: usize, takes: usize) -> Result<()> {
-    if parameters != takes {
-        bail!(
-            "{what} names {parameters} parameters and its signature takes {takes}: the two are \
-             one list crossed twice and this document's disagree"
-        );
-    }
-    Ok(())
-}
-
-/// Refuses a definition whose body answers a different type from the one its own signature says.
-///
-/// The same type and not a value of it, unlike [`answers_as_its_target_says`]. A helper's, a
-/// value's and a closure's answer are each written off the body they answer with, so the two can
-/// only be one type; a behavior's target states what the behavior was declared to answer, which a
-/// body may answer a case of. Nor a comparison of machine types: two declarations are both one
-/// address, and a caller reading one as the other would read the wrong fields at a width nothing
-/// objects to.
-fn answers_what_its_signature_says(what: &str, answers: &Ty, body: &Node) -> Result<()> {
-    if answers != body.ty() {
-        bail!(
-            "{what} answers {} at its signature and {} at its body: the two are one fact crossed \
-             twice and this document's disagree",
-            answers.spelt(),
-            body.ty().spelt()
-        );
-    }
-    Ok(())
-}
-
 /// Every behavior the document names, by the key a reference to it says.
 ///
 /// Built once and read by a hash rather than a walk, because a behavior a call reaches is asked
@@ -769,122 +659,6 @@ impl<'a> Targets<'a> {
             .copied()
             .ok_or_else(|| anyhow!("{declared}, which no target names"))
     }
-}
-
-/// That a local definition is the one thing its own target says it is.
-///
-/// Once `Composed` was a local definition beside `Body`, what a name answers with and what its
-/// local definition actually is became two readings of one fact — a `Target.is` written by one
-/// pass over the checker's program and a `Definition`'s own tag written by another — and nothing
-/// upstream holds them to each other the way one Java value holding both would. So this reads a
-/// document strictly, the way every other closed set here does: the two halves are checked against
-/// each other rather than one of them taken on trust because the other named it.
-///
-/// A composition carries three more readings of facts its own stages and its own target already
-/// answer, so those are checked here too: a stage's own answer against the target it names, the
-/// first stage's routing against what the language settles it always is (spec
-/// §sequential-composition — the first stage takes the composition's own arguments, so nothing is
-/// routed into it), and the first stage's target against what the composition itself is declared
-/// to take, since that is where a composition's own parameters are read off (spec
-/// §sequential-composition — "the pipeline takes whatever its first stage takes").
-fn agrees_with_its_target(
-    name: &str,
-    target: &Target,
-    local: &Definition,
-    targets: &Targets,
-    declared: &Declared,
-) -> Result<()> {
-    match (target.is, local) {
-        // A body's parameters are the target's inputs, one for one, and what the body answers is
-        // a value of what the target says it answers — the same type, or a case of it. Each is a
-        // fact crossed twice, and the boundary writes the answer by the target's reading of it.
-        (
-            Answers::Body,
-            Definition::Body {
-                parameters, body, ..
-            },
-        ) => {
-            takes_what_its_signature_says(name, parameters.len(), target.inputs.len())?;
-            answers_as_its_target_says(name, body, target, declared)
-        }
-        (
-            Answers::Composed,
-            Definition::Composed {
-                answers, stages, ..
-            },
-        ) => {
-            if answers != &target.answers() {
-                bail!(
-                    "{name} answers {} as a composition and {} at the target that reaches it: \
-                     the two halves disagree about what it answers",
-                    answers.spelt(),
-                    target.answers().spelt()
-                );
-            }
-            let first = stages
-                .first()
-                .ok_or_else(|| anyhow!("{name} is a composition composing nothing"))?;
-            if !matches!(first.routing, Routing::Always) {
-                bail!(
-                    "{name}'s first stage is routed rather than always applied: the first stage \
-                     of a composition takes the composition's own arguments, and nothing is \
-                     routed into it"
-                );
-            }
-            let leads = targets.named(&first.behavior)?;
-            if leads.takes() != target.takes() {
-                bail!(
-                    "{name} takes {} and its first stage {} takes {}: a composition takes \
-                     whatever its first stage takes, and the two halves disagree about what \
-                     that is",
-                    spelt(&target.takes()),
-                    first.behavior,
-                    spelt(&leads.takes())
-                );
-            }
-            for stage in stages {
-                let reached = targets.named(&stage.behavior)?;
-                if stage.answers != reached.answers() {
-                    bail!(
-                        "{}'s stage naming {} answers {} on the wire and {} at the target it \
-                         reaches: the two halves disagree",
-                        name,
-                        stage.behavior,
-                        stage.answers.spelt(),
-                        reached.answers().spelt()
-                    );
-                }
-            }
-            Ok(())
-        }
-        (is, _) => bail!(
-            "{name} crosses as {is:?} in the table of targets, and as a different kind of local \
-             definition: the two halves disagree about how it is defined"
-        ),
-    }
-}
-
-/// Refuses a body, or a row's call, whose answer is not a value of what the target answers.
-///
-/// Asked only once the answer is known to have a layout here: a collection the checker lets a
-/// body answer covariantly is not lowered, and saying the halves disagree about it would be this
-/// side answering the checker's question without the checker's rules.
-fn answers_as_its_target_says(
-    name: &str,
-    body: &Node,
-    target: &Target,
-    declared: &Declared,
-) -> Result<()> {
-    let answers = target.answers();
-    if !declared.fits(body.ty(), &answers)? {
-        bail!(
-            "{name} answers {} where the target that reaches it answers {}: the two halves \
-             disagree about what it answers",
-            body.ty().spelt(),
-            answers.spelt()
-        );
-    }
-    Ok(())
 }
 
 /// Several types, spelt the way one reads a diagnostic naming a signature.
@@ -1201,7 +975,7 @@ impl<'a> Declared<'a> {
     /// - a discriminated form's tag is a key no product case lays a field under, since the case's
     ///   fields and the tag stand in one object and one of the two would be lost.
     ///
-    /// Asked of every sum when the document is read, and of every answer union ([`Read::of`]),
+    /// Asked of every sum when the document is read, and of every answer union ([`Coherent::of`](coherent::Coherent::of)),
     /// so nothing downstream is handed a form and cases that disagree.
     fn settled(&self, owner: &str, cases: &[Case], form: &AlternativesForm) -> Result<()> {
         let mut not_a_unit = None;
@@ -1296,66 +1070,62 @@ impl<'a> Declared<'a> {
         Ok(leaves)
     }
 
-    /// Whether every value of `actual` is a value of `expected`: the same scalar, or, for
-    /// declared types and unions of them, every case the one descends to being among the other's.
+    /// Whether every value of `actual` is a value of `expected`, as the checker's assignability
+    /// (`TypeOps.assignable`) answers it for the types this backend lays out: the same type; for
+    /// declared types, unions and primitives, every case the one descends to being among the
+    /// other's; for an optional or a tuple, the same asked of what it holds.
     ///
-    /// Asked only of types this backend lays out. Whether one type's values are another's is the
-    /// checker's question, and it has answers here — a collection's covariance among them — that
-    /// this side has no reason to know until it lays a collection out. So a type with no layout
-    /// here is refused as not lowered before anything is compared, and the question is answered
-    /// only as far as the nominal membership the declarations already hold.
-    fn fits(&self, actual: &Ty, expected: &Ty) -> Result<bool> {
-        machine_type(actual)?;
-        machine_type(expected)?;
+    /// `None` where either side is a collection. The checker lets a collection stand where a wider
+    /// one is asked for, and no collection is laid out here, so this side has no reason to know the
+    /// rule yet and does not answer it: the question is left to be refused as not lowered. A
+    /// function type has no such rule upstream — a fork over two functions asks them to be one type
+    /// — so two function types are a value of one another only when they are the same.
+    ///
+    /// Nothing about a value's layout is asked here, so a refusal from this is always the two
+    /// halves disagreeing.
+    fn fits(&self, actual: &Ty, expected: &Ty) -> Result<Option<bool>> {
         if actual == expected {
-            return Ok(true);
+            return Ok(Some(true));
         }
-        match (self.cases_of(actual)?, self.cases_of(expected)?) {
-            (Some(actual), Some(expected)) => Ok(actual.iter().all(|case| expected.contains(case))),
-            (None, None) if matches!((actual, expected), (Ty::Prim { .. }, Ty::Prim { .. })) => {
-                Ok(false)
+        Ok(match (actual, expected) {
+            (Ty::List { .. } | Ty::Set { .. } | Ty::Map { .. }, _)
+            | (_, Ty::List { .. } | Ty::Set { .. } | Ty::Map { .. }) => None,
+            (Ty::Option { option: actual }, Ty::Option { option: expected }) => {
+                self.fits(actual, expected)?
             }
-            (Some(_), None) | (None, Some(_)) => Ok(false),
-            (None, None) => bail!(
-                "whether {} is {}, which nothing here has a reason to ask",
-                actual.spelt(),
-                expected.spelt()
-            ),
-        }
+            (Ty::Tuple { tuple: actual }, Ty::Tuple { tuple: expected }) => {
+                if actual.len() != expected.len() {
+                    return Ok(Some(false));
+                }
+                let mut all = Some(true);
+                for (actual, expected) in actual.iter().zip(expected) {
+                    match self.fits(actual, expected)? {
+                        Some(false) => return Ok(Some(false)),
+                        None => all = None,
+                        Some(true) => {}
+                    }
+                }
+                all
+            }
+            _ => match (self.cases_of(actual)?, self.cases_of(expected)?) {
+                (Some(actual), Some(expected)) => {
+                    Some(actual.iter().all(|case| expected.contains(case)))
+                }
+                _ => Some(false),
+            },
+        })
     }
 
+    /// The cases a value of `ty` can be, where it is a type made of cases: a declared type, a
+    /// union, or a primitive, which is a case of a union that names it.
     fn cases_of(&self, ty: &Ty) -> Result<Option<Vec<Case>>> {
         Ok(match ty {
             Ty::Declared { declared } => Some(self.leaves_of(&[Case::Declared {
                 declared: declared.clone(),
             }])?),
             Ty::Union { union } => Some(self.leaves_of(union)?),
+            Ty::Prim { prim } => Some(vec![Case::Primitive { prim: *prim }]),
             _ => None,
-        })
-    }
-
-    /// Whether a value of `actual` is one a field carrying `codec` holds. Asked, as [`fits`] is,
-    /// only of what this backend lays out: a field carrying a collection is not lowered, whatever
-    /// it would have been handed.
-    ///
-    /// [`fits`]: Declared::fits
-    fn carries(&self, codec: &CodecShape, actual: &Ty) -> Result<bool> {
-        machine_type(&codec.ty())?;
-        machine_type(actual)?;
-        Ok(match (codec, actual) {
-            (CodecShape::Scalar { scalar }, Ty::Prim { prim }) => scalar.prim() == *prim,
-            (CodecShape::Named { declared }, Ty::Declared { .. } | Ty::Union { .. }) => self.fits(
-                actual,
-                &Ty::Declared {
-                    declared: declared.clone(),
-                },
-            )?,
-            // Laid out, and its own layout says nothing of what it holds; so what it holds is
-            // asked the same question, and refused there if that has no layout.
-            (CodecShape::OptionOf { present }, Ty::Option { option }) => {
-                self.carries(present.shape(), option)?
-            }
-            _ => false,
         })
     }
 
@@ -1426,7 +1196,9 @@ fn tag_of(
 /// other was something else, and it emitted an `icmp` over a number and an address.
 ///
 /// Made from a node and what that node lowered to, so the type cannot have come from somewhere
-/// other than the value did.
+/// other than the value did. That the node's type is the type of what it lowered to is not this
+/// struct's doing: the value was made from a binder, a callee or a declaration, and
+/// [`coherent`] held the node's type to that before anything was lowered.
 #[derive(Clone, Copy)]
 struct Held<'a> {
     value: ir::Value,
@@ -1460,6 +1232,9 @@ struct Lowering<'a> {
     lifted: &'a BTreeMap<usize, FuncId>,
     /// What string literals this object already holds.
     literals: &'a Literals,
+    /// Every behavior the document names, which is where what a composition's stage answers is
+    /// read.
+    targets: &'a Targets<'a>,
 }
 
 impl Lowering<'_> {
@@ -1887,7 +1662,7 @@ fn define_composed(
     let arguments: Vec<ir::Value> = builder.block_params(entry)[..takes].to_vec();
     let mut running = {
         let reached = lowering.reachable.of_behavior_named(&first.behavior)?;
-        let answers = machine_type(&first.answers)?;
+        let answers = machine_type(&lowering.targets.named(&first.behavior)?.answers())?;
         call_reached(&mut builder, module, abort, reached, answers, &arguments)?
     };
 
@@ -1895,7 +1670,7 @@ fn define_composed(
         match &stage.routing {
             Routing::Always => {
                 let reached = lowering.reachable.of_behavior_named(&stage.behavior)?;
-                let answers = machine_type(&stage.answers)?;
+                let answers = machine_type(&lowering.targets.named(&stage.behavior)?.answers())?;
                 running = call_reached(&mut builder, module, abort, reached, answers, &[running])?;
             }
             Routing::OnCases { accepted } => {
@@ -1916,7 +1691,7 @@ fn define_composed(
 
                 builder.switch_to_block(offer);
                 let reached = lowering.reachable.of_behavior_named(&stage.behavior)?;
-                let answers = machine_type(&stage.answers)?;
+                let answers = machine_type(&lowering.targets.named(&stage.behavior)?.answers())?;
                 running = call_reached(&mut builder, module, abort, reached, answers, &[running])?;
             }
         }
@@ -2132,12 +1907,13 @@ fn lower(
         }
         Node::Let {
             binding,
+            binds,
             value,
             body,
             ..
         } => {
             let held = lower(builder, lowering, module, bindings, abort, value)?;
-            let variable = builder.declare_var(machine_type(value.ty())?);
+            let variable = builder.declare_var(machine_type(binds)?);
             builder.def_var(variable, held);
             bindings.at(*binding, variable);
             lower(builder, lowering, module, bindings, abort, body)?
@@ -2203,27 +1979,6 @@ fn lower(
                     "a construction of {declared}, which states what every one of its values owes"
                 )));
             }
-            if shape.field_count() != values.len() {
-                bail!(
-                    "{declared} is declared with {} fields and is built here from {}",
-                    shape.field_count(),
-                    values.len()
-                );
-            }
-            // What each field carries is what a boundary reads its slot as, and what is put in it
-            // here is what the slot holds. The two are one fact crossed twice, and an `Int` and a
-            // `String` are one slot wide, so a disagreement would be written out and not caught.
-            for (field, value) in shape.fields().iter().zip(values) {
-                if !lowering.declared.carries(&field.codec, value.ty())? {
-                    bail!(
-                        "{declared}'s field {} carries {} and is built here from {}: the two \
-                         halves disagree about what it holds",
-                        field.name,
-                        field.codec.ty().spelt(),
-                        value.ty().spelt()
-                    );
-                }
-            }
             // The fields are worked out before any room is taken, because working one out can
             // take room of its own and what is half-written is not a value.
             let mut held = Vec::with_capacity(values.len());
@@ -2253,15 +2008,6 @@ fn lower(
             let at = shape
                 .position_of(field)
                 .ok_or_else(|| anyhow!("{declared} declares no field {field}"))?;
-            let carries = &shape.fields()[at].codec;
-            if !lowering.declared.carries(carries, ty)? {
-                bail!(
-                    "{declared}'s field {field} carries {} and is read here as {}: the two halves \
-                     disagree about what it holds",
-                    carries.ty().spelt(),
-                    ty.spelt()
-                );
-            }
             let value = lower(builder, lowering, module, bindings, abort, target)?;
             let flags = TRUSTED;
             let held = builder
@@ -2364,13 +2110,6 @@ fn lower(
             // on rather than reports as this backend not having gotten round to a program yet.
             Reaches::Kernel { kernel } => match kernel.as_str() {
                 "int.add" => {
-                    if arguments.len() != 2 {
-                        bail!(
-                            "the kernel int.add reached this driver with {} arguments rather \
-                             than the two its own contract declares",
-                            arguments.len()
-                        );
-                    }
                     let a = Held::of(
                         &arguments[0],
                         lower(builder, lowering, module, bindings, abort, &arguments[0])?,
@@ -2430,58 +2169,6 @@ fn lower(
                     function.ty().spelt()
                 );
             };
-            // `fn_` (the applied function's own type) and `arguments`/`ty` (this `Apply` node's
-            // own arguments and own type) are independent statements of one fact, the same way a
-            // `Node::Block`'s own type, parameters and body are (see `closures`'s own doc) — and
-            // this one is never checked before now, since nothing builds a `Site` for an `Apply`.
-            // Checked before any of this node's own operands are lowered, so a document that fails
-            // this never leaves behind half-lowered IR for it.
-            //
-            // The answer and the arguments are held to two different standards, on purpose. `ty`
-            // is not this call's own decision the way an ordinary call's answer type is derived
-            // from a signature elsewhere — souther's checker builds `Core.Apply`'s own `type`
-            // straight from the applied local's `Type.FnOf`, through `applySignature()`'s result,
-            // with no assignability in between (`Core.Apply`'s own construction upstream). So
-            // `fn_.answers` and `ty` are one type fact written twice, exactly the way a
-            // `Node::Block`'s own `answers` and its `body`'s type are — held to full `Ty` equality
-            // there and held to it here for the same reason. An argument against a parameter is a
-            // different question: the language's own assignability may legitimately hand a wider
-            // argument type to a narrower parameter, which this backend has no business
-            // re-deciding, so those are checked at machine representation only — the one thing an
-            // indirect call's own ABI actually needs to agree about. Loosening the answer check to
-            // machine representation, the way the arguments are, would let two different declared
-            // types that happen to share one representation (both `POINTER`) pass a document where
-            // they disagree: the closure would store one type's address into `out` and the caller
-            // would read it back as the other — not a crash, since Cranelift has nothing to object
-            // to, just the wrong type read from a real address from then on.
-            if fn_.takes.len() != arguments.len() {
-                bail!(
-                    "an application naming {} arguments to a function type taking {}: `Apply`'s \
-                     own arguments and its function's own type are two statements of one fact and \
-                     this document's disagree",
-                    arguments.len(),
-                    fn_.takes.len()
-                );
-            }
-            if fn_.answers.as_ref() != ty {
-                bail!(
-                    "an application answering {} at its function's own type and {} at its own \
-                     type: the two are statements of one fact and this document's disagree",
-                    fn_.answers.spelt(),
-                    ty.spelt()
-                );
-            }
-            for (at, taken) in fn_.takes.iter().enumerate() {
-                if machine_type(taken)? != machine_type(arguments[at].ty())? {
-                    bail!(
-                        "an application's argument {at} is {} at its function's own type and {} \
-                         where it is written: the two have no representation in common, and this \
-                         document's two statements of what is handed over disagree",
-                        taken.spelt(),
-                        arguments[at].ty().spelt()
-                    );
-                }
-            }
             let closure = lower(builder, lowering, module, bindings, abort, function)?;
             let mut given = Vec::with_capacity(arguments.len());
             for argument in arguments {
