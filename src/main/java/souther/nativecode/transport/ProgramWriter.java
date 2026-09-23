@@ -301,7 +301,7 @@ public final class ProgramWriter {
         }
         StringJoiner values = new StringJoiner(",", "[", "]");
         for (CheckedValue value : module.values()) {
-            values.add(value(module, value));
+            values.add(value(value));
         }
         StringJoiner entries = new StringJoiner(",", "[", "]");
         for (CheckedValueEntry entry : module.valueEntries()) {
@@ -467,12 +467,13 @@ public final class ProgramWriter {
      * this value's home has to supply reads {@code handovers}, never {@code parameters.isEmpty()} —
      * a value takes none.
      *
-     * <p>{@code publication} is asked of the module and not held on {@link CheckedValue} itself, for
-     * the reason {@link CheckedModule#publicationOfValue} is its own question and not an overload of
-     * {@link CheckedModule#publicationOf}: whether this value is published is a fact about the
-     * module's surface, read the same way a behavior's is.
+     * <p>Not written with a {@code publication} of its own. {@link CheckedModule}'s constructor
+     * already holds "published ⇔ has a {@link CheckedValueEntry} among {@link
+     * CheckedModule#valueEntries()}" as an invariant, so a field here would be the same fact
+     * written twice — and a reader wanting to know would ask {@link CheckedModule#valueEntries()}
+     * or {@link CheckedModule#publicationOfValue}, never this.
      */
-    private String value(CheckedModule module, CheckedValue value) {
+    private String value(CheckedValue value) {
         Bindings bindings = new Bindings();
         StringJoiner handovers = new StringJoiner(",", "[", "]");
         for (CheckedValue.Handover handover : value.handovers()) {
@@ -484,7 +485,6 @@ public final class ProgramWriter {
         }
         return "{\"module\":" + quoted(value.name().module())
                 + ",\"name\":" + quoted(value.name().name())
-                + ",\"publication\":" + quoted(publication(module.publicationOfValue(value.name())))
                 + ",\"handovers\":" + handovers
                 + ",\"answers\":" + type(value.answers())
                 + ",\"body\":" + core(value.body(), bindings)

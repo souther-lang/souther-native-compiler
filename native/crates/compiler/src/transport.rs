@@ -201,9 +201,12 @@ pub struct Module {
 pub struct Value {
     pub module: String,
     pub name: String,
-    /// Whether the module declaring it publishes it, or keeps it — read off the module's surface,
-    /// the same as a behavior's, and not a fact of the value itself.
-    pub publication: Publication,
+    /// Whether this module publishes it is not carried here: souther's own `CheckedModule`
+    /// constructor already holds "published ⇔ has a `ValueEntry` among [`Module::entries`]" as an
+    /// invariant, so a `publication` field beside this one would be the same fact stated twice —
+    /// and the two would agree only until whichever consumer reads `entries` and whichever reads
+    /// `publication` were updated on different days. A value's own publication is asked by looking
+    /// it up in `entries`, never by a field here.
     pub handovers: Vec<Handover>,
     pub answers: Ty,
     pub body: Node,
