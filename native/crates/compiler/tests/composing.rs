@@ -19,6 +19,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use tempfile::{TempDir, tempdir};
 
+mod support;
+
 /// The document the Java half wrote, and the one its own test holds it to.
 const COMPOSING: &str = include_str!("composing.transport.json");
 
@@ -26,7 +28,9 @@ const COMPOSING: &str = include_str!("composing.transport.json");
 const PREFIX: &str = if cfg!(target_vendor = "apple") { "_" } else { "" };
 
 /// What generated code takes room from, needed here because `g` and `h` each construct a value.
-const RUNTIME: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../target/debug/libsouther_native_runtime.a");
+fn runtime() -> &'static std::path::Path {
+    support::runtime()
+}
 
 /// Reads back what `pipeline` answered: its tag, by comparing the address every value of a
 /// declared type carries against each declaration's own token, and the one field both `B` and `C`
@@ -117,7 +121,7 @@ fn build() -> (TempDir, PathBuf) {
         .arg(&executable)
         .arg(&harness)
         .arg(&object)
-        .arg(RUNTIME)
+        .arg(runtime())
         .output()
         .expect("a C compiler to link with");
     assert!(

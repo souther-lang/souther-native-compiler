@@ -12,6 +12,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use tempfile::{TempDir, tempdir};
 
+mod support;
+
 /// The document the Java half wrote, and the one its own test holds it to.
 const ADDING: &str = include_str!("adding.transport.json");
 
@@ -24,8 +26,9 @@ const PREFIX: &str = if cfg!(target_vendor = "apple") { "_" } else { "" };
 
 /// What the object calls that is not its own code. A published behavior is also an entry a host
 /// reaches for its answer as the language writes it, and writing that is the runtime's.
-const RUNTIME: &str =
-    concat!(env!("CARGO_MANIFEST_DIR"), "/../../target/debug/libsouther_native_runtime.a");
+fn runtime() -> &'static std::path::Path {
+    support::runtime()
+}
 
 /// Written in the width the object actually answers in. `long` is that width on the platforms this
 /// builds on today and is not the same thing: what the behavior takes and answers is an `Int`, and
@@ -172,7 +175,7 @@ fn build_with(harness_source: &str) -> (TempDir, PathBuf) {
         .arg(&executable)
         .arg(&harness)
         .arg(&object)
-        .arg(RUNTIME)
+        .arg(runtime())
         .output()
         .expect("a C compiler to link with");
     assert!(

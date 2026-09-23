@@ -10,6 +10,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use tempfile::{TempDir, tempdir};
 
+mod support;
+
 /// A value that names another value at its root: `ks`, kept and handed nothing, and `ys`,
 /// published and handed one `ks`.
 const VALUES: &str = include_str!("values.transport.json");
@@ -21,8 +23,9 @@ const PUBLISHED_VALUE: &str = include_str!("published_value.transport.json");
 const PREFIX: &str = if cfg!(target_vendor = "apple") { "_" } else { "" };
 
 /// What generated code takes room from, needed here because both documents construct a value.
-const RUNTIME: &str =
-    concat!(env!("CARGO_MANIFEST_DIR"), "/../../target/debug/libsouther_native_runtime.a");
+fn runtime() -> &'static std::path::Path {
+    support::runtime()
+}
 
 #[test]
 fn a_value_and_its_handover_read_back_as_the_checker_wrote_them() {
@@ -163,7 +166,7 @@ fn build(object_name: &str, document: &str, harness: &str) -> (TempDir, PathBuf)
         .arg(&executable)
         .arg(&harness_file)
         .arg(&object)
-        .arg(RUNTIME)
+        .arg(runtime())
         .output()
         .expect("a C compiler to link with");
     assert!(
