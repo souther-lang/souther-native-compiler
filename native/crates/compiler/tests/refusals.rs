@@ -511,3 +511,87 @@ fn a_published_answer_with_a_decimal_field_is_not_lowered_where_it_is_written() 
     let kept = document.replace(r#""publication":"published""#, r#""publication":"kept""#);
     object_for(&kept).expect("a kept behavior has no boundary, so nothing is written out");
 }
+
+/// A published behavior answering `m.S`, whose one case `m.C` is declared with the fields and
+/// alternatives form given. The smallest document that makes a boundary write a sum.
+fn answering_a_sum(case_fields: &str, form: &str) -> String {
+    format!(
+        concat!(
+            r#"{{"transport":9,"declarations":["#,
+            r#"{{"module":"m","name":"C","by":"amodule","is":"product","fields":{},"invariants":0}},"#,
+            r#"{{"module":"m","name":"S","by":"amodule","is":"sum","#,
+            r#""cases":[{{"is":"declared","declared":"m.C"}}],"form":{}}}],"#,
+            r#""behaviors":[{{"module":"m","name":"same","is":"body","#,
+            r#""inputs":[{{"is":"nominal","declared":"m.S"}}],"#,
+            r#""output":{{"is":"nominal","declared":"m.S"}}}}],"#,
+            r#""modules":[{{"name":"m","helpers":[],"values":[],"entries":[],"definitions":["#,
+            r#"{{"is":"body","declared":"m.same","parameters":["s"],"publication":"published","#,
+            r#""body":{{"core":"read","binding":0,"type":{{"declared":"m.S"}},"aborts":[]}}}}"#,
+            r#"],"examples":[]}}]}}"#
+        ),
+        case_fields, form
+    )
+}
+
+/// An enumeration is a set of alternatives that carry nothing but which one they are, so a case
+/// carrying fields under one is the two halves disagreeing. Written as a bare name, its fields
+/// would be dropped without a word.
+#[test]
+fn an_enumeration_over_a_case_with_fields_is_the_halves_disagreeing() {
+    let document = answering_a_sum(
+        r#"[{"name":"n","codec":{"is":"scalar","scalar":"INT"}}]"#,
+        r#"{"is":"enumeration"}"#,
+    );
+
+    let refused = object_for(&document).expect_err("a case with fields in an enumeration");
+
+    assert!(
+        refused.downcast_ref::<NotLowered>().is_none(),
+        "the halves disagreeing is not the backend being behind: {refused}"
+    );
+    assert!(refused.to_string().contains("m.C"), "{refused}");
+}
+
+/// The tag and a wrapped case's contents stand side by side in one object, so one key for both
+/// would leave whichever was written second.
+#[test]
+fn a_discriminated_form_with_one_key_for_tag_and_contents_is_the_halves_disagreeing() {
+    let document = answering_a_sum("[]", r#"{"is":"discriminated","tag":"type","contents":"type"}"#);
+
+    let refused = object_for(&document).expect_err("one key for the tag and the contents");
+
+    assert!(
+        refused.downcast_ref::<NotLowered>().is_none(),
+        "the halves disagreeing is not the backend being behind: {refused}"
+    );
+    assert!(refused.to_string().contains("type"), "{refused}");
+}
+
+/// What a field carries and what a construction puts in it are one fact crossed twice: the
+/// encoder reads the slot as the codec says, and the construction wrote it as its value is. An
+/// `Int` and a `String` are both one slot wide, so nothing about the machine would notice the two
+/// disagreeing; the value would be written out as whatever the codec took it for.
+#[test]
+fn a_construction_disagreeing_with_what_its_field_carries_is_the_halves_disagreeing() {
+    let document = concat!(
+        r#"{"transport":9,"declarations":["#,
+        r#"{"module":"m","name":"P","by":"amodule","is":"product","#,
+        r#""fields":[{"name":"n","codec":{"is":"scalar","scalar":"STRING"}}],"invariants":0}],"#,
+        r#""behaviors":[{"module":"m","name":"make","is":"body","inputs":[],"#,
+        r#""output":{"is":"nominal","declared":"m.P"}}],"#,
+        r#""modules":[{"name":"m","helpers":[],"values":[],"entries":[],"definitions":["#,
+        r#"{"is":"body","declared":"m.make","parameters":[],"publication":"kept","#,
+        r#""body":{"core":"construct","declared":"m.P","#,
+        r#""values":[{"core":"int","value":42,"type":{"prim":"INT"},"aborts":[]}],"#,
+        r#""type":{"declared":"m.P"},"aborts":[]}}"#,
+        r#"],"examples":[]}]}"#,
+    );
+
+    let refused = object_for(document).expect_err("an Int put where the field carries a String");
+
+    assert!(
+        refused.downcast_ref::<NotLowered>().is_none(),
+        "the halves disagreeing is not the backend being behind: {refused}"
+    );
+    assert!(refused.to_string().contains("m.P"), "{refused}");
+}

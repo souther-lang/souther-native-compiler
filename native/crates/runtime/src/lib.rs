@@ -11,6 +11,10 @@
 //! exists and not before: until then there is nothing to tell a shared meaning from a shared
 //! spelling.
 
+// Everything here is one half of a contract the other half reads by name, so an item whose doc has
+// slid off it onto a neighbour is a contract nobody states. Refused rather than warned about.
+#![deny(missing_docs)]
+
 use souther_native_abi::{SLOT, TEXT_BYTES, TEXT_LENGTH, room_for_text};
 
 mod external;

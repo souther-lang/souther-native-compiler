@@ -138,6 +138,17 @@ impl Declaration {
     }
 
     /// Where a field of this type sits among its fields, by the name it is declared under.
+    /// Every field a value of this holds, with what each carries; none for a sum, which is never
+    /// built.
+    pub fn fields(&self) -> &[Field] {
+        match self {
+            Declaration::Product { fields, .. }
+            | Declaration::Newtype { fields, .. }
+            | Declaration::Unit { fields, .. } => fields,
+            Declaration::Sum { .. } => &[],
+        }
+    }
+
     pub fn position_of(&self, field: &str) -> Option<usize> {
         match self {
             Declaration::Product { fields, .. }
@@ -560,6 +571,26 @@ impl CodecShape {
                 map: MapTy { key: Box::new(key.ty()), value: Box::new(value.ty()) },
             },
             CodecShape::OptionOf { present } => Ty::Option { option: Box::new(present.ty()) },
+        }
+    }
+
+    /// Whether a value of `ty` is one this shape can read out of a slot as the codec says it is.
+    ///
+    /// Exact where the shape says exactly what a value is — a scalar, and what an optional or a
+    /// collection holds — and only as far as a declared value where it names one, since a field of
+    /// a sum is given a value of one of its cases and that is still a pointer to a value that says
+    /// which it is.
+    pub fn holds(&self, ty: &Ty) -> bool {
+        match (self, ty) {
+            (CodecShape::Scalar { scalar }, Ty::Prim { prim }) => scalar.prim() == *prim,
+            (CodecShape::Named { .. }, Ty::Declared { .. } | Ty::Union { .. }) => true,
+            (CodecShape::OptionOf { present }, Ty::Option { option }) => present.holds(option),
+            (CodecShape::ListOf { element }, Ty::List { list }) => element.holds(list),
+            (CodecShape::SetOf { element }, Ty::Set { set }) => element.holds(set),
+            (CodecShape::MapOf { key, value }, Ty::Map { map }) => {
+                key.ty() == *map.key && value.holds(&map.value)
+            }
+            _ => false,
         }
     }
 }

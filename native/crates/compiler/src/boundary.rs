@@ -364,6 +364,14 @@ impl Writing<'_, '_> {
     /// One of a set of alternatives, told apart by the token at the front of the value and written
     /// in the form the set travels in.
     fn alternatives(&mut self, cases: &[Case], form: &AlternativesForm, value: ir::Value) -> Result<ir::Value> {
+        if let AlternativesForm::Discriminated { tag, contents } = form
+            && tag == contents
+        {
+            bail!(
+                "a discriminated form with {tag} for both its tag and a wrapped case's contents, \
+                 which stand in one object: the two halves disagree about the form"
+            );
+        }
         let which = self.builder.ins().load(POINTER, TRUSTED, value, WHICH as i32);
         let written = self.builder.create_block();
         self.builder.append_block_param(written, POINTER);
@@ -412,7 +420,13 @@ impl Writing<'_, '_> {
                 "{key} stands as a case and is a sum, where the checker answers the cases a sum \
                  descends to"
             ),
-            (AlternativesForm::Enumeration, _) => self.name(shape.name()),
+            (AlternativesForm::Enumeration, Declaration::Unit { .. }) => self.name(shape.name()),
+            (AlternativesForm::Enumeration, Declaration::Product { .. } | Declaration::Newtype { .. }) => {
+                bail!(
+                    "{key} carries fields and stands as a case of an enumeration, whose cases carry \
+                     nothing but which one they are: the two halves disagree about the form"
+                )
+            }
             (
                 AlternativesForm::Discriminated { tag, .. },
                 Declaration::Product { .. } | Declaration::Unit { .. },

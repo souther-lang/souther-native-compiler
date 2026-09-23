@@ -5,6 +5,10 @@
 //! neither side's tests can see. Nothing about Souther's meaning belongs here — only the names,
 //! layouts and encodings a target decides.
 
+// Everything here is one half of a contract the other half reads by name, so an item whose doc has
+// slid off it onto a neighbour is a contract nobody states. Refused rather than warned about.
+#![deny(missing_docs)]
+
 /// The generation of *wire contract* every function symbol below answers to — not only the
 /// calling convention, but what a `status` other than `ANSWERED` means once it crosses an object
 /// boundary.
@@ -143,17 +147,6 @@ pub fn example_symbol(module: &str, behavior: &str, at: usize) -> String {
 ///
 /// Where either name carries a dollar, or the type's name carries a dot, since the spelling is
 /// read on both.
-/// Where a host reaches an entry the object answers for — a published behavior, or a row — to be
-/// handed its answer as the external form the language writes it in, rather than as a value laid
-/// out the way this backend lays one out.
-///
-/// The same parameters as the entry it runs, and room for one string in place of room for the
-/// answer: the JSON text, in the arena. The status is the entry's own, and nothing is written
-/// through the room unless it is `ANSWERED`.
-pub fn boundary_symbol(entry: &str) -> String {
-    format!("{entry}$boundary")
-}
-
 pub fn type_symbol(module: &str, name: &str) -> String {
     assert!(
         !module.contains('$'),
@@ -165,6 +158,17 @@ pub fn type_symbol(module: &str, name: &str) -> String {
          both: {name}"
     );
     format!("souther$type${module}${name}")
+}
+
+/// Where a host reaches an entry the object answers for — a published behavior, or a row — to be
+/// handed its answer as the external form the language writes it in, rather than as a value laid
+/// out the way this backend lays one out.
+///
+/// The same parameters as the entry it runs, and room for one string in place of room for the
+/// answer: the JSON text, in the arena. The status is the entry's own, and nothing is written
+/// through the room unless it is `ANSWERED`.
+pub fn boundary_symbol(entry: &str) -> String {
+    format!("{entry}$boundary")
 }
 
 /// What stands under a declared type's symbol.
@@ -302,8 +306,9 @@ pub const STRING_CONCAT: &str = "souther_string_concat";
 /// a third party to a two-party contract.
 pub const STRING_OF_UTF8: &str = "souther_string_of_utf8";
 
-/// The symbols such a caller reads a string back through.
+/// The symbols such a caller reads a string back through: first how many bytes it holds.
 pub const STRING_LENGTH: &str = "souther_string_length";
+/// And then where those bytes start.
 pub const STRING_BYTES: &str = "souther_string_bytes";
 
 /// The symbol generated code takes room from.

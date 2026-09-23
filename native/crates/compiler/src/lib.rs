@@ -1822,6 +1822,20 @@ fn lower(
                     values.len()
                 );
             }
+            // What each field carries is what a boundary reads its slot as, and what is put in it
+            // here is what the slot holds. The two are one fact crossed twice, and an `Int` and a
+            // `String` are one slot wide, so a disagreement would be written out and not caught.
+            for (field, value) in shape.fields().iter().zip(values) {
+                if !field.codec.holds(value.ty()) {
+                    bail!(
+                        "{declared}'s field {} carries {} and is built here from {}: the two \
+                         halves disagree about what it holds",
+                        field.name,
+                        field.codec.ty().spelt(),
+                        value.ty().spelt()
+                    );
+                }
+            }
             // The fields are worked out before any room is taken, because working one out can
             // take room of its own and what is half-written is not a value.
             let mut held = Vec::with_capacity(values.len());
@@ -1849,6 +1863,15 @@ fn lower(
             let at = shape
                 .position_of(field)
                 .ok_or_else(|| anyhow!("{declared} declares no field {field}"))?;
+            let carries = &shape.fields()[at].codec;
+            if !carries.holds(ty) {
+                bail!(
+                    "{declared}'s field {field} carries {} and is read here as {}: the two halves \
+                     disagree about what it holds",
+                    carries.ty().spelt(),
+                    ty.spelt()
+                );
+            }
             let value = lower(builder, lowering, module, bindings, abort, target)?;
             let flags = TRUSTED;
             let held = builder

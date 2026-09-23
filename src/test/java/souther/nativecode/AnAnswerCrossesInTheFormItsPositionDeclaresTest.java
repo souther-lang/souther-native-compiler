@@ -26,9 +26,11 @@ class AnAnswerCrossesInTheFormItsPositionDeclaresTest {
 
     private static final String DOORS = """
             module doors exposing ( closedAlone, holding, doorOf, phaseOf, porchOf, customer,
-                                    placeOrder, noteOf, rankOf, bill, echoInt, echoBool, echoText,
+                                    placeOrder, noteOf, flagOf, rankOf, bill, echoInt, echoBool,
+                                    echoText,
                                     Closed, Open, Door, Phase, Pending, Holder, Porch, CustomerId,
-                                    Order, Noted, Manager, Staff, Rank, Issued, UnknownSku )
+                                    Order, Noted, Flagged, Manager, Staff, Rank, Issued,
+                                    UnknownSku )
 
             data Closed
             data Open = { since: Int }
@@ -40,6 +42,7 @@ class AnAnswerCrossesInTheFormItsPositionDeclaresTest {
             data CustomerId = String
             data Order = { id: Int, paid: Bool, note: String }
             data Noted = { note: String?, count: Int }
+            data Flagged = { on: Bool? }
 
             data Manager = Int
             data Staff
@@ -83,6 +86,11 @@ class AnAnswerCrossesInTheFormItsPositionDeclaresTest {
 
             let noteOf (has, note) =
                 if has then Noted { note = note, count = 1 } else Noted { note = None, count = 0 }
+
+            behavior flagOf : (has: Bool, on: Bool) -> Flagged
+                constructs Flagged
+
+            let flagOf (has, on) = if has then Flagged { on = on } else Flagged { on = None }
 
             behavior rankOf : (level: Int) -> Rank
                 constructs Manager
@@ -180,6 +188,26 @@ class AnAnswerCrossesInTheFormItsPositionDeclaresTest {
                     .isEqualTo(json("{\"count\":0}"));
             assertThat(answer(running, program, "noteOf", new ObservedValue.Bool(true), text("x")))
                     .isEqualTo(json("{\"note\":\"x\",\"count\":1}"));
+        }
+    }
+
+    /**
+     * A truth held under an optional is a slot wide in the box that holds it, and is read back to a
+     * truth before it is written: {@code true} and {@code false}, never the slot.
+     */
+    @Test
+    void aTruthHeldUnderAnOptionalFieldIsWrittenAsATruth() throws Exception {
+        CheckedProgram program = CheckedProgram.of(List.of(DOORS));
+        try (Running running = Running.of(program)) {
+            assertThat(answer(running, program, "flagOf",
+                    new ObservedValue.Bool(true), new ObservedValue.Bool(true)))
+                    .isEqualTo(json("{\"on\":true}"));
+            assertThat(answer(running, program, "flagOf",
+                    new ObservedValue.Bool(true), new ObservedValue.Bool(false)))
+                    .isEqualTo(json("{\"on\":false}"));
+            assertThat(answer(running, program, "flagOf",
+                    new ObservedValue.Bool(false), new ObservedValue.Bool(true)))
+                    .isEqualTo(json("{}"));
         }
     }
 
