@@ -188,14 +188,18 @@ pub struct Module {
 ///
 /// Not a `Held`. A helper is a copy a module carries because a call to it was left standing, and
 /// two modules holding one hold a copy each; a value has one executable home, the module that
-/// declares it (spec ADR-0074), and this is that home. Its identity crosses split — `module` and
-/// `name` apart, the way a behavior's [`Target`] does and a helper's `declared` does not —
-/// because `value_symbol(module, name)` is built from the two, and a joined spelling would have
-/// to be split back up to get there, which is a decision this side is not handed to make.
+/// declares it (spec ADR-0074), and this is that home — an object-private definition, reached only
+/// from within the declaring module ([`Reaches::Value`]) or through the [`ValueEntry`] a module
+/// publishes for it. Its identity crosses split — `module` and `name` apart — not because this
+/// home needs a linker-visible name built from the two (it does not: the home is free to be named
+/// however this side's own local symbols are), but because [`ValueEntry`]'s `value_symbol(module,
+/// name)` does, and a joined spelling here would have to be split back up to answer it.
 ///
-/// What its method is handed is not an argument: a value takes none. `handovers` is what its root
-/// region demands — other values this one names, built already — so nothing here has to be built
-/// twice.
+/// What it takes at the language level is nothing: a value takes no argument. `handovers` are not
+/// that — they are the machine parameters its generated method actually has, one per other value
+/// its root region names, already built by whoever calls it. A language-level "takes none" and a
+/// method with parameters are not in tension: the same is true of any other zero-argument
+/// definition whose generated method still takes what its body captures.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Value {
@@ -647,18 +651,24 @@ pub enum Node {
 pub enum Reaches {
     /// A definition the calling module holds, which is a copy of its own.
     Helper { declared: String },
-    /// A value that runs where it is declared, and this module is that module: a call reaching the
-    /// method this object runs the value as. Split identity, and not `declared` joined the way
-    /// [`Helper`](Reaches::Helper)'s and [`Behavior`](Reaches::Behavior)'s are — `value_symbol` is
-    /// built from the two apart, and this side must not split a joined spelling back up to get
-    /// there.
+    /// A value that runs where it is declared, and this module is that module: an ordinary call to
+    /// the method this object runs the value as, the same call a helper's own reach is (souther's
+    /// JVM backend calls it through the identical path a recursive helper's is — `BodyGen`'s
+    /// `recursiveHelperCall`). "Runs once" is `ADR-0074`'s checker-level guarantee that the region
+    /// reading a value's reference builds each of its dependencies once, threaded through
+    /// [`Handover`] — not a runtime cache this side has to keep; nothing here memoizes a call's
+    /// answer. Split identity, and not `declared` joined the way [`Helper`](Reaches::Helper)'s and
+    /// [`Behavior`](Reaches::Behavior)'s are, because the *entry* a module publishes for this value
+    /// needs its module and name apart to build `value_symbol` from — carried apart here too, so a
+    /// lowering never has to split a joined spelling back up to answer "which module declares
+    /// this."
     Value { module: String, name: String },
     /// A value another module declares, reached through the entry that module publishes for it —
-    /// never a method of the emitting module. Its own tag and not [`Value`](Reaches::Value): the
-    /// two are different runtime semantics (one runs here, once, in this object; the other calls
-    /// out to whoever the declaring module's object is), and collapsing them here would hand the
-    /// half that lowers a call it cannot tell apart without asking again what only the checker
-    /// already knew.
+    /// never a method of the emitting module. Its own tag and not [`Value`](Reaches::Value): what
+    /// answers the call is `value_symbol(module, name)`, an entry across an object boundary, where
+    /// [`Value`](Reaches::Value) is a call within this object to a method reached the way a helper
+    /// is — a caller emitting one must not have to tell them apart by re-deriving whether `module`
+    /// is its own.
     PublishedValue { module: String, name: String },
     /// A behavior, whether this program answers it or whoever links the object does.
     Behavior { declared: String },
