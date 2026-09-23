@@ -104,35 +104,72 @@ pub unsafe extern "C" fn souther_external_json(root: *mut Form) -> *mut u8 {
     at
 }
 
-fn write(form: &Form, out: &mut Vec<u8>) {
-    match form {
-        Form::Null => out.extend_from_slice(b"null"),
-        Form::Bool(true) => out.extend_from_slice(b"true"),
-        Form::Bool(false) => out.extend_from_slice(b"false"),
-        Form::Number(value) => out.extend_from_slice(value.to_string().as_bytes()),
-        Form::String(text) => quoted(text, out),
-        Form::Array(items) => {
-            out.push(b'[');
-            for (at, item) in items.iter().enumerate() {
-                if at > 0 {
-                    out.push(b',');
-                }
-                write(item, out);
-            }
-            out.push(b']');
-        }
-        Form::Object(members) => {
-            out.push(b'{');
-            for (at, (key, item)) in members.iter().enumerate() {
-                if at > 0 {
-                    out.push(b',');
-                }
+/// One thing left to write: a form, a key and its colon, or punctuation.
+enum Step<'a> {
+    Form(&'a Form),
+    Key(&'a [u8]),
+    Punctuation(&'static [u8]),
+}
+
+/// The tree as JSON, walked with a stack of its own rather than a frame per level, so how deep a
+/// value may be is not a question about the native stack.
+fn write(root: &Form, out: &mut Vec<u8>) {
+    let mut left = vec![Step::Form(root)];
+    while let Some(step) = left.pop() {
+        match step {
+            Step::Punctuation(text) => out.extend_from_slice(text),
+            Step::Key(key) => {
                 quoted(key, out);
                 out.push(b':');
-                write(item, out);
             }
-            out.push(b'}');
+            Step::Form(Form::Null) => out.extend_from_slice(b"null"),
+            Step::Form(Form::Bool(true)) => out.extend_from_slice(b"true"),
+            Step::Form(Form::Bool(false)) => out.extend_from_slice(b"false"),
+            Step::Form(Form::Number(value)) => out.extend_from_slice(value.to_string().as_bytes()),
+            Step::Form(Form::String(text)) => quoted(text, out),
+            // What follows the opening is pushed last-first, so it comes off in the order written.
+            Step::Form(Form::Array(items)) => {
+                out.push(b'[');
+                left.push(Step::Punctuation(b"]"));
+                for (at, item) in items.iter().enumerate().rev() {
+                    left.push(Step::Form(item));
+                    if at > 0 {
+                        left.push(Step::Punctuation(b","));
+                    }
+                }
+            }
+            Step::Form(Form::Object(members)) => {
+                out.push(b'{');
+                left.push(Step::Punctuation(b"}"));
+                for (at, (key, item)) in members.iter().enumerate().rev() {
+                    left.push(Step::Form(item));
+                    left.push(Step::Key(key));
+                    if at > 0 {
+                        left.push(Step::Punctuation(b","));
+                    }
+                }
+            }
         }
+    }
+}
+
+/// Dropped a level at a time for the reason it is written that way: the children are taken out
+/// onto a list before each form goes, so no drop recurses into what it held.
+impl Drop for Form {
+    fn drop(&mut self) {
+        let mut held = Vec::new();
+        take_children(self, &mut held);
+        while let Some(mut form) = held.pop() {
+            take_children(&mut form, &mut held);
+        }
+    }
+}
+
+fn take_children(form: &mut Form, into: &mut Vec<Form>) {
+    match form {
+        Form::Array(items) => into.append(items),
+        Form::Object(members) => into.extend(members.drain(..).map(|(_, item)| item)),
+        Form::Null | Form::Bool(_) | Form::Number(_) | Form::String(_) => {}
     }
 }
 
@@ -244,6 +281,28 @@ mod tests {
             "\"a\\\"b\\\\c\\nd\\re\\tf\\u0001g\\u001fh𠮷￥\""
         );
         assert_eq!(json(unsafe { souther_external_string(string("")) }), "\"\"");
+        souther_reset(mark);
+    }
+
+    /// As deep as a value can be made, and not as deep as a stack happens to be: a tree is written
+    /// and dropped without a frame per level.
+    #[test]
+    fn a_tree_deeper_than_any_stack_is_written_and_dropped() {
+        let mark = souther_mark();
+        let depth = 1_000_000;
+        let root = souther_external_array();
+        let mut innermost = root;
+        for _ in 0..depth {
+            let next = souther_external_array();
+            unsafe { souther_external_append(innermost, next) };
+            innermost = match unsafe { &mut *innermost } {
+                Form::Array(items) => items.last_mut().expect("just appended") as *mut Form,
+                _ => unreachable!(),
+            };
+        }
+        let written = json(root);
+        assert_eq!(written.len(), 2 * (depth + 1));
+        assert!(written.starts_with("[[[") && written.ends_with("]]]"));
         souther_reset(mark);
     }
 

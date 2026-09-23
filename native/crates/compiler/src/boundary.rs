@@ -10,6 +10,11 @@
 //! token says what a value is — and reading that is the same reading the rest of the lowering
 //! does. The walk is compiled per declaration, so nothing about a declaration is carried to run
 //! time for the runtime to interpret.
+//!
+//! An encoder calls the encoder of what a field holds, so writing a value takes a frame per level
+//! it is nested. That is no deeper than building it took: a value is built a level per
+//! construction, and a program that nests one a million deep ran a million constructions to do it.
+//! The runtime's own walk over the tree it is handed does not recurse at all.
 
 use super::{
     Declared, Literals, NO_ARM, POINTER, TRUSTED, call_reached, machine_type, not_lowered,
