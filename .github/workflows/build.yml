@@ -46,4 +46,10 @@ jobs:
         with:
           workspaces: native
 
-      - run: mvn --batch-mode test
+      # --no-snapshot-updates: the pinned install above just wrote souther-compiler's own
+      # 0.2.1-SNAPSHOT into this runner's local repository, and without this flag an online
+      # dependency resolution here is free to notice a newer timestamped build on
+      # central-snapshots and pull that in instead — silently trading the commit this workflow
+      # names for whichever one souther last happened to publish. The pinned checkout above only
+      # holds if this step is kept from overriding it.
+      - run: mvn --batch-mode --no-snapshot-updates test
