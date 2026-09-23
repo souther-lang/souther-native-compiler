@@ -20,9 +20,9 @@ use cranelift::object::{ObjectBuilder, ObjectModule};
 use souther_native_abi::{
     ALLOCATE, ANSWERED, HELD, NOTHING, SLOT, STRING_COMPARE, STRING_CONCAT, Status, TEXT_BYTES,
     TEXT_LENGTH, TOKEN, WHICH, behavior_symbol, example_symbol, field_at, held_symbol, member_at,
-    room_for_fields, room_for_held, room_for_members, room_for_text, type_symbol,
+    room_for_fields, room_for_held, room_for_members, room_for_text, type_symbol, value_symbol,
 };
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use transport::{
     AbortKind, Answers, Arm, Declaration, DeclaredBy, Definition, Node, Op, Prim, Program,
@@ -136,30 +136,6 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
             "this driver reads transport {TRANSPORT_VERSION} and was handed {}",
             program.transport
         );
-    }
-
-    // Every field a module carries gets a home below or a refusal here — named out in full, and
-    // not `..`'d away, so a field transport.rs starts carrying tomorrow is a compile error at this
-    // one destructure until it is given one of the two. A struct does not hold the two loops below
-    // to that the way `Reaches`'s own match arms hold `lower` to it: nothing stops `helpers` or
-    // `definitions` from growing a sibling that both loops quietly never look at, which is
-    // (souther-lang/souther-native-compiler#10, review of #20) exactly how `values` and `entries`
-    // went unread once transport carried them before this backend built anything for them.
-    for written in &program.modules {
-        let transport::Module {
-            name,
-            helpers: _,
-            values,
-            entries,
-            definitions: _,
-            examples: _,
-        } = written;
-        if !values.is_empty() || !entries.is_empty() {
-            return Err(not_lowered(format!(
-                "the module {name} carries a value or a published entry, which this backend does \
-                 not build yet"
-            )));
-        }
     }
 
     let mut flags = settings::builder();
@@ -293,34 +269,87 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
         reachable.behavior(&target.declared(), id)?;
     }
     for written in &program.modules {
-        for held in &written.helpers {
-            let symbol = held_symbol(&written.name, &held.declared);
+        // Named out in full, and not `..`'d away, so a field `transport::Module` starts carrying
+        // tomorrow is a compile error at this one destructure until it is given a home below.
+        // `Module::entries` (a module's own published-value entries) is bound to `value_entries`
+        // rather than `entries`, which stays free for this loop's own row-entry table below.
+        let transport::Module { name, helpers, values, entries: value_entries, definitions: _, examples } =
+            written;
+        for held in helpers {
+            let symbol = held_symbol(name, &held.declared);
             let signature = signature_over(&held.takes, &held.answers, call_conv)?;
             // Held and not exported: a definition a module holds is that module's copy, and
             // nothing outside the object reaches one.
             let id = module.declare_function(&symbol, Linkage::Local, &signature)?;
-            reachable.held(&written.name, &held.declared, id)?;
+            reachable.held(name, &held.declared, id)?;
         }
-        for example in &written.examples {
-            let signature = running_a_row(&targets, &written.name, &example.behavior, call_conv)?;
-            let symbol = example_symbol(&written.name, &example.behavior, example.at);
+        for value in values {
+            // As private as a helper's method, and named the same way: a value's home is this
+            // module's own business (ADR-0074) — nothing outside this object reaches it directly,
+            // whether outside this object's other modules or another object altogether. A caller
+            // elsewhere goes through the entry declared below instead.
+            let takes = handover_types(value);
+            let symbol = held_symbol(name, &value.declared());
+            let signature = signature_over(&takes, &value.answers, call_conv)?;
+            let id = module.declare_function(&symbol, Linkage::Local, &signature)?;
+            reachable.value(name, &value.declared(), id)?;
+        }
+        for entry in value_entries {
+            // Exported under value_symbol, which is the one thing about a value ever addressed
+            // from outside the module that declares it: the entry takes nothing at the language
+            // level (ADR-0074), and its answer is read off its own body rather than the value's —
+            // the two agree by the invariant CheckedModule already holds, and re-deriving one from
+            // the other here would be the checker's decision read a second time.
+            let signature = signature_over(&[], entry.body.ty(), call_conv)?;
+            let symbol = value_symbol(&entry.value.module, &entry.value.name);
+            let id = module.declare_function(&symbol, Linkage::Export, &signature)?;
+            reachable.published_value(&entry.value.module, &entry.value.name, id)?;
+        }
+        for example in examples {
+            let signature = running_a_row(&targets, name, &example.behavior, call_conv)?;
+            let symbol = example_symbol(name, &example.behavior, example.at);
             // Reached from outside whatever the module says about the behavior's own name: what
             // this runs is a row, and a row of a kept name is as much a row as any other.
             let id = module.declare_function(&symbol, Linkage::Export, &signature)?;
             entries.insert(symbol, id);
         }
     }
+    // Every published value a call anywhere in this document reaches, and the answer type its
+    // call sites carry — read here rather than at the call site during lowering, because a value
+    // this program does not itself declare an entry for still needs a symbol declared before any
+    // function that calls it is defined, the same two-phase shape every other declaration in this
+    // file keeps. A value this program does declare an entry for was just given one above, so
+    // only a genuinely foreign one reaches this loop.
+    for ((module_name, value_name), ty) in published_value_calls(&program)? {
+        if reachable.is_published(&module_name, &value_name) {
+            continue;
+        }
+        // The same boundary a behavior answering from another object crosses (`crosses_objects`),
+        // and held to the same condition: an entry is an ordinary call across an object boundary,
+        // and a value this backend would refuse a behavior for answering does not become
+        // reachable just because a value happened to answer it instead.
+        crosses_object(
+            &format!("`{module_name}`'s published value {value_name} answers"),
+            &ty,
+        )?;
+        let signature = signature_over(&[], &ty, call_conv)?;
+        let symbol = value_symbol(&module_name, &value_name);
+        let id = module.declare_function(&symbol, Linkage::Import, &signature)?;
+        reachable.published_value(&module_name, &value_name, id)?;
+    }
 
     for written in &program.modules {
-        for held in &written.helpers {
+        let transport::Module { name, helpers, values, entries: value_entries, definitions, examples } =
+            written;
+        for held in helpers {
             let signature = signature_over(&held.takes, &held.answers, call_conv)?;
-            let id = reachable.of_held(&written.name, &held.declared)?;
+            let id = reachable.of_held(name, &held.declared)?;
             context.clear();
             context.func = Function::with_name_signature(UserFuncName::default(), signature);
             let lowering = Lowering {
                 declared: &declared,
                 reachable: &reachable,
-                carrier: &written.name,
+                carrier: name,
                 allocate,
                 compare_text,
                 join_text,
@@ -336,19 +365,71 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
             )?;
             module.define_function(id, &mut context)?;
         }
-        for local in &written.definitions {
+        for value in values {
+            let takes = handover_types(value);
+            let signature = signature_over(&takes, &value.answers, call_conv)?;
+            let id = reachable.of_value(name, &value.declared())?;
+            context.clear();
+            context.func = Function::with_name_signature(UserFuncName::default(), signature);
+            let lowering = Lowering {
+                declared: &declared,
+                reachable: &reachable,
+                carrier: name,
+                allocate,
+                compare_text,
+                join_text,
+            };
+            define(
+                &mut context.func,
+                &mut shapes,
+                &takes,
+                &value.body,
+                frontend,
+                &lowering,
+                &mut module,
+            )?;
+            module.define_function(id, &mut context)?;
+        }
+        for entry in value_entries {
+            let signature = signature_over(&[], entry.body.ty(), call_conv)?;
+            let id = reachable.of_published_value(&entry.value.module, &entry.value.name)?;
+            context.clear();
+            context.func = Function::with_name_signature(UserFuncName::default(), signature);
+            let lowering = Lowering {
+                declared: &declared,
+                reachable: &reachable,
+                carrier: name,
+                allocate,
+                compare_text,
+                join_text,
+            };
+            // Taking nothing, the same as a row's entry: what a value needs is handed over inside
+            // its own body (`Reaches::Value`, threading each handover), never by a caller of this
+            // entry.
+            define(
+                &mut context.func,
+                &mut shapes,
+                &[],
+                &entry.body,
+                frontend,
+                &lowering,
+                &mut module,
+            )?;
+            module.define_function(id, &mut context)?;
+        }
+        for local in definitions {
             match local {
-                Definition::Body { declared: name, body, .. } => {
-                    let target = targets.named(name)?;
+                Definition::Body { declared: behavior_name, body, .. } => {
+                    let target = targets.named(behavior_name)?;
                     let takes = &target.takes;
                     let signature = signature_over(&target.takes, &target.answers, call_conv)?;
-                    let id = reachable.of_behavior_named(name)?;
+                    let id = reachable.of_behavior_named(behavior_name)?;
                     context.clear();
                     context.func = Function::with_name_signature(UserFuncName::default(), signature);
                     let lowering = Lowering {
                         declared: &declared,
                         reachable: &reachable,
-                        carrier: &written.name,
+                        carrier: name,
                         allocate,
                         compare_text,
                         join_text,
@@ -365,19 +446,19 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
                     module.define_function(id, &mut context)?;
                 }
                 Definition::Composed {
-                    declared: name,
+                    declared: behavior_name,
                     stages,
                     ..
                 } => {
-                    let target = targets.named(name)?;
+                    let target = targets.named(behavior_name)?;
                     let signature = signature_over(&target.takes, &target.answers, call_conv)?;
-                    let id = reachable.of_behavior_named(name)?;
+                    let id = reachable.of_behavior_named(behavior_name)?;
                     context.clear();
                     context.func = Function::with_name_signature(UserFuncName::default(), signature);
                     let lowering = Lowering {
                         declared: &declared,
                         reachable: &reachable,
-                        carrier: &written.name,
+                        carrier: name,
                         allocate,
                         compare_text,
                         join_text,
@@ -395,9 +476,9 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
                 }
             }
         }
-        for example in &written.examples {
-            let signature = running_a_row(&targets, &written.name, &example.behavior, call_conv)?;
-            let symbol = example_symbol(&written.name, &example.behavior, example.at);
+        for example in examples {
+            let signature = running_a_row(&targets, name, &example.behavior, call_conv)?;
+            let symbol = example_symbol(name, &example.behavior, example.at);
             let id = *entries
                 .get(&symbol)
                 .ok_or_else(|| anyhow!("no entry was declared for {symbol}"))?;
@@ -406,7 +487,7 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
             let lowering = Lowering {
                 declared: &declared,
                 reachable: &reachable,
-                carrier: &written.name,
+                carrier: name,
                 allocate,
                 compare_text,
                 join_text,
@@ -576,10 +657,20 @@ fn linkage_of(published: Publication) -> Linkage {
 /// A definition a module holds is keyed by both modules — the one holding it and the one that
 /// declared it — because two modules holding one declaration hold a copy each and a call reaches
 /// the copy its own module holds.
+///
+/// A value's own home is kept apart from a helper's copy (`values`, not folded into `held`),
+/// because the two are different identities even where a document never confuses them: a helper
+/// is carried, a value is declared, and souther's own `CheckedModule` already refuses to hold one
+/// declaration as both. A published entry is kept apart again (`published_values`), keyed by the
+/// declaring module and not by a carrier: unlike a helper or a local value home, an entry is one
+/// symbol the whole program shares, addressed by every object that calls it, this one included
+/// where it happens to be the declaring module's own.
 #[derive(Default)]
 struct Reachable {
     held: HashMap<(String, String), FuncId>,
+    values: HashMap<(String, String), FuncId>,
     behaviors: HashMap<String, FuncId>,
+    published_values: HashMap<(String, String), FuncId>,
 }
 
 impl Reachable {
@@ -591,11 +682,34 @@ impl Reachable {
         Ok(())
     }
 
+    fn value(&mut self, carrier: &str, declared: &str, id: FuncId) -> Result<()> {
+        let key = (carrier.to_string(), declared.to_string());
+        if self.values.insert(key, id).is_some() {
+            bail!("{carrier} builds two values both called {declared}");
+        }
+        Ok(())
+    }
+
     fn behavior(&mut self, declared: &str, id: FuncId) -> Result<()> {
         if self.behaviors.insert(declared.to_string(), id).is_some() {
             bail!("two behaviors are both written {declared}");
         }
         Ok(())
+    }
+
+    fn published_value(&mut self, module: &str, name: &str, id: FuncId) -> Result<()> {
+        let key = (module.to_string(), name.to_string());
+        if self.published_values.insert(key, id).is_some() {
+            bail!("`{module}` publishes two entries both called {name}");
+        }
+        Ok(())
+    }
+
+    /// Whether an entry for `module`'s value `name` has already been declared — asked before
+    /// declaring one as an import, so a value this program's own modules publish is never given a
+    /// second, importing declaration of the same symbol.
+    fn is_published(&self, module: &str, name: &str) -> bool {
+        self.published_values.contains_key(&(module.to_string(), name.to_string()))
     }
 
     fn of_held(&self, carrier: &str, declared: &str) -> Result<FuncId> {
@@ -605,12 +719,147 @@ impl Reachable {
             .ok_or_else(|| anyhow!("{carrier} reaches {declared}, which it holds no copy of"))
     }
 
+    fn of_value(&self, carrier: &str, declared: &str) -> Result<FuncId> {
+        self.values
+            .get(&(carrier.to_string(), declared.to_string()))
+            .copied()
+            .ok_or_else(|| {
+                anyhow!("{carrier} reaches the value {declared}, which it builds no home for")
+            })
+    }
+
     fn of_behavior_named(&self, declared: &str) -> Result<FuncId> {
         self.behaviors
             .get(declared)
             .copied()
             .ok_or_else(|| anyhow!("a call reaching {declared}, which the program does not name"))
     }
+
+    fn of_published_value(&self, module: &str, name: &str) -> Result<FuncId> {
+        self.published_values
+            .get(&(module.to_string(), name.to_string()))
+            .copied()
+            .ok_or_else(|| {
+                anyhow!("a call reaching `{module}`'s published value {name}, which no entry was \
+                         declared for")
+            })
+    }
+}
+
+/// The machine parameters a value's own method takes: its handovers' types, in the order
+/// `ProgramWriter` numbered their binders — the same order [`define`]'s own `takes`/binding
+/// convention already expects, so nothing here has to renumber anything.
+fn handover_types(value: &transport::Value) -> Vec<Ty> {
+    value.handovers.iter().map(|handover| handover.ty.clone()).collect()
+}
+
+/// Every published value a call anywhere in this document reaches, by the module and the name the
+/// call names, with the answer type one of its call sites carries — read once, over every body
+/// this document holds, rather than at each call site during lowering: a value this program's own
+/// modules do not declare an entry for still needs a symbol declared before anything that calls it
+/// is defined, which is the two-phase shape (declare, then define) every other function in this
+/// object already keeps.
+///
+/// A `BTreeMap` and not a `HashMap`, because this is walked to declare symbols in whatever order
+/// it hands them back, and nowhere else in this file lets an unordered map decide an order that
+/// ends up in the object it emits — the token loop above walks `program.declarations` itself for
+/// exactly that reason. A `HashMap` here would make two builds of one document free to declare
+/// these imports in different orders for no reason the source states.
+///
+/// One type per value and not one per call: every call to one value answers with the same type,
+/// since it is one declaration. Held to that rather than assumed — a second call site naming a
+/// different type for a value already found is the checker and this reading of its document
+/// disagreeing about something more basic than this side not having built it yet, and is refused
+/// the way every other such disagreement in this file is, rather than silently kept as whichever
+/// type was found first.
+fn published_value_calls(program: &Program) -> Result<BTreeMap<(String, String), Ty>> {
+    let mut found = BTreeMap::new();
+    for written in &program.modules {
+        for held in &written.helpers {
+            walk_calls(&held.body, &mut found)?;
+        }
+        for value in &written.values {
+            walk_calls(&value.body, &mut found)?;
+        }
+        for entry in &written.entries {
+            walk_calls(&entry.body, &mut found)?;
+        }
+        for local in &written.definitions {
+            if let Definition::Body { body, .. } = local {
+                walk_calls(body, &mut found)?;
+            }
+        }
+    }
+    Ok(found)
+}
+
+/// Every `Reaches::PublishedValue` under `node`, depth first. No default arm: a `Node` variant
+/// this misses is a value call this walk silently never finds, which is exactly the silent drop
+/// declaring a value's import symbol exists to end.
+fn walk_calls(node: &Node, found: &mut BTreeMap<(String, String), Ty>) -> Result<()> {
+    match node {
+        Node::Call { reaches, arguments, ty, .. } => {
+            if let Reaches::PublishedValue { module, name } = reaches {
+                match found.get(&(module.clone(), name.clone())) {
+                    Some(already) if already != ty => {
+                        bail!(
+                            "a call reaches `{module}`'s published value {name} as {}, and \
+                             another reaches it as {} — one declaration does not answer two ways",
+                            already.spelt(),
+                            ty.spelt()
+                        );
+                    }
+                    Some(_) => {}
+                    None => {
+                        found.insert((module.clone(), name.clone()), ty.clone());
+                    }
+                }
+            }
+            for argument in arguments {
+                walk_calls(argument, found)?;
+            }
+        }
+        Node::Binary { left, right, .. } => {
+            walk_calls(left, found)?;
+            walk_calls(right, found)?;
+        }
+        Node::Neg { operand, .. } => walk_calls(operand, found)?,
+        Node::Let { value, body, .. } => {
+            walk_calls(value, found)?;
+            walk_calls(body, found)?;
+        }
+        Node::If { cond, then, els, .. } => {
+            walk_calls(cond, found)?;
+            walk_calls(then, found)?;
+            walk_calls(els, found)?;
+        }
+        Node::Construct { values, .. } => {
+            for value in values {
+                walk_calls(value, found)?;
+            }
+        }
+        Node::Field { target, .. } => walk_calls(target, found)?,
+        Node::Match { subject, arms, .. } => {
+            walk_calls(subject, found)?;
+            for arm in arms {
+                walk_calls(&arm.body, found)?;
+            }
+        }
+        Node::Some { value, .. } => walk_calls(value, found)?,
+        Node::Tuple { members, .. } => {
+            for member in members {
+                walk_calls(member, found)?;
+            }
+        }
+        Node::Member { tuple, .. } => walk_calls(tuple, found)?,
+        Node::Int { .. }
+        | Node::Read { .. }
+        | Node::Bool { .. }
+        | Node::Str { .. }
+        | Node::Unit { .. }
+        | Node::None { .. } => {}
+    }
+    Ok(())
 }
 
 /// Every declared type of the program, by the key a reference to one says.
@@ -809,15 +1058,28 @@ fn machine_type(ty: &Ty) -> Result<types::Type> {
 /// Said here, where the signature is declared, because that is the one place the two scopes meet.
 fn crosses_objects(target: &Target) -> Result<()> {
     for ty in target.takes.iter().chain([&target.answers]) {
-        if !means_the_same_elsewhere(ty) {
-            return Err(not_lowered(format!(
-                "{}.{} takes or answers {}, which has no representation an object built from \
-                 another document reads the same way, and it is reached across objects",
-                target.module,
-                target.name,
-                ty.spelt()
-            )));
-        }
+        crosses_object(&format!("{}.{} takes or answers", target.module, target.name), ty)?;
+    }
+    Ok(())
+}
+
+/// Refuses `ty` where a value of it means something different once it has crossed into an object
+/// built from another document — `clause` is read straight into the message, ending just short of
+/// the type, so a caller states what it is asking about (`"m.f takes or answers"`, `` "`m`'s
+/// published value x answers" ``) rather than this function guessing a grammar for every caller.
+///
+/// The one check every cross-object boundary this backend admits is held to, [`crosses_objects`]'s
+/// behaviors and a foreign [`Reaches::PublishedValue`]'s answer alike, so the two cannot drift into
+/// being checked two different ways — which is exactly how a published value answering
+/// `Option<Decimal>` would slip past a check a behavior answering the same type refuses, had this
+/// been written twice instead of shared.
+fn crosses_object(clause: &str, ty: &Ty) -> Result<()> {
+    if !means_the_same_elsewhere(ty) {
+        return Err(not_lowered(format!(
+            "{clause} {}, which has no representation an object built from another document \
+             reads the same way, and it is reached across objects",
+            ty.spelt()
+        )));
     }
     Ok(())
 }
@@ -1306,40 +1568,41 @@ fn lower(
             ty,
             aborts,
         } => match reaches {
-            // The copy this module holds, and not another module's copy of the same declaration:
-            // a module carries every definition it reaches.
-            Reaches::Helper { declared } | Reaches::Behavior { declared } => {
+            // Four different references, and one thing done for all of them: look up the FuncId
+            // the declare phase gave the method this call reaches, and call it with whatever
+            // arguments the checker already threaded through — a value is not a special case
+            // here. `Reaches::Value` reaches a method of this same object exactly the way a
+            // helper's copy does (souther's JVM backend calls it through the identical path a
+            // recursive helper's own call is); `Reaches::PublishedValue` reaches an entry across
+            // an object boundary the same way a behavior implemented elsewhere does. Neither
+            // needs a runtime cache: "runs once" is ADR-0074's checker-level guarantee that the
+            // region reading a value's reference builds each dependency once, which is what
+            // `arguments` already carries in from the handovers `ProgramWriter` threaded — not
+            // something this side re-derives or memoizes.
+            Reaches::Helper { .. }
+            | Reaches::Behavior { .. }
+            | Reaches::Value { .. }
+            | Reaches::PublishedValue { .. } => {
                 let reached = match reaches {
-                    Reaches::Helper { .. } => {
+                    Reaches::Helper { declared } => {
                         lowering.reachable.of_held(lowering.carrier, declared)?
                     }
-                    Reaches::Behavior { .. } => {
+                    Reaches::Behavior { declared } => {
                         lowering.reachable.of_behavior_named(declared)?
                     }
-                    Reaches::Value { .. }
-                    | Reaches::PublishedValue { .. }
-                    | Reaches::Kernel { .. } => unreachable!(),
+                    Reaches::Value { module, name } => lowering
+                        .reachable
+                        .of_value(lowering.carrier, &format!("{module}.{name}"))?,
+                    Reaches::PublishedValue { module, name } => {
+                        lowering.reachable.of_published_value(module, name)?
+                    }
+                    Reaches::Kernel { .. } => unreachable!(),
                 };
                 let mut given = Vec::with_capacity(arguments.len());
                 for argument in arguments {
                     given.push(lower(builder, lowering, module, bindings, abort, argument)?);
                 }
                 call_reached(builder, module, abort, reached, machine_type(ty)?, &given)?
-            }
-            // A value's once semantics need a stable allocation domain this backend does not have
-            // yet (souther-lang/souther-native-compiler#10) — carried here with the identity split
-            // rather than joined, so a future lowering does not have to split it back up.
-            Reaches::Value { module, name } => {
-                return Err(not_lowered(format!(
-                    "a call to the value {module}.{name}, which runs once in the module that \
-                     declares it"
-                )));
-            }
-            Reaches::PublishedValue { module, name } => {
-                return Err(not_lowered(format!(
-                    "a call to the published value {module}.{name}, reached through another \
-                     module's entry"
-                )));
             }
             // Which kernels this backend already answers instructions for is this match's own
             // list and nowhere else's — kept short on purpose, so a kernel this has not met yet

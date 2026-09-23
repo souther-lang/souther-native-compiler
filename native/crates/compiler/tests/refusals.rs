@@ -190,6 +190,36 @@ fn a_transport_from_another_version_is_refused() {
     assert!(refused.to_string().contains('8'), "{refused}");
 }
 
+/// Two calls reaching one published value at two different types is not a document this backend
+/// is behind on — a value is one declaration and answers one way, so this is the checker and this
+/// reading of its document disagreeing about something more basic than a lowering not written
+/// yet, and is refused the way any other such disagreement here is, before either call is ever
+/// declared a symbol for.
+#[test]
+fn a_published_value_reached_at_two_different_types_is_the_halves_disagreeing() {
+    let document = concat!(
+        r#"{"transport":7,"declarations":[],"#,
+        r#""behaviors":[{"module":"m","name":"f","is":"body","takes":[],"answers":{"prim":"INT"}},"#,
+        r#"{"module":"m","name":"g","is":"body","takes":[],"answers":{"prim":"BOOL"}}],"#,
+        r#""modules":[{"name":"m","helpers":[],"values":[],"entries":[],"definitions":["#,
+        r#"{"is":"body","declared":"m.f","parameters":[],"publication":"kept","#,
+        r#""body":{"core":"call","reaches":{"is":"publishedvalue","module":"other","name":"x"},"#,
+        r#""arguments":[],"type":{"prim":"INT"},"aborts":[]}},"#,
+        r#"{"is":"body","declared":"m.g","parameters":[],"publication":"kept","#,
+        r#""body":{"core":"call","reaches":{"is":"publishedvalue","module":"other","name":"x"},"#,
+        r#""arguments":[],"type":{"prim":"BOOL"},"aborts":[]}}"#,
+        r#"],"examples":[]}]}"#,
+    );
+
+    let refused = object_for(document).expect_err("one value does not answer two ways");
+
+    assert!(
+        refused.downcast_ref::<NotLowered>().is_none(),
+        "the halves disagreeing is not the backend being behind: {refused}"
+    );
+    assert!(refused.to_string().contains("other"), "{refused}");
+}
+
 /// The smallest composition this driver can be handed: one behavior with a body, one composed of
 /// a single stage reaching it, and every fact the two of them share stated once so each of the
 /// tests below has one place to make disagree with the other.
