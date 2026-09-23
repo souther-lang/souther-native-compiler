@@ -308,6 +308,37 @@ pub const MARK: &str = "souther_mark";
 /// The symbol a caller gives a mark back to, dropping everything taken since.
 pub const RESET: &str = "souther_reset";
 
+/// The runtime's external form: what a value is written as at a boundary, built as a tree by
+/// generated code and written out as JSON in one step.
+///
+/// The tree is the runtime's own and lives on its heap, not in the arena. Every constructor hands
+/// the caller a form it owns; `EXTERNAL_APPEND` and `EXTERNAL_PUT` take ownership of the item they
+/// are given and leave the container with the caller; `EXTERNAL_JSON` takes the root, drops the
+/// whole tree, and answers a string of the runtime's own layout (`TEXT_LENGTH`, `TEXT_BYTES`) in
+/// the arena. So nothing of the tree outlives the call that writes it, and what `RESET` drops is
+/// only what it always dropped.
+///
+/// A key and a string handed in are strings of that same layout, not NUL-terminated text: a key a
+/// compile writes is a literal in the object, and a string a run worked out is in the arena.
+pub const EXTERNAL_NULL: &str = "souther_external_null";
+/// `(i8) -> form`: any value but 0 is true.
+pub const EXTERNAL_BOOL: &str = "souther_external_bool";
+/// `(i64) -> form`.
+pub const EXTERNAL_INT: &str = "souther_external_int";
+/// `(string) -> form`, the bytes copied.
+pub const EXTERNAL_STRING: &str = "souther_external_string";
+/// `() -> form`, an array with nothing in it.
+pub const EXTERNAL_ARRAY: &str = "souther_external_array";
+/// `(array, item)`: the item is appended and owned by the array from then on.
+pub const EXTERNAL_APPEND: &str = "souther_external_append";
+/// `() -> form`, an object with nothing in it.
+pub const EXTERNAL_OBJECT: &str = "souther_external_object";
+/// `(object, key string, item)`: the member is placed after those already there, and the item
+/// is owned by the object from then on.
+pub const EXTERNAL_PUT: &str = "souther_external_put";
+/// `(form) -> string`: the whole tree written as JSON, and dropped.
+pub const EXTERNAL_JSON: &str = "souther_external_json";
+
 /// What a generated function answers with instead of its value directly.
 ///
 /// A Souther computation ends with a value or without one, and a plain return can only ever say
