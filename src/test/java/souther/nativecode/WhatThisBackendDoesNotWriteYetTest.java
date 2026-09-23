@@ -69,6 +69,30 @@ class WhatThisBackendDoesNotWriteYetTest {
     }
 
     /**
+     * The checker lets a list of a case stand where a list of its sum is answered, and this
+     * backend lays out no list. So the program is not lowered — and it is not the two halves
+     * disagreeing, which is what it would be read as if this side answered the checker's question
+     * about a collection without the checker's rules.
+     */
+    @Test
+    void aListAnsweredCovariantlyIsNotLoweredRatherThanADisagreement() {
+        assertThatThrownBy(() -> NativeCompiler.compile(CheckedProgram.of(List.of("""
+                module demo exposing ( f, Box, A, B, S )
+
+                data A = { v: Int }
+                data B = { v: Int }
+                data S = A | B
+
+                data Box = { xs: List<A> }
+
+                behavior f : (b: Box) -> List<S>
+                let f (b) = b.xs
+                """))))
+                .isInstanceOf(NotLowered.class)
+                .hasMessageContaining("List");
+    }
+
+    /**
      * A value only passing through is not written, so a behavior handing one back compiles; what
      * is refused is the boundary that would have to write a {@code Decimal} out, which is where
      * its canonical form would be decided.

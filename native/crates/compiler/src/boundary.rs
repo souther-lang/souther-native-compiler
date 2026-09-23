@@ -11,10 +11,11 @@
 //! does. The walk is compiled per declaration, so nothing about a declaration is carried to run
 //! time for the runtime to interpret.
 //!
-//! An encoder calls the encoder of what a field holds, so writing a value takes a frame per level
-//! it is nested. That is no deeper than building it took: a value is built a level per
-//! construction, and a program that nests one a million deep ran a million constructions to do it.
-//! The runtime's own walk over the tree it is handed does not recurse at all.
+//! An encoder calls the encoder of what a field holds, so writing a value takes a native frame for
+//! every level a declared value is nested, and how deep a value it can write is bounded by the
+//! stack. Nothing bounds how deep a value it is handed is: one may have been built by another
+//! object, or by a behavior the host supplies. The runtime's own walk over the tree, and its drop,
+//! take no frame per level.
 
 use super::{
     Declared, Literals, NO_ARM, POINTER, TRUSTED, call_reached, machine_type, not_lowered,

@@ -787,8 +787,11 @@ fn agrees_with_its_target(
     }
 }
 
-/// Several types, spelt the way one reads a diagnostic naming a signature.
 /// Refuses a body, or a row's call, whose answer is not a value of what the target answers.
+///
+/// Asked only once the answer is known to have a layout here: a collection the checker lets a
+/// body answer covariantly is not lowered, and saying the halves disagree about it would be this
+/// side answering the checker's question without the checker's rules.
 fn answers_as_its_target_says(
     name: &str,
     body: &Node,
@@ -807,6 +810,7 @@ fn answers_as_its_target_says(
     Ok(())
 }
 
+/// Several types, spelt the way one reads a diagnostic naming a signature.
 fn spelt(types: &[Ty]) -> String {
     types.iter().map(Ty::spelt).collect::<Vec<_>>().join(", ")
 }
@@ -1215,21 +1219,32 @@ impl<'a> Declared<'a> {
         Ok(leaves)
     }
 
-    /// Whether every value of `actual` is a value of `expected`: the same type, or, where both are
-    /// declared or unions of declared, every case the one descends to being among the other's.
+    /// Whether every value of `actual` is a value of `expected`: the same scalar, or, for
+    /// declared types and unions of them, every case the one descends to being among the other's.
     ///
-    /// A question about the program's declarations and not about the wire, which is why it is
-    /// asked here. A declared value is a pointer whatever it is a value of, so answering this by
-    /// what the machine holds would take any declared value for any other.
+    /// Asked only of types this backend lays out. Whether one type's values are another's is the
+    /// checker's question, and it has answers here — a collection's covariance among them — that
+    /// this side has no reason to know until it lays a collection out. So a type with no layout
+    /// here is refused as not lowered before anything is compared, and the question is answered
+    /// only as far as the nominal membership the declarations already hold.
     fn fits(&self, actual: &Ty, expected: &Ty) -> Result<bool> {
+        machine_type(actual)?;
+        machine_type(expected)?;
         if actual == expected {
             return Ok(true);
         }
-        let (Some(actual), Some(expected)) = (self.cases_of(actual)?, self.cases_of(expected)?)
-        else {
-            return Ok(false);
-        };
-        Ok(actual.iter().all(|case| expected.contains(case)))
+        match (self.cases_of(actual)?, self.cases_of(expected)?) {
+            (Some(actual), Some(expected)) => Ok(actual.iter().all(|case| expected.contains(case))),
+            (None, None) if matches!((actual, expected), (Ty::Prim { .. }, Ty::Prim { .. })) => {
+                Ok(false)
+            }
+            (Some(_), None) | (None, Some(_)) => Ok(false),
+            (None, None) => bail!(
+                "whether {} is {}, which nothing here has a reason to ask",
+                actual.spelt(),
+                expected.spelt()
+            ),
+        }
     }
 
     fn cases_of(&self, ty: &Ty) -> Result<Option<Vec<Case>>> {
@@ -1242,8 +1257,14 @@ impl<'a> Declared<'a> {
         })
     }
 
-    /// Whether a value of `actual` is one a field carrying `codec` holds.
+    /// Whether a value of `actual` is one a field carrying `codec` holds. Asked, as [`fits`] is,
+    /// only of what this backend lays out: a field carrying a collection is not lowered, whatever
+    /// it would have been handed.
+    ///
+    /// [`fits`]: Declared::fits
     fn carries(&self, codec: &CodecShape, actual: &Ty) -> Result<bool> {
+        machine_type(&codec.ty())?;
+        machine_type(actual)?;
         Ok(match (codec, actual) {
             (CodecShape::Scalar { scalar }, Ty::Prim { prim }) => scalar.prim() == *prim,
             (CodecShape::Named { declared }, Ty::Declared { .. } | Ty::Union { .. }) => self.fits(
@@ -1252,13 +1273,10 @@ impl<'a> Declared<'a> {
                     declared: declared.clone(),
                 },
             )?,
+            // Laid out, and its own layout says nothing of what it holds; so what it holds is
+            // asked the same question, and refused there if that has no layout.
             (CodecShape::OptionOf { present }, Ty::Option { option }) => {
                 self.carries(present.shape(), option)?
-            }
-            (CodecShape::ListOf { element }, Ty::List { list }) => self.carries(element, list)?,
-            (CodecShape::SetOf { element }, Ty::Set { set }) => self.carries(element, set)?,
-            (CodecShape::MapOf { key, value }, Ty::Map { map }) => {
-                key.ty() == *map.key && self.carries(value, &map.value)?
             }
             _ => false,
         })
@@ -2897,15 +2915,6 @@ fn join(
     }
 }
 
-/// A string the object carries, and the address of it.
-///
-/// A literal says the same text every run, so it is written into the object rather than worked out
-/// into the arena. What comes back is the address of a string like any other: a comparison and a
-/// join read it the way they read one a run made, and nothing in the value says which of the two
-/// it is. That is what keeps where a string is kept out of what a string means.
-///
-/// One data object per literal, anonymous because nothing outside this object reaches one and two
-/// spellings of one text are not a thing anything has to agree about.
 /// Every string literal this object holds, one per text however many places spell it.
 ///
 /// Held for the whole object rather than asked of each site, because a site is not what a literal
@@ -2916,6 +2925,15 @@ struct Literals {
     held: RefCell<HashMap<String, DataId>>,
 }
 
+/// A string the object carries, and the address of it.
+///
+/// A literal says the same text every run, so it is written into the object rather than worked out
+/// into the arena. What comes back is the address of a string like any other: a comparison and a
+/// join read it the way they read one a run made, and nothing in the value says which of the two
+/// it is. That is what keeps where a string is kept out of what a string means.
+///
+/// One data object per text, shared by every site that spells it ([`Literals`]), and anonymous
+/// because nothing outside this object reaches one.
 fn text_in_the_object(
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
