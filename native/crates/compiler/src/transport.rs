@@ -73,19 +73,20 @@ pub enum Declaration {
         /// type that states any is one no value can be built of yet.
         invariants: usize,
     },
+    /// One value under another name: one field, and not a list of them that happens to hold one.
     Newtype {
         module: String,
         name: String,
         by: DeclaredBy,
-        fields: Vec<Field>,
+        field: Field,
         invariants: usize,
     },
+    /// One value, and naming it is that value: no field, and no clause, since there is nothing
+    /// for one to observe.
     Unit {
         module: String,
         name: String,
         by: DeclaredBy,
-        fields: Vec<Field>,
-        invariants: usize,
     },
     /// A sum is never built. What it says is which types stand as its cases, and a case may be a
     /// sum again — which is why an arm tests the leaves it resolved to rather than this list.
@@ -137,43 +138,32 @@ impl Declaration {
         format!("{}.{}", self.module(), self.name())
     }
 
-    /// Where a field of this type sits among its fields, by the name it is declared under.
-    /// Every field a value of this holds, with what each carries; none for a sum, which is never
-    /// built.
+    /// Every field a value of this holds, with what each carries, in the order they are laid
+    /// out; none for a unit, and none for a sum, which is never built.
     pub fn fields(&self) -> &[Field] {
         match self {
-            Declaration::Product { fields, .. }
-            | Declaration::Newtype { fields, .. }
-            | Declaration::Unit { fields, .. } => fields,
-            Declaration::Sum { .. } => &[],
+            Declaration::Product { fields, .. } => fields,
+            Declaration::Newtype { field, .. } => std::slice::from_ref(field),
+            Declaration::Unit { .. } | Declaration::Sum { .. } => &[],
         }
     }
 
+    /// Where a field of this type sits among its fields, by the name it is declared under.
     pub fn position_of(&self, field: &str) -> Option<usize> {
-        match self {
-            Declaration::Product { fields, .. }
-            | Declaration::Newtype { fields, .. }
-            | Declaration::Unit { fields, .. } => fields.iter().position(|it| it.name == field),
-            Declaration::Sum { .. } => None,
-        }
+        self.fields().iter().position(|it| it.name == field)
     }
 
     pub fn field_count(&self) -> usize {
-        match self {
-            Declaration::Product { fields, .. }
-            | Declaration::Newtype { fields, .. }
-            | Declaration::Unit { fields, .. } => fields.len(),
-            Declaration::Sum { .. } => 0,
-        }
+        self.fields().len()
     }
 
     /// How many clauses every construction of this type owes.
     pub fn invariants(&self) -> usize {
         match self {
-            Declaration::Product { invariants, .. }
-            | Declaration::Newtype { invariants, .. }
-            | Declaration::Unit { invariants, .. } => *invariants,
-            Declaration::Sum { .. } => 0,
+            Declaration::Product { invariants, .. } | Declaration::Newtype { invariants, .. } => {
+                *invariants
+            }
+            Declaration::Unit { .. } | Declaration::Sum { .. } => 0,
         }
     }
 }
@@ -540,11 +530,39 @@ impl MapKey {
 
 /// How a set of alternatives travels. Both keys of a discriminated form cross, so nothing on
 /// this side spells either of them.
+///
+/// Read through [`FormOnTheWire`], so a form with one key for both the tag and a wrapped case's
+/// contents is not a value here: the two stand in one object, and the checker refuses to build
+/// one (`CheckedAlternativesForm.Discriminated`).
 #[derive(Debug, Deserialize, PartialEq, Eq, Clone)]
-#[serde(tag = "is", rename_all = "lowercase", deny_unknown_fields)]
+#[serde(try_from = "FormOnTheWire")]
 pub enum AlternativesForm {
     Enumeration,
     Discriminated { tag: String, contents: String },
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "is", rename_all = "lowercase", deny_unknown_fields)]
+enum FormOnTheWire {
+    Enumeration,
+    Discriminated { tag: String, contents: String },
+}
+
+impl TryFrom<FormOnTheWire> for AlternativesForm {
+    type Error = String;
+
+    fn try_from(form: FormOnTheWire) -> Result<Self, Self::Error> {
+        match form {
+            FormOnTheWire::Enumeration => Ok(AlternativesForm::Enumeration),
+            FormOnTheWire::Discriminated { tag, contents } if tag == contents => Err(format!(
+                "a discriminated form with {tag} for both its tag and a wrapped case's contents, \
+                 which stand in one object"
+            )),
+            FormOnTheWire::Discriminated { tag, contents } => {
+                Ok(AlternativesForm::Discriminated { tag, contents })
+            }
+        }
+    }
 }
 
 /// What a field carries across the boundary, as the check derived it for where it stands.
@@ -556,7 +574,9 @@ pub enum CodecShape {
     ListOf { element: Box<CodecShape> },
     SetOf { element: Box<CodecShape> },
     MapOf { key: MapKey, value: Box<CodecShape> },
-    OptionOf { present: Box<CodecShape> },
+    /// What an optional holds, which is never an optional again: absence has one form wherever it
+    /// stands, so the checker has no shape for an optional of one, and neither does this.
+    OptionOf { present: Box<Bare> },
 }
 
 impl CodecShape {
@@ -570,27 +590,40 @@ impl CodecShape {
             CodecShape::MapOf { key, value } => Ty::Map {
                 map: MapTy { key: Box::new(key.ty()), value: Box::new(value.ty()) },
             },
-            CodecShape::OptionOf { present } => Ty::Option { option: Box::new(present.ty()) },
+            CodecShape::OptionOf { present } => {
+                Ty::Option { option: Box::new(present.shape().ty()) }
+            }
         }
     }
 
-    /// Whether a value of `ty` is one this shape can read out of a slot as the codec says it is.
-    ///
-    /// Exact where the shape says exactly what a value is — a scalar, and what an optional or a
-    /// collection holds — and only as far as a declared value where it names one, since a field of
-    /// a sum is given a value of one of its cases and that is still a pointer to a value that says
-    /// which it is.
-    pub fn holds(&self, ty: &Ty) -> bool {
-        match (self, ty) {
-            (CodecShape::Scalar { scalar }, Ty::Prim { prim }) => scalar.prim() == *prim,
-            (CodecShape::Named { .. }, Ty::Declared { .. } | Ty::Union { .. }) => true,
-            (CodecShape::OptionOf { present }, Ty::Option { option }) => present.holds(option),
-            (CodecShape::ListOf { element }, Ty::List { list }) => element.holds(list),
-            (CodecShape::SetOf { element }, Ty::Set { set }) => element.holds(set),
-            (CodecShape::MapOf { key, value }, Ty::Map { map }) => {
-                key.ty() == *map.key && value.holds(&map.value)
-            }
-            _ => false,
+}
+
+/// A shape that is not an optional: what an optional holds (`CheckedCodecShape.Bare`).
+///
+/// Read as a [`CodecShape`] and refused if it is an optional, so an optional of an optional never
+/// becomes a value here — which is what keeps this side from giving one a form the language never
+/// decided.
+#[derive(Debug, Deserialize, PartialEq, Eq, Clone)]
+#[serde(try_from = "CodecShape")]
+pub struct Bare(CodecShape);
+
+impl Bare {
+    pub fn shape(&self) -> &CodecShape {
+        &self.0
+    }
+}
+
+impl TryFrom<CodecShape> for Bare {
+    type Error = String;
+
+    fn try_from(shape: CodecShape) -> Result<Self, Self::Error> {
+        match shape {
+            CodecShape::OptionOf { .. } => Err(
+                "an optional holding an optional, which the check never settles: absence has one \
+                 form wherever it stands"
+                    .to_string(),
+            ),
+            bare => Ok(Bare(bare)),
         }
     }
 }
@@ -659,7 +692,6 @@ impl LanguageCase {
     }
 }
 
-
 /// How a behavior comes to answer.
 #[derive(Debug, Deserialize, PartialEq, Eq, Clone, Copy)]
 #[serde(rename_all = "lowercase")]
@@ -690,7 +722,6 @@ pub struct Held {
     pub answers: Ty,
     pub body: Node,
 }
-
 
 #[derive(Debug, Deserialize, PartialEq, Eq, Clone, Copy)]
 pub enum Prim {
@@ -746,8 +777,10 @@ pub enum Ty {
     /// says and not what a declaration is made of: the module and the name apart are carried by
     /// the declaration, and this finds it.
     Declared { declared: String },
-    /// Several declared types, any one of which a value here may be. Each of them says which type
-    /// it is, so a union is written nowhere at run time: what holds it is what holds one of them.
+    /// Several cases, any one of which a value here may be. A declared one says which it is, so a
+    /// union of those is written nowhere at run time: what holds it is what holds one of them. A
+    /// primitive or a case the language gives says nothing of the kind, and a union with one
+    /// among its members is read and not laid out.
     Union { union: Vec<Case> },
     Option { option: Box<Ty> },
     Tuple { tuple: Vec<Ty> },
@@ -1037,8 +1070,8 @@ pub struct Arm {
 #[serde(tag = "tests", rename_all = "lowercase", deny_unknown_fields)]
 pub enum Selects {
     /// The value's own type is one of these. The atoms are the leaves the checker resolved the
-    /// case to, so a case that is a sum arrives as the several types it stands for — and each of
-    /// them by the key that reaches its declaration, which is where its identity is.
+    /// case to, so a case that is a sum arrives as the several types it stands for — each as the
+    /// case identity it is, and a declared one by the key that reaches its declaration.
     Which { atoms: Vec<Case> },
     Held,
     Nothing,

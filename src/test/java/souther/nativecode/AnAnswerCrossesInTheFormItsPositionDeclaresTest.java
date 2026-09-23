@@ -26,10 +26,10 @@ class AnAnswerCrossesInTheFormItsPositionDeclaresTest {
 
     private static final String DOORS = """
             module doors exposing ( closedAlone, holding, doorOf, phaseOf, porchOf, customer,
-                                    placeOrder, noteOf, flagOf, rankOf, bill, echoInt, echoBool,
+                                    placeOrder, noteOf, flagOf, chainOf, rankOf, bill, echoInt, echoBool,
                                     echoText,
                                     Closed, Open, Door, Phase, Pending, Holder, Porch, CustomerId,
-                                    Order, Noted, Flagged, Manager, Staff, Rank, Issued,
+                                    Order, Noted, Flagged, Chain, Manager, Staff, Rank, Issued,
                                     UnknownSku )
 
             data Closed
@@ -43,6 +43,7 @@ class AnAnswerCrossesInTheFormItsPositionDeclaresTest {
             data Order = { id: Int, paid: Bool, note: String }
             data Noted = { note: String?, count: Int }
             data Flagged = { on: Bool? }
+            data Chain = { n: Int, next: Chain? }
 
             data Manager = Int
             data Staff
@@ -91,6 +92,11 @@ class AnAnswerCrossesInTheFormItsPositionDeclaresTest {
                 constructs Flagged
 
             let flagOf (has, on) = if has then Flagged { on = on } else Flagged { on = None }
+
+            behavior chainOf : (n: Int) -> Chain
+                constructs Chain
+
+            let chainOf (n) = Chain { n = n, next = Chain { n = n + 1, next = None } }
 
             behavior rankOf : (level: Int) -> Rank
                 constructs Manager
@@ -208,6 +214,16 @@ class AnAnswerCrossesInTheFormItsPositionDeclaresTest {
             assertThat(answer(running, program, "flagOf",
                     new ObservedValue.Bool(false), new ObservedValue.Bool(true)))
                     .isEqualTo(json("{}"));
+        }
+    }
+
+    /** A declaration that holds itself is written by the one encoder, as deep as the value is. */
+    @Test
+    void aDeclarationThatHoldsItselfIsWrittenAsDeepAsTheValueIs() throws Exception {
+        CheckedProgram program = CheckedProgram.of(List.of(DOORS));
+        try (Running running = Running.of(program)) {
+            assertThat(answer(running, program, "chainOf", integer(1)))
+                    .isEqualTo(json("{\"n\":1,\"next\":{\"n\":2}}"));
         }
     }
 

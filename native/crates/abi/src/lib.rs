@@ -351,6 +351,10 @@ pub const EXTERNAL_APPEND: &str = "souther_external_append";
 pub const EXTERNAL_OBJECT: &str = "souther_external_object";
 /// `(object, key string, item)`: the member is placed after those already there, and the item
 /// is owned by the object from then on.
+///
+/// `object` must be an object and `EXTERNAL_APPEND`'s `array` an array; handed any other kind of
+/// form, the runtime aborts the process rather than guess. Generated code only ever puts into an
+/// object the same function made, so reaching that is a caller outside this contract.
 pub const EXTERNAL_PUT: &str = "souther_external_put";
 /// `(form) -> string`: the whole tree written as JSON, and dropped.
 pub const EXTERNAL_JSON: &str = "souther_external_json";

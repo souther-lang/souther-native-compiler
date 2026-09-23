@@ -240,7 +240,7 @@ fn an_answer_that_is_a_list_is_read_and_not_lowered() {
 fn an_answer_with_a_primitive_among_its_cases_is_read_and_not_lowered() {
     let document = concat!(
         r#"{"transport":9,"declarations":["#,
-        r#"{"module":"m","name":"NotFound","by":"amodule","is":"unit","fields":[],"invariants":0}],"#,
+        r#"{"module":"m","name":"NotFound","by":"amodule","is":"unit"}],"#,
         r#""behaviors":[{"module":"m","name":"lengthOf","is":"injected","inputs":[],"#,
         r#""output":{"is":"cases","type":{"union":[{"is":"primitive","prim":"INT"},"#,
         r#"{"is":"declared","declared":"m.NotFound"}]},"#,
@@ -460,8 +460,8 @@ fn a_compositions_own_takes_disagreeing_with_its_first_stages_target_is_the_halv
 fn an_applys_answer_disagreeing_with_its_functions_own_type_is_the_halves_disagreeing_even_though_both_are_pointers() {
     let document = concat!(
         r#"{"transport":9,"declarations":["#,
-        r#"{"module":"m","name":"A","by":"amodule","is":"unit","fields":[],"invariants":0},"#,
-        r#"{"module":"m","name":"B","by":"amodule","is":"unit","fields":[],"invariants":0}],"#,
+        r#"{"module":"m","name":"A","by":"amodule","is":"unit"},"#,
+        r#"{"module":"m","name":"B","by":"amodule","is":"unit"}],"#,
         r#""behaviors":[],"#,
         r#""modules":[{"name":"m","#,
         r#""helpers":[{"declared":"m.f","parameters":["f"],"#,
@@ -594,4 +594,93 @@ fn a_construction_disagreeing_with_what_its_field_carries_is_the_halves_disagree
         "the halves disagreeing is not the backend being behind: {refused}"
     );
     assert!(refused.to_string().contains("m.P"), "{refused}");
+}
+
+/// A product `m.P` with one field carrying `codec`, built in a kept behavior's body from `value`,
+/// beside the sum `m.S = m.A | m.B` and the unrelated unit `m.U`.
+fn building(codec: &str, value: &str) -> String {
+    format!(
+        concat!(
+            r#"{{"transport":9,"declarations":["#,
+            r#"{{"module":"m","name":"A","by":"amodule","is":"unit"}},"#,
+            r#"{{"module":"m","name":"B","by":"amodule","is":"unit"}},"#,
+            r#"{{"module":"m","name":"U","by":"amodule","is":"unit"}},"#,
+            r#"{{"module":"m","name":"S","by":"amodule","is":"sum","#,
+            r#""cases":[{{"is":"declared","declared":"m.A"}},{{"is":"declared","declared":"m.B"}}],"#,
+            r#""form":{{"is":"enumeration"}}}},"#,
+            r#"{{"module":"m","name":"P","by":"amodule","is":"product","#,
+            r#""fields":[{{"name":"f","codec":{}}}],"invariants":0}}],"#,
+            r#""behaviors":[{{"module":"m","name":"make","is":"body","inputs":[],"#,
+            r#""output":{{"is":"nominal","declared":"m.P"}}}}],"#,
+            r#""modules":[{{"name":"m","helpers":[],"values":[],"entries":[],"definitions":["#,
+            r#"{{"is":"body","declared":"m.make","parameters":[],"publication":"kept","#,
+            r#""body":{{"core":"construct","declared":"m.P","values":[{}],"#,
+            r#""type":{{"declared":"m.P"}},"aborts":[]}}}}"#,
+            r#"],"examples":[]}}]}}"#
+        ),
+        codec, value
+    )
+}
+
+fn unit(declared: &str) -> String {
+    format!(r#"{{"core":"unit","declared":"{declared}","type":{{"declared":"{declared}"}},"aborts":[]}}"#)
+}
+
+/// A field naming one declaration given a value of an unrelated one. Both are pointers, so the
+/// machine would not tell them apart; the encoder would read the value's slots as the other
+/// declaration lays its fields out.
+#[test]
+fn a_field_of_one_declaration_given_a_value_of_another_is_the_halves_disagreeing() {
+    let document = building(r#"{"is":"named","declared":"m.A"}"#, &unit("m.U"));
+
+    let refused = object_for(&document).expect_err("m.U put where the field carries m.A");
+
+    assert!(
+        refused.downcast_ref::<NotLowered>().is_none(),
+        "the halves disagreeing is not the backend being behind: {refused}"
+    );
+    assert!(refused.to_string().contains("m.P"), "{refused}");
+}
+
+/// A field of a sum is given a value of one of its cases, which is the same field and the same
+/// value as far as the language is concerned. What is refused is a value no case of the sum is.
+#[test]
+fn a_field_of_a_sum_given_a_value_of_one_of_its_cases_is_built() {
+    let named_sum = r#"{"is":"named","declared":"m.S"}"#;
+
+    object_for(&building(named_sum, &unit("m.B"))).expect("m.B is a case of m.S");
+    let refused = object_for(&building(named_sum, &unit("m.U")))
+        .expect_err("m.U is no case of m.S");
+    assert!(refused.downcast_ref::<NotLowered>().is_none(), "{refused}");
+}
+
+/// Shapes the checker has no way to build are not values on this side either: an optional of an
+/// optional, a newtype of two fields, a unit with a field. Each is refused as a document this
+/// driver does not read, before anything is asked of it.
+#[test]
+fn a_shape_the_checker_cannot_build_is_not_a_document_this_driver_reads() {
+    let option_of_option = building(
+        r#"{"is":"optionof","present":{"is":"optionof","present":{"is":"scalar","scalar":"INT"}}}"#,
+        r#"{"core":"none","type":{"option":{"option":{"prim":"INT"}}},"aborts":[]}"#
+    );
+    let newtype_of_two = building(r#"{"is":"scalar","scalar":"INT"}"#, &unit("m.U")).replace(
+        r#"{"module":"m","name":"U","by":"amodule","is":"unit"}"#,
+        r#"{"module":"m","name":"U","by":"amodule","is":"newtype","fields":[],"invariants":0}"#,
+    );
+    let unit_with_a_field = building(r#"{"is":"scalar","scalar":"INT"}"#, &unit("m.U")).replace(
+        r#"{"module":"m","name":"U","by":"amodule","is":"unit"}"#,
+        r#"{"module":"m","name":"U","by":"amodule","is":"unit","fields":[],"invariants":0}"#,
+    );
+
+    for document in [option_of_option, newtype_of_two, unit_with_a_field] {
+        let refused = object_for(&document).expect_err("a shape nothing settles");
+        assert!(
+            refused.downcast_ref::<NotLowered>().is_none(),
+            "a shape the checker cannot build is the halves disagreeing: {refused}"
+        );
+        assert!(
+            refused.to_string().contains("line") || refused.to_string().contains("optional"),
+            "refused where it was read: {refused}"
+        );
+    }
 }

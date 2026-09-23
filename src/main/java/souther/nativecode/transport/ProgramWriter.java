@@ -251,12 +251,16 @@ public final class ProgramWriter {
                     + ",\"is\":\"product\",\"fields\":" + fields(it)
                     + ",\"invariants\":" + it.invariants().size() + "}";
             // A newtype holds one value and is told apart from a product of one field by what may
-            // be written of it, which is the checker's business and settled before this.
+            // be written of it, which is the checker's business and settled before this. Its one
+            // field is written as one: a list that happens to hold one would be a shape the reader
+            // has to be told is never longer.
             case CheckedData.Newtype it -> identity
-                    + ",\"is\":\"newtype\",\"fields\":" + fields(it)
+                    + ",\"is\":\"newtype\",\"field\":"
+                    + field(it.fields().getFirst(), it.codecShapes().getFirst())
                     + ",\"invariants\":" + it.invariants().size() + "}";
-            case CheckedData.Unit it -> identity
-                    + ",\"is\":\"unit\",\"fields\":[],\"invariants\":0}";
+            // No field and no clause: a unit has neither, and writing an empty list of each would
+            // be writing a place for them.
+            case CheckedData.Unit it -> identity + ",\"is\":\"unit\"}";
             // A sum is never built, so it has no fields of its own; what it says is which types
             // stand as its cases, and a case may be a sum again.
             case CheckedData.Sum it -> {
@@ -309,10 +313,13 @@ public final class ProgramWriter {
         }
         StringJoiner written = new StringJoiner(",", "[", "]");
         for (int at = 0; at < fields.size(); at++) {
-            written.add("{\"name\":" + quoted(fields.get(at).name())
-                    + ",\"codec\":" + codec(codecs.get(at)) + "}");
+            written.add(field(fields.get(at), codecs.get(at)));
         }
         return written.toString();
+    }
+
+    private String field(ValueShape.Field field, CheckedCodecShape codec) {
+        return "{\"name\":" + quoted(field.name()) + ",\"codec\":" + codec(codec) + "}";
     }
 
     /** What a field carries across the boundary, as the check derived it. */

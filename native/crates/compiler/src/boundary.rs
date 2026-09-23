@@ -12,11 +12,11 @@
 //! time for the runtime to interpret.
 
 use super::{
-    Declared, NO_ARM, POINTER, TRUSTED, call_reached, machine_type, not_lowered, out_of_slot,
-    text_in_the_object,
+    Declared, Literals, NO_ARM, POINTER, TRUSTED, call_reached, machine_type, not_lowered,
+    out_of_slot, text_in_the_object,
 };
 use crate::transport::{
-    AlternativesForm, BoundaryOutput, Case, CodecShape, Declaration, LeafScalar, Prim, Ty,
+    AlternativesForm, BoundaryOutput, Case, CodecShape, Declaration, Field, LeafScalar, Prim, Ty,
 };
 use anyhow::{Result, bail};
 use cranelift::codegen::Context;
@@ -51,6 +51,7 @@ pub(crate) struct Emitting<'a> {
     pub frontend: TargetFrontendConfig,
     pub call_conv: CallConv,
     pub declared: &'a Declared<'a>,
+    pub literals: &'a Literals,
 }
 
 /// Defines every entry in `boundaries`, and an encoder for each declaration one of them reaches.
@@ -58,7 +59,7 @@ pub(crate) fn define(emitting: Emitting, boundaries: &[Boundary]) -> Result<()> 
     if boundaries.is_empty() {
         return Ok(());
     }
-    let Emitting { module, context, shapes, frontend, call_conv, declared } = emitting;
+    let Emitting { module, context, shapes, frontend, call_conv, declared, literals } = emitting;
     let externals = Externals::declare(module, call_conv)?;
     let mut encoders = Encoders::new(call_conv);
 
@@ -90,6 +91,7 @@ pub(crate) fn define(emitting: Emitting, boundaries: &[Boundary]) -> Result<()> 
             builder: &mut builder,
             module,
             declared,
+            literals,
             externals: &externals,
             encoders: &mut encoders,
         };
@@ -121,6 +123,7 @@ pub(crate) fn define(emitting: Emitting, boundaries: &[Boundary]) -> Result<()> 
             builder: &mut builder,
             module,
             declared,
+            literals,
             externals: &externals,
             encoders: &mut encoders,
         };
@@ -212,6 +215,7 @@ struct Writing<'w, 'f> {
     builder: &'w mut FunctionBuilder<'f>,
     module: &'w mut ObjectModule,
     declared: &'w Declared<'w>,
+    literals: &'w Literals,
     externals: &'w Externals,
     encoders: &'w mut Encoders,
 }
@@ -231,7 +235,7 @@ impl Writing<'_, '_> {
     /// A string written into the object, a literal of the runtime's own layout: a key, or a
     /// case's name.
     fn literal(&mut self, text: &str) -> Result<ir::Value> {
-        text_in_the_object(self.builder, self.module, text)
+        text_in_the_object(self.builder, self.module, self.literals, text)
     }
 
     fn object(&mut self) -> ir::Value {
@@ -296,8 +300,8 @@ impl Writing<'_, '_> {
                 self.builder.ins().jump(written, &[null.into()]);
 
                 self.builder.switch_to_block(held);
-                let inner = self.held(present, value)?;
-                let form = self.value(present, inner)?;
+                let inner = self.held(present.shape(), value)?;
+                let form = self.value(present.shape(), inner)?;
                 self.builder.ins().jump(written, &[form.into()]);
 
                 self.builder.switch_to_block(written);
@@ -322,8 +326,8 @@ impl Writing<'_, '_> {
         self.builder.ins().brif(nothing, done, &[], held, &[]);
 
         self.builder.switch_to_block(held);
-        let inner = self.held(present, slot)?;
-        let form = self.value(present, inner)?;
+        let inner = self.held(present.shape(), slot)?;
+        let form = self.value(present.shape(), inner)?;
         self.put(object, name, form)?;
         self.builder.ins().jump(done, &[]);
 
@@ -337,24 +341,28 @@ impl Writing<'_, '_> {
         Ok(out_of_slot(self.builder, slot, machine_type(&present.ty())?))
     }
 
+    /// Every field of a value, put into an object this function made, in the order they are laid
+    /// out.
+    fn fields_into(&mut self, object: ir::Value, fields: &[Field], value: ir::Value) -> Result<()> {
+        for (at, field) in fields.iter().enumerate() {
+            let slot = self.builder.ins().load(types::I64, TRUSTED, value, field_at(at) as i32);
+            self.field(object, &field.name, &field.codec, slot)?;
+        }
+        Ok(())
+    }
+
     /// What a value of a declaration is written as on its own, wherever it stands.
     fn declaration(&mut self, key: &str, value: ir::Value) -> Result<ir::Value> {
         match self.declared.shape(key)? {
             Declaration::Product { fields, .. } => {
                 let object = self.object();
-                for (at, field) in fields.iter().enumerate() {
-                    let slot = self.builder.ins().load(types::I64, TRUSTED, value, field_at(at) as i32);
-                    self.field(object, &field.name, &field.codec, slot)?;
-                }
+                self.fields_into(object, fields, value)?;
                 Ok(object)
             }
-            Declaration::Newtype { fields, .. } => {
-                let [wrapped] = fields.as_slice() else {
-                    bail!("the newtype {key} is made of {} fields", fields.len());
-                };
+            Declaration::Newtype { field, .. } => {
                 let slot = self.builder.ins().load(types::I64, TRUSTED, value, field_at(0) as i32);
-                let inner = out_of_slot(self.builder, slot, machine_type(&wrapped.codec.ty())?);
-                self.value(&wrapped.codec, inner)
+                let inner = out_of_slot(self.builder, slot, machine_type(&field.codec.ty())?);
+                self.value(&field.codec, inner)
             }
             Declaration::Unit { .. } => Ok(self.object()),
             Declaration::Sum { cases, form, .. } => self.alternatives(cases, form, value),
@@ -364,14 +372,6 @@ impl Writing<'_, '_> {
     /// One of a set of alternatives, told apart by the token at the front of the value and written
     /// in the form the set travels in.
     fn alternatives(&mut self, cases: &[Case], form: &AlternativesForm, value: ir::Value) -> Result<ir::Value> {
-        if let AlternativesForm::Discriminated { tag, contents } = form
-            && tag == contents
-        {
-            bail!(
-                "a discriminated form with {tag} for both its tag and a wrapped case's contents, \
-                 which stand in one object: the two halves disagree about the form"
-            );
-        }
         let which = self.builder.ins().load(POINTER, TRUSTED, value, WHICH as i32);
         let written = self.builder.create_block();
         self.builder.append_block_param(written, POINTER);
@@ -408,6 +408,10 @@ impl Writing<'_, '_> {
     /// A case, written with what membership adds. Whether the case takes the tag into its own
     /// object or is wrapped beside it is read off its declaration's arm, never off what its own
     /// form turns out to be: a newtype over a product writes an object and is still wrapped.
+    ///
+    /// Every object a member is put into is one made here. A case's own fields are laid into the
+    /// object that carries its tag, rather than the tag put into whatever the case's encoder
+    /// handed back, so what a `put` is given is never a form this function has to take on trust.
     fn case(
         &mut self,
         key: &str,
@@ -421,17 +425,21 @@ impl Writing<'_, '_> {
                  descends to"
             ),
             (AlternativesForm::Enumeration, Declaration::Unit { .. }) => self.name(shape.name()),
-            (AlternativesForm::Enumeration, Declaration::Product { .. } | Declaration::Newtype { .. }) => {
-                bail!(
-                    "{key} carries fields and stands as a case of an enumeration, whose cases carry \
-                     nothing but which one they are: the two halves disagree about the form"
-                )
-            }
+            // Refused when the document was read (`Declared::of`), so reaching here is this
+            // compiler's own mistake and not the document's.
             (
-                AlternativesForm::Discriminated { tag, .. },
-                Declaration::Product { .. } | Declaration::Unit { .. },
-            ) => {
-                let object = self.named(key, value)?;
+                AlternativesForm::Enumeration,
+                Declaration::Product { .. } | Declaration::Newtype { .. },
+            ) => bail!("{key} carries fields and was admitted as a case of an enumeration"),
+            (AlternativesForm::Discriminated { tag, .. }, Declaration::Product { fields, .. }) => {
+                let object = self.object();
+                let name = self.name(shape.name())?;
+                self.put(object, tag, name)?;
+                self.fields_into(object, fields, value)?;
+                Ok(object)
+            }
+            (AlternativesForm::Discriminated { tag, .. }, Declaration::Unit { .. }) => {
+                let object = self.object();
                 let name = self.name(shape.name())?;
                 self.put(object, tag, name)?;
                 Ok(object)

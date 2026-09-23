@@ -25,10 +25,11 @@ use souther_native_abi::{
     room_for_fields, room_for_held, room_for_members, room_for_text, type_symbol, value_symbol,
 };
 use closures::{ClosureSites, Site};
+use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use transport::{
-    Case, AbortKind, Answers, Arm, Declaration, DeclaredBy, Definition, Node, Op, Prim, Program,
+    AlternativesForm, Case, CodecShape, AbortKind, Answers, Arm, Declaration, DeclaredBy, Definition, Node, Op, Prim, Program,
     Publication, Reaches, Routing, Selects, Stage, TRANSPORT_VERSION, Target, Ty,
 };
 
@@ -176,6 +177,7 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
     let join_text = module.declare_function(STRING_CONCAT, Linkage::Import, &joining)?;
 
     let declared = Declared::of(&program.declarations)?;
+    let literals = Literals::default();
 
     // The token every declaration at home in this object is tagged by, defined whether anything
     // here builds a value of one or not. A declaration has one home and it is the object of the
@@ -202,6 +204,11 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
     // repeating for every local definition, and now for every composition's every stage, would
     // make quadratic in nothing this document did.
     let targets = Targets::of(&program.behaviors);
+    for target in &program.behaviors {
+        if let transport::BoundaryOutput::Cases { cases, form, .. } = &target.output {
+            declared.settled(&target.declared(), cases, form)?;
+        }
+    }
 
     // Every closure site the document holds, found once over the whole program, and the lifted
     // function declared for each — before any body is defined, the same two-phase shape every
@@ -374,6 +381,7 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
                 join_text,
                 closures: &closures,
                 lifted: &lifted,
+                literals: &literals,
             };
             define(
                 &mut context.func,
@@ -401,6 +409,7 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
                 join_text,
                 closures: &closures,
                 lifted: &lifted,
+                literals: &literals,
             };
             define(
                 &mut context.func,
@@ -427,6 +436,7 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
                 join_text,
                 closures: &closures,
                 lifted: &lifted,
+                literals: &literals,
             };
             // Taking nothing, the same as a row's entry: what a value needs is handed over inside
             // its own body (`Reaches::Value`, threading each handover), never by a caller of this
@@ -460,6 +470,7 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
                         join_text,
                         closures: &closures,
                         lifted: &lifted,
+                        literals: &literals,
                     };
                     define(
                         &mut context.func,
@@ -491,6 +502,7 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
                         join_text,
                         closures: &closures,
                         lifted: &lifted,
+                        literals: &literals,
                     };
                     define_composed(
                         &mut context.func,
@@ -522,6 +534,7 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
                 join_text,
                 closures: &closures,
                 lifted: &lifted,
+                literals: &literals,
             };
             // Taking nothing: what the row states is written into the body, so an entry with
             // parameters would be a row whose values came from whoever ran it.
@@ -558,6 +571,7 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
             join_text,
             closures: &closures,
             lifted: &lifted,
+            literals: &literals,
         };
         define_closure(&mut context.func, &mut shapes, plan, frontend, &lowering, &mut module)?;
         module.define_function(id, &mut context)?;
@@ -609,6 +623,7 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
             frontend,
             call_conv,
             declared: &declared,
+            literals: &literals,
         },
         &boundaries,
     )?;
@@ -997,7 +1012,92 @@ impl<'a> Declared<'a> {
                 bail!("two declarations are both written {key}");
             }
         }
-        Ok(Declared { shapes })
+        let declared = Declared { shapes };
+        for declaration in declarations {
+            if let Declaration::Sum { cases, form, .. } = declaration {
+                declared.settled(&declaration.key(), cases, form)?;
+            }
+        }
+        Ok(declared)
+    }
+
+    /// Refuses a set of alternatives whose form its cases could not have been settled to: an
+    /// enumeration is a set every one of whose cases carries nothing but which one it is, so a case
+    /// with fields under one is the two halves disagreeing, and writing it as a bare name would
+    /// drop what it carries.
+    ///
+    /// Asked of every sum when the document is read, and of every answer union with it
+    /// ([`object_for`]), so nothing downstream is handed a form and cases that disagree.
+    fn settled(&self, owner: &str, cases: &[Case], form: &AlternativesForm) -> Result<()> {
+        if let AlternativesForm::Enumeration = form {
+            for case in cases {
+                let Case::Declared { declared } = case else {
+                    bail!(
+                        "{owner} travels as an enumeration and has the case {} among its cases, \
+                         which is not a unit: the two halves disagree about its form",
+                        case.spelt()
+                    );
+                };
+                if !matches!(self.shape(declared)?, Declaration::Unit { .. }) {
+                    bail!(
+                        "{owner} travels as an enumeration and has the case {declared} among its \
+                         cases, which carries fields: the two halves disagree about its form"
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Whether a value of `actual` is one a field carrying `codec` holds.
+    ///
+    /// A question about the program's declarations and not about the wire, which is why it is
+    /// asked here: a field of a sum is given a value of one of its cases, and which types those
+    /// are is what this holds. A declared value is a pointer whatever it is a value of, so answering
+    /// this by what the machine holds would take any declared value for any other.
+    fn carries(&self, codec: &CodecShape, actual: &Ty) -> Result<bool> {
+        Ok(match (codec, actual) {
+            (CodecShape::Scalar { scalar }, Ty::Prim { prim }) => scalar.prim() == *prim,
+            (CodecShape::Named { declared }, Ty::Declared { declared: of }) => {
+                self.admits(declared, &[Case::Declared { declared: of.clone() }])?
+            }
+            (CodecShape::Named { declared }, Ty::Union { union }) => self.admits(declared, union)?,
+            (CodecShape::OptionOf { present }, Ty::Option { option }) => {
+                self.carries(present.shape(), option)?
+            }
+            (CodecShape::ListOf { element }, Ty::List { list }) => self.carries(element, list)?,
+            (CodecShape::SetOf { element }, Ty::Set { set }) => self.carries(element, set)?,
+            (CodecShape::MapOf { key, value }, Ty::Map { map }) => {
+                key.ty() == *map.key && self.carries(value, &map.value)?
+            }
+            _ => false,
+        })
+    }
+
+    /// Whether every value any of `cases` can be is a value of `declared`: the declaration itself,
+    /// or, where it is a sum, every case the value's own type descends to being among the sum's.
+    fn admits(&self, declared: &str, cases: &[Case]) -> Result<bool> {
+        let accepted = match self.shape(declared)? {
+            Declaration::Sum { cases, .. } => cases.as_slice(),
+            _ => &[],
+        };
+        for case in cases {
+            if let Case::Declared { declared: of } = case {
+                if of == declared {
+                    continue;
+                }
+                let leaves = match self.shape(of)? {
+                    Declaration::Sum { cases, .. } => cases.clone(),
+                    _ => vec![case.clone()],
+                };
+                if !leaves.iter().all(|leaf| accepted.contains(leaf)) {
+                    return Ok(false);
+                }
+            } else if !accepted.contains(case) {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     fn shape(&self, declared: &str) -> Result<&'a Declaration> {
@@ -1099,6 +1199,8 @@ struct Lowering<'a> {
     /// The lifted function declared for each site, by the site's own number — declared before any
     /// body is defined, the same two-phase shape every other declaration in this object keeps.
     lifted: &'a BTreeMap<usize, FuncId>,
+    /// What string literals this object already holds.
+    literals: &'a Literals,
 }
 
 impl Lowering<'_> {
@@ -1775,7 +1877,7 @@ fn lower(
             lower(builder, lowering, module, bindings, abort, body)?
         }
         Node::Bool { value, ty, .. } => builder.ins().iconst(machine_type(ty)?, i64::from(*value)),
-        Node::Str { value, .. } => text_in_the_object(builder, module, value)?,
+        Node::Str { value, .. } => text_in_the_object(builder, module, lowering.literals, value)?,
         Node::Binary {
             op, left, right, aborts, ..
         } => binary(
@@ -1826,7 +1928,7 @@ fn lower(
             // here is what the slot holds. The two are one fact crossed twice, and an `Int` and a
             // `String` are one slot wide, so a disagreement would be written out and not caught.
             for (field, value) in shape.fields().iter().zip(values) {
-                if !field.codec.holds(value.ty()) {
+                if !lowering.declared.carries(&field.codec, value.ty())? {
                     bail!(
                         "{declared}'s field {} carries {} and is built here from {}: the two \
                          halves disagree about what it holds",
@@ -1864,7 +1966,7 @@ fn lower(
                 .position_of(field)
                 .ok_or_else(|| anyhow!("{declared} declares no field {field}"))?;
             let carries = &shape.fields()[at].codec;
-            if !carries.holds(ty) {
+            if !lowering.declared.carries(carries, ty)? {
                 bail!(
                     "{declared}'s field {field} carries {} and is read here as {}: the two halves \
                      disagree about what it holds",
@@ -2586,11 +2688,37 @@ fn join(
 ///
 /// One data object per literal, anonymous because nothing outside this object reaches one and two
 /// spellings of one text are not a thing anything has to agree about.
+/// Every string literal this object holds, one per text however many places spell it.
+///
+/// Held for the whole object rather than asked of each site, because a site is not what a literal
+/// is: two places spelling one text are one literal, and data declared per site would be the same
+/// bytes written as many times as the program says them.
+#[derive(Default)]
+struct Literals {
+    held: RefCell<HashMap<String, DataId>>,
+}
+
 fn text_in_the_object(
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
+    literals: &Literals,
     value: &str,
 ) -> Result<ir::Value> {
+    let already = literals.held.borrow().get(value).copied();
+    let id = match already {
+        Some(id) => id,
+        None => {
+            let id = literal(module, value)?;
+            literals.held.borrow_mut().insert(value.to_string(), id);
+            id
+        }
+    };
+    let named = module.declare_data_in_func(id, builder.func);
+    Ok(builder.ins().symbol_value(POINTER, named))
+}
+
+/// A literal's bytes, laid out as the runtime lays a string out, defined once in the object.
+fn literal(module: &mut ObjectModule, value: &str) -> Result<DataId> {
     let length = i64::try_from(value.len()).expect("a literal is shorter than an Int");
     let mut written = vec![0u8; room_for_text(length) as usize];
     written[TEXT_LENGTH as usize..][..SLOT as usize].copy_from_slice(&length.to_ne_bytes());
@@ -2603,9 +2731,7 @@ fn text_in_the_object(
     held.set_align(SLOT as u64);
     let id = module.declare_anonymous_data(false, false)?;
     module.define_data(id, &held)?;
-
-    let named = module.declare_data_in_func(id, builder.func);
-    Ok(builder.ins().symbol_value(POINTER, named))
+    Ok(id)
 }
 
 /// Which machine condition one of the six comparisons is, over a signed whole number.
