@@ -481,3 +481,33 @@ fn an_applys_answer_disagreeing_with_its_functions_own_type_is_the_halves_disagr
     );
     assert!(refused.to_string().contains("m.B") || refused.to_string().contains("m.A"), "{refused}");
 }
+
+/// A field whose scalar has no representation here refuses the boundary that would write it, and
+/// not the behavior: the value itself only passes through, and nothing lowers a `Decimal` until the
+/// entry that has to write one out.
+#[test]
+fn a_published_answer_with_a_decimal_field_is_not_lowered_where_it_is_written() {
+    let document = concat!(
+        r#"{"transport":9,"declarations":["#,
+        r#"{"module":"m","name":"Priced","by":"amodule","is":"product","#,
+        r#""fields":[{"name":"amount","codec":{"is":"scalar","scalar":"DECIMAL"}}],"invariants":0}],"#,
+        r#""behaviors":[{"module":"m","name":"same","is":"body","#,
+        r#""inputs":[{"is":"nominal","declared":"m.Priced"}],"#,
+        r#""output":{"is":"nominal","declared":"m.Priced"}}],"#,
+        r#""modules":[{"name":"m","helpers":[],"values":[],"entries":[],"definitions":["#,
+        r#"{"is":"body","declared":"m.same","parameters":["p"],"publication":"published","#,
+        r#""body":{"core":"read","binding":0,"type":{"declared":"m.Priced"},"aborts":[]}}"#,
+        r#"],"examples":[]}]}"#,
+    );
+
+    let refused = object_for(document).expect_err("no way yet to write a Decimal out");
+
+    assert!(
+        refused.downcast_ref::<NotLowered>().is_some(),
+        "a scalar this backend cannot write yet is the backend being behind: {refused}"
+    );
+    assert!(refused.to_string().contains("Decimal"), "{refused}");
+
+    let kept = document.replace(r#""publication":"published""#, r#""publication":"kept""#);
+    object_for(&kept).expect("a kept behavior has no boundary, so nothing is written out");
+}

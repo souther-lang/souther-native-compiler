@@ -4,6 +4,7 @@
 //! about linkers and a runtime built for it, and answering that before the code generation works
 //! would be answering the easier question first.
 
+mod boundary;
 mod closures;
 pub mod transport;
 
@@ -20,7 +21,7 @@ use cranelift::module::{DataDescription, DataId, FuncId, Linkage, Module, defaul
 use cranelift::object::{ObjectBuilder, ObjectModule};
 use souther_native_abi::{
     ALLOCATE, ANSWERED, HELD, NOTHING, SLOT, STRING_COMPARE, STRING_CONCAT, Status, TEXT_BYTES,
-    TEXT_LENGTH, TOKEN, WHICH, behavior_symbol, example_symbol, field_at, held_symbol, member_at,
+    TEXT_LENGTH, TOKEN, WHICH, behavior_symbol, boundary_symbol, example_symbol, field_at, held_symbol, member_at,
     room_for_fields, room_for_held, room_for_members, room_for_text, type_symbol, value_symbol,
 };
 use closures::{ClosureSites, Site};
@@ -561,6 +562,56 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
         define_closure(&mut context.func, &mut shapes, plan, frontend, &lowering, &mut module)?;
         module.define_function(id, &mut context)?;
     }
+
+    // What a host reaches for an answer as the language writes it: every behavior this object
+    // defines and publishes, and every row. A behavior another build implements is that build's
+    // to give a boundary to, so one object never answers for a second entry under the same name.
+    let mut boundaries = Vec::new();
+    for target in &program.behaviors {
+        if !matches!(target.is, Answers::Body | Answers::Composed) {
+            continue;
+        }
+        let declared = target.declared();
+        let local = locals
+            .get(declared.as_str())
+            .copied()
+            .ok_or_else(|| anyhow!("{declared} answers with a local definition no module carries"))?;
+        if local.publication() != Publication::Published {
+            continue;
+        }
+        boundaries.push(boundary::Boundary {
+            symbol: boundary_symbol(&behavior_symbol(&target.module, &target.name)),
+            runs: reachable.of_behavior_named(&declared)?,
+            takes: target.takes(),
+            output: &target.output,
+        });
+    }
+    for written in &program.modules {
+        for example in &written.examples {
+            let target = targets.named(&format!("{}.{}", written.name, example.behavior))?;
+            let entry = example_symbol(&written.name, &example.behavior, example.at);
+            let runs = *entries
+                .get(&entry)
+                .ok_or_else(|| anyhow!("no entry was declared for {entry}"))?;
+            boundaries.push(boundary::Boundary {
+                symbol: boundary_symbol(&entry),
+                runs,
+                takes: Vec::new(),
+                output: &target.output,
+            });
+        }
+    }
+    boundary::define(
+        boundary::Emitting {
+            module: &mut module,
+            context: &mut context,
+            shapes: &mut shapes,
+            frontend,
+            call_conv,
+            declared: &declared,
+        },
+        &boundaries,
+    )?;
 
     Ok(module.finish().emit()?)
 }

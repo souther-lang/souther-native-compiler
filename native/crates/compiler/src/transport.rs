@@ -548,6 +548,22 @@ pub enum CodecShape {
     OptionOf { present: Box<CodecShape> },
 }
 
+impl CodecShape {
+    /// The type a value standing at this shape is, which is what says how it is held in a slot.
+    pub fn ty(&self) -> Ty {
+        match self {
+            CodecShape::Scalar { scalar } => Ty::Prim { prim: scalar.prim() },
+            CodecShape::Named { declared } => Ty::Declared { declared: declared.clone() },
+            CodecShape::ListOf { element } => Ty::List { list: Box::new(element.ty()) },
+            CodecShape::SetOf { element } => Ty::Set { set: Box::new(element.ty()) },
+            CodecShape::MapOf { key, value } => Ty::Map {
+                map: MapTy { key: Box::new(key.ty()), value: Box::new(value.ty()) },
+            },
+            CodecShape::OptionOf { present } => Ty::Option { option: Box::new(present.ty()) },
+        }
+    }
+}
+
 /// A field of a declaration and what it carries across the boundary, held together.
 #[derive(Debug, Deserialize, PartialEq, Eq, Clone)]
 #[serde(deny_unknown_fields)]

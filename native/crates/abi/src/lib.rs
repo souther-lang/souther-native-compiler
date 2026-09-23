@@ -143,6 +143,17 @@ pub fn example_symbol(module: &str, behavior: &str, at: usize) -> String {
 ///
 /// Where either name carries a dollar, or the type's name carries a dot, since the spelling is
 /// read on both.
+/// Where a host reaches an entry the object answers for — a published behavior, or a row — to be
+/// handed its answer as the external form the language writes it in, rather than as a value laid
+/// out the way this backend lays one out.
+///
+/// The same parameters as the entry it runs, and room for one string in place of room for the
+/// answer: the JSON text, in the arena. The status is the entry's own, and nothing is written
+/// through the room unless it is `ANSWERED`.
+pub fn boundary_symbol(entry: &str) -> String {
+    format!("{entry}$boundary")
+}
+
 pub fn type_symbol(module: &str, name: &str) -> String {
     assert!(
         !module.contains('$'),
@@ -363,8 +374,8 @@ pub const ANSWERED: Status = 0;
 #[cfg(test)]
 mod tests {
     use super::{
-        FIRST_FIELD, SLOT, TOKEN, WHICH, behavior_symbol, example_symbol, field_at, held_symbol,
-        member_at, type_symbol, value_symbol,
+        FIRST_FIELD, SLOT, TOKEN, WHICH, behavior_symbol, boundary_symbol, example_symbol,
+        field_at, held_symbol, member_at, type_symbol, value_symbol,
     };
 
     #[test]
@@ -417,6 +428,17 @@ mod tests {
         assert_ne!(
             example_symbol("calculation", "add", 0),
             behavior_symbol("calculation", "add")
+        );
+    }
+
+    #[test]
+    fn an_entry_and_its_boundary_are_two_symbols() {
+        let entry = behavior_symbol("shop", "quote");
+        assert_eq!(boundary_symbol(&entry), "souther2.shop.quote$boundary");
+        assert_ne!(boundary_symbol(&entry), entry);
+        assert_ne!(
+            boundary_symbol(&example_symbol("shop", "quote", 0)),
+            boundary_symbol(&entry)
         );
     }
 
