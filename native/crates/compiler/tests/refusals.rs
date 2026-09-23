@@ -198,7 +198,7 @@ fn a_transport_from_another_version_is_refused() {
 /// a contract this backend has published for another object to read, whatever the function's own
 /// signature is built from (souther-lang/souther-native-compiler#11).
 #[test]
-fn a_function_value_at_an_injected_behaviors_boundary_is_the_halves_disagreeing() {
+fn a_function_value_at_an_injected_behaviors_boundary_is_not_lowered() {
     let document = concat!(
         r#"{"transport":8,"declarations":[],"#,
         r#""behaviors":[{"module":"m","name":"choose","is":"injected","takes":["#,
