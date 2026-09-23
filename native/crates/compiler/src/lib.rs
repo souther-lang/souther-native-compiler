@@ -4,6 +4,7 @@
 //! about linkers and a runtime built for it, and answering that before the code generation works
 //! would be answering the easier question first.
 
+mod closures;
 pub mod transport;
 
 use anyhow::{Result, anyhow, bail};
@@ -22,6 +23,7 @@ use souther_native_abi::{
     TEXT_LENGTH, TOKEN, WHICH, behavior_symbol, example_symbol, field_at, held_symbol, member_at,
     room_for_fields, room_for_held, room_for_members, room_for_text, type_symbol, value_symbol,
 };
+use closures::{ClosureSites, Site};
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use transport::{
@@ -200,6 +202,31 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
     // make quadratic in nothing this document did.
     let targets = Targets::of(&program.behaviors);
 
+    // Every closure site the document holds, found once over the whole program, and the lifted
+    // function declared for each — before any body is defined, the same two-phase shape every
+    // other declaration here keeps. A site nested inside one body may be referenced from another
+    // (a closure returned from one function and applied by another), so nothing about defining a
+    // body may assume every site it itself needs was already declared by the time it runs; all of
+    // them are, because this runs before any of them does.
+    let closures = ClosureSites::of_program(&program);
+    let mut lifted: BTreeMap<usize, FuncId> = BTreeMap::new();
+    for (&site, plan) in closures.iter() {
+        let Ty::Fn { fn_ } = plan.ty else {
+            bail!("a closure site whose own type is not a function type");
+        };
+        if fn_.takes.len() != plan.parameters.len() {
+            bail!(
+                "a closure site declared with {} parameters and a type naming {}",
+                plan.parameters.len(),
+                fn_.takes.len()
+            );
+        }
+        let signature = lifted_signature(&fn_.takes, &fn_.answers, call_conv)?;
+        let symbol = format!("$closure${site}");
+        let id = module.declare_function(&symbol, Linkage::Local, &signature)?;
+        lifted.insert(site, id);
+    }
+
     // Every local definition this object holds, by the name it defines — not only what the
     // module declaring it says about the name, but the definition itself, because what a target
     // says a name answers with and what its local definition actually is are two readings of one
@@ -353,6 +380,8 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
                 allocate,
                 compare_text,
                 join_text,
+                closures: &closures,
+                lifted: &lifted,
             };
             define(
                 &mut context.func,
@@ -378,6 +407,8 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
                 allocate,
                 compare_text,
                 join_text,
+                closures: &closures,
+                lifted: &lifted,
             };
             define(
                 &mut context.func,
@@ -402,6 +433,8 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
                 allocate,
                 compare_text,
                 join_text,
+                closures: &closures,
+                lifted: &lifted,
             };
             // Taking nothing, the same as a row's entry: what a value needs is handed over inside
             // its own body (`Reaches::Value`, threading each handover), never by a caller of this
@@ -433,6 +466,8 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
                         allocate,
                         compare_text,
                         join_text,
+                        closures: &closures,
+                        lifted: &lifted,
                     };
                     define(
                         &mut context.func,
@@ -462,6 +497,8 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
                         allocate,
                         compare_text,
                         join_text,
+                        closures: &closures,
+                        lifted: &lifted,
                     };
                     define_composed(
                         &mut context.func,
@@ -491,6 +528,8 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
                 allocate,
                 compare_text,
                 join_text,
+                closures: &closures,
+                lifted: &lifted,
             };
             // Taking nothing: what the row states is written into the body, so an entry with
             // parameters would be a row whose values came from whoever ran it.
@@ -505,6 +544,33 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
             )?;
             module.define_function(id, &mut context)?;
         }
+    }
+
+    // Every lifted function, defined after every ordinary body: a site's own body may itself hold
+    // a nested site, or reach one returned from elsewhere, and every one of them was declared
+    // above regardless of which body it is nested under.
+    for (&site, plan) in closures.iter() {
+        let Ty::Fn { fn_ } = plan.ty else {
+            bail!("a closure site whose own type is not a function type");
+        };
+        let signature = lifted_signature(&fn_.takes, &fn_.answers, call_conv)?;
+        let id = *lifted
+            .get(&site)
+            .ok_or_else(|| anyhow!("closure site {site} was never declared a lifted function"))?;
+        context.clear();
+        context.func = Function::with_name_signature(UserFuncName::default(), signature);
+        let lowering = Lowering {
+            declared: &declared,
+            reachable: &reachable,
+            carrier: plan.module,
+            allocate,
+            compare_text,
+            join_text,
+            closures: &closures,
+            lifted: &lifted,
+        };
+        define_closure(&mut context.func, &mut shapes, plan, frontend, &lowering, &mut module)?;
+        module.define_function(id, &mut context)?;
     }
 
     Ok(module.finish().emit()?)
@@ -852,6 +918,13 @@ fn walk_calls(node: &Node, found: &mut BTreeMap<(String, String), Ty>) -> Result
             }
         }
         Node::Member { tuple, .. } => walk_calls(tuple, found)?,
+        Node::Block { body, .. } => walk_calls(body, found)?,
+        Node::Apply { function, arguments, .. } => {
+            walk_calls(function, found)?;
+            for argument in arguments {
+                walk_calls(argument, found)?;
+            }
+        }
         Node::Int { .. }
         | Node::Read { .. }
         | Node::Bool { .. }
@@ -979,6 +1052,13 @@ struct Lowering<'a> {
     allocate: FuncId,
     compare_text: FuncId,
     join_text: FuncId,
+    /// Every closure site the whole document holds, and what each one reaches — read here rather
+    /// than re-walked per body, since a `Node::Block` nested under one top-level body may be
+    /// referenced (its captures restored) while defining a different site's own lifted function.
+    closures: &'a ClosureSites<'a>,
+    /// The lifted function declared for each site, by the site's own number — declared before any
+    /// body is defined, the same two-phase shape every other declaration in this object keeps.
+    lifted: &'a BTreeMap<usize, FuncId>,
 }
 
 impl Lowering<'_> {
@@ -1021,6 +1101,26 @@ fn signature_over(takes: &[Ty], answers: &Ty, call_conv: CallConv) -> Result<ir:
     Ok(signature)
 }
 
+/// A lifted function's signature: the same `status + out` shape [`signature_over`] gives every
+/// other generated function, with one more parameter prepended — the closure calling it, which
+/// *is* its environment (see this module's own doc on the flat-closure layout) and not a second
+/// pointer beside one.
+///
+/// Every lifted function takes this hidden parameter whether its own site captures anything or
+/// not, so a caller reaching one through `closure[0]` never has to ask which is which: the
+/// signature `call_indirect` builds and the signature this declares always agree.
+fn lifted_signature(takes: &[Ty], answers: &Ty, call_conv: CallConv) -> Result<ir::Signature> {
+    let mut signature = ir::Signature::new(call_conv);
+    signature.params.push(AbiParam::new(POINTER));
+    for taken in takes {
+        signature.params.push(AbiParam::new(machine_type(taken)?));
+    }
+    machine_type(answers)?;
+    signature.params.push(AbiParam::new(POINTER));
+    signature.returns.push(AbiParam::new(types::I32));
+    Ok(signature)
+}
+
 /// What a value of this type is on the machine.
 ///
 /// A number, a truth, or the address of what a value is made of. Every other primitive is a value
@@ -1031,6 +1131,11 @@ fn machine_type(ty: &Ty) -> Result<types::Type> {
         Ty::Declared { .. } | Ty::Union { .. } | Ty::Option { .. } | Ty::Tuple { .. } => {
             Ok(POINTER)
         }
+        // A flat closure: one pointer, the same as every other compound value. Slot 0 holds the
+        // lifted function's code address and every slot after it a capture — see `closures` — but
+        // none of that is a second machine type; a function value is a pointer here exactly as a
+        // tuple or a declared value is.
+        Ty::Fn { .. } => Ok(POINTER),
         // Every primitive is named. A set the language closed is one this has to answer for member
         // by member: caught by an arm standing for the rest, a primitive added to the language
         // would arrive here as something with no representation and nothing would have said so.
@@ -1126,6 +1231,16 @@ fn means_the_same_elsewhere(ty: &Ty) -> bool {
         Ty::Union { .. } => true,
         Ty::Option { option } => means_the_same_elsewhere(option),
         Ty::Tuple { tuple } => tuple.iter().all(means_the_same_elsewhere),
+        // Unconditionally, and not by asking whether its parameters and its answer do: what a
+        // closure's pointer holds — a code address, and after it whatever it captured — is a
+        // contract between this object's own generated code and no one else's. Nothing about a
+        // capture's own representation is why; even a closure over nothing but `Int`s carries a
+        // code address into whatever links this in, and no other object built by this compiler
+        // yet agrees on a layout to read one back from, or on what calling through one means.
+        // That is a contract to publish deliberately (a closure header and an invocation
+        // convention in `souther-native-abi`) and not one to grant by recursing into a signature
+        // that happens to be built from types that already cross.
+        Ty::Fn { .. } => false,
     }
 }
 
@@ -1135,6 +1250,27 @@ fn means_the_same_elsewhere(ty: &Ty) -> bool {
 /// pointer narrower or wider than a slot would make a field's offset a question about the host
 /// rather than a multiplication.
 const POINTER: types::Type = types::I64;
+
+/// A function value's layout: one pointer, its slot 0 the lifted function's code address and every
+/// slot after it a capture, in the order `closures::Site::captures` gives them.
+///
+/// Compiler-private and not in the `abi` crate: nothing outside code this same compiler generates
+/// ever reads one of these — a caller across an object boundary reaches a closure at all only by
+/// refusing to, since `means_the_same_elsewhere(Ty::Fn)` is unconditionally `false`. Read the doc
+/// on that arm for why it is unconditional and not asked of the captures themselves.
+const CLOSURE_CODE: i64 = 0;
+
+/// Where a capture at this position among a closure's own sits, by the same one-slot-per-value
+/// convention every other layout in this file keeps.
+fn capture_at(position: usize) -> i64 {
+    SLOT * (position as i64 + 1)
+}
+
+/// How much room a closure over this many captures takes: one slot for the code pointer, one for
+/// each capture.
+fn room_for_closure(captures: usize) -> i64 {
+    SLOT * (captures as i64 + 1)
+}
 
 /// Everything a value is made of sits in a slot of one width, so what is put in one is widened to
 /// it and what comes out is narrowed back.
@@ -1218,6 +1354,84 @@ fn define(
 
     builder.finalize(frontend);
     Ok(())
+}
+
+/// A lifted function's own body: the same `status + out` shape [`define`] gives every other body,
+/// with one more thing to do before any of it runs — restore every capture the site's own plan
+/// says it closed over, from the closure this function was called through.
+///
+/// The hidden closure parameter is `entry`'s own first parameter (see [`lifted_signature`]); it is
+/// never bound into `Bindings` under a binding number of its own, because nothing in the checker's
+/// Core ever reads it — a capture is read by the binding number it had where the block was
+/// written, not by a name for the environment carrying it. Restoring one is a load at the capture's
+/// own slot ([`capture_at`]) narrowed the way any other value out of a slot is
+/// ([`out_of_slot`]), bound to a fresh variable under that same number, exactly as if the
+/// enclosing body's own `Let` had just bound it here — which, from this function's own body's
+/// point of view, is exactly what happened.
+fn define_closure(
+    function: &mut Function,
+    shapes: &mut FunctionBuilderContext,
+    site: &Site,
+    frontend: TargetFrontendConfig,
+    lowering: &Lowering,
+    module: &mut ObjectModule,
+) -> Result<()> {
+    let mut builder = FunctionBuilder::new(function, shapes);
+    let entry = builder.create_block();
+    builder.append_block_params_for_function_params(entry);
+    builder.switch_to_block(entry);
+    builder.seal_block(entry);
+
+    let closure = builder.block_params(entry)[0];
+
+    let mut bindings = Bindings::default();
+    for (position, capture) in site.captures.iter().enumerate() {
+        let wanted = machine_type(&capture.ty)?;
+        let held = builder.ins().load(
+            types::I64,
+            TRUSTED,
+            closure,
+            capture_at(position) as i32,
+        );
+        let restored = out_of_slot(&mut builder, held, wanted);
+        let variable = builder.declare_var(wanted);
+        builder.def_var(variable, restored);
+        bindings.at(capture.binding, variable);
+    }
+
+    for (at, parameter) in site.parameters.iter().enumerate() {
+        let taken = &site_taken(site)?[at];
+        let variable = builder.declare_var(machine_type(taken)?);
+        let given = builder.block_params(entry)[1 + at];
+        builder.def_var(variable, given);
+        bindings.at(parameter.binding, variable);
+    }
+    let out = builder.block_params(entry)[1 + site.parameters.len()];
+
+    let abort = builder.create_block();
+    builder.append_block_param(abort, types::I32);
+
+    let answer = lower(&mut builder, lowering, module, &mut bindings, abort, site.body)?;
+    builder.ins().store(TRUSTED, answer, out, 0);
+    let ok = builder.ins().iconst(types::I32, i64::from(ANSWERED));
+    builder.ins().return_(&[ok]);
+
+    builder.seal_block(abort);
+    builder.switch_to_block(abort);
+    let status = builder.block_params(abort)[0];
+    builder.ins().return_(&[status]);
+
+    builder.finalize(frontend);
+    Ok(())
+}
+
+/// A site's own parameter types, read off its `Ty::Fn` — the one place they are named, since
+/// [`transport::Parameter`] carries a binding and a name and nothing about a type.
+fn site_taken<'a>(site: &'a Site) -> Result<&'a [Ty]> {
+    let Ty::Fn { fn_ } = site.ty else {
+        bail!("a closure site whose own type is not a function type");
+    };
+    Ok(&fn_.takes)
 }
 
 /// A behavior written as stages applied in order, each offered what the one before answered.
@@ -1332,17 +1546,78 @@ fn call_reached(
     arguments: &[ir::Value],
 ) -> Result<ir::Value> {
     let reaching = module.declare_func_in_func(reached, builder.func);
+    let out = out_slot(builder);
+    let mut given = arguments.to_vec();
+    given.push(out);
+    let called = builder.ins().call(reaching, &given);
+    let status = builder.inst_results(called)[0];
+    Ok(status_or_answer(builder, abort, status, out, answers))
+}
+
+/// A closure applied: `Core.Apply`, lowered as an indirect call through the code pointer its own
+/// slot 0 holds, with the closure itself handed over as the hidden environment argument every
+/// lifted function's own signature reserves ([`lifted_signature`]).
+///
+/// Shares [`status_or_answer`] with [`call_reached`] rather than repeating it, so an indirect call
+/// forwards a callee's abort exactly the way a direct one does — the two calling conventions differ
+/// only in what is called and what the first argument is, not in how a status that is not
+/// `ANSWERED` reaches this function's own `abort` block.
+fn call_indirect_reached(
+    builder: &mut FunctionBuilder,
+    abort: ir::Block,
+    closure: ir::Value,
+    call_conv: CallConv,
+    takes: &[Ty],
+    answers: types::Type,
+    arguments: &[ir::Value],
+) -> Result<ir::Value> {
+    let mut signature = ir::Signature::new(call_conv);
+    signature.params.push(AbiParam::new(POINTER));
+    for taken in takes {
+        signature.params.push(AbiParam::new(machine_type(taken)?));
+    }
+    signature.params.push(AbiParam::new(POINTER));
+    signature.returns.push(AbiParam::new(types::I32));
+    let sig_ref = builder.import_signature(signature);
+
+    let code = builder
+        .ins()
+        .load(POINTER, TRUSTED, closure, CLOSURE_CODE as i32);
+    let out = out_slot(builder);
+    let mut given = Vec::with_capacity(arguments.len() + 2);
+    given.push(closure);
+    given.extend_from_slice(arguments);
+    given.push(out);
+    let called = builder.ins().call_indirect(sig_ref, code, &given);
+    let status = builder.inst_results(called)[0];
+    Ok(status_or_answer(builder, abort, status, out, answers))
+}
+
+/// Where an indirect call's answer is written through, and where a direct one's is: a stack slot
+/// this function owns, wide enough for one slot, read back once the callee has answered
+/// `ANSWERED`.
+fn out_slot(builder: &mut FunctionBuilder) -> ir::Value {
     let slot = builder.create_sized_stack_slot(ir::StackSlotData::new(
         ir::StackSlotKind::ExplicitSlot,
         SLOT as u32,
         0,
     ));
-    let out = builder.ins().stack_addr(POINTER, slot, 0);
-    let mut given = arguments.to_vec();
-    given.push(out);
-    let called = builder.ins().call(reaching, &given);
-    let status = builder.inst_results(called)[0];
+    builder.ins().stack_addr(POINTER, slot, 0)
+}
 
+/// What every call in this file does with a callee's answer: read the status back, forward
+/// anything other than `ANSWERED` to `abort` exactly as it arrived, and load the value through
+/// `out` only once the status says it is there.
+///
+/// Shared by a direct call ([`call_reached`]) and an indirect one (a closure's own `Apply`), since
+/// forwarding a callee's abort transparently is not a fact about which of the two reached it.
+fn status_or_answer(
+    builder: &mut FunctionBuilder,
+    abort: ir::Block,
+    status: ir::Value,
+    out: ir::Value,
+    answers: types::Type,
+) -> ir::Value {
     let ok = builder.create_block();
     let bad = builder.create_block();
     let answered = builder.ins().iconst(types::I32, i64::from(ANSWERED));
@@ -1355,7 +1630,7 @@ fn call_reached(
     builder.ins().jump(abort, &[status.into()]);
 
     builder.switch_to_block(ok);
-    Ok(builder.ins().load(answers, TRUSTED, out, 0))
+    builder.ins().load(answers, TRUSTED, out, 0)
 }
 
 /// What the document's numbers for a behavior's bindings stand for here.
@@ -1643,6 +1918,61 @@ fn lower(
                 .ins()
                 .load(types::I64, flags, value, member_at(*at) as i32);
             out_of_slot(builder, held, machine_type(ty)?)
+        }
+        Node::Block { site, .. } => {
+            let plan = lowering
+                .closures
+                .site(*site)
+                .ok_or_else(|| anyhow!("closure site {site}, which nothing planned"))?;
+            let code_id = *lowering
+                .lifted
+                .get(site)
+                .ok_or_else(|| anyhow!("closure site {site}, which no lifted function was declared for"))?;
+
+            let flags = TRUSTED;
+            let value = lowering.room(builder, module, room_for_closure(plan.captures.len()));
+
+            let code_ref = module.declare_func_in_func(code_id, builder.func);
+            let code = builder.ins().func_addr(POINTER, code_ref);
+            builder.ins().store(flags, code, value, CLOSURE_CODE as i32);
+
+            for (position, capture) in plan.captures.iter().enumerate() {
+                let variable = bindings.of(capture.binding)?;
+                let held = builder.use_var(variable);
+                let held = into_slot(builder, held);
+                builder
+                    .ins()
+                    .store(flags, held, value, capture_at(position) as i32);
+            }
+            value
+        }
+        Node::Apply {
+            function,
+            arguments,
+            ty,
+            ..
+        } => {
+            let closure = lower(builder, lowering, module, bindings, abort, function)?;
+            let mut given = Vec::with_capacity(arguments.len());
+            for argument in arguments {
+                given.push(lower(builder, lowering, module, bindings, abort, argument)?);
+            }
+            let Ty::Fn { fn_ } = function.ty() else {
+                bail!(
+                    "an application of {}, which is not a function type",
+                    function.ty().spelt()
+                );
+            };
+            let call_conv = module.isa().default_call_conv();
+            call_indirect_reached(
+                builder,
+                abort,
+                closure,
+                call_conv,
+                &fn_.takes,
+                machine_type(ty)?,
+                &given,
+            )?
         }
     })
 }
