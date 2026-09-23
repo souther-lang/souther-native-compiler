@@ -26,11 +26,11 @@ class AnAnswerCrossesInTheFormItsPositionDeclaresTest {
 
     private static final String DOORS = """
             module doors exposing ( closedAlone, holding, doorOf, phaseOf, porchOf, customer,
-                                    placeOrder, noteOf, flagOf, chainOf, rankOf, bill, echoInt, echoBool,
+                                    placeOrder, noteOf, flagOf, chainOf, rankOf, bill, lookUp, echoInt, echoBool,
                                     echoText,
                                     Closed, Open, Door, Phase, Pending, Holder, Porch, CustomerId,
                                     Order, Noted, Flagged, Chain, Manager, Staff, Rank, Issued,
-                                    UnknownSku )
+                                    UnknownSku, Missing )
 
             data Closed
             data Open = { since: Int }
@@ -107,6 +107,11 @@ class AnAnswerCrossesInTheFormItsPositionDeclaresTest {
                 constructs Issued
 
             let bill (n) = if n > 0 then Issued { amount = n } else UnknownSku
+
+            behavior lookUp : (n: Int) -> Door | Missing
+                constructs Open
+
+            let lookUp (n) = if n > 1 then Open { since = n } else if n > 0 then Closed else Missing
 
             behavior echoInt : (n: Int) -> Int
             let echoInt (n) = n
@@ -250,6 +255,23 @@ class AnAnswerCrossesInTheFormItsPositionDeclaresTest {
                     .isEqualTo(json("{\"type\":\"Issued\",\"amount\":200}"));
             assertThat(answer(running, program, "bill", integer(0)))
                     .isEqualTo(json("{\"type\":\"UnknownSku\"}"));
+        }
+    }
+
+    /**
+     * A sum standing as a member of an answer nobody named is walked into: its cases are the
+     * answer's cases, each tagged with its own name, and the sum's name is written nowhere.
+     */
+    @Test
+    void aSumAmongAnAnswersMembersIsWrittenAsItsOwnCases() throws Exception {
+        CheckedProgram program = CheckedProgram.of(List.of(DOORS));
+        try (Running running = Running.of(program)) {
+            assertThat(answer(running, program, "lookUp", integer(4)))
+                    .isEqualTo(json("{\"type\":\"Open\",\"since\":4}"));
+            assertThat(answer(running, program, "lookUp", integer(1)))
+                    .isEqualTo(json("{\"type\":\"Closed\"}"));
+            assertThat(answer(running, program, "lookUp", integer(0)))
+                    .isEqualTo(json("{\"type\":\"Missing\"}"));
         }
     }
 

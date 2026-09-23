@@ -205,8 +205,9 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
     // make quadratic in nothing this document did.
     let targets = Targets::of(&program.behaviors);
     for target in &program.behaviors {
-        if let transport::BoundaryOutput::Cases { cases, form, .. } = &target.output {
+        if let transport::BoundaryOutput::Cases { ty, cases, form } = &target.output {
             declared.settled(&target.declared(), cases, form)?;
+            declared.descends_to(&target.declared(), ty, cases)?;
         }
     }
 
@@ -249,7 +250,7 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
     // never reach it.
     for (&name, &local) in &locals {
         let target = targets.named(name)?;
-        agrees_with_its_target(name, target, local, &targets)?;
+        agrees_with_its_target(name, target, local, &targets, &declared)?;
     }
 
     // Every function is declared before any is defined, because a body may reach one written
@@ -518,6 +519,8 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
             }
         }
         for example in examples {
+            let target = targets.named(&format!("{name}.{}", example.behavior))?;
+            answers_as_its_target_says(&target.declared(), &example.body, target, &declared)?;
             let signature = running_a_row(&targets, name, &example.behavior, call_conv)?;
             let symbol = example_symbol(name, &example.behavior, example.at);
             let id = *entries
@@ -680,9 +683,23 @@ fn agrees_with_its_target(
     target: &Target,
     local: &Definition,
     targets: &Targets,
+    declared: &Declared,
 ) -> Result<()> {
     match (target.is, local) {
-        (Answers::Body, Definition::Body { .. }) => Ok(()),
+        // A body's parameters are the target's inputs, one for one, and what the body answers is
+        // a value of what the target says it answers — the same type, or a case of it. Each is a
+        // fact crossed twice, and the boundary writes the answer by the target's reading of it.
+        (Answers::Body, Definition::Body { parameters, body, .. }) => {
+            if parameters.len() != target.inputs.len() {
+                bail!(
+                    "{name} names {} parameters in its body and takes {} at the target that \
+                     reaches it: the two halves disagree about what it takes",
+                    parameters.len(),
+                    target.inputs.len()
+                );
+            }
+            answers_as_its_target_says(name, body, target, declared)
+        }
         (Answers::Composed, Definition::Composed { answers, stages, .. }) => {
             if answers != &target.answers() {
                 bail!(
@@ -736,6 +753,25 @@ fn agrees_with_its_target(
 }
 
 /// Several types, spelt the way one reads a diagnostic naming a signature.
+/// Refuses a body, or a row's call, whose answer is not a value of what the target answers.
+fn answers_as_its_target_says(
+    name: &str,
+    body: &Node,
+    target: &Target,
+    declared: &Declared,
+) -> Result<()> {
+    let answers = target.answers();
+    if !declared.fits(body.ty(), &answers)? {
+        bail!(
+            "{name} answers {} where the target that reaches it answers {}: the two halves \
+             disagree about what it answers",
+            body.ty().spelt(),
+            answers.spelt()
+        );
+    }
+    Ok(())
+}
+
 fn spelt(types: &[Ty]) -> String {
     types.iter().map(Ty::spelt).collect::<Vec<_>>().join(", ")
 }
@@ -1021,47 +1057,136 @@ impl<'a> Declared<'a> {
         Ok(declared)
     }
 
-    /// Refuses a set of alternatives whose form its cases could not have been settled to: an
-    /// enumeration is a set every one of whose cases carries nothing but which one it is, so a case
-    /// with fields under one is the two halves disagreeing, and writing it as a bare name would
-    /// drop what it carries.
+    /// Refuses a set of alternatives the checker could not have settled, as the two halves
+    /// disagreeing. The relation is the one `Boundary` decides upstream, stated whole and not
+    /// only the direction that has bitten:
     ///
-    /// Asked of every sum when the document is read, and of every answer union with it
-    /// ([`object_for`]), so nothing downstream is handed a form and cases that disagree.
+    /// - the set travels as an enumeration exactly when it has cases and every one of them is a
+    ///   declared unit — so an enumeration over a case with fields, and a discriminated form over
+    ///   nothing but units, are both refused;
+    /// - a discriminated form's tag is a key no product case lays a field under, since the case's
+    ///   fields and the tag stand in one object and one of the two would be lost.
+    ///
+    /// Asked of every sum when the document is read, and of every answer union ([`object_for`]),
+    /// so nothing downstream is handed a form and cases that disagree.
     fn settled(&self, owner: &str, cases: &[Case], form: &AlternativesForm) -> Result<()> {
-        if let AlternativesForm::Enumeration = form {
-            for case in cases {
-                let Case::Declared { declared } = case else {
-                    bail!(
-                        "{owner} travels as an enumeration and has the case {} among its cases, \
-                         which is not a unit: the two halves disagree about its form",
-                        case.spelt()
-                    );
-                };
-                if !matches!(self.shape(declared)?, Declaration::Unit { .. }) {
-                    bail!(
-                        "{owner} travels as an enumeration and has the case {declared} among its \
-                         cases, which carries fields: the two halves disagree about its form"
-                    );
+        let mut not_a_unit = None;
+        for case in cases {
+            let unit = match case {
+                Case::Declared { declared } => {
+                    matches!(self.shape(declared)?, Declaration::Unit { .. })
                 }
+                Case::Primitive { .. } | Case::Language { .. } => false,
+            };
+            if !unit && not_a_unit.is_none() {
+                not_a_unit = Some(case.spelt());
             }
+        }
+        let every_one_a_unit = !cases.is_empty() && not_a_unit.is_none();
+        match form {
+            AlternativesForm::Enumeration if !every_one_a_unit => bail!(
+                "{owner} travels as an enumeration and its case {} is not a unit: the two halves \
+                 disagree about its form",
+                not_a_unit.unwrap_or_else(|| "list is empty".to_string())
+            ),
+            AlternativesForm::Discriminated { .. } if every_one_a_unit => bail!(
+                "{owner} travels discriminated and every one of its cases is a unit, which is an \
+                 enumeration: the two halves disagree about its form"
+            ),
+            AlternativesForm::Enumeration => Ok(()),
+            AlternativesForm::Discriminated { tag, .. } => {
+                for case in cases {
+                    let Case::Declared { declared } = case else { continue };
+                    if let Declaration::Product { fields, .. } = self.shape(declared)?
+                        && fields.iter().any(|field| field.name == *tag)
+                    {
+                        bail!(
+                            "{declared} lays a field under {tag} and stands as a case of {owner}, \
+                             whose tag stands under the same key: the two halves disagree, since \
+                             the checker refuses the field"
+                        );
+                    }
+                }
+                Ok(())
+            }
+        }
+    }
+
+    /// Refuses an answer union whose cases are not what its type descends to. The two cross apart
+    /// on purpose — the type as its members were written, the cases as the boundary walked them —
+    /// and the cases are what a value is written by; so they are checked against each other here
+    /// and nothing is worked out again from the type for writing.
+    fn descends_to(&self, owner: &str, ty: &Ty, cases: &[Case]) -> Result<()> {
+        let Ty::Union { union } = ty else {
+            bail!("{owner} answers cases under {}, which is not a union", ty.spelt());
+        };
+        let walked = self.leaves_of(union)?;
+        if walked != cases {
+            bail!(
+                "{owner} answers {} and is written by the cases {}: the two halves disagree about \
+                 what it answers",
+                ty.spelt(),
+                cases.iter().map(Case::spelt).collect::<Vec<_>>().join(" | ")
+            );
         }
         Ok(())
     }
 
-    /// Whether a value of `actual` is one a field carrying `codec` holds.
+    /// The cases a value of any of `members` can be, a sum walked into and each case kept at the
+    /// place it was first reached, which is the order the checker gives a sum's own.
+    fn leaves_of(&self, members: &[Case]) -> Result<Vec<Case>> {
+        let mut leaves: Vec<Case> = Vec::new();
+        for member in members {
+            let reached = match member {
+                Case::Declared { declared } => match self.shape(declared)? {
+                    Declaration::Sum { cases, .. } => cases.clone(),
+                    _ => vec![member.clone()],
+                },
+                _ => vec![member.clone()],
+            };
+            for leaf in reached {
+                if !leaves.contains(&leaf) {
+                    leaves.push(leaf);
+                }
+            }
+        }
+        Ok(leaves)
+    }
+
+    /// Whether every value of `actual` is a value of `expected`: the same type, or, where both are
+    /// declared or unions of declared, every case the one descends to being among the other's.
     ///
     /// A question about the program's declarations and not about the wire, which is why it is
-    /// asked here: a field of a sum is given a value of one of its cases, and which types those
-    /// are is what this holds. A declared value is a pointer whatever it is a value of, so answering
-    /// this by what the machine holds would take any declared value for any other.
+    /// asked here. A declared value is a pointer whatever it is a value of, so answering this by
+    /// what the machine holds would take any declared value for any other.
+    fn fits(&self, actual: &Ty, expected: &Ty) -> Result<bool> {
+        if actual == expected {
+            return Ok(true);
+        }
+        let (Some(actual), Some(expected)) = (self.cases_of(actual)?, self.cases_of(expected)?)
+        else {
+            return Ok(false);
+        };
+        Ok(actual.iter().all(|case| expected.contains(case)))
+    }
+
+    fn cases_of(&self, ty: &Ty) -> Result<Option<Vec<Case>>> {
+        Ok(match ty {
+            Ty::Declared { declared } => {
+                Some(self.leaves_of(&[Case::Declared { declared: declared.clone() }])?)
+            }
+            Ty::Union { union } => Some(self.leaves_of(union)?),
+            _ => None,
+        })
+    }
+
+    /// Whether a value of `actual` is one a field carrying `codec` holds.
     fn carries(&self, codec: &CodecShape, actual: &Ty) -> Result<bool> {
         Ok(match (codec, actual) {
             (CodecShape::Scalar { scalar }, Ty::Prim { prim }) => scalar.prim() == *prim,
-            (CodecShape::Named { declared }, Ty::Declared { declared: of }) => {
-                self.admits(declared, &[Case::Declared { declared: of.clone() }])?
+            (CodecShape::Named { declared }, Ty::Declared { .. } | Ty::Union { .. }) => {
+                self.fits(actual, &Ty::Declared { declared: declared.clone() })?
             }
-            (CodecShape::Named { declared }, Ty::Union { union }) => self.admits(declared, union)?,
             (CodecShape::OptionOf { present }, Ty::Option { option }) => {
                 self.carries(present.shape(), option)?
             }
@@ -1072,32 +1197,6 @@ impl<'a> Declared<'a> {
             }
             _ => false,
         })
-    }
-
-    /// Whether every value any of `cases` can be is a value of `declared`: the declaration itself,
-    /// or, where it is a sum, every case the value's own type descends to being among the sum's.
-    fn admits(&self, declared: &str, cases: &[Case]) -> Result<bool> {
-        let accepted = match self.shape(declared)? {
-            Declaration::Sum { cases, .. } => cases.as_slice(),
-            _ => &[],
-        };
-        for case in cases {
-            if let Case::Declared { declared: of } = case {
-                if of == declared {
-                    continue;
-                }
-                let leaves = match self.shape(of)? {
-                    Declaration::Sum { cases, .. } => cases.clone(),
-                    _ => vec![case.clone()],
-                };
-                if !leaves.iter().all(|leaf| accepted.contains(leaf)) {
-                    return Ok(false);
-                }
-            } else if !accepted.contains(case) {
-                return Ok(false);
-            }
-        }
-        Ok(true)
     }
 
     fn shape(&self, declared: &str) -> Result<&'a Declaration> {

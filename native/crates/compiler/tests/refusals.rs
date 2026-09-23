@@ -684,3 +684,73 @@ fn a_shape_the_checker_cannot_build_is_not_a_document_this_driver_reads() {
         );
     }
 }
+
+fn is_the_halves_disagreeing(document: &str, naming: &str) {
+    let refused = object_for(document).expect_err("a document the checker could not have written");
+    assert!(
+        refused.downcast_ref::<NotLowered>().is_none(),
+        "the halves disagreeing is not the backend being behind: {refused}"
+    );
+    assert!(refused.to_string().contains(naming), "{refused}");
+}
+
+/// Enumeration exactly when every case is a unit, in both directions: a set of units written
+/// discriminated would put `{"type":"A"}` where the checker settled `"A"`.
+#[test]
+fn a_discriminated_form_over_nothing_but_units_is_the_halves_disagreeing() {
+    let document = building(r#"{"is":"scalar","scalar":"INT"}"#, &unit("m.U")).replace(
+        r#""form":{"is":"enumeration"}"#,
+        r#""form":{"is":"discriminated","tag":"type","contents":"value"}"#,
+    );
+    is_the_halves_disagreeing(&document, "m.S");
+}
+
+/// A product case's fields stand in the object that carries the tag, so a field under the tag's
+/// key would leave two members of one name — the checker refuses the field, and so is a document
+/// that has one.
+#[test]
+fn a_case_with_a_field_under_the_tags_key_is_the_halves_disagreeing() {
+    let document = answering_a_sum(
+        r#"[{"name":"type","codec":{"is":"scalar","scalar":"INT"}}]"#,
+        r#"{"is":"discriminated","tag":"type","contents":"value"}"#,
+    );
+    is_the_halves_disagreeing(&document, "m.C");
+}
+
+/// What an answer union's type is and which cases it is written by are two crossings of one
+/// answer. A case the type has and the cases leave out would be a value the boundary has no arm
+/// for.
+#[test]
+fn an_answer_whose_cases_are_not_what_its_type_descends_to_is_the_halves_disagreeing() {
+    let document = concat!(
+        r#"{"transport":9,"declarations":["#,
+        r#"{"module":"m","name":"A","by":"amodule","is":"unit"},"#,
+        r#"{"module":"m","name":"B","by":"amodule","is":"unit"}],"#,
+        r#""behaviors":[{"module":"m","name":"either","is":"injected","inputs":[],"#,
+        r#""output":{"is":"cases","type":{"union":[{"is":"declared","declared":"m.A"},"#,
+        r#"{"is":"declared","declared":"m.B"}]},"#,
+        r#""cases":[{"is":"declared","declared":"m.A"}],"form":{"is":"enumeration"}}}],"#,
+        r#""modules":[{"name":"m","helpers":[],"values":[],"entries":[],"definitions":[],"examples":[]}]}"#,
+    );
+    is_the_halves_disagreeing(document, "m.either");
+}
+
+/// A body's parameters and its target's inputs are one list crossed twice.
+#[test]
+fn a_body_naming_more_parameters_than_its_target_takes_is_the_halves_disagreeing() {
+    let document = composed_document().replace(
+        r#""declared":"m.inner","parameters":["a"]"#,
+        r#""declared":"m.inner","parameters":["a","b"]"#,
+    );
+    is_the_halves_disagreeing(&document, "m.inner");
+}
+
+/// What a body answers is a value of what its target answers, which the boundary writes it as.
+#[test]
+fn a_body_answering_other_than_its_target_is_the_halves_disagreeing() {
+    let document = building(r#"{"is":"named","declared":"m.A"}"#, &unit("m.A")).replace(
+        r#""output":{"is":"nominal","declared":"m.P"}"#,
+        r#""output":{"is":"nominal","declared":"m.U"}"#,
+    );
+    is_the_halves_disagreeing(&document, "m.make");
+}
