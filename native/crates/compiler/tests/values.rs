@@ -1,11 +1,14 @@
 //! What the Java half writes for a value, its handovers, and the entry it publishes for one —
-//! read back and, since this backend does not build any of it yet, refused rather than silently
-//! left out of the object (review of #20: `values`/`entries` went unread by `object_for` before
-//! this, so a document naming one still produced a "successful" object with no published surface
-//! for it).
+//! read back, and run end to end: a value's home defined the way a helper's is, its published
+//! entry exported under `value_symbol`, and a call across a module boundary resolved to that same
+//! entry rather than to a copy of the value's own body (#10).
 
+use souther_native_driver::object_for;
 use souther_native_driver::transport::{Program, Reaches};
-use souther_native_driver::{NotLowered, object_for};
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
+use tempfile::{TempDir, tempdir};
 
 /// A value that names another value at its root: `ks`, kept and handed nothing, and `ys`,
 /// published and handed one `ks`.
@@ -13,6 +16,13 @@ const VALUES: &str = include_str!("values.transport.json");
 
 /// A behavior in one module answering with a value another module publishes.
 const PUBLISHED_VALUE: &str = include_str!("published_value.transport.json");
+
+/// What the linker on this platform calls a symbol the object names.
+const PREFIX: &str = if cfg!(target_vendor = "apple") { "_" } else { "" };
+
+/// What generated code takes room from, needed here because both documents construct a value.
+const RUNTIME: &str =
+    concat!(env!("CARGO_MANIFEST_DIR"), "/../../target/debug/libsouther_native_runtime.a");
 
 #[test]
 fn a_value_and_its_handover_read_back_as_the_checker_wrote_them() {
@@ -31,20 +41,36 @@ fn a_value_and_its_handover_read_back_as_the_checker_wrote_them() {
     assert_eq!(module.entries[0].value.declared(), "m.ys");
 }
 
-/// The same document, refused whole rather than silently missing the value it carries: this
-/// backend has nowhere yet to put the once-semantics a value needs (#10), and a module with one
-/// must say so rather than hand back an object that answers for everything else and simply has
-/// no entry for `m.ys`.
+/// `ys`'s published entry, called the way anything outside its module has to reach it: `ks` is
+/// built first inside the entry's own body, handed to `ys`'s home as the one handover it takes,
+/// and the entry answers with what `ys` names — `P { n = 42 }`, unchanged, since `ys` is nothing
+/// but a reference to `ks`.
 #[test]
-fn a_document_carrying_a_value_is_refused_rather_than_silently_missing_it() {
-    let refused = object_for(VALUES).expect_err("this backend builds no value yet");
+fn a_published_values_entry_answers_with_what_it_names() {
+    let harness: &str = r#"
+        #include <inttypes.h>
+        #include <stdint.h>
+        #include <stdio.h>
 
-    assert!(
-        refused.downcast_ref::<NotLowered>().is_some(),
-        "a value going unbuilt is this backend not there yet, not the halves disagreeing: \
-         {refused}"
-    );
-    assert!(refused.to_string().contains('m'), "{refused}");
+        extern uint32_t entry(int64_t *) __asm__("PREFIXsouther2.m$value$ys");
+
+        int main(void) {
+            int64_t out;
+            uint32_t status = entry(&out);
+            if (status != 0) {
+                printf("aborted %u\n", status);
+                return 0;
+            }
+            int64_t *answered = (int64_t *) out;
+            printf("%" PRId64 "\n", answered[1]);
+            return 0;
+        }
+    "#;
+    let (_swept, built) = build("m.o", VALUES, harness);
+    let answered = run(&built, &[]);
+
+    assert!(answered.status.success(), "the run ended: {answered:?}");
+    assert_eq!(String::from_utf8_lossy(&answered.stdout).trim(), "42");
 }
 
 /// A call reaching a value declared in the same module, and a call reaching one published by
@@ -89,13 +115,67 @@ fn a_local_value_reach_and_a_published_one_read_as_different_variants() {
     assert_eq!(published_reaches, 1, "reader.g reaches publisher.ys across the boundary");
 }
 
-/// This backend has nowhere to lower a call to either kind of value yet, so a program naming one
-/// across a module boundary is refused the same as one that only names a value locally.
+/// `reader.g` reaches `publisher.ys` across the two objects' shared boundary — here, one object
+/// holding both modules, but the call is emitted exactly as it would be split across two: `g`
+/// calls `souther2.publisher$value$ys`, the same exported entry `reader` would import from a
+/// separate build of `publisher`, never a copy of `ys`'s own body inlined into `reader`'s object.
 #[test]
-fn a_published_value_call_is_also_refused_rather_than_silently_missing_it() {
-    let refused = object_for(PUBLISHED_VALUE).expect_err("this backend builds no value yet");
+fn a_behavior_answering_with_another_modules_published_value_runs_it_there() {
+    let harness: &str = r#"
+        #include <inttypes.h>
+        #include <stdint.h>
+        #include <stdio.h>
 
-    assert!(refused.downcast_ref::<NotLowered>().is_some(), "{refused}");
+        extern uint32_t g(int64_t *) __asm__("PREFIXsouther2.reader.g");
+
+        int main(void) {
+            int64_t out;
+            uint32_t status = g(&out);
+            if (status != 0) {
+                printf("aborted %u\n", status);
+                return 0;
+            }
+            int64_t *answered = (int64_t *) out;
+            printf("%" PRId64 "\n", answered[1]);
+            return 0;
+        }
+    "#;
+    let (_swept, built) = build("reader.o", PUBLISHED_VALUE, harness);
+    let answered = run(&built, &[]);
+
+    assert!(answered.status.success(), "the run ended: {answered:?}");
+    assert_eq!(String::from_utf8_lossy(&answered.stdout).trim(), "42");
+}
+
+fn build(object_name: &str, document: &str, harness: &str) -> (TempDir, PathBuf) {
+    let into = tempdir().expect("a directory to work in");
+    let into_path = into.path().to_path_buf();
+
+    let object = into_path.join(object_name);
+    fs::write(&object, object_for(document).expect("an object")).expect("the object written");
+
+    let harness_file = into_path.join("harness.c");
+    fs::write(&harness_file, harness.replace("PREFIX", PREFIX)).expect("the harness written");
+
+    let executable = into_path.join("run");
+    let linked = Command::new("cc")
+        .arg("-o")
+        .arg(&executable)
+        .arg(&harness_file)
+        .arg(&object)
+        .arg(RUNTIME)
+        .output()
+        .expect("a C compiler to link with");
+    assert!(
+        linked.status.success(),
+        "the link failed: {}",
+        String::from_utf8_lossy(&linked.stderr)
+    );
+    (into, executable)
+}
+
+fn run(executable: &Path, args: &[&str]) -> Output {
+    Command::new(executable).args(args).output().expect("the executable to run")
 }
 
 fn definition_body(
