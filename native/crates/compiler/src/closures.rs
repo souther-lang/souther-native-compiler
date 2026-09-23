@@ -21,16 +21,17 @@
 //! A `Node::Block`'s own type, its own parameters and its own body's type are three separate
 //! statements of one fact on the wire — `ProgramWriter` writes all three from one `Core.Block`, but
 //! nothing upstream holds them to each other the way one Java value would. This reads the document
-//! strictly, the same as `agrees_with_its_target` in the crate root does for a target and its local
-//! definition: every site's signature is checked against its own parameters and its own body's type
-//! once, here, at the point the site is built — not left for a lowering three call sites downstream
-//! to each rediscover, and not trusted on the strength of what a well-behaved writer would send. A
-//! document naming two sites under one `site` ordinal is the same kind of wrong: `ProgramWriter`
-//! promises the number is document-wide unique, but a promise from the other language is not a
-//! check on this side of the wire, so a duplicate is refused here rather than let the earlier site's
-//! plan silently answer for both.
+//! strictly, with the same two checks the crate root's `Read` holds a helper's and a value's
+//! signature to: every site's signature is checked against its own parameters and its own body's
+//! type once, here, at the point the site is built — not left for a lowering three call sites
+//! downstream to each rediscover, and not trusted on the strength of what a well-behaved writer
+//! would send. A document naming two sites under one `site` ordinal is the same kind of wrong:
+//! `ProgramWriter` promises the number is document-wide unique, but a promise from the other
+//! language is not a check on this side of the wire, so a duplicate is refused here rather than let
+//! the earlier site's plan silently answer for both.
 
 use crate::transport::{Definition, FnSignature, Node, Parameter, Program, Ty};
+use crate::{answers_what_its_signature_says, takes_what_its_signature_says};
 use anyhow::{Result, bail};
 use std::collections::{BTreeMap, HashSet};
 
@@ -165,24 +166,9 @@ impl<'p, 'a> Planner<'p, 'a> {
                          disagree about what a block is"
                     );
                 };
-                if fn_.takes.len() != parameters.len() {
-                    bail!(
-                        "closure site {site} is declared with {} parameters and a type naming {}: \
-                         `Node::Block.parameters` and its own `Ty::Fn.takes` are two statements of \
-                         one fact and this document's disagree",
-                        parameters.len(),
-                        fn_.takes.len()
-                    );
-                }
-                if fn_.answers.as_ref() != body.ty() {
-                    bail!(
-                        "closure site {site} answers {} at its own type and {} at its body's: \
-                         `Ty::Fn.answers` and `Node::Block.body`'s own type are two statements of \
-                         one fact and this document's disagree",
-                        fn_.answers.spelt(),
-                        body.ty().spelt()
-                    );
-                }
+                let what = format!("closure site {site}");
+                takes_what_its_signature_says(&what, parameters.len(), fn_.takes.len())?;
+                answers_what_its_signature_says(&what, &fn_.answers, body)?;
 
                 let already_there = self
                     .sites

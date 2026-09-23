@@ -765,3 +765,81 @@ fn a_body_answering_other_than_its_target_is_the_halves_disagreeing() {
     );
     is_the_halves_disagreeing(&document, "m.make");
 }
+
+/// What a helper answers is on its signature for every caller and on its body's root for the
+/// lowering, and the writer takes the first from the second. A `Bool` signature over an `Int` body
+/// would have the helper write eight bytes where each caller reads one.
+#[test]
+fn a_helper_answering_other_than_its_body_is_the_halves_disagreeing() {
+    let int = r#"{"prim":"INT"}"#;
+    let document = over("ADD", int, int).replace(
+        r#""answers":{"prim":"INT"}"#,
+        r#""answers":{"prim":"BOOL"}"#,
+    );
+    is_the_halves_disagreeing(&document, "calculation.f");
+}
+
+/// The same with one address and one number, which are one machine word each. Held to the types
+/// themselves and not to their widths, or a caller would read a number as where a value is kept.
+#[test]
+fn a_helper_answering_a_type_of_the_same_width_as_its_body_is_still_the_halves_disagreeing() {
+    let int = r#"{"prim":"INT"}"#;
+    let document = over("ADD", int, int).replace(
+        r#""answers":{"prim":"INT"}"#,
+        r#""answers":{"prim":"STRING"}"#,
+    );
+    is_the_halves_disagreeing(&document, "calculation.f");
+}
+
+/// A signature naming a type this backend has no layout for, over a body it does, is still two
+/// statements of one answer that disagree, and is refused as that: that the backend is behind on a
+/// `Decimal` is not what is wrong with this document.
+#[test]
+fn a_helper_answering_what_has_no_layout_over_a_body_that_has_one_is_the_halves_disagreeing() {
+    let int = r#"{"prim":"INT"}"#;
+    let document = over("ADD", int, int).replace(
+        r#""answers":{"prim":"INT"}"#,
+        r#""answers":{"prim":"DECIMAL"}"#,
+    );
+    is_the_halves_disagreeing(&document, "calculation.f");
+}
+
+/// A helper's parameter names and the types it takes are one list, written in one loop.
+#[test]
+fn a_helper_naming_more_parameters_than_it_takes_is_the_halves_disagreeing() {
+    let int = r#"{"prim":"INT"}"#;
+    let document =
+        over("ADD", int, int).replace(r#""parameters":["a","b"]"#, r#""parameters":["a","b","c"]"#);
+    is_the_halves_disagreeing(&document, "calculation.f");
+}
+
+/// What a value answers is what its body was checked to answer, crossed twice. A declared value
+/// and a number are both one word, so nothing on the machine would notice.
+#[test]
+fn a_value_answering_other_than_its_body_is_the_halves_disagreeing() {
+    let document = include_str!("values.transport.json").replace(
+        r#""name":"ks","handovers":[],"answers":{"declared":"m.P"}"#,
+        r#""name":"ks","handovers":[],"answers":{"prim":"INT"}"#,
+    );
+    is_the_halves_disagreeing(&document, "m.ks");
+}
+
+/// Two targets under one name would leave whichever was read last answering for both.
+#[test]
+fn two_targets_written_the_same_are_the_halves_disagreeing() {
+    let inner = r#"{"module":"m","name":"inner","is":"body","inputs":[{"is":"scalar","scalar":"INT"}],"output":{"is":"scalar","scalar":"INT"}}"#;
+    let document = composed_document().replace(
+        inner,
+        &format!("{inner},{}", inner.replace("INT}", "BOOL}")),
+    );
+    is_the_halves_disagreeing(&document, "m.inner");
+}
+
+/// Two local definitions under one name would have one checked against its target and the other
+/// defined.
+#[test]
+fn two_local_definitions_written_the_same_are_the_halves_disagreeing() {
+    let inner = r#"{"is":"body","declared":"m.inner","parameters":["a"],"publication":"kept","body":{"core":"read","binding":0,"type":{"prim":"INT"},"aborts":[]}}"#;
+    let document = composed_document().replace(inner, &format!("{inner},{inner}"));
+    is_the_halves_disagreeing(&document, "m.inner");
+}

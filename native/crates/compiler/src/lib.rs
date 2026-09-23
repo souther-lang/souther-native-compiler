@@ -143,6 +143,12 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
             program.transport
         );
     }
+    let Read {
+        declared,
+        targets,
+        locals,
+        closures,
+    } = Read::of(&program)?;
 
     let mut flags = settings::builder();
     // A call out of this object reaches its callee the way the platform's linker expects, which on
@@ -178,7 +184,6 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
     joining.returns.push(AbiParam::new(POINTER));
     let join_text = module.declare_function(STRING_CONCAT, Linkage::Import, &joining)?;
 
-    let declared = Declared::of(&program.declarations)?;
     let literals = Literals::default();
 
     // The token every declaration at home in this object is tagged by, defined whether anything
@@ -200,25 +205,11 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
         module.define_data(id, &token)?;
     }
 
-    // Every behavior the document names, by the key a reference to it says. Built once so a
-    // lookup here is one hash rather than a walk over every target the document carries — which
-    // repeating for every local definition, and now for every composition's every stage, would
-    // make quadratic in nothing this document did.
-    let targets = Targets::of(&program.behaviors);
-    for target in &program.behaviors {
-        if let transport::BoundaryOutput::Cases { ty, cases, form } = &target.output {
-            declared.settled(&target.declared(), cases, form)?;
-            declared.descends_to(&target.declared(), ty, cases)?;
-        }
-    }
-
-    // Every closure site the document holds, found once over the whole program, and the lifted
-    // function declared for each — before any body is defined, the same two-phase shape every
-    // other declaration here keeps. A site nested inside one body may be referenced from another
-    // (a closure returned from one function and applied by another), so nothing about defining a
-    // body may assume every site it itself needs was already declared by the time it runs; all of
-    // them are, because this runs before any of them does.
-    let closures = ClosureSites::of_program(&program)?;
+    // The lifted function for every closure site the document holds — declared before any body is
+    // defined, the same two-phase shape every other declaration here keeps. A site nested inside
+    // one body may be referenced from another (a closure returned from one function and applied by
+    // another), so nothing about defining a body may assume every site it itself needs was already
+    // declared by the time it runs; all of them are, because this runs before any of them does.
     let mut lifted: BTreeMap<usize, FuncId> = BTreeMap::new();
     for (&site, plan) in closures.iter() {
         let fn_ = plan.signature;
@@ -226,32 +217,6 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
         let symbol = format!("$closure${site}");
         let id = module.declare_function(&symbol, Linkage::Local, &signature)?;
         lifted.insert(site, id);
-    }
-
-    // Every local definition this object holds, by the name it defines — not only what the
-    // module declaring it says about the name, but the definition itself, because what a target
-    // says a name answers with and what its local definition actually is are two readings of one
-    // fact once `Composed` is a local definition too, and this driver reads a document strictly:
-    // the two are checked against each other below rather than one of them read on trust.
-    let mut locals: HashMap<&str, &Definition> = HashMap::new();
-    for written in &program.modules {
-        for definition in &written.definitions {
-            locals.insert(definition.declared(), definition);
-        }
-    }
-
-    // Every local definition this object holds agrees with what its own target says — checked
-    // once, exhaustively, from the local definition's side. The declaration loop below checks
-    // the other direction — that a target answering `Body` or `Composed` has a local definition
-    // at all — which is a different question: existence, not kind. Answered from this side and
-    // not folded into that loop, because that loop only ever visits a target whose `is` is
-    // already `Body` or `Composed`; a target answering `Injected`, `Elsewhere` or `Unwritten`
-    // that nonetheless has a local definition sitting under its name — the two halves disagreeing
-    // about the one thing that matters most, whether this object defines the name at all — would
-    // never reach it.
-    for (&name, &local) in &locals {
-        let target = targets.named(name)?;
-        agrees_with_its_target(name, target, local, &targets, &declared)?;
     }
 
     // Every function is declared before any is defined, because a body may reach one written
@@ -538,8 +503,6 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
             }
         }
         for example in examples {
-            let target = targets.named(&format!("{name}.{}", example.behavior))?;
-            answers_as_its_target_says(&target.declared(), &example.body, target, &declared)?;
             let signature = running_a_row(&targets, name, &example.behavior, call_conv)?;
             let symbol = example_symbol(name, &example.behavior, example.at);
             let id = *entries
@@ -659,6 +622,124 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
     Ok(module.finish().emit()?)
 }
 
+/// A document read strictly: every fact it states more than once held to itself, before anything
+/// is declared in the object or lowered.
+///
+/// The wire states some facts twice on purpose — what a name answers is on its target for every
+/// caller and on its body's root for the lowering, what a helper takes is its parameters and its
+/// `takes` — because a tree written for two readers carries each reader's copy. Upstream the two
+/// were one value; here they are two, and a backend that read one for the signature and the other
+/// for the code would write a function its callers read at another width. So each pair is
+/// checked here, once, and nothing below this asks which of the two to believe.
+///
+/// Checked and not worked out again: what a body answers is read off the body, and whether it is
+/// what its signature says is a comparison of two things the checker wrote, never a type rule of
+/// this side's own.
+///
+/// Before the code generator is even built, so that a document whose halves disagree is refused
+/// as that and not as whichever lowering this backend happens to lack for one of the two readings.
+struct Read<'a> {
+    declared: Declared<'a>,
+    targets: Targets<'a>,
+    /// Every local definition this object holds, by the name it defines.
+    locals: HashMap<&'a str, &'a Definition>,
+    /// Every closure site the document holds, found once over the whole program; each one's own
+    /// type is held to its parameters and its body as it is found.
+    closures: ClosureSites<'a>,
+}
+
+impl<'a> Read<'a> {
+    fn of(program: &'a Program) -> Result<Self> {
+        let declared = Declared::of(&program.declarations)?;
+        let targets = Targets::of(&program.behaviors)?;
+        for target in &program.behaviors {
+            if let transport::BoundaryOutput::Cases { ty, cases, form } = &target.output {
+                declared.settled(&target.declared(), cases, form)?;
+                declared.descends_to(&target.declared(), ty, cases)?;
+            }
+        }
+        let closures = ClosureSites::of_program(program)?;
+
+        let mut locals: HashMap<&str, &Definition> = HashMap::new();
+        for written in &program.modules {
+            for definition in &written.definitions {
+                if locals.insert(definition.declared(), definition).is_some() {
+                    bail!(
+                        "two local definitions are both written {}",
+                        definition.declared()
+                    );
+                }
+            }
+        }
+        // Checked from the local definition's side, exhaustively. The declaration loop in
+        // `object_for` asks the other direction — that a target answering `Body` or `Composed`
+        // has a local definition at all — which is existence and not kind; a target answering
+        // `Injected`, `Elsewhere` or `Unwritten` with a local definition under its name anyway
+        // never reaches that loop's arm for one.
+        for (&name, &local) in &locals {
+            let target = targets.named(name)?;
+            agrees_with_its_target(name, target, local, &targets, &declared)?;
+        }
+
+        for written in &program.modules {
+            for held in &written.helpers {
+                takes_what_its_signature_says(
+                    &held.declared,
+                    held.parameters.len(),
+                    held.takes.len(),
+                )?;
+                answers_what_its_signature_says(&held.declared, &held.answers, &held.body)?;
+            }
+            for value in &written.values {
+                answers_what_its_signature_says(&value.declared(), &value.answers, &value.body)?;
+            }
+            for example in &written.examples {
+                let target = targets.named(&format!("{}.{}", written.name, example.behavior))?;
+                answers_as_its_target_says(&target.declared(), &example.body, target, &declared)?;
+            }
+        }
+
+        Ok(Read {
+            declared,
+            targets,
+            locals,
+            closures,
+        })
+    }
+}
+
+/// Refuses a definition naming a different number of parameters from the types its signature
+/// takes: one list, crossed as names for the body and as types for the signature.
+fn takes_what_its_signature_says(what: &str, parameters: usize, takes: usize) -> Result<()> {
+    if parameters != takes {
+        bail!(
+            "{what} names {parameters} parameters and its signature takes {takes}: the two are \
+             one list crossed twice and this document's disagree"
+        );
+    }
+    Ok(())
+}
+
+/// Refuses a definition whose body answers a different type from the one its own signature says.
+///
+/// The same type and not a value of it, unlike [`answers_as_its_target_says`]. A helper's, a
+/// value's and a closure's answer are each written off the body they answer with, so the two can
+/// only be one type; a behavior's target states what the behavior was declared to answer, which a
+/// body may answer a case of. Nor a comparison of machine types: two declarations are both one
+/// address, and a caller reading one as the other would read the wrong fields at a width nothing
+/// objects to.
+fn answers_what_its_signature_says(what: &str, answers: &Ty, body: &Node) -> Result<()> {
+    if answers != body.ty() {
+        bail!(
+            "{what} answers {} at its signature and {} at its body: the two are one fact crossed \
+             twice and this document's disagree",
+            answers.spelt(),
+            body.ty().spelt()
+        );
+    }
+    Ok(())
+}
+
 /// Every behavior the document names, by the key a reference to it says.
 ///
 /// Built once and read by a hash rather than a walk, because a behavior a call reaches is asked
@@ -670,12 +751,15 @@ struct Targets<'a> {
 }
 
 impl<'a> Targets<'a> {
-    fn of(behaviors: &'a [Target]) -> Self {
+    fn of(behaviors: &'a [Target]) -> Result<Self> {
         let mut by_name = HashMap::with_capacity(behaviors.len());
         for target in behaviors {
-            by_name.insert(target.declared(), target);
+            let declared = target.declared();
+            if by_name.insert(declared.clone(), target).is_some() {
+                bail!("two behaviors are both written {declared}");
+            }
         }
-        Targets { by_name }
+        Ok(Targets { by_name })
     }
 
     /// The behavior a name in this document reaches, as the table of targets says it.
@@ -720,14 +804,7 @@ fn agrees_with_its_target(
                 parameters, body, ..
             },
         ) => {
-            if parameters.len() != target.inputs.len() {
-                bail!(
-                    "{name} names {} parameters in its body and takes {} at the target that \
-                     reaches it: the two halves disagree about what it takes",
-                    parameters.len(),
-                    target.inputs.len()
-                );
-            }
+            takes_what_its_signature_says(name, parameters.len(), target.inputs.len())?;
             answers_as_its_target_says(name, body, target, declared)
         }
         (
@@ -1124,7 +1201,7 @@ impl<'a> Declared<'a> {
     /// - a discriminated form's tag is a key no product case lays a field under, since the case's
     ///   fields and the tag stand in one object and one of the two would be lost.
     ///
-    /// Asked of every sum when the document is read, and of every answer union ([`object_for`]),
+    /// Asked of every sum when the document is read, and of every answer union ([`Read::of`]),
     /// so nothing downstream is handed a form and cases that disagree.
     fn settled(&self, owner: &str, cases: &[Case], form: &AlternativesForm) -> Result<()> {
         let mut not_a_unit = None;
