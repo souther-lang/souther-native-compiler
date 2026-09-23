@@ -18,13 +18,12 @@
 //! take no frame per level.
 
 use super::{
-    Declared, Literals, NO_ARM, POINTER, TRUSTED, call_reached, machine_type, not_lowered,
-    out_of_slot, text_in_the_object,
+    Declared, Literals, Lowered, NO_ARM, POINTER, TRUSTED, accepted, call_reached, machine_type,
+    not_lowered, out_of_slot, text_in_the_object,
 };
 use crate::transport::{
     AlternativesForm, BoundaryOutput, Case, CodecShape, Declaration, Field, LeafScalar, Prim, Ty,
 };
-use anyhow::{Result, bail};
 use cranelift::codegen::Context;
 use cranelift::codegen::ir::condcodes::IntCC;
 use cranelift::codegen::ir::{
@@ -61,7 +60,7 @@ pub(crate) struct Emitting<'a> {
 }
 
 /// Defines every entry in `boundaries`, and an encoder for each declaration one of them reaches.
-pub(crate) fn define(emitting: Emitting, boundaries: &[Boundary]) -> Result<()> {
+pub(crate) fn define(emitting: Emitting, boundaries: &[Boundary]) -> Lowered<()> {
     if boundaries.is_empty() {
         return Ok(());
     }
@@ -84,7 +83,7 @@ pub(crate) fn define(emitting: Emitting, boundaries: &[Boundary]) -> Result<()> 
         }
         signature.params.push(AbiParam::new(POINTER));
         signature.returns.push(AbiParam::new(types::I32));
-        let id = module.declare_function(&boundary.symbol, Linkage::Export, &signature)?;
+        let id = accepted(module.declare_function(&boundary.symbol, Linkage::Export, &signature));
 
         context.clear();
         context.func = Function::with_name_signature(UserFuncName::default(), signature);
@@ -127,7 +126,7 @@ pub(crate) fn define(emitting: Emitting, boundaries: &[Boundary]) -> Result<()> 
         builder.ins().return_(&[status]);
         builder.seal_all_blocks();
         builder.finalize(frontend);
-        module.define_function(id, context)?;
+        accepted(module.define_function(id, context));
     }
 
     while let Some(key) = encoders.pending.pop() {
@@ -152,7 +151,7 @@ pub(crate) fn define(emitting: Emitting, boundaries: &[Boundary]) -> Result<()> 
         builder.ins().return_(&[form]);
         builder.seal_all_blocks();
         builder.finalize(frontend);
-        module.define_function(id, context)?;
+        accepted(module.define_function(id, context));
     }
     Ok(())
 }
@@ -171,8 +170,8 @@ struct Externals {
 }
 
 impl Externals {
-    fn declare(module: &mut ObjectModule, call_conv: CallConv) -> Result<Self> {
-        let mut import = |name: &str, params: &[types::Type], returns: bool| -> Result<FuncId> {
+    fn declare(module: &mut ObjectModule, call_conv: CallConv) -> Lowered<Self> {
+        let mut import = |name: &str, params: &[types::Type], returns: bool| -> Lowered<FuncId> {
             let mut signature = ir::Signature::new(call_conv);
             for &param in params {
                 signature.params.push(AbiParam::new(param));
@@ -180,7 +179,11 @@ impl Externals {
             if returns {
                 signature.returns.push(AbiParam::new(POINTER));
             }
-            Ok(module.declare_function(name, Linkage::Import, &signature)?)
+            Ok(accepted(module.declare_function(
+                name,
+                Linkage::Import,
+                &signature,
+            )))
         };
         Ok(Externals {
             null: import(EXTERNAL_NULL, &[], true)?,
@@ -220,16 +223,16 @@ impl Encoders {
 
     /// The encoder for `declared`, declared the first time it is asked for and defined once every
     /// entry has been.
-    fn of(&mut self, module: &mut ObjectModule, declared: &str) -> Result<FuncId> {
+    fn of(&mut self, module: &mut ObjectModule, declared: &str) -> Lowered<FuncId> {
         if let Some(&id) = self.ids.get(declared) {
             return Ok(id);
         }
-        let id = module.declare_function(
+        let id = accepted(module.declare_function(
             &format!("$encode${declared}"),
             Linkage::Local,
             &self.signature(),
-        )?;
-        self.ids.insert(declared.to_string(), id);
+        ));
+        crate::index::unique(&mut self.ids, declared.to_string(), id);
         self.pending.push(declared.to_string());
         Ok(id)
     }
@@ -259,7 +262,7 @@ impl Writing<'_, '_> {
 
     /// A string written into the object, a literal of the runtime's own layout: a key, or a
     /// case's name.
-    fn literal(&mut self, text: &str) -> Result<ir::Value> {
+    fn literal(&mut self, text: &str) -> Lowered<ir::Value> {
         text_in_the_object(self.builder, self.module, self.literals, text)
     }
 
@@ -267,19 +270,19 @@ impl Writing<'_, '_> {
         self.call(self.externals.object, &[])
     }
 
-    fn put(&mut self, object: ir::Value, key: &str, item: ir::Value) -> Result<()> {
+    fn put(&mut self, object: ir::Value, key: &str, item: ir::Value) -> Lowered<()> {
         let key = self.literal(key)?;
         self.call_for_effect(self.externals.put, &[object, key, item]);
         Ok(())
     }
 
-    fn name(&mut self, name: &str) -> Result<ir::Value> {
+    fn name(&mut self, name: &str) -> Lowered<ir::Value> {
         let spelt = self.literal(name)?;
         Ok(self.call(self.externals.string, &[spelt]))
     }
 
     /// What an answer leaves as.
-    fn output(&mut self, output: &BoundaryOutput, answer: ir::Value) -> Result<ir::Value> {
+    fn output(&mut self, output: &BoundaryOutput, answer: ir::Value) -> Lowered<ir::Value> {
         match output {
             BoundaryOutput::Scalar { scalar } => self.scalar(*scalar, answer),
             BoundaryOutput::Nominal { declared } => self.named(declared, answer),
@@ -293,7 +296,7 @@ impl Writing<'_, '_> {
         }
     }
 
-    fn scalar(&mut self, scalar: LeafScalar, value: ir::Value) -> Result<ir::Value> {
+    fn scalar(&mut self, scalar: LeafScalar, value: ir::Value) -> Lowered<ir::Value> {
         match scalar.prim() {
             Prim::Int => Ok(self.call(self.externals.int, &[value])),
             Prim::Bool => Ok(self.call(self.externals.truth, &[value])),
@@ -305,13 +308,13 @@ impl Writing<'_, '_> {
         }
     }
 
-    fn named(&mut self, declared: &str, value: ir::Value) -> Result<ir::Value> {
+    fn named(&mut self, declared: &str, value: ir::Value) -> Lowered<ir::Value> {
         let encoder = self.encoders.of(self.module, declared)?;
         Ok(self.call(encoder, &[value]))
     }
 
     /// A value standing where it has no key of its own: an absent one is written `null`.
-    fn value(&mut self, shape: &CodecShape, value: ir::Value) -> Result<ir::Value> {
+    fn value(&mut self, shape: &CodecShape, value: ir::Value) -> Lowered<ir::Value> {
         match shape {
             CodecShape::Scalar { scalar } => self.scalar(*scalar, value),
             CodecShape::Named { declared } => self.named(declared, value),
@@ -348,7 +351,7 @@ impl Writing<'_, '_> {
         name: &str,
         shape: &CodecShape,
         slot: ir::Value,
-    ) -> Result<()> {
+    ) -> Lowered<()> {
         let CodecShape::OptionOf { present } = shape else {
             let value = out_of_slot(self.builder, slot, machine_type(&shape.ty())?);
             let form = self.value(shape, value)?;
@@ -370,7 +373,7 @@ impl Writing<'_, '_> {
     }
 
     /// What a present optional holds, read out of its slot the way any value is.
-    fn held(&mut self, present: &CodecShape, holding: ir::Value) -> Result<ir::Value> {
+    fn held(&mut self, present: &CodecShape, holding: ir::Value) -> Lowered<ir::Value> {
         let slot = self
             .builder
             .ins()
@@ -384,7 +387,12 @@ impl Writing<'_, '_> {
 
     /// Every field of a value, put into an object this function made, in the order they are laid
     /// out.
-    fn fields_into(&mut self, object: ir::Value, fields: &[Field], value: ir::Value) -> Result<()> {
+    fn fields_into(
+        &mut self,
+        object: ir::Value,
+        fields: &[Field],
+        value: ir::Value,
+    ) -> Lowered<()> {
         for (at, field) in fields.iter().enumerate() {
             let slot = self
                 .builder
@@ -396,8 +404,8 @@ impl Writing<'_, '_> {
     }
 
     /// What a value of a declaration is written as on its own, wherever it stands.
-    fn declaration(&mut self, key: &str, value: ir::Value) -> Result<ir::Value> {
-        match self.declared.shape(key)? {
+    fn declaration(&mut self, key: &str, value: ir::Value) -> Lowered<ir::Value> {
+        match self.declared.laid(key) {
             Declaration::Product { fields, .. } => {
                 let object = self.object();
                 self.fields_into(object, fields, value)?;
@@ -423,7 +431,7 @@ impl Writing<'_, '_> {
         cases: &[Case],
         form: &AlternativesForm,
         value: ir::Value,
-    ) -> Result<ir::Value> {
+    ) -> Lowered<ir::Value> {
         let which = self
             .builder
             .ins()
@@ -447,7 +455,7 @@ impl Writing<'_, '_> {
             self.builder.ins().brif(same, this, &[], next, &[]);
 
             self.builder.switch_to_block(this);
-            let shape = self.declared.shape(key)?;
+            let shape = self.declared.laid(key);
             let form = self.case(key, shape, form, value)?;
             self.builder.ins().jump(written, &[form.into()]);
             self.builder.switch_to_block(next);
@@ -473,19 +481,18 @@ impl Writing<'_, '_> {
         shape: &Declaration,
         form: &AlternativesForm,
         value: ir::Value,
-    ) -> Result<ir::Value> {
+    ) -> Lowered<ir::Value> {
         match (form, shape) {
-            (_, Declaration::Sum { .. }) => bail!(
-                "{key} stands as a case and is a sum, where the checker answers the cases a sum \
-                 descends to"
-            ),
+            (_, Declaration::Sum { .. }) => {
+                unreachable!("`Declared::settled` refused a sum standing as a case of {key}")
+            }
             (AlternativesForm::Enumeration, Declaration::Unit { .. }) => self.name(shape.name()),
-            // Refused when the document was read (`Declared::of`), so reaching here is this
-            // compiler's own mistake and not the document's.
             (
                 AlternativesForm::Enumeration,
                 Declaration::Product { .. } | Declaration::Newtype { .. },
-            ) => bail!("{key} carries fields and was admitted as a case of an enumeration"),
+            ) => unreachable!(
+                "`Declared::settled` refused {key}, which has fields, in an enumeration"
+            ),
             (AlternativesForm::Discriminated { tag, .. }, Declaration::Product { fields, .. }) => {
                 let object = self.object();
                 let name = self.name(shape.name())?;

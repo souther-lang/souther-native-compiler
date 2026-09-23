@@ -24,18 +24,29 @@ fn document(op: &str, ty: &str) -> String {
 /// Held by a helper and not a behavior. A behavior's parameters are boundary shapes, and a tuple
 /// or an optional is not one; a helper takes any type, and is lowered by the same walk.
 fn over(op: &str, left: &str, right: &str) -> String {
+    // What the operator answers: a truth for a comparison, and otherwise what it is written over.
+    let answers = match op {
+        "EQ" | "NE" | "LT" | "LE" | "GT" | "GE" | "AND" | "OR" => r#"{"prim":"BOOL"}"#,
+        "DIV" => r#"{"prim":"RATIONAL"}"#,
+        _ => left,
+    };
+    over_answering(op, left, right, answers)
+}
+
+/// The same, answering what is given. `counting.Amount` is declared, a newtype over an `Int`.
+fn over_answering(op: &str, left: &str, right: &str, answers: &str) -> String {
     let read =
         |at: u32, ty: &str| format!(r#"{{"core":"read","binding":{at},"type":{ty},"aborts":[]}}"#);
     let body = format!(
-        r#"{{"core":"binary","op":"{op}","left":{},"right":{},"type":{left},"aborts":[]}}"#,
+        r#"{{"core":"binary","op":"{op}","left":{},"right":{},"type":{answers},"aborts":[]}}"#,
         read(0, left),
         read(1, right)
     );
     let held = format!(
-        r#"{{"declared":"calculation.f","parameters":["a","b"],"takes":[{left},{right}],"answers":{left},"body":{body}}}"#
+        r#"{{"declared":"calculation.f","parameters":[{{"name":"a","type":{left}}},{{"name":"b","type":{right}}}],"body":{body}}}"#
     );
     format!(
-        r#"{{"transport":9,"declarations":[],"behaviors":[],"modules":[{{"name":"calculation","helpers":[{held}],"values":[],"entries":[],"definitions":[],"examples":[]}}]}}"#
+        r#"{{"transport":10,"declarations":[{{"module":"counting","name":"Amount","by":"amodule","is":"newtype","field":{{"name":"value","codec":{{"is":"scalar","scalar":"INT"}}}},"invariants":0}}],"behaviors":[],"modules":[{{"name":"calculation","helpers":[{held}],"values":[],"entries":[],"definitions":[],"examples":[]}}]}}"#
     )
 }
 
@@ -49,7 +60,7 @@ fn an_operator_with_no_lowering_is_not_lowered_rather_than_unreadable() {
         refused.downcast_ref::<NotLowered>().is_some(),
         "read as something other than a lowering this driver has not got: {refused}"
     );
-    assert!(refused.to_string().contains('/'), "{refused}");
+    assert!(refused.to_string().contains("Rational"), "{refused}");
 }
 
 /// The same for a primitive. A type with no machine representation yet is a lowering this driver
@@ -65,65 +76,54 @@ fn a_primitive_with_no_representation_is_not_lowered() {
     assert!(refused.to_string().contains("Decimal"), "{refused}");
 }
 
-/// A sum of two values of a declared type, which is the address each of them is held as.
+/// Refused, and refused as not lowered: what is under test is that nothing is emitted for it.
 ///
-/// No Souther source produces this: what crosses for `a + b` over a newtype is a construction of
-/// the newtype over the sum of the two wrapped numbers, so the operands arrive as `Int`. Written
-/// by hand for that reason — the arm that answers it is what keeps this driver from depending on
-/// an arrangement made on the other side of the transport, and an `iadd` over two addresses would
-/// have answered an address that points at neither.
-#[test]
-fn a_sum_of_two_addresses_is_the_halves_disagreeing() {
-    let amount = r#"{"declared":"counting.Amount"}"#;
-    let document = over("ADD", amount, amount);
-
-    let refused = object_for(&document).expect_err("nothing here adds two addresses");
-
-    assert!(
-        refused.downcast_ref::<NotLowered>().is_none(),
-        "the halves disagreeing is not the backend being behind: {refused}"
-    );
-    assert!(refused.to_string().contains("counting.Amount"), "{refused}");
+/// Every pair below is one the checker never writes an operator over, and one this backend has no
+/// lowering for. Which of the two a refusal is would take the checker's decision about the pair,
+/// and the checked tree does not record it (souther-lang/souther#1919), so until it does they are
+/// refused the way any pair with no lowering is.
+fn is_refused_and_not_lowered(document: &str, naming: &str) {
+    let refused = object_for(document).expect_err("nothing is emitted for this pair");
+    assert!(refused.downcast_ref::<NotLowered>().is_some(), "{refused}");
+    assert!(refused.to_string().contains(naming), "{refused}");
 }
 
-/// The same with a number on one side, which is the pair a reading of the left operand alone lets
-/// through. Both orders, because a reading that answered from either one of them answers one of
-/// these and not the other.
+/// A sum of two values of a declared type, answering one.
+///
+/// No Souther source produces this: what crosses for `a + b` over a newtype is a construction of
+/// the newtype over the sum of the two wrapped numbers, and a sum answers a number wherever the
+/// checker builds one. An `iadd` over two addresses would have answered an address that points at
+/// neither.
 #[test]
-fn a_sum_of_a_number_and_an_address_is_the_halves_disagreeing_whichever_side_it_is_on() {
+fn a_sum_answering_other_than_a_number_is_the_halves_disagreeing() {
+    let amount = r#"{"declared":"counting.Amount"}"#;
+    let refused = object_for(&over("ADD", amount, amount)).expect_err("a sum answers a number");
+    assert!(refused.downcast_ref::<NotLowered>().is_none(), "{refused}");
+    assert!(refused.to_string().contains("calculation.f"), "{refused}");
+}
+
+/// A number and an address added, answering a number, in both orders: a reading of either operand
+/// alone lets one of them through.
+#[test]
+fn a_sum_of_a_number_and_an_address_is_refused_whichever_side_it_is_on() {
     let amount = r#"{"declared":"counting.Amount"}"#;
     let number = r#"{"prim":"INT"}"#;
-
-    for document in [over("ADD", number, amount), over("ADD", amount, number)] {
-        let refused = object_for(&document).expect_err("nothing here adds a number to an address");
-
-        assert!(
-            refused.downcast_ref::<NotLowered>().is_none(),
-            "the halves disagreeing is not the backend being behind: {refused}"
+    for (left, right) in [(number, amount), (amount, number)] {
+        is_refused_and_not_lowered(
+            &over_answering("ADD", left, right, number),
+            "counting.Amount",
         );
     }
 }
 
-/// An ordering over two tuples, and over two optionals.
-///
-/// What the language orders is a number, text, an amount, a moment, an enumeration and a newtype
-/// over one of those. A tuple and an optional have equality and no order, so `<` over either is
-/// the halves disagreeing — the same answer a `Bool` gets, and the reason is the same.
-///
-/// Written by hand because the checker refuses both, which is what makes them the disagreement
-/// they are read as here.
+/// An ordering over two tuples, and over two optionals: a tuple and an optional have equality and
+/// no order.
 #[test]
-fn an_ordering_over_what_has_equality_and_no_order_is_the_halves_disagreeing() {
+fn an_ordering_over_what_has_equality_and_no_order_is_refused() {
     let pair = r#"{"tuple":[{"prim":"INT"},{"prim":"INT"}]}"#;
     let held = r#"{"option":{"prim":"INT"}}"#;
-
     for ty in [pair, held] {
-        let refused = object_for(&over("LT", ty, ty)).expect_err("nothing orders these");
-
-        assert!(
-            refused.downcast_ref::<NotLowered>().is_none(),
-            "the halves disagreeing is not the backend being behind: {refused}"
-        );
+        is_refused_and_not_lowered(&over("LT", ty, ty), "<");
     }
 }
 
@@ -144,23 +144,11 @@ fn equality_over_what_has_equality_and_no_order_is_a_lowering_this_has_not_got()
     }
 }
 
-/// An ordering over two truths, which is not a program the language admits: `Bool` is not one of
-/// the ordered types. So it is the two halves disagreeing about what they are saying to each other
-/// rather than this backend being behind, and the author of the program is not the one who can do
-/// anything about it.
-///
-/// There is no Souther source that produces this, which is why it is written as a document by
-/// hand. What it holds is the arm that answers it — a comparison decided by the machine width
-/// would have run it as an `icmp` over two bytes and answered something.
+/// An ordering over two truths: `Bool` is not one of the ordered types. A comparison decided by
+/// the machine width would have run it as an `icmp` over two bytes and answered something.
 #[test]
-fn an_ordering_over_two_truths_is_the_halves_disagreeing_and_not_a_lowering_this_has_not_got() {
-    let refused = object_for(&document("LT", "BOOL")).expect_err("nothing orders two truths");
-
-    assert!(
-        refused.downcast_ref::<NotLowered>().is_none(),
-        "the halves disagreeing is not the backend being behind: {refused}"
-    );
-    assert!(refused.to_string().contains("Bool"), "{refused}");
+fn an_ordering_over_two_truths_is_refused() {
+    is_refused_and_not_lowered(&document("LT", "BOOL"), "Bool");
 }
 
 /// A field nothing here names is the writer saying something this driver has no idea it was told.
@@ -184,11 +172,11 @@ fn a_field_this_driver_does_not_know_is_refused_rather_than_skipped() {
 /// would be reading a document written to mean something else.
 #[test]
 fn a_transport_from_another_version_is_refused() {
-    let later = document("ADD", "INT").replace(r#""transport":9"#, r#""transport":10"#);
+    let later = document("ADD", "INT").replace(r#""transport":10"#, r#""transport":11"#);
 
     let refused = object_for(&later).expect_err("a version this does not read");
 
-    assert!(refused.to_string().contains("10"), "{refused}");
+    assert!(refused.to_string().contains("11"), "{refused}");
 }
 
 /// A behavior's parameter is a boundary shape, and a function is not one: the language gives a
@@ -198,7 +186,7 @@ fn a_transport_from_another_version_is_refused() {
 #[test]
 fn a_function_at_a_behaviors_boundary_is_not_a_document_this_driver_reads() {
     let document = concat!(
-        r#"{"transport":9,"declarations":[],"#,
+        r#"{"transport":10,"declarations":[],"#,
         r#""behaviors":[{"module":"m","name":"choose","is":"injected","inputs":["#,
         r#"{"fn":{"takes":[{"prim":"INT"}],"answers":{"prim":"INT"}}}],"#,
         r#""output":{"is":"scalar","scalar":"INT"}}],"#,
@@ -219,7 +207,7 @@ fn a_function_at_a_behaviors_boundary_is_not_a_document_this_driver_reads() {
 #[test]
 fn an_answer_that_is_a_list_is_read_and_not_lowered() {
     let document = concat!(
-        r#"{"transport":9,"declarations":[],"#,
+        r#"{"transport":10,"declarations":[],"#,
         r#""behaviors":[{"module":"m","name":"many","is":"injected","inputs":[],"#,
         r#""output":{"is":"listof","element":{"is":"scalar","scalar":"INT"}}}],"#,
         r#""modules":[{"name":"m","helpers":[],"values":[],"entries":[],"definitions":[],"examples":[]}]}"#,
@@ -240,7 +228,7 @@ fn an_answer_that_is_a_list_is_read_and_not_lowered() {
 #[test]
 fn an_answer_with_a_primitive_among_its_cases_is_read_and_not_lowered() {
     let document = concat!(
-        r#"{"transport":9,"declarations":["#,
+        r#"{"transport":10,"declarations":["#,
         r#"{"module":"m","name":"NotFound","by":"amodule","is":"unit"}],"#,
         r#""behaviors":[{"module":"m","name":"lengthOf","is":"injected","inputs":[],"#,
         r#""output":{"is":"cases","type":{"union":[{"is":"primitive","prim":"INT"},"#,
@@ -267,7 +255,7 @@ fn an_answer_with_a_primitive_among_its_cases_is_read_and_not_lowered() {
 #[test]
 fn a_published_value_reached_at_two_different_types_is_the_halves_disagreeing() {
     let document = concat!(
-        r#"{"transport":9,"declarations":[],"#,
+        r#"{"transport":10,"declarations":[],"#,
         r#""behaviors":[{"module":"m","name":"f","is":"body","inputs":[],"output":{"is":"scalar","scalar":"INT"}},"#,
         r#"{"module":"m","name":"g","is":"body","inputs":[],"output":{"is":"scalar","scalar":"BOOL"}}],"#,
         r#""modules":[{"name":"m","helpers":[],"values":[],"entries":[],"definitions":["#,
@@ -294,13 +282,13 @@ fn a_published_value_reached_at_two_different_types_is_the_halves_disagreeing() 
 /// tests below has one place to make disagree with the other.
 fn composed_document() -> String {
     concat!(
-        r#"{"transport":9,"declarations":[],"#,
+        r#"{"transport":10,"declarations":[],"#,
         r#""behaviors":[{"module":"m","name":"inner","is":"body","inputs":[{"is":"scalar","scalar":"INT"}],"output":{"is":"scalar","scalar":"INT"}},"#,
         r#"{"module":"m","name":"outer","is":"composed","inputs":[{"is":"scalar","scalar":"INT"}],"output":{"is":"scalar","scalar":"INT"}}],"#,
         r#""modules":[{"name":"m","helpers":[],"values":[],"entries":[],"definitions":["#,
         r#"{"is":"body","declared":"m.inner","parameters":["a"],"publication":"kept","body":{"core":"read","binding":0,"type":{"prim":"INT"},"aborts":[]}},"#,
         r#"{"is":"composed","declared":"m.outer","publication":"published","stages":["#,
-        r#"{"behavior":"m.inner","answers":{"prim":"INT"},"routing":{"is":"always"}}],"answers":{"prim":"INT"}}"#,
+        r#"{"behavior":"m.inner","routing":{"is":"always"}}]}"#,
         r#"],"examples":[]}]}"#,
     )
     .to_string()
@@ -358,48 +346,6 @@ fn a_local_definition_whose_target_says_unwritten_is_the_halves_disagreeing() {
          to: {refused}"
     );
     assert!(refused.to_string().contains("m.outer"), "{refused}");
-}
-
-/// A composition's own `answers` and its target's `answers` are the same fact, crossed twice —
-/// once as what the composition itself carries, once as what every caller reaching it by name is
-/// told. A document where they disagree is refused rather than read as whichever one happened to
-/// be asked.
-#[test]
-fn a_compositions_own_answer_disagreeing_with_its_target_is_the_halves_disagreeing() {
-    let document = composed_document().replace(
-        r#"],"answers":{"prim":"INT"}}],"examples":[]}]}"#,
-        r#"],"answers":{"prim":"BOOL"}}],"examples":[]}]}"#,
-    );
-
-    let refused = object_for(&document)
-        .expect_err("a composition answering BOOL where its target answers INT");
-
-    assert!(
-        refused.downcast_ref::<NotLowered>().is_none(),
-        "the halves disagreeing is not the backend being behind: {refused}"
-    );
-    assert!(refused.to_string().contains("m.outer"), "{refused}");
-}
-
-/// A stage's own `answers` and the `answers` of the target it names are likewise one fact crossed
-/// twice. Nothing here recomputes a stage's answer from its behavior — the checker already
-/// settled it — but a stage that spelt it differently from the target it reaches is not read as
-/// either spelling; it is refused.
-#[test]
-fn a_stages_own_answer_disagreeing_with_the_target_it_reaches_is_the_halves_disagreeing() {
-    let document = composed_document().replace(
-        r#""behavior":"m.inner","answers":{"prim":"INT"}"#,
-        r#""behavior":"m.inner","answers":{"prim":"BOOL"}"#,
-    );
-
-    let refused = object_for(&document)
-        .expect_err("a stage answering BOOL where the target it reaches answers INT");
-
-    assert!(
-        refused.downcast_ref::<NotLowered>().is_none(),
-        "the halves disagreeing is not the backend being behind: {refused}"
-    );
-    assert!(refused.to_string().contains("m.inner"), "{refused}");
 }
 
 /// The first stage of a composition takes the composition's own arguments, so nothing is routed
@@ -462,13 +408,13 @@ fn a_compositions_own_takes_disagreeing_with_its_first_stages_target_is_the_halv
 fn an_applys_answer_disagreeing_with_its_functions_own_type_is_the_halves_disagreeing_even_though_both_are_pointers()
  {
     let document = concat!(
-        r#"{"transport":9,"declarations":["#,
+        r#"{"transport":10,"declarations":["#,
         r#"{"module":"m","name":"A","by":"amodule","is":"unit"},"#,
         r#"{"module":"m","name":"B","by":"amodule","is":"unit"}],"#,
         r#""behaviors":[],"#,
         r#""modules":[{"name":"m","#,
-        r#""helpers":[{"declared":"m.f","parameters":["f"],"#,
-        r#""takes":[{"fn":{"takes":[],"answers":{"declared":"m.A"}}}],"answers":{"declared":"m.B"},"#,
+        r#""helpers":[{"declared":"m.f","#,
+        r#""parameters":[{"name":"f","type":{"fn":{"takes":[],"answers":{"declared":"m.A"}}}}],"#,
         r#""body":{"core":"apply","function":{"core":"read","binding":0,"#,
         r#""type":{"fn":{"takes":[],"answers":{"declared":"m.A"}}},"aborts":[]},"#,
         r#""arguments":[],"type":{"declared":"m.B"},"aborts":[]}}],"#,
@@ -494,7 +440,7 @@ fn an_applys_answer_disagreeing_with_its_functions_own_type_is_the_halves_disagr
 #[test]
 fn a_published_answer_with_a_decimal_field_is_not_lowered_where_it_is_written() {
     let document = concat!(
-        r#"{"transport":9,"declarations":["#,
+        r#"{"transport":10,"declarations":["#,
         r#"{"module":"m","name":"Priced","by":"amodule","is":"product","#,
         r#""fields":[{"name":"amount","codec":{"is":"scalar","scalar":"DECIMAL"}}],"invariants":0}],"#,
         r#""behaviors":[{"module":"m","name":"same","is":"body","#,
@@ -523,7 +469,7 @@ fn a_published_answer_with_a_decimal_field_is_not_lowered_where_it_is_written() 
 fn answering_a_sum(case_fields: &str, form: &str) -> String {
     format!(
         concat!(
-            r#"{{"transport":9,"declarations":["#,
+            r#"{{"transport":10,"declarations":["#,
             r#"{{"module":"m","name":"C","by":"amodule","is":"product","fields":{},"invariants":0}},"#,
             r#"{{"module":"m","name":"S","by":"amodule","is":"sum","#,
             r#""cases":[{{"is":"declared","declared":"m.C"}}],"form":{}}}],"#,
@@ -583,7 +529,7 @@ fn a_discriminated_form_with_one_key_for_tag_and_contents_is_the_halves_disagree
 #[test]
 fn a_construction_disagreeing_with_what_its_field_carries_is_the_halves_disagreeing() {
     let document = concat!(
-        r#"{"transport":9,"declarations":["#,
+        r#"{"transport":10,"declarations":["#,
         r#"{"module":"m","name":"P","by":"amodule","is":"product","#,
         r#""fields":[{"name":"n","codec":{"is":"scalar","scalar":"STRING"}}],"invariants":0}],"#,
         r#""behaviors":[{"module":"m","name":"make","is":"body","inputs":[],"#,
@@ -610,7 +556,7 @@ fn a_construction_disagreeing_with_what_its_field_carries_is_the_halves_disagree
 fn building(codec: &str, value: &str) -> String {
     format!(
         concat!(
-            r#"{{"transport":9,"declarations":["#,
+            r#"{{"transport":10,"declarations":["#,
             r#"{{"module":"m","name":"A","by":"amodule","is":"unit"}},"#,
             r#"{{"module":"m","name":"B","by":"amodule","is":"unit"}},"#,
             r#"{{"module":"m","name":"U","by":"amodule","is":"unit"}},"#,
@@ -734,7 +680,7 @@ fn a_case_with_a_field_under_the_tags_key_is_the_halves_disagreeing() {
 #[test]
 fn an_answer_whose_cases_are_not_what_its_type_descends_to_is_the_halves_disagreeing() {
     let document = concat!(
-        r#"{"transport":9,"declarations":["#,
+        r#"{"transport":10,"declarations":["#,
         r#"{"module":"m","name":"A","by":"amodule","is":"unit"},"#,
         r#"{"module":"m","name":"B","by":"amodule","is":"unit"}],"#,
         r#""behaviors":[{"module":"m","name":"either","is":"injected","inputs":[],"#,
@@ -764,4 +710,24 @@ fn a_body_answering_other_than_its_target_is_the_halves_disagreeing() {
         r#""output":{"is":"nominal","declared":"m.U"}"#,
     );
     is_the_halves_disagreeing(&document, "m.make");
+}
+
+/// Two targets under one name would leave whichever was read last answering for both.
+#[test]
+fn two_targets_written_the_same_are_the_halves_disagreeing() {
+    let inner = r#"{"module":"m","name":"inner","is":"body","inputs":[{"is":"scalar","scalar":"INT"}],"output":{"is":"scalar","scalar":"INT"}}"#;
+    let document = composed_document().replace(
+        inner,
+        &format!("{inner},{}", inner.replace("INT}", "BOOL}")),
+    );
+    is_the_halves_disagreeing(&document, "m.inner");
+}
+
+/// Two local definitions under one name would have one checked against its target and the other
+/// defined.
+#[test]
+fn two_local_definitions_written_the_same_are_the_halves_disagreeing() {
+    let inner = r#"{"is":"body","declared":"m.inner","parameters":["a"],"publication":"kept","body":{"core":"read","binding":0,"type":{"prim":"INT"},"aborts":[]}}"#;
+    let document = composed_document().replace(inner, &format!("{inner},{inner}"));
+    is_the_halves_disagreeing(&document, "m.inner");
 }

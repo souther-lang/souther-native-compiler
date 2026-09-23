@@ -82,7 +82,7 @@ public final class ProgramWriter {
      * written moves, so that a driver and a writer that disagree say so rather than producing an
      * object that is wrong quietly.
      */
-    public static final int TRANSPORT_VERSION = 9;
+    public static final int TRANSPORT_VERSION = 10;
 
     private final CheckedProgram program;
 
@@ -590,20 +590,22 @@ public final class ProgramWriter {
      * a helper is called here is where it is declared and what it is holding is which module is
      * holding it. Two modules holding one helper hold a copy each, which is what the language says
      * a published helper is.
+     *
+     * <p>Each parameter is written once, its name and its type together, because they are one
+     * {@link CheckedHelper.Parameter}; written as two lists they would be two statements of how many
+     * there are. What the helper answers is not written at all: it is its body's type, which the body
+     * already carries, and a second copy would only be something a reader has to hold to the first.
      */
     private String helper(CheckedHelper helper) {
         Bindings bindings = new Bindings();
         StringJoiner parameters = new StringJoiner(",", "[", "]");
-        StringJoiner takes = new StringJoiner(",", "[", "]");
         for (CheckedHelper.Parameter parameter : helper.parameters()) {
             bindings.number(parameter.binder().binding());
-            parameters.add(quoted(parameter.binder().name()));
-            takes.add(type(parameter.type()));
+            parameters.add("{\"name\":" + quoted(parameter.binder().name())
+                    + ",\"type\":" + type(parameter.type()) + "}");
         }
         return "{\"declared\":" + quoted(reached(helper.declares()))
                 + ",\"parameters\":" + parameters
-                + ",\"takes\":" + takes
-                + ",\"answers\":" + type(helper.body().type())
                 + ",\"body\":" + core(helper.body(), bindings)
                 + "}";
     }
@@ -625,6 +627,9 @@ public final class ProgramWriter {
      * CheckedModule#valueEntries()}" as an invariant, so a field here would be the same fact
      * written twice — and a reader wanting to know would ask {@link CheckedModule#valueEntries()}
      * or {@link CheckedModule#publicationOfValue}, never this.
+     *
+     * <p>Nor with what it answers: that is {@link CheckedValue#answers()}, which is its body's type,
+     * and the body carries it already.
      */
     private String value(CheckedValue value) {
         Bindings bindings = new Bindings();
@@ -639,7 +644,6 @@ public final class ProgramWriter {
         return "{\"module\":" + quoted(value.name().module())
                 + ",\"name\":" + quoted(value.name().name())
                 + ",\"handovers\":" + handovers
-                + ",\"answers\":" + type(value.answers())
                 + ",\"body\":" + core(value.body(), bindings)
                 + "}";
     }
@@ -791,6 +795,10 @@ public final class ProgramWriter {
      * <p>Registered the way a body's calls are: a stage's behavior may be one nothing in this
      * document's bodies ever calls — a composition's own signature is enough to name it — so it is
      * met here or nowhere, the same as a body's {@link Core.Call} meets what it reaches.
+     *
+     * <p>What the composition answers is not written here, and neither is what each stage answers:
+     * both are the answers of behaviors the table of targets already carries, the composition's own
+     * and each stage's, and a copy beside them would be a second statement to hold to the first.
      */
     private String composed(CheckedModule module, CheckedBehavior behavior,
                             CheckedImplementation.Composed written) {
@@ -803,15 +811,13 @@ public final class ProgramWriter {
                 + quoted(module.name() + "." + behavior.name().name())
                 + ",\"publication\":" + quoted(publication(module.publicationOf(behavior.name())))
                 + ",\"stages\":" + stages
-                + ",\"answers\":" + type(composition.answers())
                 + "}";
     }
 
-    /** One stage of a composition: the behavior it applies, what it answers, and when. */
+    /** One stage of a composition: the behavior it applies, and when. */
     private String stage(Composition.Stage stage) {
         behaviorsMet.add(stage.behavior());
         return "{\"behavior\":" + quoted(reached(stage.behavior()))
-                + ",\"answers\":" + type(stage.answers())
                 + ",\"routing\":" + routing(stage.routing())
                 + "}";
     }
@@ -952,11 +958,16 @@ public final class ProgramWriter {
      * was in scope where it stands and a binding cannot be read in its own value. Written the other
      * way round, a value mentioning a name the binder shadows would cross as a read of the binder
      * it is still being computed for.
+     *
+     * <p>What the binding is in force at is written beside it, and not left to the value's type or to
+     * a read of the binder: the two can differ (an annotation, or a sum the value is one case of), and
+     * every read of the binding is typed by this and not by the value.
      */
     private String letIn(Core.LetIn it, Bindings bindings) {
         String value = core(it.value(), bindings);
         int number = bindings.number(it.binder().binding());
         return "{\"core\":\"let\",\"binding\":" + number
+                + ",\"binds\":" + type(it.bindType())
                 + ",\"value\":" + value
                 + ",\"body\":" + core(it.body(), bindings)
                 + ",\"type\":" + type(it.type()) + ",\"aborts\":" + aborts(it) + "}";

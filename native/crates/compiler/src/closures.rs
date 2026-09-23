@@ -18,19 +18,17 @@
 //! top-level body, the binding is simply a live value already in scope there. Which of those it is
 //! is not asked here — this only says what each site reaches, in the order it was first reached.
 //!
-//! A `Node::Block`'s own type, its own parameters and its own body's type are three separate
-//! statements of one fact on the wire — `ProgramWriter` writes all three from one `Core.Block`, but
-//! nothing upstream holds them to each other the way one Java value would. This reads the document
-//! strictly, the same as `agrees_with_its_target` in the crate root does for a target and its local
-//! definition: every site's signature is checked against its own parameters and its own body's type
-//! once, here, at the point the site is built — not left for a lowering three call sites downstream
-//! to each rediscover, and not trusted on the strength of what a well-behaved writer would send. A
-//! document naming two sites under one `site` ordinal is the same kind of wrong: `ProgramWriter`
-//! promises the number is document-wide unique, but a promise from the other language is not a
-//! check on this side of the wire, so a duplicate is refused here rather than let the earlier site's
-//! plan silently answer for both.
+//! These plans are made inside `coherent`, before it reads the bodies, and nothing here checks
+//! whether a block's own type, its parameters and its body's type agree, or whether a read is typed
+//! as its binder. `coherent` does, after this, and hands the plans on only for a document where
+//! every one of those holds. So a capture's type, which a plan takes off a free read, is the type
+//! its binder was bound at by the time anything lowers it. A document naming two sites under one
+//! `site` ordinal is refused here: `ProgramWriter` promises the number is document-wide unique, but
+//! a promise from the other language is not a check on this side of the wire, and the earlier
+//! site's plan would otherwise answer for both.
 
-use crate::transport::{Definition, FnSignature, Node, Parameter, Program, Ty};
+use crate::index;
+use crate::transport::{FnSignature, Node, Parameter, Program, Ty};
 use anyhow::{Result, bail};
 use std::collections::{BTreeMap, HashSet};
 
@@ -52,10 +50,9 @@ pub struct Site<'a> {
     pub module: &'a str,
     pub parameters: &'a [Parameter],
     pub body: &'a Node,
-    /// What this site takes and answers, unwrapped from the block's own `Ty::Fn` once, here, and
-    /// checked against `parameters` and `body`'s own type at the same time (see this module's own
-    /// doc) — so every later reader of a `Site` reads an established fact instead of an unchecked
-    /// `Ty` it would otherwise have to unwrap and verify itself.
+    /// What this site takes and answers, unwrapped from the block's own `Ty::Fn` once, here. That
+    /// it agrees with `parameters` and with `body`'s own type is held by `coherent` before the plan
+    /// leaves it.
     pub signature: &'a FnSignature,
     /// In first-reached order — the order a closure's slots are laid out in, and the order the
     /// lifted function reads them back in.
@@ -71,24 +68,8 @@ pub struct ClosureSites<'a> {
 impl<'a> ClosureSites<'a> {
     pub fn of_program(program: &'a Program) -> Result<Self> {
         let mut sites = ClosureSites::default();
-        for written in &program.modules {
-            for held in &written.helpers {
-                Planner::new(&mut sites, &written.name).free(&held.body, &mut HashSet::new())?;
-            }
-            for value in &written.values {
-                Planner::new(&mut sites, &written.name).free(&value.body, &mut HashSet::new())?;
-            }
-            for entry in &written.entries {
-                Planner::new(&mut sites, &written.name).free(&entry.body, &mut HashSet::new())?;
-            }
-            for local in &written.definitions {
-                // A composition names no `Core` of its own — its stages reach other behaviors by
-                // name, never by a function value the body holds — so nothing here is a closure
-                // site, and only `Body` is walked.
-                if let Definition::Body { body, .. } = local {
-                    Planner::new(&mut sites, &written.name).free(body, &mut HashSet::new())?;
-                }
-            }
+        for body in program.bodies() {
+            Planner::new(&mut sites, body.module).free(body.node, &mut HashSet::new())?;
         }
         Ok(sites)
     }
@@ -165,53 +146,26 @@ impl<'p, 'a> Planner<'p, 'a> {
                          disagree about what a block is"
                     );
                 };
-                if fn_.takes.len() != parameters.len() {
-                    bail!(
-                        "closure site {site} is declared with {} parameters and a type naming {}: \
-                         `Node::Block.parameters` and its own `Ty::Fn.takes` are two statements of \
-                         one fact and this document's disagree",
-                        parameters.len(),
-                        fn_.takes.len()
-                    );
-                }
-                if fn_.answers.as_ref() != body.ty() {
-                    bail!(
-                        "closure site {site} answers {} at its own type and {} at its body's: \
-                         `Ty::Fn.answers` and `Node::Block.body`'s own type are two statements of \
-                         one fact and this document's disagree",
-                        fn_.answers.spelt(),
-                        body.ty().spelt()
-                    );
-                }
 
-                let already_there = self
-                    .sites
-                    .by_site
-                    .insert(
-                        *site,
-                        Site {
-                            module: self.module,
-                            parameters,
-                            body,
-                            signature: fn_,
-                            captures: captures
-                                .iter()
-                                .map(|(binding, ty)| Capture {
-                                    binding: *binding,
-                                    ty: ty.clone(),
-                                })
-                                .collect(),
-                        },
-                    )
-                    .is_some();
-                if already_there {
-                    bail!(
-                        "two `Node::Block`s both claim closure site {site}: `ProgramWriter` \
-                         promises this number is unique across the whole document, and this reader \
-                         does not take that on trust — a duplicate would otherwise let the first \
-                         block's lifted function and captures silently answer for the second's too"
-                    );
-                }
+                let planned = Site {
+                    module: self.module,
+                    parameters,
+                    body,
+                    signature: fn_,
+                    captures: captures
+                        .iter()
+                        .map(|(binding, ty)| Capture {
+                            binding: *binding,
+                            ty: ty.clone(),
+                        })
+                        .collect(),
+                };
+                // `ProgramWriter` promises this number is unique across the whole document, and
+                // this reader does not take that on trust: a duplicate would let the first block's
+                // lifted function and captures answer for the second's too.
+                index::once(&mut self.sites.by_site, *site, planned, || {
+                    format!("two `Node::Block`s both claim closure site {site}")
+                })?;
 
                 for (binding, ty) in captures {
                     if !bound.contains(&binding) && seen.insert(binding) {
