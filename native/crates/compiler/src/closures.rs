@@ -28,7 +28,7 @@
 //! site's plan would otherwise answer for both.
 
 use crate::index;
-use crate::transport::{Body, FnSignature, Node, Parameter, Ty};
+use crate::transport::{Body, Carrier, FnSignature, Node, Parameter, Ty};
 use anyhow::{Result, bail};
 use std::collections::{BTreeMap, HashSet};
 
@@ -44,10 +44,10 @@ pub struct Capture {
 
 /// One [`Node::Block`], where it stands in the document, and what it reaches.
 pub struct Site<'a> {
-    /// The module whose copy of a definition a call from this site's own body reaches — the same
-    /// fact `Lowering::carrier` already threads for every other body, carried here because a site
+    /// Where a call from this site's own body is resolved: where the body holding the site stands,
+    /// the same fact `Lowering::carrier` threads for every other body, carried here because a site
     /// nested inside one module's body is still defined as this module's own local function.
-    pub module: &'a str,
+    pub carrier: Carrier<'a>,
     pub parameters: &'a [Parameter],
     pub body: &'a Node,
     /// What this site takes and answers, unwrapped from the block's own `Ty::Fn` once, here. That
@@ -70,7 +70,7 @@ impl<'a> ClosureSites<'a> {
     pub fn of(bodies: impl IntoIterator<Item = Body<'a>>) -> Result<Self> {
         let mut sites = ClosureSites::default();
         for body in bodies {
-            Planner::new(&mut sites, body.module).free(body.node, &mut HashSet::new())?;
+            Planner::new(&mut sites, body.carrier()).free(body.node, &mut HashSet::new())?;
         }
         Ok(sites)
     }
@@ -86,12 +86,12 @@ impl<'a> ClosureSites<'a> {
 
 struct Planner<'p, 'a> {
     sites: &'p mut ClosureSites<'a>,
-    module: &'a str,
+    carrier: Carrier<'a>,
 }
 
 impl<'p, 'a> Planner<'p, 'a> {
-    fn new(sites: &'p mut ClosureSites<'a>, module: &'a str) -> Self {
-        Planner { sites, module }
+    fn new(sites: &'p mut ClosureSites<'a>, carrier: Carrier<'a>) -> Self {
+        Planner { sites, carrier }
     }
 
     /// What `node` reaches outside `bound`, first-reached order, with every `Node::Block` under it
@@ -149,7 +149,7 @@ impl<'p, 'a> Planner<'p, 'a> {
                 };
 
                 let planned = Site {
-                    module: self.module,
+                    carrier: self.carrier,
                     parameters,
                     body,
                     signature: fn_,

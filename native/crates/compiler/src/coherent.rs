@@ -55,8 +55,8 @@ use crate::closures::ClosureSites;
 use crate::index;
 use crate::kernels::LoweredKernel;
 use crate::transport::{
-    AbortKind, Answers, Case, Declaration, Definition, Ensures, Guard, Held, Node, Op, Owner, Prim,
-    Program, Reaches, Reading, Routing, Selects, Target, Ty, Value,
+    AbortKind, Answers, Carrier, Case, Declaration, Definition, Ensures, Guard, Held, Node, Op,
+    Owner, Prim, Program, Reaches, Reading, Routing, Selects, Target, Ty, Value,
 };
 use crate::{Declared, Runs, Targets, not_lowered, spelt};
 use anyhow::{Result, anyhow, bail};
@@ -221,7 +221,7 @@ impl<'a> Coherent<'a> {
                     (owner, bound)
                 }
                 Owner::Example(example) => {
-                    let behavior = format!("{}.{}", body.module, example.behavior);
+                    let behavior = format!("{}.{}", body.carrier().module(), example.behavior);
                     let owner = format!("row {} of {behavior}", example.at);
                     let answers = targets.named(&behavior)?.answers();
                     if body.node.ty() != &answers {
@@ -237,7 +237,7 @@ impl<'a> Coherent<'a> {
             };
             let mut walk = Walk {
                 owner,
-                carrier: body.module,
+                carrier: body.carrier(),
                 targets: &targets,
                 declared: &declared,
                 reached: &reached,
@@ -500,7 +500,7 @@ struct Walk<'w, 'a> {
     /// Whose body this is, which every refusal names.
     owner: String,
     /// The module whose copy of a helper a call from here reaches.
-    carrier: &'a str,
+    carrier: Carrier<'a>,
     targets: &'w Targets<'a>,
     declared: &'w Declared<'a>,
     reached: &'w Reached<'a>,
@@ -822,12 +822,12 @@ impl<'a> Walk<'_, 'a> {
                 let held = self
                     .reached
                     .helpers
-                    .get(&(self.carrier, declared.as_str()))
+                    .get(&(self.carrier.module(), declared.as_str()))
                     .ok_or_else(|| {
                         anyhow!(
                             "{}: a call of {declared}, which {} holds no copy of",
                             self.owner,
-                            self.carrier
+                            self.carrier.module()
                         )
                     })?;
                 (declared.clone(), held.takes())
@@ -837,12 +837,12 @@ impl<'a> Walk<'_, 'a> {
                 let value = self
                     .reached
                     .values
-                    .get(&(self.carrier, joined.clone()))
+                    .get(&(self.carrier.module(), joined.clone()))
                     .ok_or_else(|| {
                         anyhow!(
                             "{}: a call of the value {joined}, which {} builds no home for",
                             self.owner,
-                            self.carrier
+                            self.carrier.module()
                         )
                     })?;
                 let handed = value.handovers.iter().map(|it| it.ty.clone()).collect();
@@ -1502,7 +1502,7 @@ impl<'a> Walk<'_, 'a> {
                 "what it answers",
             ),
             Reaches::Helper { declared } => {
-                let held = self.reached.helpers[&(self.carrier, declared.as_str())];
+                let held = self.reached.helpers[&(self.carrier.module(), declared.as_str())];
                 // The helper's body stands as the answer it declares, so its type is that answer.
                 self.same(
                     &format!("a call of {declared}"),
@@ -1513,7 +1513,7 @@ impl<'a> Walk<'_, 'a> {
             }
             Reaches::Value { module, name } => {
                 let joined = format!("{module}.{name}");
-                let value = self.reached.values[&(self.carrier, joined.clone())];
+                let value = self.reached.values[&(self.carrier.module(), joined.clone())];
                 self.same(
                     &format!("a call of the value {joined}"),
                     ty,

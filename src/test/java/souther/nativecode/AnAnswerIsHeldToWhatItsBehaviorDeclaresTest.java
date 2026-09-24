@@ -160,6 +160,77 @@ class AnAnswerIsHeldToWhatItsBehaviorDeclaresTest {
         assertCrossingEndsButItsNeighbourAnswers("looked", 5L, -3L, 0L);
     }
 
+    private static final String DECLARING_A_HELPER = """
+            module lib.declaring exposing ( lookUp, Nat, Zero, Succ )
+
+            data Zero
+            data Succ = { prev: Nat }
+            data Nat = Zero | Succ
+
+            let depth (x: Nat): Int = match x with
+                | Zero -> 0
+                | Succ as s -> 1 + depth(s.prev)
+
+            behavior lookUp : (a: Nat) -> Int
+                ensures deepEnough = value >= depth(a)
+            """;
+
+    private static final String CALLING_IT = """
+            module app.calling exposing ( twice )
+            import lib.declaring ( lookUp, Nat, Zero, Succ )
+
+            behavior twice : (n: Int) -> Int
+                depends on lookUp
+            let twice (n, lookUp) = lookUp(if n > 0 then Succ { prev = Zero } else Zero)
+
+            fake lookUp
+                | _ -> 0
+
+            example twice
+                | "nothing deep" : (0) -> 0
+            """;
+
+    /**
+     * A rule is the module's that declares the behavior, and a helper it calls is that module's
+     * copy, whichever module's code the answer crosses into.
+     *
+     * <p>The helper recurses, so the checker leaves the call standing rather than writing the
+     * helper out into the rule, and the module whose body holds the answer to the rule carries no
+     * copy of it. A rule resolved where the caller stands would reach nothing.
+     */
+    @Test
+    void aRuleReachesTheHelpersOfTheModuleThatDeclaresIt() throws Exception {
+        CheckedProgram program = CheckedProgram.of(List.of(DECLARING_A_HELPER, CALLING_IT));
+        String written = ProgramWriter.written(program);
+        assertThat(written)
+                .as("the rule calls the helper rather than holding it written out")
+                .contains("\"reaches\":{\"is\":\"helper\",\"declared\":\"lib.declaring.depth\"}");
+        assertThat(written)
+                .as("only the declaring module holds a copy of it")
+                .contains("{\"name\":\"lib.declaring\",\"publishes\":[\"lib.declaring.Zero\"")
+                .doesNotContain("\"declared\":\"app.calling.depth\"");
+        CheckedModule calling = program.modules().stream()
+                .filter(it -> it.name().equals("app.calling"))
+                .findFirst()
+                .orElseThrow();
+        assertThat(calling.helpers()).noneMatch(it -> it.declares().toString().contains("depth"));
+        Running running = Running.of(program);
+        CheckedBehavior twice = named(calling, "twice");
+        List<StandsIn> standIns = switch (twice.rows().getFirst().statement()) {
+            case CheckedRow.WithStandIns it -> it.standsIn();
+            case CheckedRow.SelfContained it -> throw new AssertionError("no stand-in: " + it);
+            case CheckedRow.AnswerOwed it -> throw new AssertionError("no stand-in: " + it);
+            case CheckedRow.NotReproducible it -> throw new AssertionError("not run: " + it.why());
+        };
+
+        assertThat(running.answeredOrEnded(calling, twice, given(1L), standIns))
+                .as("nought answered for something one deep")
+                .isEqualTo(new RunOutcome.Aborted(AbortKind.ENSURES_NOT_HELD));
+        assertThat(running.answeredOrEnded(calling, twice, given(0L), standIns))
+                .as("nought answered for nothing deep")
+                .isEqualTo(new RunOutcome.Answered(new ObservedValue.Integer(0)));
+    }
+
     private static final String DECLARED_ELSEWHERE = """
             module lib.held exposing ( shrink )
 

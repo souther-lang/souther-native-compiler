@@ -52,10 +52,12 @@ impl Program {
                 .unwrap_or_default()
                 .iter()
                 .enumerate()
-                .map(move |(at, clause)| Body {
-                    module: declaration.module(),
-                    owner: Owner::Invariant { declaration, at },
-                    node: &clause.condition,
+                .map(move |(at, clause)| {
+                    Body::at(
+                        declaration.module(),
+                        Owner::Invariant { declaration, at },
+                        &clause.condition,
+                    )
                 })
         });
         let modules = self.modules.iter().flat_map(|written| {
@@ -70,35 +72,25 @@ impl Program {
                 examples,
             } = written;
             let module = name.as_str();
-            let helpers = helpers.iter().map(move |it| Body {
-                module,
-                owner: Owner::Helper(it),
-                node: &it.body,
-            });
-            let values = values.iter().map(move |it| Body {
-                module,
-                owner: Owner::Value(it),
-                node: &it.body,
-            });
-            let entries = entries.iter().map(move |it| Body {
-                module,
-                owner: Owner::Entry(it),
-                node: &it.body,
-            });
+            let helpers = helpers
+                .iter()
+                .map(move |it| Body::at(module, Owner::Helper(it), &it.body));
+            let values = values
+                .iter()
+                .map(move |it| Body::at(module, Owner::Value(it), &it.body));
+            let entries = entries
+                .iter()
+                .map(move |it| Body::at(module, Owner::Entry(it), &it.body));
             let definitions = definitions.iter().filter_map(move |it| match it {
-                Definition::Body { declared, body, .. } => Some(Body {
-                    module,
-                    owner: Owner::Definition(declared),
-                    node: body,
-                }),
+                Definition::Body { declared, body, .. } => {
+                    Some(Body::at(module, Owner::Definition(declared), body))
+                }
                 // Stages reach other behaviors by name, and there is no `Core` of its own.
                 Definition::Composed { .. } => None,
             });
-            let examples = examples.iter().map(move |it| Body {
-                module,
-                owner: Owner::Example(it),
-                node: &it.body,
-            });
+            let examples = examples
+                .iter()
+                .map(move |it| Body::at(module, Owner::Example(it), &it.body));
             helpers
                 .chain(values)
                 .chain(entries)
@@ -116,10 +108,12 @@ impl Program {
                 .unwrap_or_default()
                 .iter()
                 .enumerate()
-                .map(move |(at, rule)| Body {
-                    module: &target.module,
-                    owner: Owner::Ensures { target, at },
-                    node: &rule.condition,
+                .map(move |(at, rule)| {
+                    Body::at(
+                        &target.module,
+                        Owner::Ensures { target, at },
+                        &rule.condition,
+                    )
                 })
         });
         clauses.chain(rules).chain(modules)
@@ -127,12 +121,50 @@ impl Program {
 }
 
 /// One body of `Core`, where it stands, and what owns it.
+///
+/// Made by [`Program::bodies`] and nowhere else, which the module it stands in being private to
+/// this file holds to. Where a body stands decides what a call from it reaches, and [`Coherent`]
+/// holds a body's calls to what is reachable from where it stands: a body made anywhere else could
+/// say it stood somewhere its calls were never held to. It is read as a [`Carrier`].
+///
+/// [`Coherent`]: crate::coherent::Coherent
 #[derive(Clone, Copy)]
 pub struct Body<'p> {
     /// The module it stands in, whose copy of a helper a call from it reaches.
-    pub module: &'p str,
+    module: &'p str,
     pub owner: Owner<'p>,
     pub node: &'p Node,
+}
+
+impl<'p> Body<'p> {
+    fn at(module: &'p str, owner: Owner<'p>, node: &'p Node) -> Self {
+        Body {
+            module,
+            owner,
+            node,
+        }
+    }
+
+    /// Where a call from this body is resolved.
+    pub fn carrier(&self) -> Carrier<'p> {
+        Carrier(self.module)
+    }
+}
+
+/// The module whose copy of a helper, and whose home of a value, a call reaches: the module a body
+/// stands in.
+///
+/// Answered by a [`Body`] and by nothing else. What a call from a body reaches is held where the
+/// body is read and trusted where it is lowered, so the two have to ask one statement of where it
+/// stands; a module named by hand at the place a body is lowered is a second statement, which
+/// agrees with the first only as long as whoever wrote it chose the same module.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Carrier<'p>(&'p str);
+
+impl<'p> Carrier<'p> {
+    pub fn module(self) -> &'p str {
+        self.0
+    }
 }
 
 /// What a body is the body of.
