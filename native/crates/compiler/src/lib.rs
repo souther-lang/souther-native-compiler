@@ -1827,7 +1827,7 @@ pub(crate) struct Runs<'p> {
 
 impl<'p> Runs<'p> {
     pub(crate) fn of(program: &'p Program) -> Self {
-        let mut published: BTreeSet<String> = program
+        let published: BTreeSet<String> = program
             .modules
             .iter()
             .flat_map(|module| module.publishes.iter().cloned())
@@ -1836,34 +1836,55 @@ impl<'p> Runs<'p> {
         // of what it builds — so a clause is asked too, once what it belongs to is built. A clause
         // builds nothing from fields, as `Coherent` holds, and may still name a unit; so this
         // settles in a round or two, and is asked until it does rather than counting on how many.
+        //
+        // Every body is walked once, up front, and each round reads what the walk found: a round
+        // decides only which bodies run, and what a body builds does not change between rounds.
+        let walked: Vec<(transport::Body<'p>, BTreeSet<&'p str>)> = program
+            .bodies()
+            .map(|body| {
+                let mut builds = BTreeSet::new();
+                body.node.each(&mut |node| {
+                    if let Some(declared) = node.builds() {
+                        builds.insert(declared);
+                    }
+                });
+                (body, builds)
+            })
+            .collect();
+        // Which declarations could be built here at all, which no round changes either.
+        let buildable: Vec<String> = program
+            .declarations
+            .iter()
+            .filter(|declaration| {
+                declaration.by() == DeclaredBy::AModule
+                    && !matches!(declaration, Declaration::Sum { .. })
+                    && declaration
+                        .fields()
+                        .iter()
+                        .all(|field| machine_type(&field.codec.ty()).is_ok())
+            })
+            .map(Declaration::key)
+            .collect();
         let mut built = BTreeSet::new();
         loop {
-            let runs = Runs {
-                program,
-                built,
-                published,
-            };
-            let constructed = constructed(&runs);
-            let now: BTreeSet<String> = program
-                .declarations
+            let constructed: BTreeSet<&str> = walked
                 .iter()
-                .filter(|declaration| {
-                    let key = declaration.key();
-                    declaration.by() == DeclaredBy::AModule
-                        && !matches!(declaration, Declaration::Sum { .. })
-                        && (runs.published.contains(&key) || constructed.contains(key.as_str()))
-                        && declaration
-                            .fields()
-                            .iter()
-                            .all(|field| machine_type(&field.codec.ty()).is_ok())
-                })
-                .map(Declaration::key)
+                .filter(|(body, _)| runs_under(&built, body))
+                .flat_map(|(_, builds)| builds.iter().copied())
                 .collect();
-            if now == runs.built {
-                return runs;
+            let now: BTreeSet<String> = buildable
+                .iter()
+                .filter(|key| published.contains(*key) || constructed.contains(key.as_str()))
+                .cloned()
+                .collect();
+            if now == built {
+                return Runs {
+                    program,
+                    built,
+                    published,
+                };
             }
             built = now;
-            published = runs.published;
         }
     }
 
@@ -1886,12 +1907,17 @@ impl<'p> Runs<'p> {
     /// Whether this object runs `body`: every body of a module does, and a clause does where its
     /// declaration is one this object builds.
     pub(crate) fn runs(&self, body: &transport::Body) -> bool {
-        match body.owner {
-            transport::Owner::Invariant { declaration, .. } => {
-                self.built.contains(&declaration.key())
-            }
-            _ => true,
-        }
+        runs_under(&self.built, body)
+    }
+}
+
+/// Whether a body runs where `built` is what the object builds: every body of a module does, and a
+/// clause does where its declaration is built. The one statement of it, which [`Runs::of`] asks
+/// while `built` is still being settled and [`Runs::runs`] once it is.
+fn runs_under(built: &BTreeSet<String>, body: &transport::Body) -> bool {
+    match body.owner {
+        transport::Owner::Invariant { declaration, .. } => built.contains(&declaration.key()),
+        _ => true,
     }
 }
 
