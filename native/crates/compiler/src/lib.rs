@@ -843,79 +843,20 @@ fn published_value_calls(program: &Program) -> BTreeMap<(String, String), Ty> {
     found
 }
 
-/// Every `Reaches::PublishedValue` under `node`, depth first. No default arm: a `Node` variant
-/// this misses is a value call this walk silently never finds, which is exactly the silent drop
-/// declaring a value's import symbol exists to end.
+/// Every `Reaches::PublishedValue` under `node`, depth first.
 fn walk_calls(node: &Node, found: &mut BTreeMap<(String, String), Ty>) {
-    match node {
-        Node::Call {
-            reaches,
-            arguments,
-            ty,
-            ..
-        } => {
-            if let Reaches::PublishedValue { module, name } = reaches {
-                found
-                    .entry((module.clone(), name.clone()))
-                    .or_insert_with(|| ty.clone());
-            }
-            for argument in arguments {
-                walk_calls(argument, found);
-            }
-        }
-        Node::Binary { left, right, .. } => {
-            walk_calls(left, found);
-            walk_calls(right, found);
-        }
-        Node::Neg { operand, .. } => walk_calls(operand, found),
-        Node::Let { value, body, .. } => {
-            walk_calls(value, found);
-            walk_calls(body, found);
-        }
-        Node::If {
-            cond, then, els, ..
-        } => {
-            walk_calls(cond, found);
-            walk_calls(then, found);
-            walk_calls(els, found);
-        }
-        Node::Construct { values, .. } => {
-            for value in values {
-                walk_calls(value, found);
-            }
-        }
-        Node::Field { target, .. } => walk_calls(target, found),
-        Node::Match { subject, arms, .. } => {
-            walk_calls(subject, found);
-            for arm in arms {
-                walk_calls(&arm.body, found);
-            }
-        }
-        Node::Some { value, .. } => walk_calls(value, found),
-        Node::Tuple { members, .. } => {
-            for member in members {
-                walk_calls(member, found);
-            }
-        }
-        Node::Member { tuple, .. } => walk_calls(tuple, found),
-        Node::Widen { value, .. } => walk_calls(value, found),
-        Node::Block { body, .. } => walk_calls(body, found),
-        Node::Apply {
-            function,
-            arguments,
-            ..
-        } => {
-            walk_calls(function, found);
-            for argument in arguments {
-                walk_calls(argument, found);
-            }
-        }
-        Node::Int { .. }
-        | Node::Read { .. }
-        | Node::Bool { .. }
-        | Node::Str { .. }
-        | Node::Unit { .. }
-        | Node::None { .. } => {}
+    if let Node::Call {
+        reaches: Reaches::PublishedValue { module, name },
+        ty,
+        ..
+    } = node
+    {
+        found
+            .entry((module.clone(), name.clone()))
+            .or_insert_with(|| ty.clone());
+    }
+    for child in node.children() {
+        walk_calls(child, found);
     }
 }
 

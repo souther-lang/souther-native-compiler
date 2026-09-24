@@ -1293,6 +1293,44 @@ pub enum Selects {
 }
 
 impl Node {
+    /// The nodes directly under this one, in the order they are written.
+    ///
+    /// No arm standing for the rest: a node added to the document is one whose children every walk
+    /// over this would otherwise silently never reach.
+    pub fn children(&self) -> Vec<&Node> {
+        match self {
+            Node::Binary { left, right, .. } => vec![left, right],
+            Node::Neg { operand, .. } => vec![operand],
+            Node::Let { value, body, .. } => vec![value, body],
+            Node::If {
+                cond, then, els, ..
+            } => vec![cond, then, els],
+            Node::Construct { values, .. } => values.iter().collect(),
+            Node::Field { target, .. } => vec![target],
+            Node::Match { subject, arms, .. } => std::iter::once(subject.as_ref())
+                .chain(arms.iter().map(|arm| &arm.body))
+                .collect(),
+            Node::Some { value, .. } | Node::Widen { value, .. } => vec![value],
+            Node::Tuple { members, .. } => members.iter().collect(),
+            Node::Member { tuple, .. } => vec![tuple],
+            Node::Call { arguments, .. } => arguments.iter().collect(),
+            Node::Block { body, .. } => vec![body],
+            Node::Apply {
+                function,
+                arguments,
+                ..
+            } => std::iter::once(function.as_ref())
+                .chain(arguments.iter())
+                .collect(),
+            Node::Int { .. }
+            | Node::Read { .. }
+            | Node::Bool { .. }
+            | Node::Str { .. }
+            | Node::Unit { .. }
+            | Node::None { .. } => Vec::new(),
+        }
+    }
+
     /// The type the checker decided for this expression.
     ///
     /// Read off the node rather than worked out from where it sits: what a comparison compares is

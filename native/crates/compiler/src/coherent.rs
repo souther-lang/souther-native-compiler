@@ -15,7 +15,9 @@
 //! its binder, a call and the behavior it reaches, a branch and the fork it answers, an argument
 //! and the parameter it is handed to. Where the checker let a narrower value stand, the value in
 //! the slot is a `Widen` saying so, typed as what the slot takes, and whether its value is a value
-//! of that is asked of the `Widen` alone. Where the wire carried the same fact twice for no reason,
+//! of that is asked of the `Widen` alone. Where every child stands is one table, `Walk::slots`,
+//! which names each child of each node, typed or not and why, and is held to name every one; a
+//! node's own relations are apart from it. Where the wire carried the same fact twice for no reason,
 //! it no longer does: a helper's and a value's answer are their body's type, a helper's parameters
 //! are named and typed together, and a composition's answers are its targets'. What a let binds its
 //! name at is carried because it is the one thing a read of it can be held to.
@@ -344,6 +346,53 @@ impl<'a> Reached<'a> {
     }
 }
 
+/// Where a child of a node stands, and what the tree says of its type there.
+enum Slot<'n> {
+    /// At a type the node states, which the child is of exactly: where the checker let a narrower
+    /// value stand there, the child is the `Widen` saying so.
+    Typed {
+        child: &'n Node,
+        takes: Ty,
+        what: String,
+    },
+    /// At no type the tree states, and why not.
+    Untyped(
+        &'n Node,
+        #[expect(
+            dead_code,
+            reason = "stated where a child is placed, for whoever adds a node, and not read"
+        )]
+        Untyped,
+    ),
+}
+
+impl<'n> Slot<'n> {
+    fn child(&self) -> &'n Node {
+        match self {
+            Slot::Typed { child, .. } | Slot::Untyped(child, _) => child,
+        }
+    }
+}
+
+/// Why a child stands at no type the tree states. Named for whoever adds a node or an operator, who
+/// has to say which of these a child is or give it a slot; nothing reads it.
+#[derive(Clone, Copy)]
+enum Untyped {
+    /// What the node reads from or forks on: a field's target, a member's tuple, a match's
+    /// subject, an applied function. The node's own relation to it is what is held.
+    ReadFrom,
+    /// A `Widen`'s value, which stands as another type by what the `Widen` says, and is asked of
+    /// `fits` there.
+    Widened,
+    /// An operand of a comparison or an arithmetic operator: a case is compared with its sum as it
+    /// is, and which reading of the operator the checker applied is not in the tree
+    /// (souther-lang/souther#1919).
+    Operand,
+    /// An argument of a kernel call, whose parameters as settled for the call the tree does not
+    /// keep (souther-lang/souther#1930).
+    KernelArgument,
+}
+
 /// One body read with what is bound where it stands.
 struct Walk<'w, 'a> {
     /// Whose body this is, which every refusal names.
@@ -423,11 +472,294 @@ impl<'a> Walk<'_, 'a> {
         }
     }
 
+    /// `node` and everything under it: what each node says it is against where its value comes
+    /// from, and each child against the slot it stands in.
+    fn node(&mut self, node: &'a Node) -> Result<()> {
+        self.relations(node)?;
+        self.hold_slots(node)
+    }
+
+    /// Every child of `node` against the slot it stands in, from the one table of them.
+    ///
+    /// The table names each child once, in the order the node holds them, or this compiler has
+    /// written a node's slots without deciding one of them; so a child cannot stand in a slot
+    /// nothing here holds by being left out of it.
+    fn hold_slots(&self, node: &'a Node) -> Result<()> {
+        let slots = self.slots(node)?;
+        let children = node.children();
+        assert!(
+            slots.len() == children.len()
+                && slots
+                    .iter()
+                    .zip(&children)
+                    .all(|(slot, child)| std::ptr::eq(slot.child(), *child)),
+            "the slots of a node name each of its children once, in order"
+        );
+        for slot in &slots {
+            if let Slot::Typed { child, takes, what } = slot {
+                self.same(what, child.ty(), takes, "the slot it stands in")?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Where each child of `node` stands, and what the tree says of its type there.
+    ///
+    /// Inside a body every slot holds a value of exactly the type it takes, and where the checker
+    /// let a narrower value stand, what stands there is a `Widen` saying so. No arm standing for the
+    /// rest, over the nodes, the operators and what a call reaches alike: each states every child.
+    fn slots(&self, node: &'a Node) -> Result<Vec<Slot<'a>>> {
+        let truth = Ty::Prim { prim: Prim::Bool };
+        let typed = |child: &'a Node, takes: &Ty, what: String| Slot::Typed {
+            child,
+            takes: takes.clone(),
+            what,
+        };
+        Ok(match node {
+            Node::Int { .. }
+            | Node::Read { .. }
+            | Node::Bool { .. }
+            | Node::Str { .. }
+            | Node::Unit { .. }
+            | Node::None { .. } => Vec::new(),
+            Node::Construct {
+                declared, values, ..
+            } => self
+                .declared
+                .shape(declared)?
+                .fields()
+                .iter()
+                .zip(values)
+                .map(|(field, value)| {
+                    typed(
+                        value,
+                        &field.codec.ty(),
+                        format!("the value {declared}'s field {} is given", field.name),
+                    )
+                })
+                .collect(),
+            Node::Field { target, .. } => vec![Slot::Untyped(target, Untyped::ReadFrom)],
+            Node::Binary {
+                op,
+                left,
+                right,
+                ty,
+                ..
+            } => {
+                let sides = |takes: &Ty, of: &str| {
+                    vec![
+                        typed(left, takes, format!("the left side of {of}")),
+                        typed(right, takes, format!("the right side of {of}")),
+                    ]
+                };
+                match op {
+                    Op::And | Op::Or => sides(&truth, op.spelt()),
+                    Op::Concat => sides(ty, "++"),
+                    Op::Eq
+                    | Op::Ne
+                    | Op::Lt
+                    | Op::Le
+                    | Op::Gt
+                    | Op::Ge
+                    | Op::Add
+                    | Op::Sub
+                    | Op::Mul
+                    | Op::Div => vec![
+                        Slot::Untyped(left, Untyped::Operand),
+                        Slot::Untyped(right, Untyped::Operand),
+                    ],
+                }
+            }
+            Node::Neg { operand, ty, .. } => {
+                vec![typed(operand, ty, "what a negation negates".to_string())]
+            }
+            Node::Let {
+                binding,
+                binds,
+                value,
+                body,
+                ty,
+                ..
+            } => vec![
+                typed(
+                    value,
+                    binds,
+                    format!("the value binding {binding} is given"),
+                ),
+                typed(body, ty, "what a let's body answers".to_string()),
+            ],
+            Node::If {
+                cond,
+                then,
+                els,
+                ty,
+                ..
+            } => vec![
+                typed(cond, &truth, "what a fork asks".to_string()),
+                typed(then, ty, "what a fork's branch answers".to_string()),
+                typed(els, ty, "what a fork's branch answers".to_string()),
+            ],
+            Node::Match {
+                subject, arms, ty, ..
+            } => std::iter::once(Slot::Untyped(subject, Untyped::ReadFrom))
+                .chain(
+                    arms.iter()
+                        .map(|arm| typed(&arm.body, ty, "what a match arm answers".to_string())),
+                )
+                .collect(),
+            Node::Some { value, ty, .. } => {
+                let Ty::Option { option } = ty else {
+                    bail!(
+                        "{}: a present value typed {}, which is not optional",
+                        self.owner,
+                        ty.spelt()
+                    );
+                };
+                vec![typed(
+                    value,
+                    option,
+                    "what a present value holds".to_string(),
+                )]
+            }
+            Node::Tuple { members, ty, .. } => {
+                let Ty::Tuple { tuple } = ty else {
+                    bail!(
+                        "{}: a tuple typed {}, which is not a tuple",
+                        self.owner,
+                        ty.spelt()
+                    );
+                };
+                self.arity("a tuple", members.len(), tuple.len())?;
+                members
+                    .iter()
+                    .zip(tuple)
+                    .enumerate()
+                    .map(|(at, (member, held))| {
+                        typed(member, held, format!("member {at} of a tuple"))
+                    })
+                    .collect()
+            }
+            Node::Member { tuple, .. } => vec![Slot::Untyped(tuple, Untyped::ReadFrom)],
+            Node::Call {
+                reaches, arguments, ..
+            } => match self.parameters(reaches)? {
+                Some((callee, takes)) => arguments
+                    .iter()
+                    .zip(takes)
+                    .enumerate()
+                    .map(|(at, (argument, taken))| {
+                        typed(
+                            argument,
+                            &taken,
+                            format!("argument {at} handed to {callee}"),
+                        )
+                    })
+                    .collect(),
+                None => arguments
+                    .iter()
+                    .map(|argument| Slot::Untyped(argument, Untyped::KernelArgument))
+                    .collect(),
+            },
+            Node::Block { body, ty, site, .. } => {
+                let Ty::Fn { fn_ } = ty else {
+                    bail!(
+                        "{}: closure site {site} is typed {}, which is not a function type",
+                        self.owner,
+                        ty.spelt()
+                    );
+                };
+                vec![typed(
+                    body,
+                    &fn_.answers,
+                    format!("what closure site {site} answers"),
+                )]
+            }
+            Node::Apply {
+                function,
+                arguments,
+                ..
+            } => {
+                let Ty::Fn { fn_ } = function.ty() else {
+                    bail!(
+                        "{}: an application of {}, which is not a function type",
+                        self.owner,
+                        function.ty().spelt()
+                    );
+                };
+                std::iter::once(Slot::Untyped(function, Untyped::ReadFrom))
+                    .chain(arguments.iter().zip(&fn_.takes).enumerate().map(
+                        |(at, (argument, taken))| {
+                            typed(argument, taken, format!("argument {at} of an application"))
+                        },
+                    ))
+                    .collect()
+            }
+            Node::Widen { value, .. } => vec![Slot::Untyped(value, Untyped::Widened)],
+        })
+    }
+
+    /// What a call hands each argument over as: the parameters of what it reaches, by the name of
+    /// that; `None` for a kernel whose parameters as settled for the call the tree does not keep.
+    fn parameters(&self, reaches: &Reaches) -> Result<Option<(String, Vec<Ty>)>> {
+        Ok(match reaches {
+            Reaches::Behavior { declared } => {
+                Some((declared.clone(), self.targets.named(declared)?.takes()))
+            }
+            Reaches::Helper { declared } => {
+                let held = self
+                    .reached
+                    .helpers
+                    .get(&(self.carrier, declared.as_str()))
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "{}: a call of {declared}, which {} holds no copy of",
+                            self.owner,
+                            self.carrier
+                        )
+                    })?;
+                Some((declared.clone(), held.takes()))
+            }
+            Reaches::Value { module, name } => {
+                let joined = format!("{module}.{name}");
+                let value = self
+                    .reached
+                    .values
+                    .get(&(self.carrier, joined.clone()))
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "{}: a call of the value {joined}, which {} builds no home for",
+                            self.owner,
+                            self.carrier
+                        )
+                    })?;
+                let handed = value.handovers.iter().map(|it| it.ty.clone()).collect();
+                Some((format!("the value {joined}"), handed))
+            }
+            Reaches::PublishedValue { module, name } => {
+                Some((format!("`{module}`'s published value {name}"), Vec::new()))
+            }
+            Reaches::Kernel { kernel } => match kernel.as_str() {
+                "int.add" => Some((
+                    kernel.clone(),
+                    vec![Ty::Prim { prim: Prim::Int }, Ty::Prim { prim: Prim::Int }],
+                )),
+                // What the call takes each argument as is the kernel's signature with its
+                // variables settled for this call, and the tree does not keep the settlement
+                // (souther-lang/souther#1930), so an argument missing its `Widen` here is not told
+                // apart from a kernel this backend does not lower.
+                _ => None,
+            },
+        })
+    }
+
+    /// What each node says it is against where its value comes from: a read and its binder, a
+    /// call and what it reaches, a construction and its declaration. Where each child stands is
+    /// [`Walk::slots`]'s, and nothing here holds a child to a slot.
+    ///
     /// No arm standing for the rest: a node added upstream is a node whose value this has not
     /// yet said the source of, and the lowering would read its type on trust.
-    fn node(&mut self, node: &'a Node) -> Result<()> {
+    fn relations(&mut self, node: &'a Node) -> Result<()> {
         self.declared.resolves(&self.owner, node.ty())?;
-        let bool_ = Ty::Prim { prim: Prim::Bool };
         match node {
             Node::Int { ty, .. } => self.same(
                 "an integer literal",
@@ -435,7 +767,12 @@ impl<'a> Walk<'_, 'a> {
                 &Ty::Prim { prim: Prim::Int },
                 "its kind",
             ),
-            Node::Bool { ty, .. } => self.same("a truth literal", ty, &bool_, "its kind"),
+            Node::Bool { ty, .. } => self.same(
+                "a truth literal",
+                ty,
+                &Ty::Prim { prim: Prim::Bool },
+                "its kind",
+            ),
             Node::Str { ty, .. } => self.same(
                 "a text literal",
                 ty,
@@ -508,14 +845,8 @@ impl<'a> Walk<'_, 'a> {
                         values.len()
                     );
                 }
-                for (field, value) in shape.fields().iter().zip(values) {
+                for value in values {
                     self.node(value)?;
-                    self.same(
-                        &format!("the value {declared}'s field {} is given", field.name),
-                        value.ty(),
-                        &field.codec.ty(),
-                        "the field",
-                    )?;
                 }
                 Ok(())
             }
@@ -563,7 +894,6 @@ impl<'a> Walk<'_, 'a> {
                 aborts,
             } => {
                 self.node(operand)?;
-                self.same("a negation", ty, operand.ty(), "what it negates")?;
                 self.number("a negation", ty)?;
                 // A literal's sign is folded, and nothing else about one can leave the range.
                 if !matches!(operand.as_ref(), Node::Int { .. }) {
@@ -587,37 +917,20 @@ impl<'a> Walk<'_, 'a> {
                 binds,
                 value,
                 body,
-                ty,
                 ..
             } => {
                 // Read before the binding is in force: a binding is not read in its own value.
                 self.node(value)?;
-                self.same(
-                    &format!("the value binding {binding} is given"),
-                    value.ty(),
-                    binds,
-                    "what it binds",
-                )?;
-                self.under(vec![(*binding, binds.clone())], body)?;
-                self.same("what a let's body answers", body.ty(), ty, "the let")
+                self.under(vec![(*binding, binds.clone())], body)
             }
             Node::If {
-                cond,
-                then,
-                els,
-                ty,
-                ..
+                cond, then, els, ..
             } => {
                 self.node(cond)?;
-                self.same("what a fork asks", cond.ty(), &bool_, "a truth")?;
                 self.node(then)?;
-                self.node(els)?;
-                self.same("what a fork's branch answers", then.ty(), ty, "the fork")?;
-                self.same("what a fork's branch answers", els.ty(), ty, "the fork")
+                self.node(els)
             }
-            Node::Match {
-                subject, arms, ty, ..
-            } => {
+            Node::Match { subject, arms, .. } => {
                 self.node(subject)?;
                 for arm in arms {
                     if arm.selects.is_empty() {
@@ -639,26 +952,10 @@ impl<'a> Walk<'_, 'a> {
                             self.under(vec![(binding, binds.clone())], &arm.body)?;
                         }
                     }
-                    self.same("what a match arm answers", arm.body.ty(), ty, "the match")?;
                 }
                 Ok(())
             }
-            Node::Some { value, ty, .. } => {
-                self.node(value)?;
-                let Ty::Option { option } = ty else {
-                    bail!(
-                        "{}: a present value typed {}, which is not optional",
-                        self.owner,
-                        ty.spelt()
-                    );
-                };
-                self.same(
-                    "what a present value holds",
-                    value.ty(),
-                    option,
-                    "what it is optional of",
-                )
-            }
+            Node::Some { value, .. } => self.node(value),
             Node::None { ty, .. } => match ty {
                 Ty::Option { .. } => Ok(()),
                 _ => bail!(
@@ -667,14 +964,11 @@ impl<'a> Walk<'_, 'a> {
                     ty.spelt()
                 ),
             },
-            Node::Tuple { members, ty, .. } => {
+            Node::Tuple { members, .. } => {
                 for member in members {
                     self.node(member)?;
                 }
-                let made = Ty::Tuple {
-                    tuple: members.iter().map(|it| it.ty().clone()).collect(),
-                };
-                self.same("a tuple", ty, &made, "what its members are")
+                Ok(())
             }
             Node::Member { tuple, at, ty, .. } => {
                 self.node(tuple)?;
@@ -730,13 +1024,7 @@ impl<'a> Walk<'_, 'a> {
                     .zip(&fn_.takes)
                     .map(|(parameter, taken)| (parameter.binding, taken.clone()))
                     .collect();
-                self.under(bound, body)?;
-                self.same(
-                    &format!("what closure site {site} answers"),
-                    &fn_.answers,
-                    body.ty(),
-                    "its body",
-                )
+                self.under(bound, body)
             }
             Node::Widen { value, ty, .. } => {
                 if matches!(value.as_ref(), Node::Widen { .. }) {
@@ -783,16 +1071,7 @@ impl<'a> Walk<'_, 'a> {
                     ty,
                     &fn_.answers,
                     "what its function answers",
-                )?;
-                for (argument, taken) in arguments.iter().zip(&fn_.takes) {
-                    self.same(
-                        "an application's argument",
-                        argument.ty(),
-                        taken,
-                        "what it takes",
-                    )?;
-                }
-                Ok(())
+                )
             }
         }
     }
@@ -804,17 +1083,11 @@ impl<'a> Walk<'_, 'a> {
         leaves(self.declared, &format!("{}: {what}", self.owner), cases)
     }
 
-    /// An operator against what it says it answers, and its operands against the slots they stand
-    /// in.
+    /// An operator against what it says it answers. Where its operands stand is [`Walk::slots`]'s.
     ///
-    /// Every operator states what its operands stand as, one arm each and none standing for the
-    /// rest. A truth operator takes two truths. Both sides of `++` stand as what it answers: the
-    /// checker places each at the list both join at, under a `Widen` where it is narrower, and two
-    /// strings joined are strings. A comparison and an arithmetic operator place their operands at
-    /// no type the tree states: a case is compared with its sum as it is, and which reading of an
-    /// arithmetic operator the checker applied is not recorded. What holds of those is what every
-    /// such node answers: a comparison a truth, `/` a `Rational`, and `+`, `-` and `*` over two
-    /// operands of one type that type.
+    /// What holds of every operator node the checker builds, whatever it was written over: a
+    /// comparison and a truth operator answer a truth, `/` a `Rational`, and `+`, `-` and `*` over
+    /// two operands of one type that type.
     /// Which pairs an operator may be written over, and what it makes of two different ones, is
     /// `ArithmeticCheck`'s and `BinaryElaborator`'s to say, and the checked tree does not record
     /// what they said (souther-lang/souther#1919). Answering it again here would be a copy of the
@@ -832,11 +1105,7 @@ impl<'a> Walk<'_, 'a> {
         let truth = Ty::Prim { prim: Prim::Bool };
         let what = format!("what {} answers", op.spelt());
         match op {
-            Op::And | Op::Or => {
-                self.same("a side of a truth operator", left, &truth, "what it asks")?;
-                self.same("a side of a truth operator", right, &truth, "what it asks")?;
-                self.same(&what, ty, &truth, "what the operator answers")
-            }
+            Op::And | Op::Or => self.same(&what, ty, &truth, "what the operator answers"),
             Op::Eq | Op::Ne | Op::Lt | Op::Le | Op::Gt | Op::Ge => {
                 self.same(&what, ty, &truth, "what the operator answers")
             }
@@ -848,10 +1117,9 @@ impl<'a> Walk<'_, 'a> {
                 },
                 "what a quotient is",
             ),
-            Op::Concat => {
-                self.same("the left side of ++", left, ty, "what ++ answers")?;
-                self.same("the right side of ++", right, ty, "what ++ answers")
-            }
+            // Both sides stand at what it answers, which its slots hold; that is all a join says
+            // of itself.
+            Op::Concat => Ok(()),
             Op::Add | Op::Sub | Op::Mul if left == right => {
                 self.number(&what, ty)?;
                 self.same(&what, ty, left, "what its operands are")?;
@@ -952,7 +1220,8 @@ impl<'a> Walk<'_, 'a> {
         }
     }
 
-    /// A call's type against what it reaches answers, and its arguments against what that takes.
+    /// A call's type against what it reaches answers, and how many values it hands over against
+    /// how many that takes. What each argument stands as is [`Walk::slots`]'s.
     fn call(
         &mut self,
         reaches: &Reaches,
@@ -960,42 +1229,18 @@ impl<'a> Walk<'_, 'a> {
         ty: &Ty,
         aborts: &[AbortKind],
     ) -> Result<()> {
+        if let Some((callee, takes)) = self.parameters(reaches)? {
+            self.arity(&format!("a call of {callee}"), arguments.len(), takes.len())?;
+        }
         match reaches {
-            Reaches::Behavior { declared } => {
-                let target = self.targets.named(declared)?;
-                let takes = target.takes();
-                self.arity(
-                    &format!("a call of {declared}"),
-                    arguments.len(),
-                    takes.len(),
-                )?;
-                self.handed(declared, arguments, &takes)?;
-                self.same(
-                    &format!("a call of {declared}"),
-                    ty,
-                    &target.answers(),
-                    "what it answers",
-                )
-            }
+            Reaches::Behavior { declared } => self.same(
+                &format!("a call of {declared}"),
+                ty,
+                &self.targets.named(declared)?.answers(),
+                "what it answers",
+            ),
             Reaches::Helper { declared } => {
-                let held = *self
-                    .reached
-                    .helpers
-                    .get(&(self.carrier, declared.as_str()))
-                    .ok_or_else(|| {
-                        anyhow!(
-                            "{}: a call of {declared}, which {} holds no copy of",
-                            self.owner,
-                            self.carrier
-                        )
-                    })?;
-                let takes = held.takes();
-                self.arity(
-                    &format!("a call of {declared}"),
-                    arguments.len(),
-                    takes.len(),
-                )?;
-                self.handed(declared, arguments, &takes)?;
+                let held = self.reached.helpers[&(self.carrier, declared.as_str())];
                 // The helper's body stands as the answer it declares, so its type is that answer.
                 self.same(
                     &format!("a call of {declared}"),
@@ -1006,24 +1251,7 @@ impl<'a> Walk<'_, 'a> {
             }
             Reaches::Value { module, name } => {
                 let joined = format!("{module}.{name}");
-                let value = *self
-                    .reached
-                    .values
-                    .get(&(self.carrier, joined.clone()))
-                    .ok_or_else(|| {
-                        anyhow!(
-                            "{}: a call of the value {joined}, which {} builds no home for",
-                            self.owner,
-                            self.carrier
-                        )
-                    })?;
-                let handed: Vec<Ty> = value.handovers.iter().map(|it| it.ty.clone()).collect();
-                self.arity(
-                    &format!("a call of the value {joined}"),
-                    arguments.len(),
-                    handed.len(),
-                )?;
-                self.handed(&joined, arguments, &handed)?;
+                let value = self.reached.values[&(self.carrier, joined.clone())];
                 self.same(
                     &format!("a call of the value {joined}"),
                     ty,
@@ -1038,11 +1266,6 @@ impl<'a> Walk<'_, 'a> {
                         self.owner
                     );
                 }
-                self.arity(
-                    &format!("a call of `{module}`'s published value {name}"),
-                    arguments.len(),
-                    0,
-                )?;
                 match self.reached.entries.get(&(module.as_str(), name.as_str())) {
                     Some(entry) => self.same(
                         &format!("a call of `{module}`'s published value {name}"),
@@ -1070,38 +1293,18 @@ impl<'a> Walk<'_, 'a> {
             }
             Reaches::Kernel { kernel } => match kernel.as_str() {
                 "int.add" => {
-                    let int = Ty::Prim { prim: Prim::Int };
-                    self.arity("a call of int.add", arguments.len(), 2)?;
                     self.overflows("a call of int.add", aborts)?;
-                    for argument in arguments {
-                        self.same(
-                            "an argument of int.add",
-                            argument.ty(),
-                            &int,
-                            "what it takes",
-                        )?;
-                    }
-                    self.same("a call of int.add", ty, &int, "what it answers")
+                    self.same(
+                        "a call of int.add",
+                        ty,
+                        &Ty::Prim { prim: Prim::Int },
+                        "what it answers",
+                    )
                 }
-                // Refused where it is lowered. What the call takes each argument as is the kernel's
-                // signature with its variables settled for this call, and the tree does not keep
-                // the settlement (souther-lang/souther#1930), so an argument missing its `Widen`
-                // here is not told apart from a kernel this backend does not lower.
+                // Refused where it is lowered; nothing here knows what it answers.
                 _ => Ok(()),
             },
         }
-    }
-
-    fn handed(&self, callee: &str, arguments: &[Node], takes: &[Ty]) -> Result<()> {
-        for (at, (argument, taken)) in arguments.iter().zip(takes).enumerate() {
-            self.same(
-                &format!("argument {at} handed to {callee}"),
-                argument.ty(),
-                taken,
-                "the parameter",
-            )?;
-        }
-        Ok(())
     }
 }
 
