@@ -243,7 +243,10 @@ where the list and the script name every function the header declares.
 A library is one program, so it holds every build the program reaches: a build's object defines
 what reads and builds a value of a type it declares, and another build calls that. Those objects are
 handed to the driver with `--with <object>`, or to `NativeCompiler.library` beside the program, the
-same objects an executable of it is linked with. What the library then offers a host is what each
+same objects an executable of it is linked with. It also holds whatever supplies a behavior the
+program names and no build defines — an injected behavior, which the language expects to be written
+outside it. That is handed over with `--link-with <object or library>`, is linked in, and adds
+nothing to what the library offers a host. What the library then offers a host is what each
 of its objects offers, and each says that itself: an object carries its own surface, in a section
 of its own, so an object another build wrote is described by the build that wrote it and not by a
 second reading of a program this one does not have. The declarations, the manifest and the export

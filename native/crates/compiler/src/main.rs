@@ -7,11 +7,13 @@
 //! `--library <directory>` writes, into the directory, the object, a C header, the declarations it
 //! includes, a manifest and a shared library, and on stdout where it wrote each of them, one to a
 //! line and in that order, so what a library is called on this host is said by the one that named
-//! it. The library is the object, every object another build wrote that `--with <object>` names,
-//! once for each, and the runtime: the static archive the same `cargo build` put beside this
-//! executable, or the one `--runtime <archive>` names.
+//! it. The library is the object; every object another Souther build wrote that `--with <object>`
+//! names, once for each; every object or library that `--link-with <path>` names, which supplies
+//! what the program leaves undefined and no build defines, such as an injected behavior; and the
+//! runtime: the static archive the same `cargo build` put beside this executable, or the one
+//! `--runtime <archive>` names.
 
-use souther_native_driver::{NotLowered, ended, library_for, object_for};
+use souther_native_driver::{Linking, NotLowered, ended, library_for, object_for};
 use std::env;
 use std::io::{Read, Write, stdin, stdout};
 use std::path::PathBuf;
@@ -22,17 +24,14 @@ enum Asked {
     /// The object, on stdout.
     Object,
     /// Everything a host needs, in a directory.
-    Library {
-        into: PathBuf,
-        alongside: Vec<PathBuf>,
-        runtime: PathBuf,
-    },
+    Library { into: PathBuf, linking: Linking },
 }
 
 fn asked() -> Result<Asked, String> {
     let mut into = None;
     let mut runtime = None;
-    let mut alongside = Vec::new();
+    let mut builds = Vec::new();
+    let mut supplying = Vec::new();
     let mut arguments = env::args_os().skip(1);
     while let Some(argument) = arguments.next() {
         let Some(value) = arguments.next() else {
@@ -42,7 +41,8 @@ fn asked() -> Result<Asked, String> {
         match argument.to_str() {
             Some("--library") => into = Some(value),
             Some("--runtime") => runtime = Some(value),
-            Some("--with") => alongside.push(value),
+            Some("--with") => builds.push(value),
+            Some("--link-with") => supplying.push(value),
             _ => {
                 return Err(format!(
                     "an argument this driver does not read: {argument:?}"
@@ -51,10 +51,10 @@ fn asked() -> Result<Asked, String> {
         }
     }
     let Some(into) = into else {
-        return if runtime.is_none() && alongside.is_empty() {
+        return if runtime.is_none() && builds.is_empty() && supplying.is_empty() {
             Ok(Asked::Object)
         } else {
-            Err("--runtime and --with are read only with --library".to_string())
+            Err("--runtime, --with and --link-with are read only with --library".to_string())
         };
     };
     let runtime = match runtime {
@@ -65,8 +65,11 @@ fn asked() -> Result<Asked, String> {
     };
     Ok(Asked::Library {
         into,
-        alongside,
-        runtime,
+        linking: Linking {
+            builds,
+            supplying,
+            runtime,
+        },
     })
 }
 
@@ -88,23 +91,21 @@ fn main() -> ExitCode {
         Asked::Object => {
             object_for(&document).and_then(|object| stdout().write_all(&object).map_err(Into::into))
         }
-        Asked::Library {
-            into,
-            alongside,
-            runtime,
-        } => library_for(&document, &alongside, &runtime, &into).and_then(|written| {
-            let mut said = String::new();
-            for path in [
-                &written.object,
-                &written.header,
-                &written.declarations,
-                &written.manifest,
-                &written.library,
-            ] {
-                said.push_str(&format!("{}\n", path.display()));
-            }
-            stdout().write_all(said.as_bytes()).map_err(Into::into)
-        }),
+        Asked::Library { into, linking } => {
+            library_for(&document, &linking, &into).and_then(|written| {
+                let mut said = String::new();
+                for path in [
+                    &written.object,
+                    &written.header,
+                    &written.declarations,
+                    &written.manifest,
+                    &written.library,
+                ] {
+                    said.push_str(&format!("{}\n", path.display()));
+                }
+                stdout().write_all(said.as_bytes()).map_err(Into::into)
+            })
+        }
     };
     match done {
         Ok(()) => ExitCode::from(ended::WITH_AN_OBJECT),

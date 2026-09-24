@@ -7,7 +7,7 @@
 //! from, which is what they are being held to.
 
 use serde_json::Value;
-use souther_native_driver::{library_for, object_for};
+use souther_native_driver::{Linking, library_for, object_for};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
@@ -19,6 +19,16 @@ use support::PREFIX;
 
 const ADDING: &str = include_str!("adding.transport.json");
 const VALUES: &str = include_str!("values.transport.json");
+
+/// What a library is linked from beside the program's object: these builds, these objects
+/// supplying what no build defines, and the runtime.
+fn linking(builds: Vec<std::path::PathBuf>, supplying: Vec<std::path::PathBuf>) -> Linking {
+    Linking {
+        builds,
+        supplying,
+        runtime: support::runtime().to_path_buf(),
+    }
+}
 
 /// Every function the header declares, by the name before its parameters.
 fn declared_in(header: &str) -> BTreeSet<String> {
@@ -98,7 +108,7 @@ fn defined_in(file: &Path, exported: bool) -> BTreeSet<String> {
 fn the_header_the_manifest_and_the_library_name_one_set_of_functions() {
     for document in [ADDING, VALUES] {
         let into = tempdir().unwrap();
-        let built = library_for(document, &[], support::runtime(), into.path()).unwrap();
+        let built = library_for(document, &linking(vec![], vec![]), into.path()).unwrap();
 
         let declarations = fs::read_to_string(&built.declarations).unwrap();
         // What an FFI with no preprocessor reads: not one directive, whatever the program is.
@@ -215,7 +225,7 @@ fn ran(document: &str, program: &str) -> String {
 
 fn ran_as(document: &str, program: &str, compiler: &str, named: &str) -> String {
     let into = tempdir().unwrap();
-    let built = library_for(document, &[], support::runtime(), into.path()).unwrap();
+    let built = library_for(document, &linking(vec![], vec![]), into.path()).unwrap();
     let source = into.path().join(named);
     fs::write(&source, program).unwrap();
     let executable = into.path().join("host");
@@ -272,8 +282,7 @@ fn a_module_two_objects_carry_is_refused() {
     fs::write(&again, object_for(VALUES).unwrap()).unwrap();
     let refused = library_for(
         VALUES,
-        &[again],
-        support::runtime(),
+        &linking(vec![again], vec![]),
         &into.path().join("built"),
     )
     .err()
@@ -304,8 +313,7 @@ fn an_object_carrying_no_surface_is_refused() {
     assert!(compiled.success());
     let refused = library_for(
         ADDING,
-        &[other],
-        support::runtime(),
+        &linking(vec![other], vec![]),
         &into.path().join("built"),
     )
     .err()

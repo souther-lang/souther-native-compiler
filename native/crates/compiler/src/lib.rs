@@ -208,22 +208,35 @@ fn header() -> String {
     )
 }
 
-/// The object for a document, and beside it what a host needs to call it: a header and the
-/// declarations it includes, a manifest, and a shared library of the object, the objects in
-/// `alongside`, and `runtime`, the runtime's static archive.
+/// What a library is linked from besides the program's own object.
 ///
-/// `alongside` is every object another build wrote that this one reaches — whose behaviors it
-/// calls, or whose types it builds and reads — the same objects an executable of it would be linked
-/// with. A library is one program, so they go into it, and what it offers a host is everything
-/// each of them carries beside what this object does. Everything a host reads is written from
-/// what the objects carry, which is what their emission put there, so none of it can name a
-/// function the rest does not.
-pub fn library_for(
-    document: &str,
-    alongside: &[PathBuf],
-    runtime: &Path,
-    into: &Path,
-) -> Result<Library> {
+/// Three kinds of thing, as an executable of the program is linked from three: what other Souther
+/// builds wrote, what supplies a behavior the program names and no build defines, and the runtime.
+/// They are kept apart because they are not one kind of thing. An object another build wrote
+/// carries what it offers a host, and that is part of the library's surface; what supplies an
+/// injected behavior is written outside this compiler, as the language expects it to be, and
+/// offers a host nothing through the library.
+pub struct Linking {
+    /// Every object another Souther build wrote that the program reaches: whose behaviors it calls,
+    /// or whose types it builds and reads. Each carries its own surface, and one that does not is
+    /// refused.
+    pub builds: Vec<PathBuf>,
+    /// Objects and libraries that define what the program leaves for whoever links it and no build
+    /// defines — an injected behavior's implementation. Linked in, and nothing is read off them.
+    pub supplying: Vec<PathBuf>,
+    /// The runtime's static archive.
+    pub runtime: PathBuf,
+}
+
+/// The object for a document, and beside it what a host needs to call it: a header and the
+/// declarations it includes, a manifest, and a shared library of the object and what `linking`
+/// names.
+///
+/// A library is one program, so it holds every build the program reaches and whatever supplies
+/// what the program leaves undefined. What it offers a host is everything each Souther object in
+/// it carries. Everything a host reads is written from what those objects carry, which is what
+/// their emission put there, so none of it can name a function the rest does not.
+pub fn library_for(document: &str, linking: &Linking, into: &Path) -> Result<Library> {
     let linker = link::Linker::of_this_host()?;
     let object = object_for(document)?;
     fs::create_dir_all(into)?;
@@ -241,7 +254,7 @@ pub fn library_for(
     let mut modules: BTreeMap<String, manifest::Module> = BTreeMap::new();
     let mut objects = vec![written.object.as_path()];
     let mut carried = vec![(written.object.display().to_string(), object)];
-    for path in alongside {
+    for path in &linking.builds {
         carried.push((path.display().to_string(), fs::read(path)?));
         objects.push(path);
     }
@@ -256,13 +269,14 @@ pub fn library_for(
         }
     }
     let manifest = interface::manifest_of(modules.into_values().collect());
+    objects.extend(linking.supplying.iter().map(PathBuf::as_path));
 
     fs::write(&written.header, header())?;
     fs::write(&written.declarations, interface::declarations(&manifest))?;
     fs::write(&written.manifest, interface::written(&manifest))?;
     linker.shared_library(
         &objects,
-        runtime,
+        &linking.runtime,
         &interface::exported(&manifest),
         &written.library,
     )?;

@@ -62,17 +62,29 @@ public final class NativeCompiler {
         return library(program, List.of(), into);
     }
 
+    /** The program built for a host, into {@code into}, with other builds' objects beside it. */
+    public static Library library(CheckedProgram program, List<byte[]> alongside, Path into)
+            throws IOException, InterruptedException {
+        return library(program, alongside, List.of(), into);
+    }
+
     /**
-     * The program built for a host, into {@code into}, with every object another build wrote that
-     * it reaches: the same objects an executable of it would be linked with. A library is one
-     * program, so they are linked into it, and what it offers a host is what each of them carries
-     * beside what this program's object does.
+     * The program built for a host, into {@code into}.
+     *
+     * <p>{@code alongside} is every object another build wrote that the program reaches: the same
+     * objects an executable of it would be linked with. Each carries what it offers a host, and
+     * what the library offers is what all of them carry beside this program's object.
+     *
+     * <p>{@code supplying} is every object or library that defines what the program leaves for
+     * whoever links it and no build defines — an injected behavior's implementation, written
+     * outside this compiler as the language expects. It is linked in and offers a host nothing.
      *
      * <p>All of it is written by the driver, from what the objects' emission decided. Nothing here
      * reads the program to say what a host can call: that would be a second answer to a question
      * the driver already answered while writing each object.
      */
-    public static Library library(CheckedProgram program, List<byte[]> alongside, Path into)
+    public static Library library(CheckedProgram program, List<byte[]> alongside,
+                                  List<Path> supplying, Path into)
             throws IOException, InterruptedException {
         Path handed = Files.createTempDirectory("souther-native-alongside");
         try {
@@ -83,6 +95,10 @@ public final class NativeCompiler {
                 Files.write(object, alongside.get(at));
                 arguments.add("--with");
                 arguments.add(object.toString());
+            }
+            for (Path supplied : supplying) {
+                arguments.add("--link-with");
+                arguments.add(supplied.toAbsolutePath().toString());
             }
             byte[] said = run(ProgramWriter.written(program), arguments);
             // Where the driver wrote each, one to a line, which is how what a shared library is
