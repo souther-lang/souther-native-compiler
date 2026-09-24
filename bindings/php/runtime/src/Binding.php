@@ -12,6 +12,13 @@ namespace Souther\Runtime;
 abstract class Binding
 {
     /**
+     * Which version of what a generated binding calls of this runtime this is. It moves when a
+     * binding generated before would call something this does not have, or call it as something it
+     * is not; a binding says which it was generated for and refuses to load over any other.
+     */
+    public const PROTOCOL = 1;
+
+    /**
      * @param array<string, InjectionSlot> $slots by the declared name of the behavior each is for
      */
     protected function __construct(

@@ -55,6 +55,12 @@ public final class PhpBindings {
 
     private static final String RUNTIME = "\\Souther\\Runtime\\";
 
+    /**
+     * The version of what generated code calls of the runtime package that this writes against:
+     * {@code Binding::PROTOCOL} in {@code bindings/php/runtime}, which a test holds to this.
+     */
+    static final int RUNTIME_PROTOCOL = 1;
+
     private final Manifest manifest;
     private final String root;
     private final Path into;
@@ -114,7 +120,7 @@ public final class PhpBindings {
     }
 
     private void write() throws IOException {
-        PhpNames.Claimed namespaces = new PhpNames.Claimed("namespace " + root);
+        PhpNames.Claimed namespaces = PhpNames.Claimed.members("namespace " + root);
         for (Manifest.Module module : manifest.modules()) {
             String namespace = PhpNames.moduleNamespace(root, module.name());
             namespaces.claim(namespace.substring(root.length() + 1), "module `" + module.name() + "`");
@@ -199,7 +205,7 @@ public final class PhpBindings {
 
     private void module(Manifest.Module module) throws IOException {
         String namespace = PhpNames.moduleNamespace(root, module.name());
-        PhpNames.Claimed classes = new PhpNames.Claimed("namespace " + namespace);
+        PhpNames.Claimed classes = PhpNames.Claimed.members("namespace " + namespace);
         classes.claim("Behaviors", "the generated `Behaviors`");
         classes.claim("Values", "the generated `Values`");
         classes.claim("Injections", "the generated `Injections`");
@@ -232,10 +238,18 @@ public final class PhpBindings {
      * class for.
      */
     private boolean opaque(Declaration.Sum sum) {
-        return sum.which() == null || sum.cases().stream()
-                .anyMatch(it -> !(it instanceof Case.Declared d)
-                        || !(whole(d.module(), d.name()) instanceof Whole w)
-                        || w.kind() != Whole.Kind.PRODUCT);
+        return sum.which() == null || sum.cases().stream().anyMatch(it -> caseClass(it) == null);
+    }
+
+    /**
+     * The class a value that is {@code of} is made as, or null where no generated class is one: a
+     * case the model keeps, a primitive or a language's case, or a declared type of another sum.
+     * The one answer both to whether a sum needs a class for values no other class names and to
+     * which class each of its cases is made as.
+     */
+    private @Nullable Whole caseClass(Case of) {
+        return of instanceof Case.Declared d && whole(d.module(), d.name()) instanceof Whole w
+                && w.kind() == Whole.Kind.PRODUCT ? w : null;
     }
 
     /** Every sum {@code key} is a case of. */
@@ -285,7 +299,7 @@ public final class PhpBindings {
             case Declaration.Sum sum -> null;
         };
 
-        PhpNames.Claimed members = new PhpNames.Claimed("class " + it.fqcn());
+        PhpNames.Claimed members = PhpNames.Claimed.members("class " + it.fqcn());
         for (String fixed : List.of("__construct", "nativeHandle", "of", "decode", "encode")) {
             members.claim(fixed, "the generated `" + fixed + "`");
         }
@@ -354,10 +368,11 @@ public final class PhpBindings {
             return;
         }
         agrees(construct, words(crossings), List.of(Word.VALUE), Word.STATUS);
+        PhpNames.Claimed claimed = PhpNames.Claimed.parameters(it.fqcn() + "::of");
         List<String> names = new ArrayList<>();
         for (Manifest.Field field : fields) {
-            names.add(PhpNames.parameterName(field.name(), "field `" + it.key() + "." + field.name()
-                    + "`"));
+            String what = "field `" + it.key() + "." + field.name() + "`";
+            names.add(claimed.claim(PhpNames.parameterName(field.name(), what), what));
         }
         String session = PhpNames.freeOf("session", names);
         String ffi = PhpNames.freeOf("ffi", names);
@@ -506,12 +521,10 @@ public final class PhpBindings {
             agrees(sum.which(), List.of(Word.VALUE), List.of(), Word.CASE);
             StringBuilder arms = new StringBuilder();
             for (int at = 0; at < sum.cases().size(); at++) {
-                Case of = sum.cases().get(at);
-                Whole whole = of instanceof Case.Declared d ? whole(d.module(), d.name()) : null;
-                String made = whole != null && whole.kind() == Whole.Kind.PRODUCT
-                        ? whole.of(List.of("$value"), "$session")
+                Whole made = caseClass(sum.cases().get(at));
+                String arm = made != null ? made.of(List.of("$value"), "$session")
                         : "new " + it.opaque() + "($session->handle($value))";
-                arms.append("            ").append(at).append(" => ").append(made).append(",\n");
+                arms.append("            ").append(at).append(" => ").append(arm).append(",\n");
             }
             cases = "        return match ($session->ffi()->" + sum.which().name() + "($value)) {\n"
                     + arms
@@ -551,7 +564,7 @@ public final class PhpBindings {
 
     private void behaviors(Manifest.Module module, String namespace) throws IOException {
         StringBuilder functions = new StringBuilder();
-        PhpNames.Claimed members = new PhpNames.Claimed("class " + namespace + "\\Behaviors");
+        PhpNames.Claimed members = PhpNames.Claimed.members("class " + namespace + "\\Behaviors");
         members.claim("__construct", "the generated `__construct`");
         for (Manifest.Behavior behavior : module.behaviors()) {
             Function call = behavior.call();
@@ -562,9 +575,12 @@ public final class PhpBindings {
             }
             String what = "behavior `" + module.name() + "." + behavior.name() + "`";
             members.claim(PhpNames.memberName(behavior.name(), what), what);
+            PhpNames.Claimed claimed = PhpNames.Claimed.parameters(what);
             List<String> names = switch (behavior.parameters()) {
                 case Manifest.Parameters.Named named -> named.parameters().stream()
-                        .map(it -> PhpNames.parameterName(it.name(), "a parameter of " + what))
+                        .map(it -> claimed.claim(PhpNames.parameterName(it.name(),
+                                "parameter `" + it.name() + "` of " + what),
+                                "parameter `" + it.name() + "`"))
                         .toList();
                 case Manifest.Parameters.Positional positional ->
                         PhpNames.positional(positional.types().size());
@@ -589,7 +605,7 @@ public final class PhpBindings {
 
     private void values(Manifest.Module module, String namespace) throws IOException {
         StringBuilder functions = new StringBuilder();
-        PhpNames.Claimed members = new PhpNames.Claimed("class " + namespace + "\\Values");
+        PhpNames.Claimed members = PhpNames.Claimed.members("class " + namespace + "\\Values");
         members.claim("__construct", "the generated `__construct`");
         for (Manifest.PublishedValue value : module.values()) {
             Function read = value.read();
@@ -679,12 +695,13 @@ public final class PhpBindings {
         List<String> parameters = new ArrayList<>();
         List<String> entries = new ArrayList<>();
         List<String> described = new ArrayList<>();
+        PhpNames.Claimed claimed = PhpNames.Claimed.parameters(namespace + "\\Injections::of");
         for (Manifest.Injection injection : module.injections()) {
             if (adapter(module, injection) == null) {
                 continue;
             }
             String what = "behavior `" + module.name() + "." + injection.name() + "`";
-            String name = PhpNames.parameterName(injection.name(), what);
+            String name = claimed.claim(PhpNames.parameterName(injection.name(), what), what);
             parameters.add("?callable $" + name + " = null");
             entries.add("'" + module.name() + "." + injection.name() + "' => $" + name);
             List<String> types = new ArrayList<>();
@@ -831,11 +848,18 @@ public final class PhpBindings {
                      */
                     private static function over(\\Souther\\Runtime\\NativeLibrary $library): self
                     {
+                        $speaks = \\defined('\\Souther\\Runtime\\Binding::PROTOCOL')
+                            ? \\Souther\\Runtime\\Binding::PROTOCOL : 0;
+                        if ($speaks !== %d) {
+                            throw new \\LogicException('this binding was generated for version %d of'
+                                . ' what it calls of souther-lang/php-runtime, and the runtime installed'
+                                . ' is version ' . $speaks);
+                        }
                         return self::$bindings[spl_object_id($library)] ??= new self($library, [
                 %s        ]);
                     }
                 }
-                """.formatted(DECLARATIONS, DECLARATIONS, slots));
+                """.formatted(DECLARATIONS, DECLARATIONS, RUNTIME_PROTOCOL, RUNTIME_PROTOCOL, slots));
         file(root, "Binding", php);
     }
 

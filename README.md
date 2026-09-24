@@ -311,8 +311,11 @@ What a host has no way to reach is not written: a behavior with no `call`, a fie
 behavior taking or answering a type with no representation for a host, and a behavior answering a
 union no declaration names, since the library says of such a value nothing about which case it is.
 A name PHP will not take (a reserved word, `this` for a parameter, two names differing only in case
-where PHP compares them without it, a field named as a method the binding writes) is refused with
-the name, rather than spelt some other way.
+where PHP compares them without it, a field named as a method the binding writes, two parameters of
+one function under one name) is refused with the name, rather than spelt some other way. A manifest
+is read as a version only once it has said it is that one, so one of another version is refused as
+that and not as whichever member moved since, as the driver reads a transport and what an object
+carries.
 
 Everything else is in `bindings/php/runtime`, one Composer package every generated binding runs on.
 A host calls `$binding->run(fn (Session $session) => ...)`: the run marks the arena, and when it ends
@@ -332,7 +335,8 @@ function pointer once per binding and registered around each run that is handed 
 not grow with every request; a call with nothing registered throws `UnboundInjection`, and an
 exception an implementation throws is the one that comes back out of the call that reached it.
 
-The runtime loads a library once per process, with `FFI::cdef` or, under `ffi.enable=preload`, from
+A binding says which version of the runtime's surface it was generated for, and refuses to load
+over a runtime that says another (`Binding::PROTOCOL`). The runtime loads a library once per process, with `FFI::cdef` or, under `ffi.enable=preload`, from
 the scope a preload script declared with `Binding::preloadHeader`. The arena and what is registered
 are per thread, and a handle is PHP's, which a ZTS runtime such as FrankenPHP does not hand from one
 thread to another; nothing here checks for one that was.

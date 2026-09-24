@@ -167,10 +167,28 @@ record Manifest(int abi, Map<String, Integer> statuses, Map<String, Integer> out
      */
     static Manifest read(Path path) throws IOException {
         JsonNode read = JsonMapper.builder().build().readTree(Files.readString(path));
-        Result<Manifest> manifest = MANIFEST.decode(read);
-        return manifest.orElseThrow(issues -> new IllegalArgumentException(
+        // What it says it is, first and alone: a manifest of another version fails on whichever
+        // member moved since, and would say that member is unknown rather than that it is another
+        // version.
+        Says says = SAYS.decode(read).orElseThrow(issues -> new IllegalArgumentException(
+                path + " is not a manifest: " + issues));
+        if (!says.format().equals(FORMAT) || says.version() != VERSION || says.abi() != ABI) {
+            throw new IllegalArgumentException(path + " is version " + says.version() + " of "
+                    + says.format() + " for ABI generation " + says.abi() + ", and this generator"
+                    + " reads version " + VERSION + " of " + FORMAT + " for generation " + ABI);
+        }
+        return MANIFEST.decode(read).orElseThrow(issues -> new IllegalArgumentException(
                 path + " is not a manifest this generator reads: " + issues));
     }
+
+    /** What a manifest says it is, read past everything else it says. */
+    private record Says(String format, int version, int abi) {
+    }
+
+    private static final Decoder<JsonNode, Says> SAYS = combine(
+            field("format", string()),
+            field("version", int_()),
+            field("abi", int_())).map(Says::new);
 
     private static final Decoder<JsonNode, Word> WORD = string().flatMap(written -> {
         for (Word word : Word.values()) {
@@ -293,11 +311,9 @@ record Manifest(int abi, Map<String, Integer> statuses, Map<String, Integer> out
             field("declarations", list(DECLARATION))).strict(Module::new);
 
     private static final Decoder<JsonNode, Manifest> MANIFEST = combine(
-            field("format", literal(FORMAT)),
-            field("version", int_().refine(it -> it == VERSION, "invalid_value",
-                    "this generator reads version " + VERSION + " of the manifest")),
-            field("abi", int_().refine(it -> it == ABI, "invalid_value",
-                    "this generator binds ABI generation " + ABI)),
+            field("format", string()),
+            field("version", int_()),
+            field("abi", int_()),
             field("statuses", map(int_())),
             field("outcomes", map(int_())),
             field("runtime", list(FUNCTION)),

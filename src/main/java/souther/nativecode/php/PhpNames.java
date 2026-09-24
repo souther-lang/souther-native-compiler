@@ -89,26 +89,39 @@ final class PhpNames {
     }
 
     /**
-     * Names claimed in one place PHP looks names up in: a namespace's classes, or a class's
-     * methods. A second claim of a name is refused, including one differing only in the case of its
-     * letters, which PHP does not tell apart there.
+     * Names claimed in one place PHP looks names up in: a namespace's classes, a class's methods,
+     * or a function's parameters. A second claim of a name is refused, including, where PHP does not
+     * tell the case of letters apart, one differing only in that.
      */
     static final class Claimed {
 
         private final String where;
+        private final boolean foldsCase;
         private final Map<String, String> held = new HashMap<>();
 
-        Claimed(String where) {
+        private Claimed(String where, boolean foldsCase) {
             this.where = where;
+            this.foldsCase = foldsCase;
+        }
+
+        /** The classes of a namespace, or the methods of a class: PHP reads these without case. */
+        static Claimed members(String where) {
+            return new Claimed(where, true);
+        }
+
+        /** The parameters of one function: PHP reads a variable's name as it is spelt. */
+        static Claimed parameters(String where) {
+            return new Claimed(where, false);
         }
 
         /** Claims {@code name} for {@code what}, answering the name. */
         String claim(String name, String what) {
-            String before = held.putIfAbsent(name.toLowerCase(Locale.ROOT), what);
+            String before = held.putIfAbsent(foldsCase ? name.toLowerCase(Locale.ROOT) : name, what);
             if (before != null) {
                 throw new PhpBindings.NotBindable(before + " and " + what + " in " + where
-                        + " are one name to PHP, which does not tell the case of letters apart"
-                        + " there");
+                        + (foldsCase ? " are one name to PHP, which does not tell the case of"
+                        + " letters apart there" : " are one name, which PHP takes for one"
+                        + " parameter of a function"));
             }
             return name;
         }

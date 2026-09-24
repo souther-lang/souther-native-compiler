@@ -176,22 +176,51 @@ class APhpBindingIsWrittenFromTheManifestTest {
                 .hasMessageContaining("`Class` is a word PHP reserves");
     }
 
-    /** A manifest of a version this was not written for is refused, not read as far as it parses. */
+    /**
+     * A manifest of a version this was not written for is refused as that, and not as whichever
+     * member moved since: version 2, as the driver wrote it, said what a behavior takes as
+     * {@code takes}.
+     */
     @Test
-    void aManifestOfAnotherVersionIsRefused(@TempDir Path into) throws Exception {
-        NativeCompiler.Library library = NativeCompiler.library(CheckedProgram.of(List.of("""
-                module m exposing ( Box )
+    void aManifestOfAnotherVersionIsRefusedByItsVersion(@TempDir Path into) throws Exception {
+        Path earlier = Path.of("src", "test", "resources", "souther", "nativecode", "php",
+                "interface-v2.json");
+        Path declarations = into.resolve("souther.declarations");
+        Files.writeString(declarations, "", StandardCharsets.UTF_8);
 
-                data Box = Bool
-                """)), into.resolve("native"));
-        Path older = into.resolve("older.json");
-        Files.writeString(older, Files.readString(library.manifest())
-                .replace("\"version\": 3", "\"version\": 2"), StandardCharsets.UTF_8);
-
-        assertThatThrownBy(() -> PhpBindings.generate(older, library.declarations(),
-                into.resolve("php"), "Acme\\Billing"))
+        assertThatThrownBy(() -> PhpBindings.generate(earlier, declarations, into.resolve("php"),
+                "Acme\\Billing"))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("version 3");
+                .hasMessageContaining("is version 2 of souther-native-interface for ABI generation"
+                        + " 3, and this generator reads version 3")
+                .hasMessageNotContaining("takes");
+    }
+
+    /**
+     * What generated code calls of the runtime is the version the runtime says it is: the two are
+     * written in two languages, and a binding refuses to load over a runtime of another version.
+     */
+    @Test
+    void theRuntimeSpeaksTheVersionABindingIsWrittenFor() throws Exception {
+        Path binding = Path.of("bindings", "php", "runtime", "src", "Binding.php");
+
+        assertThat(said(List.of("php", "-r", "require '" + binding.toAbsolutePath()
+                + "'; echo \\Souther\\Runtime\\Binding::PROTOCOL;")))
+                .isEqualTo(String.valueOf(PhpBindings.RUNTIME_PROTOCOL));
+    }
+
+    /** Two parameters of one function under one name would be PHP no binding can load. */
+    @Test
+    void twoParametersUnderOneNameAreRefused(@TempDir Path into) {
+        assertThatThrownBy(() -> generated(into, """
+                module m exposing ( f )
+
+                behavior f : (a: Int, a: Int) -> Int
+                let f (x, y) = x
+                """))
+                .isInstanceOf(PhpBindings.NotBindable.class)
+                .hasMessageContaining("parameter `a`")
+                .hasMessageContaining("PHP takes for one parameter");
     }
 
     private static String said(List<String> command) throws Exception {
