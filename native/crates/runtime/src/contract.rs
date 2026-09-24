@@ -155,6 +155,10 @@ fn functions() -> Vec<(&'static str, Shape)> {
             shape_of(souther_string_concat as unsafe extern "C" fn(T, T) -> M),
         ),
         (
+            "souther_string_code_points",
+            shape_of(souther_string_code_points as unsafe extern "C" fn(T) -> i64),
+        ),
+        (
             "souther_string_of_utf8",
             shape_of(souther_string_of_utf8 as unsafe extern "C" fn(*const u8, Count) -> M),
         ),

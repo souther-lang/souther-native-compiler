@@ -5,6 +5,7 @@ members = [
     "crates/compiler",
     "crates/json-syntax",
     "crates/runtime",
+    "crates/text",
 ]
 
 [workspace.package]
@@ -15,6 +16,7 @@ license = "EPL-2.0"
 [workspace.dependencies]
 souther-native-abi = { path = "crates/abi" }
 souther-json-syntax = { path = "crates/json-syntax" }
+souther-text = { path = "crates/text" }
 cranelift = { version = "0.135.2", features = ["frontend", "module", "native", "object"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

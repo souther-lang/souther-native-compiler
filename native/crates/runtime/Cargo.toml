@@ -11,5 +11,7 @@ crate-type = ["staticlib", "rlib"]
 [dependencies]
 souther-native-abi.workspace = true
 souther-json-syntax.workspace = true
+# What the language says text means: its length and its order.
+souther-text.workspace = true
 # What text arriving from outside is canonicalized to (spec §string-canonical).
 unicode-normalization = "0.1"

@@ -11,7 +11,10 @@
 //! Where a computation here turns out to be the one the wasm runtime already does — a calendar, a
 //! regular expression — it is lifted into something both read. That is done when the second copy
 //! exists and not before: until then there is nothing to tell a shared meaning from a shared
-//! spelling.
+//! spelling. What the language says text means — its order, its length — already has a second copy,
+//! so it is not written here: it is `souther_text`, over bytes alone, and this reads the text out
+//! of a string and hands it over. A function of that kind added here instead would be a third copy
+//! (#17).
 
 // Everything here is one half of a contract the other half reads by name, so an item whose doc has
 // slid off it onto a neighbour is a contract nobody states. Refused rather than warned about.
@@ -25,6 +28,7 @@ mod decoding;
 mod document;
 mod external;
 mod injection;
+use souther_text::{code_points, compare_utf8_as_utf16};
 use std::cell::RefCell;
 use std::cmp::Ordering;
 
@@ -319,104 +323,64 @@ pub unsafe extern "C" fn souther_string_bytes(at: *const Text) -> *const u8 {
     unsafe { at.cast::<u8>().offset(TEXT_BYTES as isize) }
 }
 
-/// Two runs of text, compared by UTF-16 code unit.
+/// How long the string is as the language counts it: in code points, which is what
+/// `String.length` answers.
 ///
-/// Which is what the language says text is ordered by, and it is said there rather than worked out
-/// here: `<` `<=` `>` `>=` compare lexicographically over UTF-16 code units, and a carrier that
-/// stores a string some other way orders it as if it were that sequence regardless — the
-/// representation is this carrier's to choose and the order is not (spec §equality).
+/// Counted over the bytes each time rather than held beside them. The layout keeps one count, of
+/// bytes, and a second would be one every place that makes a string has to keep right. What is
+/// counted is `souther_text`'s, which the order below reads text through too.
 ///
-/// It is not the order the bytes are in, and not the order the code points are in either, which are
-/// the same order as each other. A code point past the basic plane is two units beginning at D800
-/// and a unit from E000 up is one, so `𠮷` (U+20BB7) comes before `￥` (U+FFE5) here and after it by
-/// either of the other two readings. Before the language said which, what held this to the answer
-/// was the rows: the JVM had answered them, and a row that ran recorded what it answered.
+/// # Safety
 ///
-/// Said as a run of bytes and nothing else, so that the day the wasm runtime's copy of this and
-/// this one are the same algorithm, what moves is a function over two slices — no arena, no
-/// address of either carrier's width, and nothing about where a string is kept.
-fn compare_utf8_as_utf16(left: &[u8], right: &[u8]) -> Ordering {
-    let mut a = Units::over(left);
-    let mut b = Units::over(right);
-    loop {
-        match (a.next(), b.next()) {
-            (None, None) => return Ordering::Equal,
-            (None, Some(_)) => return Ordering::Less,
-            (Some(_), None) => return Ordering::Greater,
-            (Some(x), Some(y)) if x != y => return x.cmp(&y),
-            _ => {}
-        }
-    }
+/// As [`souther_string_compare`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_string_code_points(at: *const Text) -> i64 {
+    let counted = code_points(unsafe { text(at.cast()) });
+    i64::try_from(counted).expect("a string holds fewer code points than an Int counts")
 }
 
-/// The UTF-16 code units a run of UTF-8 spells, one at a time.
+/// The token of every case in `souther_native_abi::BUILT_IN_CASES`, defined under the symbol
+/// `built_in_case_symbol` spells for it. What each is for is its address; the byte is what gives
+/// each one an address of its own, as `TOKEN` says of a declared type's.
 ///
-/// A pair is answered over two turns, which is what `pending` holds: the second unit of a surrogate
-/// pair is never nought, so nought stands for there being none.
-struct Units<'a> {
-    text: &'a [u8],
-    at: usize,
-    pending: u16,
+/// The symbol and the entry in [`BUILT_IN_CASE_TOKENS`] are made from the one name, so the table
+/// says what is defined and a test holds it to the one `souther_native_abi` states.
+macro_rules! built_in_cases {
+    ($($name:literal => $item:ident),* $(,)?) => {
+        $(
+            #[doc = concat!("The token a value of the case `", $name, "` carries.")]
+            #[unsafe(export_name = concat!("souther$case$", $name))]
+            pub static $item: [u8; 1] = [0];
+        )*
+
+        /// Every token defined here, by the name of its case.
+        #[cfg(test)]
+        const BUILT_IN_CASE_TOKENS: &[(&str, &[u8; 1])] = &[$(($name, &$item)),*];
+    };
 }
 
-impl<'a> Units<'a> {
-    fn over(text: &'a [u8]) -> Units<'a> {
-        Units {
-            text,
-            at: 0,
-            pending: 0,
-        }
-    }
-
-    fn next(&mut self) -> Option<u16> {
-        if self.pending != 0 {
-            let low = self.pending;
-            self.pending = 0;
-            return Some(low);
-        }
-        let first = u32::from(*self.text.get(self.at)?);
-        let (point, width) = if first < 0x80 {
-            (first, 1)
-        } else if first < 0xe0 {
-            (((first & 0x1f) << 6) | self.trailing(1), 2)
-        } else if first < 0xf0 {
-            (
-                ((first & 0x0f) << 12) | (self.trailing(1) << 6) | self.trailing(2),
-                3,
-            )
-        } else {
-            (
-                ((first & 0x07) << 18)
-                    | (self.trailing(1) << 12)
-                    | (self.trailing(2) << 6)
-                    | self.trailing(3),
-                4,
-            )
-        };
-        self.at += width;
-        if point > 0xffff {
-            let rest = point - 0x10000;
-            self.pending = 0xdc00 + (rest & 0x3ff) as u16;
-            Some(0xd800 + (rest >> 10) as u16)
-        } else {
-            Some(point as u16)
-        }
-    }
-
-    fn trailing(&self, offset: usize) -> u32 {
-        u32::from(self.text.get(self.at + offset).copied().unwrap_or(0)) & 0x3f
-    }
+built_in_cases! {
+    "Int" => CASE_INT,
+    "Bool" => CASE_BOOL,
+    "String" => CASE_STRING,
+    "DivisionByZero" => CASE_DIVISION_BY_ZERO,
+    "NotANumber" => CASE_NOT_A_NUMBER,
+    "NotADate" => CASE_NOT_A_DATE,
+    "NotATime" => CASE_NOT_A_TIME,
+    "NotWhole" => CASE_NOT_WHOLE,
+    "NotAFiniteDecimal" => CASE_NOT_A_FINITE_DECIMAL,
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        Count, Text, souther_alloc, souther_mark, souther_reset, souther_string_bytes,
-        souther_string_compare, souther_string_concat, souther_string_length,
-        souther_string_of_utf8,
+        BUILT_IN_CASE_TOKENS, Count, Text, souther_alloc, souther_mark, souther_reset,
+        souther_string_bytes, souther_string_code_points, souther_string_compare,
+        souther_string_concat, souther_string_length, souther_string_of_utf8,
     };
 
-    use souther_native_abi::SLOT;
+    use souther_native_abi::{BUILT_IN_CASES, SLOT};
+    use std::collections::BTreeSet;
 
     /// A string holding this text, as a host outside a Souther program would hand one over.
     ///
@@ -450,6 +414,43 @@ mod tests {
             )
         };
         String::from_utf8(bytes.to_vec()).expect("a string carries the text it was made from")
+    }
+
+    /// A length is counted in code points, so a character past the basic plane is one, and a flag
+    /// is the two regional indicators it is made of and not the one thing a reader sees.
+    #[test]
+    fn a_length_counts_code_points_and_not_bytes_or_what_a_reader_sees() {
+        let mark = souther_mark();
+        for (text, counted) in [
+            ("", 0),
+            ("cart", 4),
+            ("é", 1),
+            ("日本語", 3),
+            ("𠮷", 1),
+            ("🇯🇵", 2),
+            ("a𠮷b", 3),
+        ] {
+            let at = made(text);
+            assert_eq!(unsafe { souther_string_code_points(at) }, counted, "{text}");
+        }
+        souther_reset(mark);
+    }
+
+    /// Every case the table names has a token here, and nothing else does, and each token is a
+    /// place of its own: a token defined and not tabled, or tabled and not defined, is a case one
+    /// side tags a value with and the other never names.
+    #[test]
+    fn every_built_in_case_has_a_token_of_its_own() {
+        let defined: BTreeSet<&str> = BUILT_IN_CASE_TOKENS.iter().map(|(name, _)| *name).collect();
+        let tabled: BTreeSet<&str> = BUILT_IN_CASES.iter().copied().collect();
+        assert_eq!(defined, tabled);
+        assert_eq!(BUILT_IN_CASE_TOKENS.len(), BUILT_IN_CASES.len());
+
+        let places: BTreeSet<*const u8> = BUILT_IN_CASE_TOKENS
+            .iter()
+            .map(|(_, token)| token.as_ptr())
+            .collect();
+        assert_eq!(places.len(), BUILT_IN_CASES.len());
     }
 
     #[test]

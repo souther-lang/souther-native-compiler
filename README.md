@@ -103,11 +103,22 @@ value. `/` answers the exact quotient, which is a `Rational` and has no represen
 `-` of a literal is folded at compile time, and of anything else ends the run where it leaves the
 range, the way `+`, `-` and `*` do.
 
-An operation the language implements as a kernel: `Int.add` today, reusing the same instructions
-`+` does. Every other kernel is still ahead — including everything a program does with text beyond
-a literal, the six comparisons and `++`, which the language reaches through one. What a comparison
-of two strings compares is neither of the two addresses and not the bytes either — the language
-orders text by UTF-16 code unit, and says so of every carrier whatever one stores a string as.
+An operation the language implements as a kernel: `Int.add`, reusing the same instructions `+`
+does; `Int.truncatingDivide` and `Int.truncatingRemainder`, which answer `Int | DivisionByZero`
+and end a quotient only on the smallest `Int` over -1; and `String.length`, which counts code points
+and not the bytes a string is held in. Every other kernel is still ahead — including everything
+else a program does with text beyond a literal, the six comparisons and `++`, which the language
+reaches through one. What a comparison of two strings compares is neither of the two addresses and
+not the bytes either — the language orders text by UTF-16 code unit, and says so of every carrier
+whatever one stores a string as.
+
+A value of a union says which case it is by the token at the front of it. A declared case's token is
+its declaration's; an `Int`, a `Bool` or a `String` standing as a case, and a case the language
+gives such as `DivisionByZero`, is carried with a token the runtime defines for it, so a value of
+`Int | DivisionByZero` is told apart the way a value of a sum is, and a case keeps its token when
+the union it stands in widens. Such a union stays in the object that made it for now: no program
+yet hands one to another object, since the build publishing it would also have to write it in its
+external form, and a composition does not route on such a case.
 
 A model's own types: a product, a newtype, a unit, a sum, a value that may be absent, and several
 values carried as one. Built, read a field off, and forked on which case a value is.
@@ -165,8 +176,8 @@ with no clause answers a status too, so a clause added later does not change how
 For each field there is a reader, `..._f_<field>`, answering the field itself. For a published
 sum whose every case is a declared type there is `..._case`, answering which of the cases the sum
 descends to the value is, as its place among them counted from nought; the address the value is
-tagged with never leaves the object. A sum with a primitive among its cases has no reader, since its
-values do not say which case they are. The case answered is the concrete one the value is, and
+tagged with never leaves the object. A union with a primitive among its cases has no reader, since what
+carries the primitive is not something a host is handed. The case answered is the concrete one the value is, and
 whether a host can read that case further is its own publication's answer and not the sum's. A
 behavior answering a union no declaration names has the same reader beside its call,
 `souther3_m_<module>_b_<behavior>_answer_case`, counting the cases the union descends to: a member
@@ -226,7 +237,8 @@ the element's index (`/lines/2/quantity`). Two values of one type compare by wha
 of, a list element by element, through a comparator the object holds per type.
 
 Still ahead: a `Decimal`, a `Set` and a `Map`, a list handed to a host,
-every kernel but `Int.add`, `List.length` and `List.get`, a value
+every kernel but `Int.add`, `Int.truncatingDivide`, `Int.truncatingRemainder`,
+`String.length`, `List.length` and `List.get`, a value
 that runs in the module declaring it, an attempted
 construction, which takes an arm by the clause that did not hold instead of ending the run, and a
 behavior that declares what its answer owes, which is refused rather than answered without the

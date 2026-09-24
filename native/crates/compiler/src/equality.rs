@@ -30,12 +30,12 @@ use cranelift::frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift::module::{FuncId, Module};
 use cranelift::object::ObjectModule;
 use souther_native_abi::{
-    HELD, LIST_ELEMENTS, LIST_LENGTH, NOTHING, SLOT, WHICH, field_at, member_at,
+    CARRIED, HELD, LIST_ELEMENTS, LIST_LENGTH, NOTHING, SLOT, field_at, member_at,
 };
 
 use crate::transport::{Case, Declaration, Prim, Ty};
 use crate::{
-    Lowered, Lowerings, POINTER, TRUSTED, accepted, machine_type, not_lowered, out_of_slot, tag_of,
+    Lowered, Lowerings, TRUSTED, Tagged, accepted, machine_type, not_lowered, out_of_slot, token_of,
 };
 
 /// The function comparing two values of each type some comparison in this object asked about,
@@ -192,9 +192,9 @@ impl Comparing<'_, '_, '_, '_> {
                 }
                 // The one value there is.
                 Declaration::Unit { .. } => {}
-                Declaration::Sum { cases, .. } => self.cases(cases, a, b)?,
+                Declaration::Sum { cases, .. } => self.cases(ty, cases, a, b)?,
             },
-            Ty::Union { union } => self.cases(union, a, b)?,
+            Ty::Union { union } => self.cases(ty, union, a, b)?,
             Ty::Option { option } => self.optional(option, a, b)?,
             Ty::Tuple { tuple } => self.slots(tuple, member_at, a, b)?,
             Ty::List { list } => self.list(list, a, b)?,
@@ -238,12 +238,12 @@ impl Comparing<'_, '_, '_, '_> {
         Ok(out_of_slot(self.builder, held, machine_type(ty)?))
     }
 
-    /// Which case each is, by the token it carries, and then the two as that case. Two of the same
-    /// case are that case's to compare, so each case is its own comparator and a sum reaches it by
-    /// the id.
-    fn cases(&mut self, members: &[Case], a: ir::Value, b: ir::Value) -> Lowered<()> {
-        let one = self.builder.ins().load(POINTER, TRUSTED, a, WHICH as i32);
-        let other = self.builder.ins().load(POINTER, TRUSTED, b, WHICH as i32);
+    /// Which case each is, by the token it carries, and then the two as that case: a declared case
+    /// by its own comparator, reached by the id, a primitive a union carried by what it carries,
+    /// and a case the language gives, which holds nothing, as equal.
+    fn cases(&mut self, ty: &Ty, members: &[Case], a: ir::Value, b: ir::Value) -> Lowered<()> {
+        let one = Tagged::of(a, ty).which(self.builder);
+        let other = Tagged::of(b, ty).which(self.builder);
         let same = self.builder.ins().icmp(IntCC::Equal, one, other);
         self.unless(same)?;
         let leaves = self
@@ -254,32 +254,45 @@ impl Comparing<'_, '_, '_, '_> {
         let answered = self.builder.create_block();
         self.builder.append_block_param(answered, types::I8);
         for (at, leaf) in leaves.iter().enumerate() {
-            let Case::Declared { declared } = leaf else {
-                unreachable!("`machine_type` refused a union with a case that carries no token");
-            };
-            let as_it = Ty::Declared {
-                declared: declared.clone(),
-            };
             // The last case is the one a value tagged by none of the others is, which the checker
             // settles every value of the sum to be one of.
             if at + 1 < leaves.len() {
-                let tag = tag_of(self.builder, self.lowering, self.module, declared)?;
+                let tag = token_of(self.builder, self.lowering, self.module, leaf)?;
                 let is_it = self.builder.ins().icmp(IntCC::Equal, one, tag);
                 let taken = self.builder.create_block();
                 let next = self.builder.create_block();
                 self.builder.ins().brif(is_it, taken, &[], next, &[]);
                 self.builder.switch_to_block(taken);
-                let same = equal(self.builder, self.lowering, self.module, &as_it, a, b)?;
+                let same = self.as_the_case(leaf, a, b)?;
                 self.builder.ins().jump(answered, &[same.into()]);
                 self.builder.switch_to_block(next);
             } else {
-                let same = equal(self.builder, self.lowering, self.module, &as_it, a, b)?;
+                let same = self.as_the_case(leaf, a, b)?;
                 self.builder.ins().jump(answered, &[same.into()]);
             }
         }
         self.builder.switch_to_block(answered);
         let same = self.builder.block_params(answered)[0];
         self.unless(same)
+    }
+
+    /// Whether `a` and `b`, both known to be the case `leaf`, are equal as it.
+    fn as_the_case(&mut self, leaf: &Case, a: ir::Value, b: ir::Value) -> Lowered<ir::Value> {
+        match leaf {
+            Case::Declared { declared } => {
+                let as_it = Ty::Declared {
+                    declared: declared.clone(),
+                };
+                equal(self.builder, self.lowering, self.module, &as_it, a, b)
+            }
+            Case::Primitive { prim } => {
+                let as_it = Ty::Prim { prim: *prim };
+                let one = self.read(a, CARRIED as i32, &as_it)?;
+                let other = self.read(b, CARRIED as i32, &as_it)?;
+                equal(self.builder, self.lowering, self.module, &as_it, one, other)
+            }
+            Case::Language { .. } => Ok(self.builder.ins().iconst(types::I8, 1)),
+        }
     }
 
     /// Both absent, or both present and what they hold equal.
