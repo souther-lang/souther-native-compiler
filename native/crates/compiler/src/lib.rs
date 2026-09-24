@@ -8,6 +8,7 @@ mod boundary;
 mod closures;
 mod coherent;
 mod index;
+mod kernels;
 pub mod transport;
 
 use anyhow::{Result, anyhow, bail};
@@ -23,6 +24,7 @@ use cranelift::codegen::{Context, ir};
 use cranelift::frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use cranelift::module::{DataDescription, DataId, FuncId, Linkage, Module, default_libcall_names};
 use cranelift::object::{ObjectBuilder, ObjectModule};
+use kernels::LoweredKernel;
 use souther_native_abi::{
     ALLOCATE, ANSWERED, HELD, NOTHING, SLOT, STRING_COMPARE, STRING_CONCAT, Status, TEXT_BYTES,
     TEXT_LENGTH, TOKEN, WHICH, behavior_symbol, boundary_symbol, constructor_symbol,
@@ -2414,29 +2416,26 @@ fn lower(
                 }
                 call_reached(builder, module, abort, reached, machine_type(ty)?, &given)?
             }
-            // Which kernels this backend already answers instructions for is this match's own
-            // list and nowhere else's — kept short on purpose, so a kernel this has not met yet
-            // falls straight through to NotLowered rather than a table here claiming to know.
-            //
-            // A kernel this arm does recognise but that arrived with the wrong number of
-            // arguments is not that: the language does not admit `int.add` at any arity but two,
-            // so a document naming one anyway is not the language ahead of this backend — it is
-            // this driver's own reading of the transport disagreeing with what `KernelContract`
-            // declared, the same halves-disagreeing failure every other shape mismatch here bails
-            // on rather than reports as this backend not having gotten round to a program yet.
-            Reaches::Kernel { kernel, .. } => match kernel.as_str() {
-                "int.add" => {
+            // The kernels this backend lowers are `kernels::Lowered`'s and nowhere else's, so one it
+            // has not met falls to NotLowered rather than a list here claiming to know. What one
+            // takes is that table's contract and not the document's word: `Coherent` held the
+            // settlement to it, so the arguments are exactly as many as the kernel takes.
+            Reaches::Kernel { kernel, .. } => match LoweredKernel::of(kernel) {
+                Some(LoweredKernel::IntAdd) => {
+                    let [left, right] = arguments.as_slice() else {
+                        unreachable!("`Coherent` held int.add to the two arguments it takes");
+                    };
                     let a = Held::of(
-                        &arguments[0],
-                        lower(builder, lowering, module, bindings, abort, &arguments[0])?,
+                        left,
+                        lower(builder, lowering, module, bindings, abort, left)?,
                     );
                     let b = Held::of(
-                        &arguments[1],
-                        lower(builder, lowering, module, bindings, abort, &arguments[1])?,
+                        right,
+                        lower(builder, lowering, module, bindings, abort, right)?,
                     );
                     arithmetic(builder, abort, Op::Add, a, b, aborts)?
                 }
-                _ => return Err(not_lowered(format!("a call to the kernel {kernel}"))),
+                None => return Err(not_lowered(format!("a call to the kernel {kernel}"))),
             },
         },
         // Standing as a wider type is no operation in the language, and here it costs nothing
@@ -2727,11 +2726,46 @@ fn binary(
     op: Op,
     operands: Operands,
 ) -> Lowered<ir::Value> {
+    // What the operator reads its operands as decides what it does with them, so it is asked
+    // before the operator is: an operator with a case of its own would otherwise be lowered as
+    // the operands stand whatever the document says they are read as. Only operands read as they
+    // stand are lowered, from their one type; a pair read in a type for this operator only, or at
+    // their exact values, would first have to be taken as that, and nothing here does so yet.
+    match operands.reading {
+        Reading::AsTheyStand => {
+            binary_as_they_stand(builder, lowering, module, bindings, abort, op, operands)
+        }
+        Reading::In { ty } => Err(not_lowered(format!(
+            "{} over {} and {}, read as {}",
+            op.spelt(),
+            operands.left.ty().spelt(),
+            operands.right.ty().spelt(),
+            ty.spelt()
+        ))),
+        Reading::ExactNumbers => Err(not_lowered(format!(
+            "{} over {} and {}, read at their exact values",
+            op.spelt(),
+            operands.left.ty().spelt(),
+            operands.right.ty().spelt()
+        ))),
+    }
+}
+
+/// A binary operator over operands read as they stand.
+fn binary_as_they_stand(
+    builder: &mut FunctionBuilder,
+    lowering: &Lowering,
+    module: &mut ObjectModule,
+    bindings: &mut Bindings,
+    abort: ir::Block,
+    op: Op,
+    operands: Operands,
+) -> Lowered<ir::Value> {
     let Operands {
-        reading,
         left,
         right,
         aborts,
+        ..
     } = operands;
     match op {
         // `&&` and `||` stop as soon as the answer is settled, and which operands run is part of
@@ -2754,31 +2788,6 @@ fn binary(
             })
         }
         _ => {
-            // What the operator reads its operands as decides what it does with them. Read as
-            // they stand, the two are one type and the instruction is chosen from it. Read in a
-            // type for this operator only (a literal beside the newtype it is compared with, a
-            // case beside the enumeration that orders it), or at their exact values, the operands
-            // would first have to be taken as that, and nothing here does so yet.
-            match reading {
-                Reading::AsTheyStand => {}
-                Reading::In { ty } => {
-                    return Err(not_lowered(format!(
-                        "{} over {} and {}, read as {}",
-                        op.spelt(),
-                        left.ty().spelt(),
-                        right.ty().spelt(),
-                        ty.spelt()
-                    )));
-                }
-                Reading::ExactNumbers => {
-                    return Err(not_lowered(format!(
-                        "{} over {} and {}, read at their exact values",
-                        op.spelt(),
-                        left.ty().spelt(),
-                        right.ty().spelt()
-                    )));
-                }
-            }
             let a = Held::of(
                 left,
                 lower(builder, lowering, module, bindings, abort, left)?,

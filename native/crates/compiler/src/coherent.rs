@@ -53,6 +53,7 @@
 
 use crate::closures::ClosureSites;
 use crate::index;
+use crate::kernels::LoweredKernel;
 use crate::transport::{
     AbortKind, Answers, Case, Declaration, Definition, Held, Node, Op, Owner, Prim, Program,
     Reaches, Reading, Routing, Selects, Target, Ty, Value,
@@ -827,7 +828,11 @@ impl<'a> Walk<'_, 'a> {
     /// No arm standing for the rest: a node added upstream is a node whose value this has not
     /// yet said the source of, and the lowering would read its type on trust.
     fn relations(&mut self, node: &'a Node) -> Result<()> {
-        self.declared.resolves(&self.owner, node.ty())?;
+        // Every type the node writes, not only its own: one carried beside it is as much a name the
+        // document says it declares.
+        for ty in node.types() {
+            self.declared.resolves(&self.owner, ty)?;
+        }
         match node {
             Node::Int { ty, .. } => self.same(
                 "an integer literal",
@@ -1188,6 +1193,26 @@ impl<'a> Walk<'_, 'a> {
     /// and which reading the checker gives each, is the checker's rule and is not answered again
     /// here: this holds only what a reading, once given, says.
     fn reading(&self, op: Op, reading: &Reading, left: &Ty, right: &Ty) -> Result<()> {
+        // Which readings an operator can have. The checker reads a truth operator and a join as
+        // their operands stand, always, and arithmetic as they stand or at their exact values:
+        // only a comparison is read in a type. A document saying otherwise is one the lowering,
+        // which asks the reading before the operator, would lower under a reading the operator
+        // never has.
+        let refused = matches!(
+            (op, reading),
+            (
+                Op::And | Op::Or | Op::Concat,
+                Reading::In { .. } | Reading::ExactNumbers
+            ) | (Op::Add | Op::Sub | Op::Mul | Op::Div, Reading::In { .. })
+        );
+        if refused {
+            bail!(
+                "{}: {} is read {}, which the checker never reads it as: the two halves disagree",
+                self.owner,
+                op.spelt(),
+                reading.spelt()
+            );
+        }
         match reading {
             Reading::AsTheyStand => self.same(
                 &format!("the left side of {} read as it stands", op.spelt()),
@@ -1205,10 +1230,9 @@ impl<'a> Walk<'_, 'a> {
                     right,
                 )
             }
-            Reading::In { ty } => self.declared.resolves(
-                &format!("{}: {} read in {}", self.owner, op.spelt(), ty.spelt()),
-                ty,
-            ),
+            // The type it is read in is one the document declares, which `Node::types` holds of
+            // every type a node writes.
+            Reading::In { .. } => Ok(()),
         }
     }
 
@@ -1415,22 +1439,43 @@ impl<'a> Walk<'_, 'a> {
                     }
                 }
             }
-            Reaches::Kernel { kernel, takes, .. } => match kernel.as_str() {
-                "int.add" => {
-                    let int = Ty::Prim { prim: Prim::Int };
-                    for taken in takes {
-                        self.same("what int.add takes", taken, &int, "an Int")?;
+            Reaches::Kernel { kernel, takes, .. } => match LoweredKernel::of(kernel) {
+                // A kernel this backend lowers is held to what this backend knows of it, and the
+                // settlement is held to that: what the application says it takes is the checker's
+                // statement about this call, and not a contract this backend has for the kernel.
+                Some(known) => {
+                    let contract = known.takes();
+                    if takes.len() != contract.len() {
+                        bail!(
+                            "{}: {kernel} takes {} arguments and this application says it takes \
+                             {}: the two halves disagree",
+                            self.owner,
+                            contract.len(),
+                            takes.len()
+                        );
                     }
-                    self.overflows("a call of int.add", aborts)?;
+                    for (settled, known_to_take) in takes.iter().zip(&contract) {
+                        self.same(
+                            &format!("what an application of {kernel} takes"),
+                            settled,
+                            known_to_take,
+                            "what it takes",
+                        )?;
+                    }
+                    match known {
+                        LoweredKernel::IntAdd => {
+                            self.overflows("a call of int.add", aborts)?;
+                        }
+                    }
                     self.same(
-                        "a call of int.add",
+                        &format!("a call of {kernel}"),
                         ty,
-                        &Ty::Prim { prim: Prim::Int },
+                        &known.answers(),
                         "what it answers",
                     )
                 }
                 // Refused where it is lowered; nothing here knows what it answers.
-                _ => Ok(()),
+                None => Ok(()),
             },
         }
     }

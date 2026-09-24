@@ -1322,23 +1322,144 @@ fn a_kernel_argument_stands_at_what_the_application_takes() {
     );
 }
 
-/// `int.add` is lowered as the sum of two `Int`s, so an application of it said to take anything
-/// else is the two halves disagreeing about what the kernel is.
+/// `int.add` is lowered as the sum of two `Int`s. What an application says it takes is the
+/// checker's statement about that call, and this backend holds it to what it knows of the kernel:
+/// both how many it takes and what each is. One that says otherwise is the two halves disagreeing,
+/// and is not lowered as though it were the kernel.
 #[test]
-fn int_add_takes_two_ints() {
-    let reaches = r#"{"is":"kernel","kernel":"int.add","takes":[{"prim":"INT"},{"prim":"BOOL"}],"fact":{"is":"none"}}"#;
-    let added = node(
-        "call",
-        &format!(
-            r#""reaches":{reaches},"arguments":[{},{}]"#,
-            int(1),
-            truth(true)
-        ),
-        INT,
-    )
-    .replace(
-        r#""aborts":[]}"#,
-        r#""aborts":["REQUIRED_FORM_HAS_NO_PLACE"]}"#,
+fn int_add_takes_two_ints_whatever_the_application_says() {
+    let added = |takes: &str, arguments: &[String]| {
+        let reaches = format!(
+            r#"{{"is":"kernel","kernel":"int.add","takes":[{takes}],"fact":{{"is":"none"}}}}"#
+        );
+        node(
+            "call",
+            &format!(
+                r#""reaches":{reaches},"arguments":[{}]"#,
+                arguments.join(",")
+            ),
+            INT,
+        )
+        .replace(
+            r#""aborts":[]}"#,
+            r#""aborts":["REQUIRED_FORM_HAS_NO_PLACE"]}"#,
+        )
+    };
+    let document = |call: String| helpers(&[h(&[], &call)]);
+
+    reads_whole(&document(added(&format!("{INT},{INT}"), &[int(1), int(2)])));
+    // A second `Bool` among what it takes: two arguments, one of them the wrong type.
+    is_the_halves_disagreeing(
+        &document(added(&format!("{INT},{BOOL}"), &[int(1), truth(true)])),
+        "what an application of int.add takes",
     );
-    is_the_halves_disagreeing(&helpers(&[h(&[], &added)]), "what int.add takes");
+    // None at all, and three: as many arguments as the application says, and not what the
+    // kernel takes. Each would otherwise be lowered as the sum of the first two or panic on a
+    // missing one.
+    is_the_halves_disagreeing(&document(added("", &[])), "takes 2 arguments");
+    is_the_halves_disagreeing(
+        &document(added(
+            &format!("{INT},{INT},{INT}"),
+            &[int(1), int(2), int(3)],
+        )),
+        "takes 2 arguments",
+    );
+}
+
+/// A truth operator and a join are read as their operands stand, and arithmetic as they stand or at
+/// their exact values: only a comparison is read in a type. The lowering asks the reading before the
+/// operator, so a truth operator claiming to be read in a type is refused here and not lowered as a
+/// short circuit over what it does not say it is.
+#[test]
+fn an_operator_is_read_only_as_the_checker_reads_it() {
+    let over = |op: &str, reading: &str, ty: &str| {
+        node(
+            "binary",
+            &format!(
+                r#""op":"{op}","reading":{reading},"left":{},"right":{}"#,
+                read(0, ty),
+                read(1, ty)
+            ),
+            if matches!(op, "AND" | "OR") { BOOL } else { ty },
+        )
+    };
+    let in_amount = r#"{"is":"in","type":{"declared":"m.A"}}"#;
+    let exact = r#"{"is":"exactnumbers"}"#;
+    let stands = r#"{"is":"astheystand"}"#;
+    let documents = |body: String, ty: &str| helpers(&[h(&[ty, ty], &body)]);
+
+    reads_whole(&documents(over("AND", stands, BOOL), BOOL));
+    for reading in [in_amount, exact] {
+        is_the_halves_disagreeing(
+            &documents(over("AND", reading, BOOL), BOOL),
+            "never reads it as",
+        );
+        is_the_halves_disagreeing(
+            &documents(over("CONCAT", reading, STRING), STRING),
+            "never reads it as",
+        );
+    }
+    is_the_halves_disagreeing(
+        &documents(over("ADD", in_amount, INT), INT),
+        "never reads it as",
+    );
+}
+
+/// Every type a node writes is one the document declares, the ones it carries beside its own
+/// included: what a let binds, what an arm reads a value as, what an operator reads its operands in,
+/// and what a kernel's application takes and was settled against.
+#[test]
+fn every_type_a_node_writes_is_one_the_document_declares() {
+    let missing = r#"{"declared":"m.Missing"}"#;
+    let refuses = |body: String, takes: &[&str]| {
+        let refused =
+            object_for(&helpers(&[h(takes, &body)])).expect_err("a type nothing declares");
+        assert!(refused.downcast_ref::<NotLowered>().is_none(), "{refused}");
+        assert!(refused.to_string().contains("m.Missing"), "{refused}");
+    };
+
+    // What a kernel's application was settled against.
+    let ordering = format!(
+        r#"{{"is":"kernel","kernel":"list.sort","takes":[],"fact":{{"is":"orderingsubject","type":{missing}}}}}"#
+    );
+    refuses(call(&ordering, &[], INT), &[]);
+
+    // What an application takes, with no argument of that type to stand beside it.
+    let taking = format!(
+        r#"{{"is":"kernel","kernel":"list.length","takes":[{missing}],"fact":{{"is":"none"}}}}"#
+    );
+    refuses(call(&taking, &[int(1)], INT), &[]);
+
+    // What an operator reads its operands in.
+    refuses(
+        node(
+            "binary",
+            &format!(
+                r#""op":"EQ","reading":{{"is":"in","type":{missing}}},"left":{},"right":{}"#,
+                int(1),
+                int(2)
+            ),
+            BOOL,
+        ),
+        &[],
+    );
+
+    // What a let binds.
+    refuses(let_(0, missing, &int(1), &int(2), INT), &[]);
+
+    // What an arm reads a value as.
+    let optional = option_of(INT);
+    refuses(
+        node(
+            "match",
+            &format!(
+                r#""subject":{},"arms":[{},{}]"#,
+                read(0, &optional),
+                arm(r#"{"tests":"held"}"#, Some((1, missing)), &int(1)),
+                arm(r#"{"tests":"nothing"}"#, None, &int(2))
+            ),
+            INT,
+        ),
+        &[&optional],
+    );
 }

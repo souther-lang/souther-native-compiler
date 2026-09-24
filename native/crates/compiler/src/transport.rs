@@ -1388,7 +1388,191 @@ pub enum Selects {
     Nothing,
 }
 
+impl Reaches {
+    /// Every type this reach writes.
+    ///
+    /// Every field named, so a type-bearing field added to a reach is one this stops compiling
+    /// over until it is listed.
+    pub fn types(&self) -> Vec<&Ty> {
+        match self {
+            Reaches::Helper { declared: _ }
+            | Reaches::Value { module: _, name: _ }
+            | Reaches::PublishedValue { module: _, name: _ }
+            | Reaches::Behavior { declared: _ } => Vec::new(),
+            Reaches::Kernel {
+                kernel: _,
+                takes,
+                fact,
+            } => takes.iter().chain(fact.types()).collect(),
+        }
+    }
+}
+
+impl KernelFact {
+    /// Every type this fact writes.
+    pub fn types(&self) -> Vec<&Ty> {
+        match self {
+            KernelFact::None | KernelFact::StringMatches { pattern: _ } => Vec::new(),
+            KernelFact::OrderingSubject { ty } => vec![ty],
+        }
+    }
+}
+
+impl Reading {
+    /// Every type this reading writes.
+    pub fn types(&self) -> Vec<&Ty> {
+        match self {
+            Reading::AsTheyStand | Reading::ExactNumbers => Vec::new(),
+            Reading::In { ty } => vec![ty],
+        }
+    }
+
+    /// What a refusal says this reading is.
+    pub fn spelt(&self) -> String {
+        match self {
+            Reading::AsTheyStand => "as they stand".to_string(),
+            Reading::ExactNumbers => "at their exact values".to_string(),
+            Reading::In { ty } => format!("in {}", ty.spelt()),
+        }
+    }
+}
+
 impl Node {
+    /// Every type this node itself writes: its own, and each one it carries beside it (what a let
+    /// binds, what an arm reads a value as, what an operator reads its operands in, what a kernel's
+    /// application takes and what it was settled against).
+    ///
+    /// The one enumeration of them, so that "every type the document writes is one it declares" is
+    /// held of all of them at one place. Every field of every node is named, and none is left to
+    /// `..`, so a type-bearing field added to a node is one this stops compiling over until it is
+    /// listed here.
+    pub fn types(&self) -> Vec<&Ty> {
+        match self {
+            Node::Int {
+                value: _,
+                ty,
+                aborts: _,
+            }
+            | Node::Read {
+                binding: _,
+                ty,
+                aborts: _,
+            }
+            | Node::Bool {
+                value: _,
+                ty,
+                aborts: _,
+            }
+            | Node::Str {
+                value: _,
+                ty,
+                aborts: _,
+            }
+            | Node::Neg {
+                operand: _,
+                ty,
+                aborts: _,
+            }
+            | Node::If {
+                cond: _,
+                then: _,
+                els: _,
+                ty,
+                aborts: _,
+            }
+            | Node::Unit {
+                declared: _,
+                ty,
+                aborts: _,
+            }
+            | Node::Construct {
+                declared: _,
+                values: _,
+                ty,
+                aborts: _,
+            }
+            | Node::Field {
+                target: _,
+                field: _,
+                ty,
+                aborts: _,
+            }
+            | Node::Some {
+                value: _,
+                ty,
+                aborts: _,
+            }
+            | Node::None { ty, aborts: _ }
+            | Node::Tuple {
+                members: _,
+                ty,
+                aborts: _,
+            }
+            | Node::Member {
+                tuple: _,
+                at: _,
+                ty,
+                aborts: _,
+            }
+            | Node::Block {
+                site: _,
+                parameters: _,
+                body: _,
+                ty,
+                aborts: _,
+            }
+            | Node::Widen {
+                value: _,
+                ty,
+                aborts: _,
+            }
+            | Node::Apply {
+                function: _,
+                arguments: _,
+                ty,
+                aborts: _,
+            } => vec![ty],
+            Node::Binary {
+                op: _,
+                reading,
+                left: _,
+                right: _,
+                ty,
+                aborts: _,
+            } => std::iter::once(ty).chain(reading.types()).collect(),
+            Node::Let {
+                binding: _,
+                binds,
+                value: _,
+                body: _,
+                ty,
+                aborts: _,
+            } => vec![ty, binds],
+            Node::Match {
+                subject: _,
+                arms,
+                ty,
+                aborts: _,
+            } => std::iter::once(ty)
+                .chain(arms.iter().filter_map(|arm| {
+                    let Arm {
+                        selects: _,
+                        binding: _,
+                        binds,
+                        body: _,
+                    } = arm;
+                    binds.as_ref()
+                }))
+                .collect(),
+            Node::Call {
+                reaches,
+                arguments: _,
+                ty,
+                aborts: _,
+            } => std::iter::once(ty).chain(reaches.types()).collect(),
+        }
+    }
+
     /// The nodes directly under this one, in the order they are written.
     ///
     /// No arm standing for the rest: a node added to the document is one whose children every walk
