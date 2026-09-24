@@ -890,6 +890,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
             name: &target.name,
             runs: reachable.of_behavior_named(&declared),
             inputs: &target.inputs,
+            names: target.names.as_deref(),
             answers: target.answers(),
         });
     }
@@ -904,6 +905,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
             name: &entry.value.name,
             runs: reachable.of_published_value(&entry.value.module, &entry.value.name),
             inputs: &[],
+            names: Some(&[]),
             answers: entry.body.ty().clone(),
         })
         .collect();
@@ -952,6 +954,10 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
             name: &target.name,
             answered_by: reachable.of_behavior_named(&target.declared()),
             inputs: &target.inputs,
+            names: target
+                .names
+                .as_deref()
+                .expect("a behavior a host implements is read with the names it declares"),
             output: &target.output,
         })
         .collect();

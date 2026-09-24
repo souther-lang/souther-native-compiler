@@ -331,6 +331,24 @@ impl DeclarationSurface {
     }
 }
 
+/// Each of `takes` under the name `names` gives it at the same place. The two were read as one list
+/// ([`crate::transport::Target::names`]), and are paired back here.
+fn named(names: &[String], takes: &[Ty], declared: &Declared) -> Vec<manifest::NamedParameter> {
+    assert_eq!(
+        names.len(),
+        takes.len(),
+        "a name was read beside every input it names"
+    );
+    names
+        .iter()
+        .zip(takes)
+        .map(|(name, ty)| manifest::NamedParameter {
+            name: name.clone(),
+            ty: type_of(ty, declared),
+        })
+        .collect()
+}
+
 impl Surface {
     /// A published declaration of `module`, and what a host reaches it through.
     pub(crate) fn declaration(&mut self, module: &str, declaration: DeclarationSurface) {
@@ -341,10 +359,14 @@ impl Surface {
 
     /// A published behavior this object defines, and what a host calls it through, where a host
     /// can hand it what it takes and take what it answers.
+    ///
+    /// `names` are what its declaration calls what it takes, and none for a composition.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn behavior(
         &mut self,
         module: &str,
         name: &str,
+        names: Option<&[String]>,
         takes: &[Ty],
         answers: &Ty,
         declared: &Declared,
@@ -352,7 +374,12 @@ impl Surface {
     ) {
         let behavior = manifest::Behavior {
             name: name.to_string(),
-            takes: takes.iter().map(|ty| type_of(ty, declared)).collect(),
+            parameters: match names {
+                Some(names) => manifest::Parameters::Named(named(names, takes, declared)),
+                None => manifest::Parameters::Positional(
+                    takes.iter().map(|ty| type_of(ty, declared)).collect(),
+                ),
+            },
             answers: type_of(answers, declared),
             call: call.map(HostFunction::described),
         };
@@ -366,6 +393,7 @@ impl Surface {
         &mut self,
         module: &str,
         name: &str,
+        names: &[String],
         takes: &[Ty],
         answers: &Ty,
         declared: &Declared,
@@ -374,7 +402,7 @@ impl Surface {
     ) {
         let injection = manifest::Injection {
             name: name.to_string(),
-            takes: takes.iter().map(|ty| type_of(ty, declared)).collect(),
+            parameters: named(names, takes, declared),
             answers: type_of(answers, declared),
             implementation: implementation.described(),
             register: register.to_string(),

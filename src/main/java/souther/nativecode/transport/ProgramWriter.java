@@ -22,6 +22,7 @@ import souther.compiler.program.CheckedImplementation;
 import souther.compiler.program.CheckedModule;
 import souther.compiler.program.CheckedProgram;
 import souther.compiler.program.CheckedRow;
+import souther.compiler.program.CheckedSignature;
 import souther.compiler.program.CheckedValue;
 import souther.compiler.program.CheckedValueEntry;
 import souther.compiler.program.Declared;
@@ -46,6 +47,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.StringJoiner;
 import java.util.function.Function;
@@ -84,7 +86,7 @@ public final class ProgramWriter {
      * written moves, so that a driver and a writer that disagree say so rather than producing an
      * object that is wrong quietly.
      */
-    public static final int TRANSPORT_VERSION = 14;
+    public static final int TRANSPORT_VERSION = 15;
 
     private final CheckedProgram program;
 
@@ -839,20 +841,41 @@ public final class ProgramWriter {
             case CheckedImplementation.Composed it -> "composed";
             case CheckedImplementation.Unwritten it -> "unwritten";
         };
-        StringJoiner inputs = new StringJoiner(",", "[", "]");
-        for (CheckedBoundaryInput input : behavior.signature().inputs()) {
-            inputs.add(input(input));
-        }
         // The module and the name apart, which is what an identity is made of and what a symbol is
         // built from. Joined into one string it would have to be split back, and a module's name
         // carries dots.
         return "{\"module\":" + quoted(name.module())
                 + ",\"name\":" + quoted(name.name())
                 + ",\"is\":" + quoted(how)
-                + ",\"inputs\":" + inputs
+                + ",\"parameters\":" + parameters(behavior.signature())
                 + ",\"output\":" + output(behavior.signature().output())
                 + ",\"ensures\":" + ensures(enforcement(name))
                 + "}";
+    }
+
+    /**
+     * What a behavior takes, with the names its declaration gives them where it gives any.
+     *
+     * <p>The names are the signature's and not the binders of a {@code let} implementing it, which
+     * correspond by place and may be named otherwise. A composition declares no parameters, and
+     * takes what it takes with no name for any of it; which of the two a behavior is crosses as
+     * the form the list is written in, so a name and the input it names are one member and there
+     * are never two lists to line up.
+     */
+    private String parameters(CheckedSignature signature) {
+        StringJoiner parameters = new StringJoiner(",", "[", "]");
+        Optional<List<CheckedSignature.Parameter>> declared = signature.declaredParameters();
+        if (declared.isPresent()) {
+            for (CheckedSignature.Parameter parameter : declared.get()) {
+                parameters.add("{\"name\":" + quoted(parameter.name())
+                        + ",\"input\":" + input(parameter.input()) + "}");
+            }
+            return "{\"named\":" + parameters + "}";
+        }
+        for (CheckedBoundaryInput input : signature.inputs()) {
+            parameters.add(input(input));
+        }
+        return "{\"positional\":" + parameters + "}";
     }
 
     /**

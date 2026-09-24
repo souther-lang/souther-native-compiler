@@ -18,7 +18,7 @@ use serde::Deserialize;
 
 /// What this side reads. A document written to say anything else is refused rather than read as
 /// much of as happens to parse.
-pub const TRANSPORT_VERSION: u32 = 14;
+pub const TRANSPORT_VERSION: u32 = 15;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -551,15 +551,80 @@ pub struct Example {
 /// what the symbol is built from. Written as one string and split back, the two halves would be
 /// recovered from a spelling rather than carried, and a module's name carries dots.
 #[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(try_from = "WrittenTarget")]
 pub struct Target {
     pub module: String,
     pub name: String,
     pub is: Answers,
+    /// What it takes, in order.
     pub inputs: Vec<BoundaryInput>,
+    /// The names its declaration gives what it takes, one for each of `inputs`, and none for a
+    /// composition, which declares no parameters. Held apart from `inputs` because every reader
+    /// but one asks what arrives and not what it is called; made only from a document in which
+    /// each name was written beside the input it names, so the two cannot disagree in length.
+    pub names: Option<Vec<String>>,
     pub output: BoundaryOutput,
     /// What is done about what the behavior declares of its answer, as the checker answered it.
     pub ensures: Ensures,
+}
+
+/// A [`Target`] as the document writes it.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WrittenTarget {
+    module: String,
+    name: String,
+    is: Answers,
+    parameters: Parameters,
+    output: BoundaryOutput,
+    ensures: Ensures,
+}
+
+/// What a behavior takes: named where its declaration names them, and in order only where it is a
+/// composition, which writes no parameter list.
+#[derive(Deserialize)]
+#[serde(rename_all = "lowercase", deny_unknown_fields)]
+enum Parameters {
+    Named(Vec<NamedInput>),
+    Positional(Vec<BoundaryInput>),
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NamedInput {
+    name: String,
+    input: BoundaryInput,
+}
+
+impl TryFrom<WrittenTarget> for Target {
+    type Error = String;
+
+    /// Refuses a behavior a host implements written with no names: what a host implements is
+    /// declared, and a declaration names every parameter.
+    fn try_from(written: WrittenTarget) -> Result<Self, Self::Error> {
+        let (inputs, names) = match written.parameters {
+            Parameters::Named(named) => {
+                let (names, inputs) = named.into_iter().map(|it| (it.name, it.input)).unzip();
+                (inputs, Some(names))
+            }
+            Parameters::Positional(_) if written.is == Answers::Injected => {
+                return Err(format!(
+                    "`{}.{}` is implemented by a host and is written with no parameter names",
+                    written.module, written.name
+                ));
+            }
+            Parameters::Positional(inputs) => (inputs, None),
+        };
+        Ok(Target {
+            module: written.module,
+            name: written.name,
+            is: written.is,
+            inputs,
+            names,
+            output: written.output,
+            ensures: written.ensures,
+        })
+    }
 }
 
 impl Target {

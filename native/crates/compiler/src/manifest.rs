@@ -2,13 +2,14 @@
 //!
 //! Written as types and not built as JSON, so that what a manifest of one version says is a thing
 //! the compiler holds this code to. A field renamed here is a change to these types, and the
-//! fixture `tests/interface-v2.json` is what version 2 is: every manifest this writes is read back
+//! fixture `tests/interface-v3.json` is what version 3 is: every manifest this writes is read back
 //! by these same types, which refuse a member they do not name.
 //!
 //! [`VERSION`] moves when what a manifest says is read differently. What the functions it names
 //! answer to is [`Manifest::abi`], the generation in every symbol, and the two move apart.
 //! Version 2 is `souther-native-compiler#46`: a module says what it asks a host to implement
-//! ([`Module::injections`]) beside what it offers one.
+//! ([`Module::injections`]) beside what it offers one. Version 3 names what a behavior takes as
+//! its declaration does ([`Parameters`]), which a binding writes its functions' parameters under.
 //!
 //! Where a function is `null`, the model has the thing and a host has no way to reach it yet: a
 //! behavior taking a type with no way across, a field of a type with no representation for a host,
@@ -23,7 +24,7 @@ use std::collections::BTreeMap;
 pub(crate) const FORMAT: &str = "souther-native-interface";
 
 /// Which version of what a manifest says this is.
-pub(crate) const VERSION: u32 = 2;
+pub(crate) const VERSION: u32 = 3;
 
 /// Everything a host can call in one shared library, and the model it reaches.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -86,8 +87,8 @@ pub(crate) struct Module {
 #[serde(deny_unknown_fields)]
 pub(crate) struct Behavior {
     pub name: String,
-    /// What it takes, in order. The names its parameters are written under do not cross yet.
-    pub takes: Vec<Type>,
+    /// What it takes, in order.
+    pub parameters: Parameters,
     pub answers: Type,
     /// What a host calls it through.
     pub call: Option<Function>,
@@ -98,8 +99,9 @@ pub(crate) struct Behavior {
 #[serde(deny_unknown_fields)]
 pub(crate) struct Injection {
     pub name: String,
-    /// What it takes, in order, as the model says it.
-    pub takes: Vec<Type>,
+    /// What it takes, in order, as the model says it. Always named: a behavior a host implements
+    /// is declared, and a declaration names every parameter.
+    pub parameters: Vec<NamedParameter>,
     pub answers: Type,
     /// The function a host writes to implement it.
     pub implementation: Implementation,
@@ -113,6 +115,31 @@ pub(crate) struct Injection {
     /// a host language that makes a new C entry for a function every time it is handed to C (PHP's
     /// FFI keeps each until the request ends) would otherwise grow with every call.
     pub register: String,
+}
+
+/// What a published behavior takes, as the model says it.
+///
+/// Named where the behavior declares a parameter list, and in order only for a `>->` composition,
+/// which declares none: it takes what its first stage takes, and nothing names those inputs. Two
+/// forms and not a name that may be null, so that a list naming some parameters and not others is
+/// not something a manifest can say.
+///
+/// The names are the declaration's, not those of a `let` implementing it, which correspond by place
+/// and may differ. Apart from [`Implementation::takes`], which is how a host hands each over.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "lowercase", deny_unknown_fields)]
+pub(crate) enum Parameters {
+    Named(Vec<NamedParameter>),
+    Positional(Vec<Type>),
+}
+
+/// One parameter a declaration names.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct NamedParameter {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub ty: Type,
 }
 
 /// The type of a function a host writes, and not a function: nothing is defined under its name,
@@ -352,18 +379,18 @@ impl From<HostParameter> for Parameter {
 mod tests {
     use super::{FORMAT, Manifest, VERSION};
 
-    /// What version 2 is. Read by these types, which refuse a member they do not name, and
+    /// What version 3 is. Read by these types, which refuse a member they do not name, and
     /// written back the same: a field renamed or a kind reshaped here stops matching the fixture
     /// the Java half's test also holds a written manifest to.
-    const V2: &str = include_str!("../tests/interface-v2.json");
+    const V3: &str = include_str!("../tests/interface-v3.json");
 
     #[test]
-    fn version_two_is_read_and_written_back_as_it_is() {
-        let read: Manifest = serde_json::from_str(V2).expect("version 2 reads");
+    fn version_three_is_read_and_written_back_as_it_is() {
+        let read: Manifest = serde_json::from_str(V3).expect("version 3 reads");
         assert_eq!(read.format, FORMAT);
         assert_eq!(read.version, VERSION);
         let mut written = serde_json::to_string_pretty(&read).unwrap();
         written.push('\n');
-        assert_eq!(written, V2);
+        assert_eq!(written, V3);
     }
 }
