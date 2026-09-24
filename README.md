@@ -179,8 +179,11 @@ no Souther type, no arena and no runtime, written to be what both runtimes read 
 A `List` is laid out inside a run as its length and then its elements, one slot each, and read
 through the two kernels the language reads one with, `List.length` and `List.get`. Every other
 list operation is Souther written over those two, so nothing else about a list is a kernel here.
+In the external form a list is an array of its elements, and a mistake inside one is answered at
+the element's index (`/lines/2/quantity`). Two values of one type compare by what they are made
+of, a list element by element, through a comparator the object holds per type.
 
-Still ahead: a `Decimal`, a `Set` and a `Map`, a list's external form and a list handed to a host,
+Still ahead: a `Decimal`, a `Set` and a `Map`, a list handed to a host,
 every kernel but `Int.add`, `List.length` and `List.get`, a value
 that runs in the module declaring it, an attempted
 construction, which takes an arm by the clause that did not hold instead of ending the run, and a

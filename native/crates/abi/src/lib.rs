@@ -682,8 +682,16 @@ pub const DECODE_ABANDON: &str = "souther_decode_abandon";
 /// declaration says. `path` is the place's, made with `PATH_BELOW` from the root, which is null.
 /// `(path, step string) -> path`.
 pub const PATH_BELOW: &str = "souther_path_below";
+/// `(path, i64) -> path`: the place of an array's element, by its index.
+pub const PATH_AT: &str = "souther_path_at";
 /// `(node, path, reading) -> i8`: whether it is an object.
 pub const READ_OBJECT: &str = "souther_read_object";
+/// `(node, path, reading) -> i8`: whether it is an array.
+pub const READ_ARRAY: &str = "souther_read_array";
+/// `(node) -> i64`: how many elements an array holds, asked of one `READ_ARRAY` said is one.
+pub const READ_ARRAY_LENGTH: &str = "souther_read_array_length";
+/// `(node, i64) -> node`: an array's element at an index below its length.
+pub const READ_ELEMENT: &str = "souther_read_element";
 /// `(node, key string) -> node`: an object's member, null where there is none.
 pub const READ_MEMBER: &str = "souther_read_member";
 /// `(path, reading)`: a field every value has was not written.
@@ -1062,6 +1070,26 @@ pub const GENERATED_RUNTIME: &[GeneratedCall] = {
             name: PATH_BELOW,
             takes: &[Given(Path), Given(Host(String))],
             answers: Some(Path),
+        },
+        GeneratedCall {
+            name: PATH_AT,
+            takes: &[Given(Path), Given(Host(Count))],
+            answers: Some(Path),
+        },
+        GeneratedCall {
+            name: READ_ARRAY,
+            takes: &[Given(Node), Given(Path), Given(Host(Decoded))],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: READ_ARRAY_LENGTH,
+            takes: &[Given(Node)],
+            answers: Some(Host(Count)),
+        },
+        GeneratedCall {
+            name: READ_ELEMENT,
+            takes: &[Given(Node), Given(Host(Count))],
+            answers: Some(Node),
         },
         GeneratedCall {
             name: READ_OBJECT,

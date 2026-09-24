@@ -29,10 +29,11 @@ use cranelift::codegen::isa::CallConv;
 use cranelift::module::{FuncId, Linkage, Module};
 use cranelift::object::ObjectModule;
 use souther_native_abi::{
-    DECODE_ABANDON, DECODE_BEGIN, DECODE_END, DECODE_ROOT, EXTERNAL_BOOL, EXTERNAL_INT,
-    EXTERNAL_JSON, EXTERNAL_NULL, EXTERNAL_OBJECT, EXTERNAL_PUT, EXTERNAL_STRING, PATH_BELOW,
-    READ_BOOL, READ_CASE, READ_INT, READ_INVARIANT, READ_IS, READ_MEMBER, READ_MISSING,
-    READ_NOT_A_CASE, READ_NULL, READ_OBJECT, READ_STRING, READ_TAG, reader_symbol,
+    DECODE_ABANDON, DECODE_BEGIN, DECODE_END, DECODE_ROOT, EXTERNAL_APPEND, EXTERNAL_ARRAY,
+    EXTERNAL_BOOL, EXTERNAL_INT, EXTERNAL_JSON, EXTERNAL_NULL, EXTERNAL_OBJECT, EXTERNAL_PUT,
+    EXTERNAL_STRING, PATH_AT, PATH_BELOW, READ_ARRAY, READ_ARRAY_LENGTH, READ_BOOL, READ_CASE,
+    READ_ELEMENT, READ_INT, READ_INVARIANT, READ_IS, READ_MEMBER, READ_MISSING, READ_NOT_A_CASE,
+    READ_NULL, READ_OBJECT, READ_STRING, READ_TAG, reader_symbol,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -40,7 +41,8 @@ use std::collections::{BTreeMap, BTreeSet};
 /// reference to it says.
 ///
 /// A scalar it holds is an `Int`, a `Bool` or a `String`; a declared type it holds is one of these
-/// again; a set of alternatives is made of declared cases, each one of these. What the language
+/// again, and so is what a list it holds holds; a set of alternatives is made of declared cases,
+/// each one of these. What the language
 /// declares is none: no build defines its token, so no value of it is made here.
 ///
 /// The greatest set that holds, worked out by striking what fails and then what reaches something
@@ -107,9 +109,9 @@ fn shape_reaches<'s>(shape: &'s CodecShape, reached: &mut Vec<Option<&'s str>>) 
         },
         CodecShape::Named { declared } => reached.push(Some(declared)),
         CodecShape::OptionOf { present } => shape_reaches(present.shape(), reached),
-        CodecShape::ListOf { .. } | CodecShape::SetOf { .. } | CodecShape::MapOf { .. } => {
-            reached.push(None)
-        }
+        // An array of its elements, each written as one would be anywhere else.
+        CodecShape::ListOf { element } => shape_reaches(element, reached),
+        CodecShape::SetOf { .. } | CodecShape::MapOf { .. } => reached.push(None),
     }
 }
 
@@ -139,6 +141,8 @@ pub(crate) enum Runtime {
     ExternalBool,
     ExternalInt,
     ExternalString,
+    ExternalArray,
+    ExternalAppend,
     ExternalObject,
     ExternalPut,
     ExternalJson,
@@ -147,6 +151,10 @@ pub(crate) enum Runtime {
     DecodeEnd,
     DecodeAbandon,
     PathBelow,
+    PathAt,
+    ReadArray,
+    ReadArrayLength,
+    ReadElement,
     ReadObject,
     ReadMember,
     ReadMissing,
@@ -168,6 +176,8 @@ impl Runtime {
             Runtime::ExternalBool => EXTERNAL_BOOL,
             Runtime::ExternalInt => EXTERNAL_INT,
             Runtime::ExternalString => EXTERNAL_STRING,
+            Runtime::ExternalArray => EXTERNAL_ARRAY,
+            Runtime::ExternalAppend => EXTERNAL_APPEND,
             Runtime::ExternalObject => EXTERNAL_OBJECT,
             Runtime::ExternalPut => EXTERNAL_PUT,
             Runtime::ExternalJson => EXTERNAL_JSON,
@@ -176,6 +186,10 @@ impl Runtime {
             Runtime::DecodeEnd => DECODE_END,
             Runtime::DecodeAbandon => DECODE_ABANDON,
             Runtime::PathBelow => PATH_BELOW,
+            Runtime::PathAt => PATH_AT,
+            Runtime::ReadArray => READ_ARRAY,
+            Runtime::ReadArrayLength => READ_ARRAY_LENGTH,
+            Runtime::ReadElement => READ_ELEMENT,
             Runtime::ReadObject => READ_OBJECT,
             Runtime::ReadMember => READ_MEMBER,
             Runtime::ReadMissing => READ_MISSING,

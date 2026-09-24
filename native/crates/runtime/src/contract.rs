@@ -223,6 +223,24 @@ fn functions() -> Vec<(&'static str, Shape)> {
             shape_of(souther_path_below as unsafe extern "C" fn(*const Path, T) -> *const Path),
         ),
         (
+            "souther_path_at",
+            shape_of(souther_path_at as unsafe extern "C" fn(*const Path, Count) -> *const Path),
+        ),
+        (
+            "souther_read_array",
+            shape_of(souther_read_array as unsafe extern "C" fn(*const Node, *const Path, D) -> i8),
+        ),
+        (
+            "souther_read_array_length",
+            shape_of(souther_read_array_length as unsafe extern "C" fn(*const Node) -> Count),
+        ),
+        (
+            "souther_read_element",
+            shape_of(
+                souther_read_element as unsafe extern "C" fn(*const Node, Count) -> *const Node,
+            ),
+        ),
+        (
             "souther_read_object",
             shape_of(
                 souther_read_object as unsafe extern "C" fn(*const Node, *const Path, D) -> i8,

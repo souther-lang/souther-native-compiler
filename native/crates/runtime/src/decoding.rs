@@ -267,6 +267,69 @@ pub unsafe extern "C" fn souther_path_below(path: *const Path, step: *const Text
     })
 }
 
+/// The place of the element at `index` below `path`, the index written as a JSON Pointer writes
+/// one: in decimal, with no sign and no leading nought.
+///
+/// Here and not in generated code, which would otherwise be writing a number out as text for a
+/// path that is only ever written out where an issue is found.
+///
+/// # Safety
+/// `path` is null or one this or [`souther_path_below`] answered; `index` is not negative.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_path_at(path: *const Path, index: Count) -> *const Path {
+    held(Path {
+        above: path,
+        step: string(index.0.to_string().as_bytes()),
+    })
+}
+
+/// Whether `node` is an array, having recorded that it is not where it is not.
+///
+/// # Safety
+/// As [`souther_read_object`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_read_array(
+    node: *const Node,
+    path: *const Path,
+    decoding: *mut Decoding,
+) -> i8 {
+    let node = unsafe { &*node };
+    if let Node::Array(_) = node {
+        return 1;
+    }
+    unsafe { mismatched(decoding, path, node, "an array") };
+    0
+}
+
+/// How many elements the array `node` holds.
+///
+/// # Safety
+/// `node` is a place in a document being read, which [`souther_read_array`] answered is an array.
+/// # Panics
+/// Where it is not an array, which is generated code asking without having asked that first.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_read_array_length(node: *const Node) -> Count {
+    let Node::Array(items) = (unsafe { &*node }) else {
+        panic!("the length of a place that is not an array");
+    };
+    Count(items.len() as i64)
+}
+
+/// The element of the array `node` at `index`.
+///
+/// # Safety
+/// As [`souther_read_array_length`], and `index` is below the length it answered.
+/// # Panics
+/// Where it is not an array, or the index is outside it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_read_element(node: *const Node, index: Count) -> *const Node {
+    let Node::Array(items) = (unsafe { &*node }) else {
+        panic!("an element of a place that is not an array");
+    };
+    let at = usize::try_from(index.0).expect("an index is not negative");
+    &items[at]
+}
+
 /// Whether `node` is an object, having recorded that it is not where it is not.
 ///
 /// # Safety
@@ -804,6 +867,32 @@ mod tests {
         assert_eq!(
             issues(decoding),
             vec!["/a~1b/~0c/0 missing_field actual=nothing expected=a field"]
+        );
+        souther_reset(mark);
+    }
+
+    /// An element's place is its index below the array's, and a place that is not an array is
+    /// recorded as one.
+    #[test]
+    fn an_array_is_read_element_by_element_at_its_index() {
+        let mark = souther_mark();
+        let decoding = begun("[1, true]");
+        let root = unsafe { souther_decode_root(decoding) };
+        unsafe {
+            assert_eq!(souther_read_array(root, ptr::null(), decoding), 1);
+            assert_eq!(souther_read_array_length(root), Count(2));
+            let second = souther_read_element(root, Count(1));
+            let at = souther_path_at(souther_path_below(ptr::null(), literal("xs")), Count(1));
+            let mut out = 0;
+            assert_eq!(souther_read_int(second, at, decoding, &mut out), 0);
+            assert_eq!(souther_read_array(second, at, decoding), 0);
+        }
+        assert_eq!(
+            issues(decoding),
+            vec![
+                "/xs/1 type_mismatch actual=boolean expected=Int",
+                "/xs/1 type_mismatch actual=boolean expected=an array",
+            ]
         );
         souther_reset(mark);
     }

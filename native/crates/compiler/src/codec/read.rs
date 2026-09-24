@@ -31,7 +31,9 @@ use cranelift::codegen::ir::{self, InstBuilder, types};
 use cranelift::frontend::{FunctionBuilder, Variable};
 use cranelift::module::{FuncId, Module};
 use cranelift::object::ObjectModule;
-use souther_native_abi::{ANSWERED, HELD, NOTHING, room_for_held};
+use souther_native_abi::{
+    ANSWERED, HELD, LIST_ELEMENTS, LIST_LENGTH, NOTHING, SLOT, room_for_held, room_for_list,
+};
 
 /// Defines the reader of `key`.
 pub(super) fn define(
@@ -319,10 +321,83 @@ impl Reading<'_, '_> {
                 self.builder.switch_to_block(read);
                 Ok(self.builder.block_params(read)[0])
             }
-            CodecShape::ListOf { .. } | CodecShape::SetOf { .. } | CodecShape::MapOf { .. } => Err(
-                not_lowered(format!("{} read at a boundary", shape.ty().spelt())),
-            ),
+            CodecShape::ListOf { element } => self.list(node, path, element),
+            CodecShape::SetOf { .. } | CodecShape::MapOf { .. } => Err(not_lowered(format!(
+                "{} read at a boundary",
+                shape.ty().spelt()
+            ))),
         }
+    }
+
+    /// A list, from an array: every element read at its own index below `path`, whatever the one
+    /// before it was, so an array with several wrong elements answers each of them. A place that is
+    /// not an array is one issue there and no list.
+    fn list(
+        &mut self,
+        node: ir::Value,
+        path: ir::Value,
+        element: &CodecShape,
+    ) -> Lowered<ir::Value> {
+        let is_array = self.asked(Runtime::ReadArray, &[node, path, self.decoding]);
+        let array = self.builder.create_block();
+        let not_array = self.builder.create_block();
+        let read = self.builder.create_block();
+        self.builder.append_block_param(read, POINTER);
+        self.builder
+            .ins()
+            .brif(is_array, array, &[], not_array, &[]);
+
+        self.builder.switch_to_block(not_array);
+        self.refuse();
+        let none = self.builder.ins().iconst(POINTER, NOTHING);
+        self.builder.ins().jump(read, &[none.into()]);
+
+        self.builder.switch_to_block(array);
+        let length = self.asked(Runtime::ReadArrayLength, &[node]);
+        let along = self.builder.ins().imul_imm_s(length, SLOT);
+        let size = self.builder.ins().iadd_imm_s(along, room_for_list(0));
+        let taking = self
+            .module
+            .declare_func_in_func(self.allocate, self.builder.func);
+        let taken = self.builder.ins().call(taking, &[size]);
+        let list = self.builder.inst_results(taken)[0];
+        self.builder
+            .ins()
+            .store(TRUSTED, length, list, LIST_LENGTH as i32);
+
+        let head = self.builder.create_block();
+        self.builder.append_block_param(head, types::I64);
+        let step = self.builder.create_block();
+        let walked = self.builder.create_block();
+        let start = self.builder.ins().iconst(types::I64, 0);
+        self.builder.ins().jump(head, &[start.into()]);
+
+        self.builder.switch_to_block(head);
+        let index = self.builder.block_params(head)[0];
+        let inside = self
+            .builder
+            .ins()
+            .icmp(IntCC::SignedLessThan, index, length);
+        self.builder.ins().brif(inside, step, &[], walked, &[]);
+
+        self.builder.switch_to_block(step);
+        let item = self.asked(Runtime::ReadElement, &[node, index]);
+        let at = self.asked(Runtime::PathAt, &[path, index]);
+        let value = self.value(item, at, element)?;
+        let slot = into_slot(self.builder, value);
+        let along = self.builder.ins().imul_imm_s(index, SLOT);
+        let into = self.builder.ins().iadd(list, along);
+        self.builder
+            .ins()
+            .store(TRUSTED, slot, into, LIST_ELEMENTS as i32);
+        let next = self.builder.ins().iadd_imm_s(index, 1);
+        self.builder.ins().jump(head, &[next.into()]);
+
+        self.builder.switch_to_block(walked);
+        self.builder.ins().jump(read, &[list.into()]);
+
+        self.builder.switch_to_block(read);
+        Ok(self.builder.block_params(read)[0])
     }
 
     /// An optional holding `value`, as the generated code holds one.
