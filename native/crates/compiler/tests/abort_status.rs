@@ -13,7 +13,7 @@ use souther_native_driver::native_status;
 use souther_native_driver::transport::AbortKind;
 
 /// The fixture both this test and the Java harness read.
-const FIXTURE: &str = include_str!("abort-status-abi2.json");
+const FIXTURE: &str = include_str!("abort-status-abi3.json");
 
 #[test]
 fn the_fixture_the_java_harness_is_held_to_is_what_native_status_answers_today() {
@@ -28,12 +28,19 @@ fn the_fixture_the_java_harness_is_held_to_is_what_native_status_answers_today()
     assert_eq!(FIXTURE.trim(), written);
 }
 
-/// Every reason a computation ends is its own number, and none is `ANSWERED`: a caller tells them
-/// apart by the number alone, and the Java harness, the header and the manifest all read it back
-/// that way. The fixture above would carry two names for one number without complaint.
+/// Every reason a computation ends is its own number, and none is `ANSWERED` or one the `abi` crate
+/// reserves for what a host brings about: a caller tells them apart by the number alone, and the
+/// Java harness, the header and the manifest all read it back that way. The fixture above would
+/// carry two names for one number without complaint. The driver holds the same at compile time;
+/// this says it where the fixture is.
 #[test]
 fn every_abort_answers_a_number_of_its_own() {
     let mut seen = vec![souther_native_abi::ANSWERED];
+    seen.extend(
+        souther_native_abi::HOST_STATUSES
+            .iter()
+            .map(|(_, number)| *number),
+    );
     for kind in AbortKind::ALL {
         let number = native_status(kind);
         assert!(

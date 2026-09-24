@@ -30,7 +30,7 @@ use cranelift::object::ObjectModule;
 use object::{Object, ObjectSection};
 use souther_native_abi::{
     ABI_GENERATION, ANSWERED, DECODED_ISSUES, DECODED_MALFORMED, DECODED_VALUE, HOST_RUNTIME,
-    HostParameter, HostWord,
+    HOST_STATUSES, HostParameter, HostWord,
 };
 use std::collections::BTreeMap;
 use target_lexicon::BinaryFormat;
@@ -48,17 +48,7 @@ impl HostFunction {
     /// The signature the function is emitted under, read off what a host is told it takes and
     /// answers, so the two cannot differ.
     pub(crate) fn signature(&self, call_conv: CallConv) -> ir::Signature {
-        let mut signature = ir::Signature::new(call_conv);
-        for taken in &self.takes {
-            signature.params.push(AbiParam::new(match taken {
-                HostParameter::Given(word) => machine(*word),
-                HostParameter::Room(_) => POINTER,
-            }));
-        }
-        if let Some(word) = self.answers {
-            signature.returns.push(AbiParam::new(machine(word)));
-        }
-        signature
+        signature_of(&self.takes, self.answers, call_conv)
     }
 
     /// What a host is told of it.
@@ -69,6 +59,50 @@ impl HostFunction {
             answers: self.answers.map(Word::from),
         }
     }
+}
+
+/// The type of a function a host writes to implement a behavior with no body, as it is called: what
+/// C calls a pointer to one, and what it takes and answers. Nothing is defined under the name.
+#[derive(Clone, Debug)]
+pub(crate) struct HostImplementation {
+    pub type_name: String,
+    pub takes: Vec<HostParameter>,
+    pub answers: HostWord,
+}
+
+impl HostImplementation {
+    /// The signature it is called under, read off what a host is told it takes and answers.
+    pub(crate) fn signature(&self, call_conv: CallConv) -> ir::Signature {
+        signature_of(&self.takes, Some(self.answers), call_conv)
+    }
+
+    /// What a host is told of it.
+    fn described(&self) -> manifest::Implementation {
+        manifest::Implementation {
+            type_name: self.type_name.clone(),
+            takes: self.takes.iter().copied().map(Parameter::from).collect(),
+            answers: self.answers.into(),
+        }
+    }
+}
+
+/// A signature of what a host hands over and is handed, whichever side of the call a host is on.
+fn signature_of(
+    takes: &[HostParameter],
+    answers: Option<HostWord>,
+    call_conv: CallConv,
+) -> ir::Signature {
+    let mut signature = ir::Signature::new(call_conv);
+    for taken in takes {
+        signature.params.push(AbiParam::new(match taken {
+            HostParameter::Given(word) => machine(*word),
+            HostParameter::Room(_) => POINTER,
+        }));
+    }
+    if let Some(word) = answers {
+        signature.returns.push(AbiParam::new(machine(word)));
+    }
+    signature
 }
 
 /// What a word is on the machine.
@@ -115,24 +149,43 @@ fn pointer_to(word: &str) -> String {
 
 /// A function as the header declares it.
 fn declared(function: &manifest::Function) -> String {
-    let taken: Vec<String> = function
-        .takes
+    let answers = function.answers.map_or("void", c_word);
+    format!(
+        "{answers}{}{}({});",
+        if answers.ends_with('*') { "" } else { " " },
+        function.name,
+        parameters(&function.takes)
+    )
+}
+
+/// What a function takes, as C writes it between the parentheses.
+fn parameters(takes: &[Parameter]) -> String {
+    let taken: Vec<String> = takes
         .iter()
         .map(|taken| match taken {
             Parameter::Given(word) => c_word(*word).to_string(),
             Parameter::Room(word) => pointer_to(c_word(*word)),
         })
         .collect();
-    let answers = function.answers.map_or("void", c_word);
+    if taken.is_empty() {
+        "void".to_string()
+    } else {
+        taken.join(", ")
+    }
+}
+
+/// What a host implements a behavior as, and registers one through, as the header declares them:
+/// the pointer's type, named, and the function taking one and answering one, with what a host owes
+/// what it registers.
+fn declared_injection(injection: &manifest::Injection) -> String {
+    let implementation = &injection.implementation;
+    let answers = c_word(implementation.answers);
+    let pointer = &implementation.type_name;
     format!(
-        "{answers}{}{}({});",
-        if answers.ends_with('*') { "" } else { " " },
-        function.name,
-        if taken.is_empty() {
-            "void".to_string()
-        } else {
-            taken.join(", ")
-        }
+        "/* What is registered stays callable while it is registered on any thread. */\n\
+         typedef {answers} (*{pointer})({});\n{pointer} {}({pointer});",
+        parameters(&implementation.takes),
+        injection.register
     )
 }
 
@@ -306,6 +359,29 @@ impl Surface {
         self.module(module).behaviors.push(behavior);
     }
 
+    /// A behavior a module of this object declares with no body, which a host implements as
+    /// `implementation` says and registers through `register`.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn injection(
+        &mut self,
+        module: &str,
+        name: &str,
+        takes: &[Ty],
+        answers: &Ty,
+        declared: &Declared,
+        implementation: &HostImplementation,
+        register: &str,
+    ) {
+        let injection = manifest::Injection {
+            name: name.to_string(),
+            takes: takes.iter().map(|ty| type_of(ty, declared)).collect(),
+            answers: type_of(answers, declared),
+            implementation: implementation.described(),
+            register: register.to_string(),
+        };
+        self.module(module).injections.push(injection);
+    }
+
     /// A value a module of this object publishes, and what a host reads it through.
     pub(crate) fn value(
         &mut self,
@@ -329,6 +405,7 @@ impl Surface {
             .or_insert_with(|| manifest::Module {
                 name: name.to_string(),
                 behaviors: Vec::new(),
+                injections: Vec::new(),
                 values: Vec::new(),
                 declarations: Vec::new(),
             })
@@ -495,9 +572,19 @@ fn declaration_functions(
 }
 
 /// Every symbol a shared library with this manifest exports: what a host calls, and nothing else.
+///
+/// What a host registers an implementation through is one of them. What it implements is not: that
+/// is the host's own function, named in C and defined by nobody here.
 pub(crate) fn exported(manifest: &Manifest) -> Vec<String> {
+    let registers = manifest
+        .modules
+        .iter()
+        .flat_map(|module| &module.injections)
+        .map(|injection| &injection.register);
     functions(manifest)
-        .map(|function| function.name.clone())
+        .map(|function| &function.name)
+        .chain(registers)
+        .cloned()
         .collect()
 }
 
@@ -546,6 +633,11 @@ pub(crate) fn declarations(manifest: &Manifest) -> String {
                 written.push_str(&declared(call));
                 written.push('\n');
             }
+        }
+        for injection in &module.injections {
+            written.push_str(&format!("/* injected {name}.{} */\n", injection.name));
+            written.push_str(&declared_injection(injection));
+            written.push('\n');
         }
         for value in &module.values {
             if let Some(read) = &value.read {
@@ -607,6 +699,7 @@ fn statuses() -> Vec<(&'static str, u32)> {
             .iter()
             .map(|kind| (kind.spelt(), native_status(*kind))),
     );
+    statuses.extend(HOST_STATUSES.iter().copied());
     statuses
 }
 

@@ -73,6 +73,25 @@ pub(crate) struct Coherent<'a> {
     pub runs: Runs<'a>,
     /// Every closure site under what this object runs.
     pub closures: ClosureSites<'a>,
+    /// Which object defines each behavior's symbol, and as what, by the name it is declared
+    /// under. Decided here once, from what the target says it is and whether a module this
+    /// document builds declares it, and read by whatever emits or describes the behavior.
+    pub defined: HashMap<String, Defined>,
+}
+
+/// Which object defines a behavior's symbol, and as what.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Defined {
+    /// This object, as the local definition a module of it holds: a body or a composition.
+    Here,
+    /// This object, as a call to what a host registered for it on the calling thread: a module this
+    /// document builds declares it with no body and nothing to depend on.
+    ByTheHost,
+    /// Another object: the build that implements it, or the build that declares it with no body
+    /// and answers it with what a host registered. A call is the same call either way.
+    Elsewhere,
+    /// Nothing: it was never written.
+    Nowhere,
 }
 
 impl<'a> Coherent<'a> {
@@ -130,6 +149,7 @@ impl<'a> Coherent<'a> {
                 })?;
             }
         }
+        let mut defined = HashMap::new();
         for target in &program.behaviors {
             let name = target.declared();
             if !spells_a_module(&target.module) || !spells_a_name(&target.name) {
@@ -156,11 +176,15 @@ impl<'a> Coherent<'a> {
                     target.module
                 );
             }
-            placed(
-                &name,
-                target,
-                reached.modules.contains_key(target.module.as_str()),
-            )?;
+            let declared_here = reached.modules.contains_key(target.module.as_str());
+            placed(&name, target, declared_here)?;
+            let definition = match (target.is, declared_here) {
+                (Answers::Body | Answers::Composed, _) => Defined::Here,
+                (Answers::Injected, true) => Defined::ByTheHost,
+                (Answers::Injected, false) | (Answers::Elsewhere, _) => Defined::Elsewhere,
+                (Answers::Unwritten, _) => Defined::Nowhere,
+            };
+            index::unique(&mut defined, name.clone(), definition);
         }
 
         let runs = Runs::of(program, &declared)?;
@@ -264,6 +288,7 @@ impl<'a> Coherent<'a> {
             locals,
             runs,
             closures,
+            defined,
         })
     }
 }

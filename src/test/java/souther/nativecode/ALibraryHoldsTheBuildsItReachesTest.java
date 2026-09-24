@@ -70,24 +70,24 @@ class ALibraryHoldsTheBuildsItReachesTest {
                 int64_t mark = souther_mark();
 
                 souther_value three = NULL, price = NULL, closed = NULL, order = NULL;
-                souther2_m_lib_m_money_t_Money_construct(3, &three);
-                souther2_m_lib_m_money_t_Price_construct(three, &price);
-                souther2_m_lib_m_money_t_Closed_construct(&closed);
+                souther3_m_lib_m_money_t_Money_construct(3, &three);
+                souther3_m_lib_m_money_t_Price_construct(three, &price);
+                souther3_m_lib_m_money_t_Closed_construct(&closed);
                 souther_status status =
-                        souther2_m_app_m_order_t_Order_construct(price, closed, closed, 2, &order);
+                        souther3_m_app_m_order_t_Order_construct(price, closed, closed, 2, &order);
                 int64_t total = -1;
-                souther_status totalled = souther2_m_app_m_order_b_total(order, &total);
+                souther_status totalled = souther3_m_app_m_order_b_total(order, &total);
                 printf("order: status %u, total %u %" PRId64 ", door %u\\n", status, totalled,
-                       total, souther2_m_lib_m_money_t_Door_case(
-                               souther2_m_app_m_order_t_Order_f_door(order)));
+                       total, souther3_m_lib_m_money_t_Door_case(
+                               souther3_m_app_m_order_t_Order_f_door(order)));
                 printf("written: ");
-                text(souther2_m_app_m_order_t_Order_encode(order));
+                text(souther3_m_app_m_order_t_Order_encode(order));
                 printf("\\n");
 
                 const char *json = "{\\"price\\":{\\"amount\\":-1},\\"door\\":{\\"type\\":\\"Closed\\"},"
                         "\\"settled\\":{\\"type\\":\\"Closed\\"},\\"count\\":1}";
                 souther_decoded reading = NULL;
-                souther2_m_app_m_order_t_Order_decode((const uint8_t *) json, (int64_t) strlen(json),
+                souther3_m_app_m_order_t_Order_decode((const uint8_t *) json, (int64_t) strlen(json),
                                                       &reading);
                 souther_issue issue = souther_decoded_issue(reading, 0);
                 printf("read: ");
@@ -108,8 +108,8 @@ class ALibraryHoldsTheBuildsItReachesTest {
 
         String declarations = Files.readString(library.declarations(), StandardCharsets.UTF_8);
         assertThat(declarations)
-                .contains("souther2_m_lib_m_money_t_Money_construct(")
-                .contains("souther2_m_app_m_order_b_total(");
+                .contains("souther3_m_lib_m_money_t_Money_construct(")
+                .contains("souther3_m_app_m_order_b_total(");
 
         Path source = into.resolve("host.c");
         Files.writeString(source, HARNESS, StandardCharsets.UTF_8);

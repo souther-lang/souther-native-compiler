@@ -24,27 +24,36 @@
 //! and a boundary are not here either: they are how this project's own tests run the object, and
 //! a host is told nothing of them.
 //!
+//! A host is also what answers a behavior with no body that declares nothing to depend on, and the
+//! object of the build that declares one is what calls it: under the behavior's own symbol, with
+//! what a host registered for it on the calling thread ([`define_injections`]). That crossing is
+//! a published behavior's the other way round, and made of the same words: a behavior's boundary
+//! has no optional, so either way it is a word for each parameter and room for one answer.
+//!
 //! Every function is emitted from the [`HostFunction`] a host is told about, and put on the
 //! [`Surface`] where it is emitted, so what the object defines for a host and what the header and
 //! the manifest say it defines are one decision.
 
 use super::{
     Declared, Emitting, Lowered, NO_ARM, POINTER, Runs, TRUSTED, accepted, into_slot, machine_type,
-    out_of_slot, out_slot,
+    not_lowered, out_of_slot, out_slot,
 };
 use crate::codec::write::Writing;
 use crate::codec::{Codecs, Runtime};
-use crate::interface::{DeclarationSurface, HostFunction, Surface, machine};
-use crate::transport::{Case, Declaration, DeclaredBy, Prim, Program, Ty};
+use crate::interface::{DeclarationSurface, HostFunction, HostImplementation, Surface, machine};
+use crate::transport::{
+    BoundaryInput, BoundaryOutput, Case, Declaration, DeclaredBy, Prim, Program, Ty,
+};
 use cranelift::codegen::ir::condcodes::IntCC;
 use cranelift::codegen::ir::{self, InstBuilder, TrapCode, types};
 use cranelift::frontend::FunctionBuilder;
-use cranelift::module::{FuncId, Linkage, Module};
+use cranelift::module::{DataDescription, FuncId, Linkage, Module};
 use cranelift::object::ObjectModule;
 use souther_native_abi::{
-    ANSWERED, HELD, HostParameter, HostWord, NOTHING, WHICH, field_at, host_behavior_symbol,
-    host_case_symbol, host_constructor_symbol, host_decode_symbol, host_encode_symbol,
-    host_field_symbol, host_value_symbol, room_for_held,
+    ANSWERED, HELD, HostParameter, HostWord, IMPLEMENTATION_ANSWERS, INJECTION_PROTOCOL_VIOLATION,
+    INJECTION_UNBOUND, NOTHING, TOKEN, WHICH, field_at, host_behavior_symbol, host_case_symbol,
+    host_constructor_symbol, host_decode_symbol, host_encode_symbol, host_field_symbol,
+    host_implementation_type, host_register_symbol, host_value_symbol, room_for_held,
 };
 
 /// How a value of a type is handed to a host and taken from one.
@@ -289,14 +298,28 @@ pub(crate) fn define(
     Ok(())
 }
 
-/// A behavior or a published value's entry, as a host would call it: what it runs, what that takes,
-/// and what it answers.
+/// A behavior or a published value's entry, as a host would call it: what it runs, what each
+/// parameter arrives as, and what it answers. A value takes nothing.
 pub(crate) struct Entry<'a> {
     pub module: &'a str,
     pub name: &'a str,
     pub runs: FuncId,
-    pub takes: Vec<Ty>,
+    pub inputs: &'a [BoundaryInput],
     pub answers: Ty,
+}
+
+/// The word a behavior's parameter is handed over in, where a host can hand one over.
+///
+/// A word and never a presence beside one: what a parameter arrives as is a boundary shape, and no
+/// boundary shape is an optional (the checker's E1402), so a behavior's crossing has no absence to
+/// say. Read off the shape rather than off a type made of it, so that is not forgotten on the way.
+fn taken_word(input: &BoundaryInput) -> Option<HostWord> {
+    whole(&input.ty())
+}
+
+/// The word a behavior's answer is handed over in, for the same reason a word (E1313).
+fn answered_word(output: &BoundaryOutput) -> Option<HostWord> {
+    whole(&output.ty())
 }
 
 /// Defines what a host calls each published behavior this object defines through, and puts every
@@ -310,10 +333,11 @@ pub(crate) fn define_behaviors(
     for behavior in behaviors {
         let symbol = host_behavior_symbol(behavior.module, behavior.name);
         let call = forward(emitting, symbol, behavior)?;
+        let takes: Vec<Ty> = behavior.inputs.iter().map(BoundaryInput::ty).collect();
         surface.behavior(
             behavior.module,
             behavior.name,
-            &behavior.takes,
+            &takes,
             &behavior.answers,
             emitting.declared,
             call.as_ref(),
@@ -355,39 +379,34 @@ fn forward(
     symbol: String,
     entry: &Entry,
 ) -> Lowered<Option<HostFunction>> {
-    let Some(handed) = entry.takes.iter().map(Host::of).collect::<Option<Vec<_>>>() else {
+    let Some(handed) = entry
+        .inputs
+        .iter()
+        .map(taken_word)
+        .collect::<Option<Vec<_>>>()
+    else {
         return Ok(None);
     };
+    // A published value's answer may be an optional, which a behavior's never is.
     let Some(answered) = Host::of(&entry.answers) else {
         return Ok(None);
     };
-    let mut takes: Vec<HostParameter> = handed.iter().flat_map(|host| host.given()).collect();
+    let mut takes: Vec<HostParameter> = handed.iter().copied().map(HostParameter::Given).collect();
     takes.extend(answered.room());
     let function = HostFunction {
         symbol,
         takes,
         answers: Some(HostWord::Status),
     };
-    let allocate = emitting.allocate;
     let runs = entry.runs;
     let answers = machine_type(&entry.answers)?;
     let exposed = expose(emitting, function, &mut |builder, module, params| {
         let mut given = params.iter().copied();
         let mut arguments = Vec::with_capacity(handed.len() + 1);
-        for (host, taken) in handed.iter().zip(&entry.takes) {
-            arguments.push(match host {
-                Host::Whole(word) => {
-                    // What a host hands over whole is what the entry takes, word for word; an
-                    // optional is where the two part, and only there.
-                    assert_eq!(machine(*word), machine_type(taken)?);
-                    given.next().expect("a parameter for every one handed over")
-                }
-                Host::Present(_) => {
-                    let present = given.next().expect("a presence for every optional");
-                    let value = given.next().expect("a value beside every presence");
-                    held(builder, module, allocate, present, value)
-                }
-            });
+        // What a host hands over is what the entry takes, word for word.
+        for (word, taken) in handed.iter().zip(entry.inputs) {
+            assert_eq!(machine(*word), machine_type(&taken.ty())?);
+            arguments.push(given.next().expect("a parameter for every one handed over"));
         }
         let reaching = module.declare_func_in_func(runs, builder.func);
         match answered {
@@ -444,6 +463,179 @@ fn forward(
         Ok(())
     })?;
     Ok(Some(exposed))
+}
+
+/// A behavior a module of this object declares with no body, which a host implements: the
+/// function its symbol is defined as, and what each parameter arrives as and the answer leaves as.
+pub(crate) struct Injected<'a> {
+    pub module: &'a str,
+    pub name: &'a str,
+    pub answered_by: FuncId,
+    pub inputs: &'a [BoundaryInput],
+    pub output: &'a BoundaryOutput,
+}
+
+/// The runtime's functions a registration is kept by ([`souther_native_abi::INJECTION_GET`] and
+/// [`souther_native_abi::INJECTION_EXCHANGE`]).
+pub(crate) struct Registrations {
+    pub get: FuncId,
+    pub exchange: FuncId,
+}
+
+/// Defines each behavior in `injected` as a call to what a host registered for it on the calling
+/// thread, and what a host registers one through, and puts both on `surface`.
+///
+/// Each has a key: a byte of this object's own that nothing reads, whose address is which behavior
+/// a registration is for. Writable, so no link lays two keys at one address because their bytes
+/// are alike.
+///
+/// Refused where a host cannot hand over what the behavior answers or be handed what it takes: a
+/// host is the only thing that answers one, so a behavior no host can answer is one nothing can.
+pub(crate) fn define_injections(
+    emitting: &mut Emitting,
+    surface: &mut Surface,
+    injected: &[Injected],
+    registrations: &Registrations,
+) -> Lowered<()> {
+    for behavior in injected {
+        let spelt = format!("{}.{}", behavior.module, behavior.name);
+        let takes: Vec<Ty> = behavior.inputs.iter().map(BoundaryInput::ty).collect();
+        let answers = behavior.output.ty();
+        let Some(handed) = behavior
+            .inputs
+            .iter()
+            .map(taken_word)
+            .collect::<Option<Vec<_>>>()
+        else {
+            return Err(not_lowered(format!(
+                "the injected behavior {spelt}, which takes what a host cannot hand over"
+            )));
+        };
+        let Some(answered) = answered_word(behavior.output) else {
+            return Err(not_lowered(format!(
+                "the injected behavior {spelt}, which answers what a host cannot be handed"
+            )));
+        };
+        let mut given: Vec<HostParameter> =
+            handed.iter().copied().map(HostParameter::Given).collect();
+        given.push(HostParameter::Room(answered));
+        let implementation = HostImplementation {
+            type_name: host_implementation_type(behavior.module, behavior.name),
+            takes: given,
+            answers: HostWord::Status,
+        };
+
+        let key = accepted(emitting.module.declare_data(
+            &format!("$injection${spelt}"),
+            Linkage::Local,
+            true,
+            false,
+        ));
+        let mut byte = DataDescription::new();
+        byte.define(TOKEN.into());
+        accepted(emitting.module.define_data(key, &byte));
+
+        let register = host_register_symbol(behavior.module, behavior.name);
+        let mut registering = ir::Signature::new(emitting.call_conv);
+        registering.params.push(ir::AbiParam::new(POINTER));
+        registering.returns.push(ir::AbiParam::new(POINTER));
+        let id = accepted(emitting.module.declare_function(
+            &register,
+            Linkage::Export,
+            &registering,
+        ));
+        let exchange = registrations.exchange;
+        emitting.function(id, registering, |builder, module, given| {
+            let key = module.declare_data_in_func(key, builder.func);
+            let key = builder.ins().symbol_value(POINTER, key);
+            let exchanging = module.declare_func_in_func(exchange, builder.func);
+            let called = builder.ins().call(exchanging, &[key, given[0]]);
+            let before = builder.inst_results(called)[0];
+            builder.ins().return_(&[before]);
+            Ok(())
+        })?;
+
+        let signature = super::signature_over(&takes, &answers, emitting.call_conv)?;
+        let calling = implementation.signature(emitting.call_conv);
+        let get = registrations.get;
+        // What the behavior takes and answers is what a host hands over and is handed, word for
+        // word, so the arguments go to the implementation as they came and its room is read as
+        // the answer.
+        for (word, taken) in handed.iter().zip(&takes) {
+            assert_eq!(machine(*word), machine_type(taken)?);
+        }
+        assert_eq!(machine(answered), machine_type(&answers)?);
+        emitting.function(behavior.answered_by, signature, |builder, module, given| {
+            let (arguments, out) = given.split_at(given.len() - 1);
+            let out = out[0];
+            let key = module.declare_data_in_func(key, builder.func);
+            let key = builder.ins().symbol_value(POINTER, key);
+            let getting = module.declare_func_in_func(get, builder.func);
+            let got = builder.ins().call(getting, &[key]);
+            let registered = builder.inst_results(got)[0];
+            let bound = builder.create_block();
+            let unbound = builder.create_block();
+            builder.ins().brif(registered, bound, &[], unbound, &[]);
+
+            builder.switch_to_block(unbound);
+            let status = builder
+                .ins()
+                .iconst(types::I32, i64::from(INJECTION_UNBOUND));
+            builder.ins().return_(&[status]);
+
+            // The implementation writes into room of this function's own and not through `out`,
+            // which is written only once the status says there is an answer.
+            builder.switch_to_block(bound);
+            let room = out_slot(builder);
+            let mut handing = arguments.to_vec();
+            handing.push(room);
+            let calling = builder.import_signature(calling.clone());
+            let called = builder.ins().call_indirect(calling, registered, &handing);
+            let status = builder.inst_results(called)[0];
+
+            let is_answered = builder
+                .ins()
+                .icmp_imm_s(IntCC::Equal, status, i64::from(ANSWERED));
+            let answered_block = builder.create_block();
+            let otherwise = builder.create_block();
+            builder
+                .ins()
+                .brif(is_answered, answered_block, &[], otherwise, &[]);
+
+            // Handed on as it came where an implementation may answer it, and the protocol broken
+            // where it may not: not a status this object hands a caller as if a computation of
+            // the model had come to it.
+            builder.switch_to_block(otherwise);
+            let mut handed_on = builder
+                .ins()
+                .iconst(types::I32, i64::from(INJECTION_PROTOCOL_VIOLATION));
+            for may in IMPLEMENTATION_ANSWERS.iter().filter(|it| **it != ANSWERED) {
+                let is = builder
+                    .ins()
+                    .icmp_imm_s(IntCC::Equal, status, i64::from(*may));
+                handed_on = builder.ins().select(is, status, handed_on);
+            }
+            builder.ins().return_(&[handed_on]);
+
+            builder.switch_to_block(answered_block);
+            let value = builder.ins().load(machine(answered), TRUSTED, room, 0);
+            builder.ins().store(TRUSTED, value, out, 0);
+            let ok = builder.ins().iconst(types::I32, i64::from(ANSWERED));
+            builder.ins().return_(&[ok]);
+            Ok(())
+        })?;
+
+        surface.injection(
+            behavior.module,
+            behavior.name,
+            &takes,
+            &answers,
+            emitting.declared,
+            &implementation,
+            &register,
+        );
+    }
+    Ok(())
 }
 
 /// A host's decoder: the bytes read as a document, the document read as a value of `key` by the

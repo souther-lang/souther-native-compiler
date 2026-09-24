@@ -1,11 +1,14 @@
 {
   "format": "souther-native-interface",
-  "version": 1,
-  "abi": 2,
+  "version": 2,
+  "abi": 3,
   "statuses": {
     "ANSWERED": 0,
     "DIVISION_BY_ZERO": 4,
     "ENSURES_NOT_HELD": 2,
+    "HOST_EXCEPTION": 2147483647,
+    "INJECTION_PROTOCOL_VIOLATION": 2147483646,
+    "INJECTION_UNBOUND": 2147483645,
     "INVALID_BOUNDS": 6,
     "INVARIANT_NOT_HELD": 1,
     "REQUIRED_FORM_HAS_NO_PLACE": 5,
@@ -184,7 +187,7 @@
             "name": "Outcome"
           },
           "call": {
-            "name": "souther2_m_shop_b_settle",
+            "name": "souther3_m_shop_b_settle",
             "takes": [
               {
                 "given": "value"
@@ -213,7 +216,7 @@
             "name": "Int"
           },
           "call": {
-            "name": "souther2_m_shop_b_owing",
+            "name": "souther3_m_shop_b_owing",
             "takes": [
               {
                 "given": "value"
@@ -224,6 +227,35 @@
             ],
             "answers": "status"
           }
+        }
+      ],
+      "injections": [
+        {
+          "name": "discountFor",
+          "takes": [
+            {
+              "kind": "declared",
+              "module": "shop",
+              "name": "Line"
+            }
+          ],
+          "answers": {
+            "kind": "primitive",
+            "name": "Int"
+          },
+          "implementation": {
+            "type": "souther3_m_shop_b_discountFor_implementation",
+            "takes": [
+              {
+                "given": "value"
+              },
+              {
+                "room": "int"
+              }
+            ],
+            "answers": "status"
+          },
+          "register": "souther3_m_shop_b_discountFor_register"
         }
       ],
       "values": [],
@@ -238,7 +270,7 @@
               "name": "Int"
             },
             "read": {
-              "name": "souther2_m_shop_t_Money_f_value",
+              "name": "souther3_m_shop_t_Money_f_value",
               "takes": [
                 {
                   "given": "value"
@@ -248,7 +280,7 @@
             }
           },
           "construct": {
-            "name": "souther2_m_shop_t_Money_construct",
+            "name": "souther3_m_shop_t_Money_construct",
             "takes": [
               {
                 "given": "int"
@@ -260,7 +292,7 @@
             "answers": "status"
           },
           "decode": {
-            "name": "souther2_m_shop_t_Money_decode",
+            "name": "souther3_m_shop_t_Money_decode",
             "takes": [
               {
                 "given": "bytes"
@@ -275,7 +307,7 @@
             "answers": "status"
           },
           "encode": {
-            "name": "souther2_m_shop_t_Money_encode",
+            "name": "souther3_m_shop_t_Money_encode",
             "takes": [
               {
                 "given": "value"
@@ -296,7 +328,7 @@
                 "name": "Money"
               },
               "read": {
-                "name": "souther2_m_shop_t_Line_f_price",
+                "name": "souther3_m_shop_t_Line_f_price",
                 "takes": [
                   {
                     "given": "value"
@@ -312,7 +344,7 @@
                 "name": "Int"
               },
               "read": {
-                "name": "souther2_m_shop_t_Line_f_quantity",
+                "name": "souther3_m_shop_t_Line_f_quantity",
                 "takes": [
                   {
                     "given": "value"
@@ -331,7 +363,7 @@
                 }
               },
               "read": {
-                "name": "souther2_m_shop_t_Line_f_note",
+                "name": "souther3_m_shop_t_Line_f_note",
                 "takes": [
                   {
                     "given": "value"
@@ -345,7 +377,7 @@
             }
           ],
           "construct": {
-            "name": "souther2_m_shop_t_Line_construct",
+            "name": "souther3_m_shop_t_Line_construct",
             "takes": [
               {
                 "given": "value"
@@ -366,7 +398,7 @@
             "answers": "status"
           },
           "decode": {
-            "name": "souther2_m_shop_t_Line_decode",
+            "name": "souther3_m_shop_t_Line_decode",
             "takes": [
               {
                 "given": "bytes"
@@ -381,7 +413,7 @@
             "answers": "status"
           },
           "encode": {
-            "name": "souther2_m_shop_t_Line_encode",
+            "name": "souther3_m_shop_t_Line_encode",
             "takes": [
               {
                 "given": "value"
@@ -394,7 +426,7 @@
           "kind": "unit",
           "name": "Free",
           "construct": {
-            "name": "souther2_m_shop_t_Free_construct",
+            "name": "souther3_m_shop_t_Free_construct",
             "takes": [
               {
                 "room": "value"
@@ -403,7 +435,7 @@
             "answers": "status"
           },
           "decode": {
-            "name": "souther2_m_shop_t_Free_decode",
+            "name": "souther3_m_shop_t_Free_decode",
             "takes": [
               {
                 "given": "bytes"
@@ -418,7 +450,7 @@
             "answers": "status"
           },
           "encode": {
-            "name": "souther2_m_shop_t_Free_encode",
+            "name": "souther3_m_shop_t_Free_encode",
             "takes": [
               {
                 "given": "value"
@@ -439,7 +471,7 @@
                 "name": "Money"
               },
               "read": {
-                "name": "souther2_m_shop_t_Paid_f_amount",
+                "name": "souther3_m_shop_t_Paid_f_amount",
                 "takes": [
                   {
                     "given": "value"
@@ -450,7 +482,7 @@
             }
           ],
           "construct": {
-            "name": "souther2_m_shop_t_Paid_construct",
+            "name": "souther3_m_shop_t_Paid_construct",
             "takes": [
               {
                 "given": "value"
@@ -462,7 +494,7 @@
             "answers": "status"
           },
           "decode": {
-            "name": "souther2_m_shop_t_Paid_decode",
+            "name": "souther3_m_shop_t_Paid_decode",
             "takes": [
               {
                 "given": "bytes"
@@ -477,7 +509,7 @@
             "answers": "status"
           },
           "encode": {
-            "name": "souther2_m_shop_t_Paid_encode",
+            "name": "souther3_m_shop_t_Paid_encode",
             "takes": [
               {
                 "given": "value"
@@ -498,7 +530,7 @@
                 "name": "Money"
               },
               "read": {
-                "name": "souther2_m_shop_t_Owed_f_amount",
+                "name": "souther3_m_shop_t_Owed_f_amount",
                 "takes": [
                   {
                     "given": "value"
@@ -514,7 +546,7 @@
                 "name": "Bool"
               },
               "read": {
-                "name": "souther2_m_shop_t_Owed_f_overdue",
+                "name": "souther3_m_shop_t_Owed_f_overdue",
                 "takes": [
                   {
                     "given": "value"
@@ -525,7 +557,7 @@
             }
           ],
           "construct": {
-            "name": "souther2_m_shop_t_Owed_construct",
+            "name": "souther3_m_shop_t_Owed_construct",
             "takes": [
               {
                 "given": "value"
@@ -540,7 +572,7 @@
             "answers": "status"
           },
           "decode": {
-            "name": "souther2_m_shop_t_Owed_decode",
+            "name": "souther3_m_shop_t_Owed_decode",
             "takes": [
               {
                 "given": "bytes"
@@ -555,7 +587,7 @@
             "answers": "status"
           },
           "encode": {
-            "name": "souther2_m_shop_t_Owed_encode",
+            "name": "souther3_m_shop_t_Owed_encode",
             "takes": [
               {
                 "given": "value"
@@ -585,7 +617,7 @@
             }
           ],
           "case": {
-            "name": "souther2_m_shop_t_Settled_case",
+            "name": "souther3_m_shop_t_Settled_case",
             "takes": [
               {
                 "given": "value"
@@ -594,7 +626,7 @@
             "answers": "case"
           },
           "decode": {
-            "name": "souther2_m_shop_t_Settled_decode",
+            "name": "souther3_m_shop_t_Settled_decode",
             "takes": [
               {
                 "given": "bytes"
@@ -609,7 +641,7 @@
             "answers": "status"
           },
           "encode": {
-            "name": "souther2_m_shop_t_Settled_encode",
+            "name": "souther3_m_shop_t_Settled_encode",
             "takes": [
               {
                 "given": "value"
@@ -644,7 +676,7 @@
             }
           ],
           "case": {
-            "name": "souther2_m_shop_t_Outcome_case",
+            "name": "souther3_m_shop_t_Outcome_case",
             "takes": [
               {
                 "given": "value"
@@ -653,7 +685,7 @@
             "answers": "case"
           },
           "decode": {
-            "name": "souther2_m_shop_t_Outcome_decode",
+            "name": "souther3_m_shop_t_Outcome_decode",
             "takes": [
               {
                 "given": "bytes"
@@ -668,7 +700,7 @@
             "answers": "status"
           },
           "encode": {
-            "name": "souther2_m_shop_t_Outcome_encode",
+            "name": "souther3_m_shop_t_Outcome_encode",
             "takes": [
               {
                 "given": "value"

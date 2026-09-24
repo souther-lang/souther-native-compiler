@@ -18,7 +18,7 @@ pub mod transport;
 
 use anyhow::{Result, anyhow, bail};
 use closures::{ClosureSites, Site};
-use coherent::Coherent;
+use coherent::{Coherent, Defined};
 use cranelift::codegen::ir::condcodes::IntCC;
 use cranelift::codegen::ir::{
     AbiParam, Function, InstBuilder, MemFlagsData, TrapCode, UserFuncName, types,
@@ -32,11 +32,11 @@ use cranelift::object::{ObjectBuilder, ObjectModule};
 use interface::Surface;
 use kernels::LoweredKernel;
 use souther_native_abi::{
-    ALLOCATE, ANSWERED, HELD, NOTHING, Parameter, SLOT, STRING_COMPARE, STRING_CONCAT, Status,
-    TEXT_BYTES, TEXT_LENGTH, TOKEN, WHICH, Word, behavior_symbol, boundary_symbol,
-    constructor_symbol, example_symbol, field_at, generated_call, held_symbol, home_symbol,
-    member_at, room_for_fields, room_for_held, room_for_members, room_for_text, spells_a_module,
-    spells_a_name, type_symbol, value_symbol,
+    ALLOCATE, ANSWERED, HELD, HOST_STATUSES, INJECTION_EXCHANGE, INJECTION_GET, NOTHING, Parameter,
+    SLOT, STRING_COMPARE, STRING_CONCAT, Status, TEXT_BYTES, TEXT_LENGTH, TOKEN, WHICH, Word,
+    behavior_symbol, boundary_symbol, constructor_symbol, example_symbol, field_at, generated_call,
+    held_symbol, home_symbol, member_at, room_for_fields, room_for_held, room_for_members,
+    room_for_text, spells_a_module, spells_a_name, type_symbol, value_symbol,
 };
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -44,9 +44,9 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 use transport::{
-    AbortKind, AlternativesForm, Answers, Arm, Carrier, Case, Declaration, DeclaredBy, Definition,
-    Ensures, Guard, Node, Op, Owner, Prim, Program, Publication, Reaches, Reading, Routing,
-    Selects, Stage, TRANSPORT_VERSION, Target, Ty,
+    AbortKind, AlternativesForm, Arm, Carrier, Case, Declaration, DeclaredBy, Definition, Ensures,
+    Guard, Node, Op, Owner, Prim, Program, Publication, Reaches, Reading, Routing, Selects, Stage,
+    TRANSPORT_VERSION, Target, Ty,
 };
 
 /// A fork that ran out of arms, which is this compiler having emitted the wrong test rather than
@@ -56,14 +56,15 @@ use transport::{
 const NO_ARM: u8 = 2;
 
 /// Every reason a Souther computation ends without a value, mapped to the wire number a generated
-/// function's status answers with — `souther_native_abi::ANSWERED` reserves zero, so every member
-/// here gets one of what is left.
+/// function's status answers with. `souther_native_abi` reserves `ANSWERED` and the
+/// `HOST_STATUSES`, so every member here gets one of what is left, which is held below at compile
+/// time rather than by a reading of both tables.
 ///
 /// No default arm, for the reason `KernelContracts::abortsOf` on the Java side has none: a member
 /// `AbortKind` adds and this does not answer for is a mapping nobody wrote rather than one that
 /// silently agrees with the last one written for something else. What number a member gets is a
-/// decision of this crate's alone — the `abi` crate states the wire's width and its one reserved
-/// value and nothing about what any other value of it means.
+/// decision of this crate's alone — the `abi` crate states the wire's width and the values it
+/// reserves, and nothing about what any other value of it means.
 ///
 /// `pub`, and not only for `lower`'s own sake: `Running`'s Java test harness reads a status this
 /// answers back off a compiled run and has to turn it back into the `AbortKind` it came from to
@@ -72,7 +73,7 @@ const NO_ARM: u8 = 2;
 /// `vocabularies.rs` plays for `Op`, `Prim` and the rest, and the same reason: a member spelt
 /// (here, numbered) differently on the two sides reads without complaint and means something
 /// other than what either side thinks it does.
-pub fn native_status(kind: AbortKind) -> Status {
+pub const fn native_status(kind: AbortKind) -> Status {
     match kind {
         AbortKind::InvariantNotHeld => 1,
         AbortKind::EnsuresNotHeld => 2,
@@ -82,6 +83,28 @@ pub fn native_status(kind: AbortKind) -> Status {
         AbortKind::InvalidBounds => 6,
     }
 }
+
+/// That no reason a computation ends is answered with a number the `abi` crate reserves, or with
+/// the number of another reason. Both halves are constants, so a number given twice is a build
+/// that stops, and not a status a host reads as one thing when it meant the other.
+const _: () = {
+    let mut at = 0;
+    while at < AbortKind::ALL.len() {
+        let number = native_status(AbortKind::ALL[at]);
+        assert!(number != ANSWERED);
+        let mut reserved = 0;
+        while reserved < HOST_STATUSES.len() {
+            assert!(number != HOST_STATUSES[reserved].1);
+            reserved += 1;
+        }
+        let mut other = 0;
+        while other < at {
+            assert!(number != native_status(AbortKind::ALL[other]));
+            other += 1;
+        }
+        at += 1;
+    }
+};
 
 /// The one status an arithmetic site that may leave the range its type holds jumps to the abort
 /// block with.
@@ -208,22 +231,18 @@ fn header() -> String {
     )
 }
 
-/// What a library is linked from besides the program's own object.
+/// What a library is linked from besides the program's own object: what other Souther builds
+/// wrote, and the runtime.
 ///
-/// Three kinds of thing, as an executable of the program is linked from three: what other Souther
-/// builds wrote, what supplies a behavior the program names and no build defines, and the runtime.
-/// They are kept apart because they are not one kind of thing. An object another build wrote
-/// carries what it offers a host, and that is part of the library's surface; what supplies an
-/// injected behavior is written outside this compiler, as the language expects it to be, and
-/// offers a host nothing through the library.
+/// Nothing else. What the program names and does not define is defined by the object of the build
+/// that declares it, a behavior with no body included: that object answers one with what a host
+/// registers for it when the program runs, so nothing is left for whoever links the library to
+/// supply.
 pub struct Linking {
     /// Every object another Souther build wrote that the program reaches: whose behaviors it calls,
-    /// or whose types it builds and reads. Each carries its own surface, and one that does not is
-    /// refused.
+    /// whether they have a body or a host answers them, or whose types it builds and reads. Each
+    /// carries its own surface, and one that does not is refused.
     pub builds: Vec<PathBuf>,
-    /// Objects and libraries that define what the program leaves for whoever links it and no build
-    /// defines — an injected behavior's implementation. Linked in, and nothing is read off them.
-    pub supplying: Vec<PathBuf>,
     /// The runtime's static archive.
     pub runtime: PathBuf,
 }
@@ -232,9 +251,8 @@ pub struct Linking {
 /// declarations it includes, a manifest, and a shared library of the object and what `linking`
 /// names.
 ///
-/// A library is one program, so it holds every build the program reaches and whatever supplies
-/// what the program leaves undefined. What it offers a host is everything each Souther object in
-/// it carries. Everything a host reads is written from what those objects carry, which is what
+/// A library is one program, so it holds every build the program reaches. What it offers a host is
+/// everything each Souther object in it carries. Everything a host reads is written from what those objects carry, which is what
 /// their emission put there, so none of it can name a function the rest does not.
 pub fn library_for(document: &str, linking: &Linking, into: &Path) -> Result<Library> {
     let linker = link::Linker::of_this_host()?;
@@ -269,7 +287,6 @@ pub fn library_for(document: &str, linking: &Linking, into: &Path) -> Result<Lib
         }
     }
     let manifest = interface::manifest_of(modules.into_values().collect());
-    objects.extend(linking.supplying.iter().map(PathBuf::as_path));
 
     fs::write(&written.header, header())?;
     fs::write(&written.declarations, interface::declarations(&manifest))?;
@@ -317,6 +334,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
         locals,
         runs,
         closures,
+        defined,
     } = coherent;
     let mut context = Context::new();
     let mut shapes = FunctionBuilderContext::new();
@@ -330,6 +348,12 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
     // be the same walk written as many times as the program says it.
     let compare_text = import_runtime(&mut module, STRING_COMPARE, call_conv);
     let join_text = import_runtime(&mut module, STRING_CONCAT, call_conv);
+
+    // What a host registered for a behavior this object answers is kept by the runtime, per thread.
+    let registrations = host::Registrations {
+        get: import_runtime(&mut module, INJECTION_GET, call_conv),
+        exchange: import_runtime(&mut module, INJECTION_EXCHANGE, call_conv),
+    };
 
     let literals = Literals::default();
 
@@ -432,26 +456,32 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
     for target in &program.behaviors {
         let symbol = behavior_symbol(&target.module, &target.name);
         let signature = signature_over(&target.takes(), &target.answers(), call_conv)?;
-        let linkage = match target.is {
+        let linkage = match defined[&target.declared()] {
             // Defined here, so what the table carries for it is this object's answer about a name
             // the declaring module has already decided. A body or a composition with no such
             // answer is a local definition of a module this document does not carry, which is the
             // two halves disagreeing rather than something to fall back from. That the definition
             // found, if any, is the kind of definition this target says was already checked above.
-            Answers::Body | Answers::Composed => {
+            Defined::Here => {
                 let declared = target.declared();
                 let local = locals.get(declared.as_str()).copied().expect(
                     "`Coherent` held every target answering with a local definition to have one",
                 );
                 linkage_of(local.publication())
             }
-            // Named and not defined. What answers it is settled where the object is linked, and
-            // the two reasons a body is absent are one call to whoever reaches in.
-            Answers::Injected | Answers::Elsewhere => {
+            // Answered by this object, with what a host registered for it: the declaring build's
+            // object is the one place it is defined, however many objects call it.
+            Defined::ByTheHost => {
+                crosses_objects(target)?;
+                Linkage::Export
+            }
+            // Named and not defined: another build's object defines it, as a body or as what a
+            // host registered. A call is the same call either way.
+            Defined::Elsewhere => {
                 crosses_objects(target)?;
                 Linkage::Import
             }
-            Answers::Unwritten => {
+            Defined::Nowhere => {
                 return Err(not_lowered(format!(
                     "the unwritten behavior {}",
                     target.declared()
@@ -838,7 +868,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
     let mut boundaries = Vec::new();
     let mut published = Vec::new();
     for target in &program.behaviors {
-        if !matches!(target.is, Answers::Body | Answers::Composed) {
+        if defined[&target.declared()] != Defined::Here {
             continue;
         }
         let declared = target.declared();
@@ -859,7 +889,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
             module: &target.module,
             name: &target.name,
             runs: reachable.of_behavior_named(&declared),
-            takes: target.takes(),
+            inputs: &target.inputs,
             answers: target.answers(),
         });
     }
@@ -873,7 +903,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
             module: &entry.value.module,
             name: &entry.value.name,
             runs: reachable.of_published_value(&entry.value.module, &entry.value.name),
-            takes: Vec::new(),
+            inputs: &[],
             answers: entry.body.ty().clone(),
         })
         .collect();
@@ -912,6 +942,20 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
     // this compiler calls: the two are different parties and are told different things.
     host::define_behaviors(&mut emitting, &mut surface, &published)?;
     host::define_values(&mut emitting, &mut surface, &values)?;
+    // What a host implements, and registers an implementation through.
+    let injections: Vec<host::Injected> = program
+        .behaviors
+        .iter()
+        .filter(|target| defined[&target.declared()] == Defined::ByTheHost)
+        .map(|target| host::Injected {
+            module: &target.module,
+            name: &target.name,
+            answered_by: reachable.of_behavior_named(&target.declared()),
+            inputs: &target.inputs,
+            output: &target.output,
+        })
+        .collect();
+    host::define_injections(&mut emitting, &mut surface, &injections, &registrations)?;
     boundary::define(&mut emitting, &mut codecs, &boundaries)?;
     // Every writer and reader the entries above reached.
     codecs.define(&mut emitting)?;
@@ -1648,7 +1692,8 @@ impl Lowerings<'_> {
 ///
 /// The value crosses through one more parameter than a caller reading only `takes` and `answers`
 /// would expect — a pointer the answer is written through — and the return says whether it is
-/// there to read: `ANSWERED` if so, a language abort's wire number if not. A plain return of the
+/// there to read: `ANSWERED` if so, and if not why it is not, a language abort's wire number or one
+/// of the `abi` crate's `HOST_STATUSES` a host's implementation brought about. A plain return of the
 /// answer can only ever say the first of those, which is exactly the gap issue #9 closes; see
 /// `define`'s own doc for the rest of the shape this signature is half of.
 fn signature_over(takes: &[Ty], answers: &Ty, call_conv: CallConv) -> Lowered<ir::Signature> {
@@ -1709,7 +1754,12 @@ fn word_on_the_machine(word: Word) -> types::Type {
     match word {
         Word::Host(word) => interface::machine(word),
         Word::Comparison => types::I64,
-        Word::Memory | Word::Form | Word::Node | Word::Path => POINTER,
+        Word::Memory
+        | Word::Form
+        | Word::Node
+        | Word::Path
+        | Word::Injection
+        | Word::Implementation => POINTER,
     }
 }
 
@@ -2659,10 +2709,11 @@ fn define_composed(
 /// Every generated function answers `status + out` (see `signature_over`'s own doc), so every call
 /// here hands over one more argument than `arguments` shows — room on this function's own stack
 /// the answer is written through — and reads the status back before trusting what is in it. A
-/// status other than `ANSWERED` is not this call's to interpret: it already went through
-/// `native_status` once, at whichever site first left its range or ran out of representation, and
-/// asking what it means a second time here would be the reclassification issue #9 exists to rule
-/// out. So it is not read; it is forwarded, to `abort`, exactly as it arrived — which is what makes
+/// status other than `ANSWERED` is not this call's to interpret: it was decided once where it
+/// arose, through `native_status` at whichever site first left its range or ran out of
+/// representation, or at the object answering a behavior a host implements, which is where a
+/// host's own status is held to what a host may answer. Asking what it means a second time here
+/// would be the reclassification issue #9 exists to rule out. So it is not read; it is forwarded, to `abort`, exactly as it arrived — which is what makes
 /// a callee's abort cross a call boundary the same way an answer does, transparently, all the way
 /// out to whichever caller first receives a status that is not zero.
 fn call_reached(
