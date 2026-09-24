@@ -112,25 +112,6 @@ class WhatThisBackendDoesNotWriteYetTest {
     }
 
     /**
-     * What a behavior declares of its answer is held to where the checker placed the check, and an
-     * answer that does not keep it ends the run. Nothing here runs a rule yet, and answering without
-     * one would make the declaration true of what this emits by leaving it out.
-     */
-    @Test
-    void aBehaviorThatDeclaresWhatItsAnswerOwesIsNotWrittenYet() {
-        assertThatThrownBy(() -> NativeCompiler.compile(CheckedProgram.of(List.of("""
-                module owing exposing ( bounded )
-
-                behavior bounded : (n: Int) -> Int
-                    ensures above = value >= n
-
-                let bounded (n) = n
-                """))))
-                .isInstanceOf(NotLowered.class)
-                .hasMessageContaining("owing.bounded");
-    }
-
-    /**
      * A row states its values and the object carries an entry that runs them, so a value with no
      * expression to make it is a row the object cannot run.
      *

@@ -18,7 +18,7 @@ use serde::Deserialize;
 
 /// What this side reads. A document written to say anything else is refused rather than read as
 /// much of as happens to parse.
-pub const TRANSPORT_VERSION: u32 = 13;
+pub const TRANSPORT_VERSION: u32 = 14;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -43,7 +43,8 @@ impl Program {
     /// holds a body.
     ///
     /// A clause a declaration holds its values to is a body as much as a behavior's is. It stands
-    /// in the declaration's own module, whose copy of a helper a call from it reaches.
+    /// in the declaration's own module, whose copy of a helper a call from it reaches. So is a rule a
+    /// behavior's answer is held to, in the module that declares the behavior.
     pub fn bodies(&self) -> impl Iterator<Item = Body<'_>> {
         let clauses = self.declarations.iter().flat_map(|declaration| {
             declaration
@@ -51,10 +52,12 @@ impl Program {
                 .unwrap_or_default()
                 .iter()
                 .enumerate()
-                .map(move |(at, clause)| Body {
-                    module: declaration.module(),
-                    owner: Owner::Invariant { declaration, at },
-                    node: &clause.condition,
+                .map(move |(at, clause)| {
+                    Body::at(
+                        declaration.module(),
+                        Owner::Invariant { declaration, at },
+                        &clause.condition,
+                    )
                 })
         });
         let modules = self.modules.iter().flat_map(|written| {
@@ -69,52 +72,99 @@ impl Program {
                 examples,
             } = written;
             let module = name.as_str();
-            let helpers = helpers.iter().map(move |it| Body {
-                module,
-                owner: Owner::Helper(it),
-                node: &it.body,
-            });
-            let values = values.iter().map(move |it| Body {
-                module,
-                owner: Owner::Value(it),
-                node: &it.body,
-            });
-            let entries = entries.iter().map(move |it| Body {
-                module,
-                owner: Owner::Entry(it),
-                node: &it.body,
-            });
+            let helpers = helpers
+                .iter()
+                .map(move |it| Body::at(module, Owner::Helper(it), &it.body));
+            let values = values
+                .iter()
+                .map(move |it| Body::at(module, Owner::Value(it), &it.body));
+            let entries = entries
+                .iter()
+                .map(move |it| Body::at(module, Owner::Entry(it), &it.body));
             let definitions = definitions.iter().filter_map(move |it| match it {
-                Definition::Body { declared, body, .. } => Some(Body {
-                    module,
-                    owner: Owner::Definition(declared),
-                    node: body,
-                }),
+                Definition::Body { declared, body, .. } => {
+                    Some(Body::at(module, Owner::Definition(declared), body))
+                }
                 // Stages reach other behaviors by name, and there is no `Core` of its own.
                 Definition::Composed { .. } => None,
             });
-            let examples = examples.iter().map(move |it| Body {
-                module,
-                owner: Owner::Example(it),
-                node: &it.body,
-            });
+            let examples = examples
+                .iter()
+                .map(move |it| Body::at(module, Owner::Example(it), &it.body));
             helpers
                 .chain(values)
                 .chain(entries)
                 .chain(definitions)
                 .chain(examples)
         });
-        clauses.chain(modules)
+        // A rule a behavior's answer is held to is a body as much as a clause is. It stands in the
+        // module that declares the behavior, wherever the check is run from: the rule is that
+        // module's, and a call from it reaches that module's copy of a helper.
+        let rules = self.behaviors.iter().flat_map(|target| {
+            target
+                .ensures
+                .contract()
+                .map(|contract| contract.rules.as_slice())
+                .unwrap_or_default()
+                .iter()
+                .enumerate()
+                .map(move |(at, rule)| {
+                    Body::at(
+                        &target.module,
+                        Owner::Ensures { target, at },
+                        &rule.condition,
+                    )
+                })
+        });
+        clauses.chain(rules).chain(modules)
     }
 }
 
 /// One body of `Core`, where it stands, and what owns it.
+///
+/// Made by [`Program::bodies`] and nowhere else, which the module it stands in being private to
+/// this file holds to. Where a body stands decides what a call from it reaches, and [`Coherent`]
+/// holds a body's calls to what is reachable from where it stands: a body made anywhere else could
+/// say it stood somewhere its calls were never held to. It is read as a [`Carrier`].
+///
+/// [`Coherent`]: crate::coherent::Coherent
 #[derive(Clone, Copy)]
 pub struct Body<'p> {
     /// The module it stands in, whose copy of a helper a call from it reaches.
-    pub module: &'p str,
+    module: &'p str,
     pub owner: Owner<'p>,
     pub node: &'p Node,
+}
+
+impl<'p> Body<'p> {
+    fn at(module: &'p str, owner: Owner<'p>, node: &'p Node) -> Self {
+        Body {
+            module,
+            owner,
+            node,
+        }
+    }
+
+    /// Where a call from this body is resolved.
+    pub fn carrier(&self) -> Carrier<'p> {
+        Carrier(self.module)
+    }
+}
+
+/// The module whose copy of a helper, and whose home of a value, a call reaches: the module a body
+/// stands in.
+///
+/// Answered by a [`Body`] and by nothing else. What a call from a body reaches is held where the
+/// body is read and trusted where it is lowered, so the two have to ask one statement of where it
+/// stands; a module named by hand at the place a body is lowered is a second statement, which
+/// agrees with the first only as long as whoever wrote it chose the same module.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Carrier<'p>(&'p str);
+
+impl<'p> Carrier<'p> {
+    pub fn module(self) -> &'p str {
+        self.0
+    }
 }
 
 /// What a body is the body of.
@@ -129,6 +179,11 @@ pub enum Owner<'p> {
     /// The clause at `at` among what `declaration` holds its values to, in the order they run.
     Invariant {
         declaration: &'p Declaration,
+        at: usize,
+    },
+    /// The rule at `at` among what `target`'s answer is held to, in the order they run.
+    Ensures {
+        target: &'p Target,
         at: usize,
     },
 }
@@ -503,6 +558,8 @@ pub struct Target {
     pub is: Answers,
     pub inputs: Vec<BoundaryInput>,
     pub output: BoundaryOutput,
+    /// What is done about what the behavior declares of its answer, as the checker answered it.
+    pub ensures: Ensures,
 }
 
 impl Target {
@@ -521,6 +578,90 @@ impl Target {
     /// What it answers, read off what the answer can leave as.
     pub fn answers(&self) -> Ty {
         self.output.ty()
+    }
+}
+
+/// Where a behavior's answer is held to what the behavior declares of it, as the checker placed
+/// the check (`EnsuresEnforcement`).
+///
+/// Four answers and not a pair of flags. Whether the callee checks and whether a crossing does are
+/// one decision with three meaningful outcomes, and two flags could also say that nothing checks a
+/// clause or that two places do. `None` and `Undecided` are apart for the same reason: one is a
+/// behavior read and found to declare nothing, the other one whose clause nobody here decided where
+/// to run.
+#[derive(Debug, Deserialize)]
+#[serde(tag = "at", rename_all = "lowercase", deny_unknown_fields)]
+pub enum Ensures {
+    /// Held where the behavior answers: its body is here, and every way in goes through it.
+    Callee { contract: Contract },
+    /// Held at every call into this object's code, because the answer arrives from outside.
+    Crossing { contract: Contract },
+    /// The behavior declares nothing of its answer.
+    None,
+    /// The behavior is another build's, and this compile did not decide what is done about it.
+    Undecided,
+}
+
+impl Ensures {
+    /// The rules, where something here runs them.
+    pub fn contract(&self) -> Option<&Contract> {
+        match self {
+            Ensures::Callee { contract } | Ensures::Crossing { contract } => Some(contract),
+            Ensures::None | Ensures::Undecided => None,
+        }
+    }
+}
+
+/// What a behavior declares of the relation between what it is given and what it answers, as the
+/// checker elaborated it to run (`Contract`).
+///
+/// What it takes and answers is its target's, and is not carried a second time. The parameters are
+/// named, the way a body's are, and bound under the number of where each stands.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Contract {
+    pub parameters: Vec<String>,
+    /// Every rule the answer is held to, in the order a failure is decided in. All of those whose
+    /// guard holds are held, and not the first: a declaration states a conjunction.
+    pub rules: Vec<Rule>,
+}
+
+/// One rule of a contract: which answers it applies to, the binding the answer is read through,
+/// and what has to hold.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Rule {
+    pub guard: Guard,
+    /// The number `condition` reads the answer under.
+    pub value: usize,
+    pub condition: Node,
+    /// Whether the rule as written refers to the answer. The checker's decision about the
+    /// declaration, carried so that nothing reads it back off `condition`; nothing here runs it.
+    #[serde(rename = "readsanswer")]
+    pub reads_answer: bool,
+    /// The name a failure of this is reported under, where the author gave one.
+    pub clause: Option<String>,
+}
+
+/// Which answers a rule applies to.
+#[derive(Debug, Deserialize)]
+#[serde(tag = "is", rename_all = "lowercase", deny_unknown_fields)]
+pub enum Guard {
+    /// Every answer, read as what the behavior answers.
+    Always,
+    /// An answer that is this case, read as what `binds` says: the test does not say it, since a
+    /// case that is a sum is tested as the leaves it descends to.
+    Case { selects: Selects, binds: Ty },
+}
+
+impl Guard {
+    /// What the answer is read as where this rule applies, `answers` being what the behavior
+    /// answers.
+    pub fn reads_as<'t>(&'t self, answers: &'t Ty) -> &'t Ty {
+        match self {
+            Guard::Always => answers,
+            Guard::Case { binds, .. } => binds,
+        }
     }
 }
 

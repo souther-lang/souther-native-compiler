@@ -56,7 +56,7 @@ fn binary(op: &str, left: Value, right: Value, ty: Value, aborts: Value) -> Valu
 
 fn program(declarations: Value, helpers: Value, publishes: Value) -> Value {
     json!({
-        "transport": 13,
+        "transport": 14,
         "declarations": declarations,
         "behaviors": [],
         "modules": [{
@@ -260,6 +260,7 @@ fn fixtures() -> Vec<(&'static str, Value)> {
             read_json(include_str!("published_value.transport.json")),
         ),
         ("values", read_json(include_str!("values.transport.json"))),
+        ("ensures", read_json(include_str!("ensures.transport.json"))),
     ];
     documents.extend(by_hand());
     documents
@@ -557,8 +558,9 @@ fn try_change(
 
 /// Every binder of every body renamed to a number nothing else uses, each read following the binder
 /// that is in force where it stands: a `let` for its body, a match arm for its body, a function
-/// value's parameter for its body, a field for the clauses of its declaration. What is a parameter
-/// of a helper, a value or a behavior stands as the position it is handed at and is not renamed.
+/// value's parameter for its body, a field for the clauses of its declaration, the answer for the
+/// rule that reads it. What is a parameter of a helper, a value, a behavior or a rule over a
+/// behavior's answer stands as the position it is handed at and is not renamed.
 ///
 /// Written to the rule and not to a reader: a name is what the nearest enclosing binder of that
 /// number says it is, and is that binder's alone for as long as its scope lasts.
@@ -599,6 +601,42 @@ fn rename_binders(document: &mut Value, mode: Mode) {
                 for clause in clauses {
                     if let Some(condition) = clause.get_mut("condition") {
                         rename(condition, &mut names.clone(), &mut fresh, mode, 0);
+                    }
+                }
+            }
+        }
+    }
+    // A rule a behavior's answer is held to reads the parameters where each stands, and the answer
+    // under a number of its own for the whole of the rule.
+    if let Some(behaviors) = document.get_mut("behaviors").and_then(Value::as_array_mut) {
+        for target in behaviors {
+            let Some(contract) = target
+                .get_mut("ensures")
+                .and_then(|it| it.get_mut("contract"))
+            else {
+                continue;
+            };
+            let handed = contract
+                .get("parameters")
+                .and_then(Value::as_array)
+                .map_or(0, Vec::len) as u64;
+            if let Some(rules) = contract.get_mut("rules").and_then(Value::as_array_mut) {
+                for rule in rules {
+                    let mut names: BTreeMap<u64, u64> = BTreeMap::new();
+                    if let Some(old) = rule.get("value").and_then(Value::as_u64) {
+                        let new = number(
+                            mode,
+                            &names,
+                            handed,
+                            rule.get("condition"),
+                            Some(old),
+                            &mut fresh,
+                        );
+                        bind(&mut names, old, new);
+                        rule["value"] = Value::from(new);
+                    }
+                    if let Some(condition) = rule.get_mut("condition") {
+                        rename(condition, &mut names, &mut fresh, mode, handed);
                     }
                 }
             }

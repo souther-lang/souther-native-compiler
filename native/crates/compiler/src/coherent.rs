@@ -55,8 +55,8 @@ use crate::closures::ClosureSites;
 use crate::index;
 use crate::kernels::LoweredKernel;
 use crate::transport::{
-    AbortKind, Answers, Case, Declaration, Definition, Held, Node, Op, Owner, Prim, Program,
-    Reaches, Reading, Routing, Selects, Target, Ty, Value,
+    AbortKind, Answers, Carrier, Case, Declaration, Definition, Ensures, Guard, Held, Node, Op,
+    Owner, Prim, Program, Reaches, Reading, Routing, Selects, Target, Ty, Value,
 };
 use crate::{Declared, Runs, Targets, not_lowered, spelt};
 use anyhow::{Result, anyhow, bail};
@@ -156,6 +156,11 @@ impl<'a> Coherent<'a> {
                     target.module
                 );
             }
+            placed(
+                &name,
+                target,
+                reached.modules.contains_key(target.module.as_str()),
+            )?;
         }
 
         let runs = Runs::of(program, &declared)?;
@@ -171,6 +176,8 @@ impl<'a> Coherent<'a> {
             // gave the field, which is not where the field sits.
             let positional =
                 |takes: Vec<Ty>| -> Vec<(usize, Ty)> { takes.into_iter().enumerate().collect() };
+            // What a rule tests the answer for before it reads it, against what the answer is.
+            let mut guarded: Option<(&Guard, Ty)> = None;
             let (owner, bound) = match body.owner {
                 Owner::Helper(held) => (held.declared.clone(), positional(held.takes())),
                 Owner::Value(value) => (
@@ -193,37 +200,28 @@ impl<'a> Coherent<'a> {
                         Some(name) => format!("{}'s clause {name}", declaration.key()),
                         None => format!("{}'s clause {at}", declaration.key()),
                     };
-                    // What has to hold is a truth, whatever it reads.
-                    let truth = Ty::Prim { prim: Prim::Bool };
-                    if body.node.ty() != &truth {
-                        bail!(
-                            "{owner} is typed {}, where a clause is a truth",
-                            body.node.ty().spelt()
-                        );
-                    }
-                    // A clause observes the value being built and builds none: the checker refuses
-                    // one that constructs, through a helper as much as written out. So every value
-                    // built here is built by a body, and a construction runs clauses that build
-                    // nothing in turn. A unit's value is not asked about: it is built from no
-                    // fields and runs no clause, and is laid out where it stands (`Construction`),
-                    // so naming one in a clause calls no constructor — which is what `Runs` rests
-                    // on when it settles what is built from the modules' bodies alone.
-                    let mut built = None;
-                    body.node.each(&mut |node| {
-                        if let Node::Construct { declared, .. } = node {
-                            built.get_or_insert(declared);
-                        }
-                    });
-                    if let Some(declared) = built {
-                        bail!(
-                            "{owner} constructs {declared}, where a clause builds no value: the two \
-                             halves disagree"
-                        );
-                    }
+                    holds_and_builds_nothing(&owner, body.node)?;
                     (owner, fields_bound(declaration))
                 }
+                Owner::Ensures { target, at } => {
+                    let contract = target
+                        .ensures
+                        .contract()
+                        .expect("a rule is listed only of a target that carries its contract");
+                    let rule = &contract.rules[at];
+                    let owner = match &rule.clause {
+                        Some(name) => format!("{}'s ensures {name}", target.declared()),
+                        None => format!("{}'s ensures rule {at}", target.declared()),
+                    };
+                    holds_and_builds_nothing(&owner, body.node)?;
+                    let answers = target.answers();
+                    guarded = Some((&rule.guard, answers.clone()));
+                    let mut bound = positional(target.takes());
+                    bound.push((rule.value, rule.guard.reads_as(&answers).clone()));
+                    (owner, bound)
+                }
                 Owner::Example(example) => {
-                    let behavior = format!("{}.{}", body.module, example.behavior);
+                    let behavior = format!("{}.{}", body.carrier().module(), example.behavior);
                     let owner = format!("row {} of {behavior}", example.at);
                     let answers = targets.named(&behavior)?.answers();
                     if body.node.ty() != &answers {
@@ -237,17 +235,24 @@ impl<'a> Coherent<'a> {
                     (owner, Vec::new())
                 }
             };
-            Walk {
+            let mut walk = Walk {
                 owner,
-                carrier: body.module,
+                carrier: body.carrier(),
                 targets: &targets,
                 declared: &declared,
                 reached: &reached,
                 bound: HashMap::new(),
                 owed: &mut owed,
                 runs: runs.runs(&body),
+            };
+            // A rule over a case tests the answer the way an arm tests what it forks on, and reads
+            // it as an arm reads what it binds.
+            if let Some((Guard::Case { selects, binds }, answers)) = guarded {
+                let selects = std::slice::from_ref(selects);
+                walk.tests("a rule", &answers, selects)?;
+                walk.arm_binds(&answers, selects, binds)?;
             }
-            .under(bound, body.node)?;
+            walk.under(bound, body.node)?;
         }
 
         owed.settle(&declared)?;
@@ -495,7 +500,7 @@ struct Walk<'w, 'a> {
     /// Whose body this is, which every refusal names.
     owner: String,
     /// The module whose copy of a helper a call from here reaches.
-    carrier: &'a str,
+    carrier: Carrier<'a>,
     targets: &'w Targets<'a>,
     declared: &'w Declared<'a>,
     reached: &'w Reached<'a>,
@@ -817,12 +822,12 @@ impl<'a> Walk<'_, 'a> {
                 let held = self
                     .reached
                     .helpers
-                    .get(&(self.carrier, declared.as_str()))
+                    .get(&(self.carrier.module(), declared.as_str()))
                     .ok_or_else(|| {
                         anyhow!(
                             "{}: a call of {declared}, which {} holds no copy of",
                             self.owner,
-                            self.carrier
+                            self.carrier.module()
                         )
                     })?;
                 (declared.clone(), held.takes())
@@ -832,12 +837,12 @@ impl<'a> Walk<'_, 'a> {
                 let value = self
                     .reached
                     .values
-                    .get(&(self.carrier, joined.clone()))
+                    .get(&(self.carrier.module(), joined.clone()))
                     .ok_or_else(|| {
                         anyhow!(
                             "{}: a call of the value {joined}, which {} builds no home for",
                             self.owner,
-                            self.carrier
+                            self.carrier.module()
                         )
                     })?;
                 let handed = value.handovers.iter().map(|it| it.ty.clone()).collect();
@@ -1080,40 +1085,7 @@ impl<'a> Walk<'_, 'a> {
                     if arm.selects.is_empty() {
                         bail!("{}: an arm tests for nothing", self.owner);
                     }
-                    // What an arm tests is held against what it forks on, whether the arm binds a value
-                    // or not: the lowering turns each test into one comparison of the value, and
-                    // a test of absence is a comparison with no case in it, so it means something
-                    // only of an optional, and a test of a case only of a value that is not one.
-                    let optional = matches!(subject.ty(), Ty::Option { .. });
-                    for selects in &arm.selects {
-                        match selects {
-                            Selects::Which { atoms } => {
-                                self.leaves("an arm", atoms)?;
-                                if optional {
-                                    bail!(
-                                        "{}: an arm tests which case {} is, which an optional \
-                                         answers by holding or not: the two halves disagree",
-                                        self.owner,
-                                        subject.ty().spelt()
-                                    );
-                                }
-                                self.fits(
-                                    "a case an arm tests is one of what it forks on",
-                                    &Ty::Union {
-                                        union: atoms.clone(),
-                                    },
-                                    subject.ty(),
-                                );
-                            }
-                            Selects::Held | Selects::Nothing if !optional => bail!(
-                                "{}: an arm tests whether {} holds a value, which only an \
-                                 optional does: the two halves disagree",
-                                self.owner,
-                                subject.ty().spelt()
-                            ),
-                            Selects::Held | Selects::Nothing => {}
-                        }
-                    }
+                    self.tests("an arm", subject.ty(), &arm.selects)?;
                     match (arm.binding, &arm.binds) {
                         (None, None) => self.node(&arm.body)?,
                         // The writer says both or neither, so an arm saying one is a statement
@@ -1418,6 +1390,46 @@ impl<'a> Walk<'_, 'a> {
         Ok(())
     }
 
+    /// What `what` tests a value of `subject` for, against what the value can be.
+    ///
+    /// Held whether anything is then read out of the value or not: the lowering turns each test
+    /// into one comparison of the value, and a test of absence is a comparison with no case in it,
+    /// so it means something only of an optional, and a test of a case only of a value that is not
+    /// one. An arm tests what it forks on this way, and a rule tests an answer.
+    fn tests(&mut self, what: &str, subject: &Ty, selects: &[Selects]) -> Result<()> {
+        let optional = matches!(subject, Ty::Option { .. });
+        for one in selects {
+            match one {
+                Selects::Which { atoms } => {
+                    self.leaves(what, atoms)?;
+                    if optional {
+                        bail!(
+                            "{}: {what} tests which case {} is, which an optional answers by \
+                             holding or not: the two halves disagree",
+                            self.owner,
+                            subject.spelt()
+                        );
+                    }
+                    self.fits(
+                        &format!("a case {what} tests is a case of the value it tests"),
+                        &Ty::Union {
+                            union: atoms.clone(),
+                        },
+                        subject,
+                    );
+                }
+                Selects::Held | Selects::Nothing if !optional => bail!(
+                    "{}: {what} tests whether {} holds a value, which only an optional does: the \
+                     two halves disagree",
+                    self.owner,
+                    subject.spelt()
+                ),
+                Selects::Held | Selects::Nothing => {}
+            }
+        }
+        Ok(())
+    }
+
     /// What an arm reads the value it forks on as, against what reaches the arm.
     ///
     /// The one place a read is narrower than what it reads from, and narrower only by what the
@@ -1490,7 +1502,7 @@ impl<'a> Walk<'_, 'a> {
                 "what it answers",
             ),
             Reaches::Helper { declared } => {
-                let held = self.reached.helpers[&(self.carrier, declared.as_str())];
+                let held = self.reached.helpers[&(self.carrier.module(), declared.as_str())];
                 // The helper's body stands as the answer it declares, so its type is that answer.
                 self.same(
                     &format!("a call of {declared}"),
@@ -1501,7 +1513,7 @@ impl<'a> Walk<'_, 'a> {
             }
             Reaches::Value { module, name } => {
                 let joined = format!("{module}.{name}");
-                let value = self.reached.values[&(self.carrier, joined.clone())];
+                let value = self.reached.values[&(self.carrier.module(), joined.clone())];
                 self.same(
                     &format!("a call of the value {joined}"),
                     ty,
@@ -1751,6 +1763,84 @@ fn composes(
         &running,
         &answers,
     );
+    Ok(())
+}
+
+/// That what has to hold is a truth, and builds no value.
+///
+/// A declaration's clause observes the value being built, and a rule a behavior's answer is held to
+/// observes the answer, and the checker refuses either one that constructs, through a helper as much
+/// as written out (spec §invariant-expressions, which §ensures reads unchanged). So every value built
+/// here is built by a body, and a construction runs clauses that build nothing in turn. A unit's
+/// value is not asked about: it is built from no fields and runs no clause, and is laid out where it
+/// stands (`Construction`), so naming one calls no constructor — which is what `Runs` rests on when
+/// it settles what is built from the modules' bodies alone.
+fn holds_and_builds_nothing(owner: &str, condition: &Node) -> Result<()> {
+    let truth = Ty::Prim { prim: Prim::Bool };
+    if condition.ty() != &truth {
+        bail!(
+            "{owner} is typed {}, where a clause is a truth",
+            condition.ty().spelt()
+        );
+    }
+    let mut built = None;
+    condition.each(&mut |node| {
+        if let Node::Construct { declared, .. } = node {
+            built.get_or_insert(declared);
+        }
+    });
+    if let Some(declared) = built {
+        bail!(
+            "{owner} constructs {declared}, where a clause builds no value: the two halves \
+             disagree"
+        );
+    }
+    Ok(())
+}
+
+/// That where a behavior's answer is held to what it declares is a place the behavior has.
+///
+/// The checker decides it for every behavior of a module it checked, and for no other: another
+/// build's behavior is one nobody here decided about, and one of this document's own is one
+/// somebody did. Where it is decided, a check at the callee needs a callee whose answer is this
+/// object's to hold, and a check at each crossing an answer that arrives from outside; a composition
+/// carries no rule at all (spec §a-composition-carries-no-ensures). A rule over the parameters
+/// names as many as the behavior takes.
+fn placed(name: &str, target: &Target, decided_here: bool) -> Result<()> {
+    let placement = match &target.ensures {
+        Ensures::Callee { .. } => "at the callee",
+        Ensures::Crossing { .. } => "where it crosses in",
+        Ensures::None => "nowhere, since it declares nothing",
+        Ensures::Undecided => "",
+    };
+    match (&target.ensures, decided_here, target.is) {
+        (Ensures::Undecided, false, _) => {}
+        (Ensures::Undecided, true, _) => bail!(
+            "{name} is declared by {}, which this document builds, and nothing decided where its \
+             answer is held to what it declares: the two halves disagree",
+            target.module
+        ),
+        (_, false, _) => bail!(
+            "{name} is another build's, and this document says its answer is held {placement}: \
+             the two halves disagree"
+        ),
+        (Ensures::None, true, _)
+        | (Ensures::Callee { .. }, true, Answers::Body | Answers::Unwritten)
+        | (Ensures::Crossing { .. }, true, Answers::Injected | Answers::Unwritten) => {}
+        (Ensures::Callee { .. } | Ensures::Crossing { .. }, true, is) => bail!(
+            "{name} answers as {is:?} and its answer is held {placement}: the two halves disagree"
+        ),
+    }
+    if let Some(contract) = target.ensures.contract()
+        && contract.parameters.len() != target.inputs.len()
+    {
+        bail!(
+            "{name}'s ensures names {} parameters and its target takes {}: the two are one list \
+             crossed twice and this document's disagree",
+            contract.parameters.len(),
+            target.inputs.len()
+        );
+    }
     Ok(())
 }
 

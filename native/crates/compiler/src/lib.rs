@@ -44,9 +44,9 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 use transport::{
-    AbortKind, AlternativesForm, Answers, Arm, Case, Declaration, DeclaredBy, Definition, Node, Op,
-    Prim, Program, Publication, Reaches, Reading, Routing, Selects, Stage, TRANSPORT_VERSION,
-    Target, Ty,
+    AbortKind, AlternativesForm, Answers, Arm, Carrier, Case, Declaration, DeclaredBy, Definition,
+    Ensures, Guard, Node, Op, Owner, Prim, Program, Publication, Reaches, Reading, Routing,
+    Selects, Stage, TRANSPORT_VERSION, Target, Ty,
 };
 
 /// A fork that ran out of arms, which is this compiler having emitted the wrong test rather than
@@ -446,6 +446,62 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
         };
         let id = accepted(module.declare_function(&symbol, linkage, &signature));
         reachable.behavior(&target.declared(), id);
+
+        // What holds the answer to what the behavior declares of it, one for each behavior that
+        // declares something here: private to this object, since the rules are this object's
+        // modules' and a caller elsewhere is held by its own build. Where it is held at the
+        // callee, the body moves under a name of its own and the behavior's symbol is what runs it
+        // and then holds its answer, so that a call, a stage, a row, a host and a boundary all go
+        // through the one place the answer is held.
+        if target.ensures.contract().is_some() {
+            let name = target.declared();
+            let holding = holding_signature(&target.takes(), &target.answers(), call_conv)?;
+            let rules = accepted(module.declare_function(
+                &format!("$ensures${name}"),
+                Linkage::Local,
+                &holding,
+            ));
+            reachable.rules(&name, rules);
+            if let Ensures::Callee { .. } = target.ensures {
+                let unheld = accepted(module.declare_function(
+                    &format!("$unheld${name}"),
+                    Linkage::Local,
+                    &signature,
+                ));
+                reachable.unheld(&name, unheld);
+            }
+        }
+    }
+    // A helper's copy and a value's home, each under where its body stands: the same statement a
+    // call from a body is resolved by, so the key a copy is put under and the key a call asks for
+    // are read off one thing.
+    for body in runs.bodies() {
+        match body.owner {
+            Owner::Helper(held) => {
+                let symbol = held_symbol(body.carrier().module(), &held.declared);
+                let signature = signature_over(&held.takes(), held.answers(), call_conv)?;
+                // Held and not exported: a definition a module holds is that module's copy, and
+                // nothing outside the object reaches one.
+                let id = accepted(module.declare_function(&symbol, Linkage::Local, &signature));
+                reachable.held(body.carrier(), &held.declared, id);
+            }
+            Owner::Value(value) => {
+                // As private as a helper's method, and named the same way: a value's home is this
+                // module's own business (ADR-0074) — nothing outside this object reaches it
+                // directly, whether outside this object's other modules or another object
+                // altogether. A caller elsewhere goes through the entry declared below instead.
+                let takes = handover_types(value);
+                let symbol = home_symbol(&value.module, &value.name);
+                let signature = signature_over(&takes, value.answers(), call_conv)?;
+                let id = accepted(module.declare_function(&symbol, Linkage::Local, &signature));
+                reachable.value(body.carrier(), &value.declared(), id);
+            }
+            Owner::Entry(_)
+            | Owner::Definition(_)
+            | Owner::Example(_)
+            | Owner::Invariant { .. }
+            | Owner::Ensures { .. } => {}
+        }
     }
     for written in &program.modules {
         // Named out in full, and not `..`'d away, so a field `transport::Module` starts carrying
@@ -455,31 +511,12 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
         let transport::Module {
             name,
             publishes: _,
-            helpers,
-            values,
+            helpers: _,
+            values: _,
             entries: value_entries,
             definitions: _,
             examples,
         } = written;
-        for held in helpers {
-            let symbol = held_symbol(name, &held.declared);
-            let signature = signature_over(&held.takes(), held.answers(), call_conv)?;
-            // Held and not exported: a definition a module holds is that module's copy, and
-            // nothing outside the object reaches one.
-            let id = accepted(module.declare_function(&symbol, Linkage::Local, &signature));
-            reachable.held(name, &held.declared, id);
-        }
-        for value in values {
-            // As private as a helper's method, and named the same way: a value's home is this
-            // module's own business (ADR-0074) — nothing outside this object reaches it directly,
-            // whether outside this object's other modules or another object altogether. A caller
-            // elsewhere goes through the entry declared below instead.
-            let takes = handover_types(value);
-            let symbol = home_symbol(&value.module, &value.name);
-            let signature = signature_over(&takes, value.answers(), call_conv)?;
-            let id = accepted(module.declare_function(&symbol, Linkage::Local, &signature));
-            reachable.value(name, &value.declared(), id);
-        }
         for entry in value_entries {
             // Exported under value_symbol, which is the one thing about a value ever addressed
             // from outside the module that declares it: the entry takes nothing at the language
@@ -524,221 +561,206 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
         reachable.published_value(module_name, value_name, id);
     }
 
-    for written in &program.modules {
-        let transport::Module {
-            name,
-            publishes: _,
-            helpers,
-            values,
-            entries: value_entries,
-            definitions,
-            examples,
-        } = written;
-        for held in helpers {
-            let signature = signature_over(&held.takes(), held.answers(), call_conv)?;
-            let id = reachable.of_held(name, &held.declared);
-            context.clear();
-            context.func = Function::with_name_signature(UserFuncName::default(), signature);
-            let lowering = Lowering {
-                declared: &declared,
-                reachable: &reachable,
-                carrier: name,
-                allocate,
-                compare_text,
-                join_text,
-                closures: &closures,
-                lifted: &lifted,
-                targets: &targets,
-                literals: &literals,
-                constructors: &constructors,
-            };
-            define(
-                &mut context.func,
-                &mut shapes,
-                &held.takes(),
-                &held.body,
-                frontend,
-                &lowering,
-                &mut module,
-            )?;
-            accepted(module.define_function(id, &mut context));
-        }
-        for value in values {
-            let takes = handover_types(value);
-            let signature = signature_over(&takes, value.answers(), call_conv)?;
-            let id = reachable.of_value(name, &value.declared());
-            context.clear();
-            context.func = Function::with_name_signature(UserFuncName::default(), signature);
-            let lowering = Lowering {
-                declared: &declared,
-                reachable: &reachable,
-                carrier: name,
-                allocate,
-                compare_text,
-                join_text,
-                closures: &closures,
-                lifted: &lifted,
-                targets: &targets,
-                literals: &literals,
-                constructors: &constructors,
-            };
-            define(
-                &mut context.func,
-                &mut shapes,
-                &takes,
-                &value.body,
-                frontend,
-                &lowering,
-                &mut module,
-            )?;
-            accepted(module.define_function(id, &mut context));
-        }
-        for entry in value_entries {
-            let signature = signature_over(&[], entry.body.ty(), call_conv)?;
-            let id = reachable.of_published_value(&entry.value.module, &entry.value.name);
-            context.clear();
-            context.func = Function::with_name_signature(UserFuncName::default(), signature);
-            let lowering = Lowering {
-                declared: &declared,
-                reachable: &reachable,
-                carrier: name,
-                allocate,
-                compare_text,
-                join_text,
-                closures: &closures,
-                lifted: &lifted,
-                targets: &targets,
-                literals: &literals,
-                constructors: &constructors,
-            };
-            // Taking nothing, the same as a row's entry: what a value needs is handed over inside
-            // its own body (`Reaches::Value`, threading each handover), never by a caller of this
-            // entry.
-            define(
-                &mut context.func,
-                &mut shapes,
-                &[],
-                &entry.body,
-                frontend,
-                &lowering,
-                &mut module,
-            )?;
-            accepted(module.define_function(id, &mut context));
-        }
-        for local in definitions {
-            match local {
-                Definition::Body {
-                    declared: behavior_name,
-                    body,
-                    ..
-                } => {
-                    let target = targets.reached(behavior_name);
-                    let takes = &target.takes();
-                    let signature = signature_over(&target.takes(), &target.answers(), call_conv)?;
-                    let id = reachable.of_behavior_named(behavior_name);
+    let lowerings = Lowerings {
+        declared: &declared,
+        reachable: &reachable,
+        allocate,
+        compare_text,
+        join_text,
+        closures: &closures,
+        lifted: &lifted,
+        targets: &targets,
+        literals: &literals,
+        constructors: &constructors,
+    };
+
+    // Every body this object runs, each lowered where it stands: what a call from it reaches is
+    // what `Coherent` held reachable from there, because both read it off the one `Body`.
+    for body in runs.bodies() {
+        let lowering = lowerings.at(body.carrier());
+        match body.owner {
+            Owner::Helper(held) => {
+                let signature = signature_over(&held.takes(), held.answers(), call_conv)?;
+                let id = reachable.of_held(body.carrier(), &held.declared);
+                context.clear();
+                context.func = Function::with_name_signature(UserFuncName::default(), signature);
+                define(
+                    &mut context.func,
+                    &mut shapes,
+                    &held.takes(),
+                    body.node,
+                    frontend,
+                    &lowering,
+                    &mut module,
+                )?;
+                accepted(module.define_function(id, &mut context));
+            }
+            Owner::Value(value) => {
+                let takes = handover_types(value);
+                let signature = signature_over(&takes, value.answers(), call_conv)?;
+                let id = reachable.of_value(body.carrier(), &value.declared());
+                context.clear();
+                context.func = Function::with_name_signature(UserFuncName::default(), signature);
+                define(
+                    &mut context.func,
+                    &mut shapes,
+                    &takes,
+                    body.node,
+                    frontend,
+                    &lowering,
+                    &mut module,
+                )?;
+                accepted(module.define_function(id, &mut context));
+            }
+            Owner::Entry(entry) => {
+                let signature = signature_over(&[], entry.body.ty(), call_conv)?;
+                let id = reachable.of_published_value(&entry.value.module, &entry.value.name);
+                context.clear();
+                context.func = Function::with_name_signature(UserFuncName::default(), signature);
+                // Taking nothing, the same as a row's entry: what a value needs is handed over
+                // inside its own body (`Reaches::Value`, threading each handover), never by a
+                // caller of this entry.
+                define(
+                    &mut context.func,
+                    &mut shapes,
+                    &[],
+                    body.node,
+                    frontend,
+                    &lowering,
+                    &mut module,
+                )?;
+                accepted(module.define_function(id, &mut context));
+            }
+            Owner::Definition(behavior_name) => {
+                let target = targets.reached(behavior_name);
+                let takes = &target.takes();
+                let signature = signature_over(&target.takes(), &target.answers(), call_conv)?;
+                let id = reachable.of_body(behavior_name);
+                context.clear();
+                context.func =
+                    Function::with_name_signature(UserFuncName::default(), signature.clone());
+                define(
+                    &mut context.func,
+                    &mut shapes,
+                    takes,
+                    body.node,
+                    frontend,
+                    &lowering,
+                    &mut module,
+                )?;
+                accepted(module.define_function(id, &mut context));
+                if let Ensures::Callee { .. } = target.ensures {
                     context.clear();
                     context.func =
                         Function::with_name_signature(UserFuncName::default(), signature);
-                    let lowering = Lowering {
-                        declared: &declared,
-                        reachable: &reachable,
-                        carrier: name,
-                        allocate,
-                        compare_text,
-                        join_text,
-                        closures: &closures,
-                        lifted: &lifted,
-                        targets: &targets,
-                        literals: &literals,
-                        constructors: &constructors,
-                    };
-                    define(
+                    define_held(
                         &mut context.func,
                         &mut shapes,
-                        takes,
-                        body,
+                        target,
+                        id,
+                        reachable.of_rules(behavior_name),
                         frontend,
-                        &lowering,
                         &mut module,
                     )?;
-                    accepted(module.define_function(id, &mut context));
-                }
-                Definition::Composed {
-                    declared: behavior_name,
-                    stages,
-                    ..
-                } => {
-                    let target = targets.reached(behavior_name);
-                    let signature = signature_over(&target.takes(), &target.answers(), call_conv)?;
-                    let id = reachable.of_behavior_named(behavior_name);
-                    context.clear();
-                    context.func =
-                        Function::with_name_signature(UserFuncName::default(), signature);
-                    let lowering = Lowering {
-                        declared: &declared,
-                        reachable: &reachable,
-                        carrier: name,
-                        allocate,
-                        compare_text,
-                        join_text,
-                        closures: &closures,
-                        lifted: &lifted,
-                        targets: &targets,
-                        literals: &literals,
-                        constructors: &constructors,
-                    };
-                    define_composed(
-                        &mut context.func,
-                        &mut shapes,
-                        target.takes().len(),
-                        stages,
-                        frontend,
-                        &lowering,
-                        &mut module,
-                    )?;
-                    accepted(module.define_function(id, &mut context));
+                    let held = reachable.of_behavior_named(behavior_name);
+                    accepted(module.define_function(held, &mut context));
                 }
             }
+            Owner::Example(example) => {
+                let signature = running_a_row(
+                    &targets,
+                    body.carrier().module(),
+                    &example.behavior,
+                    call_conv,
+                )?;
+                let symbol = example_symbol(body.carrier().module(), &example.behavior, example.at);
+                let id = *entries
+                    .get(&symbol)
+                    .expect("every row was declared an entry before any was defined");
+                context.clear();
+                context.func = Function::with_name_signature(UserFuncName::default(), signature);
+                // Taking nothing: what the row states is written into the body, so an entry with
+                // parameters would be a row whose values came from whoever ran it.
+                define(
+                    &mut context.func,
+                    &mut shapes,
+                    &[],
+                    body.node,
+                    frontend,
+                    &lowering,
+                    &mut module,
+                )?;
+                accepted(module.define_function(id, &mut context));
+            }
+            // Each is one of several bodies lowered into one function, the declaration's and the
+            // behavior's, below.
+            Owner::Invariant { .. } | Owner::Ensures { .. } => {}
         }
-        for example in examples {
-            let signature = running_a_row(&targets, name, &example.behavior, call_conv)?;
-            let symbol = example_symbol(name, &example.behavior, example.at);
-            let id = *entries
-                .get(&symbol)
-                .expect("every row was declared an entry before any was defined");
+    }
+
+    // A composition has no body: it applies behaviors by name, and nothing it does is resolved
+    // where it stands.
+    for written in &program.modules {
+        for local in &written.definitions {
+            let Definition::Composed {
+                declared: behavior_name,
+                stages,
+                ..
+            } = local
+            else {
+                continue;
+            };
+            let target = targets.reached(behavior_name);
+            let signature = signature_over(&target.takes(), &target.answers(), call_conv)?;
+            let id = reachable.of_behavior_named(behavior_name);
             context.clear();
             context.func = Function::with_name_signature(UserFuncName::default(), signature);
-            let lowering = Lowering {
-                declared: &declared,
-                reachable: &reachable,
-                carrier: name,
-                allocate,
-                compare_text,
-                join_text,
-                closures: &closures,
-                lifted: &lifted,
-                targets: &targets,
-                literals: &literals,
-                constructors: &constructors,
-            };
-            // Taking nothing: what the row states is written into the body, so an entry with
-            // parameters would be a row whose values came from whoever ran it.
-            define(
+            define_composed(
                 &mut context.func,
                 &mut shapes,
-                &[],
-                &example.body,
+                target.takes().len(),
+                stages,
                 frontend,
-                &lowering,
+                &lowerings,
                 &mut module,
             )?;
             accepted(module.define_function(id, &mut context));
         }
     }
 
+    // What holds each answer to what its behavior declares, one function of the behavior's rules.
+    // Each rule is lowered where it stands, which is the module that declares the behavior
+    // whichever place the check is run from. A caller holding an answer as it crosses in calls
+    // this and restates none of it.
+    for target in &program.behaviors {
+        if target.ensures.contract().is_none() {
+            continue;
+        }
+        let rules: Vec<transport::Body> = runs
+            .bodies()
+            .filter(|body| matches!(body.owner, Owner::Ensures { target: of, .. } if std::ptr::eq(of, target)))
+            .collect();
+        context.clear();
+        context.func = Function::with_name_signature(
+            UserFuncName::default(),
+            holding_signature(&target.takes(), &target.answers(), call_conv)?,
+        );
+        define_rules(
+            &mut context.func,
+            &mut shapes,
+            target,
+            &rules,
+            frontend,
+            &lowerings,
+            &mut module,
+        )?;
+        accepted(module.define_function(reachable.of_rules(&target.declared()), &mut context));
+    }
+
     // Every lifted function, defined after every ordinary body: a site's own body may itself hold
     // a nested site, or reach one returned from elsewhere, and every one of them was declared
-    // above regardless of which body it is nested under.
+    // above regardless of which body it is nested under. A site stands where the body holding it
+    // does.
     for (&site, plan) in closures.iter() {
         let fn_ = plan.signature;
         let signature = lifted_signature(&fn_.takes, &fn_.answers, call_conv)?;
@@ -747,25 +769,12 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
             .expect("every closure site was declared a lifted function before any was defined");
         context.clear();
         context.func = Function::with_name_signature(UserFuncName::default(), signature);
-        let lowering = Lowering {
-            declared: &declared,
-            reachable: &reachable,
-            carrier: plan.module,
-            allocate,
-            compare_text,
-            join_text,
-            closures: &closures,
-            lifted: &lifted,
-            targets: &targets,
-            literals: &literals,
-            constructors: &constructors,
-        };
         define_closure(
             &mut context.func,
             &mut shapes,
             plan,
             frontend,
-            &lowering,
+            &lowerings.at(plan.carrier),
             &mut module,
         )?;
         accepted(module.define_function(id, &mut context));
@@ -789,28 +798,20 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
         );
         accepted(module.define_function(constructors.of(key)?, &mut context));
 
+        let clauses: Vec<transport::Body> = runs
+            .bodies()
+            .filter(|body| matches!(body.owner, Owner::Invariant { declaration: of, .. } if std::ptr::eq(of, declaration)))
+            .collect();
         let signature = checked_signature(declaration, call_conv)?;
         context.clear();
         context.func = Function::with_name_signature(UserFuncName::default(), signature);
-        let lowering = Lowering {
-            declared: &declared,
-            reachable: &reachable,
-            carrier: declaration.module(),
-            allocate,
-            compare_text,
-            join_text,
-            closures: &closures,
-            lifted: &lifted,
-            targets: &targets,
-            literals: &literals,
-            constructors: &constructors,
-        };
         define_checked(
             &mut context.func,
             &mut shapes,
             declaration,
+            &clauses,
             frontend,
-            &lowering,
+            &lowerings,
             &mut module,
         )?;
         accepted(module.define_function(checked, &mut context));
@@ -1042,18 +1043,25 @@ struct Reachable {
     values: HashMap<(String, String), FuncId>,
     behaviors: HashMap<String, FuncId>,
     published_values: HashMap<(String, String), FuncId>,
+    /// What holds a behavior's answer to what the behavior declares of it, by the behavior, where
+    /// something here holds it.
+    rules: HashMap<String, FuncId>,
+    /// What a behavior held at the callee answers before it is held, by the behavior. The
+    /// behavior's own symbol is where it is held, so every way in is held and none of them reaches
+    /// this.
+    unheld: HashMap<String, FuncId>,
 }
 
 /// Built from names [`Coherent`] already held to be named once each, so a name written twice here
 /// is this compiler's mistake and not the document's.
 impl Reachable {
-    fn held(&mut self, carrier: &str, declared: &str, id: FuncId) {
-        let key = (carrier.to_string(), declared.to_string());
+    fn held(&mut self, carrier: Carrier, declared: &str, id: FuncId) {
+        let key = (carrier.module().to_string(), declared.to_string());
         index::unique(&mut self.held, key, id);
     }
 
-    fn value(&mut self, carrier: &str, declared: &str, id: FuncId) {
-        let key = (carrier.to_string(), declared.to_string());
+    fn value(&mut self, carrier: Carrier, declared: &str, id: FuncId) {
+        let key = (carrier.module().to_string(), declared.to_string());
         index::unique(&mut self.values, key, id);
     }
 
@@ -1066,6 +1074,14 @@ impl Reachable {
         index::unique(&mut self.published_values, key, id);
     }
 
+    fn rules(&mut self, declared: &str, id: FuncId) {
+        index::unique(&mut self.rules, declared.to_string(), id);
+    }
+
+    fn unheld(&mut self, declared: &str, id: FuncId) {
+        index::unique(&mut self.unheld, declared.to_string(), id);
+    }
+
     /// Whether an entry for `module`'s value `name` has already been declared — asked before
     /// declaring one as an import, so a value this program's own modules publish is never given a
     /// second, importing declaration of the same symbol.
@@ -1074,17 +1090,17 @@ impl Reachable {
             .contains_key(&(module.to_string(), name.to_string()))
     }
 
-    fn of_held(&self, carrier: &str, declared: &str) -> FuncId {
+    fn of_held(&self, carrier: Carrier, declared: &str) -> FuncId {
         *self
             .held
-            .get(&(carrier.to_string(), declared.to_string()))
+            .get(&(carrier.module().to_string(), declared.to_string()))
             .expect("`Coherent` held every helper a call reaches to be one its module holds")
     }
 
-    fn of_value(&self, carrier: &str, declared: &str) -> FuncId {
+    fn of_value(&self, carrier: Carrier, declared: &str) -> FuncId {
         *self
             .values
-            .get(&(carrier.to_string(), declared.to_string()))
+            .get(&(carrier.module().to_string(), declared.to_string()))
             .expect("`Coherent` held every value a call reaches to have a home in its module")
     }
 
@@ -1100,6 +1116,22 @@ impl Reachable {
             .published_values
             .get(&(module.to_string(), name.to_string()))
             .expect("every published value a call reaches was declared an entry or an import")
+    }
+
+    fn of_rules(&self, declared: &str) -> FuncId {
+        *self
+            .rules
+            .get(declared)
+            .expect("every behavior whose answer is held here was declared what holds it")
+    }
+
+    /// What `declared`'s body is defined under: the function it answers through before it is
+    /// held, where it is held at the callee, and otherwise the behavior's own.
+    fn of_body(&self, declared: &str) -> FuncId {
+        self.unheld
+            .get(declared)
+            .copied()
+            .unwrap_or_else(|| self.of_behavior_named(declared))
     }
 }
 
@@ -1485,7 +1517,7 @@ impl<'a> Declared<'a> {
 /// The address of the declaration's token, as a value of it says which type it is.
 fn tag_of(
     builder: &mut FunctionBuilder,
-    lowering: &Lowering,
+    lowering: &Lowerings,
     module: &mut ObjectModule,
     declared: &str,
 ) -> Lowered<ir::Value> {
@@ -1521,12 +1553,14 @@ impl<'a> Held<'a> {
     }
 }
 
-/// What the lowering of one function needs besides the function itself.
-struct Lowering<'a> {
+/// What the lowering of every function in this object shares.
+///
+/// What it does not hold is where a body stands, which is the one thing that differs between two
+/// bodies lowered here and is a body's own to say ([`Lowering`]). A function with no body, a
+/// composition, is lowered with this alone, and so cannot resolve a call the way a body would.
+struct Lowerings<'a> {
     declared: &'a Declared<'a>,
     reachable: &'a Reachable,
-    /// The module whose copy of a definition a call from here reaches.
-    carrier: &'a str,
     allocate: FuncId,
     compare_text: FuncId,
     join_text: FuncId,
@@ -1546,7 +1580,37 @@ struct Lowering<'a> {
     targets: &'a Targets<'a>,
 }
 
-impl Lowering<'_> {
+impl<'a> Lowerings<'a> {
+    /// What lowering a body that stands where `carrier` says needs.
+    fn at(&'a self, carrier: Carrier<'a>) -> Lowering<'a> {
+        Lowering {
+            shared: self,
+            carrier,
+        }
+    }
+}
+
+/// What the lowering of one body needs besides the function itself: what every lowering here
+/// shares, and where the body stands.
+///
+/// Where it stands is a [`Carrier`], which only a [`transport::Body`] answers and only
+/// `Program::bodies` makes, so a body is lowered where `Coherent` read it as standing and not
+/// where the code defining its function happened to name.
+struct Lowering<'a> {
+    shared: &'a Lowerings<'a>,
+    /// The module whose copy of a definition a call from here reaches.
+    carrier: Carrier<'a>,
+}
+
+impl<'a> std::ops::Deref for Lowering<'a> {
+    type Target = Lowerings<'a>;
+
+    fn deref(&self) -> &Lowerings<'a> {
+        self.shared
+    }
+}
+
+impl Lowerings<'_> {
     /// Room for `bytes` bytes, from the arena the caller brackets.
     ///
     /// Bytes and not slots, because how many slots a value is made of is a fact about its layout
@@ -1997,8 +2061,10 @@ impl Constructors {
 /// What this object runs, which is narrower than what the document says, and what running it
 /// needs from outside the bodies themselves.
 ///
-/// Every body of a module, and the clauses of each declaration this object builds a constructor
-/// for. It builds one for a declaration a module of this compile declares, whose fields all have a
+/// Every body of a module, every rule a behavior's answer is held to here, and the clauses of each
+/// declaration this object builds a constructor for. A rule runs whether or not anything here calls
+/// the behavior: what holds an answer is the declaring module's, defined once where the module is,
+/// the way the constructor of a type it publishes is. It builds one for a declaration a module of this compile declares, whose fields all have a
 /// representation here, wherever something may build a value of it through this object: another
 /// build or a host, where the module publishes it; a body here, through a call
 /// ([`Construction::Called`]); and a reader, where a value of a published type is read through it
@@ -2168,8 +2234,8 @@ impl<'p> Runs<'p> {
         self.bodies.iter().copied()
     }
 
-    /// Whether this object runs `body`: every body of a module does, and a clause does where its
-    /// declaration is one this object builds.
+    /// Whether this object runs `body`: every body of a module and every rule over a behavior's
+    /// answer does, and a clause does where its declaration is one this object builds.
     pub(crate) fn runs(&self, body: &transport::Body) -> bool {
         match body.owner {
             transport::Owner::Invariant { declaration, .. } => {
@@ -2249,12 +2315,16 @@ fn checked_signature(declaration: &Declaration, call_conv: CallConv) -> Lowered<
 ///
 /// Nothing is laid out before every clause has held, so a value that is not one of the type never
 /// exists, even in the arena.
+///
+/// Each clause is one of `clauses`, the bodies the program says the declaration's clauses are, and
+/// is lowered where that body stands.
 fn define_checked(
     function: &mut Function,
     shapes: &mut FunctionBuilderContext,
     declaration: &Declaration,
+    clauses: &[transport::Body],
     frontend: TargetFrontendConfig,
-    lowering: &Lowering,
+    lowerings: &Lowerings,
     module: &mut ObjectModule,
 ) -> Lowered<()> {
     let mut builder = FunctionBuilder::new(function, shapes);
@@ -2281,17 +2351,26 @@ fn define_checked(
     let broken = builder.create_block();
     builder.append_block_param(broken, types::I64);
 
-    let clauses = declaration
+    let stated = declaration
         .clauses()
         .expect("a constructor is defined only for a declaration this build runs the clauses of");
+    assert_eq!(
+        clauses.len(),
+        stated.len(),
+        "every clause of a declaration this object builds is a body it runs"
+    );
     for (at, clause) in clauses.iter().enumerate() {
+        assert!(
+            matches!(clause.owner, Owner::Invariant { at: place, .. } if place == at),
+            "the program lists a declaration's clauses in the order they run"
+        );
         let holds = lower(
             &mut builder,
-            lowering,
+            &lowerings.at(clause.carrier()),
             module,
             &mut bindings,
             abort,
-            &clause.condition,
+            clause.node,
         )?;
         let held = builder.create_block();
         let place = builder.ins().iconst(
@@ -2308,8 +2387,8 @@ fn define_checked(
     let value = lay_out(
         &mut builder,
         module,
-        lowering.declared,
-        lowering.allocate,
+        lowerings.declared,
+        lowerings.allocate,
         declaration,
         &given,
     )?;
@@ -2476,7 +2555,7 @@ fn define_composed(
     takes: usize,
     stages: &[Stage],
     frontend: TargetFrontendConfig,
-    lowering: &Lowering,
+    lowering: &Lowerings,
     module: &mut ObjectModule,
 ) -> Lowered<()> {
     let mut builder = FunctionBuilder::new(function, shapes);
@@ -2493,18 +2572,26 @@ fn define_composed(
         .split_first()
         .expect("`Coherent` held every composition to compose something");
     let arguments: Vec<ir::Value> = builder.block_params(entry)[..takes].to_vec();
-    let mut running = {
-        let reached = lowering.reachable.of_behavior_named(&first.behavior);
-        let answers = machine_type(&lowering.targets.reached(&first.behavior).answers())?;
-        call_reached(&mut builder, module, abort, reached, answers, &arguments)?
-    };
+    let mut running = call_behavior(
+        &mut builder,
+        lowering,
+        module,
+        abort,
+        &first.behavior,
+        &arguments,
+    )?;
 
     for stage in rest {
         match &stage.routing {
             Routing::Always => {
-                let reached = lowering.reachable.of_behavior_named(&stage.behavior);
-                let answers = machine_type(&lowering.targets.reached(&stage.behavior).answers())?;
-                running = call_reached(&mut builder, module, abort, reached, answers, &[running])?;
+                running = call_behavior(
+                    &mut builder,
+                    lowering,
+                    module,
+                    abort,
+                    &stage.behavior,
+                    &[running],
+                )?;
             }
             Routing::OnCases { accepted } => {
                 let accepts =
@@ -2523,9 +2610,14 @@ fn define_composed(
                 builder.ins().return_(&[ok]);
 
                 builder.switch_to_block(offer);
-                let reached = lowering.reachable.of_behavior_named(&stage.behavior);
-                let answers = machine_type(&lowering.targets.reached(&stage.behavior).answers())?;
-                running = call_reached(&mut builder, module, abort, reached, answers, &[running])?;
+                running = call_behavior(
+                    &mut builder,
+                    lowering,
+                    module,
+                    abort,
+                    &stage.behavior,
+                    &[running],
+                )?;
             }
         }
     }
@@ -2574,6 +2666,226 @@ fn call_reached(
     let called = builder.ins().call(reaching, &given);
     let status = builder.inst_results(called)[0];
     Ok(status_or_answer(builder, abort, status, out, answers))
+}
+
+/// A behavior applied to `arguments`, and its answer where it keeps what the behavior declares.
+///
+/// The one way a behavior is applied, whether a body calls it, a row runs it or a composition's
+/// stage applies it, so what is done about the answer is decided here for all of them. Where the
+/// answer arrives from outside it is held here, as it crosses in; where the callee holds its own
+/// answer, or nothing does, there is nothing for a caller to do.
+///
+/// The rules are not written here. They are the declaring module's, lowered once where it holds
+/// them ([`define_rules`]), and this calls that.
+fn call_behavior(
+    builder: &mut FunctionBuilder,
+    lowering: &Lowerings,
+    module: &mut ObjectModule,
+    abort: ir::Block,
+    declared: &str,
+    arguments: &[ir::Value],
+) -> Lowered<ir::Value> {
+    let target = lowering.targets.reached(declared);
+    let reached = lowering.reachable.of_behavior_named(declared);
+    let answer = call_reached(
+        builder,
+        module,
+        abort,
+        reached,
+        machine_type(&target.answers())?,
+        arguments,
+    )?;
+    match target.ensures {
+        Ensures::Crossing { .. } => {
+            let rules = lowering.reachable.of_rules(declared);
+            hold(builder, module, abort, rules, arguments, answer);
+        }
+        // Held by the callee, on its way out: every way in reaches its symbol, which holds it.
+        Ensures::Callee { .. } => {}
+        Ensures::None => {}
+        // Another build's behavior, whose clause nothing in this compile runs: what is done about
+        // it is not decided here, and a check made up here would be this compile deciding it.
+        Ensures::Undecided => {}
+    }
+    Ok(answer)
+}
+
+/// `answer` held to what `rules` hold it to, given what it was answered for: the run goes on where
+/// it keeps them, and ends with the status the rules answered where it does not.
+fn hold(
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    abort: ir::Block,
+    rules: FuncId,
+    arguments: &[ir::Value],
+    answer: ir::Value,
+) {
+    let reaching = module.declare_func_in_func(rules, builder.func);
+    let mut given = arguments.to_vec();
+    given.push(answer);
+    let called = builder.ins().call(reaching, &given);
+    let status = builder.inst_results(called)[0];
+    forward_unless_answered(builder, abort, status);
+}
+
+/// What holds an answer to what its behavior declares takes and answers: what the behavior takes,
+/// then the answer, and a status. Nothing is written back, since there is nothing to answer beyond
+/// whether the answer is kept.
+fn holding_signature(takes: &[Ty], answers: &Ty, call_conv: CallConv) -> Lowered<ir::Signature> {
+    let mut signature = ir::Signature::new(call_conv);
+    for taken in takes.iter().chain([answers]) {
+        signature.params.push(AbiParam::new(machine_type(taken)?));
+    }
+    signature.returns.push(AbiParam::new(types::I32));
+    Ok(signature)
+}
+
+/// A behavior held at the callee, under its own symbol: its body run under the name it moved to,
+/// and the answer held to what the behavior declares before it is answered.
+///
+/// Held at the symbol and not at the end of the body. A body answers from one place today, but
+/// what holds the answer is then a property of every way the body can come to answer, where here it
+/// is a property of the one way anything reaches the behavior at all.
+fn define_held(
+    function: &mut Function,
+    shapes: &mut FunctionBuilderContext,
+    target: &Target,
+    unheld: FuncId,
+    rules: FuncId,
+    frontend: TargetFrontendConfig,
+    module: &mut ObjectModule,
+) -> Lowered<()> {
+    let mut builder = FunctionBuilder::new(function, shapes);
+    let entry = builder.create_block();
+    builder.append_block_params_for_function_params(entry);
+    builder.switch_to_block(entry);
+    builder.seal_block(entry);
+    let given = builder.block_params(entry).to_vec();
+    let (arguments, out) = given.split_at(target.inputs.len());
+
+    let abort = builder.create_block();
+    builder.append_block_param(abort, types::I32);
+
+    let answers = machine_type(&target.answers())?;
+    let answer = call_reached(&mut builder, module, abort, unheld, answers, arguments)?;
+    hold(&mut builder, module, abort, rules, arguments, answer);
+    builder.ins().store(TRUSTED, answer, out[0], 0);
+    let ok = builder.ins().iconst(types::I32, i64::from(ANSWERED));
+    builder.ins().return_(&[ok]);
+
+    builder.seal_block(abort);
+    builder.switch_to_block(abort);
+    let status = builder.block_params(abort)[0];
+    builder.ins().return_(&[status]);
+
+    builder.finalize(frontend);
+    Ok(())
+}
+
+/// What holds an answer to what its behavior declares: every rule whose guard the answer meets,
+/// in the order the checker keeps them, until one does not hold.
+///
+/// Every rule and not the first whose guard holds, because a declaration states a conjunction and
+/// one answer may be a case two rules name. A rule that does not hold ends the check with
+/// `EnsuresNotHeld`; a rule that itself ends without an answer, dividing by nought or leaving an
+/// `Int`'s range, ends it with that status instead, since it did not answer false.
+///
+/// The parameters are bound under where each stands, as a body's are, and the answer under the
+/// number each rule reads it by, as what the rule's guard says it is read as.
+fn define_rules(
+    function: &mut Function,
+    shapes: &mut FunctionBuilderContext,
+    target: &Target,
+    rules: &[transport::Body],
+    frontend: TargetFrontendConfig,
+    lowerings: &Lowerings,
+    module: &mut ObjectModule,
+) -> Lowered<()> {
+    let mut builder = FunctionBuilder::new(function, shapes);
+    let entry = builder.create_block();
+    builder.append_block_params_for_function_params(entry);
+    builder.switch_to_block(entry);
+    builder.seal_block(entry);
+
+    let contract = target
+        .ensures
+        .contract()
+        .expect("what holds an answer is defined only for a behavior that declares something");
+    let takes = target.takes();
+    let mut bindings = Bindings::default();
+    for (at, taken) in takes.iter().enumerate() {
+        let variable = builder.declare_var(machine_type(taken)?);
+        let given = builder.block_params(entry)[at];
+        builder.def_var(variable, given);
+        bindings.at(at, variable);
+    }
+    let answer = builder.block_params(entry)[takes.len()];
+    let answers = target.answers();
+
+    let abort = builder.create_block();
+    builder.append_block_param(abort, types::I32);
+    let broken = builder.create_block();
+
+    assert_eq!(
+        rules.len(),
+        contract.rules.len(),
+        "every rule of a contract is a body this object runs"
+    );
+    for (at, body) in rules.iter().enumerate() {
+        assert!(
+            matches!(body.owner, Owner::Ensures { at: place, .. } if place == at),
+            "the program lists a contract's rules in the order they run"
+        );
+        let rule = &contract.rules[at];
+        let lowering = lowerings.at(body.carrier());
+        // Where the rule applies, and past it where it does not.
+        let next = builder.create_block();
+        let read = match &rule.guard {
+            Guard::Always => answer,
+            Guard::Case { selects, binds } => {
+                let selects = std::slice::from_ref(selects);
+                let applies = builder.create_block();
+                let asked = tests(&mut builder, &lowering, module, answer, selects)?;
+                builder.ins().brif(asked, applies, &[], next, &[]);
+                builder.seal_block(applies);
+                builder.switch_to_block(applies);
+                self::binds(&mut builder, answer, selects, machine_type(binds)?)
+            }
+        };
+        let variable = builder.declare_var(machine_type(rule.guard.reads_as(&answers))?);
+        builder.def_var(variable, read);
+        bindings.at(rule.value, variable);
+        let holds = lower(
+            &mut builder,
+            &lowering,
+            module,
+            &mut bindings,
+            abort,
+            body.node,
+        );
+        bindings.leave(rule.value);
+        builder.ins().brif(holds?, next, &[], broken, &[]);
+        builder.seal_block(next);
+        builder.switch_to_block(next);
+    }
+    let ok = builder.ins().iconst(types::I32, i64::from(ANSWERED));
+    builder.ins().return_(&[ok]);
+
+    builder.seal_block(broken);
+    builder.switch_to_block(broken);
+    let not_held = builder.ins().iconst(
+        types::I32,
+        i64::from(native_status(AbortKind::EnsuresNotHeld)),
+    );
+    builder.ins().return_(&[not_held]);
+
+    builder.seal_block(abort);
+    builder.switch_to_block(abort);
+    let status = builder.block_params(abort)[0];
+    builder.ins().return_(&[status]);
+
+    builder.finalize(frontend);
+    Ok(())
 }
 
 /// A closure applied: `Core.Apply`, lowered as an indirect call through the code pointer its own
@@ -2640,6 +2952,16 @@ fn status_or_answer(
     out: ir::Value,
     answers: types::Type,
 ) -> ir::Value {
+    forward_unless_answered(builder, abort, status);
+    builder.ins().load(answers, TRUSTED, out, 0)
+}
+
+/// A status other than `ANSWERED` forwarded to `abort` exactly as it arrived, and the run carried
+/// on past it otherwise.
+///
+/// Shared by every call whose status this function does not interpret: a callee's, and what holds
+/// an answer to what its behavior declares.
+fn forward_unless_answered(builder: &mut FunctionBuilder, abort: ir::Block, status: ir::Value) {
     let ok = builder.create_block();
     let bad = builder.create_block();
     let answered = builder.ins().iconst(types::I32, i64::from(ANSWERED));
@@ -2652,7 +2974,6 @@ fn status_or_answer(
     builder.ins().jump(abort, &[status.into()]);
 
     builder.switch_to_block(ok);
-    builder.ins().load(answers, TRUSTED, out, 0)
 }
 
 /// What the document's numbers for a behavior's bindings stand for here.
@@ -2887,16 +3208,19 @@ fn lower(
             // region reading a value's reference builds each dependency once, which is what
             // `arguments` already carries in from the handovers `ProgramWriter` threaded — not
             // something this side re-derives or memoizes.
-            Reaches::Helper { .. }
-            | Reaches::Behavior { .. }
-            | Reaches::Value { .. }
-            | Reaches::PublishedValue { .. } => {
+            // A behavior is applied the one way every behavior is, which is where what is done
+            // about its answer is decided (`call_behavior`).
+            Reaches::Behavior { declared } => {
+                let mut given = Vec::with_capacity(arguments.len());
+                for argument in arguments {
+                    given.push(lower(builder, lowering, module, bindings, abort, argument)?);
+                }
+                call_behavior(builder, lowering, module, abort, declared, &given)?
+            }
+            Reaches::Helper { .. } | Reaches::Value { .. } | Reaches::PublishedValue { .. } => {
                 let reached = match reaches {
                     Reaches::Helper { declared } => {
                         lowering.reachable.of_held(lowering.carrier, declared)
-                    }
-                    Reaches::Behavior { declared } => {
-                        lowering.reachable.of_behavior_named(declared)
                     }
                     Reaches::Value { module, name } => lowering
                         .reachable
@@ -2904,7 +3228,7 @@ fn lower(
                     Reaches::PublishedValue { module, name } => {
                         lowering.reachable.of_published_value(module, name)
                     }
-                    Reaches::Kernel { .. } => unreachable!(),
+                    Reaches::Behavior { .. } | Reaches::Kernel { .. } => unreachable!(),
                 };
                 let mut given = Vec::with_capacity(arguments.len());
                 for argument in arguments {
@@ -3083,7 +3407,7 @@ fn fork_on_what_it_is(
 /// what makes the answer mean the same thing on either side of an object boundary.
 fn tests(
     builder: &mut FunctionBuilder,
-    lowering: &Lowering,
+    lowering: &Lowerings,
     module: &mut ObjectModule,
     value: ir::Value,
     selects: &[Selects],
@@ -3119,7 +3443,7 @@ fn tests(
 /// compared as the linker resolves it.
 fn is_one_of_declared_cases(
     builder: &mut FunctionBuilder,
-    lowering: &Lowering,
+    lowering: &Lowerings,
     module: &mut ObjectModule,
     value: ir::Value,
     cases: &[Case],
