@@ -160,8 +160,9 @@ being JSON and where they stopped, or every issue found in the document — not 
 one of Raoh's codes, a JSON Pointer and its metadata as named entries. A clause that does not hold is
 `invariant_violation` at the value's path, naming the type's module and name and the clause where
 it has one. A value of a type another build declares is read by that build's object, under
-`souther2.<module>$read$<Name>`, since only the build running the clauses can say which one did not
-hold. Text read is canonicalized to NFC. What JSON is, is `souther-json-syntax`, a crate that knows
+`souther2.<module>$read$<Name>`, whatever kind of type it is: how a declaration is read is the
+declaring build's, and for a type built from fields that build is also the only one that can say
+which clause did not hold. Text read is canonicalized to NFC. What JSON is, is `souther-json-syntax`, a crate that knows
 no Souther type, no arena and no runtime, written to be what both runtimes read once #17 moves it.
 
 Still ahead: a `Decimal`, the collections, a function value, every kernel but `Int.add`, a value

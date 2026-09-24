@@ -13,8 +13,9 @@ import java.util.Set;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * A value of a type another build declares is read by that build's object, which is the one that
- * runs the type's clauses and so the one that can say which of them did not hold.
+ * A value of a type another build declares is read by that build's object: how a declaration is
+ * read is its build's, and for a type built from fields that build is also the one running the
+ * clauses and so the one that can say which of them did not hold.
  *
  * <p>The constructor another build calls says only that a clause did not hold, which is what a body
  * is told. A document is told which, and where: the issue carries the type, its module and the
@@ -72,14 +73,19 @@ class AValueOfATypeAnotherBuildDeclaresIsReadThereTest {
                 """);
     }
 
-    /** What reads a value of a type built from fields is that type's build's, and no copy of it. */
+    /**
+     * What reads a value of a type is that type's build's, and no copy of it: a set of alternatives
+     * and a unit, which run no clause, as much as a type built from fields.
+     */
     @Test
     void theReaderOfATypeIsDefinedByTheBuildThatDeclaresIt() throws Exception {
         Set<String> here = NativeArtifacts.built(program()).defined();
         Set<String> there = NativeArtifacts.built(CheckedProgram.of(List.of(BUILT_BEFORE))).defined();
 
         List<String> theirs = List.of(reader("lib.money", "Money"), reader("lib.money", "Price"),
-                reader("lib.money", "Open"), reader("lib.money", "Waived"));
+                reader("lib.money", "Open"), reader("lib.money", "Waived"),
+                reader("lib.money", "Closed"), reader("lib.money", "Door"),
+                reader("lib.money", "Settled"));
         assertThat(there).containsAll(theirs);
         assertThat(here).doesNotContainAnyElementsOf(theirs);
         assertThat(here).contains(reader("app.order", "Order"));

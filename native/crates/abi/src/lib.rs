@@ -286,10 +286,11 @@ pub fn host_encode_symbol(module: &str, name: &str) -> String {
 /// compiler built: `(node, path, reading, out) -> status`, the three pointers being the runtime's
 /// and never looked behind.
 ///
-/// Defined by the object of the build that declared the type, beside its constructor and for the
-/// same reason: a reading ends in the type's clauses, and which clause did not hold is something
-/// only the build that runs them can say. A build reading a value of a type another declared calls
-/// this rather than the constructor, whose status says a clause did not hold and not which.
+/// Defined by the object of the build that declared the type, beside its constructor and its token,
+/// whatever the type is: how a declaration is read is the declaring build's, and every other build
+/// reaching a value of it in a document calls this rather than reading one itself. For a type built
+/// from fields it is also the one place that can say which clause did not hold, which the
+/// constructor's status does not.
 ///
 /// Nothing is written through `out` unless the status is `ANSWERED`, and then what is written is
 /// the value, or nothing ([`NOTHING`]) where what stands there is not one and the reading was told

@@ -299,12 +299,16 @@ impl Codecs {
         id
     }
 
-    /// The reader of `declared`.
+    /// The reader of `declared`: the one the build that declared it defines, whatever kind of
+    /// declaration it is.
     ///
-    /// A type built from fields is read by the build that declared it, which is the build that runs
-    /// its clauses and so the one that can say which of them did not hold: that build exports its
-    /// reader, and every other reaches it. A unit and a set of alternatives run no clause, and each
-    /// object reads them for itself, the way each writes them.
+    /// Reading a value's external form is the declaring build's, as building one is: that build
+    /// exports its reader and every other reaches it, so a declaration is read one way, by one
+    /// function, wherever a document holds a value of it. For a type built from fields this is also
+    /// the build running its clauses, which is the only one that can say which of them did not
+    /// hold; a unit and a set of alternatives run none and are read there all the same, so what
+    /// decides where a reader lives is whose declaration it is and never what the declaration
+    /// happens to hold today.
     pub(crate) fn reader(
         &mut self,
         module: &mut ObjectModule,
@@ -315,20 +319,13 @@ impl Codecs {
             return id;
         }
         let declaration = declared.laid(key);
-        let (symbol, linkage, defined) = match (declaration, declaration.by()) {
-            (Declaration::Product { .. } | Declaration::Newtype { .. }, by) => {
-                let symbol = reader_symbol(declaration.module(), declaration.name());
-                match by {
-                    DeclaredBy::AModule => (symbol, Linkage::Export, true),
-                    DeclaredBy::OnThePath => (symbol, Linkage::Import, false),
-                    DeclaredBy::TheLanguage => unreachable!(
-                        "`Declared` held that the language declares nothing built from fields"
-                    ),
-                }
-            }
-            (Declaration::Unit { .. } | Declaration::Sum { .. }, _) => {
-                (format!("$read${key}"), Linkage::Local, true)
-            }
+        let symbol = reader_symbol(declaration.module(), declaration.name());
+        let (linkage, defined) = match declaration.by() {
+            DeclaredBy::AModule => (Linkage::Export, true),
+            DeclaredBy::OnThePath => (Linkage::Import, false),
+            DeclaredBy::TheLanguage => unreachable!(
+                "`carried` holds that no value of what the language declares is read here"
+            ),
         };
         let id = accepted(module.declare_function(&symbol, linkage, &self.reader_signature()));
         crate::index::unique(&mut self.readers.ids, key.to_string(), id);
