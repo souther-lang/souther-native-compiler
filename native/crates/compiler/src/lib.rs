@@ -898,6 +898,7 @@ fn walk_calls(node: &Node, found: &mut BTreeMap<(String, String), Ty>) {
             }
         }
         Node::Member { tuple, .. } => walk_calls(tuple, found),
+        Node::Widen { value, .. } => walk_calls(value, found),
         Node::Block { body, .. } => walk_calls(body, found),
         Node::Apply {
             function,
@@ -1116,23 +1117,24 @@ impl<'a> Declared<'a> {
         Ok(leaves)
     }
 
-    /// Whether every value of `actual` is a value of `expected`, as the checker's assignability
-    /// (`TypeOps.assignable`) answers it for the types this backend lays out: the same type; for
-    /// declared types, unions and primitives, every case the one descends to being among the
-    /// other's; for an optional or a tuple, the same asked of what it holds.
+    /// Whether every value of `actual` is a value of `expected`, as the checker lets one stand as
+    /// the other for the types this backend lays out: the same type; for declared types, unions and
+    /// primitives, every case the one descends to being among the other's; for an optional or a
+    /// tuple, the same asked of what it holds; for a function, one taking at least what the other
+    /// takes and answering no more than it answers.
     ///
     /// `None` where either side is a collection. The checker lets a collection stand where a wider
     /// one is asked for, and no collection is laid out here, so this side has no reason to know the
-    /// rule yet and does not answer it: the question is left to be refused as not lowered. A
-    /// function type has no such rule upstream — a fork over two functions asks them to be one type
-    /// — so two function types are a value of one another only when they are the same.
+    /// rule yet and does not answer it: the question is left to be refused as not lowered.
     ///
     /// Nothing about a value's layout is asked here, so a refusal from this is always the two
     /// halves disagreeing.
     ///
-    /// This is a copy of part of the checker's rule, and each type laid out here later would copy
-    /// more of it. The checker stating where it widened, so that this reads the decision instead,
-    /// is souther-lang/souther#1916.
+    /// Where a value stands as a wider type is the checker's decision, and the document says so
+    /// with a `Widen`; this is asked of that decision, and of the relations a document states
+    /// outside `Core` (a composition's stages, what an arm binds), and nowhere else. It is a copy of
+    /// part of the checker's rule all the same, and each type laid out here later would copy more
+    /// of it.
     fn fits(&self, actual: &Ty, expected: &Ty) -> Result<Option<bool>> {
         if actual == expected {
             return Ok(Some(true));
@@ -1147,15 +1149,18 @@ impl<'a> Declared<'a> {
                 if actual.len() != expected.len() {
                     return Ok(Some(false));
                 }
-                let mut all = Some(true);
-                for (actual, expected) in actual.iter().zip(expected) {
-                    match self.fits(actual, expected)? {
-                        Some(false) => return Ok(Some(false)),
-                        None => all = None,
-                        Some(true) => {}
-                    }
+                self.all_fit(actual.iter().zip(expected))?
+            }
+            // What the position takes it as is handed only what that type takes, so the function
+            // standing there has to take at least that; and what it answers stands where the
+            // position's answer does.
+            (Ty::Fn { fn_: actual }, Ty::Fn { fn_: expected }) => {
+                if actual.takes.len() != expected.takes.len() {
+                    return Ok(Some(false));
                 }
-                all
+                let takes = expected.takes.iter().zip(&actual.takes);
+                let answers = std::iter::once((actual.answers.as_ref(), expected.answers.as_ref()));
+                self.all_fit(takes.chain(answers))?
             }
             _ => match (self.cases_of(actual)?, self.cases_of(expected)?) {
                 (Some(actual), Some(expected)) => {
@@ -1164,6 +1169,19 @@ impl<'a> Declared<'a> {
                 _ => Some(false),
             },
         })
+    }
+
+    /// Whether every pair fits, `None` where one is not answered and none is refused.
+    fn all_fit<'t>(&self, pairs: impl Iterator<Item = (&'t Ty, &'t Ty)>) -> Result<Option<bool>> {
+        let mut all = Some(true);
+        for (actual, expected) in pairs {
+            match self.fits(actual, expected)? {
+                Some(false) => return Ok(Some(false)),
+                None => all = None,
+                Some(true) => {}
+            }
+        }
+        Ok(all)
     }
 
     /// The cases a value of `ty` can be, where it is a type made of cases: a declared type, a
@@ -2184,6 +2202,16 @@ fn lower(
                 _ => return Err(not_lowered(format!("a call to the kernel {kernel}"))),
             },
         },
+        // Standing as a wider type is no operation in the language, and here it costs nothing
+        // either: every type laid out here holds a value of any type it may stand as the way it
+        // holds one of its own — a case and the sum it is a case of are both the address of a
+        // value carrying its token, and an optional, a tuple or a function over them is laid out
+        // alike. The type it stands as is asked for its representation all the same, so one this
+        // backend has none for is refused here as it is anywhere else.
+        Node::Widen { value, ty, .. } => {
+            machine_type(ty)?;
+            lower(builder, lowering, module, bindings, abort, value)?
+        }
         Node::Member { tuple, at, ty, .. } => {
             let value = lower(builder, lowering, module, bindings, abort, tuple)?;
             let flags = TRUSTED;

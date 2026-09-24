@@ -11,14 +11,14 @@
 //! lowering after this reads a node's type as what its value is.
 //!
 //! Nothing here works a type out. Each rule compares what a node says it is with what the document
-//! says about where its value comes from, under the one relation the checker holds between the
-//! two: the same type, where the checker copies one into the other (a read and its binder, a call
-//! and the behavior it reaches), or a value of it, where the checker lets a narrower value stand
-//! (a branch and the fork it answers, an argument and the parameter it is handed to). Where the
-//! wire carried the same fact twice for no reason, it no longer does (transport 10): a helper's and
-//! a value's answer are their body's type, a helper's parameters are named and typed together, and
-//! a composition's answers are its targets'. What a let binds its name at is carried because it is
-//! the one thing a read of it can be held to.
+//! says about where its value comes from, and inside a body the two are the same type: a read and
+//! its binder, a call and the behavior it reaches, a branch and the fork it answers, an argument
+//! and the parameter it is handed to. Where the checker let a narrower value stand, the value in
+//! the slot is a `Widen` saying so, typed as what the slot takes, and whether its value is a value
+//! of that is asked of the `Widen` alone. Where the wire carried the same fact twice for no reason,
+//! it no longer does: a helper's and a value's answer are their body's type, a helper's parameters
+//! are named and typed together, and a composition's answers are its targets'. What a let binds its
+//! name at is carried because it is the one thing a read of it can be held to.
 //!
 //! Three passes, in an order that decides what a refusal says:
 //!
@@ -42,8 +42,9 @@
 //! - which pairs an operator may be written over, and what it makes of two different ones
 //!   (souther-lang/souther#1919). A pair the checker would refuse and one this backend has no
 //!   lowering for are both refused as not lowered;
-//! - where a value is let stand as a wider type. That is asked of [`Declared::fits`], which copies
-//!   the part of the checker's rule for the types laid out here (souther-lang/souther#1916);
+//! - why a value may stand as a wider type. The document says where it does, and that is asked
+//!   of [`Declared::fits`], which copies the part of the checker's rule for the types laid out
+//!   here;
 //! - what the writer drops: which values a module publishes beyond the entries it has, what a row
 //!   expects, what a kernel call settled.
 
@@ -152,11 +153,15 @@ impl<'a> Coherent<'a> {
                 Owner::Example(example) => {
                     let behavior = format!("{}.{}", body.module, example.behavior);
                     let owner = format!("row {} of {behavior}", example.at);
-                    owed.fits(
-                        format!("{owner} answers what its behavior answers"),
-                        body.node.ty(),
-                        &targets.named(&behavior)?.answers(),
-                    );
+                    let answers = targets.named(&behavior)?.answers();
+                    if body.node.ty() != &answers {
+                        bail!(
+                            "{owner} is typed {} and its behavior answers {}: the two halves \
+                             disagree",
+                            body.node.ty().spelt(),
+                            answers.spelt()
+                        );
+                    }
                     (owner, Vec::new())
                 }
             };
@@ -505,11 +510,12 @@ impl<'a> Walk<'_, 'a> {
                 }
                 for (field, value) in shape.fields().iter().zip(values) {
                     self.node(value)?;
-                    self.fits(
-                        &format!("{declared}'s field {} is given a value", field.name),
+                    self.same(
+                        &format!("the value {declared}'s field {} is given", field.name),
                         value.ty(),
                         &field.codec.ty(),
-                    );
+                        "the field",
+                    )?;
                 }
                 Ok(())
             }
@@ -586,14 +592,14 @@ impl<'a> Walk<'_, 'a> {
             } => {
                 // Read before the binding is in force: a binding is not read in its own value.
                 self.node(value)?;
-                self.fits(
+                self.same(
                     &format!("the value binding {binding} is given"),
                     value.ty(),
                     binds,
-                );
+                    "what it binds",
+                )?;
                 self.under(vec![(*binding, binds.clone())], body)?;
-                self.fits("what a let answers", body.ty(), ty);
-                Ok(())
+                self.same("what a let's body answers", body.ty(), ty, "the let")
             }
             Node::If {
                 cond,
@@ -606,9 +612,8 @@ impl<'a> Walk<'_, 'a> {
                 self.same("what a fork asks", cond.ty(), &bool_, "a truth")?;
                 self.node(then)?;
                 self.node(els)?;
-                self.fits("what a fork's branch answers", then.ty(), ty);
-                self.fits("what a fork's branch answers", els.ty(), ty);
-                Ok(())
+                self.same("what a fork's branch answers", then.ty(), ty, "the fork")?;
+                self.same("what a fork's branch answers", els.ty(), ty, "the fork")
             }
             Node::Match {
                 subject, arms, ty, ..
@@ -634,7 +639,7 @@ impl<'a> Walk<'_, 'a> {
                             self.under(vec![(binding, binds.clone())], &arm.body)?;
                         }
                     }
-                    self.fits("what a match arm answers", arm.body.ty(), ty);
+                    self.same("what a match arm answers", arm.body.ty(), ty, "the match")?;
                 }
                 Ok(())
             }
@@ -647,8 +652,12 @@ impl<'a> Walk<'_, 'a> {
                         ty.spelt()
                     );
                 };
-                self.fits("what a present value holds", value.ty(), option);
-                Ok(())
+                self.same(
+                    "what a present value holds",
+                    value.ty(),
+                    option,
+                    "what it is optional of",
+                )
             }
             Node::None { ty, .. } => match ty {
                 Ty::Option { .. } => Ok(()),
@@ -729,6 +738,28 @@ impl<'a> Walk<'_, 'a> {
                     "its body",
                 )
             }
+            Node::Widen { value, ty, .. } => {
+                if matches!(value.as_ref(), Node::Widen { .. }) {
+                    bail!(
+                        "{}: a value stands as {} and again as {}, where a value stands at one \
+                         position once",
+                        self.owner,
+                        value.ty().spelt(),
+                        ty.spelt()
+                    );
+                }
+                if value.ty() == ty {
+                    bail!(
+                        "{}: a value of {} is said to stand as its own type, which the checker \
+                         never says",
+                        self.owner,
+                        ty.spelt()
+                    );
+                }
+                self.node(value)?;
+                self.fits("a value standing as a wider type", value.ty(), ty);
+                Ok(())
+            }
             Node::Apply {
                 function,
                 arguments,
@@ -754,7 +785,12 @@ impl<'a> Walk<'_, 'a> {
                     "what its function answers",
                 )?;
                 for (argument, taken) in arguments.iter().zip(&fn_.takes) {
-                    self.fits("an application's argument", argument.ty(), taken);
+                    self.same(
+                        "an application's argument",
+                        argument.ty(),
+                        taken,
+                        "what it takes",
+                    )?;
                 }
                 Ok(())
             }
@@ -926,7 +962,7 @@ impl<'a> Walk<'_, 'a> {
                     arguments.len(),
                     takes.len(),
                 )?;
-                self.handed(declared, arguments, &takes);
+                self.handed(declared, arguments, &takes)?;
                 self.same(
                     &format!("a call of {declared}"),
                     ty,
@@ -952,15 +988,14 @@ impl<'a> Walk<'_, 'a> {
                     arguments.len(),
                     takes.len(),
                 )?;
-                self.handed(declared, arguments, &takes);
-                // A call stands at the helper's declared answer, which its body only has to be a
-                // value of, and the helper's answer on the wire is its body's type.
-                self.fits(
-                    &format!("what {declared} answers is what a call of it stands at"),
-                    held.answers(),
+                self.handed(declared, arguments, &takes)?;
+                // The helper's body stands as the answer it declares, so its type is that answer.
+                self.same(
+                    &format!("a call of {declared}"),
                     ty,
-                );
-                Ok(())
+                    held.answers(),
+                    "what it answers",
+                )
             }
             Reaches::Value { module, name } => {
                 let joined = format!("{module}.{name}");
@@ -981,7 +1016,7 @@ impl<'a> Walk<'_, 'a> {
                     arguments.len(),
                     handed.len(),
                 )?;
-                self.handed(&joined, arguments, &handed);
+                self.handed(&joined, arguments, &handed)?;
                 self.same(
                     &format!("a call of the value {joined}"),
                     ty,
@@ -1047,14 +1082,16 @@ impl<'a> Walk<'_, 'a> {
         }
     }
 
-    fn handed(&mut self, callee: &str, arguments: &[Node], takes: &[Ty]) {
+    fn handed(&self, callee: &str, arguments: &[Node], takes: &[Ty]) -> Result<()> {
         for (at, (argument, taken)) in arguments.iter().zip(takes).enumerate() {
-            self.fits(
+            self.same(
                 &format!("argument {at} handed to {callee}"),
                 argument.ty(),
                 taken,
-            );
+                "the parameter",
+            )?;
         }
+        Ok(())
     }
 }
 
@@ -1073,9 +1110,9 @@ fn agrees_with_its_target(
     owed: &mut Owed,
 ) -> Result<()> {
     match (target.is, local) {
-        // A body's parameters are the target's inputs, one for one, and what the body answers is
-        // a value of what the target says it answers — the same type, or a case of it, since the
-        // target states what the behavior was declared to answer.
+        // A body's parameters are the target's inputs, one for one, and the body stands as what
+        // the target says it answers: where it answers a case of it, the checker says so with a
+        // `Widen` at its root.
         (
             Answers::Body,
             Definition::Body {
@@ -1090,11 +1127,14 @@ fn agrees_with_its_target(
                     target.inputs.len()
                 );
             }
-            owed.fits(
-                format!("{name} answers what its target answers"),
-                body.ty(),
-                &target.answers(),
-            );
+            if body.ty() != &target.answers() {
+                bail!(
+                    "{name}'s body is typed {} and its target answers {}: the body stands as \
+                     what the behavior declares, and the two halves disagree",
+                    body.ty().spelt(),
+                    target.answers().spelt()
+                );
+            }
             Ok(())
         }
         (Answers::Composed, Definition::Composed { stages, .. }) => {

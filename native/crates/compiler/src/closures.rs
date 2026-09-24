@@ -236,6 +236,7 @@ impl<'p, 'a> Planner<'p, 'a> {
                 }
             }
             Node::Member { tuple, .. } => self.walk(tuple, bound, acc, seen)?,
+            Node::Widen { value, .. } => self.walk(value, bound, acc, seen)?,
             Node::Call { arguments, .. } => {
                 for argument in arguments {
                     self.walk(argument, bound, acc, seen)?;

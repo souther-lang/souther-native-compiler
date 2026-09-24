@@ -18,7 +18,7 @@ use serde::Deserialize;
 
 /// What this side reads. A document written to say anything else is refused rather than read as
 /// much of as happens to parse.
-pub const TRANSPORT_VERSION: u32 = 10;
+pub const TRANSPORT_VERSION: u32 = 11;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1195,6 +1195,18 @@ pub enum Node {
         ty: Ty,
         aborts: Vec<AbortKind>,
     },
+    /// A value standing as a type other than its own, where the checker decided that it may.
+    ///
+    /// `value` is what is evaluated, at the type it was worked out at, and `ty` is what the position
+    /// it stands in takes it as. Written only where the two differ, so every other position holds a
+    /// value of exactly the type it takes. Why the checker let it stand there is not carried, and
+    /// nothing here works it out again.
+    Widen {
+        value: Box<Node>,
+        #[serde(rename = "type")]
+        ty: Ty,
+        aborts: Vec<AbortKind>,
+    },
 }
 
 /// One parameter of a [`Node::Block`], numbered the way any other binder on the wire is: where it
@@ -1306,7 +1318,8 @@ impl Node {
             | Node::Member { ty, .. }
             | Node::Call { ty, .. }
             | Node::Block { ty, .. }
-            | Node::Apply { ty, .. } => ty,
+            | Node::Apply { ty, .. }
+            | Node::Widen { ty, .. } => ty,
         }
     }
 }
