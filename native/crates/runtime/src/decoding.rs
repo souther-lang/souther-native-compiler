@@ -319,8 +319,21 @@ pub unsafe extern "C" fn souther_read_null(node: *const Node) -> i8 {
     i8::from(matches!(unsafe { &*node }, Node::Null))
 }
 
+/// Writes what a scalar reader read through `out`, and answers whether it read one.
+///
+/// Every scalar reader writes its room whatever it answers: the value, or `none` where it read
+/// nothing and recorded why. So generated code never holds what a stack slot happened to hold
+/// before the call, whichever way the call went — the same holds of a reader of a declared type,
+/// which writes its value or nothing whenever it answers — and the rule is kept here, once, rather
+/// than by each reader remembering it.
+unsafe fn answered<T>(out: *mut T, read: Option<T>, none: T) -> i8 {
+    let there = read.is_some();
+    unsafe { out.write(read.unwrap_or(none)) };
+    i8::from(there)
+}
+
 /// An `Int`, written through `out`, where `node` writes one: a whole number, as digits with no
-/// point and no exponent, within sixty-four bits.
+/// point and no exponent, within sixty-four bits. Nought is written where it does not.
 ///
 /// # Safety
 /// As [`souther_read_object`], and `out` may be written.
@@ -331,10 +344,14 @@ pub unsafe extern "C" fn souther_read_int(
     decoding: *mut Decoding,
     out: *mut i64,
 ) -> i8 {
-    let node = unsafe { &*node };
+    let read = unsafe { int(&*node, path, decoding) };
+    unsafe { answered(out, read, 0) }
+}
+
+unsafe fn int(node: &Node, path: *const Path, decoding: *mut Decoding) -> Option<i64> {
     let Node::Number(written) = node else {
         unsafe { mismatched(decoding, path, node, "Int") };
-        return 0;
+        return None;
     };
     let (negative, digits) = match written.split_first() {
         Some((b'-', rest)) => (true, rest),
@@ -344,7 +361,7 @@ pub unsafe extern "C" fn souther_read_int(
     // amount it is.
     if !digits.iter().all(u8::is_ascii_digit) {
         unsafe { mismatched(decoding, path, node, "Int") };
-        return 0;
+        return None;
     }
     let mut magnitude: i128 = 0;
     for &digit in digits {
@@ -354,26 +371,22 @@ pub unsafe extern "C" fn souther_read_int(
         }
     }
     let value = if negative { -magnitude } else { magnitude };
-    match i64::try_from(value) {
-        Ok(value) => {
-            unsafe { out.write(value) };
-            1
-        }
-        Err(_) => {
-            unsafe {
-                found(
-                    decoding,
-                    "out_of_range",
-                    path,
-                    &[("actual", b"number"), ("expected", b"Int")],
-                )
-            };
-            0
-        }
+    let read = i64::try_from(value).ok();
+    if read.is_none() {
+        unsafe {
+            found(
+                decoding,
+                "out_of_range",
+                path,
+                &[("actual", b"number"), ("expected", b"Int")],
+            )
+        };
     }
+    read
 }
 
-/// A `Bool`, written through `out` as nought or one, where `node` writes one.
+/// A `Bool`, written through `out` as nought or one, where `node` writes one; nought where it does
+/// not.
 ///
 /// # Safety
 /// As [`souther_read_int`].
@@ -384,20 +397,18 @@ pub unsafe extern "C" fn souther_read_bool(
     decoding: *mut Decoding,
     out: *mut i8,
 ) -> i8 {
-    match unsafe { &*node } {
-        Node::Bool(truth) => {
-            unsafe { out.write(i8::from(*truth)) };
-            1
-        }
+    let read = match unsafe { &*node } {
+        Node::Bool(truth) => Some(i8::from(*truth)),
         other => {
             unsafe { mismatched(decoding, path, other, "Bool") };
-            0
+            None
         }
-    }
+    };
+    unsafe { answered(out, read, 0) }
 }
 
 /// A `String`, written through `out` as a string of the runtime's layout in the arena, where
-/// `node` writes one: its text canonicalized to NFC.
+/// `node` writes one: its text canonicalized to NFC. Null is written where it does not.
 ///
 /// # Safety
 /// As [`souther_read_int`].
@@ -408,16 +419,14 @@ pub unsafe extern "C" fn souther_read_string(
     decoding: *mut Decoding,
     out: *mut *mut u8,
 ) -> i8 {
-    match unsafe { &*node } {
-        Node::String(written) => {
-            unsafe { out.write(string(&canonical(written))) };
-            1
-        }
+    let read = match unsafe { &*node } {
+        Node::String(written) => Some(string(&canonical(written))),
         other => {
             unsafe { mismatched(decoding, path, other, "String") };
-            0
+            None
         }
-    }
+    };
+    unsafe { answered(out, read, ptr::null_mut()) }
 }
 
 /// Whether `node` is text naming a case, having recorded that it is not where it is not. Which
@@ -708,6 +717,32 @@ mod tests {
         } else {
             Err(issues(decoding))
         }
+    }
+
+    /// A reader that read nothing still writes its room, so what the caller's room held before
+    /// the call is never taken for anything.
+    #[test]
+    fn a_scalar_reader_writes_its_room_whether_it_read_one_or_not() {
+        let mark = souther_mark();
+        let decoding = begun("{}");
+        let root = unsafe { souther_decode_root(decoding) };
+        let mut int = -7;
+        let mut truth = 7;
+        let mut text = literal("before");
+        unsafe {
+            assert_eq!(souther_read_int(root, ptr::null(), decoding, &mut int), 0);
+            assert_eq!(
+                souther_read_bool(root, ptr::null(), decoding, &mut truth),
+                0
+            );
+            assert_eq!(
+                souther_read_string(root, ptr::null(), decoding, &mut text),
+                0
+            );
+            souther_decode_abandon(decoding);
+        }
+        assert_eq!((int, truth, text), (0, 0, ptr::null_mut()));
+        souther_reset(mark);
     }
 
     #[test]
