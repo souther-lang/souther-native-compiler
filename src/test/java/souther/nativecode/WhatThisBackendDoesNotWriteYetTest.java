@@ -53,29 +53,29 @@ class WhatThisBackendDoesNotWriteYetTest {
     }
 
     /**
-     * A list crosses whole: the program is read, and what is refused is laying one out, which
-     * nothing here does yet. Its external form waits on the language saying how every carrier
-     * orders and spells what a collection holds.
+     * A set crosses whole: the program is read, and what is refused is laying one out, which
+     * nothing here does yet. How a set holds its members waits on the language saying how every
+     * carrier orders and spells them.
      */
     @Test
-    void anAnswerThatIsAListIsReadAndNotLaidOut() {
+    void anAnswerThatIsASetIsReadAndNotLaidOut() {
         assertThatThrownBy(() -> NativeCompiler.compile(CheckedProgram.of(List.of("""
                 module listed exposing ( many )
 
-                behavior many : (n: Int) -> List<Int>
+                behavior many : (n: Int) -> Set<Int>
                 """))))
                 .isInstanceOf(NotLowered.class)
-                .hasMessageContaining("List");
+                .hasMessageContaining("Set");
     }
 
     /**
-     * The checker lets a list of a case stand where a list of its sum is answered, and this
-     * backend lays out no list. So the program is not lowered — and it is not the two halves
-     * disagreeing, which is what it would be read as if this side answered the checker's question
-     * about a collection without the checker's rules.
+     * The checker lets a set of a case stand where a set of its sum is answered, and this backend
+     * lays out no set. So the program is not lowered — and it is not the two halves disagreeing,
+     * which is what it would be read as if this side answered the checker's question about a
+     * collection without the checker's rules.
      */
     @Test
-    void aListAnsweredCovariantlyIsNotLoweredRatherThanADisagreement() {
+    void aSetAnsweredCovariantlyIsNotLoweredRatherThanADisagreement() {
         assertThatThrownBy(() -> NativeCompiler.compile(CheckedProgram.of(List.of("""
                 module demo exposing ( f, Box, A, B, S )
 
@@ -83,13 +83,13 @@ class WhatThisBackendDoesNotWriteYetTest {
                 data B = { v: Int }
                 data S = A | B
 
-                data Box = { xs: List<A> }
+                data Box = { xs: Set<A> }
 
-                behavior f : (b: Box) -> List<S>
+                behavior f : (b: Box) -> Set<S>
                 let f (b) = b.xs
                 """))))
                 .isInstanceOf(NotLowered.class)
-                .hasMessageContaining("List");
+                .hasMessageContaining("Set");
     }
 
     /**
@@ -174,32 +174,6 @@ class WhatThisBackendDoesNotWriteYetTest {
     }
 
     /**
-     * Two values of a declared type compared, which is what they are made of and not where they
-     * are.
-     *
-     * <p>Souther's {@code ==} over a value of a declared type is its fields compared one by one, so
-     * two built separately out of the same field values are equal. A value here is held as the
-     * address of what it is made of, and a comparison of the two addresses answers a different
-     * question — one whose answer is false for exactly the pair the language calls equal.
-     *
-     * <p>So the refusal is the point. An object that compared the addresses would link, run, and
-     * answer, and nothing downstream would have anything to notice.
-     */
-    @Test
-    void twoValuesOfADeclaredTypeAreNotComparedByWhereTheyAre() {
-        assertThatThrownBy(() -> NativeCompiler.compile(CheckedProgram.of(List.of("""
-                module comparing
-
-                data Employee = { id: Int }
-
-                behavior same : (a: Employee, b: Employee) -> Bool
-                let same (a, b) = a == b
-                """))))
-                .isInstanceOf(NotLowered.class)
-                .hasMessageContaining("comparing.Employee");
-    }
-
-    /**
      * A value of a newtype compared with a bare literal, which is a comparison of what it wraps.
      *
      * <p>Both orders, and the order is the point. The checker reads the pair as values of the
@@ -250,32 +224,6 @@ class WhatThisBackendDoesNotWriteYetTest {
                 """))))
                 .isInstanceOf(NotLowered.class)
                 .hasMessageContaining("staging.Stage");
-    }
-
-    /**
-     * The same of an optional, which is equal where both hold nothing and where both hold values
-     * that compare equal.
-     *
-     * <p>Written out rather than taken as covered by the declared type above: an optional holding
-     * nothing is a null pointer here, so two of those do compare equal by address, and a check that
-     * only ever compared absent ones would be green over the half of the question that happens to
-     * agree.
-     *
-     * <p>Reached through a field because that is where the language admits one: an optional is
-     * written on a data field or inferred, and never named on a behavior's own signature.
-     */
-    @Test
-    void twoOptionalsAreNotComparedByWhereTheyAre() {
-        assertThatThrownBy(() -> NativeCompiler.compile(CheckedProgram.of(List.of("""
-                module comparing
-
-                data Employee = { manager: Int? }
-
-                behavior same : (a: Employee, b: Employee) -> Bool
-                let same (a, b) = a.manager == b.manager
-                """))))
-                .isInstanceOf(NotLowered.class)
-                .hasMessageContaining("an Option of Int");
     }
 
     @Test

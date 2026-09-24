@@ -18,7 +18,7 @@ use serde::Deserialize;
 
 /// What this side reads. A document written to say anything else is refused rather than read as
 /// much of as happens to parse.
-pub const TRANSPORT_VERSION: u32 = 15;
+pub const TRANSPORT_VERSION: u32 = 16;
 
 /// A document of [`TRANSPORT_VERSION`], and no other, read through [`Program::read`] and nothing
 /// else ([`crate::versioned`]).
@@ -1128,7 +1128,7 @@ pub struct Invariant {
 
 /// Which case a name is: one a module declares, a primitive standing as a case, or one the
 /// language gives. The identity only — how a case is written is read off what it reaches.
-#[derive(Debug, Deserialize, PartialEq, Eq, Clone)]
+#[derive(Debug, Deserialize, PartialEq, Eq, Hash, Clone)]
 #[serde(tag = "is", rename_all = "lowercase", deny_unknown_fields)]
 pub enum Case {
     Declared { declared: String },
@@ -1147,7 +1147,7 @@ impl Case {
 }
 
 /// The cases the language itself gives, a closed set.
-#[derive(Debug, Deserialize, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, Deserialize, PartialEq, Eq, Hash, Clone, Copy)]
 pub enum LanguageCase {
     #[serde(rename = "SOME")]
     Some,
@@ -1237,7 +1237,7 @@ pub struct HeldParameter {
     pub ty: Ty,
 }
 
-#[derive(Debug, Deserialize, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, Deserialize, PartialEq, Eq, Hash, Clone, Copy)]
 pub enum Prim {
     #[serde(rename = "INT")]
     Int,
@@ -1283,7 +1283,7 @@ impl Prim {
 ///
 /// Told apart by which key is written rather than by a word beside it, since each of these is a
 /// different shape and no two of them are ever both readable.
-#[derive(Debug, Deserialize, PartialEq, Eq, Clone)]
+#[derive(Debug, Deserialize, PartialEq, Eq, Hash, Clone)]
 #[serde(untagged, deny_unknown_fields)]
 pub enum Ty {
     Prim {
@@ -1327,7 +1327,7 @@ pub enum Ty {
     },
 }
 
-#[derive(Debug, Deserialize, PartialEq, Eq, Clone)]
+#[derive(Debug, Deserialize, PartialEq, Eq, Hash, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct MapTy {
     pub key: Box<Ty>,
@@ -1338,7 +1338,7 @@ pub struct MapTy {
 /// `takes`/`answers` siblings of it — the same reason [`Reaches`]'s own shape is nested: a reader
 /// telling a function type apart from every other [`Ty`] shape by which key is present must not
 /// also have to notice a document naming `fn` beside `option` or `tuple` on the same object.
-#[derive(Debug, Deserialize, PartialEq, Eq, Clone)]
+#[derive(Debug, Deserialize, PartialEq, Eq, Hash, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct FnSignature {
     pub takes: Vec<Ty>,
@@ -1500,6 +1500,14 @@ pub enum Node {
     Member {
         tuple: Box<Node>,
         at: usize,
+        #[serde(rename = "type")]
+        ty: Ty,
+        aborts: Vec<AbortKind>,
+    },
+    /// A list written out element by element, in the order it holds them. Its type is the list's,
+    /// and says what every element is.
+    List {
+        elements: Vec<Node>,
         #[serde(rename = "type")]
         ty: Ty,
         aborts: Vec<AbortKind>,
@@ -1803,6 +1811,11 @@ impl Node {
                 ty,
                 aborts: _,
             }
+            | Node::List {
+                elements: _,
+                ty,
+                aborts: _,
+            }
             | Node::Block {
                 site: _,
                 parameters: _,
@@ -1881,6 +1894,7 @@ impl Node {
             | Node::None { aborts, .. }
             | Node::Tuple { aborts, .. }
             | Node::Member { aborts, .. }
+            | Node::List { aborts, .. }
             | Node::Call { aborts, .. }
             | Node::Block { aborts, .. }
             | Node::Widen { aborts, .. }
@@ -1926,6 +1940,7 @@ impl Node {
             | Node::None { .. }
             | Node::Tuple { .. }
             | Node::Member { .. }
+            | Node::List { .. }
             | Node::Block { .. }
             | Node::Widen { .. }
             | Node::Apply { .. } => false,
@@ -1952,6 +1967,7 @@ impl Node {
             Node::Some { value, .. } | Node::Widen { value, .. } => vec![value],
             Node::Tuple { members, .. } => members.iter().collect(),
             Node::Member { tuple, .. } => vec![tuple],
+            Node::List { elements, .. } => elements.iter().collect(),
             Node::Call { arguments, .. } => arguments.iter().collect(),
             Node::Block { body, .. } => vec![body],
             Node::Apply {
@@ -1993,6 +2009,7 @@ impl Node {
             | Node::None { .. }
             | Node::Tuple { .. }
             | Node::Member { .. }
+            | Node::List { .. }
             | Node::Call { .. }
             | Node::Block { .. }
             | Node::Apply { .. }
@@ -2031,6 +2048,7 @@ impl Node {
             | Node::None { ty, .. }
             | Node::Tuple { ty, .. }
             | Node::Member { ty, .. }
+            | Node::List { ty, .. }
             | Node::Call { ty, .. }
             | Node::Block { ty, .. }
             | Node::Apply { ty, .. }

@@ -20,7 +20,7 @@ use cranelift::codegen::ir::{self, InstBuilder, TrapCode, types};
 use cranelift::frontend::FunctionBuilder;
 use cranelift::module::{FuncId, Module};
 use cranelift::object::ObjectModule;
-use souther_native_abi::{HELD, NOTHING, WHICH, field_at};
+use souther_native_abi::{HELD, LIST_ELEMENTS, LIST_LENGTH, NOTHING, SLOT, WHICH, field_at};
 
 /// Defines the writer of `key`.
 pub(super) fn define(
@@ -156,10 +156,51 @@ impl Writing<'_, '_> {
                 self.builder.switch_to_block(written);
                 Ok(self.builder.block_params(written)[0])
             }
-            CodecShape::ListOf { .. } | CodecShape::SetOf { .. } | CodecShape::MapOf { .. } => Err(
-                not_lowered(format!("{} written at a boundary", shape.ty().spelt())),
-            ),
+            CodecShape::ListOf { element } => self.list(element, value),
+            CodecShape::SetOf { .. } | CodecShape::MapOf { .. } => Err(not_lowered(format!(
+                "{} written at a boundary",
+                shape.ty().spelt()
+            ))),
         }
+    }
+
+    /// A list, as an array of its elements in the order it holds them.
+    fn list(&mut self, element: &CodecShape, list: ir::Value) -> Lowered<ir::Value> {
+        let array = self.call(Runtime::ExternalArray, &[]);
+        let length = self
+            .builder
+            .ins()
+            .load(types::I64, TRUSTED, list, LIST_LENGTH as i32);
+        let head = self.builder.create_block();
+        self.builder.append_block_param(head, types::I64);
+        let step = self.builder.create_block();
+        let written = self.builder.create_block();
+        let start = self.builder.ins().iconst(types::I64, 0);
+        self.builder.ins().jump(head, &[start.into()]);
+
+        self.builder.switch_to_block(head);
+        let index = self.builder.block_params(head)[0];
+        let inside = self
+            .builder
+            .ins()
+            .icmp(IntCC::SignedLessThan, index, length);
+        self.builder.ins().brif(inside, step, &[], written, &[]);
+
+        self.builder.switch_to_block(step);
+        let along = self.builder.ins().imul_imm_s(index, SLOT);
+        let at = self.builder.ins().iadd(list, along);
+        let slot = self
+            .builder
+            .ins()
+            .load(types::I64, TRUSTED, at, LIST_ELEMENTS as i32);
+        let value = out_of_slot(self.builder, slot, machine_type(&element.ty())?);
+        let form = self.value(element, value)?;
+        self.call_for_effect(Runtime::ExternalAppend, &[array, form]);
+        let next = self.builder.ins().iadd_imm_s(index, 1);
+        self.builder.ins().jump(head, &[next.into()]);
+
+        self.builder.switch_to_block(written);
+        Ok(array)
     }
 
     /// A field of an object, which has a second way of holding nothing: not being there.

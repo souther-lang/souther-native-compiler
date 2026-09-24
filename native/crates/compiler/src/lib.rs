@@ -8,6 +8,7 @@ mod boundary;
 mod closures;
 mod codec;
 mod coherent;
+mod equality;
 mod host;
 mod index;
 mod interface;
@@ -34,11 +35,12 @@ use cranelift::object::{ObjectBuilder, ObjectModule};
 use interface::Surface;
 use kernels::LoweredKernel;
 use souther_native_abi::{
-    ALLOCATE, ANSWERED, HELD, HOST_STATUSES, INJECTION_EXCHANGE, INJECTION_GET, NOTHING, Parameter,
-    SLOT, STRING_COMPARE, STRING_CONCAT, Status, TEXT_BYTES, TEXT_LENGTH, TOKEN, WHICH, Word,
-    behavior_symbol, boundary_symbol, constructor_symbol, example_symbol, field_at, generated_call,
-    held_symbol, home_symbol, member_at, room_for_fields, room_for_held, room_for_members,
-    room_for_text, spells_a_module, spells_a_name, type_symbol, value_symbol,
+    ALLOCATE, ANSWERED, HELD, HOST_STATUSES, INJECTION_EXCHANGE, INJECTION_GET, LIST_LENGTH,
+    NOTHING, Parameter, SLOT, STRING_COMPARE, STRING_CONCAT, Status, TEXT_BYTES, TEXT_LENGTH,
+    TOKEN, WHICH, Word, behavior_symbol, boundary_symbol, constructor_symbol, example_symbol,
+    field_at, generated_call, held_symbol, home_symbol, list_at, member_at, room_for_fields,
+    room_for_held, room_for_list, room_for_members, room_for_text, spells_a_module, spells_a_name,
+    type_symbol, value_symbol,
 };
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -639,8 +641,10 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
         reachable.published_value(module_name, value_name, id);
     }
 
+    let comparators = equality::Comparators::default();
     let lowerings = Lowerings {
         declared: &declared,
+        comparators: &comparators,
         reachable: &reachable,
         allocate,
         compare_text,
@@ -893,6 +897,23 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
             &mut module,
         )?;
         accepted(module.define_function(checked, &mut context));
+    }
+
+    // Every comparator a body above asked for, and every one those ask for in turn. Written last
+    // because a comparison anywhere may be the first to reach a type, and a comparator reaches the
+    // types its own values are made of only as it is written.
+    while let Some(owed) = comparators.owed() {
+        context.clear();
+        context.func = Function::with_name_signature(UserFuncName::default(), owed.signature);
+        equality::define_comparator(
+            &mut context.func,
+            &mut shapes,
+            &owed.ty,
+            frontend,
+            &lowerings,
+            &mut module,
+        )?;
+        accepted(module.define_function(owed.id, &mut context));
     }
 
     // Every behavior this object defines and publishes, which a host calls and whose answer a
@@ -1481,13 +1502,13 @@ impl<'a> Declared<'a> {
 
     /// Whether every value of `actual` is a value of `expected`, as the checker lets one stand as
     /// the other for the types this backend lays out: the same type; for declared types, unions and
-    /// primitives, every case the one descends to being among the other's; for an optional or a
-    /// tuple, the same asked of what it holds; for a function, one taking at least what the other
-    /// takes and answering no more than it answers.
+    /// primitives, every case the one descends to being among the other's; for an optional, a list
+    /// or a tuple, the same asked of what it holds; for a function, one taking at least what the
+    /// other takes and answering no more than it answers.
     ///
-    /// `None` where either side is a collection. The checker lets a collection stand where a wider
-    /// one is asked for, and no collection is laid out here, so this side has no reason to know the
-    /// rule yet and does not answer it: the question is left to be refused as not lowered.
+    /// `None` where either side is a `Set` or a `Map`. The checker lets one stand where a wider one
+    /// is asked for, and neither is laid out here, so this side has no reason to know the rule yet
+    /// and does not answer it: the question is left to be refused as not lowered.
     ///
     /// Nothing about a value's layout is asked here, so a refusal from this is always the two
     /// halves disagreeing.
@@ -1502,9 +1523,9 @@ impl<'a> Declared<'a> {
             return Ok(Some(true));
         }
         Ok(match (actual, expected) {
-            (Ty::List { .. } | Ty::Set { .. } | Ty::Map { .. }, _)
-            | (_, Ty::List { .. } | Ty::Set { .. } | Ty::Map { .. }) => None,
-            (Ty::Option { option: actual }, Ty::Option { option: expected }) => {
+            (Ty::Set { .. } | Ty::Map { .. }, _) | (_, Ty::Set { .. } | Ty::Map { .. }) => None,
+            (Ty::Option { option: actual }, Ty::Option { option: expected })
+            | (Ty::List { list: actual }, Ty::List { list: expected }) => {
                 self.fits(actual, expected)?
             }
             (Ty::Tuple { tuple: actual }, Ty::Tuple { tuple: expected }) => {
@@ -1662,6 +1683,8 @@ impl<'a> Held<'a> {
 /// composition, is lowered with this alone, and so cannot resolve a call the way a body would.
 struct Lowerings<'a> {
     declared: &'a Declared<'a>,
+    /// The function comparing two values of each type a comparison here asked about.
+    comparators: &'a equality::Comparators,
     reachable: &'a Reachable,
     allocate: FuncId,
     compare_text: FuncId,
@@ -1815,6 +1838,9 @@ fn word_on_the_machine(word: Word) -> types::Type {
 fn machine_type(ty: &Ty) -> Lowered<types::Type> {
     match ty {
         Ty::Declared { .. } | Ty::Option { .. } | Ty::Tuple { .. } => Ok(POINTER),
+        // The address of its length and its elements, as `souther-native-abi` lays one out. What
+        // the elements are is the static type's and is not asked here: every element is a slot.
+        Ty::List { .. } => Ok(POINTER),
         // What holds a union holds one of its members, and says which by the token at the front of
         // it. A primitive or a case the language gives carries no token, so a union with one among
         // its members has no representation here yet: the members would not say which they are.
@@ -1826,10 +1852,10 @@ fn machine_type(ty: &Ty) -> Lowered<types::Type> {
                 case.spelt()
             ))),
         },
-        // A collection is a value with a layout to design, and none is designed yet. Read whole
-        // off the wire all the same: whether a type crosses and whether it can be laid out here
-        // are two questions, and only this one is this backend's.
-        Ty::List { .. } | Ty::Set { .. } | Ty::Map { .. } => {
+        // A collection other than a list is a value with a layout to design, and none is designed
+        // yet. Read whole off the wire all the same: whether a type crosses and whether it can be
+        // laid out here are two questions, and only this one is this backend's.
+        Ty::Set { .. } | Ty::Map { .. } => {
             Err(not_lowered(format!("a value of type {}", ty.spelt())))
         }
         // A flat closure: one pointer, the same as every other compound value. Slot 0 holds the
@@ -1934,8 +1960,11 @@ fn means_the_same_elsewhere(ty: &Ty) -> bool {
         // those says which type it is.
         Ty::Union { union } => union.iter().all(|it| matches!(it, Case::Declared { .. })),
         Ty::Option { option } => means_the_same_elsewhere(option),
+        // A length and slots, laid out in the crate both halves read, so a list means what its
+        // elements mean.
+        Ty::List { list } => means_the_same_elsewhere(list),
         // No layout, so nothing another object could read the same way.
-        Ty::List { .. } | Ty::Set { .. } | Ty::Map { .. } => false,
+        Ty::Set { .. } | Ty::Map { .. } => false,
         Ty::Tuple { tuple } => tuple.iter().all(means_the_same_elsewhere),
         // Unconditionally, and not by asking whether its parameters and its answer do: what a
         // closure's pointer holds — a code address, and after it whatever it captured — is a
@@ -3300,6 +3329,28 @@ fn lower(
             }
             value
         }
+        // Its length and then its elements, as `souther-native-abi` lays a list out. The empty
+        // list is room for the length alone, and never the null an absent value is.
+        Node::List { elements, .. } => {
+            let mut held = Vec::with_capacity(elements.len());
+            for element in elements {
+                let answered = lower(builder, lowering, module, bindings, abort, element)?;
+                held.push(into_slot(builder, answered));
+            }
+            let count = elements.len() as i64;
+            let flags = TRUSTED;
+            let value = lowering.room(builder, module, room_for_list(count));
+            let length = builder.ins().iconst(types::I64, count);
+            builder
+                .ins()
+                .store(flags, length, value, LIST_LENGTH as i32);
+            for (at, element) in held.into_iter().enumerate() {
+                builder
+                    .ins()
+                    .store(flags, element, value, list_at(at as i64) as i32);
+            }
+            value
+        }
         Node::Call {
             reaches,
             arguments,
@@ -3363,6 +3414,36 @@ fn lower(
                         lower(builder, lowering, module, bindings, abort, right)?,
                     );
                     arithmetic(builder, abort, Op::Add, a, b, aborts)?
+                }
+                Some(LoweredKernel::ListLength) => {
+                    let [list] = arguments.as_slice() else {
+                        unreachable!("`Coherent` held list.length to the one argument it takes");
+                    };
+                    let list = lower(builder, lowering, module, bindings, abort, list)?;
+                    builder
+                        .ins()
+                        .load(types::I64, TRUSTED, list, LIST_LENGTH as i32)
+                }
+                // The element's own slot, which is what an `Option` holding it points at: nothing
+                // is copied and nothing taken from the arena. An index is in the list where it is
+                // below the length read without a sign, so a negative one, read as a very large
+                // one, is outside it as well. The address is worked out either way and only
+                // answered where the index is inside.
+                Some(LoweredKernel::ListGet) => {
+                    let [index, list] = arguments.as_slice() else {
+                        unreachable!("`Coherent` held list.get to the two arguments it takes");
+                    };
+                    let index = lower(builder, lowering, module, bindings, abort, index)?;
+                    let list = lower(builder, lowering, module, bindings, abort, list)?;
+                    let length = builder
+                        .ins()
+                        .load(types::I64, TRUSTED, list, LIST_LENGTH as i32);
+                    let inside = builder.ins().icmp(IntCC::UnsignedLessThan, index, length);
+                    let along = builder.ins().imul_imm_s(index, SLOT);
+                    let at = builder.ins().iadd(list, along);
+                    let slot = builder.ins().iadd_imm_s(at, list_at(0));
+                    let nothing = builder.ins().iconst(POINTER, NOTHING);
+                    builder.ins().select(inside, slot, nothing)
                 }
                 None => return Err(not_lowered(format!("a call to the kernel {kernel}"))),
             },
@@ -3805,6 +3886,15 @@ fn compare(
                 prim.spelt()
             ))),
         },
+        // Two values of one type that is not a primitive: equal where what they are made of is,
+        // which `equality` answers per type.
+        (one, other) if one == other && matches!(op, Op::Eq | Op::Ne) => {
+            let same = equality::equal(builder, lowering, module, one, a, b)?;
+            Ok(match op {
+                Op::Eq => same,
+                _ => builder.ins().icmp_imm_s(IntCC::Equal, same, 0),
+            })
+        }
         // A declared type on either side, which covers every legitimate comparison whose operands
         // are not two values of one primitive: two values of one declared type, a value against a
         // bare literal of what its newtype wraps, and a sum against one of its cases. What each of

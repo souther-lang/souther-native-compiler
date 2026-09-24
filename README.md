@@ -217,11 +217,20 @@ declaring build's, and for a type built from fields that build is also the only 
 which clause did not hold. Text read is canonicalized to NFC. What JSON is, is `souther-json-syntax`, a crate that knows
 no Souther type, no arena and no runtime, written to be what both runtimes read once #17 moves it.
 
-Still ahead: a `Decimal`, the collections, a function value, every kernel but `Int.add`, a value
+A `List` is laid out inside a run as its length and then its elements, one slot each. Of the
+list kernels the standard library declares (the `intrinsic`s in `souther/list.sou`), this backend
+lowers `list.length` and `list.get`; the others are still ahead. `List.fold` is not one of them:
+it is an ordinary helper over `List.get` (ADR-0051), and so are the combinators written over it.
+In the external form a list is an array of its elements, and a mistake inside one is answered at
+the element's index (`/lines/2/quantity`). Two values of one type compare by what they are made
+of, a list element by element, through a comparator the object holds per type.
+
+Still ahead: a `Decimal`, a `Set` and a `Map`, a list handed to a host,
+every kernel but `Int.add`, `List.length` and `List.get`, a value
 that runs in the module declaring it, an attempted
 construction, which takes an arm by the clause that did not hold instead of ending the run, and a
 behavior that declares what its answer owes, which is refused rather than answered without the
-rule being run. A collection and
+rule being run. A set, a map and
 a `Decimal` are read off the program whole and refused where one would be laid out or written: how
 every carrier orders a set's members, spells a map's keys and writes a decimal is for the language
 to state before a backend writes one.

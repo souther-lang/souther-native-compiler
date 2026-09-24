@@ -53,7 +53,7 @@
 
 use crate::closures::ClosureSites;
 use crate::index;
-use crate::kernels::LoweredKernel;
+use crate::kernels::{Bound, LoweredKernel};
 use crate::transport::{
     AbortKind, Answers, Carrier, Case, Declaration, Definition, Ensures, Guard, Held, Node, Op,
     Owner, Prim, Program, Reaches, Reading, Routing, Selects, Target, Ty, Value,
@@ -781,6 +781,20 @@ impl<'a> Walk<'_, 'a> {
                     .collect()
             }
             Node::Member { tuple, .. } => vec![Slot::Untyped(tuple, Untyped::ReadFrom)],
+            Node::List { elements, ty, .. } => {
+                let Ty::List { list } = ty else {
+                    bail!(
+                        "{}: a list typed {}, which is not a list",
+                        self.owner,
+                        ty.spelt()
+                    );
+                };
+                elements
+                    .iter()
+                    .enumerate()
+                    .map(|(at, element)| typed(element, list, format!("element {at} of a list")))
+                    .collect()
+            }
             Node::Call {
                 reaches, arguments, ..
             } => {
@@ -1142,7 +1156,10 @@ impl<'a> Walk<'_, 'a> {
                     ty.spelt()
                 ),
             },
-            Node::Tuple { members, .. } => {
+            Node::Tuple { members, .. }
+            | Node::List {
+                elements: members, ..
+            } => {
                 for member in members {
                     self.node(member)?;
                 }
@@ -1607,19 +1624,29 @@ impl<'a> Walk<'_, 'a> {
                             contract.fact
                         );
                     }
+                    // What it takes binds the contract's variables, once each, and what it
+                    // answers is then the one type the contract says it answers.
+                    let mut bound = Bound::default();
                     for (settled, known_to_take) in takes.iter().zip(&contract.takes) {
-                        self.same(
-                            &format!("what an application of {kernel} takes"),
-                            settled,
-                            known_to_take,
-                            "what it takes",
-                        )?;
+                        if !known_to_take.binds(settled, &mut bound) {
+                            bail!(
+                                "{}: what an application of {kernel} takes is typed {} and what \
+                                 it takes is {}: the two are one fact crossed twice and this \
+                                 document's disagree",
+                                self.owner,
+                                settled.spelt(),
+                                known_to_take.spelt()
+                            );
+                        }
                     }
                     self.ends_for(&format!("a call of {kernel}"), aborts, &contract.aborts)?;
+                    let Some(answers) = contract.answers.settled(&bound) else {
+                        unreachable!("what {kernel} takes binds every variable of what it answers");
+                    };
                     self.same(
                         &format!("a call of {kernel}"),
                         ty,
-                        &contract.answers,
+                        &answers,
                         "what it answers",
                     )
                 }

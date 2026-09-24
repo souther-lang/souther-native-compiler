@@ -231,7 +231,10 @@ impl<'p, 'a> Planner<'p, 'a> {
             }
             Node::Field { target, .. } => self.walk(target, bound, acc, seen)?,
             Node::Some { value, .. } => self.walk(value, bound, acc, seen)?,
-            Node::Tuple { members, .. } => {
+            Node::Tuple { members, .. }
+            | Node::List {
+                elements: members, ..
+            } => {
                 for member in members {
                     self.walk(member, bound, acc, seen)?;
                 }
