@@ -9,6 +9,8 @@ import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * A checked program as an object file for the machine this runs on.
@@ -45,21 +47,57 @@ public final class NativeCompiler {
     }
 
     /**
+     * What a build for a host writes: the object, a C header declaring every function a host
+     * calls, a manifest describing the same functions in the model's terms, and a shared library
+     * of the object and the runtime exporting those functions and nothing else.
+     */
+    public record Library(Path object, Path header, Path manifest, Path library) {}
+
+    /**
+     * The program built for a host, into {@code into}.
+     *
+     * <p>All of it is written by the driver, from what the object's emission decided. Nothing here
+     * reads the program to say what a host can call: that would be a second answer to a question
+     * the driver already answered while writing the object.
+     */
+    public static Library library(CheckedProgram program, Path into)
+            throws IOException, InterruptedException {
+        byte[] said = run(ProgramWriter.written(program),
+                List.of("--library", into.toAbsolutePath().toString()));
+        // Where the driver wrote each, one to a line, which is how what a shared library is called
+        // on this host is said by the side that named it.
+        List<Path> written = new String(said, StandardCharsets.UTF_8).lines().map(Path::of).toList();
+        if (written.size() != 4) {
+            throw new IOException("the driver said it wrote " + written);
+        }
+        return new Library(written.get(0), written.get(1), written.get(2), written.get(3));
+    }
+
+    /**
      * The object a transport document is compiled to. Package-visible for a test that asks what the
      * driver does with a document no checked program of today's language writes.
      */
     static byte[] driven(String document) throws IOException, InterruptedException {
+        return run(document, List.of());
+    }
+
+    /** What the driver writes on stdout when handed the document with these arguments. */
+    private static byte[] run(String document, List<String> arguments)
+            throws IOException, InterruptedException {
         Path driver = driver();
         if (!Files.isExecutable(driver)) {
             throw new IOException("no driver at " + driver.toAbsolutePath()
                     + ", which `cargo build` in native/ writes");
         }
+        List<String> command = new ArrayList<>();
+        command.add(driver.toString());
+        command.addAll(arguments);
 
         // What the driver says goes to a file rather than to a pipe this side reads second: two
         // pipes read one after the other deadlock where the one not being read fills up first.
         Path said = Files.createTempFile("souther-native-", ".problems");
         try {
-            Process process = new ProcessBuilder(driver.toString())
+            Process process = new ProcessBuilder(command)
                     .redirectError(said.toFile())
                     .start();
 

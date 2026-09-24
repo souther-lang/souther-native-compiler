@@ -1825,3 +1825,32 @@ pub enum AbortKind {
     #[serde(rename = "INVALID_BOUNDS")]
     InvalidBounds,
 }
+
+impl AbortKind {
+    /// Every member, in the order the Java half's enumeration declares them.
+    ///
+    /// Written by hand, since Rust has no way to ask an enum for its members. What keeps it whole
+    /// is [`AbortKind::spelt`] and `native_status` beside it: a member added to the enum stops both
+    /// compiling until it is answered for, and whoever answers it there is in the one place this
+    /// list is also asked to keep up.
+    pub const ALL: [AbortKind; 6] = [
+        AbortKind::InvariantNotHeld,
+        AbortKind::EnsuresNotHeld,
+        AbortKind::UnreachableReached,
+        AbortKind::DivisionByZero,
+        AbortKind::RequiredFormHasNoPlace,
+        AbortKind::InvalidBounds,
+    ];
+
+    /// How the member is spelt on the wire, which is also what a host is told a status means.
+    pub fn spelt(self) -> &'static str {
+        match self {
+            AbortKind::InvariantNotHeld => "INVARIANT_NOT_HELD",
+            AbortKind::EnsuresNotHeld => "ENSURES_NOT_HELD",
+            AbortKind::UnreachableReached => "UNREACHABLE_REACHED",
+            AbortKind::DivisionByZero => "DIVISION_BY_ZERO",
+            AbortKind::RequiredFormHasNoPlace => "REQUIRED_FORM_HAS_NO_PLACE",
+            AbortKind::InvalidBounds => "INVALID_BOUNDS",
+        }
+    }
+}

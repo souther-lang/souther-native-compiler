@@ -10,7 +10,9 @@ mod codec;
 mod coherent;
 mod host;
 mod index;
+mod interface;
 mod kernels;
+mod link;
 pub mod transport;
 
 use anyhow::{Result, anyhow, bail};
@@ -26,6 +28,7 @@ use cranelift::codegen::{Context, ir};
 use cranelift::frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use cranelift::module::{DataDescription, DataId, FuncId, Linkage, Module, default_libcall_names};
 use cranelift::object::{ObjectBuilder, ObjectModule};
+use interface::Surface;
 use kernels::LoweredKernel;
 use souther_native_abi::{
     ALLOCATE, ANSWERED, HELD, NOTHING, SLOT, STRING_COMPARE, STRING_CONCAT, Status, TEXT_BYTES,
@@ -36,6 +39,8 @@ use souther_native_abi::{
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
+use std::fs;
+use std::path::{Path, PathBuf};
 use transport::{
     AbortKind, AlternativesForm, Answers, Arm, Case, Declaration, DeclaredBy, Definition, Node, Op,
     Prim, Program, Publication, Reaches, Reading, Routing, Selects, Stage, TRANSPORT_VERSION,
@@ -118,7 +123,7 @@ impl std::error::Error for NotLowered {}
 /// with a party the compiler cannot check. What holds the two together is a test that runs the
 /// whole way through rather than each side's reading of this comment.
 pub mod ended {
-    /// The object is on stdout.
+    /// The object is on stdout, or what was asked for is in the directory it was asked into.
     pub const WITH_AN_OBJECT: u8 = 0;
 
     /// Something went wrong here: a document this driver could not read, or a machine it could not
@@ -142,6 +147,11 @@ fn not_lowered(what: impl Into<String>) -> NotLowered {
 /// compile, and a name `Coherent` held to be there and is not is this compiler's own mistake.
 /// Between them the host is asked for a code generator, which is neither.
 pub fn object_for(document: &str) -> Result<Vec<u8>> {
+    Ok(built(document)?.0)
+}
+
+/// The object, and everything a host can call in it and in the runtime.
+fn built(document: &str) -> Result<(Vec<u8>, Surface)> {
     let program: Program = serde_json::from_str(document)?;
     if program.transport != TRANSPORT_VERSION {
         bail!(
@@ -152,6 +162,45 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
     let coherent = Coherent::of(&program)?;
     let module = for_this_host()?;
     Ok(emit(&program, coherent, module)?)
+}
+
+/// What a build for a host writes into a directory of its own.
+pub struct Library {
+    /// The object, which is what another Souther build's object is linked with.
+    pub object: PathBuf,
+    /// The C header declaring every function a host calls.
+    pub header: PathBuf,
+    /// The same functions described in the model's terms, for a binding to be written from.
+    pub manifest: PathBuf,
+    /// The object and the runtime linked into one shared library, exporting what the header
+    /// declares and nothing else.
+    pub library: PathBuf,
+}
+
+/// The object for a document, and beside it what a host needs to call it: a header, a manifest,
+/// and a shared library of the object and `runtime`, the runtime's static archive.
+///
+/// All three of what a host reads are written from the one surface the object's emission put its
+/// functions on, so none of them can name a function the others do not.
+pub fn library_for(document: &str, runtime: &Path, into: &Path) -> Result<Library> {
+    let (object, surface) = built(document)?;
+    fs::create_dir_all(into)?;
+    let written = Library {
+        object: into.join("souther.o"),
+        header: into.join("souther.h"),
+        manifest: into.join("souther.json"),
+        library: into.join(link::LIBRARY),
+    };
+    fs::write(&written.object, object)?;
+    fs::write(&written.header, surface.header())?;
+    fs::write(&written.manifest, surface.manifest())?;
+    link::shared_library(
+        &written.object,
+        runtime,
+        &surface.exported(),
+        &written.library,
+    )?;
+    Ok(written)
 }
 
 /// What is left once a document has been read whole: a program this backend does not write yet,
@@ -181,7 +230,11 @@ fn for_this_host() -> Result<ObjectModule> {
 }
 
 /// The object for a document [`Coherent`] read whole.
-fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowered<Vec<u8>> {
+fn emit(
+    program: &Program,
+    coherent: Coherent,
+    mut module: ObjectModule,
+) -> Lowered<(Vec<u8>, Surface)> {
     let Coherent {
         declared,
         targets,
@@ -712,10 +765,12 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
         accepted(module.define_function(checked, &mut context));
     }
 
-    // What a host reaches for an answer as the language writes it: every behavior this object
-    // defines and publishes, and every row. A behavior another build implements is that build's
-    // to give a boundary to, so one object never answers for a second entry under the same name.
+    // Every behavior this object defines and publishes, which a host calls and whose answer a
+    // boundary writes as the language writes it, and every row, which has a boundary too. A
+    // behavior another build implements is that build's to give either to, so one object never
+    // answers for a second entry under the same name.
     let mut boundaries = Vec::new();
+    let mut published = Vec::new();
     for target in &program.behaviors {
         if !matches!(target.is, Answers::Body | Answers::Composed) {
             continue;
@@ -734,7 +789,28 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
             takes: target.takes(),
             output: &target.output,
         });
+        published.push(host::Entry {
+            module: &target.module,
+            name: &target.name,
+            runs: reachable.of_behavior_named(&declared),
+            takes: target.takes(),
+            answers: target.answers(),
+        });
     }
+    // Every value a module of this object publishes, through the entry another object reaches it
+    // by.
+    let values: Vec<host::Entry> = program
+        .modules
+        .iter()
+        .flat_map(|written| &written.entries)
+        .map(|entry| host::Entry {
+            module: &entry.value.module,
+            name: &entry.value.name,
+            runs: reachable.of_published_value(&entry.value.module, &entry.value.name),
+            takes: Vec::new(),
+            answers: entry.body.ty().clone(),
+        })
+        .collect();
     for written in &program.modules {
         for example in &written.examples {
             let target = targets.reached(&format!("{}.{}", written.name, example.behavior));
@@ -764,12 +840,17 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
     let mut codecs = codec::Codecs::new(call_conv);
     // What a host builds, reads, decodes and encodes a value of a published type through, each
     // running on the constructors just defined and the layout they write.
-    host::define(&mut emitting, &mut codecs, program, &runs)?;
+    let mut surface = Surface::default();
+    host::define(&mut emitting, &mut codecs, &mut surface, program, &runs)?;
+    // What a host calls a behavior and reads a value through, beside what another object built by
+    // this compiler calls: the two are different parties and are told different things.
+    host::define_behaviors(&mut emitting, &mut surface, &published)?;
+    host::define_values(&mut emitting, &mut surface, &values)?;
     boundary::define(&mut emitting, &mut codecs, &boundaries)?;
     // Every writer and reader the entries above reached.
     codecs.define(&mut emitting)?;
 
-    Ok(accepted(module.finish().emit()))
+    Ok((accepted(module.finish().emit()), surface))
 }
 
 /// Where a definition that is not a body is emitted from: a host's entries, a boundary, a writer

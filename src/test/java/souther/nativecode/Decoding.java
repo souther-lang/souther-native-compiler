@@ -45,8 +45,7 @@ final class Decoding {
     }
 
     static String symbol(String module, String type, String operation) {
-        return Running.PREFIX + "souther" + Running.ABI + "." + module + "$type$" + type + "$"
-                + operation;
+        return Running.hostSymbol(module, type, operation);
     }
 
     String harness() {

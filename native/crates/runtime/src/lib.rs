@@ -20,6 +20,8 @@ use souther_native_abi::{SLOT, TEXT_BYTES, TEXT_LENGTH, room_for_text};
 mod decoding;
 mod document;
 mod external;
+#[cfg(test)]
+mod host_table;
 use std::cell::RefCell;
 use std::cmp::Ordering;
 
