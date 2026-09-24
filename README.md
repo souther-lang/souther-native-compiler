@@ -238,9 +238,18 @@ driver runs is:
     cc -shared -o libsouther.so -Wl,--version-script=<script> -Wl,--no-undefined \
         -Wl,-u,<symbol> ... souther.o libsouther_native_runtime.a
 
-where the list and the script name every function the header declares. An object that leaves a
-behavior for another build to answer does not link into a library on its own: the library is one
-program, and what it leaves unresolved is refused when it is linked rather than when a host loads it.
+where the list and the script name every function the header declares.
+
+A library is one program, so it holds every build the program reaches: a build's object defines
+what reads and builds a value of a type it declares, and another build calls that. Those objects are
+handed to the driver with `--with <object>`, or to `NativeCompiler.library` beside the program, the
+same objects an executable of it is linked with. What the library then offers a host is what each
+of its objects offers, and each says that itself: an object carries its own surface, in a section
+of its own, so an object another build wrote is described by the build that wrote it and not by a
+second reading of a program this one does not have. The declarations, the manifest and the export
+list are written from what the objects carry. A module two of them carry is refused, and so is an
+object that carries none, and a program missing a build it reaches is refused when it is linked
+rather than when a host loads it.
 
 What a behavior takes is said by type and in order. The names its parameters were written under do
 not cross from the checker yet, so a binding has no name to give one but its place.

@@ -19,16 +19,21 @@
 //! type is the key the document reaches it by and never leaves it: the manifest says the module
 //! and the name apart, read off the declaration.
 
-use crate::manifest::{self, Manifest, Parameter, Word};
+use crate::manifest::{self, Carried, Manifest, Parameter, Word};
 use crate::transport::{self, AbortKind, Declaration, Prim, Ty};
 use crate::{Declared, POINTER, native_status};
+use anyhow::{Result, bail};
 use cranelift::codegen::ir::{self, AbiParam, types};
 use cranelift::codegen::isa::CallConv;
+use cranelift::module::{DataDescription, Linkage, Module};
+use cranelift::object::ObjectModule;
+use object::{Object, ObjectSection};
 use souther_native_abi::{
     ABI_GENERATION, ANSWERED, DECODED_ISSUES, DECODED_MALFORMED, DECODED_VALUE, HOST_RUNTIME,
     HostParameter, HostWord,
 };
 use std::collections::BTreeMap;
+use target_lexicon::BinaryFormat;
 
 /// A function a host calls, as it is emitted: its symbol, which is its name in C, and what it
 /// takes and answers.
@@ -329,10 +334,80 @@ impl Surface {
             })
     }
 
-    /// Every module of this object, as the manifest says it.
-    pub(crate) fn modules(self) -> Vec<manifest::Module> {
-        self.modules.into_values().collect()
+    /// Puts what this object makes reachable to a host into the object itself, in a section of
+    /// its own, so that whatever links it reads what it offers off it and from nothing else.
+    ///
+    /// The object is what a library is made of, and more than one build's object may go into one
+    /// library: a build's object defines what reads and builds a value of a type it declares, and
+    /// another build's object calls that. So what a library offers is what each of its objects
+    /// carries, and one object built before another is described by itself rather than by a
+    /// second reading of a program that build no longer has.
+    pub(crate) fn carry(&self, module: &mut ObjectModule) {
+        let carried = Carried {
+            version: manifest::VERSION,
+            abi: ABI_GENERATION,
+            modules: self.modules.values().cloned().collect(),
+        };
+        let written =
+            serde_json::to_vec(&carried).expect("what an object carries is JSON whatever it holds");
+        let mut data = DataDescription::new();
+        data.define(written.into_boxed_slice());
+        data.set_custom_section(match module.isa().triple().binary_format {
+            BinaryFormat::Macho => "__DATA,__souther_host",
+            _ => CARRIED,
+        });
+        // Kept by a link that strips what nothing refers to: nothing in the program refers to this.
+        data.set_used(true);
+        let id = module
+            .declare_data("$host$surface", Linkage::Local, false, false)
+            .unwrap_or_else(|refused| panic!("Cranelift refused a data object: {refused}"));
+        module
+            .define_data(id, &data)
+            .unwrap_or_else(|refused| panic!("Cranelift refused a data object: {refused}"));
     }
+}
+
+/// The section an object carries its surface in, where its format has no segments; in Mach-O the
+/// section of the same name, less its dot and with the two underscores Mach-O names take, in the
+/// data segment.
+const CARRIED: &str = ".souther_host";
+
+/// Every module an object carries, read back out of it. `named` is what the object is called, for
+/// a refusal to say which one it was.
+pub(crate) fn carried_by(object: &[u8], named: &str) -> Result<Vec<manifest::Module>> {
+    let file = object::File::parse(object)
+        .map_err(|problem| anyhow::anyhow!("{named} is not an object: {problem}"))?;
+    let section = match file.format() {
+        object::BinaryFormat::MachO => "__souther_host",
+        _ => CARRIED,
+    };
+    let Some(section) = file.section_by_name(section) else {
+        bail!(
+            "{named} carries no surface for a host: it is not an object this compiler built, or \
+             one it built before an object carried one"
+        );
+    };
+    let data = section
+        .data()
+        .map_err(|problem| anyhow::anyhow!("{named}: {problem}"))?;
+    // What the section holds is the JSON, and whatever padding its alignment asked for after it.
+    let end = data
+        .iter()
+        .rposition(|byte| *byte != 0)
+        .map_or(0, |at| at + 1);
+    let carried: Carried = serde_json::from_slice(&data[..end])
+        .map_err(|problem| anyhow::anyhow!("what {named} carries does not read: {problem}"))?;
+    if carried.version != manifest::VERSION || carried.abi != ABI_GENERATION {
+        bail!(
+            "{named} carries a surface of manifest version {} and ABI generation {}, and this \
+             driver writes version {} and generation {}",
+            carried.version,
+            carried.abi,
+            manifest::VERSION,
+            ABI_GENERATION
+        );
+    }
+    Ok(carried.modules)
 }
 
 /// The manifest of a library holding these modules.

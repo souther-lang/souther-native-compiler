@@ -148,11 +148,6 @@ fn not_lowered(what: impl Into<String>) -> NotLowered {
 /// compile, and a name `Coherent` held to be there and is not is this compiler's own mistake.
 /// Between them the host is asked for a code generator, which is neither.
 pub fn object_for(document: &str) -> Result<Vec<u8>> {
-    Ok(built(document)?.0)
-}
-
-/// The object, and everything a host can call in it and in the runtime.
-fn built(document: &str) -> Result<(Vec<u8>, Surface)> {
     let program: Program = serde_json::from_str(document)?;
     if program.transport != TRANSPORT_VERSION {
         bail!(
@@ -213,15 +208,23 @@ fn header() -> String {
 }
 
 /// The object for a document, and beside it what a host needs to call it: a header and the
-/// declarations it includes, a manifest, and a shared library of the object and `runtime`, the
-/// runtime's static archive.
+/// declarations it includes, a manifest, and a shared library of the object, the objects in
+/// `alongside`, and `runtime`, the runtime's static archive.
 ///
-/// Everything a host reads is written from the one manifest the object's emission put its
-/// functions on, so none of it can name a function the rest does not.
-pub fn library_for(document: &str, runtime: &Path, into: &Path) -> Result<Library> {
+/// `alongside` is every object another build wrote that this one reaches — whose behaviors it
+/// calls, or whose types it builds and reads — the same objects an executable of it would be linked
+/// with. A library is one program, so they go into it, and what it offers a host is everything
+/// each of them carries beside what this object does. Everything a host reads is written from
+/// what the objects carry, which is what their emission put there, so none of it can name a
+/// function the rest does not.
+pub fn library_for(
+    document: &str,
+    alongside: &[PathBuf],
+    runtime: &Path,
+    into: &Path,
+) -> Result<Library> {
     let linker = link::Linker::of_this_host()?;
-    let (object, surface) = built(document)?;
-    let manifest = interface::manifest_of(surface.modules());
+    let object = object_for(document)?;
     fs::create_dir_all(into)?;
     let written = Library {
         object: into.join("souther.o"),
@@ -230,12 +233,34 @@ pub fn library_for(document: &str, runtime: &Path, into: &Path) -> Result<Librar
         manifest: into.join("souther.json"),
         library: into.join(linker.library()),
     };
-    fs::write(&written.object, object)?;
+    fs::write(&written.object, &object)?;
+
+    // Every module once: a module is declared by one build, so one in two objects is two builds
+    // of it, or one object handed over twice, and either would be a link of two definitions.
+    let mut modules: BTreeMap<String, manifest::Module> = BTreeMap::new();
+    let mut objects = vec![written.object.as_path()];
+    let mut carried = vec![(written.object.display().to_string(), object)];
+    for path in alongside {
+        carried.push((path.display().to_string(), fs::read(path)?));
+        objects.push(path);
+    }
+    for (named, bytes) in &carried {
+        for module in interface::carried_by(bytes, named)? {
+            let name = module.name.clone();
+            index::once(&mut modules, name.clone(), module, || {
+                format!(
+                    "the module {name} is carried by two of the objects linked, the second {named}"
+                )
+            })?;
+        }
+    }
+    let manifest = interface::manifest_of(modules.into_values().collect());
+
     fs::write(&written.header, header())?;
     fs::write(&written.declarations, interface::declarations(&manifest))?;
     fs::write(&written.manifest, interface::written(&manifest))?;
     linker.shared_library(
-        &[&written.object],
+        &objects,
         runtime,
         &interface::exported(&manifest),
         &written.library,
@@ -270,11 +295,7 @@ fn for_this_host() -> Result<ObjectModule> {
 }
 
 /// The object for a document [`Coherent`] read whole.
-fn emit(
-    program: &Program,
-    coherent: Coherent,
-    mut module: ObjectModule,
-) -> Lowered<(Vec<u8>, Surface)> {
+fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowered<Vec<u8>> {
     let Coherent {
         declared,
         targets,
@@ -890,7 +911,9 @@ fn emit(
     // Every writer and reader the entries above reached.
     codecs.define(&mut emitting)?;
 
-    Ok((accepted(module.finish().emit()), surface))
+    surface.carry(&mut module);
+
+    Ok(accepted(module.finish().emit()))
 }
 
 /// Where a definition that is not a body is emitted from: a host's entries, a boundary, a writer

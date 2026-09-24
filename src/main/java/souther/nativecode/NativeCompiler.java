@@ -56,25 +56,52 @@ public final class NativeCompiler {
     public record Library(Path object, Path header, Path declarations, Path manifest,
                           Path library) {}
 
-    /**
-     * The program built for a host, into {@code into}.
-     *
-     * <p>All of it is written by the driver, from what the object's emission decided. Nothing here
-     * reads the program to say what a host can call: that would be a second answer to a question
-     * the driver already answered while writing the object.
-     */
+    /** The program built for a host, into {@code into}, reaching no other build's object. */
     public static Library library(CheckedProgram program, Path into)
             throws IOException, InterruptedException {
-        byte[] said = run(ProgramWriter.written(program),
-                List.of("--library", into.toAbsolutePath().toString()));
-        // Where the driver wrote each, one to a line, which is how what a shared library is called
-        // on this host is said by the side that named it.
-        List<Path> written = new String(said, StandardCharsets.UTF_8).lines().map(Path::of).toList();
-        if (written.size() != 5) {
-            throw new IOException("the driver said it wrote " + written);
+        return library(program, List.of(), into);
+    }
+
+    /**
+     * The program built for a host, into {@code into}, with every object another build wrote that
+     * it reaches: the same objects an executable of it would be linked with. A library is one
+     * program, so they are linked into it, and what it offers a host is what each of them carries
+     * beside what this program's object does.
+     *
+     * <p>All of it is written by the driver, from what the objects' emission decided. Nothing here
+     * reads the program to say what a host can call: that would be a second answer to a question
+     * the driver already answered while writing each object.
+     */
+    public static Library library(CheckedProgram program, List<byte[]> alongside, Path into)
+            throws IOException, InterruptedException {
+        Path handed = Files.createTempDirectory("souther-native-alongside");
+        try {
+            List<String> arguments = new ArrayList<>(
+                    List.of("--library", into.toAbsolutePath().toString()));
+            for (int at = 0; at < alongside.size(); at++) {
+                Path object = handed.resolve(at + ".o");
+                Files.write(object, alongside.get(at));
+                arguments.add("--with");
+                arguments.add(object.toString());
+            }
+            byte[] said = run(ProgramWriter.written(program), arguments);
+            // Where the driver wrote each, one to a line, which is how what a shared library is
+            // called on this host is said by the side that named it.
+            List<Path> written =
+                    new String(said, StandardCharsets.UTF_8).lines().map(Path::of).toList();
+            if (written.size() != 5) {
+                throw new IOException("the driver said it wrote " + written);
+            }
+            return new Library(written.get(0), written.get(1), written.get(2), written.get(3),
+                    written.get(4));
+        } finally {
+            try (var files = Files.list(handed)) {
+                for (Path file : files.toList()) {
+                    Files.delete(file);
+                }
+            }
+            Files.delete(handed);
         }
-        return new Library(written.get(0), written.get(1), written.get(2), written.get(3),
-                written.get(4));
     }
 
     /**

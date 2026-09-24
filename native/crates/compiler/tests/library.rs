@@ -7,7 +7,7 @@
 //! from, which is what they are being held to.
 
 use serde_json::Value;
-use souther_native_driver::library_for;
+use souther_native_driver::{library_for, object_for};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
@@ -98,7 +98,7 @@ fn defined_in(file: &Path, exported: bool) -> BTreeSet<String> {
 fn the_header_the_manifest_and_the_library_name_one_set_of_functions() {
     for document in [ADDING, VALUES] {
         let into = tempdir().unwrap();
-        let built = library_for(document, support::runtime(), into.path()).unwrap();
+        let built = library_for(document, &[], support::runtime(), into.path()).unwrap();
 
         let declarations = fs::read_to_string(&built.declarations).unwrap();
         // What an FFI with no preprocessor reads: not one directive, whatever the program is.
@@ -215,7 +215,7 @@ fn ran(document: &str, program: &str) -> String {
 
 fn ran_as(document: &str, program: &str, compiler: &str, named: &str) -> String {
     let into = tempdir().unwrap();
-    let built = library_for(document, support::runtime(), into.path()).unwrap();
+    let built = library_for(document, &[], support::runtime(), into.path()).unwrap();
     let source = into.path().join(named);
     fs::write(&source, program).unwrap();
     let executable = into.path().join("host");
@@ -261,4 +261,59 @@ fn a_host_builds_reads_and_writes_a_value_through_the_header_and_the_library() {
 #[test]
 fn a_cpp_program_calls_a_behavior_through_the_same_header() {
     assert_eq!(ran_as(ADDING, CALLING_FROM_CPP, "c++", "host.cpp"), "0 5\n");
+}
+
+/// A module is declared by one build, so an object carrying one this build carries too is refused
+/// rather than linked as a second definition of everything in it.
+#[test]
+fn a_module_two_objects_carry_is_refused() {
+    let into = tempdir().unwrap();
+    let again = into.path().join("again.o");
+    fs::write(&again, object_for(VALUES).unwrap()).unwrap();
+    let refused = library_for(
+        VALUES,
+        &[again],
+        support::runtime(),
+        &into.path().join("built"),
+    )
+    .err()
+    .expect("a module in two objects is refused");
+    assert!(
+        refused
+            .to_string()
+            .contains("the module m is carried by two"),
+        "{refused}"
+    );
+}
+
+/// An object that says nothing of what it offers a host is not linked into a library as though it
+/// offered nothing.
+#[test]
+fn an_object_carrying_no_surface_is_refused() {
+    let into = tempdir().unwrap();
+    let source = into.path().join("other.c");
+    fs::write(&source, "int other(void) { return 0; }\n").unwrap();
+    let other = into.path().join("other.o");
+    let compiled = Command::new("cc")
+        .arg("-c")
+        .arg(&source)
+        .arg("-o")
+        .arg(&other)
+        .status()
+        .unwrap();
+    assert!(compiled.success());
+    let refused = library_for(
+        ADDING,
+        &[other],
+        support::runtime(),
+        &into.path().join("built"),
+    )
+    .err()
+    .expect("an object with no surface is refused");
+    assert!(
+        refused
+            .to_string()
+            .contains("carries no surface for a host"),
+        "{refused}"
+    );
 }

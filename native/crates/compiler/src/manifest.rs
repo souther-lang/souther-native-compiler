@@ -44,6 +44,20 @@ pub(crate) struct Manifest {
     pub modules: Vec<Module>,
 }
 
+/// What one object carries of its own surface, in a section of its own: every module it holds, as
+/// the manifest says them. A library is made of the objects it links, and what it offers a host is
+/// what each of them carries, so an object built by another build is described by itself and not
+/// by whatever links it.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Carried {
+    /// The [`VERSION`] of what the modules say.
+    pub version: u32,
+    /// The ABI generation their functions answer to.
+    pub abi: u32,
+    pub modules: Vec<Module>,
+}
+
 /// What one module publishes.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(deny_unknown_fields)]

@@ -19,3 +19,7 @@ cranelift = { version = "0.135.2", features = ["frontend", "module", "native", "
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
+# The versions Cranelift already builds: an object is written by the one and its host read off the
+# other, and reading one back is the same crate reading what it wrote.
+object = { version = "0.39", default-features = false, features = ["read_core", "elf", "macho", "std"] }
+target-lexicon = "0.13"
