@@ -174,32 +174,6 @@ class WhatThisBackendDoesNotWriteYetTest {
     }
 
     /**
-     * Two values of a declared type compared, which is what they are made of and not where they
-     * are.
-     *
-     * <p>Souther's {@code ==} over a value of a declared type is its fields compared one by one, so
-     * two built separately out of the same field values are equal. A value here is held as the
-     * address of what it is made of, and a comparison of the two addresses answers a different
-     * question — one whose answer is false for exactly the pair the language calls equal.
-     *
-     * <p>So the refusal is the point. An object that compared the addresses would link, run, and
-     * answer, and nothing downstream would have anything to notice.
-     */
-    @Test
-    void twoValuesOfADeclaredTypeAreNotComparedByWhereTheyAre() {
-        assertThatThrownBy(() -> NativeCompiler.compile(CheckedProgram.of(List.of("""
-                module comparing
-
-                data Employee = { id: Int }
-
-                behavior same : (a: Employee, b: Employee) -> Bool
-                let same (a, b) = a == b
-                """))))
-                .isInstanceOf(NotLowered.class)
-                .hasMessageContaining("comparing.Employee");
-    }
-
-    /**
      * A value of a newtype compared with a bare literal, which is a comparison of what it wraps.
      *
      * <p>Both orders, and the order is the point. The checker reads the pair as values of the
@@ -250,32 +224,6 @@ class WhatThisBackendDoesNotWriteYetTest {
                 """))))
                 .isInstanceOf(NotLowered.class)
                 .hasMessageContaining("staging.Stage");
-    }
-
-    /**
-     * The same of an optional, which is equal where both hold nothing and where both hold values
-     * that compare equal.
-     *
-     * <p>Written out rather than taken as covered by the declared type above: an optional holding
-     * nothing is a null pointer here, so two of those do compare equal by address, and a check that
-     * only ever compared absent ones would be green over the half of the question that happens to
-     * agree.
-     *
-     * <p>Reached through a field because that is where the language admits one: an optional is
-     * written on a data field or inferred, and never named on a behavior's own signature.
-     */
-    @Test
-    void twoOptionalsAreNotComparedByWhereTheyAre() {
-        assertThatThrownBy(() -> NativeCompiler.compile(CheckedProgram.of(List.of("""
-                module comparing
-
-                data Employee = { manager: Int? }
-
-                behavior same : (a: Employee, b: Employee) -> Bool
-                let same (a, b) = a.manager == b.manager
-                """))))
-                .isInstanceOf(NotLowered.class)
-                .hasMessageContaining("an Option of Int");
     }
 
     @Test

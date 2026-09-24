@@ -1433,7 +1433,10 @@ fn a_list_holds_what_its_type_says_it_holds() {
     };
     let of_int = format!(r#"{{"list":{INT}}}"#);
 
-    reads_whole(&helpers(&[h(&[INT], &list(&[read(0, INT), int(1)], &of_int))]));
+    reads_whole(&helpers(&[h(
+        &[INT],
+        &list(&[read(0, INT), int(1)], &of_int),
+    )]));
     reads_whole(&helpers(&[h(&[INT], &list(&[], &of_int))]));
     is_the_halves_disagreeing(
         &helpers(&[h(&[INT], &list(&[read(0, INT), truth(true)], &of_int))]),

@@ -8,6 +8,7 @@ mod boundary;
 mod closures;
 mod codec;
 mod coherent;
+mod equality;
 mod host;
 mod index;
 mod interface;
@@ -640,8 +641,10 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
         reachable.published_value(module_name, value_name, id);
     }
 
+    let comparators = equality::Comparators::default();
     let lowerings = Lowerings {
         declared: &declared,
+        comparators: &comparators,
         reachable: &reachable,
         allocate,
         compare_text,
@@ -894,6 +897,23 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
             &mut module,
         )?;
         accepted(module.define_function(checked, &mut context));
+    }
+
+    // Every comparator a body above asked for, and every one those ask for in turn. Written last
+    // because a comparison anywhere may be the first to reach a type, and a comparator reaches the
+    // types its own values are made of only as it is written.
+    while let Some(owed) = comparators.owed() {
+        context.clear();
+        context.func = Function::with_name_signature(UserFuncName::default(), owed.signature);
+        equality::define_comparator(
+            &mut context.func,
+            &mut shapes,
+            &owed.ty,
+            frontend,
+            &lowerings,
+            &mut module,
+        )?;
+        accepted(module.define_function(owed.id, &mut context));
     }
 
     // Every behavior this object defines and publishes, which a host calls and whose answer a
@@ -1663,6 +1683,8 @@ impl<'a> Held<'a> {
 /// composition, is lowered with this alone, and so cannot resolve a call the way a body would.
 struct Lowerings<'a> {
     declared: &'a Declared<'a>,
+    /// The function comparing two values of each type a comparison here asked about.
+    comparators: &'a equality::Comparators,
     reachable: &'a Reachable,
     allocate: FuncId,
     compare_text: FuncId,
@@ -3864,6 +3886,15 @@ fn compare(
                 prim.spelt()
             ))),
         },
+        // Two values of one type that is not a primitive: equal where what they are made of is,
+        // which `equality` answers per type.
+        (one, other) if one == other && matches!(op, Op::Eq | Op::Ne) => {
+            let same = equality::equal(builder, lowering, module, one, a, b)?;
+            Ok(match op {
+                Op::Eq => same,
+                _ => builder.ins().icmp_imm_s(IntCC::Equal, same, 0),
+            })
+        }
         // A declared type on either side, which covers every legitimate comparison whose operands
         // are not two values of one primitive: two values of one declared type, a value against a
         // bare literal of what its newtype wraps, and a sum against one of its cases. What each of

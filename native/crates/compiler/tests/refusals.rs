@@ -139,20 +139,19 @@ fn an_ordering_over_what_has_equality_and_no_order_is_refused() {
     }
 }
 
-/// And equality over the same two, which is a comparison still to be written rather than a
-/// disagreement: the language does compare them, by what they hold.
+/// And equality over the same two, which the language does have: they are compared by what they
+/// hold.
 #[test]
-fn equality_over_what_has_equality_and_no_order_is_a_lowering_this_has_not_got() {
+fn equality_over_what_has_equality_and_no_order_is_lowered() {
     let pair = r#"{"tuple":[{"prim":"INT"},{"prim":"INT"}]}"#;
     let held = r#"{"option":{"prim":"INT"}}"#;
 
     for ty in [pair, held] {
-        let refused = object_for(&over("EQ", ty, ty)).expect_err("no comparison for these yet");
-
-        assert!(
-            refused.downcast_ref::<NotLowered>().is_some(),
-            "the backend being behind is not the halves disagreeing: {refused}"
-        );
+        for op in ["EQ", "NE"] {
+            if let Err(refused) = object_for(&over(op, ty, ty)) {
+                panic!("{op} over {ty} is refused: {refused}");
+            }
+        }
     }
 }
 
