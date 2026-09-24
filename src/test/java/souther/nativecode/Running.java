@@ -16,15 +16,13 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.StringJoiner;
 
 /**
@@ -44,7 +42,7 @@ import java.util.StringJoiner;
  * it is. The compiler hands Cranelift the name from the {@code abi} crate and never sees it again;
  * a C declaration is the only other thing that has to say it, and it has to say it in C.
  */
-final class Running implements AutoCloseable {
+final class Running {
 
     /**
      * The generation of calling convention a function symbol answers to, held to {@code
@@ -57,21 +55,24 @@ final class Running implements AutoCloseable {
      */
     private static final String ABI = "2";
 
-    private final CheckedProgram program;
-    private final Path into;
-    private final Path object;
-    private final List<Path> alongside;
-    private final Map<String, Path> linked = new HashMap<>();
+    /**
+     * One thing a run can reach in the object: a behavior by its own symbol, or a row by the entry
+     * the object carries for it. The name is what a run says to select it and the symbol is what
+     * the harness declares to reach it; the types are what its call is made of, written into the
+     * harness for it and not handed to it as data.
+     */
+    private record Entry(String name, String symbol, List<Type> takes) {}
 
-    private Running(CheckedProgram program, Path into, Path object, List<Path> alongside) {
+    private final CheckedProgram program;
+    private final List<byte[]> alongside;
+
+    private Running(CheckedProgram program, List<byte[]> alongside) {
         this.program = program;
-        this.into = into;
-        this.object = object;
         this.alongside = alongside;
     }
 
-    /** The program compiled to one object, with nothing linked yet. */
-    static Running of(CheckedProgram program) throws IOException, InterruptedException {
+    /** The program, with nothing compiled or linked until something is asked of it. */
+    static Running of(CheckedProgram program) {
         return of(program, List.of());
     }
 
@@ -84,19 +85,13 @@ final class Running implements AutoCloseable {
      * emitted decides it the way a build does, and what the two objects then have to agree about —
      * a symbol, a signature, what a value of a declared type says it is — is agreed through the
      * linker or not at all.
+     *
+     * <p>Nothing is built here. What is built is kept by {@link NativeArtifacts} for as long as the
+     * tests run, so asking a program a second question is free wherever it is asked from, and
+     * there is nothing here to release.
      */
-    static Running of(CheckedProgram program, List<byte[]> alongside)
-            throws IOException, InterruptedException {
-        Path into = Files.createTempDirectory("souther-native-running");
-        Path object = into.resolve("program.o");
-        Files.write(object, NativeCompiler.compile(program));
-        List<Path> written = new ArrayList<>();
-        for (byte[] built : alongside) {
-            Path beside = into.resolve("alongside." + written.size() + ".o");
-            Files.write(beside, built);
-            written.add(beside);
-        }
-        return new Running(program, into, object, List.copyOf(written));
+    static Running of(CheckedProgram program, List<byte[]> alongside) {
+        return new Running(program, List.copyOf(alongside));
     }
 
     /**
@@ -172,9 +167,7 @@ final class Running implements AutoCloseable {
             throws IOException, InterruptedException {
         published(module, behavior);
         String reached = module.name() + "." + behavior.name().name();
-        Path executable = linked(reached, "souther" + ABI + "." + reached,
-                behavior.signature().takes(), standIns);
-        return ran(executable, inputs);
+        return ran(linked(standIns), reached, inputs);
     }
 
     /** What the behavior answered when this one of its rows was run. */
@@ -206,10 +199,7 @@ final class Running implements AutoCloseable {
                                              int at, List<StandsIn> standIns)
             throws IOException, InterruptedException {
         String named = module.name() + "." + behavior.name().name() + ".example." + at;
-        String symbol = "souther" + ABI + "." + module.name() + "." + behavior.name().name()
-                + "$example$" + at;
-        Path executable = linked(named, symbol, List.of(), standIns);
-        return ran(executable, List.of());
+        return ran(linked(standIns), named, List.of());
     }
 
     /**
@@ -262,10 +252,11 @@ final class Running implements AutoCloseable {
      * it could write either line, is neither {@link RunOutcome} case: it is this harness's own
      * failure and not a Souther computation's, so it is thrown rather than folded into one of them.
      */
-    private BoundaryOutcome ran(Path executable, List<ObservedValue> inputs)
+    private BoundaryOutcome ran(Path executable, String entry, List<ObservedValue> inputs)
             throws IOException, InterruptedException {
         List<String> command = new ArrayList<>();
         command.add(executable.toString());
+        command.add(entry);
         for (ObservedValue given : inputs) {
             command.add(written(given));
         }
@@ -344,75 +335,110 @@ final class Running implements AutoCloseable {
         }
     }
 
-    private Path linked(String named, String symbol, List<Type> takes,
-                        List<StandsIn> standIns) throws IOException {
-        // What stands in for a dependency is part of what is linked, so two rows of one behavior
-        // that state different stand-ins are two executables and not one reused. The key is what
-        // was stated and not a number worked out from it: a number that collides hands back an
-        // executable built for a different table, and the answers would look like the lowering's.
-        String key = named + " " + standIns;
-        Path already = linked.get(key);
-        if (already != null) {
-            return already;
-        }
-
-        // The file is named by a count because what the key holds is not a file name.
-        String name = named + "." + linked.size();
-        Path harness = into.resolve(name + ".c");
-        Files.writeString(harness, harnessFor(symbol, takes, standIns),
-                StandardCharsets.UTF_8);
-        Path executable = into.resolve(name);
-
-        List<String> link = new ArrayList<>(List.of("cc", "-o", executable.toString(),
-                harness.toString(), object.toString()));
-        for (Path beside : alongside) {
-            link.add(beside.toString());
-        }
-        link.add(RUNTIME.toString());
-        Process cc = new ProcessBuilder(link)
-                .redirectErrorStream(true)
-                .start();
-        String said = new String(cc.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-        try {
-            if (cc.waitFor() != 0) {
-                throw new AssertionError("the link failed: " + said);
-            }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new UncheckedIOException(new IOException("interrupted while linking"));
-        }
-        linked.put(key, executable);
-        return executable;
+    /**
+     * The executable for these stand-ins, one for the program whichever entry is run through it.
+     *
+     * <p>What stands in for a dependency is part of what is linked, so two rows that state
+     * different stand-ins are two executables. Which entry is run is not: it is handed to the
+     * process, so the linker is asked once for however many behaviors and rows are asked about.
+     */
+    private Path linked(List<StandsIn> standIns) throws IOException, InterruptedException {
+        return NativeArtifacts.executable(program, alongside,
+                harnessFor(entries(), standIns));
     }
 
-    /** What a program made here calls for room, linked in beside what this compiler emitted. */
-    private static final Path RUNTIME =
-            Path.of("native", "target", "debug", "libsouther_native_runtime.a");
+    /**
+     * Every entry the object carries that a harness here can call.
+     *
+     * <p>Which of the candidates the object carries is asked of the object, and not worked out
+     * from the rules the compiler follows in deciding which behaviors get a boundary: a name kept
+     * by its module, or implemented by another build, has none, and a harness declaring one
+     * anyway would fail to link for it.
+     */
+    private List<Entry> entries() throws IOException, InterruptedException {
+        Set<String> carried = NativeArtifacts.built(program).defined();
+        List<Entry> entries = new ArrayList<>();
+        for (CheckedModule module : program.modules()) {
+            for (CheckedBehavior behavior : module.behaviors()) {
+                String reached = module.name() + "." + behavior.name().name();
+                List<Type> takes = behavior.signature().takes();
+                String boundary = "souther" + ABI + "." + reached + "$boundary";
+                if (carried.contains(PREFIX + boundary) && everyOneCrosses(takes)) {
+                    entries.add(new Entry(reached, "souther" + ABI + "." + reached, takes));
+                }
+                for (int at = 0; at < behavior.rows().size(); at++) {
+                    String symbol = "souther" + ABI + "." + reached + "$example$" + at;
+                    if (carried.contains(PREFIX + symbol + "$boundary")) {
+                        entries.add(new Entry(reached + ".example." + at, symbol, List.of()));
+                    }
+                }
+            }
+        }
+        return entries;
+    }
+
+    private static boolean everyOneCrosses(List<Type> takes) {
+        for (Type taken : takes) {
+            if (!(taken instanceof Type.Prim prim) || (prim != Type.Prim.INT
+                    && prim != Type.Prim.BOOL && prim != Type.Prim.STRING)) {
+                return false;
+            }
+        }
+        return true;
+    }
 
     /**
-     * A C program that reaches the one entry at its boundary and writes out what it wrote.
+     * A C program that reaches whichever of the entries its first argument names, and writes out
+     * what it wrote.
      *
-     * <p>Written for what is being reached rather than dispatched at run time: the arity and the
-     * widths are what a call is made of, and a harness that took them as data would be making the
-     * call from something other than what is being called.
+     * <p>Which entry is a choice made when the process runs. What each entry's call is made of is
+     * not: the arity and the widths are written into the function for that entry, and a harness
+     * that took them as data would be making the call from something other than what is being
+     * called.
      *
      * <p>The call is bracketed, which is how a Souther value is freed: nothing frees one on its
      * own, and what the run made is dropped in a single go by the caller. Bracketed here even
      * where one call is all that happens, because a harness that never gave the room back would be
      * a harness the contract had never been put to.
      */
-    private String harnessFor(String symbol, List<Type> takes, List<StandsIn> standIns) {
-        List<String> taken = new ArrayList<>();
-        List<String> given = new ArrayList<>();
-        for (int at = 0; at < takes.size(); at++) {
-            taken.add(cType(takes.get(at)));
-            given.add(read(takes.get(at), at + 1));
+    private String harnessFor(List<Entry> entries, List<StandsIn> standIns) {
+        StringBuilder declared = new StringBuilder();
+        StringBuilder reaching = new StringBuilder();
+        StringBuilder chosen = new StringBuilder();
+        boolean text = false;
+        for (int number = 0; number < entries.size(); number++) {
+            Entry entry = entries.get(number);
+            List<String> taken = new ArrayList<>();
+            List<String> given = new ArrayList<>();
+            for (int at = 0; at < entry.takes().size(); at++) {
+                taken.add(cType(entry.takes().get(at)));
+                // What a run hands over starts after the process's name and the entry's.
+                given.add(read(entry.takes().get(at), at + 2));
+            }
+            // One more parameter than the Souther signature shows: room the boundary writes its
+            // JSON through, as a string of the runtime's layout. What the answer is written as is
+            // the object's to say, so nothing here depends on the type it was declared at.
+            taken.add("const uint8_t **");
+            given.add("answered");
+            text |= textCrossesHere(entry.takes());
+
+            declared.append("extern uint32_t reached%d(%s) __asm__(\"%s%s$boundary\");\n"
+                    .formatted(number, takenIn(taken), PREFIX, entry.symbol()));
+            reaching.append("""
+                    static uint32_t call%d(char **argv, const uint8_t **answered) {
+                        return reached%d(%s);
+                    }
+
+                    """.formatted(number, number, String.join(", ", given)));
+            chosen.append("""
+                        if (strcmp(argv[1], "%s") == 0) {
+                            if (argc != %d) {
+                                return 2;
+                            }
+                            status = call%d(argv, &answered);
+                        }
+                        else\s""".formatted(entry.name(), entry.takes().size() + 2, number));
         }
-        // One more parameter than the Souther signature shows: room the boundary writes its JSON
-        // through, as a string of the runtime's layout. What the answer is written as is the
-        // object's to say, so nothing here depends on the type it was declared at.
-        taken.add("const uint8_t **");
-        given.add("&answered");
 
         // Every name the object left undefined, and not only the ones this row states. The object
         // is the whole program, so what it names is what the linker wants whichever behavior is
@@ -436,19 +462,24 @@ final class Running implements AutoCloseable {
 
                 %s%s
 
-                extern uint32_t reached(%s) __asm__("%s%s$boundary");
+                %s
                 extern int64_t souther_mark(void);
                 extern void souther_reset(int64_t);
                 extern int64_t souther_string_length(const uint8_t *);
                 extern const uint8_t *souther_string_bytes(const uint8_t *);
 
+                %s
                 int main(int argc, char **argv) {
-                    if (argc != %d) {
+                    if (argc < 2) {
                         return 2;
                     }
                     int64_t mark = souther_mark();
                     const uint8_t *answered;
-                    uint32_t status = reached(%s);
+                    uint32_t status;
+                %s
+                    {
+                        return 2;
+                    }
                     printf("%%u\\n", status);
                     if (status == 0) {
                         fwrite(souther_string_bytes(answered), 1,
@@ -459,12 +490,11 @@ final class Running implements AutoCloseable {
                     return 0;
                 }
                 """.formatted(
-                textCrossesHere(takes) ? TEXT_CROSSING : "",
+                text ? TEXT_CROSSING : "",
                 supplied.toString(),
-                takenIn(taken),
-                PREFIX, symbol,
-                takes.size() + 1,
-                String.join(", ", given));
+                declared,
+                reaching,
+                chosen);
     }
 
     /**
@@ -677,18 +707,5 @@ final class Running implements AutoCloseable {
             return it;
         }
         throw new AssertionError("no harness crosses a " + type + " yet");
-    }
-
-    @Override
-    public void close() throws IOException {
-        try (var walked = Files.walk(into)) {
-            walked.sorted((a, b) -> b.getNameCount() - a.getNameCount()).forEach(it -> {
-                try {
-                    Files.deleteIfExists(it);
-                } catch (IOException e) {
-                    throw new UncheckedIOException(e);
-                }
-            });
-        }
     }
 }

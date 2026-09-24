@@ -36,17 +36,16 @@ class AKernelCallCrossesAsWhatTheLanguageImplementsTest {
     @Test
     void aKernelCallAnswersTheSameSumAnOperatorDoes() throws Exception {
         CheckedProgram program = CheckedProgram.of(List.of(SOURCE));
-        try (Running running = Running.of(program)) {
-            CheckedModule module = program.modules().getFirst();
-            CheckedBehavior add = module.behaviors().stream()
-                    .filter(it -> it.name().name().equals("add"))
-                    .findFirst()
-                    .orElseThrow(() -> new AssertionError("no behavior add"));
+        Running running = Running.of(program);
+        CheckedModule module = program.modules().getFirst();
+        CheckedBehavior add = module.behaviors().stream()
+                .filter(it -> it.name().name().equals("add"))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("no behavior add"));
 
-            assertThat(running.answeredOrEnded(module, add,
-                    List.of(new ObservedValue.Integer(2), new ObservedValue.Integer(40))))
-                    .isEqualTo(new RunOutcome.Answered(new ObservedValue.Integer(42)));
-        }
+        assertThat(running.answeredOrEnded(module, add,
+                List.of(new ObservedValue.Integer(2), new ObservedValue.Integer(40))))
+                .isEqualTo(new RunOutcome.Answered(new ObservedValue.Integer(42)));
     }
 
     /**
@@ -57,17 +56,16 @@ class AKernelCallCrossesAsWhatTheLanguageImplementsTest {
     @Test
     void aKernelCallPastTheEndAnswersRequiredFormHasNoPlace() throws Exception {
         CheckedProgram program = CheckedProgram.of(List.of(SOURCE));
-        try (Running running = Running.of(program)) {
-            CheckedModule module = program.modules().getFirst();
-            CheckedBehavior add = module.behaviors().stream()
-                    .filter(it -> it.name().name().equals("add"))
-                    .findFirst()
-                    .orElseThrow(() -> new AssertionError("no behavior add"));
+        Running running = Running.of(program);
+        CheckedModule module = program.modules().getFirst();
+        CheckedBehavior add = module.behaviors().stream()
+                .filter(it -> it.name().name().equals("add"))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("no behavior add"));
 
-            assertThat(running.answeredOrEnded(module, add,
-                    List.of(new ObservedValue.Integer(Long.MAX_VALUE),
-                            new ObservedValue.Integer(1))))
-                    .isEqualTo(new RunOutcome.Aborted(AbortKind.REQUIRED_FORM_HAS_NO_PLACE));
-        }
+        assertThat(running.answeredOrEnded(module, add,
+                List.of(new ObservedValue.Integer(Long.MAX_VALUE),
+                        new ObservedValue.Integer(1))))
+                .isEqualTo(new RunOutcome.Aborted(AbortKind.REQUIRED_FORM_HAS_NO_PLACE));
     }
 }

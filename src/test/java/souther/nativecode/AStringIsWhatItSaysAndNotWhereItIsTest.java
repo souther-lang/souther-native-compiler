@@ -99,14 +99,13 @@ class AStringIsWhatItSaysAndNotWhereItIsTest {
     void twoStringsMadeApartOutOfOneTextAreEqual() throws Exception {
         CheckedProgram program = CheckedProgram.of(List.of(TEXT));
 
-        try (Running running = Running.of(program)) {
-            assertThat(answering(running, program, "same", text("abc"), text("abc")))
-                    .isEqualTo(new ObservedValue.Bool(true));
-            assertThat(answering(running, program, "same", text(""), text("")))
-                    .isEqualTo(new ObservedValue.Bool(true));
-            assertThat(answering(running, program, "same", text("abc"), text("abd")))
-                    .isEqualTo(new ObservedValue.Bool(false));
-        }
+        Running running = Running.of(program);
+        assertThat(answering(running, program, "same", text("abc"), text("abc")))
+                .isEqualTo(new ObservedValue.Bool(true));
+        assertThat(answering(running, program, "same", text(""), text("")))
+                .isEqualTo(new ObservedValue.Bool(true));
+        assertThat(answering(running, program, "same", text("abc"), text("abd")))
+                .isEqualTo(new ObservedValue.Bool(false));
     }
 
     /**
@@ -121,16 +120,15 @@ class AStringIsWhatItSaysAndNotWhereItIsTest {
     void textCrossesBothWaysWhateverBytesItHolds() throws Exception {
         CheckedProgram program = CheckedProgram.of(List.of(TEXT));
 
-        try (Running running = Running.of(program)) {
-            assertThat(answering(running, program, "joined", text("ab"), text("cd")))
-                    .isEqualTo(new ObservedValue.Text("abcd"));
-            assertThat(answering(running, program, "joined", text(""), text("")))
-                    .isEqualTo(new ObservedValue.Text(""));
-            assertThat(answering(running, program, "joined", text("a\nb"), text("\u0000c")))
-                    .isEqualTo(new ObservedValue.Text("a\nb\u0000c"));
-            assertThat(answering(running, program, "joined", text("𠮷"), text("￥")))
-                    .isEqualTo(new ObservedValue.Text("𠮷￥"));
-        }
+        Running running = Running.of(program);
+        assertThat(answering(running, program, "joined", text("ab"), text("cd")))
+                .isEqualTo(new ObservedValue.Text("abcd"));
+        assertThat(answering(running, program, "joined", text(""), text("")))
+                .isEqualTo(new ObservedValue.Text(""));
+        assertThat(answering(running, program, "joined", text("a\nb"), text("\u0000c")))
+                .isEqualTo(new ObservedValue.Text("a\nb\u0000c"));
+        assertThat(answering(running, program, "joined", text("𠮷"), text("￥")))
+                .isEqualTo(new ObservedValue.Text("𠮷￥"));
     }
 
     private static ObservedValue answering(Running running, CheckedProgram program, String name,

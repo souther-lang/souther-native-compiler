@@ -209,19 +209,18 @@ class ABehaviorAnotherBuildImplementsTest {
     @Test
     void aValueBuiltInOneObjectIsForkedOnInAnother() throws Exception {
         CheckedProgram program = compiled(FORKING_ON_IT);
-        byte[] before = NativeCompiler.compile(builtBefore());
+        byte[] before = NativeArtifacts.object(builtBefore());
 
-        try (Running running = Running.of(program, List.of(before))) {
-            CheckedModule module = program.modules().getFirst();
-            var sized = module.behavior(new ValueName.Behavior("app.forks", "sized"));
+        Running running = Running.of(program, List.of(before));
+        CheckedModule module = program.modules().getFirst();
+        var sized = module.behavior(new ValueName.Behavior("app.forks", "sized"));
 
-            assertThat(running.answering(module, sized,
-                    List.of(new ObservedValue.Integer(5), new ObservedValue.Bool(true))))
-                    .isEqualTo(new ObservedValue.Integer(10));
-            assertThat(running.answering(module, sized,
-                    List.of(new ObservedValue.Integer(5), new ObservedValue.Bool(false))))
-                    .isEqualTo(new ObservedValue.Integer(20));
-        }
+        assertThat(running.answering(module, sized,
+                List.of(new ObservedValue.Integer(5), new ObservedValue.Bool(true))))
+                .isEqualTo(new ObservedValue.Integer(10));
+        assertThat(running.answering(module, sized,
+                List.of(new ObservedValue.Integer(5), new ObservedValue.Bool(false))))
+                .isEqualTo(new ObservedValue.Integer(20));
     }
 
     /**
@@ -237,18 +236,17 @@ class ABehaviorAnotherBuildImplementsTest {
                 behavior fourTimes : (base: Int) -> Int
                 let fourTimes (base) = twice(twice(base))
                 """);
-        byte[] before = NativeCompiler.compile(builtBefore());
+        byte[] before = NativeArtifacts.object(builtBefore());
 
         assertThat(ProgramWriter.written(program))
                 .contains("\"module\":\"lib.rates\",\"name\":\"twice\",\"is\":\"elsewhere\"");
-        try (Running running = Running.of(program, List.of(before))) {
-            CheckedModule module = program.modules().getFirst();
-            var fourTimes = module.behavior(new ValueName.Behavior("app.plainly", "fourTimes"));
+        Running running = Running.of(program, List.of(before));
+        CheckedModule module = program.modules().getFirst();
+        var fourTimes = module.behavior(new ValueName.Behavior("app.plainly", "fourTimes"));
 
-            assertThat(running.answering(module, fourTimes,
-                    List.of(new ObservedValue.Integer(3))))
-                    .isEqualTo(new ObservedValue.Integer(12));
-        }
+        assertThat(running.answering(module, fourTimes,
+                List.of(new ObservedValue.Integer(3))))
+                .isEqualTo(new ObservedValue.Integer(12));
     }
 
     /**
@@ -271,20 +269,19 @@ class ABehaviorAnotherBuildImplementsTest {
                 behavior agrees : (a: String) -> Bool
                 let agrees (a) = shout(a) == (a ++ "!")
                 """);
-        byte[] before = NativeCompiler.compile(builtBefore());
+        byte[] before = NativeArtifacts.object(builtBefore());
 
-        try (Running running = Running.of(program, List.of(before))) {
-            CheckedModule module = program.modules().getFirst();
-            var twiceOver = module.behavior(new ValueName.Behavior("app.says", "twiceOver"));
-            var agrees = module.behavior(new ValueName.Behavior("app.says", "agrees"));
+        Running running = Running.of(program, List.of(before));
+        CheckedModule module = program.modules().getFirst();
+        var twiceOver = module.behavior(new ValueName.Behavior("app.says", "twiceOver"));
+        var agrees = module.behavior(new ValueName.Behavior("app.says", "agrees"));
 
-            assertThat(running.answering(module, twiceOver,
-                    List.of(new ObservedValue.Text("hi"))))
-                    .isEqualTo(new ObservedValue.Text("hi!!"));
-            assertThat(running.answering(module, agrees,
-                    List.of(new ObservedValue.Text("hi"))))
-                    .isEqualTo(new ObservedValue.Bool(true));
-        }
+        assertThat(running.answering(module, twiceOver,
+                List.of(new ObservedValue.Text("hi"))))
+                .isEqualTo(new ObservedValue.Text("hi!!"));
+        assertThat(running.answering(module, agrees,
+                List.of(new ObservedValue.Text("hi"))))
+                .isEqualTo(new ObservedValue.Bool(true));
     }
 
     /**

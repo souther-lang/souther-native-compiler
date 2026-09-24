@@ -139,21 +139,20 @@ class AValueIsBuiltOnlyWhereItsClausesHoldTest {
                                                          AbortKind with, List<Long> answers,
                                                          long answered) throws Exception {
         CheckedProgram program = CheckedProgram.of(List.of(SOURCE));
-        try (Running running = Running.of(program)) {
-            CheckedModule module = program.modules().getFirst();
-            CheckedBehavior reached = module.behaviors().stream()
-                    .filter(it -> it.name().name().equals(behavior))
-                    .findFirst()
-                    .orElseThrow(() -> new AssertionError("no behavior " + behavior));
+        Running running = Running.of(program);
+        CheckedModule module = program.modules().getFirst();
+        CheckedBehavior reached = module.behaviors().stream()
+                .filter(it -> it.name().name().equals(behavior))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("no behavior " + behavior));
 
-            assertThat(running.answeredOrEnded(module, reached, given(ends)))
-                    .as("%s handed %s", behavior, ends)
-                    .isEqualTo(new RunOutcome.Aborted(with));
-            assertThat(running.answeredOrEnded(module, reached, given(answers)))
-                    .as("%s handed %s, which is the control the ending above is read against",
-                            behavior, answers)
-                    .isEqualTo(new RunOutcome.Answered(new ObservedValue.Integer(answered)));
-        }
+        assertThat(running.answeredOrEnded(module, reached, given(ends)))
+                .as("%s handed %s", behavior, ends)
+                .isEqualTo(new RunOutcome.Aborted(with));
+        assertThat(running.answeredOrEnded(module, reached, given(answers)))
+                .as("%s handed %s, which is the control the ending above is read against",
+                        behavior, answers)
+                .isEqualTo(new RunOutcome.Answered(new ObservedValue.Integer(answered)));
     }
 
     private static List<ObservedValue> given(List<Long> values) {

@@ -102,20 +102,19 @@ class WhatTheObjectMakesReachableTest {
     void everyRowOfAKeptBehaviorHoldsAllTheSame() throws Exception {
         CheckedProgram program = CheckedProgram.of(List.of(SURFACE));
         int asked = 0;
-        try (Running running = Running.of(program)) {
-            CheckedModule module = program.modules().getFirst();
-            CheckedBehavior kept = behaviorOf(module, "hidden");
-            List<CheckedRow> rows = kept.rows();
-            for (int at = 0; at < rows.size(); at++) {
-                CheckedRow.SelfContained states =
-                        (CheckedRow.SelfContained) rows.get(at).statement();
-                ObservedValue answered = running.rowAnswering(module, kept, at, List.of());
+        Running running = Running.of(program);
+        CheckedModule module = program.modules().getFirst();
+        CheckedBehavior kept = behaviorOf(module, "hidden");
+        List<CheckedRow> rows = kept.rows();
+        for (int at = 0; at < rows.size(); at++) {
+            CheckedRow.SelfContained states =
+                    (CheckedRow.SelfContained) rows.get(at).statement();
+            ObservedValue answered = running.rowAnswering(module, kept, at, List.of());
 
-                assertThat(states.holds(answered))
-                        .as("row %d of %s answered %s", at, kept.name(), answered)
-                        .isInstanceOf(Verdict.Held.class);
-                asked++;
-            }
+            assertThat(states.holds(answered))
+                    .as("row %d of %s answered %s", at, kept.name(), answered)
+                    .isInstanceOf(Verdict.Held.class);
+            asked++;
         }
         assertThat(asked).isPositive();
     }
@@ -127,15 +126,14 @@ class WhatTheObjectMakesReachableTest {
     @Test
     void reachingAKeptBehaviorItselfSaysThatIsWhatTheModuleDecided() throws Exception {
         CheckedProgram program = CheckedProgram.of(List.of(SURFACE));
-        try (Running running = Running.of(program)) {
-            CheckedModule module = program.modules().getFirst();
-            CheckedBehavior kept = behaviorOf(module, "hidden");
+        Running running = Running.of(program);
+        CheckedModule module = program.modules().getFirst();
+        CheckedBehavior kept = behaviorOf(module, "hidden");
 
-            assertThatThrownBy(() -> running.answering(module, kept,
-                    List.of(new ObservedValue.Integer(21))))
-                    .isInstanceOf(AssertionError.class)
-                    .hasMessageContaining("keeps");
-        }
+        assertThatThrownBy(() -> running.answering(module, kept,
+                List.of(new ObservedValue.Integer(21))))
+                .isInstanceOf(AssertionError.class)
+                .hasMessageContaining("keeps");
     }
 
     /** The row entries the object carries, which are reached whatever the module publishes. */

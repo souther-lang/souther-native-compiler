@@ -56,19 +56,18 @@ class ACaseBuiltElsewhereIsWrittenAsItsOwnCaseTest {
     @Test
     void aCaseBuiltInAnotherObjectIsWrittenAsTheCaseItIs() throws Exception {
         CheckedProgram program = CheckedProgram.of(List.of(RELAYING), path());
-        byte[] before = NativeCompiler.compile(CheckedProgram.of(List.of(BUILT_BEFORE)));
+        byte[] before = NativeArtifacts.object(CheckedProgram.of(List.of(BUILT_BEFORE)));
 
-        try (Running running = Running.of(program, List.of(before))) {
-            CheckedModule module = program.modules().getFirst();
-            CheckedBehavior relay = module.behavior(new ValueName.Behavior("app.relay", "relay"));
+        Running running = Running.of(program, List.of(before));
+        CheckedModule module = program.modules().getFirst();
+        CheckedBehavior relay = module.behavior(new ValueName.Behavior("app.relay", "relay"));
 
-            assertThat(running.externalAnswer(module, relay,
-                    List.of(new ObservedValue.Integer(5), new ObservedValue.Bool(true))))
-                    .isEqualTo(JSON.readTree("{\"type\":\"Open\",\"since\":5}"));
-            assertThat(running.externalAnswer(module, relay,
-                    List.of(new ObservedValue.Integer(5), new ObservedValue.Bool(false))))
-                    .isEqualTo(JSON.readTree("{\"type\":\"Closed\"}"));
-        }
+        assertThat(running.externalAnswer(module, relay,
+                List.of(new ObservedValue.Integer(5), new ObservedValue.Bool(true))))
+                .isEqualTo(JSON.readTree("{\"type\":\"Open\",\"since\":5}"));
+        assertThat(running.externalAnswer(module, relay,
+                List.of(new ObservedValue.Integer(5), new ObservedValue.Bool(false))))
+                .isEqualTo(JSON.readTree("{\"type\":\"Closed\"}"));
     }
 
     private static ModulePath path() {

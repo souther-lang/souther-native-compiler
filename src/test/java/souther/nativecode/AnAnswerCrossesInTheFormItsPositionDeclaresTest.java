@@ -134,72 +134,66 @@ class AnAnswerCrossesInTheFormItsPositionDeclaresTest {
     @Test
     void oneUnitIsWrittenFourWaysByThePositionItStandsIn() throws Exception {
         CheckedProgram program = CheckedProgram.of(List.of(DOORS));
-        try (Running running = Running.of(program)) {
-            assertThat(answer(running, program, "closedAlone", integer(0)))
-                    .isEqualTo(json("{}"));
-            assertThat(answer(running, program, "holding", integer(0)))
-                    .isEqualTo(json("{\"state\":{}}"));
-            assertThat(answer(running, program, "doorOf", integer(0)))
-                    .isEqualTo(json("{\"type\":\"Closed\"}"));
-            assertThat(answer(running, program, "phaseOf", integer(0)))
-                    .isEqualTo(json("\"Closed\""));
-        }
+        Running running = Running.of(program);
+        assertThat(answer(running, program, "closedAlone", integer(0)))
+                .isEqualTo(json("{}"));
+        assertThat(answer(running, program, "holding", integer(0)))
+                .isEqualTo(json("{\"state\":{}}"));
+        assertThat(answer(running, program, "doorOf", integer(0)))
+                .isEqualTo(json("{\"type\":\"Closed\"}"));
+        assertThat(answer(running, program, "phaseOf", integer(0)))
+                .isEqualTo(json("\"Closed\""));
     }
 
     @Test
     void aProductCaseTakesTheTagBesideItsOwnFields() throws Exception {
         CheckedProgram program = CheckedProgram.of(List.of(DOORS));
-        try (Running running = Running.of(program)) {
-            assertThat(answer(running, program, "doorOf", integer(7)))
-                    .isEqualTo(json("{\"type\":\"Open\",\"since\":7}"));
-            assertThat(answer(running, program, "phaseOf", integer(1)))
-                    .isEqualTo(json("\"Pending\""));
-        }
+        Running running = Running.of(program);
+        assertThat(answer(running, program, "doorOf", integer(7)))
+                .isEqualTo(json("{\"type\":\"Open\",\"since\":7}"));
+        assertThat(answer(running, program, "phaseOf", integer(1)))
+                .isEqualTo(json("\"Pending\""));
     }
 
     /** A field of a sum's type is written as that sum is, whichever of its forms it has. */
     @Test
     void aFieldIsWrittenAsItsOwnDeclarationIs() throws Exception {
         CheckedProgram program = CheckedProgram.of(List.of(DOORS));
-        try (Running running = Running.of(program)) {
-            assertThat(answer(running, program, "porchOf", integer(3)))
-                    .isEqualTo(json("{\"door\":{\"type\":\"Open\",\"since\":3},\"phase\":\"Pending\"}"));
-        }
+        Running running = Running.of(program);
+        assertThat(answer(running, program, "porchOf", integer(3)))
+                .isEqualTo(json("{\"door\":{\"type\":\"Open\",\"since\":3},\"phase\":\"Pending\"}"));
     }
 
     @Test
     void aNewtypeIsWrittenAsWhatItWraps() throws Exception {
         CheckedProgram program = CheckedProgram.of(List.of(DOORS));
-        try (Running running = Running.of(program)) {
-            assertThat(answer(running, program, "customer", text("c-42")))
-                    .isEqualTo(json("\"c-42\""));
-        }
+        Running running = Running.of(program);
+        assertThat(answer(running, program, "customer", text("c-42")))
+                .isEqualTo(json("\"c-42\""));
     }
 
     /** A truth held in a field is a slot wide, and is written as a truth and not as the slot. */
     @Test
     void aProductIsAnObjectOfItsFields() throws Exception {
         CheckedProgram program = CheckedProgram.of(List.of(DOORS));
-        try (Running running = Running.of(program)) {
-            assertThat(answer(running, program, "placeOrder",
-                    integer(12), new ObservedValue.Bool(true), text("rush")))
-                    .isEqualTo(json("{\"id\":12,\"paid\":true,\"note\":\"rush\"}"));
-            assertThat(answer(running, program, "placeOrder",
-                    integer(-1), new ObservedValue.Bool(false), text("")))
-                    .isEqualTo(json("{\"id\":-1,\"paid\":false,\"note\":\"\"}"));
-        }
+        Running running = Running.of(program);
+        assertThat(answer(running, program, "placeOrder",
+                integer(12), new ObservedValue.Bool(true), text("rush")))
+                .isEqualTo(json("{\"id\":12,\"paid\":true,\"note\":\"rush\"}"));
+        assertThat(answer(running, program, "placeOrder",
+                integer(-1), new ObservedValue.Bool(false), text("")))
+                .isEqualTo(json("{\"id\":-1,\"paid\":false,\"note\":\"\"}"));
     }
 
     /** A field holding nothing is not there at all, and one holding something is what it holds. */
     @Test
     void anAbsentOptionalFieldIsLeftOut() throws Exception {
         CheckedProgram program = CheckedProgram.of(List.of(DOORS));
-        try (Running running = Running.of(program)) {
-            assertThat(answer(running, program, "noteOf", new ObservedValue.Bool(false), text("x")))
-                    .isEqualTo(json("{\"count\":0}"));
-            assertThat(answer(running, program, "noteOf", new ObservedValue.Bool(true), text("x")))
-                    .isEqualTo(json("{\"note\":\"x\",\"count\":1}"));
-        }
+        Running running = Running.of(program);
+        assertThat(answer(running, program, "noteOf", new ObservedValue.Bool(false), text("x")))
+                .isEqualTo(json("{\"count\":0}"));
+        assertThat(answer(running, program, "noteOf", new ObservedValue.Bool(true), text("x")))
+                .isEqualTo(json("{\"note\":\"x\",\"count\":1}"));
     }
 
     /**
@@ -209,27 +203,25 @@ class AnAnswerCrossesInTheFormItsPositionDeclaresTest {
     @Test
     void aTruthHeldUnderAnOptionalFieldIsWrittenAsATruth() throws Exception {
         CheckedProgram program = CheckedProgram.of(List.of(DOORS));
-        try (Running running = Running.of(program)) {
-            assertThat(answer(running, program, "flagOf",
-                    new ObservedValue.Bool(true), new ObservedValue.Bool(true)))
-                    .isEqualTo(json("{\"on\":true}"));
-            assertThat(answer(running, program, "flagOf",
-                    new ObservedValue.Bool(true), new ObservedValue.Bool(false)))
-                    .isEqualTo(json("{\"on\":false}"));
-            assertThat(answer(running, program, "flagOf",
-                    new ObservedValue.Bool(false), new ObservedValue.Bool(true)))
-                    .isEqualTo(json("{}"));
-        }
+        Running running = Running.of(program);
+        assertThat(answer(running, program, "flagOf",
+                new ObservedValue.Bool(true), new ObservedValue.Bool(true)))
+                .isEqualTo(json("{\"on\":true}"));
+        assertThat(answer(running, program, "flagOf",
+                new ObservedValue.Bool(true), new ObservedValue.Bool(false)))
+                .isEqualTo(json("{\"on\":false}"));
+        assertThat(answer(running, program, "flagOf",
+                new ObservedValue.Bool(false), new ObservedValue.Bool(true)))
+                .isEqualTo(json("{}"));
     }
 
     /** A declaration that holds itself is written by the one encoder, as deep as the value is. */
     @Test
     void aDeclarationThatHoldsItselfIsWrittenAsDeepAsTheValueIs() throws Exception {
         CheckedProgram program = CheckedProgram.of(List.of(DOORS));
-        try (Running running = Running.of(program)) {
-            assertThat(answer(running, program, "chainOf", integer(1)))
-                    .isEqualTo(json("{\"n\":1,\"next\":{\"n\":2}}"));
-        }
+        Running running = Running.of(program);
+        assertThat(answer(running, program, "chainOf", integer(1)))
+                .isEqualTo(json("{\"n\":1,\"next\":{\"n\":2}}"));
     }
 
     /**
@@ -239,23 +231,21 @@ class AnAnswerCrossesInTheFormItsPositionDeclaresTest {
     @Test
     void aNewtypeCaseIsWrappedBesideTheTag() throws Exception {
         CheckedProgram program = CheckedProgram.of(List.of(DOORS));
-        try (Running running = Running.of(program)) {
-            assertThat(answer(running, program, "rankOf", integer(3)))
-                    .isEqualTo(json("{\"type\":\"Manager\",\"value\":3}"));
-            assertThat(answer(running, program, "rankOf", integer(0)))
-                    .isEqualTo(json("{\"type\":\"Staff\"}"));
-        }
+        Running running = Running.of(program);
+        assertThat(answer(running, program, "rankOf", integer(3)))
+                .isEqualTo(json("{\"type\":\"Manager\",\"value\":3}"));
+        assertThat(answer(running, program, "rankOf", integer(0)))
+                .isEqualTo(json("{\"type\":\"Staff\"}"));
     }
 
     @Test
     void anAnswerNobodyNamedIsDiscriminatedLikeASumOverTheSameCases() throws Exception {
         CheckedProgram program = CheckedProgram.of(List.of(DOORS));
-        try (Running running = Running.of(program)) {
-            assertThat(answer(running, program, "bill", integer(200)))
-                    .isEqualTo(json("{\"type\":\"Issued\",\"amount\":200}"));
-            assertThat(answer(running, program, "bill", integer(0)))
-                    .isEqualTo(json("{\"type\":\"UnknownSku\"}"));
-        }
+        Running running = Running.of(program);
+        assertThat(answer(running, program, "bill", integer(200)))
+                .isEqualTo(json("{\"type\":\"Issued\",\"amount\":200}"));
+        assertThat(answer(running, program, "bill", integer(0)))
+                .isEqualTo(json("{\"type\":\"UnknownSku\"}"));
     }
 
     /**
@@ -265,40 +255,37 @@ class AnAnswerCrossesInTheFormItsPositionDeclaresTest {
     @Test
     void aSumAmongAnAnswersMembersIsWrittenAsItsOwnCases() throws Exception {
         CheckedProgram program = CheckedProgram.of(List.of(DOORS));
-        try (Running running = Running.of(program)) {
-            assertThat(answer(running, program, "lookUp", integer(4)))
-                    .isEqualTo(json("{\"type\":\"Open\",\"since\":4}"));
-            assertThat(answer(running, program, "lookUp", integer(1)))
-                    .isEqualTo(json("{\"type\":\"Closed\"}"));
-            assertThat(answer(running, program, "lookUp", integer(0)))
-                    .isEqualTo(json("{\"type\":\"Missing\"}"));
-        }
+        Running running = Running.of(program);
+        assertThat(answer(running, program, "lookUp", integer(4)))
+                .isEqualTo(json("{\"type\":\"Open\",\"since\":4}"));
+        assertThat(answer(running, program, "lookUp", integer(1)))
+                .isEqualTo(json("{\"type\":\"Closed\"}"));
+        assertThat(answer(running, program, "lookUp", integer(0)))
+                .isEqualTo(json("{\"type\":\"Missing\"}"));
     }
 
     @Test
     void theEndsOfAnIntAreWrittenWhole() throws Exception {
         CheckedProgram program = CheckedProgram.of(List.of(DOORS));
-        try (Running running = Running.of(program)) {
-            assertThat(answer(running, program, "echoInt", integer(Long.MIN_VALUE)))
-                    .isEqualTo(json(Long.toString(Long.MIN_VALUE)));
-            assertThat(answer(running, program, "echoInt", integer(Long.MAX_VALUE)))
-                    .isEqualTo(json(Long.toString(Long.MAX_VALUE)));
-            assertThat(answer(running, program, "echoBool", new ObservedValue.Bool(true)))
-                    .isEqualTo(json("true"));
-        }
+        Running running = Running.of(program);
+        assertThat(answer(running, program, "echoInt", integer(Long.MIN_VALUE)))
+                .isEqualTo(json(Long.toString(Long.MIN_VALUE)));
+        assertThat(answer(running, program, "echoInt", integer(Long.MAX_VALUE)))
+                .isEqualTo(json(Long.toString(Long.MAX_VALUE)));
+        assertThat(answer(running, program, "echoBool", new ObservedValue.Bool(true)))
+                .isEqualTo(json("true"));
     }
 
     /** Whatever a string holds reads back as that string once the JSON is read as JSON. */
     @Test
     void aStringIsWrittenSoThatItReadsBackAsItself() throws Exception {
         CheckedProgram program = CheckedProgram.of(List.of(DOORS));
-        try (Running running = Running.of(program)) {
-            for (String said : List.of("", "a\"b\\c", "line\nbreak\ttab\rreturn", "\u0001\u001f",
-                    "𠮷￥", "nought\u0000after")) {
-                assertThat(answer(running, program, "echoText", text(said)).stringValue())
-                        .as("the string %s", said)
-                        .isEqualTo(said);
-            }
+        Running running = Running.of(program);
+        for (String said : List.of("", "a\"b\\c", "line\nbreak\ttab\rreturn", "\u0001\u001f",
+                "𠮷￥", "nought\u0000after")) {
+            assertThat(answer(running, program, "echoText", text(said)).stringValue())
+                    .as("the string %s", said)
+                    .isEqualTo(said);
         }
     }
 

@@ -77,16 +77,15 @@ class AValuePublishedByAnotherBuildIsReachedTest {
     @Test
     void aValuePublishedByAnotherBuildIsReachedThroughItsEntry() throws Exception {
         CheckedProgram publisherProgram = CheckedProgram.of(List.of(PUBLISHER));
-        byte[] publisherObject = NativeCompiler.compile(publisherProgram);
+        byte[] publisherObject = NativeArtifacts.object(publisherProgram);
         CheckedProgram readerProgram = compiledReader();
 
-        try (Running running = Running.of(readerProgram, List.of(publisherObject))) {
-            CheckedModule reader = readerProgram.module("reader");
-            var g = reader.behavior(new ValueName.Behavior("reader", "g"));
+        Running running = Running.of(readerProgram, List.of(publisherObject));
+        CheckedModule reader = readerProgram.module("reader");
+        var g = reader.behavior(new ValueName.Behavior("reader", "g"));
 
-            assertThat(running.answering(reader, g, List.of()))
-                    .isEqualTo(new ObservedValue.Integer(42));
-        }
+        assertThat(running.answering(reader, g, List.of()))
+                .isEqualTo(new ObservedValue.Integer(42));
     }
 
     private static CheckedProgram compiledReader() {
