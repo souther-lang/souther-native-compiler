@@ -199,7 +199,7 @@ fn a_read_disagreeing_with_a_binder_that_has_no_layout_is_the_halves_disagreeing
 fn a_behaviors_read_is_typed_as_its_target_takes() {
     let target = |answers: &str| {
         format!(
-            r#"{{"module":"m","name":"b","is":"body","parameters":{{"named":[{{"name":"p0","input":{{"is":"scalar","scalar":"INT"}}}}]}},"output":{{"is":"scalar","scalar":"{answers}"}},"ensures":{{"at":"none"}}}}"#
+            r#"{{"module":"m","name":"b","is":"body","parameters":{{"named":[{{"name":"a","input":{{"is":"scalar","scalar":"INT"}}}}]}},"output":{{"is":"scalar","scalar":"{answers}"}},"ensures":{{"at":"none"}}}}"#
         )
     };
     let body = |read: String| {
@@ -510,7 +510,8 @@ fn a_call_of_a_published_value_stands_at_what_its_entry_answers() {
 fn two_stages(flag_takes: &str, outer_answers: &str) -> String {
     let target = |name: &str, is: &str, takes: &str, answers: &str| {
         format!(
-            r#"{{"module":"m","name":"{name}","is":"{is}","parameters":{{"named":[{{"name":"p0","input":{{"is":"scalar","scalar":"{takes}"}}}}]}},"output":{{"is":"scalar","scalar":"{answers}"}},"ensures":{{"at":"none"}}}}"#
+            r#"{{"module":"m","name":"{name}","is":"{is}","parameters":{},"output":{{"is":"scalar","scalar":"{answers}"}},"ensures":{{"at":"none"}}}}"#,
+            taking(is, &format!(r#"{{"is":"scalar","scalar":"{takes}"}}"#))
         )
     };
     let body = |name: &str, ty: &str| {
@@ -1920,11 +1921,22 @@ fn a_handover_carries_a_value_the_module_builds() {
     is_the_halves_disagreeing(&value("nothing"), "builds no value of");
 }
 
+/// What a target answering as `is` takes, one `input`: under the name `a` where it is declared, which
+/// every clause here relates, and by its place alone where it is a composition, which declares none.
+fn taking(is: &str, input: &str) -> String {
+    if is == "composed" {
+        format!(r#"{{"positional":[{input}]}}"#)
+    } else {
+        format!(r#"{{"named":[{{"name":"a","input":{input}}}]}}"#)
+    }
+}
+
 /// `m.b`, taking one `Int`, answering what `output` says, answering as `is` says, and whose answer
 /// is held as `ensures` says.
 fn held(is: &str, output: &str, ensures: &str) -> String {
     format!(
-        r#"{{"module":"m","name":"b","is":"{is}","parameters":{{"named":[{{"name":"p0","input":{{"is":"scalar","scalar":"INT"}}}}]}},"output":{output},"ensures":{ensures}}}"#
+        r#"{{"module":"m","name":"b","is":"{is}","parameters":{},"output":{output},"ensures":{ensures}}}"#,
+        taking(is, r#"{"is":"scalar","scalar":"INT"}"#)
     )
 }
 
@@ -2008,7 +2020,7 @@ fn an_answer_is_held_where_the_behavior_has_a_place_for_it() {
 /// rule could relate its answer to.
 #[test]
 fn a_composition_holds_its_answer_to_nothing() {
-    let stage = r#"{"module":"m","name":"c","is":"body","parameters":{"named":[{"name":"p0","input":{"is":"scalar","scalar":"INT"}}]},"output":{"is":"scalar","scalar":"INT"},"ensures":{"at":"none"}}"#.to_string();
+    let stage = r#"{"module":"m","name":"c","is":"body","parameters":{"named":[{"name":"a","input":{"is":"scalar","scalar":"INT"}}]},"output":{"is":"scalar","scalar":"INT"},"ensures":{"at":"none"}}"#.to_string();
     let stage_body = format!(
         r#"{{"is":"body","declared":"m.c","parameters":["a"],"publication":"kept","body":{}}}"#,
         read(0, INT)
@@ -2058,10 +2070,10 @@ fn a_rule_is_decided_for_this_documents_behaviors_and_no_others() {
     );
 }
 
-/// A rule names as many parameters as its behavior takes, since it reads each under where it
-/// stands among them.
+/// A rule relates the parameters its behavior takes, since it reads each under where it stands
+/// among them: the clause's names and the declaration's are one list crossed twice.
 #[test]
-fn a_rule_names_as_many_parameters_as_its_behavior_takes() {
+fn a_rule_names_the_parameters_its_behavior_takes() {
     let rules = held_at(
         "callee",
         &["a", "z"],
@@ -2073,7 +2085,7 @@ fn a_rule_names_as_many_parameters_as_its_behavior_takes() {
             &[],
             &[defined(&read(0, INT))],
         ),
-        "names 2 parameters",
+        r#"its ensures relates ["a", "z"]"#,
     );
 }
 

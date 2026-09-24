@@ -27,7 +27,7 @@ fn runtime() -> &'static std::path::Path {
 
 #[test]
 fn a_value_and_its_handover_read_back_as_the_checker_wrote_them() {
-    let program: Program = serde_json::from_str(VALUES).expect("every field this carries reads");
+    let program = Program::read(VALUES).expect("every field this carries reads");
     let module = &program.modules[0];
 
     assert_eq!(module.values.len(), 2, "ks and ys");
@@ -88,8 +88,7 @@ fn a_published_values_entry_answers_with_what_it_names() {
 /// occurrence of each back.
 #[test]
 fn a_local_value_reach_and_a_published_one_read_as_different_variants() {
-    let program: Program =
-        serde_json::from_str(PUBLISHED_VALUE).expect("every field this carries reads");
+    let program = Program::read(PUBLISHED_VALUE).expect("every field this carries reads");
 
     let publisher = program
         .modules

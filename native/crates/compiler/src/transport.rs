@@ -20,8 +20,9 @@ use serde::Deserialize;
 /// much of as happens to parse.
 pub const TRANSPORT_VERSION: u32 = 15;
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
+/// A document of [`TRANSPORT_VERSION`], and no other, read through [`Program::read`] and nothing
+/// else ([`crate::versioned`]).
+#[derive(Debug)]
 pub struct Program {
     pub transport: u32,
     pub declarations: Vec<Declaration>,
@@ -29,6 +30,45 @@ pub struct Program {
     /// behavior a module read off the path declares, and that module is not one of these.
     pub behaviors: Vec<Target>,
     pub modules: Vec<Module>,
+}
+
+/// A [`Program`] as the document writes it.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WrittenProgram {
+    transport: u32,
+    declarations: Vec<Declaration>,
+    behaviors: Vec<Target>,
+    modules: Vec<Module>,
+}
+
+/// What a document says it is.
+#[derive(Deserialize)]
+struct Says {
+    transport: u32,
+}
+
+impl Program {
+    /// The program `document` holds, where it is a document of [`TRANSPORT_VERSION`]. One of any
+    /// other version is refused as that, before anything else in it is read.
+    pub fn read(document: &str) -> anyhow::Result<Program> {
+        let written: WrittenProgram = crate::versioned::read(document.as_bytes(), |says: Says| {
+            if says.transport == TRANSPORT_VERSION {
+                Ok(())
+            } else {
+                Err(format!(
+                    "this driver reads transport {TRANSPORT_VERSION} and was handed {}",
+                    says.transport
+                ))
+            }
+        })?;
+        Ok(Program {
+            transport: written.transport,
+            declarations: written.declarations,
+            behaviors: written.behaviors,
+            modules: written.modules,
+        })
+    }
 }
 
 impl Program {
@@ -560,9 +600,9 @@ pub struct Target {
     pub inputs: Vec<BoundaryInput>,
     /// The names its declaration gives what it takes, one for each of `inputs`, and none for a
     /// composition, which declares no parameters. Held apart from `inputs` because every reader
-    /// but one asks what arrives and not what it is called; made only from a document in which
-    /// each name was written beside the input it names, so the two cannot disagree in length.
-    pub names: Option<Vec<String>>,
+    /// but one asks what arrives and not what it is called; set only by [`Target::try_from`], from
+    /// a document in which each name was written beside the input it names.
+    names: Option<Vec<String>>,
     pub output: BoundaryOutput,
     /// What is done about what the behavior declares of its answer, as the checker answered it.
     pub ensures: Ensures,
@@ -599,22 +639,55 @@ struct NamedInput {
 impl TryFrom<WrittenTarget> for Target {
     type Error = String;
 
-    /// Refuses a behavior a host implements written with no names: what a host implements is
-    /// declared, and a declaration names every parameter.
+    /// Holds what a behavior takes to how it answers, as the checker pairs them
+    /// (`CheckedProgramAssembler`): a behavior with a body, one a host implements and one not
+    /// written are each declared, and a declaration names every parameter; a composition declares
+    /// none. One another build implements was either, and the kind of answer it crosses as does not
+    /// say which. Every pair is written out, so a kind of answer added to [`Answers`] is not read
+    /// until it is decided here.
+    ///
+    /// Where the behavior's answer is held to an `ensures`, the names the clause relates are the
+    /// declaration's, the same list crossed twice: they are held to be one.
     fn try_from(written: WrittenTarget) -> Result<Self, Self::Error> {
-        let (inputs, names) = match written.parameters {
-            Parameters::Named(named) => {
-                let (names, inputs) = named.into_iter().map(|it| (it.name, it.input)).unzip();
-                (inputs, Some(names))
-            }
-            Parameters::Positional(_) if written.is == Answers::Injected => {
-                return Err(format!(
-                    "`{}.{}` is implemented by a host and is written with no parameter names",
-                    written.module, written.name
-                ));
-            }
-            Parameters::Positional(inputs) => (inputs, None),
+        let named = |named: Vec<NamedInput>| {
+            let (names, inputs): (Vec<String>, Vec<BoundaryInput>) =
+                named.into_iter().map(|it| (it.name, it.input)).unzip();
+            (inputs, Some(names))
         };
+        let refused = |why: &str| {
+            Err(format!(
+                "`{}.{}` answers as {:?} and {why}: the two halves disagree",
+                written.module, written.name, written.is
+            ))
+        };
+        let (inputs, names) = match (written.is, written.parameters) {
+            (Answers::Body | Answers::Injected | Answers::Unwritten, Parameters::Named(it)) => {
+                named(it)
+            }
+            (Answers::Body | Answers::Injected | Answers::Unwritten, Parameters::Positional(_)) => {
+                return refused("is written with no parameter names, which its declaration gives");
+            }
+            (Answers::Composed, Parameters::Positional(inputs)) => (inputs, None),
+            (Answers::Composed, Parameters::Named(_)) => {
+                return refused(
+                    "is written with parameter names, which a composition declares none of",
+                );
+            }
+            (Answers::Elsewhere, Parameters::Named(it)) => named(it),
+            (Answers::Elsewhere, Parameters::Positional(inputs)) => (inputs, None),
+        };
+        if let Some(contract) = written.ensures.contract() {
+            match &names {
+                Some(names) if *names == contract.parameters => {}
+                Some(names) => {
+                    return refused(&format!(
+                        "takes {names:?}, and its ensures relates {:?}",
+                        contract.parameters
+                    ));
+                }
+                None => return refused("declares no parameters, and an ensures relates some"),
+            }
+        }
         Ok(Target {
             module: written.module,
             name: written.name,
@@ -628,6 +701,12 @@ impl TryFrom<WrittenTarget> for Target {
 }
 
 impl Target {
+    /// The names its declaration gives what it takes, one for each of `inputs`, or none where it
+    /// is a composition.
+    pub fn names(&self) -> Option<&[String]> {
+        self.names.as_deref()
+    }
+
     /// What a call reaching this behavior writes, which is the two halves joined the one way.
     pub fn declared(&self) -> String {
         format!("{}.{}", self.module, self.name)

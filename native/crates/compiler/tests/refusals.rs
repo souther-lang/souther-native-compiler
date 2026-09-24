@@ -5,6 +5,7 @@
 //! disagreeing about what they are saying to each other. The half that started the driver reports
 //! them to different people, so what is checked here is that they arrive apart.
 
+use souther_native_driver::transport::Program;
 use souther_native_driver::{NotLowered, object_for};
 
 /// One behavior over one primitive, joined by one operator — the smallest document that reaches
@@ -212,24 +213,104 @@ fn a_function_at_a_behaviors_boundary_is_not_a_document_this_driver_reads() {
     );
 }
 
-/// A behavior a host implements is declared, and a declaration names every parameter. Written with
-/// no names, it is a document the checker could not have written, and a binding would have nothing
-/// to call what it hands the host.
+/// What a behavior takes is named where it is declared and unnamed where it is a composition, and
+/// each kind of answer is one or the other: a body, a behavior a host implements and one not
+/// written are declared, a composition is not, and one another build implements may be either.
+/// Every pair is asked, read as a document and nothing further, so the answer is the reader's.
 #[test]
-fn a_behavior_a_host_implements_written_with_no_names_is_not_a_document_this_driver_reads() {
-    let document = concat!(
-        r#"{"transport":15,"declarations":[],"#,
-        r#""behaviors":[{"module":"m","name":"lookUp","is":"injected","#,
-        r#""parameters":{"positional":[{"is":"scalar","scalar":"INT"}]},"#,
-        r#""output":{"is":"scalar","scalar":"INT"},"ensures":{"at":"none"}}],"#,
-        r#""modules":[{"name":"m","publishes":[],"helpers":[],"values":[],"entries":[],"definitions":[],"examples":[]}]}"#,
+fn what_a_behavior_takes_is_named_as_its_kind_of_answer_declares() {
+    let named = r#"{"named":[{"name":"n","input":{"is":"scalar","scalar":"INT"}}]}"#;
+    let positional = r#"{"positional":[{"is":"scalar","scalar":"INT"}]}"#;
+    for (is, reads_named, reads_positional) in [
+        ("body", true, false),
+        ("injected", true, false),
+        ("unwritten", true, false),
+        ("composed", false, true),
+        ("elsewhere", true, true),
+    ] {
+        for (parameters, reads) in [(named, reads_named), (positional, reads_positional)] {
+            let document = format!(
+                concat!(
+                    r#"{{"transport":15,"declarations":[],"#,
+                    r#""behaviors":[{{"module":"m","name":"f","is":"{}","parameters":{},"#,
+                    r#""output":{{"is":"scalar","scalar":"INT"}},"ensures":{{"at":"none"}}}}],"#,
+                    r#""modules":[]}}"#,
+                ),
+                is, parameters
+            );
+            let read = Program::read(&document);
+            assert_eq!(
+                read.is_ok(),
+                reads,
+                "{is} with {parameters}: {:?}",
+                read.err()
+            );
+            if let Err(refused) = read {
+                assert!(
+                    refused.to_string().contains("the two halves disagree"),
+                    "{refused}"
+                );
+            }
+        }
+    }
+}
+
+/// The names an `ensures` relates are the parameters the behavior declares, crossed twice: a
+/// clause relating others is refused, and so is one on a behavior that declares none.
+#[test]
+fn an_ensures_relates_the_parameters_the_behavior_declares() {
+    let contract = |parameters: &str| {
+        format!(r#"{{"at":"crossing","contract":{{"parameters":{parameters},"rules":[]}}}}"#)
+    };
+    let document = |parameters: &str, ensures: &str| {
+        format!(
+            concat!(
+                r#"{{"transport":15,"declarations":[],"#,
+                r#""behaviors":[{{"module":"m","name":"f","is":"injected","parameters":{},"#,
+                r#""output":{{"is":"scalar","scalar":"INT"}},"ensures":{}}}],"#,
+                r#""modules":[]}}"#,
+            ),
+            parameters, ensures
+        )
+    };
+    let named = r#"{"named":[{"name":"n","input":{"is":"scalar","scalar":"INT"}}]}"#;
+
+    assert!(Program::read(&document(named, &contract(r#"["n"]"#))).is_ok());
+    let other = Program::read(&document(named, &contract(r#"["m"]"#)))
+        .expect_err("a clause relating a parameter the behavior does not take");
+    assert!(
+        other.to_string().contains(r#"its ensures relates ["m"]"#),
+        "{other}"
+    );
+    let composed = document(
+        r#"{"positional":[{"is":"scalar","scalar":"INT"}]}"#,
+        &contract(r#"["n"]"#),
+    )
+    .replace(r#""is":"injected""#, r#""is":"elsewhere""#);
+    let none =
+        Program::read(&composed).expect_err("a clause on a behavior that declares no parameters");
+    assert!(
+        none.to_string().contains("declares no parameters"),
+        "{none}"
+    );
+}
+
+/// A document of an earlier transport is refused as that, and not as whichever member moved
+/// since: 14 wrote what a behavior takes as `inputs`, which 15 does not read.
+#[test]
+fn a_transport_of_an_earlier_shape_is_refused_by_its_version() {
+    let earlier = concat!(
+        r#"{"transport":14,"declarations":[],"#,
+        r#""behaviors":[{"module":"m","name":"f","is":"body","inputs":[],"#,
+        r#""output":{"is":"scalar","scalar":"INT"},"ensures":{"at":"none"}}],"modules":[]}"#,
     );
 
-    let refused = object_for(document).expect_err("a host's behavior with no names");
+    let refused = object_for(earlier).expect_err("a transport of another version");
 
     assert!(
-        refused.downcast_ref::<NotLowered>().is_none()
-            && refused.to_string().contains("no parameter names"),
+        refused
+            .to_string()
+            .contains("this driver reads transport 15 and was handed 14"),
         "{refused}"
     );
 }

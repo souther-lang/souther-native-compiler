@@ -17,7 +17,7 @@
 //! is and that it cannot be reached, rather than not know it is there.
 
 use serde::{Deserialize, Serialize};
-use souther_native_abi::{HostParameter, HostWord};
+use souther_native_abi::{ABI_GENERATION, HostParameter, HostWord};
 use std::collections::BTreeMap;
 
 /// What a manifest says it is.
@@ -52,14 +52,55 @@ pub(crate) struct Manifest {
 /// the manifest says them. A library is made of the objects it links, and what it offers a host is
 /// what each of them carries, so an object built by another build is described by itself and not
 /// by whatever links it.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(deny_unknown_fields)]
+///
+/// Read through [`Carried::read`] and nothing else: an object another release of this compiler
+/// built is refused by the version it says it is ([`crate::versioned`]).
+#[derive(Serialize, Debug, Clone, PartialEq)]
 pub(crate) struct Carried {
     /// The [`VERSION`] of what the modules say.
     pub version: u32,
     /// The ABI generation their functions answer to.
     pub abi: u32,
     pub modules: Vec<Module>,
+}
+
+/// A [`Carried`] as an object holds it.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WrittenCarried {
+    version: u32,
+    abi: u32,
+    modules: Vec<Module>,
+}
+
+/// What a carried surface says it is.
+#[derive(Deserialize)]
+struct Says {
+    version: u32,
+    abi: u32,
+}
+
+impl Carried {
+    /// The surface `carried` holds, where it is of this [`VERSION`] and ABI generation. One of any
+    /// other is refused as that, before anything its modules say is read.
+    pub(crate) fn read(carried: &[u8]) -> anyhow::Result<Carried> {
+        let written: WrittenCarried = crate::versioned::read(carried, |says: Says| {
+            if says.version == VERSION && says.abi == ABI_GENERATION {
+                Ok(())
+            } else {
+                Err(format!(
+                    "a surface of manifest version {} and ABI generation {}, and this driver \
+                     writes version {VERSION} and generation {ABI_GENERATION}",
+                    says.version, says.abi
+                ))
+            }
+        })?;
+        Ok(Carried {
+            version: written.version,
+            abi: written.abi,
+            modules: written.modules,
+        })
+    }
 }
 
 /// What one module publishes, and what it asks a host to implement.
@@ -377,7 +418,7 @@ impl From<HostParameter> for Parameter {
 
 #[cfg(test)]
 mod tests {
-    use super::{FORMAT, Manifest, VERSION};
+    use super::{Carried, FORMAT, Manifest, VERSION};
 
     /// What version 3 is. Read by these types, which refuse a member they do not name, and
     /// written back the same: a field renamed or a kind reshaped here stops matching the fixture
@@ -392,5 +433,21 @@ mod tests {
         let mut written = serde_json::to_string_pretty(&read).unwrap();
         written.push('\n');
         assert_eq!(written, V3);
+    }
+
+    /// A surface an object of an earlier release carries is refused as that, and not as whichever
+    /// member moved since: version 2 wrote what a behavior takes as `takes`, which 3 does not read.
+    #[test]
+    fn a_surface_of_an_earlier_version_is_refused_by_its_version() {
+        let earlier = br#"{"version":2,"abi":3,"modules":[{"name":"m","behaviors":[
+            {"name":"f","takes":[],"answers":{"kind":"primitive","name":"Int"},"call":null}],
+            "injections":[],"values":[],"declarations":[]}]}"#;
+
+        let refused = Carried::read(earlier).expect_err("a surface of another version");
+
+        assert!(
+            refused.to_string().contains("manifest version 2 and ABI generation 3"),
+            "{refused}"
+        );
     }
 }

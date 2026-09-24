@@ -500,18 +500,8 @@ pub(crate) fn carried_by(object: &[u8], named: &str) -> Result<Vec<manifest::Mod
         .iter()
         .rposition(|byte| *byte != 0)
         .map_or(0, |at| at + 1);
-    let carried: Carried = serde_json::from_slice(&data[..end])
-        .map_err(|problem| anyhow::anyhow!("what {named} carries does not read: {problem}"))?;
-    if carried.version != manifest::VERSION || carried.abi != ABI_GENERATION {
-        bail!(
-            "{named} carries a surface of manifest version {} and ABI generation {}, and this \
-             driver writes version {} and generation {}",
-            carried.version,
-            carried.abi,
-            manifest::VERSION,
-            ABI_GENERATION
-        );
-    }
+    let carried = Carried::read(&data[..end])
+        .map_err(|problem| anyhow::anyhow!("{named} carries {problem}"))?;
     Ok(carried.modules)
 }
 
