@@ -170,6 +170,101 @@ class AHostImplementsABehaviorWithNoBodyTest {
                         """);
     }
 
+    private static final String SHOP = """
+            module shop exposing ( Money, quote, cheap )
+
+            data Money = Int
+                invariant notNegative = value >= 0
+
+            behavior priceOf : (sku: String, gift: Bool) -> Money
+
+            behavior isCheap : (price: Money) -> Bool
+
+            behavior quote : (sku: String, gift: Bool, count: Int) -> Int
+                depends on priceOf
+            let quote (sku, gift, count, priceOf) = priceOf(sku, gift).value * count
+
+            behavior cheap : (n: Int) -> Bool
+                depends on isCheap
+            let cheap (n, isCheap) = isCheap(Money(n))
+            """;
+
+    /**
+     * Implementations handed text, a truth and a value of a declared type, answering a value and a
+     * truth: every word a behavior's crossing is made of besides a number, each way. One builds its
+     * answer with the type's own host constructor, and where that refuses the value, what it hands
+     * back is not an answer the model can end with.
+     */
+    private static final String WORDS = """
+            #include <stdio.h>
+            #include <string.h>
+            #include "souther.h"
+
+            static souther_status priced(souther_string sku, uint8_t gift, souther_value *out) {
+                int64_t cents = strncmp((const char *) souther_string_bytes(sku), "free", 4) == 0
+                        ? -1 : souther_string_length(sku) * 100 + (gift ? 50 : 0);
+                return souther3_m_shop_t_Money_construct(cents, out);
+            }
+
+            static souther_status judged(souther_value price, uint8_t *out) {
+                *out = souther3_m_shop_t_Money_f_value(price) < 300;
+                return SOUTHER_ANSWERED;
+            }
+
+            static int64_t quoted(const char *sku, uint8_t gift, int64_t count, souther_status *status) {
+                souther_string text = souther_string_of_utf8((const uint8_t *) sku, (int64_t) strlen(sku));
+                int64_t answer = -1;
+                *status = souther3_m_shop_b_quote(text, gift, count, &answer);
+                return answer;
+            }
+
+            int main(void) {
+                int64_t mark = souther_mark();
+                souther3_m_shop_b_priceOf_register(priced);
+                souther3_m_shop_b_isCheap_register(judged);
+                souther_status status;
+                int64_t answer = quoted("abc", 1, 2, &status);
+                printf("gift %u %lld\\n", status, (long long) answer);
+                answer = quoted("ab", 0, 1, &status);
+                printf("plain %u %lld\\n", status, (long long) answer);
+                answer = quoted("free", 0, 1, &status);
+                printf("refused %d %lld\\n", status == SOUTHER_INJECTION_PROTOCOL_VIOLATION,
+                       (long long) answer);
+                uint8_t cheap = 9;
+                status = souther3_m_shop_b_cheap(250, &cheap);
+                printf("cheap %u %u\\n", status, cheap);
+                status = souther3_m_shop_b_cheap(400, &cheap);
+                printf("dear %u %u\\n", status, cheap);
+                souther_reset(mark);
+                return 0;
+            }
+            """;
+
+    @Test
+    void textATruthAndAValueCrossToAnImplementationAndBack(@TempDir Path into) throws Exception {
+        NativeCompiler.Library library =
+                NativeCompiler.library(CheckedProgram.of(List.of(SHOP)), into);
+        assertThat(Files.readString(library.declarations(), StandardCharsets.UTF_8))
+                .contains("typedef souther_status (*souther3_m_shop_b_priceOf_implementation)"
+                        + "(souther_string, uint8_t, souther_value *);")
+                .contains("typedef souther_status (*souther3_m_shop_b_isCheap_implementation)"
+                        + "(souther_value, uint8_t *);");
+
+        Path source = into.resolve("host.c");
+        Files.writeString(source, WORDS, StandardCharsets.UTF_8);
+        Path executable = into.resolve("host");
+        said(List.of("cc", "-Wall", "-Werror", "-o", executable.toString(), source.toString(),
+                "-I", into.toString(), library.library().toString(),
+                "-Wl,-rpath," + library.library().getParent()));
+        assertThat(said(List.of(executable.toString()))).isEqualTo("""
+                gift 0 700
+                plain 0 200
+                refused 1 -1
+                cheap 0 1
+                dear 0 0
+                """);
+    }
+
     private static final String PORT = """
             module lib.port exposing ( lookUp )
 

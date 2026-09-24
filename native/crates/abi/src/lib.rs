@@ -26,8 +26,8 @@
 /// - The calling convention itself — `souther-native-compiler#19` is `2`; `1` was every function
 ///   answering its value as a plain return, with no generation written into the symbol because
 ///   there was only ever the one.
-/// - What a non-`ANSWERED` `status` *means*. This crate reserves `ANSWERED` and nothing else —
-///   which wire number a language abort gets is `native_status` in `souther-native-driver`'s own
+/// - What a non-`ANSWERED` `status` *means*. This crate reserves `ANSWERED` and the
+///   [`HOST_STATUSES`] — which wire number a language abort gets is `native_status` in `souther-native-driver`'s own
 ///   exhaustive mapping, kept apart from this crate for the reason this file's own doc gives. Two
 ///   objects built by drivers whose `native_status` disagrees about what `4` is are exactly as
 ///   incompatible as two objects with different calling conventions; they just still link, because
@@ -265,6 +265,10 @@ pub fn host_behavior_symbol(module: &str, behavior: &str) -> String {
 /// one implementation into another handle's still finds its own implementation after it returns.
 /// The behavior is answered by the object of the build that declares it, and what it runs is what
 /// is registered here: a call with nothing registered answers [`INJECTION_UNBOUND`].
+///
+/// What is registered is the host's, and has to stay callable for as long as it is registered on
+/// any thread: the object calls it through the pointer and keeps nothing else of it. A host makes
+/// the pointer once for what it registers and hands the same one over each time.
 pub fn host_register_symbol(module: &str, behavior: &str) -> String {
     format!("{}_register", host_under(module, 'b', behavior))
 }

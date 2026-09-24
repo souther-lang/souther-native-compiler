@@ -219,7 +219,9 @@ without reading the program: each module's behaviors with what they take and ans
 values, and its published types with their fields and cases, each beside the function that reaches
 it, or `null` where a host has no way in yet. Apart from its behaviors, each module's `injections`
 are the behaviors a host implements, published or not, each with what it takes and answers, the
-function type a host implements it as, and what it registers one through. A type is said by its
+function type a host implements it as, and what it registers one through. The function type is not
+a function: every `name` of a function in the manifest is a symbol the library defines, and the
+type's is under `type`. A type is said by its
 module and its name, never by the key the Java half hands this one. What a manifest may say is Rust
 types, and version 2 is `native/crates/compiler/tests/interface-v2.json`: a test holds a program's
 manifest to it, and
@@ -236,7 +238,11 @@ none. The function takes what the behavior takes and room for its answer, in the
 a published behavior, and answers a status. Registration is per thread, like the arena, and handing
 back what was replaced is how a binding registers an implementation around one call and puts the
 previous one back after it, so a call made from inside an implementation into another still finds
-its own. A call with nothing registered answers `INJECTION_UNBOUND`. An implementation may answer
+its own. What is registered stays the host's, and has to stay callable while it is registered, so a
+binding makes the pointer once and hands that same pointer over around each call. PHP's FFI makes a
+new C entry each time a closure is handed to C and keeps it until the request ends, so a binding
+that handed its closure over on every call would grow for as long as the process lives; a test
+holds a PHP binding to the first shape. A call with nothing registered answers `INJECTION_UNBOUND`. An implementation may answer
 `ANSWERED` or `HOST_EXCEPTION`, which says it threw and that the host kept what it threw to throw
 again where the outermost call returns, since a host's exception cannot unwind through generated
 code. Anything else it answers is `INJECTION_PROTOCOL_VIOLATION` by the time a caller sees it: an

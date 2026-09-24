@@ -49,41 +49,32 @@ fn declared_in(header: &str) -> BTreeSet<String> {
         .collect()
 }
 
-/// Every function the manifest names, wherever it names one.
+/// Every function the manifest names, wherever it names one: every member shaped as a function is
+/// (a name, what it takes and what it answers, and nothing else), and what a host registers an
+/// implementation through. Found by walking the whole manifest rather than by a list of where
+/// functions are kept, so a function a later version puts somewhere new is held to the header and
+/// the library without this having to be told, and a type named where a function is expected is
+/// caught for not being defined.
 fn described_in(manifest: &Value) -> BTreeSet<String> {
+    fn walk(value: &Value, named: &mut BTreeSet<String>) {
+        match value {
+            Value::Object(members) => {
+                let mut keys: Vec<&str> = members.keys().map(String::as_str).collect();
+                keys.sort_unstable();
+                if keys == ["answers", "name", "takes"] {
+                    named.insert(members["name"].as_str().unwrap().to_string());
+                }
+                if let Some(register) = members.get("register") {
+                    named.insert(register.as_str().unwrap().to_string());
+                }
+                members.values().for_each(|it| walk(it, named));
+            }
+            Value::Array(items) => items.iter().for_each(|it| walk(it, named)),
+            _ => {}
+        }
+    }
     let mut named = BTreeSet::new();
-    let mut add = |function: &Value| {
-        if let Some(name) = function.get("name").and_then(Value::as_str) {
-            named.insert(name.to_string());
-        }
-    };
-    for function in manifest["runtime"].as_array().unwrap() {
-        add(function);
-    }
-    for module in manifest["modules"].as_array().unwrap() {
-        for behavior in module["behaviors"].as_array().unwrap() {
-            add(&behavior["call"]);
-        }
-        for value in module["values"].as_array().unwrap() {
-            add(&value["read"]);
-        }
-        // What a host registers through, and not what it registers: that is a function the host
-        // writes, and its name is a type's.
-        for injection in module["injections"].as_array().unwrap() {
-            add(&serde_json::json!({ "name": injection["register"] }));
-        }
-        // Each kind has the members it has: a newtype one field, a sum its cases and no
-        // constructor. A member a kind has not got is absent, and indexing it answers null.
-        for declaration in module["declarations"].as_array().unwrap() {
-            for operation in ["construct", "case", "decode", "encode"] {
-                add(&declaration[operation]);
-            }
-            for field in declaration["fields"].as_array().into_iter().flatten() {
-                add(&field["read"]);
-            }
-            add(&declaration["field"]["read"]);
-        }
-    }
+    walk(manifest, &mut named);
     named
 }
 

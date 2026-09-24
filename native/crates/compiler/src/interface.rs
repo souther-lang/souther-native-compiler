@@ -48,17 +48,7 @@ impl HostFunction {
     /// The signature the function is emitted under, read off what a host is told it takes and
     /// answers, so the two cannot differ.
     pub(crate) fn signature(&self, call_conv: CallConv) -> ir::Signature {
-        let mut signature = ir::Signature::new(call_conv);
-        for taken in &self.takes {
-            signature.params.push(AbiParam::new(match taken {
-                HostParameter::Given(word) => machine(*word),
-                HostParameter::Room(_) => POINTER,
-            }));
-        }
-        if let Some(word) = self.answers {
-            signature.returns.push(AbiParam::new(machine(word)));
-        }
-        signature
+        signature_of(&self.takes, self.answers, call_conv)
     }
 
     /// What a host is told of it.
@@ -69,6 +59,50 @@ impl HostFunction {
             answers: self.answers.map(Word::from),
         }
     }
+}
+
+/// The type of a function a host writes to implement a behavior with no body, as it is called: what
+/// C calls a pointer to one, and what it takes and answers. Nothing is defined under the name.
+#[derive(Clone, Debug)]
+pub(crate) struct HostImplementation {
+    pub type_name: String,
+    pub takes: Vec<HostParameter>,
+    pub answers: HostWord,
+}
+
+impl HostImplementation {
+    /// The signature it is called under, read off what a host is told it takes and answers.
+    pub(crate) fn signature(&self, call_conv: CallConv) -> ir::Signature {
+        signature_of(&self.takes, Some(self.answers), call_conv)
+    }
+
+    /// What a host is told of it.
+    fn described(&self) -> manifest::Implementation {
+        manifest::Implementation {
+            type_name: self.type_name.clone(),
+            takes: self.takes.iter().copied().map(Parameter::from).collect(),
+            answers: self.answers.into(),
+        }
+    }
+}
+
+/// A signature of what a host hands over and is handed, whichever side of the call a host is on.
+fn signature_of(
+    takes: &[HostParameter],
+    answers: Option<HostWord>,
+    call_conv: CallConv,
+) -> ir::Signature {
+    let mut signature = ir::Signature::new(call_conv);
+    for taken in takes {
+        signature.params.push(AbiParam::new(match taken {
+            HostParameter::Given(word) => machine(*word),
+            HostParameter::Room(_) => POINTER,
+        }));
+    }
+    if let Some(word) = answers {
+        signature.returns.push(AbiParam::new(machine(word)));
+    }
+    signature
 }
 
 /// What a word is on the machine.
@@ -120,14 +154,13 @@ fn declared(function: &manifest::Function) -> String {
         "{answers}{}{}({});",
         if answers.ends_with('*') { "" } else { " " },
         function.name,
-        parameters(function)
+        parameters(&function.takes)
     )
 }
 
 /// What a function takes, as C writes it between the parentheses.
-fn parameters(function: &manifest::Function) -> String {
-    let taken: Vec<String> = function
-        .takes
+fn parameters(takes: &[Parameter]) -> String {
+    let taken: Vec<String> = takes
         .iter()
         .map(|taken| match taken {
             Parameter::Given(word) => c_word(*word).to_string(),
@@ -142,14 +175,16 @@ fn parameters(function: &manifest::Function) -> String {
 }
 
 /// What a host implements a behavior as, and registers one through, as the header declares them:
-/// the pointer's type, named, and the function taking one and answering one.
+/// the pointer's type, named, and the function taking one and answering one, with what a host owes
+/// what it registers.
 fn declared_injection(injection: &manifest::Injection) -> String {
     let implementation = &injection.implementation;
-    let answers = implementation.answers.map_or("void", c_word);
-    let pointer = &implementation.name;
+    let answers = c_word(implementation.answers);
+    let pointer = &implementation.type_name;
     format!(
-        "typedef {answers} (*{pointer})({});\n{pointer} {}({pointer});",
-        parameters(implementation),
+        "/* What is registered stays callable while it is registered on any thread. */\n\
+         typedef {answers} (*{pointer})({});\n{pointer} {}({pointer});",
+        parameters(&implementation.takes),
         injection.register
     )
 }
@@ -334,7 +369,7 @@ impl Surface {
         takes: &[Ty],
         answers: &Ty,
         declared: &Declared,
-        implementation: &HostFunction,
+        implementation: &HostImplementation,
         register: &str,
     ) {
         let injection = manifest::Injection {

@@ -101,14 +101,34 @@ pub(crate) struct Injection {
     /// What it takes, in order, as the model says it.
     pub takes: Vec<Type>,
     pub answers: Type,
-    /// The function a host writes: what the behavior takes as a host hands each over, room for its
-    /// answer as a host is handed one, and a status, of which only `ANSWERED` and `HOST_EXCEPTION`
-    /// are what an implementation may answer. `name` is what C calls a pointer to one, and nothing
-    /// is defined under it.
-    pub implementation: Function,
-    /// What a host calls to register one on the thread it calls from, taking a pointer to the
-    /// implementation and answering the one it replaced, either null for none.
+    /// The function a host writes to implement it.
+    pub implementation: Implementation,
+    /// The symbol a host calls to register an implementation on the thread it calls from: it
+    /// takes a pointer to a function of `implementation`'s type and answers the one it replaced,
+    /// either null for none.
+    ///
+    /// What is registered is the host's, and stays callable for as long as it is registered on any
+    /// thread: the object calls it on every call of the behavior and keeps no copy of it. So a
+    /// binding makes the pointer once for what it registers and hands the same one over each time;
+    /// a host language that makes a new C entry for a function every time it is handed to C (PHP's
+    /// FFI keeps each until the request ends) would otherwise grow with every call.
     pub register: String,
+}
+
+/// The type of a function a host writes, and not a function: nothing is defined under its name,
+/// which is what C calls a pointer to one. What it takes is what the behavior takes, as a host
+/// hands each over, and room for its answer, as a host is handed one; it answers a status, of which
+/// `ANSWERED` and `HOST_EXCEPTION` are what an implementation may answer.
+///
+/// Its own type and not a [`Function`], so that every [`Function`] a manifest names is a symbol a
+/// library defines.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Implementation {
+    #[serde(rename = "type")]
+    pub type_name: String,
+    pub takes: Vec<Parameter>,
+    pub answers: Word,
 }
 
 /// A published value.
@@ -244,7 +264,8 @@ pub(crate) enum LanguageCase {
     NotAFiniteDecimal,
 }
 
-/// A function a host calls: its symbol, which is its name in C, and what it takes and answers.
+/// A function a host calls: its symbol, which is its name in C and which the library defines, and
+/// what it takes and answers.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Function {

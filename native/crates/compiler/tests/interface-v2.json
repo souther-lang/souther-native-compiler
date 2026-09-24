@@ -244,7 +244,7 @@
             "name": "Int"
           },
           "implementation": {
-            "name": "souther3_m_shop_b_discountFor_implementation",
+            "type": "souther3_m_shop_b_discountFor_implementation",
             "takes": [
               {
                 "given": "value"
