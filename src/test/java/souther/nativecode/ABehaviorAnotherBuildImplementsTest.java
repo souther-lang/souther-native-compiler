@@ -46,16 +46,17 @@ class ABehaviorAnotherBuildImplementsTest {
             module lib.rates exposing ( Rate, Shape, Round, Square, spin, tally, twice, rounded,
                                         squared, shout )
 
-            data Rate = Int
-
+            // `Round` first, so that this document carries it before anything else, in the order
+            // the module declares it, and the one below, which carries what its bodies name in the
+            // order they name it, carries it second. Which declaration a document carries first is
+            // a fact about how it was written, and that is exactly what an identity must not be
+            // made of.
             data Round = { across: Int }
             data Square = { side: Int }
             data Shape = Round | Square
 
-            // `rounded` first, so that this document meets `Round` before anything else and the
-            // one below meets it second. Which declaration a document meets first is a fact about
-            // the order its bodies happen to be written in, and that is exactly what an identity
-            // must not be made of.
+            data Rate = Int
+
             behavior rounded : (across: Int) -> Shape
             let rounded (across) = Round { across = across }
 

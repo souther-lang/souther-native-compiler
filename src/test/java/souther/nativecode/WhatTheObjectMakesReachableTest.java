@@ -61,6 +61,37 @@ class WhatTheObjectMakesReachableTest {
     }
 
     /**
+     * A type is built through the object of the build that declares it, and what that object
+     * makes reachable is what the module says of the type. One it publishes can be named, and so
+     * built, by another build; one it keeps and builds here is built here and nowhere else; one it
+     * keeps and nothing here builds has no constructor at all, and its clause, which this backend
+     * cannot lower, refuses nothing.
+     */
+    @Test
+    void aTypeIsBuiltWhereTheModuleSaysAndNowhereItDoesNot() throws Exception {
+        Map<String, String> table = named(CheckedProgram.of(List.of("""
+                module shaped exposing ( Open, made )
+
+                data Open = { n: Int }
+                data Closed = { n: Int }
+                data Secret = String
+                    invariant String.length(value) > 0
+
+                behavior made : (n: Int) -> Open
+                let made (n) = {
+                    let closed = Closed { n = n }
+                    Open { n = closed.n }
+                }
+                """)));
+
+        assertThat(table)
+                .as("what the object carries: %s", table)
+                .containsEntry("souther2.shaped$construct$Open", "T")
+                .containsEntry("souther2.shaped$construct$Closed", "t")
+                .doesNotContainKey("souther2.shaped$construct$Secret");
+    }
+
+    /**
      * A row of a kept name still runs, through the entry the object carries for it.
      *
      * <p>Which is what makes keeping a name a decision about the module's surface and not about

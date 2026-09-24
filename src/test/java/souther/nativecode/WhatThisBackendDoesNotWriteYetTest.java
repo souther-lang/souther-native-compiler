@@ -112,26 +112,22 @@ class WhatThisBackendDoesNotWriteYetTest {
     }
 
     /**
-     * A construction runs the type's clauses and stops at the first that does not hold. Nothing
-     * here runs one, and building the value anyway would make the type's invariant true of what
-     * this emits by leaving it out.
+     * What a behavior declares of its answer is held to where the checker placed the check, and an
+     * answer that does not keep it ends the run. Nothing here runs a rule yet, and answering without
+     * one would make the declaration true of what this emits by leaving it out.
      */
     @Test
-    void aTypeThatSaysWhatItsValuesOweIsOneNothingIsBuiltOfYet() {
+    void aBehaviorThatDeclaresWhatItsAnswerOwesIsNotWrittenYet() {
         assertThatThrownBy(() -> NativeCompiler.compile(CheckedProgram.of(List.of("""
-                module owing
+                module owing exposing ( bounded )
 
-                data Amount = { value: Int }
-                    invariant value >= 0
+                behavior bounded : (n: Int) -> Int
+                    ensures above = value >= n
 
-                behavior of : (a: Int) -> Int
-                let of (a) = {
-                    let held = Amount { value = a }
-                    held.value
-                }
+                let bounded (n) = n
                 """))))
                 .isInstanceOf(NotLowered.class)
-                .hasMessageContaining("owing.Amount");
+                .hasMessageContaining("owing.bounded");
     }
 
     /**

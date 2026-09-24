@@ -18,7 +18,7 @@ use serde::Deserialize;
 
 /// What this side reads. A document written to say anything else is refused rather than read as
 /// much of as happens to parse.
-pub const TRANSPORT_VERSION: u32 = 11;
+pub const TRANSPORT_VERSION: u32 = 12;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -34,14 +34,34 @@ pub struct Program {
 impl Program {
     /// Every body of `Core` the document holds, with the module it stands in and what owns it.
     ///
-    /// The one enumeration of them. Every pass that has to see every body — to find its closure
-    /// sites, the published values it calls, whether its types hold together — walks this, so a
-    /// body one of them skips is a body all of them skip. `Module` is taken apart whole, so a field
-    /// it starts carrying tomorrow does not compile here until it is said whether it holds a body.
+    /// What the document says, read whole: whether the two halves agree about a body is asked of
+    /// every one of them. It is not what the object runs. A clause of a declaration no value of
+    /// which is built here is a body here and is run nowhere here, so a pass asking what the object
+    /// emits (the closure sites it lifts, the published values it imports, what it constructs) walks
+    /// the object's own `Runs`, which narrows this, and never this. `Module` is taken apart whole,
+    /// so a field it starts carrying tomorrow does not compile here until it is said whether it
+    /// holds a body.
+    ///
+    /// A clause a declaration holds its values to is a body as much as a behavior's is. It stands
+    /// in the declaration's own module, whose copy of a helper a call from it reaches.
     pub fn bodies(&self) -> impl Iterator<Item = Body<'_>> {
-        self.modules.iter().flat_map(|written| {
+        let clauses = self.declarations.iter().flat_map(|declaration| {
+            declaration
+                .clauses()
+                .unwrap_or_default()
+                .iter()
+                .enumerate()
+                .map(move |(at, clause)| Body {
+                    module: declaration.module(),
+                    owner: Owner::Invariant { declaration, at },
+                    node: &clause.condition,
+                })
+        });
+        let modules = self.modules.iter().flat_map(|written| {
             let Module {
                 name,
+                // What the module publishes of its data names declarations and holds no body.
+                publishes: _,
                 helpers,
                 values,
                 entries,
@@ -83,7 +103,8 @@ impl Program {
                 .chain(entries)
                 .chain(definitions)
                 .chain(examples)
-        })
+        });
+        clauses.chain(modules)
     }
 }
 
@@ -103,6 +124,11 @@ pub enum Owner<'p> {
     /// A behavior's own body, by the name it defines.
     Definition(&'p str),
     Example(&'p Example),
+    /// The clause at `at` among what `declaration` holds its values to, in the order they run.
+    Invariant {
+        declaration: &'p Declaration,
+        at: usize,
+    },
 }
 
 /// Who declared a type, which is what decides who defines the byte its values are tagged with.
@@ -143,9 +169,12 @@ pub enum Declaration {
         name: String,
         by: DeclaredBy,
         fields: Vec<Field>,
-        /// How many clauses every construction of this type owes. Nothing here checks one, so a
-        /// type that states any is one no value can be built of yet.
-        invariants: usize,
+        /// What every value of this owes, in the order a construction runs them and stops at the
+        /// first that does not hold, where this build is the one that runs them: carried for a
+        /// declaration a module of this compile declares and for no other. One on the path is
+        /// built by its own build's object, and a construction here calls that.
+        #[serde(default)]
+        invariants: Option<Vec<Invariant>>,
     },
     /// One value under another name: one field, and not a list of them that happens to hold one.
     Newtype {
@@ -153,7 +182,8 @@ pub enum Declaration {
         name: String,
         by: DeclaredBy,
         field: Field,
-        invariants: usize,
+        #[serde(default)]
+        invariants: Option<Vec<Invariant>>,
     },
     /// One value, and naming it is that value: no field, and no clause, since there is nothing
     /// for one to observe.
@@ -231,13 +261,16 @@ impl Declaration {
         self.fields().len()
     }
 
-    /// How many clauses every construction of this type owes.
-    pub fn invariants(&self) -> usize {
+    /// What every value of this owes, in the order a construction runs them, where this build
+    /// runs them; `None` for a declaration another build builds, whose clauses are that build's.
+    /// None to run for a unit, which has nothing for a clause to read, and none for a sum, which is
+    /// never built.
+    pub fn clauses(&self) -> Option<&[Invariant]> {
         match self {
             Declaration::Product { invariants, .. } | Declaration::Newtype { invariants, .. } => {
-                *invariants
+                invariants.as_deref()
             }
-            Declaration::Unit { .. } | Declaration::Sum { .. } => 0,
+            Declaration::Unit { .. } | Declaration::Sum { .. } => Some(&[]),
         }
     }
 }
@@ -246,6 +279,10 @@ impl Declaration {
 #[serde(deny_unknown_fields)]
 pub struct Module {
     pub name: String,
+    /// The data this module publishes, by the key a reference to each says: what another build can
+    /// name, and so build a value of. The module's answer about its surface and not a fact about
+    /// any one declaration, so it is carried here and not beside the declarations.
+    pub publishes: Vec<String>,
     pub helpers: Vec<Held>,
     /// The values this module declares: the one place each of them runs.
     pub values: Vec<Value>,
@@ -778,12 +815,28 @@ impl TryFrom<CodecShape> for Bare {
     }
 }
 
-/// A field of a declaration and what it carries across the boundary, held together.
+/// A field of a declaration, what it carries across the boundary, and the number a clause reads it
+/// under, held together.
+///
+/// The number is the declaration's own, counted where its fields are bound, and it is not where the
+/// field sits. A clause a spread takes in reads the field under the binding the declaration that
+/// wrote it gave, so a reader putting a field's value under its position would be running the
+/// clause over something it was not written about.
 #[derive(Debug, Deserialize, PartialEq, Eq, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct Field {
     pub name: String,
+    pub binding: usize,
     pub codec: CodecShape,
+}
+
+/// One clause a declaration holds its values to: the name a failure is reported under, where the
+/// author gave one, and what has to hold, as the checker elaborated it over the fields' bindings.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Invariant {
+    pub name: Option<String>,
+    pub condition: Node,
 }
 
 /// Which case a name is: one a module declares, a primitive standing as a case, or one the
@@ -1328,6 +1381,14 @@ impl Node {
             | Node::Str { .. }
             | Node::Unit { .. }
             | Node::None { .. } => Vec::new(),
+        }
+    }
+
+    /// Every node under this one, this one first, depth first and in the order they are written.
+    pub fn each<'n>(&'n self, visit: &mut impl FnMut(&'n Node)) {
+        visit(self);
+        for child in self.children() {
+            child.each(visit);
         }
     }
 

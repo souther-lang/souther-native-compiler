@@ -4,6 +4,7 @@ import souther.compiler.abort.AbortKind;
 import souther.compiler.abort.AbortSet;
 import souther.compiler.core.Composition;
 import souther.compiler.core.Core;
+import souther.compiler.core.EnsuresEnforcement;
 import souther.compiler.core.Kernel;
 import souther.compiler.core.ValueShape;
 import souther.compiler.observe.ObservedValue;
@@ -82,7 +83,7 @@ public final class ProgramWriter {
      * written moves, so that a driver and a writer that disagree say so rather than producing an
      * object that is wrong quietly.
      */
-    public static final int TRANSPORT_VERSION = 11;
+    public static final int TRANSPORT_VERSION = 12;
 
     private final CheckedProgram program;
 
@@ -173,6 +174,12 @@ public final class ProgramWriter {
             for (CheckedBehavior behavior : module.behaviors()) {
                 behaviorsMet.add(behavior.name());
             }
+            // Every declaration a module of this compile declares, whether a body here meets it
+            // or not: its token and its constructor are this build's to define, and another build
+            // constructing a value of it, or forking on one, reaches them here.
+            for (CheckedData data : module.data()) {
+                declarationsMet.add(data.name());
+            }
             modules.add(module(module));
         }
 
@@ -237,27 +244,30 @@ public final class ProgramWriter {
      * named the document carries the key that reaches this — so the two halves are joined in one
      * place and split in none.
      *
-     * <p>What is not written is whether the module publishes the type. That is the same question
-     * the object already asks of a behavior, and {@link CheckedModule#publicationOf} answers it for
-     * a behavior and for nothing else, so there is nothing here to project. Until there is, an
-     * object exports the token of every type it declares, including one the module keeps.
+     * <p>What is not written here is whether the module publishes the type. That is the module's
+     * answer about its surface and not a fact about the declaration, so it crosses with the module
+     * ({@link #module}).
      */
     private String declaration(TypeSymbol.AtModule name, Declared declared) {
         String identity = "{\"module\":" + quoted(name.module())
                 + ",\"name\":" + quoted(name.name())
                 + ",\"by\":" + quoted(by(declared.declaredBy()));
         return switch (declared.data()) {
-            case CheckedData.Product it -> identity
-                    + ",\"is\":\"product\",\"fields\":" + fields(it)
-                    + ",\"invariants\":" + it.invariants().size() + "}";
+            case CheckedData.Product it -> {
+                Bindings bindings = fieldsBound(it);
+                yield identity + ",\"is\":\"product\",\"fields\":" + fields(it, bindings)
+                        + clauses(declared, it, bindings) + "}";
+            }
             // A newtype holds one value and is told apart from a product of one field by what may
             // be written of it, which is the checker's business and settled before this. Its one
             // field is written as one: a list that happens to hold one would be a shape the reader
             // has to be told is never longer.
-            case CheckedData.Newtype it -> identity
-                    + ",\"is\":\"newtype\",\"field\":"
-                    + field(it.fields().getFirst(), it.codecShapes().getFirst())
-                    + ",\"invariants\":" + it.invariants().size() + "}";
+            case CheckedData.Newtype it -> {
+                Bindings bindings = fieldsBound(it);
+                yield identity + ",\"is\":\"newtype\",\"field\":"
+                        + field(it.fields().getFirst(), it.codecShapes().getFirst(), bindings)
+                        + clauses(declared, it, bindings) + "}";
+            }
             // No field and no clause: a unit has neither, and writing an empty list of each would
             // be writing a place for them.
             case CheckedData.Unit it -> identity + ",\"is\":\"unit\"}";
@@ -304,7 +314,7 @@ public final class ProgramWriter {
      * only a field holds is met here — a declaration is where a type stops being reachable from
      * anything but itself.
      */
-    private String fields(CheckedData.WithFields held) {
+    private String fields(CheckedData.WithFields held, Bindings bindings) {
         List<ValueShape.Field> fields = held.fields();
         List<CheckedCodecShape> codecs = held.codecShapes();
         if (fields.size() != codecs.size()) {
@@ -313,13 +323,74 @@ public final class ProgramWriter {
         }
         StringJoiner written = new StringJoiner(",", "[", "]");
         for (int at = 0; at < fields.size(); at++) {
-            written.add(field(fields.get(at), codecs.get(at)));
+            written.add(field(fields.get(at), codecs.get(at), bindings));
         }
         return written.toString();
     }
 
-    private String field(ValueShape.Field field, CheckedCodecShape codec) {
-        return "{\"name\":" + quoted(field.name()) + ",\"codec\":" + codec(codec) + "}";
+    /**
+     * A field, what it carries, and the number a clause reads it under.
+     *
+     * <p>The number is the binding the checker gave the field, counted in this declaration's own
+     * {@link Bindings}, and not where the field sits. A clause a spread takes in reads the binding of
+     * the declaration that wrote the field, so the two are different facts that happen to agree
+     * most of the time, and a reader putting a field's value under its position would be running a
+     * clause over a value it was not written about the first time they did not.
+     */
+    private String field(ValueShape.Field field, CheckedCodecShape codec, Bindings bindings) {
+        return "{\"name\":" + quoted(field.name())
+                + ",\"binding\":" + bindings.of(field.binding(), field.name())
+                + ",\"codec\":" + codec(codec) + "}";
+    }
+
+    /**
+     * The bindings a declaration's clauses read its fields through, numbered before any clause is
+     * written: a clause reads a field and binds nothing a field is.
+     */
+    private static Bindings fieldsBound(CheckedData.WithFields held) {
+        Bindings bindings = new Bindings();
+        for (ValueShape.Field field : held.fields()) {
+            bindings.number(field.binding());
+        }
+        return bindings;
+    }
+
+    /**
+     * What a value of this is held to, where this build is the one that runs it.
+     *
+     * <p>A declaration a module of this compile declares is built by this build's object, which
+     * runs its clauses; one a module on the path declares is built by the object of the build that
+     * checked it, and a construction here calls that one. So its clauses are that build's and not
+     * written here: what they read and call is that build's own, a helper it keeps among it, and a
+     * copy of the clauses would be run without the rest of what they were checked against.
+     */
+    private String clauses(Declared declared, CheckedData.WithFields held, Bindings bindings) {
+        return switch (declared.declaredBy()) {
+            case A_MODULE -> ",\"invariants\":" + invariants(held, bindings);
+            case A_MODULE_ON_THE_PATH -> "";
+            // What the language declares is a set of alternatives or a single value, and neither
+            // is built from fields.
+            case THE_LANGUAGE -> throw new IllegalStateException(
+                    held.name() + " is declared by the language and has fields");
+        };
+    }
+
+    /**
+     * Every clause a value of this has to hold, in the order a failure is decided in: the name it
+     * is reported under, where the author gave one, and the condition as the checker elaborated
+     * it over the fields' bindings.
+     *
+     * <p>Every clause that applies and not the ones this declaration wrote, since a spread carries
+     * the clauses of what it takes in, and the checker has already said which those are.
+     */
+    private String invariants(CheckedData.WithFields held, Bindings bindings) {
+        StringJoiner written = new StringJoiner(",", "[", "]");
+        for (ValueShape.Invariant clause : held.invariants()) {
+            String name = clause.name().map(ProgramWriter::quoted).orElse("null");
+            written.add("{\"name\":" + name
+                    + ",\"condition\":" + core(clause.condition(), bindings) + "}");
+        }
+        return written.toString();
     }
 
     /** What a field carries across the boundary, as the check derived it. */
@@ -437,6 +508,7 @@ public final class ProgramWriter {
     private String module(CheckedModule module) {
         StringJoiner definitions = new StringJoiner(",", "[", "]");
         for (CheckedBehavior behavior : module.behaviors()) {
+            ensured(module, behavior);
             switch (behavior.implementation()) {
                 case CheckedImplementation.Body written -> definitions.add(body(module, behavior, written));
                 case CheckedImplementation.Composed written -> definitions.add(composed(module, behavior, written));
@@ -470,12 +542,44 @@ public final class ProgramWriter {
                 }
             }
         }
+        // What the module publishes of the data it declares, which is its surface and not a fact
+        // about any one declaration: what another build can name, and so build a value of.
+        StringJoiner publishes = new StringJoiner(",", "[", "]");
+        for (CheckedData data : module.data()) {
+            if (module.publicationOf(data.name()) == Publication.PUBLISHED) {
+                publishes.add(quoted(named(data.name())));
+            }
+        }
         return "{\"name\":" + quoted(module.name())
+                + ",\"publishes\":" + publishes
                 + ",\"helpers\":" + helpers
                 + ",\"values\":" + values
                 + ",\"entries\":" + entries
                 + ",\"definitions\":" + definitions
                 + ",\"examples\":" + examples + "}";
+    }
+
+    /**
+     * Refuses a behavior whose answer is held to a rule here, which nothing on the wire carries yet.
+     *
+     * <p>The rule is {@code Core} the program hands out as much as a body is, and a run that
+     * answered without it would make what the behavior declares true of this object by leaving it
+     * out. Where the check goes is the checker's answer: at the callee for a body, at every crossing
+     * for an answer from outside. Either one is a check this object would have to run.
+     */
+    private static void ensured(CheckedModule module, CheckedBehavior behavior) {
+        String name = module.name() + "." + behavior.name().name();
+        switch (behavior.ensures()) {
+            case EnsuresEnforcement.AtTheCallee it ->
+                    throw notYet("`" + name + "`, whose answer is held to what it declares");
+            case EnsuresEnforcement.AtEachCrossing it ->
+                    throw notYet("`" + name + "`, whose answer is held to what it declares where it"
+                            + " crosses in");
+            case EnsuresEnforcement.NoContract it -> { }
+            // Another module's behavior, whose own build decided where its check goes. No
+            // behavior of a module this compile checked is one.
+            case EnsuresEnforcement.NotDecidedHere it -> { }
+        }
     }
 
     /**

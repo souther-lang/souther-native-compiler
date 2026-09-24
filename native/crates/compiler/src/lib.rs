@@ -25,12 +25,12 @@ use cranelift::module::{DataDescription, DataId, FuncId, Linkage, Module, defaul
 use cranelift::object::{ObjectBuilder, ObjectModule};
 use souther_native_abi::{
     ALLOCATE, ANSWERED, HELD, NOTHING, SLOT, STRING_COMPARE, STRING_CONCAT, Status, TEXT_BYTES,
-    TEXT_LENGTH, TOKEN, WHICH, behavior_symbol, boundary_symbol, example_symbol, field_at,
-    held_symbol, home_symbol, member_at, room_for_fields, room_for_held, room_for_members,
-    room_for_text, spells_a_module, spells_a_name, type_symbol, value_symbol,
+    TEXT_LENGTH, TOKEN, WHICH, behavior_symbol, boundary_symbol, constructor_symbol,
+    example_symbol, field_at, held_symbol, home_symbol, member_at, room_for_fields, room_for_held,
+    room_for_members, room_for_text, spells_a_module, spells_a_name, type_symbol, value_symbol,
 };
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use transport::{
     AbortKind, AlternativesForm, Answers, Arm, Case, Declaration, DeclaredBy, Definition, Node, Op,
@@ -82,8 +82,7 @@ pub fn native_status(kind: AbortKind) -> Status {
 /// An arithmetic site names exactly one reason, which [`Coherent`] held every such site to: zero
 /// or more than one would be the two halves disagreeing about what kind of site this is, and
 /// answering a wrong value because the checker said `NONE` would be worse than refusing the
-/// program. `Core.Neg` names none today (souther-lang/souther#1878), and a negation is refused as
-/// not lowered there rather than reaching this.
+/// program.
 fn overflow_status(aborts: &[AbortKind]) -> Status {
     match aborts {
         [only] => native_status(*only),
@@ -182,6 +181,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
         declared,
         targets,
         locals,
+        runs,
         closures,
     } = coherent;
     let mut context = Context::new();
@@ -243,6 +243,55 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
         index::unique(&mut lifted, site, id);
     }
 
+    // The constructor of every declaration a value is built of, declared before any body is,
+    // since every construction calls one. A declaration is built by the object of the build that
+    // declared it, the way its token is defined there: this object defines the constructor of each
+    // declaration it builds (`Runs`), and reaches the constructor of one a module on the path
+    // declares.
+    let mut constructors = Constructors::default();
+    for key in runs.built() {
+        let declaration = declared.laid(key);
+        let signature = constructor_signature(declaration, call_conv)?;
+        // Reached from another build where the module publishes the type, which is what lets
+        // another build name it, and where a value of each field means the same there, as a
+        // behavior taking the fields would be. Otherwise it is this object's own.
+        let linkage = if runs.publishes(key)
+            && declaration
+                .fields()
+                .iter()
+                .all(|field| means_the_same_elsewhere(&field.codec.ty()))
+        {
+            Linkage::Export
+        } else {
+            Linkage::Local
+        };
+        let symbol = constructor_symbol(declaration.module(), declaration.name());
+        let id = accepted(module.declare_function(&symbol, linkage, &signature));
+        index::unique(&mut constructors.by_key, key.to_string(), id);
+    }
+    for key in constructed(&runs) {
+        let declaration = declared.laid(key);
+        match declaration.by() {
+            // Built here, or with no representation here for what it holds, which the
+            // construction's own fields are refused over.
+            DeclaredBy::AModule => continue,
+            DeclaredBy::OnThePath => {}
+            DeclaredBy::TheLanguage => unreachable!(
+                "`Declared` held that nothing the language declares is built from fields"
+            ),
+        }
+        for field in declaration.fields() {
+            crosses_object(
+                &format!("{key}, built by the build that declares it, takes"),
+                &field.codec.ty(),
+            )?;
+        }
+        let signature = constructor_signature(declaration, call_conv)?;
+        let symbol = constructor_symbol(declaration.module(), declaration.name());
+        let id = accepted(module.declare_function(&symbol, Linkage::Import, &signature));
+        index::unique(&mut constructors.by_key, key.to_string(), id);
+    }
+
     // Every function is declared before any is defined, because a body may reach one written
     // after it — a definition that calls itself reaches itself, and two that call each other
     // reach one another. Nothing here orders the program to make that go away.
@@ -289,6 +338,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
         // rather than `entries`, which stays free for this loop's own row-entry table below.
         let transport::Module {
             name,
+            publishes: _,
             helpers,
             values,
             entries: value_entries,
@@ -340,7 +390,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
     // function that calls it is defined, the same two-phase shape every other declaration in this
     // file keeps. A value this program does declare an entry for was just given one above, so
     // only a genuinely foreign one reaches this loop.
-    for ((module_name, value_name), ty) in published_value_calls(program) {
+    for ((module_name, value_name), ty) in published_value_calls(&runs) {
         if reachable.is_published(&module_name, &value_name) {
             continue;
         }
@@ -361,6 +411,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
     for written in &program.modules {
         let transport::Module {
             name,
+            publishes: _,
             helpers,
             values,
             entries: value_entries,
@@ -383,6 +434,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
                 lifted: &lifted,
                 targets: &targets,
                 literals: &literals,
+                constructors: &constructors,
             };
             define(
                 &mut context.func,
@@ -412,6 +464,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
                 lifted: &lifted,
                 targets: &targets,
                 literals: &literals,
+                constructors: &constructors,
             };
             define(
                 &mut context.func,
@@ -440,6 +493,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
                 lifted: &lifted,
                 targets: &targets,
                 literals: &literals,
+                constructors: &constructors,
             };
             // Taking nothing, the same as a row's entry: what a value needs is handed over inside
             // its own body (`Reaches::Value`, threading each handover), never by a caller of this
@@ -480,6 +534,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
                         lifted: &lifted,
                         targets: &targets,
                         literals: &literals,
+                        constructors: &constructors,
                     };
                     define(
                         &mut context.func,
@@ -514,6 +569,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
                         lifted: &lifted,
                         targets: &targets,
                         literals: &literals,
+                        constructors: &constructors,
                     };
                     define_composed(
                         &mut context.func,
@@ -547,6 +603,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
                 lifted: &lifted,
                 targets: &targets,
                 literals: &literals,
+                constructors: &constructors,
             };
             // Taking nothing: what the row states is written into the body, so an entry with
             // parameters would be a row whose values came from whoever ran it.
@@ -585,11 +642,42 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
             lifted: &lifted,
             targets: &targets,
             literals: &literals,
+            constructors: &constructors,
         };
         define_closure(
             &mut context.func,
             &mut shapes,
             plan,
+            frontend,
+            &lowering,
+            &mut module,
+        )?;
+        accepted(module.define_function(id, &mut context));
+    }
+
+    for key in runs.built() {
+        let id = constructors.of(key)?;
+        let declaration = declared.laid(key);
+        let signature = constructor_signature(declaration, call_conv)?;
+        context.clear();
+        context.func = Function::with_name_signature(UserFuncName::default(), signature);
+        let lowering = Lowering {
+            declared: &declared,
+            reachable: &reachable,
+            carrier: declaration.module(),
+            allocate,
+            compare_text,
+            join_text,
+            closures: &closures,
+            lifted: &lifted,
+            targets: &targets,
+            literals: &literals,
+            constructors: &constructors,
+        };
+        define_constructor(
+            &mut context.func,
+            &mut shapes,
+            declaration,
             frontend,
             &lowering,
             &mut module,
@@ -835,29 +923,23 @@ fn handover_types(value: &transport::Value) -> Vec<Ty> {
 ///
 /// One type per value and not one per call: every call to one value answers with the same type,
 /// since it is one declaration, and [`Coherent`] refused a document where two calls disagree.
-fn published_value_calls(program: &Program) -> BTreeMap<(String, String), Ty> {
+fn published_value_calls(runs: &Runs) -> BTreeMap<(String, String), Ty> {
     let mut found = BTreeMap::new();
-    for body in program.bodies() {
-        walk_calls(body.node, &mut found);
+    for body in runs.bodies() {
+        body.node.each(&mut |node| {
+            if let Node::Call {
+                reaches: Reaches::PublishedValue { module, name },
+                ty,
+                ..
+            } = node
+            {
+                found
+                    .entry((module.clone(), name.clone()))
+                    .or_insert_with(|| ty.clone());
+            }
+        });
     }
     found
-}
-
-/// Every `Reaches::PublishedValue` under `node`, depth first.
-fn walk_calls(node: &Node, found: &mut BTreeMap<(String, String), Ty>) {
-    if let Node::Call {
-        reaches: Reaches::PublishedValue { module, name },
-        ty,
-        ..
-    } = node
-    {
-        found
-            .entry((module.clone(), name.clone()))
-            .or_insert_with(|| ty.clone());
-    }
-    for child in node.children() {
-        walk_calls(child, found);
-    }
 }
 
 /// Every declared type of the program, by the key a reference to one says.
@@ -900,6 +982,22 @@ impl<'a> Declared<'a> {
             }
             for field in declaration.fields() {
                 declared.resolves(&format!("{key}'s field {}", field.name), &field.codec.ty())?;
+            }
+            // A declaration's clauses cross exactly where this build is the one that runs them.
+            if let Declaration::Product { invariants, .. } | Declaration::Newtype { invariants, .. } =
+                declaration
+                && invariants.is_some() != (declaration.by() == DeclaredBy::AModule)
+            {
+                bail!(
+                    "{key} is declared by {:?} and its clauses {} carried: they cross for a \
+                     declaration this build builds and for no other",
+                    declaration.by(),
+                    if invariants.is_some() {
+                        "are"
+                    } else {
+                        "are not"
+                    }
+                );
             }
             if let Declaration::Sum { cases, form, .. } = declaration {
                 declared.settled(&key, cases, form)?;
@@ -1175,10 +1273,10 @@ impl<'a> Declared<'a> {
             );
         }
         let linkage = match declaration.by() {
-            // At home here. Exported rather than kept, because another build naming this
-            // declaration reaches this object's token and nothing else — and whether the module
-            // publishes the type is a question the program API answers for a behavior and not yet
-            // for a declaration, so this object cannot ask it.
+            // At home here, and exported whether the module publishes the type or keeps it: a type
+            // the module keeps may still be a case of a sum it publishes, and another build
+            // writing or forking on a value of the sum compares against this token. Which of its
+            // cases another build can reach is the checker's to say, and not asked here.
             DeclaredBy::AModule => Linkage::Export,
             DeclaredBy::OnThePath => Linkage::Import,
             DeclaredBy::TheLanguage => {
@@ -1252,6 +1350,8 @@ struct Lowering<'a> {
     lifted: &'a BTreeMap<usize, FuncId>,
     /// What string literals this object already holds.
     literals: &'a Literals,
+    /// The constructor of every declaration a body here builds a value of.
+    constructors: &'a Constructors,
     /// Every behavior the document names, which is where what a composition's stage answers is
     /// read.
     targets: &'a Targets<'a>,
@@ -1645,6 +1745,227 @@ fn define_closure(
     Ok(())
 }
 
+/// The one function a value of a declaration is built by: the one this object defines for a
+/// declaration it builds, and the one it reaches for a declaration a module on the path declares.
+#[derive(Default)]
+struct Constructors {
+    by_key: BTreeMap<String, FuncId>,
+}
+
+impl Constructors {
+    /// The constructor a construction of `declared` calls. None where the declaration is this
+    /// build's and holds something with no representation here, which is not lowered.
+    fn of(&self, declared: &str) -> Lowered<FuncId> {
+        self.by_key.get(declared).copied().ok_or_else(|| {
+            not_lowered(format!(
+                "a value of {declared}, whose fields have no representation here"
+            ))
+        })
+    }
+}
+
+/// What this object runs, which is narrower than what the document says.
+///
+/// Every body of a module, and the clauses of each declaration this object builds. It builds a
+/// declaration a module of this compile declares, whose fields all have a representation here,
+/// where a body here constructs a value of it or the module publishes it, since another build may
+/// then construct one through this object. A declaration neither holds is read, and its clauses
+/// held to what the checker held them to, and nothing of it is run here: no value of it is built
+/// here to run a clause over, and the program is not refused for what nothing runs.
+///
+/// Every pass that asks what this object will emit (the closure sites it lifts, the published
+/// values it imports, the declarations it builds) walks this and not [`Program::bodies`], which is
+/// what the document says and is read whole.
+pub(crate) struct Runs<'p> {
+    program: &'p Program,
+    built: BTreeSet<String>,
+    published: BTreeSet<String>,
+}
+
+impl<'p> Runs<'p> {
+    pub(crate) fn of(program: &'p Program) -> Self {
+        let published: BTreeSet<String> = program
+            .modules
+            .iter()
+            .flat_map(|module| module.publishes.iter().cloned())
+            .collect();
+        // Every declaration a body of a module constructs a value of. A clause constructs none,
+        // as `Coherent` holds, so what a clause would ask for is never among what is built.
+        let mut constructed = BTreeSet::new();
+        for body in program.bodies() {
+            if matches!(body.owner, transport::Owner::Invariant { .. }) {
+                continue;
+            }
+            body.node.each(&mut |node| {
+                if let Node::Construct { declared, .. } = node {
+                    constructed.insert(declared.clone());
+                }
+            });
+        }
+        let built = program
+            .declarations
+            .iter()
+            .filter(|declaration| {
+                let key = declaration.key();
+                declaration.by() == DeclaredBy::AModule
+                    && matches!(
+                        declaration,
+                        Declaration::Product { .. } | Declaration::Newtype { .. }
+                    )
+                    && (published.contains(&key) || constructed.contains(&key))
+                    && declaration
+                        .fields()
+                        .iter()
+                        .all(|field| machine_type(&field.codec.ty()).is_ok())
+            })
+            .map(Declaration::key)
+            .collect();
+        Runs {
+            program,
+            built,
+            published,
+        }
+    }
+
+    /// Whether another build may build a value of `declared` through this object: the module
+    /// publishes it, so another build can name it.
+    fn publishes(&self, declared: &str) -> bool {
+        self.published.contains(declared)
+    }
+
+    /// Every declaration this object builds, by the key a reference to it says.
+    fn built(&self) -> impl Iterator<Item = &str> {
+        self.built.iter().map(String::as_str)
+    }
+
+    /// Every body this object runs.
+    pub(crate) fn bodies(&self) -> impl Iterator<Item = transport::Body<'p>> + '_ {
+        self.program.bodies().filter(|body| self.runs(body))
+    }
+
+    /// Whether this object runs `body`: every body of a module does, and a clause does where its
+    /// declaration is one this object builds.
+    pub(crate) fn runs(&self, body: &transport::Body) -> bool {
+        match body.owner {
+            transport::Owner::Invariant { declaration, .. } => {
+                self.built.contains(&declaration.key())
+            }
+            _ => true,
+        }
+    }
+}
+
+/// Every declaration a body this object runs constructs a value of. A clause constructs none, as
+/// [`Coherent`] held.
+fn constructed<'p>(runs: &Runs<'p>) -> BTreeSet<&'p str> {
+    let mut built = BTreeSet::new();
+    for body in runs.bodies() {
+        body.node.each(&mut |node| {
+            if let Node::Construct { declared, .. } = node {
+                built.insert(declared.as_str());
+            }
+        });
+    }
+    built
+}
+
+/// What a declaration's constructor takes and answers: its fields, in the order they are laid out,
+/// and a value of it, in the `status + out` shape every generated function shares.
+fn constructor_signature(declaration: &Declaration, call_conv: CallConv) -> Lowered<ir::Signature> {
+    let takes: Vec<Ty> = declaration
+        .fields()
+        .iter()
+        .map(|field| field.codec.ty())
+        .collect();
+    signature_over(
+        &takes,
+        &Ty::Declared {
+            declared: declaration.key(),
+        },
+        call_conv,
+    )
+}
+
+/// A declaration's constructor: every clause run over the fields it was handed, in the order the
+/// declaration states them, and the value laid out only once all of them hold.
+///
+/// A field is put under the binding its clauses read it through and not under where it sits, which
+/// is what lets a clause a spread took in read the field the declaration that wrote it named.
+///
+/// A clause that does not hold ends the construction with `InvariantNotHeld`, and nothing after it
+/// runs. A clause that itself ends without a value, dividing by nought or leaving an `Int`'s range,
+/// ends it for that reason instead: the clause did not answer false, it did not answer.
+///
+/// Nothing is laid out before every clause has held, so a value that is not one of the type never
+/// exists, even in the arena.
+fn define_constructor(
+    function: &mut Function,
+    shapes: &mut FunctionBuilderContext,
+    declaration: &Declaration,
+    frontend: TargetFrontendConfig,
+    lowering: &Lowering,
+    module: &mut ObjectModule,
+) -> Lowered<()> {
+    let mut builder = FunctionBuilder::new(function, shapes);
+    let entry = builder.create_block();
+    builder.append_block_params_for_function_params(entry);
+    builder.switch_to_block(entry);
+    builder.seal_block(entry);
+
+    let fields = declaration.fields();
+    let mut bindings = Bindings::default();
+    let mut given = Vec::with_capacity(fields.len());
+    for (at, field) in fields.iter().enumerate() {
+        let value = builder.block_params(entry)[at];
+        let variable = builder.declare_var(machine_type(&field.codec.ty())?);
+        builder.def_var(variable, value);
+        bindings.at(field.binding, variable);
+        given.push(value);
+    }
+    let out = builder.block_params(entry)[fields.len()];
+
+    let abort = builder.create_block();
+    builder.append_block_param(abort, types::I32);
+
+    let not_held = native_status(AbortKind::InvariantNotHeld);
+    let clauses = declaration
+        .clauses()
+        .expect("a constructor is defined only for a declaration this build runs the clauses of");
+    for clause in clauses {
+        let holds = lower(
+            &mut builder,
+            lowering,
+            module,
+            &mut bindings,
+            abort,
+            &clause.condition,
+        )?;
+        let fails = builder.ins().icmp_imm_u(IntCC::Equal, holds, 0);
+        abort_where(&mut builder, abort, not_held, fails);
+    }
+
+    let value = lowering.room(&mut builder, module, room_for_fields(fields.len()));
+    let which = tag_of(&mut builder, lowering, module, &declaration.key())?;
+    builder.ins().store(TRUSTED, which, value, WHICH as i32);
+    for (at, field) in given.into_iter().enumerate() {
+        let held = into_slot(&mut builder, field);
+        builder
+            .ins()
+            .store(TRUSTED, held, value, field_at(at) as i32);
+    }
+    builder.ins().store(TRUSTED, value, out, 0);
+    let ok = builder.ins().iconst(types::I32, i64::from(ANSWERED));
+    builder.ins().return_(&[ok]);
+
+    builder.seal_block(abort);
+    builder.switch_to_block(abort);
+    let status = builder.block_params(abort)[0];
+    builder.ins().return_(&[status]);
+
+    builder.finalize(frontend);
+    Ok(())
+}
+
 /// A behavior written as stages applied in order, each offered what the one before answered.
 ///
 /// Nothing here is worked out again: which cases a stage is offered and what leaves the main line
@@ -1906,23 +2227,12 @@ fn lower(
         Node::Neg {
             operand, aborts, ..
         } => {
-            // `program.abortsAt` answers AbortSet.NONE for Core.Neg today (souther-lang/souther
-            // #1878), citing only the JVM backend's own codegen — which is exactly the kind of
-            // backend-specific re-derivation issue #9 exists to stop this file from doing on its
-            // own account. So this does not trust it the way every other arithmetic site here
-            // trusts what it is given: `-Int.MIN` overflows for the same representational reason
-            // `Int.MIN - 1` does, and answering it as though it did not would be a wrong value
-            // returned as a right one — worse than refusing a program this backend can lower
-            // correctly once #1878 is resolved. (A literal operand does not reach here at all —
-            // see the arm above — so this is only ever a variable's own value.)
-            if aborts.is_empty() {
-                return Err(not_lowered(
-                    "a negation of something other than a literal, whose overflow this backend \
-                     does not yet trust program.abortsAt for — see souther-lang/souther#1878",
-                ));
-            }
+            // The width first: a `Decimal` or a `Rational` has none here, and is refused before its
+            // negation is asked what it can end for. An `Int` names the one reason `Coherent` held
+            // it to.
+            let width = machine_type(operand.ty())?;
             let held = lower(builder, lowering, module, bindings, abort, operand)?;
-            let nought = builder.ins().iconst(machine_type(operand.ty())?, 0);
+            let nought = builder.ins().iconst(width, 0);
             difference(builder, abort, overflow_status(aborts), nought, held)?
         }
         Node::Let {
@@ -1986,36 +2296,19 @@ fn lower(
             builder.ins().store(flags, which, value, WHICH as i32);
             value
         }
+        // What a construction does is its declaration's constructor's to do: the fields are worked
+        // out here, in the order they are written, and handed over. Whether the value is one the
+        // type admits, and how one is laid out, is answered in the one place every construction of
+        // the type reaches, so no site holds a copy of either.
         Node::Construct {
             declared, values, ..
         } => {
-            let shape = lowering.declared.laid(declared);
-            // A construction runs the type's clauses and stops at the first that does not hold,
-            // which is an abort and not a value. Nothing here runs one, and building the value
-            // without running them would make a type's invariant true of what this emits by
-            // omission.
-            if shape.invariants() > 0 {
-                return Err(not_lowered(format!(
-                    "a construction of {declared}, which states what every one of its values owes"
-                )));
-            }
-            // The fields are worked out before any room is taken, because working one out can
-            // take room of its own and what is half-written is not a value.
-            let mut held = Vec::with_capacity(values.len());
+            let mut given = Vec::with_capacity(values.len());
             for value in values {
-                let answered = lower(builder, lowering, module, bindings, abort, value)?;
-                held.push(into_slot(builder, answered));
+                given.push(lower(builder, lowering, module, bindings, abort, value)?);
             }
-            let flags = TRUSTED;
-            let value = lowering.room(builder, module, room_for_fields(values.len()));
-            let which = tag_of(builder, lowering, module, declared)?;
-            builder.ins().store(flags, which, value, WHICH as i32);
-            for (at, field) in held.into_iter().enumerate() {
-                builder
-                    .ins()
-                    .store(flags, field, value, field_at(at) as i32);
-            }
-            value
+            let constructor = lowering.constructors.of(declared)?;
+            call_reached(builder, module, abort, constructor, POINTER, &given)?
         }
         Node::Field {
             target, field, ty, ..

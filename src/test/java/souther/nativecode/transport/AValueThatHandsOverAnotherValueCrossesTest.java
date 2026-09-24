@@ -42,9 +42,9 @@ class AValueThatHandsOverAnotherValueCrossesTest {
         String written = ProgramWriter.written(CheckedProgram.of(List.of(MODULE)));
 
         assertThat(written).isEqualTo("""
-                {"transport":11,"declarations":[{"module":"m","name":"P","by":"amodule","is":"product",\
-                "fields":[{"name":"n","codec":{"is":"scalar","scalar":"INT"}}],"invariants":0}],"behaviors":[],\
-                "modules":[{"name":"m","helpers":[],\
+                {"transport":12,"declarations":[{"module":"m","name":"P","by":"amodule","is":"product",\
+                "fields":[{"name":"n","binding":0,"codec":{"is":"scalar","scalar":"INT"}}],"invariants":[]}],"behaviors":[],\
+                "modules":[{"name":"m","publishes":["m.P"],"helpers":[],\
                 "values":[{"module":"m","name":"ks","handovers":[],\
                 "body":{"core":"construct","declared":"m.P",\
                 "values":[{"core":"int","value":42,"type":{"prim":"INT"},"aborts":[]}],\

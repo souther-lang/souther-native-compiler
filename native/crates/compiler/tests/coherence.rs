@@ -21,16 +21,16 @@ const P: &str = r#"{"declared":"m.P"}"#;
 fn document(behaviors: &[String], helpers: &[String], definitions: &[String]) -> String {
     format!(
         concat!(
-            r#"{{"transport":11,"declarations":["#,
+            r#"{{"transport":12,"declarations":["#,
             r#"{{"module":"m","name":"A","by":"amodule","is":"unit"}},"#,
             r#"{{"module":"m","name":"B","by":"amodule","is":"unit"}},"#,
             r#"{{"module":"m","name":"S","by":"amodule","is":"sum","#,
             r#""cases":[{{"is":"declared","declared":"m.A"}},{{"is":"declared","declared":"m.B"}}],"#,
             r#""form":{{"is":"enumeration"}}}},"#,
             r#"{{"module":"m","name":"P","by":"amodule","is":"product","#,
-            r#""fields":[{{"name":"f","codec":{{"is":"named","declared":"m.S"}}}}],"invariants":0}}],"#,
+            r#""fields":[{{"name":"f","binding":0,"codec":{{"is":"named","declared":"m.S"}}}}],"invariants":[]}}],"#,
             r#""behaviors":[{}],"#,
-            r#""modules":[{{"name":"m","helpers":[{}],"values":[],"entries":[],"definitions":[{}],"#,
+            r#""modules":[{{"name":"m","publishes":[],"helpers":[{}],"values":[],"entries":[],"definitions":[{}],"#,
             r#""examples":[]}}]}}"#
         ),
         behaviors.join(","),
@@ -653,7 +653,7 @@ fn a_value_an_entry_or_a_module_written_twice_is_the_halves_disagreeing() {
     );
     let module = |helpers: &str| {
         format!(
-            r#"{{"name":"m","helpers":[{helpers}],"values":[],"entries":[],"definitions":[],"examples":[]}}"#
+            r#"{{"name":"m","publishes":[],"helpers":[{helpers}],"values":[],"entries":[],"definitions":[],"examples":[]}}"#
         )
     };
     let document = helpers(&[]).replace(
@@ -960,8 +960,10 @@ fn a_name_no_symbol_can_carry_is_refused_where_it_is_read() {
         r#"{"module":"m","name":"A.x","by":"amodule","is":"unit"}"#,
     );
     is_the_halves_disagreeing(&dotted_type, "m.A.x");
-    let dollar_module =
-        helpers(&[behind()]).replace(r#""name":"m","helpers""#, r#""name":"m$","helpers""#);
+    let dollar_module = helpers(&[behind()]).replace(
+        r#""name":"m","publishes":[],"helpers""#,
+        r#""name":"m$","publishes":[],"helpers""#,
+    );
     is_the_halves_disagreeing(&dollar_module, "m$");
     let dotted_behavior = r#"{"module":"other","name":"b.c","is":"elsewhere","inputs":[],"output":{"is":"scalar","scalar":"INT"}}"#;
     is_the_halves_disagreeing(
@@ -1099,4 +1101,169 @@ fn a_concat_of_two_strings_reads_whole() {
         INT,
     );
     is_the_halves_disagreeing(&helpers(&[h(&[STRING, STRING], &answered_wrong)]), "++");
+}
+
+/// The product `m.R` with the fields and clauses given, and the helpers given; one module `m`.
+fn with_clauses(fields: &str, invariants: &str, helpers: &[String]) -> String {
+    format!(
+        concat!(
+            r#"{{"transport":12,"declarations":["#,
+            r#"{{"module":"m","name":"R","by":"amodule","is":"product","#,
+            r#""fields":[{}],"invariants":[{}]}}],"#,
+            r#""behaviors":[],"#,
+            r#""modules":[{{"name":"m","publishes":[],"helpers":[{}],"values":[],"entries":[],"definitions":[],"#,
+            r#""examples":[]}}]}}"#
+        ),
+        fields,
+        invariants,
+        helpers.join(",")
+    )
+}
+
+fn field(name: &str, binding: usize, scalar: &str) -> String {
+    format!(
+        r#"{{"name":"{name}","binding":{binding},"codec":{{"is":"scalar","scalar":"{scalar}"}}}}"#
+    )
+}
+
+fn clause(name: Option<&str>, condition: &str) -> String {
+    let name = name.map_or("null".to_string(), |it| format!(r#""{it}""#));
+    format!(r#"{{"name":{name},"condition":{condition}}}"#)
+}
+
+fn at_least(left: &str, right: &str) -> String {
+    node(
+        "binary",
+        &format!(r#""op":"GE","left":{left},"right":{right}"#),
+        BOOL,
+    )
+}
+
+/// A clause reads each field under the binding the field is bound at, which need not be where the
+/// field sits: here the `Bool` is laid out first and bound second.
+#[test]
+fn a_clause_reads_a_field_under_its_binding_and_not_its_position() {
+    let fields = [field("flag", 1, "BOOL"), field("count", 0, "INT")].join(",");
+    let holds = clause(Some("counted"), &at_least(&read(0, INT), &int(0)));
+    reads_whole(&with_clauses(&fields, &holds, &[]));
+
+    let by_position = clause(Some("counted"), &at_least(&read(1, INT), &int(0)));
+    is_the_halves_disagreeing(
+        &with_clauses(&fields, &by_position, &[]),
+        "m.R's clause counted",
+    );
+}
+
+/// What a clause reads is one of the fields and nothing else.
+#[test]
+fn a_clause_reads_only_what_its_fields_bind() {
+    let fields = field("count", 0, "INT");
+    let stray = clause(None, &at_least(&read(3, INT), &int(0)));
+    is_the_halves_disagreeing(&with_clauses(&fields, &stray, &[]), "m.R's clause 0");
+}
+
+/// A clause is something that has to hold, so it is a truth.
+#[test]
+fn a_clause_is_a_truth() {
+    let fields = field("count", 0, "INT");
+    is_the_halves_disagreeing(
+        &with_clauses(&fields, &clause(None, &read(0, INT)), &[]),
+        "where a clause is a truth",
+    );
+}
+
+/// Two fields under one binding would be one name read for two values.
+#[test]
+fn no_two_fields_share_a_binding() {
+    let fields = [field("one", 0, "INT"), field("other", 0, "INT")].join(",");
+    let holds = clause(None, &at_least(&read(0, INT), &int(0)));
+    is_the_halves_disagreeing(
+        &with_clauses(&fields, &holds, &[]),
+        "binds two fields under 0",
+    );
+}
+
+/// A construction of a type that states a clause names `INVARIANT_NOT_HELD` as what it can end
+/// with, and one of a type that states none names nothing: the checker says so, and a document
+/// saying otherwise disagrees about the type.
+#[test]
+fn a_construction_says_it_can_fail_exactly_where_its_type_states_a_clause() {
+    let built = |aborts: &str| {
+        format!(
+            r#"{{"core":"construct","declared":"m.R","values":[{}],"type":{{"declared":"m.R"}},"aborts":{aborts}}}"#,
+            int(1)
+        )
+    };
+    let fields = field("count", 0, "INT");
+    let holds = clause(None, &at_least(&read(0, INT), &int(0)));
+    let owing = |aborts: &str| with_clauses(&fields, &holds, &[h(&[], &built(aborts))]);
+    let owing_nothing = |aborts: &str| with_clauses(&fields, "", &[h(&[], &built(aborts))]);
+
+    reads_whole(&owing(r#"["INVARIANT_NOT_HELD"]"#));
+    reads_whole(&owing_nothing("[]"));
+    is_the_halves_disagreeing(&owing("[]"), "states what its values owe");
+    is_the_halves_disagreeing(
+        &owing_nothing(r#"["INVARIANT_NOT_HELD"]"#),
+        "states no clause",
+    );
+}
+
+/// A clause observes the value being built and builds none, which the checker holds to: so a
+/// construction runs clauses that construct nothing in turn.
+#[test]
+fn a_clause_builds_no_value() {
+    let fields = field("count", 0, "INT");
+    let built = format!(
+        r#"{{"core":"construct","declared":"m.R","values":[{}],"type":{{"declared":"m.R"}},"aborts":["INVARIANT_NOT_HELD"]}}"#,
+        read(0, INT)
+    );
+    let read_back = node(
+        "field",
+        &format!(r#""target":{built},"field":"count""#),
+        INT,
+    );
+    let building = clause(None, &at_least(&read_back, &int(0)));
+    is_the_halves_disagreeing(
+        &with_clauses(&fields, &building, &[]),
+        "constructs m.R, where a clause builds no value",
+    );
+}
+
+/// A clause this object does not run is read, and held to what the checker holds it to, and is not
+/// refused for what this backend cannot lower. This object runs the clauses of a declaration it
+/// builds: one whose fields have a representation here, and which a body here constructs or the
+/// module publishes, so another build may construct one through this object. A declaration the
+/// module keeps and nothing here constructs is built nowhere, whatever its fields are; one whose
+/// fields have no representation is built nowhere here either. The same clause on a declaration
+/// the module publishes is run, and refused as not lowered.
+///
+/// The clause makes a function taking a `Decimal`, which no lifted function here can take.
+#[test]
+fn a_clause_of_a_declaration_nothing_here_builds_is_not_run() {
+    let decimal_to_truth = fn_of(&[DECIMAL], BOOL);
+    let block = format!(
+        r#"{{"core":"block","site":0,"parameters":[{{"binding":1,"name":"x"}}],"body":{},"type":{decimal_to_truth},"aborts":[]}}"#,
+        truth(true)
+    );
+    let holds = clause(
+        None,
+        &let_(2, &decimal_to_truth, &block, &truth(true), BOOL),
+    );
+    let published =
+        |document: String| document.replace(r#""publishes":[]"#, r#""publishes":["m.R"]"#);
+    let listed = r#"{"name":"items","binding":0,"codec":{"is":"listof","element":{"is":"scalar","scalar":"INT"}}}"#;
+    let counted = field("count", 0, "INT");
+
+    reads_whole(&published(with_clauses(listed, &holds, &[])));
+    reads_whole(&with_clauses(&counted, &holds, &[]));
+
+    let refused = object_for(&published(with_clauses(&counted, &holds, &[])))
+        .expect_err("the module publishes it, so it is built here and its clause is run");
+    assert!(refused.downcast_ref::<NotLowered>().is_some(), "{refused}");
+
+    let disagreeing = clause(
+        None,
+        &let_(2, &decimal_to_truth, &block, &read(0, BOOL), BOOL),
+    );
+    is_the_halves_disagreeing(&with_clauses(listed, &disagreeing, &[]), "m.R's clause 0");
 }

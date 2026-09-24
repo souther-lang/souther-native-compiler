@@ -53,10 +53,10 @@
 use crate::closures::ClosureSites;
 use crate::index;
 use crate::transport::{
-    AbortKind, Answers, Case, Definition, Held, Node, Op, Owner, Prim, Program, Reaches, Routing,
-    Selects, Target, Ty, Value,
+    AbortKind, Answers, Case, Declaration, Definition, Held, Node, Op, Owner, Prim, Program,
+    Reaches, Routing, Selects, Target, Ty, Value,
 };
-use crate::{Declared, Targets, not_lowered, spelt};
+use crate::{Declared, Runs, Targets, not_lowered, spelt};
 use anyhow::{Result, anyhow, bail};
 use souther_native_abi::{spells_a_module, spells_a_name};
 use std::collections::HashMap;
@@ -67,7 +67,9 @@ pub(crate) struct Coherent<'a> {
     pub targets: Targets<'a>,
     /// Every local definition this object holds, by the name it defines.
     pub locals: HashMap<&'a str, &'a Definition>,
-    /// Every closure site the document holds, found once over the whole program.
+    /// What this object runs, which is narrower than what the document says.
+    pub runs: Runs<'a>,
+    /// Every closure site under what this object runs.
     pub closures: ClosureSites<'a>,
 }
 
@@ -81,9 +83,31 @@ impl<'a> Coherent<'a> {
                 declared.descends_to(&target.declared(), ty, cases)?;
             }
         }
-        let closures = ClosureSites::of_program(program)?;
+        // Every site the document holds is numbered once, whether or not this object runs it: a
+        // number two sites share is the two halves disagreeing wherever it stands.
+        ClosureSites::of(program.bodies())?;
 
         let reached = Reached::of(program)?;
+        for written in &program.modules {
+            let mut published = HashMap::new();
+            for key in &written.publishes {
+                let declaration = declared.shape(key)?;
+                // A module publishes what it declares and nothing another module does.
+                if declaration.module() != written.name
+                    || declaration.by() != crate::transport::DeclaredBy::AModule
+                {
+                    bail!(
+                        "{} publishes {key}, which {} declares: a module publishes the data it \
+                         declares",
+                        written.name,
+                        declaration.module()
+                    );
+                }
+                index::once(&mut published, key.as_str(), (), || {
+                    format!("{} publishes {key} twice", written.name)
+                })?;
+            }
+        }
 
         let mut locals: HashMap<&str, &Definition> = HashMap::new();
         for written in &program.modules {
@@ -132,6 +156,7 @@ impl<'a> Coherent<'a> {
             }
         }
 
+        let runs = Runs::of(program);
         let mut owed = Owed::default();
         for (&name, &local) in &locals {
             let target = targets.named(name)?;
@@ -139,18 +164,58 @@ impl<'a> Coherent<'a> {
         }
 
         for body in program.bodies() {
-            let (owner, takes) = match body.owner {
-                Owner::Helper(held) => (held.declared.clone(), held.takes()),
+            // What each body is handed, bound under the number the writer gave it: a parameter's
+            // is where it stands among the parameters, and a field's is the binding the checker
+            // gave the field, which is not where the field sits.
+            let positional =
+                |takes: Vec<Ty>| -> Vec<(usize, Ty)> { takes.into_iter().enumerate().collect() };
+            let (owner, bound) = match body.owner {
+                Owner::Helper(held) => (held.declared.clone(), positional(held.takes())),
                 Owner::Value(value) => (
                     value.declared(),
-                    value.handovers.iter().map(|it| it.ty.clone()).collect(),
+                    positional(value.handovers.iter().map(|it| it.ty.clone()).collect()),
                 ),
                 Owner::Entry(entry) => (
                     format!("the entry for {}", entry.value.declared()),
                     Vec::new(),
                 ),
-                Owner::Definition(declared) => {
-                    (declared.to_string(), targets.named(declared)?.takes())
+                Owner::Definition(declared) => (
+                    declared.to_string(),
+                    positional(targets.named(declared)?.takes()),
+                ),
+                Owner::Invariant { declaration, at } => {
+                    let clause = &declaration.clauses().expect(
+                        "a clause is listed only of a declaration that carries its clauses",
+                    )[at];
+                    let owner = match &clause.name {
+                        Some(name) => format!("{}'s clause {name}", declaration.key()),
+                        None => format!("{}'s clause {at}", declaration.key()),
+                    };
+                    // What has to hold is a truth, whatever it reads.
+                    let truth = Ty::Prim { prim: Prim::Bool };
+                    if body.node.ty() != &truth {
+                        bail!(
+                            "{owner} is typed {}, where a clause is a truth",
+                            body.node.ty().spelt()
+                        );
+                    }
+                    // A clause observes the value being built and builds none: the checker refuses
+                    // one that constructs, through a helper as much as written out. So every value
+                    // built here is built by a body, and a construction runs clauses that build
+                    // nothing in turn.
+                    let mut built = None;
+                    body.node.each(&mut |node| {
+                        if let Node::Construct { declared, .. } = node {
+                            built.get_or_insert(declared);
+                        }
+                    });
+                    if let Some(declared) = built {
+                        bail!(
+                            "{owner} constructs {declared}, where a clause builds no value: the two \
+                             halves disagree"
+                        );
+                    }
+                    (owner, fields_bound(declaration)?)
                 }
                 Owner::Example(example) => {
                     let behavior = format!("{}.{}", body.module, example.behavior);
@@ -175,16 +240,19 @@ impl<'a> Coherent<'a> {
                 reached: &reached,
                 bound: HashMap::new(),
                 owed: &mut owed,
+                runs: runs.runs(&body),
             }
-            .under(takes.into_iter().enumerate().collect(), body.node)?;
+            .under(bound, body.node)?;
         }
 
         owed.settle(&declared)?;
 
+        let closures = ClosureSites::of(runs.bodies())?;
         Ok(Coherent {
             declared,
             targets,
             locals,
+            runs,
             closures,
         })
     }
@@ -207,14 +275,22 @@ struct Owing {
     what: String,
     actual: Ty,
     expected: Ty,
+    /// Whether the relation stands in something this object runs. One that does not is still held
+    /// to the checker's answer, and not refused as not lowered where this backend cannot say.
+    runs: bool,
 }
 
 impl Owed {
     fn fits(&mut self, what: String, actual: &Ty, expected: &Ty) {
+        self.fits_where(true, what, actual, expected);
+    }
+
+    fn fits_where(&mut self, runs: bool, what: String, actual: &Ty, expected: &Ty) {
         self.fits.push(Owing {
             what,
             actual: actual.clone(),
             expected: expected.clone(),
+            runs,
         });
     }
 
@@ -232,11 +308,12 @@ impl Owed {
                     owing.actual.spelt(),
                     owing.expected.spelt()
                 ),
-                None => undecided.push(format!(
+                None if owing.runs => undecided.push(format!(
                     "whether a value of {} is one of {}",
                     owing.actual.spelt(),
                     owing.expected.spelt()
                 )),
+                None => {}
             }
         }
         if let Some(first) = self.not_lowered.into_iter().chain(undecided).next() {
@@ -405,6 +482,9 @@ struct Walk<'w, 'a> {
     /// What each binding in scope is in force at, as the node that made it says.
     bound: HashMap<usize, Ty>,
     owed: &'w mut Owed,
+    /// Whether this object runs the body. What this backend has no lowering for is refused only
+    /// where it would be lowered; the two halves disagreeing is refused wherever it stands.
+    runs: bool,
 }
 
 impl<'a> Walk<'_, 'a> {
@@ -424,11 +504,13 @@ impl<'a> Walk<'_, 'a> {
 
     fn fits(&mut self, what: &str, actual: &Ty, expected: &Ty) {
         let what = format!("{}: {what}", self.owner);
-        self.owed.fits(what, actual, expected);
+        self.owed.fits_where(self.runs, what, actual, expected);
     }
 
     fn not_lowered(&mut self, what: String) {
-        self.owed.not_lowered.push(what);
+        if self.runs {
+            self.owed.not_lowered.push(what);
+        }
     }
 
     fn arity(&self, what: &str, given: usize, taken: usize) -> Result<()> {
@@ -816,7 +898,7 @@ impl<'a> Walk<'_, 'a> {
                 declared,
                 values,
                 ty,
-                ..
+                aborts,
             } => {
                 self.same(
                     &format!("a construction of {declared}"),
@@ -835,6 +917,32 @@ impl<'a> Walk<'_, 'a> {
                     bail!(
                         "{}: {declared} is constructed and is not declared with fields to build",
                         self.owner
+                    );
+                }
+                // A construction ends without a value where a clause does not hold, and the checker
+                // says so of exactly the constructions of a type that states one. Of a type another
+                // build builds, the clauses are that build's and not carried, so there is nothing
+                // here to hold what the construction says to.
+                let owed: Option<&[AbortKind]> = shape.clauses().map(|clauses| {
+                    if clauses.is_empty() {
+                        &[][..]
+                    } else {
+                        &[AbortKind::InvariantNotHeld][..]
+                    }
+                });
+                if let Some(owed) = owed
+                    && aborts.as_slice() != owed
+                {
+                    let states = if owed.is_empty() {
+                        "states no clause"
+                    } else {
+                        "states what its values owe"
+                    };
+                    bail!(
+                        "{}: a construction of {declared}, whose type {states}, names {:?} as what \
+                         it can end without a value for: the two halves disagree",
+                        self.owner,
+                        aborts
                     );
                 }
                 if shape.field_count() != values.len() {
@@ -895,19 +1003,21 @@ impl<'a> Walk<'_, 'a> {
             } => {
                 self.node(operand)?;
                 self.number("a negation", ty)?;
-                // A literal's sign is folded, and nothing else about one can leave the range.
+                // A literal's sign is folded, and nothing else about one can leave the range. Of
+                // anything else, negating the smallest `Int` leaves it, and a `Decimal` or a
+                // `Rational` only changes sign: the checker names one reason for the first and none
+                // for the others.
                 if !matches!(operand.as_ref(), Node::Int { .. }) {
-                    if aborts.is_empty() {
-                        // souther-lang/souther#1878: the checker answers no reason for a negation,
-                        // and this backend does not answer one on its behalf.
-                        self.not_lowered(
-                            "a negation of something other than a literal, whose overflow this \
-                             backend does not yet trust program.abortsAt for — see \
-                             souther-lang/souther#1878"
-                                .to_string(),
+                    if matches!(ty, Ty::Prim { prim: Prim::Int }) {
+                        self.overflows("a negation of an Int", aborts)?;
+                    } else if !aborts.is_empty() {
+                        bail!(
+                            "{}: a negation of {} names {:?} as what it can end without a value \
+                             for, where it only changes sign: the two halves disagree",
+                            self.owner,
+                            ty.spelt(),
+                            aborts
                         );
-                    } else {
-                        self.overflows("a negation", aborts)?;
                     }
                 }
                 Ok(())
@@ -1467,6 +1577,24 @@ fn composes(
         &answers,
     );
     Ok(())
+}
+
+/// Each field of `declaration` under the binding its clauses read it through, at the type it holds.
+///
+/// Two fields under one binding would be a clause reading one name for two values.
+fn fields_bound(declaration: &Declaration) -> Result<Vec<(usize, Ty)>> {
+    let mut bound: Vec<(usize, Ty)> = Vec::new();
+    for field in declaration.fields() {
+        if bound.iter().any(|(binding, _)| *binding == field.binding) {
+            bail!(
+                "{} binds two fields under {}, which a clause reads as one value",
+                declaration.key(),
+                field.binding
+            );
+        }
+        bound.push((field.binding, field.codec.ty()));
+    }
+    Ok(bound)
 }
 
 /// Refuses a test naming no case, or naming a sum where the checker answers the leaves it descends
