@@ -317,9 +317,13 @@ than replaced. The driver writes a library's directory the same way.
 What a host has no way to reach is not written: a behavior with no `call`, a field with no `read`, a
 behavior taking or answering a type with no representation for a host, and a behavior answering a
 union no declaration names, since the library says of such a value nothing about which case it is.
-A name PHP will not take (a reserved word, `this` or a superglobal for a parameter, two names differing only in case
-where PHP compares them without it, a field named as a method the binding writes, two parameters of
-one function under one name) is refused with the name, rather than spelt some other way. A manifest
+A name PHP will not take is refused with the name, rather than spelt some other way: a reserved
+word, `this` or a superglobal for a parameter, two parameters of one function under one name, a
+field named as a method the binding writes, and two names that are one where they are looked up. Two
+methods are one where they differ in the case of ASCII letters, as PHP compares them. Two classes or
+namespaces are one where they differ in the case of any letter, since each is also a file or a
+directory, and the file systems macOS and Windows use by default do not tell those apart. What PHP
+refuses is held to PHP itself by a test that asks it. A manifest
 is read as a version only once it has said it is that one, so one of another version is refused as
 that and not as whichever member moved since, as the driver reads a transport and what an object
 carries.
@@ -356,7 +360,10 @@ process, with `FFI::cdef` or, under `ffi.enable=preload`, from the scope a prelo
 with `Binding::preloadHeader`, given the library's path again so that it is the same library a load
 of that file would be. The arena and what is registered
 are per thread, and a handle is PHP's, which a ZTS runtime such as FrankenPHP does not hand from one
-thread to another; nothing here checks for one that was.
+thread to another; nothing here checks for one that was. A fiber is checked for: runs are one stack,
+ended in the order they nest, so while a run is going on one fiber, another fiber can neither start
+one nor use a session or a value of it (`RunOnAnotherFiber`), and one suspended in a run holds the
+library until it ends that run.
 
 ## Where a value lives
 

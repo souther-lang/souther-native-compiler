@@ -24,8 +24,10 @@ final class Session
     private bool $active = true;
 
     /** @internal */
-    public function __construct(private readonly NativeLibrary $library)
-    {
+    public function __construct(
+        private readonly NativeLibrary $library,
+        private readonly ?\Fiber $fiber,
+    ) {
     }
 
     public function isActive(): bool
@@ -50,6 +52,10 @@ final class Session
     {
         if (!$this->active) {
             throw new Expired('a session was used after its run ended');
+        }
+        if (\Fiber::getCurrent() !== $this->fiber) {
+            throw new RunOnAnotherFiber(
+                'a session, or a value made in it, was used on a fiber other than its run\'s');
         }
         return $this->library->ffi();
     }

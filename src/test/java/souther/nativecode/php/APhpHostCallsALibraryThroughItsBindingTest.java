@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import souther.compiler.program.CheckedProgram;
 import souther.nativecode.NativeCompiler;
+import souther.nativecode.Php;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -92,6 +93,7 @@ class APhpHostCallsALibraryThroughItsBindingTest {
             use Souther\\Runtime\\Expired;
             use Souther\\Runtime\\ForeignHandle;
             use Souther\\Runtime\\NotTheInnermostRun;
+            use Souther\\Runtime\\RunOnAnotherFiber;
             use Souther\\Runtime\\Session;
             use Souther\\Runtime\\SoutherAbort;
             use Souther\\Runtime\\UnboundInjection;
@@ -180,6 +182,30 @@ class APhpHostCallsALibraryThroughItsBindingTest {
                         Line::of($inner, $money, 1)->getOrThrow(), 1)));
             }), "\\n";
 
+            // A fiber suspended inside a run holds the library's runs until it ends them: another
+            // fiber's run on top would be ended in some other order.
+            $first = new Fiber(fn () => $binding->run(function (Session $session): int {
+                $money = Money::of($session, 6)->getOrThrow();
+                $handed = Fiber::suspend($session);
+                return $money->value() + $handed;
+            }));
+            $suspended = $first->start();
+            $second = new Fiber(fn () => $binding->run(fn (Session $session): int => 1));
+            try {
+                $second->start();
+            } catch (RunOnAnotherFiber $refused) {
+                echo "second fiber: ", $refused::class, "\\n";
+            }
+            try {
+                (new Fiber(fn () => Money::of($suspended, 1)))->start();
+            } catch (RunOnAnotherFiber $refused) {
+                echo "session on another fiber: ", $refused::class, "\\n";
+            }
+            $first->resume(1);
+            echo "first fiber: ", $first->getReturn(), ", then ",
+                $binding->run(fn (Session $session): int => Money::of($session, 2)->getOrThrow()->value()),
+                "\\n";
+
             $kept = $binding->run(fn (Session $session): Money => Money::of($session, 5)->getOrThrow());
             try {
                 $kept->value();
@@ -244,6 +270,9 @@ class APhpHostCallsALibraryThroughItsBindingTest {
             discounted: 4
             thrown: the same one
             nested runs: 4
+            second fiber: Souther\\Runtime\\RunOnAnotherFiber
+            session on another fiber: Souther\\Runtime\\RunOnAnotherFiber
+            first fiber: 7, then 2
             expired: a value was used after the run it was made in ended
             foreign: a value one library made was handed to another
             one binding: true
@@ -272,7 +301,7 @@ class APhpHostCallsALibraryThroughItsBindingTest {
         Path host = into.resolve("host.php");
         Files.writeString(host, HOST, StandardCharsets.UTF_8);
 
-        String said = said(List.of("php", "-d", "ffi.enable=1", host.toString(),
+        String said = Php.ran(List.of("-d", "ffi.enable=1", host.toString(),
                 RUNTIME.toAbsolutePath().toString(), binding.root().toString(),
                 library.library().toString(), again.library().toString()));
 
@@ -313,17 +342,8 @@ class APhpHostCallsALibraryThroughItsBindingTest {
                         Money::of($session, 3)->getOrThrow(), 2)->getOrThrow(), 2))), "\\n";
                 """, StandardCharsets.UTF_8);
 
-        assertThat(said(List.of("php", "-d", "opcache.enable_cli=1",
+        assertThat(Php.ran(List.of("-d", "opcache.enable_cli=1",
                 "-d", "opcache.preload=" + preload, "-d", "ffi.enable=preload",
                 host.toString(), library.library().toString()))).isEqualTo("4\n");
-    }
-
-    private static String said(List<String> command) throws Exception {
-        Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
-        String said = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-        if (process.waitFor() != 0) {
-            throw new AssertionError(command.get(0) + " failed: " + said);
-        }
-        return said;
     }
 }

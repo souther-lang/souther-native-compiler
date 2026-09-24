@@ -135,7 +135,7 @@ public final class PhpBindings {
     }
 
     private void write() throws IOException {
-        PhpNames.Claimed namespaces = PhpNames.Claimed.members("namespace " + root);
+        PhpNames.Claimed namespaces = PhpNames.Claimed.classes("namespace " + root);
         for (Manifest.Module module : manifest.modules()) {
             String namespace = PhpNames.moduleNamespace(root, module.name());
             namespaces.claim(namespace.substring(root.length() + 1), "module `" + module.name() + "`");
@@ -220,7 +220,7 @@ public final class PhpBindings {
 
     private void module(Manifest.Module module) throws IOException {
         String namespace = PhpNames.moduleNamespace(root, module.name());
-        PhpNames.Claimed classes = PhpNames.Claimed.members("namespace " + namespace);
+        PhpNames.Claimed classes = PhpNames.Claimed.classes("namespace " + namespace);
         classes.claim("Behaviors", "the generated `Behaviors`");
         classes.claim("Values", "the generated `Values`");
         classes.claim("Injections", "the generated `Injections`");
@@ -314,7 +314,7 @@ public final class PhpBindings {
             case Declaration.Sum sum -> null;
         };
 
-        PhpNames.Claimed members = PhpNames.Claimed.members("class " + it.fqcn());
+        PhpNames.Claimed members = PhpNames.Claimed.methods("class " + it.fqcn());
         for (String fixed : List.of("__construct", "nativeHandle", "of", "decode", "encode")) {
             members.claim(fixed, "the generated `" + fixed + "`");
         }
@@ -579,7 +579,7 @@ public final class PhpBindings {
 
     private void behaviors(Manifest.Module module, String namespace) throws IOException {
         StringBuilder functions = new StringBuilder();
-        PhpNames.Claimed members = PhpNames.Claimed.members("class " + namespace + "\\Behaviors");
+        PhpNames.Claimed members = PhpNames.Claimed.methods("class " + namespace + "\\Behaviors");
         members.claim("__construct", "the generated `__construct`");
         for (Manifest.Behavior behavior : module.behaviors()) {
             Function call = behavior.call();
@@ -620,7 +620,7 @@ public final class PhpBindings {
 
     private void values(Manifest.Module module, String namespace) throws IOException {
         StringBuilder functions = new StringBuilder();
-        PhpNames.Claimed members = PhpNames.Claimed.members("class " + namespace + "\\Values");
+        PhpNames.Claimed members = PhpNames.Claimed.methods("class " + namespace + "\\Values");
         members.claim("__construct", "the generated `__construct`");
         for (Manifest.PublishedValue value : module.values()) {
             Function read = value.read();

@@ -1,6 +1,7 @@
 package souther.nativecode.php;
 
 import org.junit.jupiter.api.Test;
+import souther.nativecode.Php;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.charset.StandardCharsets;
@@ -59,10 +60,13 @@ class PhpNamesAreTheOnesPhpTakesTest {
     void everyNamePhpRefusesIsRefused(@TempDir Path into) throws Exception {
         Path script = into.resolve("candidates.php");
         Files.writeString(script, CANDIDATES, StandardCharsets.UTF_8);
-        Set<String> candidates = new TreeSet<>(said(List.of("php", script.toString())).lines()
+        Set<String> candidates = new TreeSet<>(Php.ran(List.of(script.toString())).lines()
                 .filter(it -> it.matches("[A-Za-z_][A-Za-z0-9_]*")).toList());
         candidates.addAll(PhpNames.reserved());
         candidates.addAll(PhpNames.unnameableParameters());
+        // A reserved word with a letter past ASCII that a Unicode rule would make an ASCII one (the
+        // Kelvin sign is a capital K to Java): not the reserved word to PHP.
+        candidates.add("brea\u212A");
 
         Set<String> missed = new TreeSet<>();
         Set<String> needless = new TreeSet<>();
@@ -91,6 +95,58 @@ class PhpNamesAreTheOnesPhpTakesTest {
                         .collect(Collectors.toSet()));
     }
 
+    /**
+     * Two names PHP, or the file each class is written to, might take for one, held to whether a
+     * binding's claims take them for one: a method's by what PHP compiles, a class's by that and by
+     * whether this machine's file system keeps two files of those names apart.
+     */
+    @Test
+    void twoNamesAreOneWhereWhatLooksThemUpSaysSo(@TempDir Path into) throws Exception {
+        List<List<String>> pairs = List.of(
+                List.of("Kept", "kept"),
+                List.of("\u00c4", "\u00e4"),
+                List.of("K", "\u212A"),
+                List.of("Stra\u00dfe", "STRASSE"),
+                List.of("Kept", "Kepts"));
+        for (List<String> pair : pairs) {
+            String one = pair.get(0);
+            String other = pair.get(1);
+
+            Path methods = Files.createTempFile(into, "methods", ".php");
+            Files.writeString(methods, "<?php class C { public function " + one
+                    + "() {} public function " + other + "() {} }\n", StandardCharsets.UTF_8);
+            boolean phpMethods = !Php.compiles(methods);
+            assertThat(claimsOne(PhpNames.Claimed.methods("a class"), one, other))
+                    .as("the methods %s and %s", one, other).isEqualTo(phpMethods);
+
+            Path classes = Files.createTempFile(into, "classes", ".php");
+            Files.writeString(classes, "<?php class " + one + " {} class " + other + " {}\n",
+                    StandardCharsets.UTF_8);
+            Path directory = Files.createTempDirectory(into, "files");
+            Files.writeString(directory.resolve(one + ".php"), "one", StandardCharsets.UTF_8);
+            Files.writeString(directory.resolve(other + ".php"), "other", StandardCharsets.UTF_8);
+            boolean oneFile;
+            try (var files = Files.list(directory)) {
+                oneFile = files.count() == 1;
+            }
+            boolean phpClasses = !Php.compiles(classes);
+            if (phpClasses || oneFile) {
+                assertThat(claimsOne(PhpNames.Claimed.classes("a namespace"), one, other))
+                        .as("the classes %s and %s", one, other).isTrue();
+            }
+        }
+    }
+
+    private static boolean claimsOne(PhpNames.Claimed claimed, String one, String other) {
+        claimed.claim(one, "one");
+        try {
+            claimed.claim(other, "other");
+            return false;
+        } catch (PhpBindings.NotBindable refused) {
+            return true;
+        }
+    }
+
     private static boolean refusedHere(Place place, String word) {
         try {
             switch (place) {
@@ -108,10 +164,7 @@ class PhpNamesAreTheOnesPhpTakesTest {
         try {
             Path file = Files.createTempFile(into, place.name(), ".php");
             Files.writeString(file, place.written.formatted(word), StandardCharsets.UTF_8);
-            Process lint = new ProcessBuilder("php", "-l", file.toString())
-                    .redirectErrorStream(true).start();
-            lint.getInputStream().readAllBytes();
-            return lint.waitFor() != 0;
+            return !Php.compiles(file);
         } catch (Exception e) {
             throw new IllegalStateException(e);
         }
@@ -119,18 +172,9 @@ class PhpNamesAreTheOnesPhpTakesTest {
 
     private static String phpVersion() {
         try {
-            return said(List.of("php", "-r", "echo PHP_VERSION;"));
+            return Php.ran(List.of("-r", "echo PHP_VERSION;"));
         } catch (Exception e) {
             return "?";
         }
-    }
-
-    private static String said(List<String> command) throws Exception {
-        Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
-        String said = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-        if (process.waitFor() != 0) {
-            throw new AssertionError(command.get(0) + " failed: " + said);
-        }
-        return said;
     }
 }

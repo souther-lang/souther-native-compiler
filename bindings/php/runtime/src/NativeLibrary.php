@@ -22,8 +22,24 @@ final class NativeLibrary
     /** @var array<int, string> */
     private readonly array $named;
 
-    /** @var list<Session> */
+    /**
+     * The runs going, innermost last. They nest as calls do, and each ends before the one it was
+     * started in: the arena is reset to each run's mark, and what each registered is put back, in
+     * that order and no other.
+     *
+     * @var list<Session>
+     */
     private array $open = [];
+
+    /**
+     * The fiber the runs going are on, the main one being null; meaningful while any is going.
+     *
+     * A fiber can be suspended in the middle of a run and another resumed, which would start a run
+     * of its own on top and could end its first. So while a run is going, the fiber it is on is the
+     * only one that may start another or use one: the runs stay one stack whatever fibers there
+     * are.
+     */
+    private ?\Fiber $holder = null;
 
     /**
      * @param array<string, int> $statuses every status the library answers, by name
@@ -138,7 +154,13 @@ final class NativeLibrary
     /** @internal A session for a run starting now, inside whichever runs are going. */
     public function open(): Session
     {
-        return $this->open[] = new Session($this);
+        $fiber = \Fiber::getCurrent();
+        if ($this->open !== [] && $fiber !== $this->holder) {
+            throw new RunOnAnotherFiber(
+                'a run of this library is going on another fiber, which has to end it first');
+        }
+        $this->holder = $fiber;
+        return $this->open[] = new Session($this, $fiber);
     }
 
     /** @internal Ends the run `$session` is for, which is the innermost one. */
@@ -149,6 +171,9 @@ final class NativeLibrary
         }
         array_pop($this->open);
         $session->expire();
+        if ($this->open === []) {
+            $this->holder = null;
+        }
     }
 
     /** @internal The session of the innermost run going. */

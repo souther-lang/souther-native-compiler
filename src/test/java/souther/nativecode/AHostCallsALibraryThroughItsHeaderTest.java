@@ -272,7 +272,7 @@ class AHostCallsALibraryThroughItsHeaderTest {
         Path script = into.resolve("host.php");
         Files.writeString(script, PHP, StandardCharsets.UTF_8);
 
-        assertThat(said(List.of("php", "-d", "ffi.enable=1", script.toString(),
+        assertThat(Php.ran(List.of("-d", "ffi.enable=1", script.toString(),
                 library.declarations().toString(), library.library().toString())))
                 .isEqualTo(ANSWERED);
     }

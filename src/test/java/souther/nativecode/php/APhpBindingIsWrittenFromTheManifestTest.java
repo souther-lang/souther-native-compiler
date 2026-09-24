@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import souther.compiler.program.CheckedProgram;
 import souther.nativecode.NativeCompiler;
+import souther.nativecode.Php;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -52,8 +53,7 @@ class APhpBindingIsWrittenFromTheManifestTest {
 
         for (Path file : generated.files()) {
             if (file.toString().endsWith(".php")) {
-                assertThat(said(List.of("php", "-l", file.toString())))
-                        .as("%s", file).contains("No syntax errors");
+                assertThat(Php.compiles(file)).as("%s", file).isTrue();
             }
         }
         assertThat(generated.files()).extracting(it -> generated.root().relativize(it).toString())
@@ -204,7 +204,7 @@ class APhpBindingIsWrittenFromTheManifestTest {
     void theRuntimeSpeaksTheVersionABindingIsWrittenFor() throws Exception {
         Path binding = Path.of("bindings", "php", "runtime", "src", "Binding.php");
 
-        assertThat(said(List.of("php", "-r", "require '" + binding.toAbsolutePath()
+        assertThat(Php.ran(List.of("-r", "require '" + binding.toAbsolutePath()
                 + "'; echo \\Souther\\Runtime\\Binding::PROTOCOL;")))
                 .isEqualTo(String.valueOf(PhpBindings.RUNTIME_PROTOCOL));
     }
@@ -299,14 +299,5 @@ class APhpBindingIsWrittenFromTheManifestTest {
                 .isInstanceOf(PhpBindings.NotBindable.class)
                 .hasMessageContaining("holds files a binding did not write");
         assertThat(php.resolve("mine.php")).exists();
-    }
-
-    private static String said(List<String> command) throws Exception {
-        Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
-        String said = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-        if (process.waitFor() != 0) {
-            throw new AssertionError(command.get(0) + " failed: " + said);
-        }
-        return said;
     }
 }

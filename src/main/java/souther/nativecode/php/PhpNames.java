@@ -1,5 +1,6 @@
 package souther.nativecode.php;
 
+import java.text.Normalizer;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
@@ -72,7 +73,7 @@ final class PhpNames {
     /** Refused where {@code name} is not a name PHP takes for a class, interface or namespace. */
     static String typeName(String name, String what) {
         identifier(name, what);
-        if (RESERVED.contains(name.toLowerCase(Locale.ROOT))) {
+        if (RESERVED.contains(asciiLower(name))) {
             throw new PhpBindings.NotBindable(what + " `" + name + "` is a word PHP reserves,"
                     + " which no class, interface or namespace may be called");
         }
@@ -82,7 +83,7 @@ final class PhpNames {
     /** Refused where {@code name} is not a name PHP takes for a method or a parameter. */
     static String memberName(String name, String what) {
         identifier(name, what);
-        if (name.equalsIgnoreCase(HALT)) {
+        if (asciiLower(name).equals(HALT)) {
             throw new PhpBindings.NotBindable(what + " `" + name + "` is a word PHP reserves even"
                     + " for a method");
         }
@@ -106,8 +107,10 @@ final class PhpNames {
     static String moduleNamespace(String root, String module) {
         StringBuilder namespace = new StringBuilder(root);
         for (String part : module.split("\\.", -1)) {
-            String capital = part.isEmpty() ? part
-                    : part.substring(0, 1).toUpperCase(Locale.ROOT) + part.substring(1);
+            // The first letter made capital where it is an ASCII one, as PHP would: a letter past
+            // ASCII is left as it is, rather than made one Java's rules make it.
+            String capital = part.isEmpty() || part.charAt(0) < 'a' || part.charAt(0) > 'z' ? part
+                    : (char) (part.charAt(0) - ('a' - 'A')) + part.substring(1);
             namespace.append('\\').append(typeName(capital, "module `" + module + "`"));
         }
         return namespace.toString();
@@ -126,42 +129,95 @@ final class PhpNames {
     }
 
     /**
-     * Names claimed in one place PHP looks names up in: a namespace's classes, a class's methods,
-     * or a function's parameters. A second claim of a name is refused, including, where PHP does not
-     * tell the case of letters apart, one differing only in that.
+     * Names claimed in one place a name is looked up in: a namespace's classes, a class's methods,
+     * or a function's parameters. A second claim of a name is refused where it is the same name to
+     * whatever looks it up there.
      */
     static final class Claimed {
 
+        /** What makes two names one, where each kind of name is looked up. */
+        private enum Sameness {
+            /**
+             * A class's or a namespace's name, which is a file's or a directory's too: one to PHP
+             * where they differ in the case of ASCII letters, and one to a file system that does
+             * not tell case apart (macOS's and Windows' by default) where they differ in the case
+             * of any letter, or in how an accented letter is composed.
+             */
+            FILE,
+            /** A method's: one to PHP where they differ in the case of ASCII letters, and no other. */
+            METHOD,
+            /** A parameter's: PHP reads a variable's name as it is spelt. */
+            SPELLING
+        }
+
         private final String where;
-        private final boolean foldsCase;
+        private final Sameness sameness;
         private final Map<String, String> held = new HashMap<>();
 
-        private Claimed(String where, boolean foldsCase) {
+        private Claimed(String where, Sameness sameness) {
             this.where = where;
-            this.foldsCase = foldsCase;
+            this.sameness = sameness;
         }
 
-        /** The classes of a namespace, or the methods of a class: PHP reads these without case. */
-        static Claimed members(String where) {
-            return new Claimed(where, true);
+        /** The classes of a namespace, or the namespaces under another. */
+        static Claimed classes(String where) {
+            return new Claimed(where, Sameness.FILE);
         }
 
-        /** The parameters of one function: PHP reads a variable's name as it is spelt. */
+        /** The methods of a class. */
+        static Claimed methods(String where) {
+            return new Claimed(where, Sameness.METHOD);
+        }
+
+        /** The parameters of one function. */
         static Claimed parameters(String where) {
-            return new Claimed(where, false);
+            return new Claimed(where, Sameness.SPELLING);
         }
 
         /** Claims {@code name} for {@code what}, answering the name. */
         String claim(String name, String what) {
-            String before = held.putIfAbsent(foldsCase ? name.toLowerCase(Locale.ROOT) : name, what);
+            String key = switch (sameness) {
+                case FILE -> asAFile(name);
+                case METHOD -> asciiLower(name);
+                case SPELLING -> name;
+            };
+            String before = held.putIfAbsent(key, what);
             if (before != null) {
                 throw new PhpBindings.NotBindable(before + " and " + what + " in " + where
-                        + (foldsCase ? " are one name to PHP, which does not tell the case of"
-                        + " letters apart there" : " are one name, which PHP takes for one"
-                        + " parameter of a function"));
+                        + switch (sameness) {
+                            case FILE -> " are one name to PHP or to a file system that does not"
+                                    + " tell case apart, and each is a file of its own";
+                            case METHOD -> " are one name to PHP, which does not tell the case of"
+                                    + " ASCII letters apart there";
+                            case SPELLING -> " are one name, which PHP takes for one parameter of"
+                                    + " a function";
+                        });
             }
             return name;
         }
+    }
+
+    /**
+     * {@code name} with its ASCII capitals made small, and nothing else: how PHP compares the names
+     * of classes, functions and methods, and the only case it changes (since 8.2, not by locale).
+     */
+    static String asciiLower(String name) {
+        StringBuilder lowered = new StringBuilder(name.length());
+        for (int at = 0; at < name.length(); at++) {
+            char held = name.charAt(at);
+            lowered.append(held >= 'A' && held <= 'Z' ? (char) (held + ('a' - 'A')) : held);
+        }
+        return lowered.toString();
+    }
+
+    /**
+     * {@code name} as a file system that does not tell case apart compares it: every letter's case
+     * folded, and composed the one way. The two such systems a binding is most often written to
+     * fold more than ASCII, so this does too.
+     */
+    static String asAFile(String name) {
+        return Normalizer.normalize(
+                name.toUpperCase(Locale.ROOT).toLowerCase(Locale.ROOT), Normalizer.Form.NFC);
     }
 
     /** {@code wanted}, or it with underscores after it until it is none of {@code taken}. */
