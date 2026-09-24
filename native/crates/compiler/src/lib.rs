@@ -7,6 +7,7 @@
 mod boundary;
 mod closures;
 mod coherent;
+mod host;
 mod index;
 mod kernels;
 pub mod transport;
@@ -246,11 +247,11 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
         index::unique(&mut lifted, site, id);
     }
 
-    // The constructor of every declaration a value is built of, declared before any body is,
-    // since every construction calls one. A declaration is built by the object of the build that
-    // declared it, the way its token is defined there: this object defines the constructor of each
-    // declaration it builds (`Runs`), and reaches the constructor of one a module on the path
-    // declares.
+    // The constructor of every declaration a value is built of through one, declared before any
+    // body is, since a construction may call one (`Construction`). A declaration is built by the
+    // object of the build that declared it, the way its token is defined there: this object
+    // defines the constructor of each declaration it builds (`Runs`), and reaches the constructor
+    // of one a module on the path declares.
     let mut constructors = Constructors::default();
     for key in runs.built() {
         let declaration = declared.laid(key);
@@ -272,7 +273,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
         let id = accepted(module.declare_function(&symbol, linkage, &signature));
         index::unique(&mut constructors.by_key, key.to_string(), id);
     }
-    for key in constructed(&runs) {
+    for key in runs.calls() {
         let declaration = declared.laid(key);
         match declaration.by() {
             // Built here, or with no representation here for what it holds, which the
@@ -280,7 +281,8 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
             DeclaredBy::AModule => continue,
             DeclaredBy::OnThePath => {}
             DeclaredBy::TheLanguage => unreachable!(
-                "`Declared` held that nothing the language declares is built from fields"
+                "`Declared` held that the language declares only sums and units, and neither is \
+                 built by a call"
             ),
         }
         for field in declaration.fields() {
@@ -387,14 +389,14 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
             index::unique(&mut entries, symbol, id);
         }
     }
-    // Every published value a call anywhere in this document reaches, and the answer type its
-    // call sites carry — read here rather than at the call site during lowering, because a value
+    // Every published value a call anywhere this object runs reaches, and the answer type its
+    // call sites carry (`Runs` gathered them) — read here rather than at the call site during lowering, because a value
     // this program does not itself declare an entry for still needs a symbol declared before any
     // function that calls it is defined, the same two-phase shape every other declaration in this
     // file keeps. A value this program does declare an entry for was just given one above, so
     // only a genuinely foreign one reaches this loop.
-    for ((module_name, value_name), ty) in published_value_calls(&runs) {
-        if reachable.is_published(&module_name, &value_name) {
+    for ((module_name, value_name), ty) in runs.published_values() {
+        if reachable.is_published(module_name, value_name) {
             continue;
         }
         // The same boundary a behavior answering from another object crosses (`crosses_objects`),
@@ -403,12 +405,12 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
         // reachable just because a value happened to answer it instead.
         crosses_object(
             &format!("`{module_name}`'s published value {value_name} answers"),
-            &ty,
+            ty,
         )?;
-        let signature = signature_over(&[], &ty, call_conv)?;
-        let symbol = value_symbol(&module_name, &value_name);
+        let signature = signature_over(&[], ty, call_conv)?;
+        let symbol = value_symbol(module_name, value_name);
         let id = accepted(module.declare_function(&symbol, Linkage::Import, &signature));
-        reachable.published_value(&module_name, &value_name, id);
+        reachable.published_value(module_name, value_name, id);
     }
 
     for written in &program.modules {
@@ -688,6 +690,23 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
         accepted(module.define_function(id, &mut context));
     }
 
+    // What a host builds and reads a value of a published type through, each running on the
+    // constructors just defined and the layout they write.
+    host::define(
+        host::Emitting {
+            module: &mut module,
+            context: &mut context,
+            shapes: &mut shapes,
+            frontend,
+            call_conv,
+            declared: &declared,
+            constructors: &constructors,
+            allocate,
+        },
+        program,
+        &runs,
+    )?;
+
     // What a host reaches for an answer as the language writes it: every behavior this object
     // defines and publishes, and every row. A behavior another build implements is that build's
     // to give a boundary to, so one object never answers for a second entry under the same name.
@@ -911,40 +930,6 @@ fn handover_types(value: &transport::Value) -> Vec<Ty> {
         .collect()
 }
 
-/// Every published value a call anywhere in this document reaches, by the module and the name the
-/// call names, with the answer type one of its call sites carries — read once, over every body
-/// this document holds, rather than at each call site during lowering: a value this program's own
-/// modules do not declare an entry for still needs a symbol declared before anything that calls it
-/// is defined, which is the two-phase shape (declare, then define) every other function in this
-/// object already keeps.
-///
-/// A `BTreeMap` and not a `HashMap`, because this is walked to declare symbols in whatever order
-/// it hands them back, and nowhere else in this file lets an unordered map decide an order that
-/// ends up in the object it emits — the token loop above walks `program.declarations` itself for
-/// exactly that reason. A `HashMap` here would make two builds of one document free to declare
-/// these imports in different orders for no reason the source states.
-///
-/// One type per value and not one per call: every call to one value answers with the same type,
-/// since it is one declaration, and [`Coherent`] refused a document where two calls disagree.
-fn published_value_calls(runs: &Runs) -> BTreeMap<(String, String), Ty> {
-    let mut found = BTreeMap::new();
-    for body in runs.bodies() {
-        body.node.each(&mut |node| {
-            if let Node::Call {
-                reaches: Reaches::PublishedValue { module, name },
-                ty,
-                ..
-            } = node
-            {
-                found
-                    .entry((module.clone(), name.clone()))
-                    .or_insert_with(|| ty.clone());
-            }
-        });
-    }
-    found
-}
-
 /// Every declared type of the program, by the key a reference to one says.
 ///
 /// Two questions are asked of this and they are not one question. What a type is made of decides
@@ -988,6 +973,13 @@ impl<'a> Declared<'a> {
             // states a clause or not.
             let mut bound = HashMap::new();
             for field in declaration.fields() {
+                // A host reads a field by a symbol its name is the last segment of.
+                if !spells_a_name(&field.name) {
+                    bail!(
+                        "{key} declares a field written {}, which no symbol can carry",
+                        field.name
+                    );
+                }
                 declared.resolves(&format!("{key}'s field {}", field.name), &field.codec.ty())?;
                 index::once(&mut bound, field.binding, (), || {
                     format!(
@@ -1777,55 +1769,107 @@ impl Constructors {
     }
 }
 
-/// What this object runs, which is narrower than what the document says.
+/// What this object runs, which is narrower than what the document says, and what running it
+/// needs from outside the bodies themselves.
 ///
-/// Every body of a module, and the clauses of each declaration this object builds. It builds a
-/// declaration a module of this compile declares, whose fields all have a representation here,
-/// where a body here constructs a value of it or the module publishes it, since another build may
-/// then construct one through this object. A declaration neither holds is read, and its clauses
-/// held to what the checker held them to, and nothing of it is run here: no value of it is built
-/// here to run a clause over, and the program is not refused for what nothing runs.
+/// Every body of a module, and the clauses of each declaration this object builds a constructor
+/// for. It builds one for a declaration a module of this compile declares, whose fields all have a
+/// representation here, where the module publishes it, since another build or a host may then
+/// construct one through this object, or where a body here constructs one through a call
+/// ([`Construction::Called`]). A declaration neither holds is read, and its clauses held to what
+/// the checker held them to, and nothing of it is run here: no value of it is built here to run a
+/// clause over, and the program is not refused for what nothing runs.
 ///
-/// Every pass that asks what this object will emit (the closure sites it lifts, the published
-/// values it imports, the declarations it builds) walks this and not [`Program::bodies`], which is
-/// what the document says and is read whole.
+/// Settled once, when this is made, by walking each body it runs once: which bodies run, which
+/// constructors a body calls and which published values it reaches. Every pass that asks what this
+/// object will emit reads those answers, and walks [`Runs::bodies`] only for what it asks of a
+/// body's own shape, never [`Program::bodies`], which is what the document says and is read whole.
+/// A fact another pass comes to need about what runs is gathered in [`Reach`] beside these,
+/// rather than by a walk of its own.
 pub(crate) struct Runs<'p> {
-    program: &'p Program,
+    bodies: Vec<transport::Body<'p>>,
     built: BTreeSet<String>,
     published: BTreeSet<String>,
+    reach: Reach<'p>,
+}
+
+/// What the bodies an object runs reach besides one another, gathered in the one walk
+/// [`Runs::of`] makes of each.
+#[derive(Default)]
+struct Reach<'p> {
+    /// Every declaration a body here builds a value of by calling its constructor.
+    calls: BTreeSet<&'p str>,
+    /// Every published value a call here reaches, by the module and the name the call names, with
+    /// the answer type one of its call sites carries.
+    ///
+    /// A `BTreeMap`, because this is walked to declare symbols in whatever order it hands them
+    /// back, and nothing in this file lets an unordered map decide an order that ends up in the
+    /// object. One type per value and not one per call: every call to one value answers with the
+    /// same type, since it is one declaration, and [`Coherent`] refused a document where two calls
+    /// disagree.
+    published_values: BTreeMap<(String, String), Ty>,
+}
+
+impl<'p> Reach<'p> {
+    /// What `body` reaches, added to what is already here.
+    fn of(&mut self, body: &transport::Body<'p>, declared: &Declared) -> Result<()> {
+        let mut named = Ok(());
+        body.node.each(&mut |node| {
+            if let Some(key) = node.builds() {
+                match declared.shape(key) {
+                    Ok(declaration) => {
+                        if construction(declaration) == Construction::Called {
+                            self.calls.insert(key);
+                        }
+                    }
+                    Err(missing) => {
+                        if named.is_ok() {
+                            named = Err(missing);
+                        }
+                    }
+                }
+            }
+            if let Node::Call {
+                reaches: Reaches::PublishedValue { module, name },
+                ty,
+                ..
+            } = node
+            {
+                self.published_values
+                    .entry((module.clone(), name.clone()))
+                    .or_insert_with(|| ty.clone());
+            }
+        });
+        named
+    }
 }
 
 impl<'p> Runs<'p> {
-    pub(crate) fn of(program: &'p Program) -> Self {
+    pub(crate) fn of(program: &'p Program, declared: &Declared) -> Result<Self> {
         let published: BTreeSet<String> = program
             .modules
             .iter()
             .flat_map(|module| module.publishes.iter().cloned())
             .collect();
-        // Every declaration a body of a module constructs a value of. A clause constructs none,
-        // as `Coherent` holds, so what a clause would ask for is never among what is built.
-        let mut constructed = BTreeSet::new();
-        for body in program.bodies() {
-            if matches!(body.owner, transport::Owner::Invariant { .. }) {
-                continue;
-            }
-            body.node.each(&mut |node| {
-                if let Node::Construct { declared, .. } = node {
-                    constructed.insert(declared.clone());
-                }
-            });
+        // Every body of a module runs. A clause runs where its declaration is built, and what is
+        // built is settled by the modules' bodies alone: a clause builds nothing from fields, as
+        // `Coherent` holds, and the unit it may name is laid out where it stands, so no clause
+        // calls a constructor and none makes another declaration built.
+        let (clauses, bodies): (Vec<_>, Vec<_>) = program
+            .bodies()
+            .partition(|body| matches!(body.owner, transport::Owner::Invariant { .. }));
+        let mut reach = Reach::default();
+        for body in &bodies {
+            reach.of(body, declared)?;
         }
-        let built = program
+        let built: BTreeSet<String> = program
             .declarations
             .iter()
             .filter(|declaration| {
                 let key = declaration.key();
                 declaration.by() == DeclaredBy::AModule
-                    && matches!(
-                        declaration,
-                        Declaration::Product { .. } | Declaration::Newtype { .. }
-                    )
-                    && (published.contains(&key) || constructed.contains(&key))
+                    && !matches!(declaration, Declaration::Sum { .. })
+                    && (published.contains(&key) || reach.calls.contains(key.as_str()))
                     && declaration
                         .fields()
                         .iter()
@@ -1833,11 +1877,20 @@ impl<'p> Runs<'p> {
             })
             .map(Declaration::key)
             .collect();
-        Runs {
-            program,
+        let mut runs = Runs {
+            bodies,
             built,
             published,
+            reach: Reach::default(),
+        };
+        for clause in clauses {
+            if runs.runs(&clause) {
+                reach.of(&clause, declared)?;
+                runs.bodies.push(clause);
+            }
         }
+        runs.reach = reach;
+        Ok(runs)
     }
 
     /// Whether another build may build a value of `declared` through this object: the module
@@ -1846,14 +1899,24 @@ impl<'p> Runs<'p> {
         self.published.contains(declared)
     }
 
-    /// Every declaration this object builds, by the key a reference to it says.
+    /// Every declaration this object defines a constructor for, by the key a reference to it says.
     fn built(&self) -> impl Iterator<Item = &str> {
         self.built.iter().map(String::as_str)
     }
 
+    /// Every declaration a body here builds a value of by calling its constructor.
+    fn calls(&self) -> impl Iterator<Item = &'p str> + '_ {
+        self.reach.calls.iter().copied()
+    }
+
+    /// Every published value a call here reaches, with the type it answers.
+    fn published_values(&self) -> &BTreeMap<(String, String), Ty> {
+        &self.reach.published_values
+    }
+
     /// Every body this object runs.
     pub(crate) fn bodies(&self) -> impl Iterator<Item = transport::Body<'p>> + '_ {
-        self.program.bodies().filter(|body| self.runs(body))
+        self.bodies.iter().copied()
     }
 
     /// Whether this object runs `body`: every body of a module does, and a clause does where its
@@ -1868,18 +1931,26 @@ impl<'p> Runs<'p> {
     }
 }
 
-/// Every declaration a body this object runs constructs a value of. A clause constructs none, as
-/// [`Coherent`] held.
-fn constructed<'p>(runs: &Runs<'p>) -> BTreeSet<&'p str> {
-    let mut built = BTreeSet::new();
-    for body in runs.bodies() {
-        body.node.each(&mut |node| {
-            if let Node::Construct { declared, .. } = node {
-                built.insert(declared.as_str());
-            }
-        });
+/// How a construction of a declaration is made where it stands: laid out right there, or by a call
+/// to the declaration's constructor.
+///
+/// Laid out where this object holds the declaration's clauses and there are none — a unit, which
+/// never has one, or a type of this compile's that states none — since there is then nothing for a
+/// constructor to run and nothing a construction can end for. Called where there are clauses to
+/// run, and where the clauses are another build's and not carried, whether that build's type
+/// states any or not. Either way the value is laid out by [`lay_out`], so how one is laid out is
+/// written once whichever way a construction is made.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Construction {
+    Laid,
+    Called,
+}
+
+fn construction(declaration: &Declaration) -> Construction {
+    match declaration.clauses() {
+        Some([]) => Construction::Laid,
+        Some(_) | None => Construction::Called,
     }
-    built
 }
 
 /// What a declaration's constructor takes and answers: its fields, in the order they are laid out,
@@ -1957,15 +2028,7 @@ fn define_constructor(
         abort_where(&mut builder, abort, not_held, fails);
     }
 
-    let value = lowering.room(&mut builder, module, room_for_fields(fields.len()));
-    let which = tag_of(&mut builder, lowering, module, &declaration.key())?;
-    builder.ins().store(TRUSTED, which, value, WHICH as i32);
-    for (at, field) in given.into_iter().enumerate() {
-        let held = into_slot(&mut builder, field);
-        builder
-            .ins()
-            .store(TRUSTED, held, value, field_at(at) as i32);
-    }
+    let value = lay_out(&mut builder, lowering, module, declaration, &given)?;
     builder.ins().store(TRUSTED, value, out, 0);
     let ok = builder.ins().iconst(types::I32, i64::from(ANSWERED));
     builder.ins().return_(&[ok]);
@@ -1977,6 +2040,50 @@ fn define_constructor(
 
     builder.finalize(frontend);
     Ok(())
+}
+
+/// A value of `declared` built from `fields`, the way [`construction`] says one is made where it
+/// stands.
+fn construct(
+    builder: &mut FunctionBuilder,
+    lowering: &Lowering,
+    module: &mut ObjectModule,
+    abort: ir::Block,
+    declared: &str,
+    fields: &[ir::Value],
+) -> Lowered<ir::Value> {
+    let declaration = lowering.declared.laid(declared);
+    match construction(declaration) {
+        Construction::Laid => lay_out(builder, lowering, module, declaration, fields),
+        Construction::Called => {
+            let constructor = lowering.constructors.of(declared)?;
+            call_reached(builder, module, abort, constructor, POINTER, fields)
+        }
+    }
+}
+
+/// A value of `declaration` laid out from its fields, which are already ones the type admits: room
+/// for them, the token that says which type it is, and each field in its slot.
+///
+/// The one place a value of a declared type is laid out, whether a constructor lays it out once its
+/// clauses hold or a construction with none to run lays it out where it stands.
+fn lay_out(
+    builder: &mut FunctionBuilder,
+    lowering: &Lowering,
+    module: &mut ObjectModule,
+    declaration: &Declaration,
+    fields: &[ir::Value],
+) -> Lowered<ir::Value> {
+    let value = lowering.room(builder, module, room_for_fields(fields.len()));
+    let which = tag_of(builder, lowering, module, &declaration.key())?;
+    builder.ins().store(TRUSTED, which, value, WHICH as i32);
+    for (at, &field) in fields.iter().enumerate() {
+        let held = into_slot(builder, field);
+        builder
+            .ins()
+            .store(TRUSTED, held, value, field_at(at) as i32);
+    }
+    Ok(value)
 }
 
 /// A behavior written as stages applied in order, each offered what the one before answered.
@@ -2320,17 +2427,9 @@ fn lower(
                 )
             })?
         }
-        Node::Unit { declared, .. } => {
-            let flags = TRUSTED;
-            let value = lowering.room(builder, module, room_for_fields(0));
-            let which = tag_of(builder, lowering, module, declared)?;
-            builder.ins().store(flags, which, value, WHICH as i32);
-            value
-        }
-        // What a construction does is its declaration's constructor's to do: the fields are worked
-        // out here, in the order they are written, and handed over. Whether the value is one the
-        // type admits, and how one is laid out, is answered in the one place every construction of
-        // the type reaches, so no site holds a copy of either.
+        Node::Unit { declared, .. } => construct(builder, lowering, module, abort, declared, &[])?,
+        // The fields are worked out here, in the order they are written; whether the value is one
+        // the type admits, and how one is laid out, is not this site's to say (`construct`).
         Node::Construct {
             declared, values, ..
         } => {
@@ -2338,8 +2437,7 @@ fn lower(
             for value in values {
                 given.push(lower(builder, lowering, module, bindings, abort, value)?);
             }
-            let constructor = lowering.constructors.of(declared)?;
-            call_reached(builder, module, abort, constructor, POINTER, &given)?
+            construct(builder, lowering, module, abort, declared, &given)?
         }
         Node::Field {
             target, field, ty, ..

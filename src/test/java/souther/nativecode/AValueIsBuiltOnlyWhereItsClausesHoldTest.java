@@ -135,6 +135,41 @@ class AValueIsBuiltOnlyWhereItsClausesHoldTest {
                 """);
     }
 
+    /**
+     * A clause may name a unit's value, which is built while the clause runs, and whatever the
+     * module says of the unit: kept, and named nowhere but in the clause, it is still there to be
+     * built.
+     */
+    @Test
+    void aClauseThatNamesAUnitRuns() throws Exception {
+        CheckedProgram program = CheckedProgram.of(List.of("""
+                module ready exposing ( checked )
+
+                data Ready
+                data Waiting
+                data State = Ready | Waiting
+
+                let accepts (s: State): Bool = match s with
+                    | Ready -> true
+                    | Waiting -> false
+
+                data Positive = Int
+                    invariant ready = accepts(Ready)
+                    invariant positive = value > 0
+
+                behavior checked : (n: Int) -> Int
+                let checked (n) = Positive(n).value
+                """));
+        Running running = Running.of(program);
+        CheckedModule module = program.modules().getFirst();
+        CheckedBehavior checked = module.behaviors().getFirst();
+
+        assertThat(running.answeredOrEnded(module, checked, given(List.of(0L))))
+                .isEqualTo(new RunOutcome.Aborted(AbortKind.INVARIANT_NOT_HELD));
+        assertThat(running.answeredOrEnded(module, checked, given(List.of(5L))))
+                .isEqualTo(new RunOutcome.Answered(new ObservedValue.Integer(5)));
+    }
+
     private static void assertEndsButItsNeighbourAnswers(String behavior, List<Long> ends,
                                                          AbortKind with, List<Long> answers,
                                                          long answered) throws Exception {

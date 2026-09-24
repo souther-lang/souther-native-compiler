@@ -109,6 +109,7 @@ impl Program {
 }
 
 /// One body of `Core`, where it stands, and what owns it.
+#[derive(Clone, Copy)]
 pub struct Body<'p> {
     /// The module it stands in, whose copy of a helper a call from it reaches.
     pub module: &'p str,
@@ -117,6 +118,7 @@ pub struct Body<'p> {
 }
 
 /// What a body is the body of.
+#[derive(Clone, Copy)]
 pub enum Owner<'p> {
     Helper(&'p Held),
     Value(&'p Value),
@@ -1678,6 +1680,36 @@ impl Node {
             | Node::Str { .. }
             | Node::Unit { .. }
             | Node::None { .. } => Vec::new(),
+        }
+    }
+
+    /// The declaration this node builds a value of, where it builds one: a construction from
+    /// fields, and a unit's value, which is a construction from none.
+    ///
+    /// Asked here, once, by everything that has to know what a body builds — which constructors an
+    /// object defines and which it reaches — so that what counts as building a value is not a list
+    /// of kinds each of them keeps.
+    pub fn builds(&self) -> Option<&str> {
+        match self {
+            Node::Construct { declared, .. } | Node::Unit { declared, .. } => Some(declared),
+            Node::Int { .. }
+            | Node::Read { .. }
+            | Node::Bool { .. }
+            | Node::Str { .. }
+            | Node::Binary { .. }
+            | Node::Neg { .. }
+            | Node::Let { .. }
+            | Node::If { .. }
+            | Node::Field { .. }
+            | Node::Match { .. }
+            | Node::Some { .. }
+            | Node::None { .. }
+            | Node::Tuple { .. }
+            | Node::Member { .. }
+            | Node::Call { .. }
+            | Node::Block { .. }
+            | Node::Apply { .. }
+            | Node::Widen { .. } => None,
         }
     }
 

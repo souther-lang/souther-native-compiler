@@ -185,6 +185,75 @@ pub fn constructor_symbol(module: &str, name: &str) -> String {
     format!("souther{ABI}.{module}$construct${name}")
 }
 
+/// What every operation a host reaches a value of one declared type through is spelt under:
+/// `souther<abi>.<module>$type$<name>`, which a symbol then names the operation after.
+///
+/// A family of its own, and not [`constructor_symbol`]'s, because a host is a third party to how
+/// this backend lays a value out and a call between two objects it built is not: what a host hands
+/// over and reads back is a presence and a payload where the generated code holds an optional as
+/// an address or nothing, and the day the two differ in any other way the host's spelling does not
+/// move. Carrying the ABI generation all the same, because a host's call crosses an object boundary
+/// the way any other does, and what its status means is the one mapping every generated function
+/// answers with.
+///
+/// Room is left under `$type$` for what a host reaches a collection through, once one is laid out;
+/// nothing else is spelt there.
+fn host_type_prefix(module: &str, name: &str) -> String {
+    assert!(
+        spells_a_module(module),
+        "a module's name carries no dollar, and the symbol is split on one: {module}"
+    );
+    assert!(
+        spells_a_name(name),
+        "a declared type's name carries neither dollar nor dot, and the symbol is split on \
+         both: {name}"
+    );
+    format!("souther{ABI}.{module}$type${name}")
+}
+
+/// Where a host builds a value of a declared type: the fields as a host hands them over, and
+/// `status + out`, the way a call to the type's own constructor answers — which is what this runs.
+///
+/// A type with no clause answers a status too, so a clause added to it later is not a change to
+/// how a host calls it.
+///
+/// # Panics
+///
+/// Where either name does not stand in a symbol, for the reason [`type_symbol`] gives.
+pub fn host_constructor_symbol(module: &str, name: &str) -> String {
+    format!("{}$construct", host_type_prefix(module, name))
+}
+
+/// Where a host reads one field of a value of a declared type, by the name the field is declared
+/// under.
+///
+/// The name and not the position: a field moved within its declaration is still the field a host
+/// asked for, and a position would make every reordering a break the linker cannot see.
+///
+/// # Panics
+///
+/// Where a name does not stand in a symbol. A field's name is the symbol's last segment, so it is
+/// held to what a behavior's is ([`spells_a_name`]).
+pub fn host_field_symbol(module: &str, name: &str, field: &str) -> String {
+    assert!(
+        spells_a_name(field),
+        "a field's name carries neither dot nor dollar, and it is the symbol's last segment: \
+         {field}"
+    );
+    format!("{}$field${field}", host_type_prefix(module, name))
+}
+
+/// Where a host asks which of a sum's cases a value is, and is answered with the case's place
+/// among them, counted from nought — never with what the value is tagged by, whose address stays
+/// inside the objects that compare against it.
+///
+/// # Panics
+///
+/// Where either name does not stand in a symbol.
+pub fn host_case_symbol(module: &str, name: &str) -> String {
+    format!("{}$case", host_type_prefix(module, name))
+}
+
 /// The symbol the object carries for one of a behavior's `example` rows.
 ///
 /// A row states the values to hand over, so what stands under this name takes nothing: the values
@@ -461,7 +530,8 @@ pub const ANSWERED: Status = 0;
 mod tests {
     use super::{
         FIRST_FIELD, SLOT, TOKEN, WHICH, behavior_symbol, boundary_symbol, constructor_symbol,
-        example_symbol, field_at, held_symbol, home_symbol, member_at, type_symbol, value_symbol,
+        example_symbol, field_at, held_symbol, home_symbol, host_case_symbol,
+        host_constructor_symbol, host_field_symbol, member_at, type_symbol, value_symbol,
     };
 
     #[test]
@@ -656,5 +726,51 @@ mod tests {
     #[should_panic(expected = "neither dollar nor dot")]
     fn a_constructed_types_name_carrying_a_dot_is_refused() {
         let _ = constructor_symbol("a", "b.C");
+    }
+
+    #[test]
+    fn a_host_reaches_a_type_under_its_module_and_its_name() {
+        assert_eq!(
+            host_constructor_symbol("pricing", "Amount"),
+            "souther2.pricing$type$Amount$construct"
+        );
+        assert_eq!(
+            host_field_symbol("pricing", "Amount", "value"),
+            "souther2.pricing$type$Amount$field$value"
+        );
+        assert_eq!(
+            host_case_symbol("pricing", "Result"),
+            "souther2.pricing$type$Result$case"
+        );
+    }
+
+    /// What a host builds a value through is not what another object built by this compiler
+    /// does, nor any other symbol a module's name reaches.
+    #[test]
+    fn what_a_host_reaches_is_not_any_other_symbol_of_one_name() {
+        let hosts = [
+            host_constructor_symbol("pricing", "Amount"),
+            host_field_symbol("pricing", "Amount", "construct"),
+            host_field_symbol("pricing", "Amount", "case"),
+            host_case_symbol("pricing", "Amount"),
+        ];
+        let others = [
+            constructor_symbol("pricing", "Amount"),
+            type_symbol("pricing", "Amount"),
+            behavior_symbol("pricing", "Amount"),
+            value_symbol("pricing", "Amount"),
+            home_symbol("pricing", "Amount"),
+            held_symbol("pricing", "pricing.Amount"),
+        ];
+        for (at, host) in hosts.iter().enumerate() {
+            assert!(!others.contains(host), "{host}");
+            assert!(!hosts[at + 1..].contains(host), "{host}");
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "it is the symbol's last segment")]
+    fn a_field_whose_name_carries_a_dollar_is_refused() {
+        let _ = host_field_symbol("a", "B", "c$case");
     }
 }

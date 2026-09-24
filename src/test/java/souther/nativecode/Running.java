@@ -53,7 +53,7 @@ final class Running {
      * exactly the silent ABI mismatch embedding this in the symbol exists to turn into a linker
      * error instead.
      */
-    private static final String ABI = "2";
+    static final String ABI = "2";
 
     /**
      * One thing a run can reach in the object: a behavior by its own symbol, or a row by the entry
@@ -607,7 +607,7 @@ final class Running {
      * whichever its format takes, so what needs saying here is only what a C declaration has to be
      * written with to reach it.
      */
-    private static final String PREFIX =
+    static final String PREFIX =
             System.getProperty("os.name", "").toLowerCase().contains("mac") ? "_" : "";
 
     /** Whether this harness has a string to make. */
