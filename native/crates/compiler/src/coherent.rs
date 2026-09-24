@@ -73,6 +73,10 @@ pub(crate) struct Coherent<'a> {
     pub runs: Runs<'a>,
     /// Every closure site under what this object runs.
     pub closures: ClosureSites<'a>,
+    /// Every behavior a module this document builds declares with no body and nothing to depend
+    /// on. This object answers each, with what a host registered for it; an object built from
+    /// another document that names one only calls it.
+    pub injected: Vec<&'a Target>,
 }
 
 impl<'a> Coherent<'a> {
@@ -130,6 +134,7 @@ impl<'a> Coherent<'a> {
                 })?;
             }
         }
+        let mut injected = Vec::new();
         for target in &program.behaviors {
             let name = target.declared();
             if !spells_a_module(&target.module) || !spells_a_name(&target.name) {
@@ -156,11 +161,11 @@ impl<'a> Coherent<'a> {
                     target.module
                 );
             }
-            placed(
-                &name,
-                target,
-                reached.modules.contains_key(target.module.as_str()),
-            )?;
+            let declared_here = reached.modules.contains_key(target.module.as_str());
+            placed(&name, target, declared_here)?;
+            if target.is == Answers::Injected && declared_here {
+                injected.push(target);
+            }
         }
 
         let runs = Runs::of(program, &declared)?;
@@ -264,6 +269,7 @@ impl<'a> Coherent<'a> {
             locals,
             runs,
             closures,
+            injected,
         })
     }
 }

@@ -53,7 +53,7 @@ final class Running {
      * exactly the silent ABI mismatch embedding this in the symbol exists to turn into a linker
      * error instead.
      */
-    static final String ABI = "2";
+    static final String ABI = "3";
 
     /**
      * One thing a run can reach in the object: a behavior by its own symbol, or a row by the entry
@@ -79,9 +79,9 @@ final class Running {
     /**
      * The same, with objects another build wrote linked in beside it.
      *
-     * <p>Which is the only way to put what two objects agree on to anything: a behavior this
-     * program names and does not define is answered by whoever links it, and a C stand-in
-     * answering it is this test deciding what the dependency does. An object another Souther build
+     * <p>Which is the only way to put what two objects agree on to anything: a behavior another
+     * build implements is answered by that build's object, and a C stand-in answering it would be
+     * this test deciding what the dependency does. An object another Souther build
      * emitted decides it the way a build does, and what the two objects then have to agree about —
      * a symbol, a signature, what a value of a declared type says it is — is agreed through the
      * linker or not at all.
@@ -441,17 +441,19 @@ final class Running {
                         else\s""".formatted(entry.name(), entry.takes().size() + 2, number));
         }
 
-        // Every name the object left undefined, and not only the ones this row states. The object
-        // is the whole program, so what it names is what the linker wants whichever behavior is
-        // being run — a dependency this row says nothing about is still a symbol with nothing
-        // under it.
+        // Every behavior a host answers, and not only the ones this row states. The object is the
+        // whole program, so any of them may be reached whichever behavior is being run, and one
+        // this row says nothing about ends the run rather than answering what nobody stated.
         //
-        // What each of them is called in C is counted out here, so that nothing downstream has a
-        // Souther identity to make a C identifier from.
+        // What each stand-in is called in C is counted out here. The name it is registered
+        // through is the object's, spelt from the behavior's module and name.
         StringJoiner supplied = new StringJoiner("\n");
+        StringBuilder registering = new StringBuilder();
         int counted = 0;
-        for (Map.Entry<ValueName.Behavior, StandsIn> named : leftUndefined(standIns).entrySet()) {
-            supplied.add(standingIn("standsIn" + counted++, named.getKey(), named.getValue()));
+        for (Map.Entry<ValueName.Behavior, StandsIn> named : injected(standIns).entrySet()) {
+            String standsIn = "standsIn" + counted++;
+            supplied.add(standingIn(standsIn, named.getKey(), named.getValue()));
+            registering.append("    %s(%s);\n".formatted(registerSymbol(named.getKey()), standsIn));
         }
 
         return """
@@ -477,7 +479,7 @@ final class Running {
                     int64_t mark = souther_mark();
                     const uint8_t *answered;
                     uint32_t status;
-                %s
+                %s%s
                     {
                         return 2;
                     }
@@ -495,23 +497,24 @@ final class Running {
                 supplied.toString(),
                 declared,
                 reaching,
+                registering,
                 chosen);
     }
 
     /**
-     * Every behavior the object names and defines nothing for, with what the row says it answers
-     * where the row says anything.
+     * Every behavior a host answers in this program, with what the row says it answers where the
+     * row says anything.
      *
-     * <p>The row says what the dependency answers, entry by entry, and this is that table as the
-     * definition the linker was missing. Arguments it was not told about end the run rather than
-     * answering something: a stand-in asked for what the row never stated would be this harness
-     * deciding what the dependency does, which is the row's to say.
+     * <p>The row says what the dependency answers, entry by entry, and this is that table as what
+     * a host registers for it. Arguments it was not told about end the run rather than answering
+     * something: a stand-in asked for what the row never stated would be this harness deciding
+     * what the dependency does, which is the row's to say.
      *
-     * <p>A dependency the row is silent about still has to be defined for the object to link, and
-     * what it answers is nothing the row stated — so it ends the run, the same as an argument the
-     * table was not told about.
+     * <p>A dependency the row is silent about is registered all the same, and what it answers is
+     * nothing the row stated — so it ends the run, the same as an argument the table was not told
+     * about, rather than answering that nothing was registered.
      */
-    private Map<ValueName.Behavior, StandsIn> leftUndefined(List<StandsIn> standIns) {
+    private Map<ValueName.Behavior, StandsIn> injected(List<StandsIn> standIns) {
         Map<ValueName.Behavior, StandsIn> supplied = new LinkedHashMap<>();
         for (CheckedModule module : program.modules()) {
             for (CheckedBehavior behavior : module.behaviors()) {
@@ -527,14 +530,12 @@ final class Running {
     }
 
     /**
-     * A C definition for one behavior the object names and does not define.
+     * A C function a host registers for one behavior it answers, and the declaration of what it is
+     * registered through.
      *
-     * <p>What it is called in C is handed in, and it is a physical name that means nothing. The
-     * whole of what this definition is for is in the {@code __asm__} string, which carries a
-     * Souther identity entire — a module and a name. A C identifier made here out of part of one
-     * would be that identity written twice, once whole and once with the module dropped, and two
-     * modules declaring a dependency of one name would collide in a translation unit that holds
-     * every undefined name the object left. Which is every one of them, whatever this row states.
+     * <p>What it is called in C is handed in, and it is a physical name that means nothing: two
+     * modules declaring a dependency of one name are two stand-ins, told apart by what each is
+     * registered through, which carries the module and the name entire.
      */
     private String standingIn(String reached, ValueName.Behavior dependency, StandsIn standsIn) {
         CheckedSignature signature = program.behavior(dependency).signature();
@@ -567,10 +568,23 @@ final class Running {
             };
         }
 
-        String symbol = PREFIX + "souther" + ABI + "." + dependency.module() + "."
-                + dependency.name();
-        return "uint32_t %s(%s) __asm__(\"%s\");\nuint32_t %s(%s) {\n%s%s}"
-                .formatted(reached, parameters, symbol, reached, parameters, answering, otherwise);
+        return ("typedef uint32_t (*%s_t)(%s);\nextern %s_t %s(%s_t);\n"
+                + "static uint32_t %s(%s) {\n%s%s}")
+                .formatted(reached, parameters, reached, registerSymbol(dependency), reached,
+                        reached, parameters, answering, otherwise);
+    }
+
+    /**
+     * What a host registers an implementation of {@code dependency} through, in C. Spelt a second
+     * time for the reason {@link #hostSymbol} is, and for the same names.
+     */
+    private static String registerSymbol(ValueName.Behavior dependency) {
+        StringBuilder symbol = new StringBuilder("souther").append(ABI);
+        for (String segment : dependency.module().toString().split("\\.", -1)) {
+            symbol.append("_m_").append(plain(segment));
+        }
+        return symbol.append("_b_").append(plain(dependency.name())).append("_register")
+                .toString();
     }
 
     /**

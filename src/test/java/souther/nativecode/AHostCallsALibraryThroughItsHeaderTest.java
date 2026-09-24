@@ -62,6 +62,12 @@ class AHostCallsALibraryThroughItsHeaderTest {
             behavior twice : (n: Int) -> Int
             let twice (n) = n * 2
 
+            behavior discountFor : (line: Line) -> Int
+
+            behavior discounted : (line: Line) -> Int
+                depends on discountFor
+            let discounted (line, discountFor) = line.price.value * line.quantity - discountFor(line)
+
             example twice
                 | "two" : (1) -> 2
             """;
@@ -79,13 +85,13 @@ class AHostCallsALibraryThroughItsHeaderTest {
 
             static void decoded(const char *label, const char *json) {
                 souther_decoded reading = NULL;
-                souther_status status = souther2_m_shop_t_Line_decode(
+                souther_status status = souther3_m_shop_t_Line_decode(
                         (const uint8_t *) json, (int64_t) strlen(json), &reading);
                 printf("%s: status %u", label, status);
                 switch (souther_decoded_outcome(reading)) {
                 case SOUTHER_DECODED_VALUE:
                     printf(", quantity %" PRId64,
-                           souther2_m_shop_t_Line_f_quantity(souther_decoded_value(reading)));
+                           souther3_m_shop_t_Line_f_quantity(souther_decoded_value(reading)));
                     break;
                 case SOUTHER_DECODED_ISSUES:
                     for (int64_t at = 0; at < souther_decoded_issue_count(reading); at++) {
@@ -108,35 +114,35 @@ class AHostCallsALibraryThroughItsHeaderTest {
                 int64_t mark = souther_mark();
 
                 souther_value three = NULL;
-                souther_status status = souther2_m_shop_t_Money_construct(3, &three);
+                souther_status status = souther3_m_shop_t_Money_construct(3, &three);
                 printf("money: status %u, value %" PRId64 "\\n", status,
-                       souther2_m_shop_t_Money_f_value(three));
+                       souther3_m_shop_t_Money_f_value(three));
                 souther_value below = NULL;
-                status = souther2_m_shop_t_Money_construct(-1, &below);
+                status = souther3_m_shop_t_Money_construct(-1, &below);
                 printf("below: %d\\n", status == SOUTHER_INVARIANT_NOT_HELD && below == NULL);
 
                 const char *wrap = "gift wrap";
                 souther_string note = souther_string_of_utf8((const uint8_t *) wrap,
                                                              (int64_t) strlen(wrap));
                 souther_value line = NULL;
-                status = souther2_m_shop_t_Line_construct(three, 2, 1, note, &line);
+                status = souther3_m_shop_t_Line_construct(three, 2, 1, note, &line);
                 souther_string noted = NULL;
-                uint8_t present = souther2_m_shop_t_Line_f_note(line, &noted);
+                uint8_t present = souther3_m_shop_t_Line_f_note(line, &noted);
                 printf("line: status %u, note %u ", status, present);
                 text(noted);
                 printf("\\n");
 
                 souther_value outcome = NULL;
-                status = souther2_m_shop_b_settle(line, 2, &outcome);
+                status = souther3_m_shop_b_settle(line, 2, &outcome);
                 int64_t owed = -1;
-                souther_status owing = souther2_m_shop_b_owing(outcome, &owed);
+                souther_status owing = souther3_m_shop_b_owing(outcome, &owed);
                 printf("settled: status %u, case %u, amount %" PRId64 ", owing %u %" PRId64 "\\n",
-                       status, souther2_m_shop_t_Outcome_case(outcome),
-                       souther2_m_shop_t_Money_f_value(souther2_m_shop_t_Owed_f_amount(outcome)),
+                       status, souther3_m_shop_t_Outcome_case(outcome),
+                       souther3_m_shop_t_Money_f_value(souther3_m_shop_t_Owed_f_amount(outcome)),
                        owing, owed);
 
                 printf("written: ");
-                text(souther2_m_shop_t_Line_encode(line));
+                text(souther3_m_shop_t_Line_encode(line));
                 printf("\\n");
                 decoded("read", "{\\"price\\": 4, \\"quantity\\": 5}");
                 decoded("read wrong", "{\\"price\\": -1, \\"quantity\\": 5}");
@@ -168,12 +174,12 @@ class AHostCallsALibraryThroughItsHeaderTest {
 
             function decoded($ffi, string $label, string $json): void {
                 $reading = $ffi->new("souther_decoded");
-                $status = $ffi->souther2_m_shop_t_Line_decode(bytes($ffi, $json), strlen($json),
+                $status = $ffi->souther3_m_shop_t_Line_decode(bytes($ffi, $json), strlen($json),
                         FFI::addr($reading));
                 echo "$label: status $status";
                 $outcome = $ffi->souther_decoded_outcome($reading);
                 if ($outcome === $ffi->SOUTHER_DECODED_VALUE) {
-                    echo ", quantity ", $ffi->souther2_m_shop_t_Line_f_quantity(
+                    echo ", quantity ", $ffi->souther3_m_shop_t_Line_f_quantity(
                             $ffi->souther_decoded_value($reading));
                 } elseif ($outcome === $ffi->SOUTHER_DECODED_ISSUES) {
                     for ($at = 0; $at < $ffi->souther_decoded_issue_count($reading); $at++) {
@@ -190,31 +196,31 @@ class AHostCallsALibraryThroughItsHeaderTest {
             $mark = $ffi->souther_mark();
 
             $three = $ffi->new("souther_value");
-            $status = $ffi->souther2_m_shop_t_Money_construct(3, FFI::addr($three));
-            echo "money: status $status, value ", $ffi->souther2_m_shop_t_Money_f_value($three), "\n";
+            $status = $ffi->souther3_m_shop_t_Money_construct(3, FFI::addr($three));
+            echo "money: status $status, value ", $ffi->souther3_m_shop_t_Money_f_value($three), "\n";
             $below = $ffi->new("souther_value");
-            $status = $ffi->souther2_m_shop_t_Money_construct(-1, FFI::addr($below));
+            $status = $ffi->souther3_m_shop_t_Money_construct(-1, FFI::addr($below));
             echo "below: ", (int) ($status === $ffi->SOUTHER_INVARIANT_NOT_HELD && FFI::isNull($below)),
                     "\n";
 
             $wrap = "gift wrap";
             $note = $ffi->souther_string_of_utf8(bytes($ffi, $wrap), strlen($wrap));
             $line = $ffi->new("souther_value");
-            $status = $ffi->souther2_m_shop_t_Line_construct($three, 2, 1, $note, FFI::addr($line));
+            $status = $ffi->souther3_m_shop_t_Line_construct($three, 2, 1, $note, FFI::addr($line));
             $noted = $ffi->new("souther_string");
-            $present = $ffi->souther2_m_shop_t_Line_f_note($line, FFI::addr($noted));
+            $present = $ffi->souther3_m_shop_t_Line_f_note($line, FFI::addr($noted));
             echo "line: status $status, note $present ", text($ffi, $noted), "\n";
 
             $outcome = $ffi->new("souther_value");
-            $status = $ffi->souther2_m_shop_b_settle($line, 2, FFI::addr($outcome));
+            $status = $ffi->souther3_m_shop_b_settle($line, 2, FFI::addr($outcome));
             $owed = $ffi->new("int64_t");
-            $owing = $ffi->souther2_m_shop_b_owing($outcome, FFI::addr($owed));
-            echo "settled: status $status, case ", $ffi->souther2_m_shop_t_Outcome_case($outcome),
-                    ", amount ", $ffi->souther2_m_shop_t_Money_f_value(
-                            $ffi->souther2_m_shop_t_Owed_f_amount($outcome)),
+            $owing = $ffi->souther3_m_shop_b_owing($outcome, FFI::addr($owed));
+            echo "settled: status $status, case ", $ffi->souther3_m_shop_t_Outcome_case($outcome),
+                    ", amount ", $ffi->souther3_m_shop_t_Money_f_value(
+                            $ffi->souther3_m_shop_t_Owed_f_amount($outcome)),
                     ", owing $owing ", $owed->cdata, "\n";
 
-            echo "written: ", text($ffi, $ffi->souther2_m_shop_t_Line_encode($line)), "\n";
+            echo "written: ", text($ffi, $ffi->souther3_m_shop_t_Line_encode($line)), "\n";
             decoded($ffi, "read", '{"price": 4, "quantity": 5}');
             decoded($ffi, "read wrong", '{"price": -1, "quantity": 5}');
             decoded($ffi, "not json", '{"price"');
@@ -234,9 +240,9 @@ class AHostCallsALibraryThroughItsHeaderTest {
             not json: status 0, malformed at 8
             """;
 
-    /** What version 1 of the manifest is, for the program above. */
-    private static final Path INTERFACE_V1 =
-            Path.of("native", "crates", "compiler", "tests", "interface-v1.json");
+    /** What version 2 of the manifest is, for the program above. */
+    private static final Path INTERFACE_V2 =
+            Path.of("native", "crates", "compiler", "tests", "interface-v2.json");
 
     private static final JsonMapper JSON = JsonMapper.builder().build();
 
@@ -270,21 +276,21 @@ class AHostCallsALibraryThroughItsHeaderTest {
     }
 
     /**
-     * The manifest a binding is written against, as version 1 says it for this program. A change
+     * The manifest a binding is written against, as version 2 says it for this program. A change
      * to what the manifest says is a change here, and whether it moves the version is decided
      * looking at it.
      */
     @Test
-    void theManifestIsWhatVersionOneSays(@TempDir Path into) throws Exception {
+    void theManifestIsWhatVersionTwoSays(@TempDir Path into) throws Exception {
         NativeCompiler.Library library =
                 NativeCompiler.library(CheckedProgram.of(List.of(SHOP)), into);
 
         String written = Files.readString(library.manifest(), StandardCharsets.UTF_8);
-        String fixed = Files.exists(INTERFACE_V1)
-                ? Files.readString(INTERFACE_V1, StandardCharsets.UTF_8) : "";
+        String fixed = Files.exists(INTERFACE_V2)
+                ? Files.readString(INTERFACE_V2, StandardCharsets.UTF_8) : "";
         if (!written.equals(fixed)) {
             // Kept where it can be compared with the fixture, and copied over it once it is read.
-            Files.writeString(Path.of("target", "interface-v1.written.json"), written,
+            Files.writeString(Path.of("target", "interface-v2.written.json"), written,
                     StandardCharsets.UTF_8);
         }
         assertThat(written).isEqualTo(fixed);
@@ -316,7 +322,8 @@ class AHostCallsALibraryThroughItsHeaderTest {
         Set<String> inTheObject = definedIn(library.object());
         assertThat(inTheObject).anyMatch(it -> it.contains("$example$"));
         assertThat(inTheObject).anyMatch(it -> it.endsWith("$boundary"));
-        assertThat(inTheObject).contains("souther" + Running.ABI + ".shop.settle");
+        assertThat(inTheObject).contains("souther" + Running.ABI + ".shop.settle",
+                "souther" + Running.ABI + ".shop.discountFor");
         assertThat(exported).noneMatch(it -> it.contains("$") || it.contains("."));
         assertThat(exported).doesNotContain("souther_alloc", "souther_decode_begin",
                 "souther_read_int", "souther_external_json");
@@ -342,6 +349,8 @@ class AHostCallsALibraryThroughItsHeaderTest {
         for (JsonNode module : manifest.get("modules")) {
             module.get("behaviors").forEach(it -> functions.add(it.get("call")));
             module.get("values").forEach(it -> functions.add(it.get("read")));
+            // What a host registers through, and not what it registers, whose name is a type's.
+            module.get("injections").forEach(it -> described.add(it.get("register").stringValue()));
             // Each kind has the members it has: a newtype one field, a sum its cases and no
             // constructor. A member a kind has not got is absent, and one it has is here.
             for (JsonNode declaration : module.get("declarations")) {

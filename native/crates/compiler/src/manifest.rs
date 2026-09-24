@@ -2,11 +2,13 @@
 //!
 //! Written as types and not built as JSON, so that what a manifest of one version says is a thing
 //! the compiler holds this code to. A field renamed here is a change to these types, and the
-//! fixture `tests/interface-v1.json` is what version 1 is: every manifest this writes is read back
+//! fixture `tests/interface-v2.json` is what version 2 is: every manifest this writes is read back
 //! by these same types, which refuse a member they do not name.
 //!
 //! [`VERSION`] moves when what a manifest says is read differently. What the functions it names
 //! answer to is [`Manifest::abi`], the generation in every symbol, and the two move apart.
+//! Version 2 is `souther-native-compiler#46`: a module says what it asks a host to implement
+//! ([`Module::injections`]) beside what it offers one.
 //!
 //! Where a function is `null`, the model has the thing and a host has no way to reach it yet: a
 //! behavior taking a type with no way across, a field of a type with no representation for a host,
@@ -21,7 +23,7 @@ use std::collections::BTreeMap;
 pub(crate) const FORMAT: &str = "souther-native-interface";
 
 /// Which version of what a manifest says this is.
-pub(crate) const VERSION: u32 = 1;
+pub(crate) const VERSION: u32 = 2;
 
 /// Everything a host can call in one shared library, and the model it reaches.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -33,8 +35,9 @@ pub(crate) struct Manifest {
     pub version: u32,
     /// The ABI generation every function named here answers to.
     pub abi: u32,
-    /// Every status a function answering one answers, by name: `ANSWERED`, and each reason a
-    /// Souther computation ends without a value.
+    /// Every status a function answering one answers, by name: `ANSWERED`, each reason a Souther
+    /// computation ends without a value, and what a host's implementation of a behavior brings
+    /// about, which no computation answers.
     pub statuses: BTreeMap<String, u32>,
     /// What a reading comes to, by name.
     pub outcomes: BTreeMap<String, i32>,
@@ -58,7 +61,7 @@ pub(crate) struct Carried {
     pub modules: Vec<Module>,
 }
 
-/// What one module publishes.
+/// What one module publishes, and what it asks a host to implement.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Module {
@@ -66,6 +69,12 @@ pub(crate) struct Module {
     pub name: String,
     /// Every behavior it publishes and the object defines.
     pub behaviors: Vec<Behavior>,
+    /// Every behavior it declares with no body and nothing to depend on, which a host implements.
+    ///
+    /// Apart from `behaviors`, which a host calls: these are what a host is called for. Whether the
+    /// module publishes one does not decide whether it is here. A published behavior that reaches
+    /// one runs only once a host registered an implementation for it, whoever may name it.
+    pub injections: Vec<Injection>,
     /// Every value it publishes.
     pub values: Vec<PublishedValue>,
     /// Every type it declares and publishes.
@@ -82,6 +91,24 @@ pub(crate) struct Behavior {
     pub answers: Type,
     /// What a host calls it through.
     pub call: Option<Function>,
+}
+
+/// A behavior a host implements, and what it registers an implementation through.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Injection {
+    pub name: String,
+    /// What it takes, in order, as the model says it.
+    pub takes: Vec<Type>,
+    pub answers: Type,
+    /// The function a host writes: what the behavior takes as a host hands each over, room for its
+    /// answer as a host is handed one, and a status, of which only `ANSWERED` and `HOST_EXCEPTION`
+    /// are what an implementation may answer. `name` is what C calls a pointer to one, and nothing
+    /// is defined under it.
+    pub implementation: Function,
+    /// What a host calls to register one on the thread it calls from, taking a pointer to the
+    /// implementation and answering the one it replaced, either null for none.
+    pub register: String,
 }
 
 /// A published value.
@@ -304,18 +331,18 @@ impl From<HostParameter> for Parameter {
 mod tests {
     use super::{FORMAT, Manifest, VERSION};
 
-    /// What version 1 is. Read by these types, which refuse a member they do not name, and
+    /// What version 2 is. Read by these types, which refuse a member they do not name, and
     /// written back the same: a field renamed or a kind reshaped here stops matching the fixture
     /// the Java half's test also holds a written manifest to.
-    const V1: &str = include_str!("../tests/interface-v1.json");
+    const V2: &str = include_str!("../tests/interface-v2.json");
 
     #[test]
-    fn version_one_is_read_and_written_back_as_it_is() {
-        let read: Manifest = serde_json::from_str(V1).expect("version 1 reads");
+    fn version_two_is_read_and_written_back_as_it_is() {
+        let read: Manifest = serde_json::from_str(V2).expect("version 2 reads");
         assert_eq!(read.format, FORMAT);
         assert_eq!(read.version, VERSION);
         let mut written = serde_json::to_string_pretty(&read).unwrap();
         written.push('\n');
-        assert_eq!(written, V1);
+        assert_eq!(written, V2);
     }
 }

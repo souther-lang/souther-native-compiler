@@ -32,11 +32,11 @@ use cranelift::object::{ObjectBuilder, ObjectModule};
 use interface::Surface;
 use kernels::LoweredKernel;
 use souther_native_abi::{
-    ALLOCATE, ANSWERED, HELD, NOTHING, Parameter, SLOT, STRING_COMPARE, STRING_CONCAT, Status,
-    TEXT_BYTES, TEXT_LENGTH, TOKEN, WHICH, Word, behavior_symbol, boundary_symbol,
-    constructor_symbol, example_symbol, field_at, generated_call, held_symbol, home_symbol,
-    member_at, room_for_fields, room_for_held, room_for_members, room_for_text, spells_a_module,
-    spells_a_name, type_symbol, value_symbol,
+    ALLOCATE, ANSWERED, HELD, INJECTION_EXCHANGE, INJECTION_GET, NOTHING, Parameter, SLOT,
+    STRING_COMPARE, STRING_CONCAT, Status, TEXT_BYTES, TEXT_LENGTH, TOKEN, WHICH, Word,
+    behavior_symbol, boundary_symbol, constructor_symbol, example_symbol, field_at, generated_call,
+    held_symbol, home_symbol, member_at, room_for_fields, room_for_held, room_for_members,
+    room_for_text, spells_a_module, spells_a_name, type_symbol, value_symbol,
 };
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -208,22 +208,18 @@ fn header() -> String {
     )
 }
 
-/// What a library is linked from besides the program's own object.
+/// What a library is linked from besides the program's own object: what other Souther builds
+/// wrote, and the runtime.
 ///
-/// Three kinds of thing, as an executable of the program is linked from three: what other Souther
-/// builds wrote, what supplies a behavior the program names and no build defines, and the runtime.
-/// They are kept apart because they are not one kind of thing. An object another build wrote
-/// carries what it offers a host, and that is part of the library's surface; what supplies an
-/// injected behavior is written outside this compiler, as the language expects it to be, and
-/// offers a host nothing through the library.
+/// Nothing else. What the program names and does not define is defined by the object of the build
+/// that declares it, a behavior with no body included: that object answers one with what a host
+/// registers for it when the program runs, so nothing is left for whoever links the library to
+/// supply.
 pub struct Linking {
     /// Every object another Souther build wrote that the program reaches: whose behaviors it calls,
-    /// or whose types it builds and reads. Each carries its own surface, and one that does not is
-    /// refused.
+    /// whether they have a body or a host answers them, or whose types it builds and reads. Each
+    /// carries its own surface, and one that does not is refused.
     pub builds: Vec<PathBuf>,
-    /// Objects and libraries that define what the program leaves for whoever links it and no build
-    /// defines — an injected behavior's implementation. Linked in, and nothing is read off them.
-    pub supplying: Vec<PathBuf>,
     /// The runtime's static archive.
     pub runtime: PathBuf,
 }
@@ -232,9 +228,8 @@ pub struct Linking {
 /// declarations it includes, a manifest, and a shared library of the object and what `linking`
 /// names.
 ///
-/// A library is one program, so it holds every build the program reaches and whatever supplies
-/// what the program leaves undefined. What it offers a host is everything each Souther object in
-/// it carries. Everything a host reads is written from what those objects carry, which is what
+/// A library is one program, so it holds every build the program reaches. What it offers a host is
+/// everything each Souther object in it carries. Everything a host reads is written from what those objects carry, which is what
 /// their emission put there, so none of it can name a function the rest does not.
 pub fn library_for(document: &str, linking: &Linking, into: &Path) -> Result<Library> {
     let linker = link::Linker::of_this_host()?;
@@ -269,7 +264,6 @@ pub fn library_for(document: &str, linking: &Linking, into: &Path) -> Result<Lib
         }
     }
     let manifest = interface::manifest_of(modules.into_values().collect());
-    objects.extend(linking.supplying.iter().map(PathBuf::as_path));
 
     fs::write(&written.header, header())?;
     fs::write(&written.declarations, interface::declarations(&manifest))?;
@@ -317,6 +311,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
         locals,
         runs,
         closures,
+        injected,
     } = coherent;
     let mut context = Context::new();
     let mut shapes = FunctionBuilderContext::new();
@@ -330,6 +325,12 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
     // be the same walk written as many times as the program says it.
     let compare_text = import_runtime(&mut module, STRING_COMPARE, call_conv);
     let join_text = import_runtime(&mut module, STRING_CONCAT, call_conv);
+
+    // What a host registered for a behavior this object answers is kept by the runtime, per thread.
+    let registrations = host::Registrations {
+        get: import_runtime(&mut module, INJECTION_GET, call_conv),
+        exchange: import_runtime(&mut module, INJECTION_EXCHANGE, call_conv),
+    };
 
     let literals = Literals::default();
 
@@ -445,8 +446,15 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
                 );
                 linkage_of(local.publication())
             }
-            // Named and not defined. What answers it is settled where the object is linked, and
-            // the two reasons a body is absent are one call to whoever reaches in.
+            // Answered by this object, with what a host registered for it: a module this document
+            // builds declares it, and the declaring build's object is the one place that is
+            // defined, however many objects call it.
+            Answers::Injected if injected.iter().any(|it| std::ptr::eq(*it, target)) => {
+                crosses_objects(target)?;
+                Linkage::Export
+            }
+            // Named and not defined: another build's object defines it, as a body or as what a
+            // host registered. A call is the same call either way.
             Answers::Injected | Answers::Elsewhere => {
                 crosses_objects(target)?;
                 Linkage::Import
@@ -912,6 +920,18 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
     // this compiler calls: the two are different parties and are told different things.
     host::define_behaviors(&mut emitting, &mut surface, &published)?;
     host::define_values(&mut emitting, &mut surface, &values)?;
+    // What a host implements, and registers an implementation through.
+    let injections: Vec<host::Injected> = injected
+        .iter()
+        .map(|target| host::Injected {
+            module: &target.module,
+            name: &target.name,
+            answered_by: reachable.of_behavior_named(&target.declared()),
+            takes: target.takes(),
+            answers: target.answers(),
+        })
+        .collect();
+    host::define_injections(&mut emitting, &mut surface, &injections, &registrations)?;
     boundary::define(&mut emitting, &mut codecs, &boundaries)?;
     // Every writer and reader the entries above reached.
     codecs.define(&mut emitting)?;
@@ -1709,7 +1729,12 @@ fn word_on_the_machine(word: Word) -> types::Type {
     match word {
         Word::Host(word) => interface::machine(word),
         Word::Comparison => types::I64,
-        Word::Memory | Word::Form | Word::Node | Word::Path => POINTER,
+        Word::Memory
+        | Word::Form
+        | Word::Node
+        | Word::Path
+        | Word::Injection
+        | Word::Implementation => POINTER,
     }
 }
 

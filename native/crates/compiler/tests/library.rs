@@ -19,22 +19,25 @@ use support::PREFIX;
 
 const ADDING: &str = include_str!("adding.transport.json");
 const VALUES: &str = include_str!("values.transport.json");
+/// `m.lookUp` has no body and declares nothing to depend on, and holds its answer to not being
+/// below what it was handed; `m.twice` doubles what it answers, and `m.looked` is a composition
+/// with it as the first stage.
+const ENSURES: &str = include_str!("ensures.transport.json");
 
-/// What a library is linked from beside the program's object: these builds, these objects
-/// supplying what no build defines, and the runtime.
-fn linking(builds: Vec<std::path::PathBuf>, supplying: Vec<std::path::PathBuf>) -> Linking {
+/// What a library is linked from beside the program's object: these builds, and the runtime.
+fn linking(builds: Vec<std::path::PathBuf>) -> Linking {
     Linking {
         builds,
-        supplying,
         runtime: support::runtime().to_path_buf(),
     }
 }
 
-/// Every function the header declares, by the name before its parameters.
+/// Every function the header declares, by the name before its parameters. A type the header names
+/// is not one.
 fn declared_in(header: &str) -> BTreeSet<String> {
     header
         .lines()
-        .filter(|line| line.ends_with(");"))
+        .filter(|line| line.ends_with(");") && !line.starts_with("typedef "))
         .map(|line| {
             let before = &line[..line.find('(').expect("a declaration takes something")];
             before
@@ -63,6 +66,11 @@ fn described_in(manifest: &Value) -> BTreeSet<String> {
         }
         for value in module["values"].as_array().unwrap() {
             add(&value["read"]);
+        }
+        // What a host registers through, and not what it registers: that is a function the host
+        // writes, and its name is a type's.
+        for injection in module["injections"].as_array().unwrap() {
+            add(&serde_json::json!({ "name": injection["register"] }));
         }
         // Each kind has the members it has: a newtype one field, a sum its cases and no
         // constructor. A member a kind has not got is absent, and indexing it answers null.
@@ -106,9 +114,9 @@ fn defined_in(file: &Path, exported: bool) -> BTreeSet<String> {
 
 #[test]
 fn the_header_the_manifest_and_the_library_name_one_set_of_functions() {
-    for document in [ADDING, VALUES] {
+    for document in [ADDING, VALUES, ENSURES] {
         let into = tempdir().unwrap();
-        let built = library_for(document, &linking(vec![], vec![]), into.path()).unwrap();
+        let built = library_for(document, &linking(vec![]), into.path()).unwrap();
 
         let declarations = fs::read_to_string(&built.declarations).unwrap();
         // What an FFI with no preprocessor reads: not one directive, whatever the program is.
@@ -156,10 +164,10 @@ const CALLING: &str = r#"
 int main(void) {
     int64_t mark = souther_mark();
     int64_t answer = -1;
-    souther_status status = souther2_m_calculation_b_add(2, 3, &answer);
+    souther_status status = souther3_m_calculation_b_add(2, 3, &answer);
     printf("%u %" PRId64 "\n", status, answer);
     answer = -1;
-    status = souther2_m_calculation_b_add(INT64_MAX, 1, &answer);
+    status = souther3_m_calculation_b_add(INT64_MAX, 1, &answer);
     printf("%d %" PRId64 "\n", status == SOUTHER_REQUIRED_FORM_HAS_NO_PLACE, answer);
     souther_reset(mark);
     return 0;
@@ -181,26 +189,26 @@ static void said(souther_string text) {
 int main(void) {
     int64_t mark = souther_mark();
     souther_value built = NULL;
-    souther_status status = souther2_m_m_t_P_construct(7, &built);
-    printf("%u %" PRId64 "\n", status, souther2_m_m_t_P_f_n(built));
-    said(souther2_m_m_t_P_encode(built));
+    souther_status status = souther3_m_m_t_P_construct(7, &built);
+    printf("%u %" PRId64 "\n", status, souther3_m_m_t_P_f_n(built));
+    said(souther3_m_m_t_P_encode(built));
 
     const char *json = "{\"n\": 9}";
     souther_decoded reading = NULL;
-    status = souther2_m_m_t_P_decode((const uint8_t *) json, (int64_t) strlen(json), &reading);
+    status = souther3_m_m_t_P_decode((const uint8_t *) json, (int64_t) strlen(json), &reading);
     printf("%u %d %" PRId64 "\n", status, souther_decoded_outcome(reading) == SOUTHER_DECODED_VALUE,
-           souther2_m_m_t_P_f_n(souther_decoded_value(reading)));
+           souther3_m_m_t_P_f_n(souther_decoded_value(reading)));
 
     json = "{}";
-    status = souther2_m_m_t_P_decode((const uint8_t *) json, (int64_t) strlen(json), &reading);
+    status = souther3_m_m_t_P_decode((const uint8_t *) json, (int64_t) strlen(json), &reading);
     souther_issue issue = souther_decoded_issue(reading, 0);
     printf("%u %d %" PRId64 " ", status, souther_decoded_outcome(reading) == SOUTHER_DECODED_ISSUES,
            souther_decoded_issue_count(reading));
     said(souther_issue_code(issue));
 
     souther_value published = NULL;
-    status = souther2_m_m_v_ys(&published);
-    printf("%u %" PRId64 "\n", status, souther2_m_m_t_P_f_n(published));
+    status = souther3_m_m_v_ys(&published);
+    printf("%u %" PRId64 "\n", status, souther3_m_m_t_P_f_n(published));
     souther_reset(mark);
     return 0;
 }
@@ -213,7 +221,7 @@ const CALLING_FROM_CPP: &str = r#"
 
 int main() {
     int64_t answer = -1;
-    souther_status status = souther2_m_calculation_b_add(2, 3, &answer);
+    souther_status status = souther3_m_calculation_b_add(2, 3, &answer);
     std::printf("%u %lld\n", status, static_cast<long long>(answer));
     return 0;
 }
@@ -225,7 +233,7 @@ fn ran(document: &str, program: &str) -> String {
 
 fn ran_as(document: &str, program: &str, compiler: &str, named: &str) -> String {
     let into = tempdir().unwrap();
-    let built = library_for(document, &linking(vec![], vec![]), into.path()).unwrap();
+    let built = library_for(document, &linking(vec![]), into.path()).unwrap();
     let source = into.path().join(named);
     fs::write(&source, program).unwrap();
     let executable = into.path().join("host");
@@ -268,6 +276,125 @@ fn a_host_builds_reads_and_writes_a_value_through_the_header_and_the_library() {
     );
 }
 
+/// A behavior with no body answered by what a host registered for it on the calling thread, and
+/// by nothing where it registered nothing.
+const IMPLEMENTING: &str = r#"
+#include <pthread.h>
+#include <stdio.h>
+#include "souther.h"
+
+static souther_status added(int64_t a, int64_t *out) {
+    *out = a + 20;
+    return SOUTHER_ANSWERED;
+}
+
+static souther_status below(int64_t a, int64_t *out) {
+    *out = a - 1;
+    return SOUTHER_ANSWERED;
+}
+
+static souther_status thrown(int64_t a, int64_t *out) {
+    return SOUTHER_HOST_EXCEPTION;
+}
+
+static souther_status aborted(int64_t a, int64_t *out) {
+    return SOUTHER_INVARIANT_NOT_HELD;
+}
+
+static souther_status unbound(int64_t a, int64_t *out) {
+    return SOUTHER_INJECTION_UNBOUND;
+}
+
+/* Registers another implementation around a call of its own, and puts back what it replaced. */
+static souther_status nesting(int64_t a, int64_t *out) {
+    souther3_m_m_b_lookUp_implementation before = souther3_m_m_b_lookUp_register(added);
+    int64_t inner = -1;
+    souther_status status = souther3_m_m_b_twice(a, &inner);
+    souther3_m_m_b_lookUp_implementation replaced = souther3_m_m_b_lookUp_register(before);
+    printf("inner %u %lld %d\n", status, (long long) inner, replaced == added);
+    *out = a;
+    return SOUTHER_ANSWERED;
+}
+
+static void *elsewhere(void *ignored) {
+    int64_t answer = -1;
+    souther_status status = souther3_m_m_b_twice(1, &answer);
+    printf("elsewhere %d %lld\n", status == SOUTHER_INJECTION_UNBOUND, (long long) answer);
+    return NULL;
+}
+
+static void twice(const char *what) {
+    int64_t answer = -1;
+    souther_status status = souther3_m_m_b_twice(1, &answer);
+    printf("%s %u %lld\n", what, status, (long long) answer);
+}
+
+int main(void) {
+    int64_t mark = souther_mark();
+    int64_t answer = -1;
+    souther_status status = souther3_m_m_b_twice(1, &answer);
+    printf("nothing %d %lld\n", status == SOUTHER_INJECTION_UNBOUND, (long long) answer);
+
+    printf("first %d\n", souther3_m_m_b_lookUp_register(added) == NULL);
+    twice("added");
+    answer = -1;
+    status = souther3_m_m_b_looked(1, &answer);
+    printf("looked %u %lld\n", status, (long long) answer);
+
+    pthread_t thread;
+    pthread_create(&thread, NULL, elsewhere, NULL);
+    pthread_join(thread, NULL);
+
+    printf("replaced %d\n", souther3_m_m_b_lookUp_register(below) == added);
+    answer = -1;
+    status = souther3_m_m_b_twice(1, &answer);
+    printf("below %d %lld\n", status == SOUTHER_ENSURES_NOT_HELD, (long long) answer);
+
+    souther3_m_m_b_lookUp_register(thrown);
+    answer = -1;
+    status = souther3_m_m_b_twice(1, &answer);
+    printf("thrown %d %lld\n", status == SOUTHER_HOST_EXCEPTION, (long long) answer);
+
+    souther3_m_m_b_lookUp_register(aborted);
+    status = souther3_m_m_b_twice(1, &answer);
+    printf("aborted %d\n", status == SOUTHER_INJECTION_PROTOCOL_VIOLATION);
+
+    souther3_m_m_b_lookUp_register(unbound);
+    status = souther3_m_m_b_twice(1, &answer);
+    printf("claimed %d\n", status == SOUTHER_INJECTION_PROTOCOL_VIOLATION);
+
+    souther3_m_m_b_lookUp_register(nesting);
+    twice("outer");
+    printf("kept %d\n", souther3_m_m_b_lookUp_register(NULL) == nesting);
+    status = souther3_m_m_b_twice(1, &answer);
+    printf("removed %d\n", status == SOUTHER_INJECTION_UNBOUND);
+    souther_reset(mark);
+    return 0;
+}
+"#;
+
+#[test]
+fn a_host_implements_a_behavior_with_no_body_by_registering_it() {
+    assert!(!IMPLEMENTING.contains("__asm__"));
+    assert_eq!(
+        ran(ENSURES, IMPLEMENTING),
+        "nothing 1 -1\n\
+         first 1\n\
+         added 0 42\n\
+         looked 0 42\n\
+         elsewhere 1 -1\n\
+         replaced 1\n\
+         below 1 -1\n\
+         thrown 1 -1\n\
+         aborted 1\n\
+         claimed 1\n\
+         inner 0 42 1\n\
+         outer 0 2\n\
+         kept 1\n\
+         removed 1\n"
+    );
+}
+
 #[test]
 fn a_cpp_program_calls_a_behavior_through_the_same_header() {
     assert_eq!(ran_as(ADDING, CALLING_FROM_CPP, "c++", "host.cpp"), "0 5\n");
@@ -280,13 +407,9 @@ fn a_module_two_objects_carry_is_refused() {
     let into = tempdir().unwrap();
     let again = into.path().join("again.o");
     fs::write(&again, object_for(VALUES).unwrap()).unwrap();
-    let refused = library_for(
-        VALUES,
-        &linking(vec![again], vec![]),
-        &into.path().join("built"),
-    )
-    .err()
-    .expect("a module in two objects is refused");
+    let refused = library_for(VALUES, &linking(vec![again]), &into.path().join("built"))
+        .err()
+        .expect("a module in two objects is refused");
     assert!(
         refused
             .to_string()
@@ -311,13 +434,9 @@ fn an_object_carrying_no_surface_is_refused() {
         .status()
         .unwrap();
     assert!(compiled.success());
-    let refused = library_for(
-        ADDING,
-        &linking(vec![other], vec![]),
-        &into.path().join("built"),
-    )
-    .err()
-    .expect("an object with no surface is refused");
+    let refused = library_for(ADDING, &linking(vec![other]), &into.path().join("built"))
+        .err()
+        .expect("an object with no surface is refused");
     assert!(
         refused
             .to_string()

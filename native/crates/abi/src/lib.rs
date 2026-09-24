@@ -32,8 +32,15 @@
 ///   objects built by drivers whose `native_status` disagrees about what `4` is are exactly as
 ///   incompatible as two objects with different calling conventions; they just still link, because
 ///   nothing about the *shape* of the call changed. A renumbering there bumps this the same as a
-///   calling-convention change does — see `abort-status-abi2.json` in the driver crate's own
+///   calling-convention change does — see `abort-status-abi3.json` in the driver crate's own
 ///   tests, named for the generation it is a fixture of.
+///
+/// `3` is `souther-native-compiler#46`, both at once. A behavior with no body that declares
+/// nothing to depend on is answered by whatever a host registered for it on the calling thread,
+/// through a function the object of the declaring build defines under the behavior's own symbol,
+/// where before that symbol was left for whoever linked the object to define. And a status is no
+/// longer either `ANSWERED` or a language abort: [`HOST_STATUSES`] are three a host's
+/// implementation brings about, which no Souther computation answers.
 ///
 /// Not part of [`type_symbol`]: a declared type's token is data, not a call, and nothing about how
 /// a call is made or what its status means changes what a value of one looks like.
@@ -41,7 +48,7 @@
 /// Public, because a host is a party to it too: what a binding reads off the manifest a build
 /// writes beside the object says which generation the functions it names answer to, and that is
 /// this number and not a copy of it.
-pub const ABI_GENERATION: u32 = 2;
+pub const ABI_GENERATION: u32 = 3;
 
 /// Whether a module's name can stand in a symbol: it carries no `$`, which is what every symbol
 /// below is split on. A module's name carries dots.
@@ -249,6 +256,28 @@ fn host_under(module: &str, mark: char, name: &str) -> String {
 /// this still takes what a host hands over.
 pub fn host_behavior_symbol(module: &str, behavior: &str) -> String {
     host_under(module, 'b', behavior)
+}
+
+/// Where a host registers what answers a behavior with no body, on the thread it calls from: `(the
+/// implementation) -> the implementation registered before`, either of them null for none.
+///
+/// Given back what it replaced so a host can put that back, which is how a call made from inside
+/// one implementation into another handle's still finds its own implementation after it returns.
+/// The behavior is answered by the object of the build that declares it, and what it runs is what
+/// is registered here: a call with nothing registered answers [`INJECTION_UNBOUND`].
+pub fn host_register_symbol(module: &str, behavior: &str) -> String {
+    format!("{}_register", host_under(module, 'b', behavior))
+}
+
+/// What a host calls the type of the function it registers through [`host_register_symbol`]: what
+/// the behavior takes as a host hands each over, and room for what it answers, as a host is
+/// handed it, answering a status. The same words a host calls a published behavior with, the other
+/// way round.
+///
+/// A name in C and not a symbol, since nothing is defined under it: it is what a header calls the
+/// pointer, spelt under the behavior the way everything a host reaches of it is.
+pub fn host_implementation_type(module: &str, behavior: &str) -> String {
+    format!("{}_implementation", host_under(module, 'b', behavior))
 }
 
 /// Where a host reads a value a module publishes: nothing taken, and `status + out`, running the
@@ -817,6 +846,22 @@ pub const HOST_RUNTIME: &[RuntimeFunction] = {
     ]
 };
 
+/// Where generated code asks what a host registered on the calling thread for one behavior with no
+/// body: `(key) -> implementation`, null where nothing is.
+///
+/// The key is the address of a byte the object answering the behavior holds for it and nothing
+/// reads, so which behavior it is is the linker's to have made unique, as it is for a declared
+/// type's token ([`TOKEN`]). Nothing counts behaviors across objects to number them.
+///
+/// What a host calls to register one is not the runtime's: it is the object's
+/// ([`host_register_symbol`]), which hands the runtime its key and the implementation through
+/// [`INJECTION_EXCHANGE`], so a host names a behavior and never a key.
+pub const INJECTION_GET: &str = "souther_injection_get";
+
+/// Where the object registers an implementation for a key on the calling thread: `(key,
+/// implementation) -> the one it replaced`, either null for none.
+pub const INJECTION_EXCHANGE: &str = "souther_injection_exchange";
+
 /// What generated code hands the runtime and is handed back: every word a host is ([`HostWord`]),
 /// and the ones that stay between generated code and the runtime.
 ///
@@ -837,6 +882,12 @@ pub enum Word {
     Node,
     /// Where a place in a document is, as the reading records it.
     Path,
+    /// Which behavior with no body a host registered for: an address, never read behind
+    /// ([`INJECTION_GET`]).
+    Injection,
+    /// What a host registered for one: the address of a function it wrote, called by the object
+    /// and never by the runtime.
+    Implementation,
 }
 
 /// One parameter of a function of the runtime's that generated code calls.
@@ -876,7 +927,7 @@ pub struct GeneratedCall {
 pub const GENERATED_RUNTIME: &[GeneratedCall] = {
     use HostWord::{Bool, Bytes, Count, Decoded, Int, String, Value};
     use Parameter::{Given, Room};
-    use Word::{Comparison, Form, Host, Memory, Node, Path};
+    use Word::{Comparison, Form, Host, Implementation, Injection, Memory, Node, Path};
     &[
         GeneratedCall {
             name: ALLOCATE,
@@ -1049,6 +1100,16 @@ pub const GENERATED_RUNTIME: &[GeneratedCall] = {
             ],
             answers: None,
         },
+        GeneratedCall {
+            name: INJECTION_GET,
+            takes: &[Given(Injection)],
+            answers: Some(Implementation),
+        },
+        GeneratedCall {
+            name: INJECTION_EXCHANGE,
+            takes: &[Given(Injection), Given(Implementation)],
+            answers: Some(Implementation),
+        },
     ]
 };
 
@@ -1070,43 +1131,84 @@ pub fn generated_call(name: &str) -> &'static GeneratedCall {
 /// A Souther computation ends with a value or without one, and a plain return can only ever say
 /// the first — which is why every generated function takes one more parameter than its signature
 /// shows a caller, a pointer the value is written through, and answers this instead. `ANSWERED`
-/// says the pointer holds it; any other code is a language abort's wire number and the pointer was
-/// never written.
+/// says the pointer holds it. Any other code says the pointer was never written, and is one of
+/// two things: a language abort's wire number, or one of [`HOST_STATUSES`], which a host's
+/// implementation of a behavior brings about and no Souther computation answers. Generated code
+/// hands either on untouched, so what a host's call is answered with may be one a host brought
+/// about further down.
 ///
 /// What number a member of `souther_compiler`'s `AbortKind` gets is not here. This crate is the
-/// wire's width and its one reserved value, both facts a target decides; which reason gets which
-/// of the numbers left over is `souther_native_driver`'s own exhaustive mapping, kept apart from
-/// this crate for the reason this file's own doc gives — nothing about what Souther means belongs
-/// here, and an abort's reason is exactly that.
+/// wire's width and the values it reserves, facts a target decides; which reason gets which of the
+/// numbers left over is `souther_native_driver`'s own exhaustive mapping, kept apart from this
+/// crate for the reason this file's own doc gives — nothing about what Souther means belongs here,
+/// and an abort's reason is exactly that.
 pub type Status = u32;
 
-/// The one code this crate reserves: the pointer holds the answer.
-///
-/// Every other value of [`Status`] is a language abort, and which is which is
-/// `souther_native_driver`'s to say — this crate answers only for the one case that is not one.
+/// The pointer holds the answer.
 pub const ANSWERED: Status = 0;
+
+/// A behavior a host answers was called on a thread where nothing is registered for it.
+///
+/// Answered by the object and never by an implementation: an implementation answering it is one
+/// breaking what it may answer ([`INJECTION_PROTOCOL_VIOLATION`]), and a host reading it back is told that it
+/// supplied nothing, which is a different thing from an implementation saying so.
+pub const INJECTION_UNBOUND: Status = 0x7fff_fffd;
+
+/// An implementation a host registered answered what it may not: anything but [`ANSWERED`] and
+/// [`HOST_EXCEPTION`].
+///
+/// An implementation is outside the model, where a value that breaks a clause is a reading that
+/// failed and not a computation that ended (spec §invariant-abort), so it has no way to end a
+/// Souther computation with a language abort, and one that answered `INVARIANT_NOT_HELD` from a
+/// host constructor has not said what it meant to. The object answers this in its place, whatever
+/// the implementation answered, rather than hand a language abort on that no computation of the
+/// model came to.
+pub const INJECTION_PROTOCOL_VIOLATION: Status = 0x7fff_fffe;
+
+/// An implementation a host registered ended with what its own language throws, which it keeps
+/// and throws again where the outermost call returns.
+///
+/// Nothing crosses generated code but a status, and a host's exception is what a platform failure
+/// is (spec §java-impl-rules) and what a mistake in the implementation is alike: this says only
+/// that one was thrown, and the host that kept it knows which. So it is not a Souther abort, and it
+/// is not called a platform failure.
+pub const HOST_EXCEPTION: Status = 0x7fff_ffff;
+
+/// The statuses no Souther computation answers, by the names a host is told them under.
+///
+/// Numbered from the top of what a C `int` holds, which is what a header's enumeration is, so the
+/// numbers a language abort is given, counted up from one, never reach them.
+pub const HOST_STATUSES: &[(&str, Status)] = &[
+    ("INJECTION_UNBOUND", INJECTION_UNBOUND),
+    ("INJECTION_PROTOCOL_VIOLATION", INJECTION_PROTOCOL_VIOLATION),
+    ("HOST_EXCEPTION", HOST_EXCEPTION),
+];
+
+/// What an implementation may answer: every other status it answers is [`INJECTION_PROTOCOL_VIOLATION`].
+pub const IMPLEMENTATION_ANSWERS: &[Status] = &[ANSWERED, HOST_EXCEPTION];
 
 #[cfg(test)]
 mod tests {
     use super::{
-        ABI_GENERATION, FIRST_FIELD, SLOT, TOKEN, WHICH, behavior_symbol, boundary_symbol,
-        constructor_symbol, example_symbol, field_at, held_symbol, home_symbol,
+        ABI_GENERATION, FIRST_FIELD, HOST_STATUSES, IMPLEMENTATION_ANSWERS,
+        INJECTION_PROTOCOL_VIOLATION, INJECTION_UNBOUND, SLOT, TOKEN, WHICH, behavior_symbol,
+        boundary_symbol, constructor_symbol, example_symbol, field_at, held_symbol, home_symbol,
         host_behavior_symbol, host_case_symbol, host_constructor_symbol, host_decode_symbol,
-        host_encode_symbol, host_field_symbol, host_value_symbol, member_at, reader_symbol,
-        type_symbol, value_symbol,
+        host_encode_symbol, host_field_symbol, host_implementation_type, host_register_symbol,
+        host_value_symbol, member_at, reader_symbol, type_symbol, value_symbol,
     };
 
     #[test]
     fn a_behavior_is_reached_by_its_module_and_its_name() {
         assert_eq!(
             behavior_symbol("calculation", "add"),
-            "souther2.calculation.add"
+            "souther3.calculation.add"
         );
     }
 
     #[test]
     fn a_dotted_module_keeps_its_dots() {
-        assert_eq!(behavior_symbol("lib.pub", "bill"), "souther2.lib.pub.bill");
+        assert_eq!(behavior_symbol("lib.pub", "bill"), "souther3.lib.pub.bill");
     }
 
     /// What the reading rests on. Were this admitted, `a.b` / `c` and `a` / `b.c` would be spelt
@@ -1145,7 +1247,7 @@ mod tests {
     fn each_row_of_a_behavior_is_its_own_symbol() {
         assert_eq!(
             example_symbol("calculation", "add", 0),
-            "souther2.calculation.add$example$0"
+            "souther3.calculation.add$example$0"
         );
         assert_ne!(
             example_symbol("calculation", "add", 0),
@@ -1160,7 +1262,7 @@ mod tests {
     #[test]
     fn an_entry_and_its_boundary_are_two_symbols() {
         let entry = behavior_symbol("shop", "quote");
-        assert_eq!(boundary_symbol(&entry), "souther2.shop.quote$boundary");
+        assert_eq!(boundary_symbol(&entry), "souther3.shop.quote$boundary");
         assert_ne!(boundary_symbol(&entry), entry);
         assert_ne!(
             boundary_symbol(&example_symbol("shop", "quote", 0)),
@@ -1231,7 +1333,7 @@ mod tests {
     fn a_published_value_is_reached_by_its_module_and_its_name() {
         assert_eq!(
             value_symbol("pricing", "standard"),
-            "souther2.pricing$value$standard"
+            "souther3.pricing$value$standard"
         );
     }
 
@@ -1269,7 +1371,7 @@ mod tests {
     fn a_type_is_built_through_its_module_and_its_name() {
         assert_eq!(
             constructor_symbol("pricing", "Amount"),
-            "souther2.pricing$construct$Amount"
+            "souther3.pricing$construct$Amount"
         );
     }
 
@@ -1294,23 +1396,23 @@ mod tests {
     fn a_host_reaches_a_type_under_its_module_and_its_name() {
         assert_eq!(
             host_constructor_symbol("pricing", "Amount"),
-            "souther2_m_pricing_t_Amount_construct"
+            "souther3_m_pricing_t_Amount_construct"
         );
         assert_eq!(
             host_field_symbol("pricing", "Amount", "value"),
-            "souther2_m_pricing_t_Amount_f_value"
+            "souther3_m_pricing_t_Amount_f_value"
         );
         assert_eq!(
             host_case_symbol("pricing", "Result"),
-            "souther2_m_pricing_t_Result_case"
+            "souther3_m_pricing_t_Result_case"
         );
         assert_eq!(
             host_decode_symbol("pricing", "Amount"),
-            "souther2_m_pricing_t_Amount_decode"
+            "souther3_m_pricing_t_Amount_decode"
         );
         assert_eq!(
             host_encode_symbol("pricing", "Amount"),
-            "souther2_m_pricing_t_Amount_encode"
+            "souther3_m_pricing_t_Amount_encode"
         );
     }
 
@@ -1318,11 +1420,11 @@ mod tests {
     fn a_host_reaches_a_behavior_and_a_value_under_their_module() {
         assert_eq!(
             host_behavior_symbol("lib.shop", "quote"),
-            "souther2_m_lib_m_shop_b_quote"
+            "souther3_m_lib_m_shop_b_quote"
         );
         assert_eq!(
             host_value_symbol("lib.shop", "standard"),
-            "souther2_m_lib_m_shop_v_standard"
+            "souther3_m_lib_m_shop_v_standard"
         );
     }
 
@@ -1330,11 +1432,11 @@ mod tests {
     fn a_name_that_is_not_ascii_letters_and_digits_is_escaped() {
         assert_eq!(
             host_behavior_symbol("shop", "foo_bar"),
-            "souther2_m_shop_b_foo__bar"
+            "souther3_m_shop_b_foo__bar"
         );
         assert_eq!(
             host_behavior_symbol("shop", "数量"),
-            "souther2_m_shop_b__u6570__u91cf_"
+            "souther3_m_shop_b__u6570__u91cf_"
         );
     }
 
@@ -1344,7 +1446,7 @@ mod tests {
     fn a_type_is_read_through_its_module_and_its_name() {
         assert_eq!(
             reader_symbol("pricing", "Amount"),
-            "souther2.pricing$read$Amount"
+            "souther3.pricing$read$Amount"
         );
     }
 
@@ -1469,6 +1571,15 @@ mod tests {
                     under(module, vec![named('v', name)]),
                 );
                 for (symbol, done) in [
+                    (host_register_symbol(module, name), "register"),
+                    (host_implementation_type(module, name), "implementation"),
+                ] {
+                    hold(
+                        symbol,
+                        under(module, vec![named('b', name), operation(done)]),
+                    );
+                }
+                for (symbol, done) in [
                     (host_constructor_symbol(module, name), "construct"),
                     (host_case_symbol(module, name), "case"),
                     (host_decode_symbol(module, name), "decode"),
@@ -1507,5 +1618,19 @@ mod tests {
         ] {
             assert!(!others.contains(&symbol), "{symbol}");
         }
+    }
+
+    /// What a host brings about is told apart by number alone, from `ANSWERED` and from each
+    /// other, and stays inside what a C `int` holds, which is what a header's enumeration is.
+    #[test]
+    fn what_a_host_brings_about_is_a_number_of_its_own() {
+        let mut seen = vec![super::ANSWERED];
+        for (name, number) in HOST_STATUSES {
+            assert!(!seen.contains(number), "{name} answers {number} twice");
+            assert!(i32::try_from(*number).is_ok(), "{name} is past a C int");
+            seen.push(*number);
+        }
+        assert!(!IMPLEMENTATION_ANSWERS.contains(&INJECTION_UNBOUND));
+        assert!(!IMPLEMENTATION_ANSWERS.contains(&INJECTION_PROTOCOL_VIOLATION));
     }
 }

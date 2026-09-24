@@ -1044,7 +1044,9 @@ impl LanguageCase {
 pub enum Answers {
     /// Code this object holds, which is emitted.
     Body,
-    /// Supplied by whoever runs the program. The object names it and defines nothing for it.
+    /// Supplied by whoever runs the program, which registers an implementation for it when it
+    /// runs. The object of the build that declares it answers it with that; any other object only
+    /// names it.
     Injected,
     /// Implemented by another build. The same call to whoever reaches in, and a different thing to
     /// whoever links.
@@ -1455,7 +1457,7 @@ pub enum Reaches {
     /// is — a caller emitting one must not have to tell them apart by re-deriving whether `module`
     /// is its own.
     PublishedValue { module: String, name: String },
-    /// A behavior, whether this program answers it or whoever links the object does.
+    /// A behavior, whether this object answers it or another object does.
     Behavior { declared: String },
     /// An operation the language itself implements, with what this application of it takes each
     /// argument as and what else the checker settled about it. The kernel's own signature has type

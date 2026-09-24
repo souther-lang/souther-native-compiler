@@ -291,10 +291,11 @@ class ARowHoldsWhereverItIsRunTest {
             """;
 
     /**
-     * A behavior the object names and does not define, and one that reaches it.
+     * A behavior a host implements, and one that reaches it.
      *
-     * <p>What answers it is settled where the object is linked, so the row's stand-in is the
-     * definition the linker was missing rather than something arranged around the run.
+     * <p>What answers it is what a host registered when it runs the program, so the row's stand-in
+     * is registered the way a host registers an implementation, and nothing about the object is
+     * arranged around the run.
      */
     private static final String DEPENDING = """
             module depending
@@ -334,8 +335,8 @@ class ARowHoldsWhereverItIsRunTest {
      * something the other does not.
      *
      * <p>Two behaviors, as the language says and as the object says: the symbols are apart. What
-     * has to be apart with them is whatever supplies them, because the object is the whole program
-     * and so every name it leaves open is a name the linker wants whichever row is being run.
+     * has to be apart with them is whatever implements them, because the object is the whole
+     * program and so every behavior a host implements may be reached whichever row is being run.
      */
     private static final String PRICING = """
             module pricing
@@ -372,8 +373,8 @@ class ARowHoldsWhereverItIsRunTest {
     /**
      * A module that names neither of them, which is the row that says what the population is.
      *
-     * <p>Its row states no stand-in and reaches no dependency, and the object still leaves both of
-     * those names open — so what runs this row has to supply both of them all the same. A run
+     * <p>Its row states no stand-in and reaches no dependency, and the object still answers both of
+     * those behaviors — so what runs this row registers for both of them all the same. A run
      * arranged around what a row mentions would never meet the pair at all.
      */
     private static final String PLAINLY = """

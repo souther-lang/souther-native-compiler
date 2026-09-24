@@ -30,7 +30,7 @@ use cranelift::object::ObjectModule;
 use object::{Object, ObjectSection};
 use souther_native_abi::{
     ABI_GENERATION, ANSWERED, DECODED_ISSUES, DECODED_MALFORMED, DECODED_VALUE, HOST_RUNTIME,
-    HostParameter, HostWord,
+    HOST_STATUSES, HostParameter, HostWord,
 };
 use std::collections::BTreeMap;
 use target_lexicon::BinaryFormat;
@@ -115,6 +115,17 @@ fn pointer_to(word: &str) -> String {
 
 /// A function as the header declares it.
 fn declared(function: &manifest::Function) -> String {
+    let answers = function.answers.map_or("void", c_word);
+    format!(
+        "{answers}{}{}({});",
+        if answers.ends_with('*') { "" } else { " " },
+        function.name,
+        parameters(function)
+    )
+}
+
+/// What a function takes, as C writes it between the parentheses.
+fn parameters(function: &manifest::Function) -> String {
     let taken: Vec<String> = function
         .takes
         .iter()
@@ -123,16 +134,23 @@ fn declared(function: &manifest::Function) -> String {
             Parameter::Room(word) => pointer_to(c_word(*word)),
         })
         .collect();
-    let answers = function.answers.map_or("void", c_word);
+    if taken.is_empty() {
+        "void".to_string()
+    } else {
+        taken.join(", ")
+    }
+}
+
+/// What a host implements a behavior as, and registers one through, as the header declares them:
+/// the pointer's type, named, and the function taking one and answering one.
+fn declared_injection(injection: &manifest::Injection) -> String {
+    let implementation = &injection.implementation;
+    let answers = implementation.answers.map_or("void", c_word);
+    let pointer = &implementation.name;
     format!(
-        "{answers}{}{}({});",
-        if answers.ends_with('*') { "" } else { " " },
-        function.name,
-        if taken.is_empty() {
-            "void".to_string()
-        } else {
-            taken.join(", ")
-        }
+        "typedef {answers} (*{pointer})({});\n{pointer} {}({pointer});",
+        parameters(implementation),
+        injection.register
     )
 }
 
@@ -306,6 +324,29 @@ impl Surface {
         self.module(module).behaviors.push(behavior);
     }
 
+    /// A behavior a module of this object declares with no body, which a host implements as
+    /// `implementation` says and registers through `register`.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn injection(
+        &mut self,
+        module: &str,
+        name: &str,
+        takes: &[Ty],
+        answers: &Ty,
+        declared: &Declared,
+        implementation: &HostFunction,
+        register: &str,
+    ) {
+        let injection = manifest::Injection {
+            name: name.to_string(),
+            takes: takes.iter().map(|ty| type_of(ty, declared)).collect(),
+            answers: type_of(answers, declared),
+            implementation: implementation.described(),
+            register: register.to_string(),
+        };
+        self.module(module).injections.push(injection);
+    }
+
     /// A value a module of this object publishes, and what a host reads it through.
     pub(crate) fn value(
         &mut self,
@@ -329,6 +370,7 @@ impl Surface {
             .or_insert_with(|| manifest::Module {
                 name: name.to_string(),
                 behaviors: Vec::new(),
+                injections: Vec::new(),
                 values: Vec::new(),
                 declarations: Vec::new(),
             })
@@ -495,9 +537,19 @@ fn declaration_functions(
 }
 
 /// Every symbol a shared library with this manifest exports: what a host calls, and nothing else.
+///
+/// What a host registers an implementation through is one of them. What it implements is not: that
+/// is the host's own function, named in C and defined by nobody here.
 pub(crate) fn exported(manifest: &Manifest) -> Vec<String> {
+    let registers = manifest
+        .modules
+        .iter()
+        .flat_map(|module| &module.injections)
+        .map(|injection| &injection.register);
     functions(manifest)
-        .map(|function| function.name.clone())
+        .map(|function| &function.name)
+        .chain(registers)
+        .cloned()
         .collect()
 }
 
@@ -546,6 +598,11 @@ pub(crate) fn declarations(manifest: &Manifest) -> String {
                 written.push_str(&declared(call));
                 written.push('\n');
             }
+        }
+        for injection in &module.injections {
+            written.push_str(&format!("/* injected {name}.{} */\n", injection.name));
+            written.push_str(&declared_injection(injection));
+            written.push('\n');
         }
         for value in &module.values {
             if let Some(read) = &value.read {
@@ -607,6 +664,7 @@ fn statuses() -> Vec<(&'static str, u32)> {
             .iter()
             .map(|kind| (kind.spelt(), native_status(*kind))),
     );
+    statuses.extend(HOST_STATUSES.iter().copied());
     statuses
 }
 
