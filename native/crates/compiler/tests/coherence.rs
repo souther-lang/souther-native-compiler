@@ -1045,3 +1045,58 @@ fn a_function_stands_as_one_taking_less_and_answering_more() {
         "a value standing as a wider type",
     );
 }
+
+/// Both sides of `++` stand as the list it answers, each under a `Widen` where it holds a narrower
+/// element. A document with one side left at its own list is one the checker does not write, and it
+/// is refused as that and not as a list this backend does not lay out.
+#[test]
+fn a_concat_operand_narrower_than_its_slot_without_a_widen_is_the_halves_disagreeing() {
+    let listed = |of: &str| format!(r#"{{"list":{of}}}"#);
+    let b = r#"{"declared":"m.B"}"#;
+    let joined = |left: &str, right: &str| {
+        node(
+            "binary",
+            &format!(r#""op":"CONCAT","left":{left},"right":{right}"#),
+            &listed(S),
+        )
+    };
+    let takes = [listed(A), listed(b)];
+    let takes: Vec<&str> = takes.iter().map(String::as_str).collect();
+    let both = joined(
+        &widen(&read(0, &listed(A)), &listed(S)),
+        &widen(&read(1, &listed(b)), &listed(S)),
+    );
+    let refused = object_for(&helpers(&[h(&takes, &both)])).expect_err("nothing lays a list out");
+    assert!(refused.downcast_ref::<NotLowered>().is_some(), "{refused}");
+
+    let bare = joined(
+        &read(0, &listed(A)),
+        &widen(&read(1, &listed(b)), &listed(S)),
+    );
+    is_the_halves_disagreeing(&helpers(&[h(&takes, &bare)]), "the left side of ++");
+}
+
+/// Two strings joined are a string, and each side is one.
+#[test]
+fn a_concat_of_two_strings_reads_whole() {
+    let joined = node(
+        "binary",
+        &format!(
+            r#""op":"CONCAT","left":{},"right":{}"#,
+            read(0, STRING),
+            read(1, STRING)
+        ),
+        STRING,
+    );
+    reads_whole(&helpers(&[h(&[STRING, STRING], &joined)]));
+    let answered_wrong = node(
+        "binary",
+        &format!(
+            r#""op":"CONCAT","left":{},"right":{}"#,
+            read(0, STRING),
+            read(1, STRING)
+        ),
+        INT,
+    );
+    is_the_halves_disagreeing(&helpers(&[h(&[STRING, STRING], &answered_wrong)]), "++");
+}

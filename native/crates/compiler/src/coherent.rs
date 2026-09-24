@@ -804,11 +804,17 @@ impl<'a> Walk<'_, 'a> {
         leaves(self.declared, &format!("{}: {what}", self.owner), cases)
     }
 
-    /// An operator against what it says it answers.
+    /// An operator against what it says it answers, and its operands against the slots they stand
+    /// in.
     ///
-    /// Only what holds of every operator node the checker builds, whatever it was written over:
-    /// a comparison and a truth operator answer a truth, and a truth operator asks two; `/` answers
-    /// a `Rational`; and `+`, `-`, `*` and `++` over two operands of one type answer that type.
+    /// Every operator states what its operands stand as, one arm each and none standing for the
+    /// rest. A truth operator takes two truths. Both sides of `++` stand as what it answers: the
+    /// checker places each at the list both join at, under a `Widen` where it is narrower, and two
+    /// strings joined are strings. A comparison and an arithmetic operator place their operands at
+    /// no type the tree states: a case is compared with its sum as it is, and which reading of an
+    /// arithmetic operator the checker applied is not recorded. What holds of those is what every
+    /// such node answers: a comparison a truth, `/` a `Rational`, and `+`, `-` and `*` over two
+    /// operands of one type that type.
     /// Which pairs an operator may be written over, and what it makes of two different ones, is
     /// `ArithmeticCheck`'s and `BinaryElaborator`'s to say, and the checked tree does not record
     /// what they said (souther-lang/souther#1919). Answering it again here would be a copy of the
@@ -842,18 +848,19 @@ impl<'a> Walk<'_, 'a> {
                 },
                 "what a quotient is",
             ),
-            Op::Add | Op::Sub | Op::Mul | Op::Concat if left == right => {
-                if op != Op::Concat {
-                    self.number(&what, ty)?;
-                }
+            Op::Concat => {
+                self.same("the left side of ++", left, ty, "what ++ answers")?;
+                self.same("the right side of ++", right, ty, "what ++ answers")
+            }
+            Op::Add | Op::Sub | Op::Mul if left == right => {
+                self.number(&what, ty)?;
                 self.same(&what, ty, left, "what its operands are")?;
-                if op != Op::Concat && matches!(left, Ty::Prim { prim: Prim::Int }) {
+                if matches!(left, Ty::Prim { prim: Prim::Int }) {
                     self.overflows(&format!("{} over two Ints", op.spelt()), aborts)?;
                 }
                 Ok(())
             }
             Op::Add | Op::Sub | Op::Mul => self.number(&what, ty),
-            Op::Concat => Ok(()),
         }
     }
 
@@ -1076,7 +1083,10 @@ impl<'a> Walk<'_, 'a> {
                     }
                     self.same("a call of int.add", ty, &int, "what it answers")
                 }
-                // Refused where it is lowered; nothing here knows what it answers.
+                // Refused where it is lowered. What the call takes each argument as is the kernel's
+                // signature with its variables settled for this call, and the tree does not keep
+                // the settlement (souther-lang/souther#1930), so an argument missing its `Widen`
+                // here is not told apart from a kernel this backend does not lower.
                 _ => Ok(()),
             },
         }
