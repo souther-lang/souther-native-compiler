@@ -1573,6 +1573,61 @@ impl Node {
         }
     }
 
+    /// What the checker says this node can end a run without a value for.
+    pub fn aborts(&self) -> &[AbortKind] {
+        match self {
+            Node::Int { aborts, .. }
+            | Node::Read { aborts, .. }
+            | Node::Bool { aborts, .. }
+            | Node::Str { aborts, .. }
+            | Node::Binary { aborts, .. }
+            | Node::Neg { aborts, .. }
+            | Node::Let { aborts, .. }
+            | Node::If { aborts, .. }
+            | Node::Unit { aborts, .. }
+            | Node::Construct { aborts, .. }
+            | Node::Field { aborts, .. }
+            | Node::Match { aborts, .. }
+            | Node::Some { aborts, .. }
+            | Node::None { aborts, .. }
+            | Node::Tuple { aborts, .. }
+            | Node::Member { aborts, .. }
+            | Node::Call { aborts, .. }
+            | Node::Block { aborts, .. }
+            | Node::Widen { aborts, .. }
+            | Node::Apply { aborts, .. } => aborts,
+        }
+    }
+
+    /// Whether a node of this kind is one the checker ever gives a reason to end a run without a
+    /// value: arithmetic and negation over a number, a construction of a type that states a
+    /// clause, and a call to a kernel. Every other kind is total in itself, and what a call to a
+    /// behavior, a helper or a value ends with is the callee's own. Named for every kind, with no
+    /// arm standing for the rest, so a kind added to the document has to be said to be one or the
+    /// other.
+    pub fn can_end_without_a_value(&self) -> bool {
+        match self {
+            Node::Binary { .. } | Node::Neg { .. } | Node::Construct { .. } => true,
+            Node::Call { reaches, .. } => matches!(reaches, Reaches::Kernel { .. }),
+            Node::Int { .. }
+            | Node::Read { .. }
+            | Node::Bool { .. }
+            | Node::Str { .. }
+            | Node::Let { .. }
+            | Node::If { .. }
+            | Node::Unit { .. }
+            | Node::Field { .. }
+            | Node::Match { .. }
+            | Node::Some { .. }
+            | Node::None { .. }
+            | Node::Tuple { .. }
+            | Node::Member { .. }
+            | Node::Block { .. }
+            | Node::Widen { .. }
+            | Node::Apply { .. } => false,
+        }
+    }
+
     /// The nodes directly under this one, in the order they are written.
     ///
     /// No arm standing for the rest: a node added to the document is one whose children every walk

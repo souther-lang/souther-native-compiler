@@ -833,6 +833,17 @@ impl<'a> Walk<'_, 'a> {
         for ty in node.types() {
             self.declared.resolves(&self.owner, ty)?;
         }
+        // What a node can end without a value for is its kind's, and only some kinds can. A node
+        // of any other kind naming a reason is one the checker does not write, and the lowering,
+        // which reads a reason only where a kind has one to give, would not notice it.
+        if !node.can_end_without_a_value() && !node.aborts().is_empty() {
+            bail!(
+                "{}: a node that ends no run without a value names {:?} as what it can end without \
+                 one for: the two halves disagree",
+                self.owner,
+                node.aborts()
+            );
+        }
         match node {
             Node::Int { ty, .. } => self.same(
                 "an integer literal",
@@ -1439,22 +1450,36 @@ impl<'a> Walk<'_, 'a> {
                     }
                 }
             }
-            Reaches::Kernel { kernel, takes, .. } => match LoweredKernel::of(kernel) {
+            Reaches::Kernel {
+                kernel,
+                takes,
+                fact,
+            } => match LoweredKernel::of(kernel) {
                 // A kernel this backend lowers is held to what this backend knows of it, and the
                 // settlement is held to that: what the application says it takes is the checker's
                 // statement about this call, and not a contract this backend has for the kernel.
                 Some(known) => {
-                    let contract = known.takes();
-                    if takes.len() != contract.len() {
+                    let contract = known.contract();
+                    if takes.len() != contract.takes.len() {
                         bail!(
                             "{}: {kernel} takes {} arguments and this application says it takes \
                              {}: the two halves disagree",
                             self.owner,
-                            contract.len(),
+                            contract.takes.len(),
                             takes.len()
                         );
                     }
-                    for (settled, known_to_take) in takes.iter().zip(&contract) {
+                    // What was settled beside what it takes is held to the same contract: a fact
+                    // the checker attaches to another kernel is not one it attaches to this.
+                    if fact != &contract.fact {
+                        bail!(
+                            "{}: an application of {kernel} settles {fact:?} where the kernel \
+                             settles {:?}: the two halves disagree",
+                            self.owner,
+                            contract.fact
+                        );
+                    }
+                    for (settled, known_to_take) in takes.iter().zip(&contract.takes) {
                         self.same(
                             &format!("what an application of {kernel} takes"),
                             settled,
@@ -1470,7 +1495,7 @@ impl<'a> Walk<'_, 'a> {
                     self.same(
                         &format!("a call of {kernel}"),
                         ty,
-                        &known.answers(),
+                        &contract.answers,
                         "what it answers",
                     )
                 }

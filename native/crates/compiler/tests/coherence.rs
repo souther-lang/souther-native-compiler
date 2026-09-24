@@ -70,6 +70,21 @@ fn widen(value: &str, ty: &str) -> String {
     node("widen", &format!(r#""value":{value}"#), ty)
 }
 
+/// `node` naming these reasons for ending without a value, on the node itself: the `aborts` at the
+/// end of the document, and not the ones on the literals and reads under it, which name none.
+fn with_outer_aborts(node: &str, reasons: &str) -> String {
+    let empty = r#""aborts":[]}"#;
+    let at = node
+        .rfind(empty)
+        .expect("a node names what it can end without a value for");
+    format!(
+        "{}{}{}",
+        &node[..at],
+        format_args!(r#""aborts":[{reasons}]}}"#),
+        &node[at + empty.len()..]
+    )
+}
+
 fn read(binding: usize, ty: &str) -> String {
     node("read", &format!(r#""binding":{binding}"#), ty)
 }
@@ -414,16 +429,13 @@ fn a_negation_is_typed_as_what_it_negates() {
 fn int_add_answers_a_number() {
     let reaches = r#"{"is":"kernel","kernel":"int.add","takes":[{"prim":"INT"},{"prim":"INT"}],"fact":{"is":"none"}}"#;
     let added = |ty: &str| {
-        {
-            node(
+        with_outer_aborts(
+            &node(
                 "call",
                 &format!(r#""reaches":{reaches},"arguments":[{},{}]"#, int(1), int(2)),
                 ty,
-            )
-        }
-        .replace(
-            r#""aborts":[]}"#,
-            r#""aborts":["REQUIRED_FORM_HAS_NO_PLACE"]}"#,
+            ),
+            r#""REQUIRED_FORM_HAS_NO_PLACE""#,
         )
     };
     reads_whole(&helpers(&[h(&[], &added(INT))]));
@@ -754,16 +766,18 @@ fn numbers_of_two_types_are_told_apart_by_how_the_operator_reads_them() {
 #[test]
 fn arithmetic_that_can_overflow_names_one_reason() {
     let added = |aborts: &str| {
-        node(
-            "binary",
-            &format!(
-                r#""op":"ADD","reading":{{"is":"astheystand"}},"left":{},"right":{}"#,
-                int(1),
-                int(2)
+        with_outer_aborts(
+            &node(
+                "binary",
+                &format!(
+                    r#""op":"ADD","reading":{{"is":"astheystand"}},"left":{},"right":{}"#,
+                    int(1),
+                    int(2)
+                ),
+                INT,
             ),
-            INT,
+            aborts,
         )
-        .replace(r#""aborts":[]}"#, &format!(r#""aborts":[{aborts}]}}"#))
     };
     reads_whole(&helpers(&[h(
         &[],
@@ -1332,17 +1346,16 @@ fn int_add_takes_two_ints_whatever_the_application_says() {
         let reaches = format!(
             r#"{{"is":"kernel","kernel":"int.add","takes":[{takes}],"fact":{{"is":"none"}}}}"#
         );
-        node(
-            "call",
-            &format!(
-                r#""reaches":{reaches},"arguments":[{}]"#,
-                arguments.join(",")
+        with_outer_aborts(
+            &node(
+                "call",
+                &format!(
+                    r#""reaches":{reaches},"arguments":[{}]"#,
+                    arguments.join(",")
+                ),
+                INT,
             ),
-            INT,
-        )
-        .replace(
-            r#""aborts":[]}"#,
-            r#""aborts":["REQUIRED_FORM_HAS_NO_PLACE"]}"#,
+            r#""REQUIRED_FORM_HAS_NO_PLACE""#,
         )
     };
     let document = |call: String| helpers(&[h(&[], &call)]);
@@ -1461,5 +1474,89 @@ fn every_type_a_node_writes_is_one_the_document_declares() {
             INT,
         ),
         &[&optional],
+    );
+}
+
+/// What the checker settles beside what a kernel takes is that kernel's: a pattern belongs to
+/// `String.matches` and an ordering subject to the kernels that order. An application of `int.add`
+/// carrying either is not one the checker writes, and is refused as that and not lowered as the
+/// sum it says it is. What another kernel carries is that kernel's own, and is read but not held
+/// where this backend does not lower the kernel.
+#[test]
+fn a_kernel_settles_what_this_backend_knows_it_settles() {
+    let added = |fact: &str| {
+        let reaches =
+            format!(r#"{{"is":"kernel","kernel":"int.add","takes":[{INT},{INT}],"fact":{fact}}}"#);
+        with_outer_aborts(
+            &node(
+                "call",
+                &format!(r#""reaches":{reaches},"arguments":[{},{}]"#, int(1), int(2)),
+                INT,
+            ),
+            r#""REQUIRED_FORM_HAS_NO_PLACE""#,
+        )
+    };
+    let document = |fact: &str| helpers(&[h(&[], &added(fact))]);
+
+    reads_whole(&document(r#"{"is":"none"}"#));
+    is_the_halves_disagreeing(
+        &document(r#"{"is":"stringmatches","pattern":"foo"}"#),
+        "settles",
+    );
+    is_the_halves_disagreeing(
+        &document(&format!(r#"{{"is":"orderingsubject","type":{INT}}}"#)),
+        "settles",
+    );
+
+    // A kernel this backend does not lower is refused as not lowered, whatever it settles.
+    let matching = node(
+        "call",
+        &format!(
+            r#""reaches":{{"is":"kernel","kernel":"string.matches","takes":[{STRING},{STRING}],"fact":{{"is":"stringmatches","pattern":"a"}}}},"arguments":[{},{}]"#,
+            read(0, STRING),
+            read(1, STRING)
+        ),
+        BOOL,
+    );
+    let refused = object_for(&helpers(&[h(&[STRING, STRING], &matching)]))
+        .expect_err("a kernel nothing here lowers");
+    assert!(refused.downcast_ref::<NotLowered>().is_some(), "{refused}");
+}
+
+/// A node names a reason to end a run without a value only where its kind has one. A literal, a
+/// read, a fork, a call to a helper and every other kind that ends no run of its own naming one is a
+/// document the checker does not write, and the lowering would not notice it.
+#[test]
+fn only_the_kinds_that_can_end_a_run_name_a_reason_to() {
+    let with_reason = |body: String| with_outer_aborts(&body, r#""DIVISION_BY_ZERO""#);
+
+    reads_whole(&helpers(&[h(&[INT], &read(0, INT))]));
+    for body in [
+        int(1),
+        read(0, INT),
+        node(
+            "if",
+            &format!(
+                r#""cond":{},"then":{},"else":{}"#,
+                truth(true),
+                int(1),
+                int(2)
+            ),
+            INT,
+        ),
+        widen(&unit("m.A"), S),
+    ] {
+        is_the_halves_disagreeing(
+            &helpers(&[h(&[INT], &with_reason(body))]),
+            "ends no run without a value",
+        );
+    }
+    // A call to a helper ends with what the helper ends with, and names none of its own.
+    let g = helper("m.g", &[INT], &read(0, INT));
+    let reaches = r#"{"is":"helper","declared":"m.g"}"#;
+    let called = with_reason(call(reaches, &[int(1)], INT));
+    is_the_halves_disagreeing(
+        &helpers(&[g, h(&[], &called)]),
+        "ends no run without a value",
     );
 }
