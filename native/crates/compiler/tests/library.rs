@@ -15,16 +15,10 @@ use std::process::Command;
 use tempfile::tempdir;
 
 mod support;
+use support::PREFIX;
 
 const ADDING: &str = include_str!("adding.transport.json");
 const VALUES: &str = include_str!("values.transport.json");
-
-/// What the linker on this platform calls a symbol a C declaration names.
-const PREFIX: &str = if cfg!(target_vendor = "apple") {
-    "_"
-} else {
-    ""
-};
 
 /// Every function the header declares, by the name before its parameters.
 fn declared_in(header: &str) -> BTreeSet<String> {
@@ -74,8 +68,9 @@ fn described_in(manifest: &Value) -> BTreeSet<String> {
 
 /// Every symbol a file defines and makes visible outside it, spelt the way a C declaration is.
 fn defined_in(file: &Path, exported: bool) -> BTreeSet<String> {
+    // Linux is the only other host these compile on (`support::PREFIX`).
     let mut command = Command::new("nm");
-    if cfg!(target_vendor = "apple") {
+    if cfg!(target_os = "macos") {
         command.arg("-gU");
     } else if exported {
         command.args(["-D", "--defined-only"]);

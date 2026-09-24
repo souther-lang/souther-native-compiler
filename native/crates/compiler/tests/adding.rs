@@ -13,20 +13,10 @@ use std::process::{Command, Output};
 use tempfile::{TempDir, tempdir};
 
 mod support;
+use support::PREFIX;
 
 /// The document the Java half wrote, and the one its own test holds it to.
 const ADDING: &str = include_str!("adding.transport.json");
-
-/// What the linker on this platform calls a symbol the object names.
-///
-/// Mach-O writes an underscore before every one and ELF writes none. The object carries whichever
-/// its format takes, so what needs saying here is only what a C declaration has to be written with
-/// to reach it.
-const PREFIX: &str = if cfg!(target_vendor = "apple") {
-    "_"
-} else {
-    ""
-};
 
 /// What the object calls that is not its own code. A published behavior is also an entry a host
 /// reaches for its answer as the language writes it, and writing that is the runtime's.

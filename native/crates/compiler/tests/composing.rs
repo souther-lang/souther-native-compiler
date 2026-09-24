@@ -20,16 +20,10 @@ use std::process::{Command, Output};
 use tempfile::{TempDir, tempdir};
 
 mod support;
+use support::PREFIX;
 
 /// The document the Java half wrote, and the one its own test holds it to.
 const COMPOSING: &str = include_str!("composing.transport.json");
-
-/// What the linker on this platform calls a symbol the object names.
-const PREFIX: &str = if cfg!(target_vendor = "apple") {
-    "_"
-} else {
-    ""
-};
 
 /// What generated code takes room from, needed here because `g` and `h` each construct a value.
 fn runtime() -> &'static std::path::Path {

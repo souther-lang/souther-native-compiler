@@ -238,17 +238,18 @@ class AHostCallsALibraryThroughItsHeaderTest {
         return described;
     }
 
-    private static final boolean MAC =
-            System.getProperty("os.name", "").toLowerCase().contains("mac");
-
     private static Set<String> exportedBy(Path library) throws IOException, InterruptedException {
-        return symbols(MAC ? List.of("nm", "-gU", library.toString())
-                : List.of("nm", "-D", "--defined-only", library.toString()));
+        return symbols(switch (Running.HOST) {
+            case DARWIN -> List.of("nm", "-gU", library.toString());
+            case LINUX -> List.of("nm", "-D", "--defined-only", library.toString());
+        });
     }
 
     private static Set<String> definedIn(Path object) throws IOException, InterruptedException {
-        return symbols(MAC ? List.of("nm", "-gU", object.toString())
-                : List.of("nm", "-g", "--defined-only", object.toString()));
+        return symbols(switch (Running.HOST) {
+            case DARWIN -> List.of("nm", "-gU", object.toString());
+            case LINUX -> List.of("nm", "-g", "--defined-only", object.toString());
+        });
     }
 
     private static Set<String> symbols(List<String> command)

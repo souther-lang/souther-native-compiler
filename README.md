@@ -46,9 +46,10 @@ needed too, by the test that links what came out and runs it.
 ## Where it runs
 
 Unix hosts: what the object is written as is decided by the host's format, and Mach-O and ELF are
-the two anything here has been run on. Windows is not refused anywhere — it is untried, and the
-test that links and runs would have to say what a COFF object and its linker want before it meant
-anything there.
+the two anything here has been run on. Writing an object is not refused anywhere else — it is
+untried, and the test that links and runs would have to say what a COFF object and its linker want
+before it meant anything there. Linking a shared library for a host is refused on anything but
+macOS and Linux, since what it asks of the linker is said only for those two.
 
 ## What compiles today
 

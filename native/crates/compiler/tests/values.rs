@@ -11,6 +11,7 @@ use std::process::{Command, Output};
 use tempfile::{TempDir, tempdir};
 
 mod support;
+use support::PREFIX;
 
 /// A value that names another value at its root: `ks`, kept and handed nothing, and `ys`,
 /// published and handed one `ks`.
@@ -18,13 +19,6 @@ const VALUES: &str = include_str!("values.transport.json");
 
 /// A behavior in one module answering with a value another module publishes.
 const PUBLISHED_VALUE: &str = include_str!("published_value.transport.json");
-
-/// What the linker on this platform calls a symbol the object names.
-const PREFIX: &str = if cfg!(target_vendor = "apple") {
-    "_"
-} else {
-    ""
-};
 
 /// What generated code takes room from, needed here because both documents construct a value.
 fn runtime() -> &'static std::path::Path {

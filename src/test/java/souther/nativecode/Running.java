@@ -633,14 +633,38 @@ final class Running {
     }
 
     /**
+     * The hosts these tests link and run on. Any other is refused when this class is loaded,
+     * rather than read as whichever of the two it is not.
+     */
+    enum Host {
+        DARWIN, LINUX;
+
+        static Host ofThisMachine() {
+            String name = System.getProperty("os.name", "").toLowerCase();
+            if (name.contains("mac")) {
+                return DARWIN;
+            }
+            if (name.contains("linux")) {
+                return LINUX;
+            }
+            throw new IllegalStateException("these tests link on macOS and Linux, and not on "
+                    + name);
+        }
+    }
+
+    static final Host HOST = Host.ofThisMachine();
+
+    /**
      * What the linker on this platform calls a symbol the object names.
      *
      * <p>Mach-O writes an underscore before every one and ELF writes none. The object carries
      * whichever its format takes, so what needs saying here is only what a C declaration has to be
      * written with to reach it.
      */
-    static final String PREFIX =
-            System.getProperty("os.name", "").toLowerCase().contains("mac") ? "_" : "";
+    static final String PREFIX = switch (HOST) {
+        case DARWIN -> "_";
+        case LINUX -> "";
+    };
 
     /** Whether this harness has a string to make. */
     private static boolean textCrossesHere(List<Type> takes) {

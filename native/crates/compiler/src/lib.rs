@@ -183,19 +183,20 @@ pub struct Library {
 /// All three of what a host reads are written from the one surface the object's emission put its
 /// functions on, so none of them can name a function the others do not.
 pub fn library_for(document: &str, runtime: &Path, into: &Path) -> Result<Library> {
+    let linker = link::Linker::of_this_host()?;
     let (object, surface) = built(document)?;
     fs::create_dir_all(into)?;
     let written = Library {
         object: into.join("souther.o"),
         header: into.join("souther.h"),
         manifest: into.join("souther.json"),
-        library: into.join(link::LIBRARY),
+        library: into.join(linker.library()),
     };
     fs::write(&written.object, object)?;
     fs::write(&written.header, surface.header())?;
     fs::write(&written.manifest, surface.manifest())?;
-    link::shared_library(
-        &written.object,
+    linker.shared_library(
+        &[&written.object],
         runtime,
         &surface.exported(),
         &written.library,

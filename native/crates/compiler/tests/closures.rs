@@ -35,16 +35,10 @@ use std::process::{Command, Output};
 use tempfile::{TempDir, tempdir};
 
 mod support;
+use support::PREFIX;
 
 /// The document the Java half wrote, and the one its own test holds it to.
 const CLOSURES: &str = include_str!("closures.transport.json");
-
-/// What the linker on this platform calls a symbol the object names.
-const PREFIX: &str = if cfg!(target_vendor = "apple") {
-    "_"
-} else {
-    ""
-};
 
 /// What generated code takes room from — needed here because every closure this fixture builds is
 /// allocated through it, the same as any other compound value.
