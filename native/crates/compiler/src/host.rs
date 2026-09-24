@@ -1,6 +1,7 @@
-//! What a host reaches a value of a model's own type through: a constructor, a reader for each
-//! field, and for a sum a reader of which case a value is — each a function the object defines, so
-//! that nothing about where a value keeps what it holds leaves the object.
+//! What a host reaches a value of a model's own type through — building one, reading its fields or
+//! which case it is, and reading it from and writing it to the language's external form — each a
+//! function the object defines, so that nothing about where a value keeps what it holds leaves the
+//! object.
 //!
 //! A host holds a value as an address it never looks behind, and hands it back to these and to the
 //! behaviors. The layout is this backend's to change, and a host that read an offset would be a

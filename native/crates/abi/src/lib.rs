@@ -196,8 +196,10 @@ pub fn constructor_symbol(module: &str, name: &str) -> String {
 /// the way any other does, and what its status means is the one mapping every generated function
 /// answers with.
 ///
-/// Room is left under `$type$` for what a host reaches a collection through, once one is laid out;
-/// nothing else is spelt there.
+/// Every operation a host reaches a declared type through is spelt under `$type$`, each under a
+/// suffix of its own — building a value, reading a field or a case, decoding and encoding, and
+/// whatever a collection is reached through once one is laid out — and nothing a host does not
+/// call is spelt there. Which suffixes there are is the functions below, not a list kept here.
 fn host_type_prefix(module: &str, name: &str) -> String {
     assert!(
         spells_a_module(module),
@@ -590,6 +592,11 @@ pub const READ_MISSING: &str = "souther_read_missing";
 /// `(node) -> i8`: whether it is `null`.
 pub const READ_NULL: &str = "souther_read_null";
 /// `(node, path, reading, out) -> i8`: an `Int` written through `out`.
+///
+/// A scalar reader writes `out` whatever it answers: the value where it read one, and nought, or
+/// null for text, where it did not and recorded why. So a caller's room holds something the reader
+/// wrote after every call, the same as a type's reader, which writes its value or nothing whenever
+/// it answers `ANSWERED`.
 pub const READ_INT: &str = "souther_read_int";
 /// `(node, path, reading, out) -> i8`: a `Bool` written through `out` as one byte.
 pub const READ_BOOL: &str = "souther_read_bool";
@@ -662,7 +669,8 @@ mod tests {
     use super::{
         FIRST_FIELD, SLOT, TOKEN, WHICH, behavior_symbol, boundary_symbol, constructor_symbol,
         example_symbol, field_at, held_symbol, home_symbol, host_case_symbol,
-        host_constructor_symbol, host_field_symbol, member_at, type_symbol, value_symbol,
+        host_constructor_symbol, host_decode_symbol, host_encode_symbol, host_field_symbol,
+        member_at, reader_symbol, type_symbol, value_symbol,
     };
 
     #[test]
@@ -873,6 +881,24 @@ mod tests {
             host_case_symbol("pricing", "Result"),
             "souther2.pricing$type$Result$case"
         );
+        assert_eq!(
+            host_decode_symbol("pricing", "Amount"),
+            "souther2.pricing$type$Amount$decode"
+        );
+        assert_eq!(
+            host_encode_symbol("pricing", "Amount"),
+            "souther2.pricing$type$Amount$encode"
+        );
+    }
+
+    /// What another object reads a value of a type through is under the type's module, apart from
+    /// everything a host reaches.
+    #[test]
+    fn a_type_is_read_through_its_module_and_its_name() {
+        assert_eq!(
+            reader_symbol("pricing", "Amount"),
+            "souther2.pricing$read$Amount"
+        );
     }
 
     /// What a host builds a value through is not what another object built by this compiler
@@ -883,7 +909,10 @@ mod tests {
             host_constructor_symbol("pricing", "Amount"),
             host_field_symbol("pricing", "Amount", "construct"),
             host_field_symbol("pricing", "Amount", "case"),
+            host_field_symbol("pricing", "Amount", "decode"),
             host_case_symbol("pricing", "Amount"),
+            host_decode_symbol("pricing", "Amount"),
+            host_encode_symbol("pricing", "Amount"),
         ];
         let others = [
             constructor_symbol("pricing", "Amount"),
@@ -892,6 +921,7 @@ mod tests {
             value_symbol("pricing", "Amount"),
             home_symbol("pricing", "Amount"),
             held_symbol("pricing", "pricing.Amount"),
+            reader_symbol("pricing", "Amount"),
         ];
         for (at, host) in hosts.iter().enumerate() {
             assert!(!others.contains(host), "{host}");

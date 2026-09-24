@@ -1836,11 +1836,12 @@ impl Constructors {
 ///
 /// Every body of a module, and the clauses of each declaration this object builds a constructor
 /// for. It builds one for a declaration a module of this compile declares, whose fields all have a
-/// representation here, where the module publishes it, since another build or a host may then
-/// construct one through this object, or where a body here constructs one through a call
-/// ([`Construction::Called`]). A declaration neither holds is read, and its clauses held to what
-/// the checker held them to, and nothing of it is run here: no value of it is built here to run a
-/// clause over, and the program is not refused for what nothing runs.
+/// representation here, wherever something may build a value of it through this object: another
+/// build or a host, where the module publishes it; a body here, through a call
+/// ([`Construction::Called`]); and a reader, where a value of a published type is read through it
+/// ([`codec::reached_from`]). A declaration none of those reaches is read, and its clauses held to
+/// what the checker held them to, and nothing of it is run here: no value of it is built here to
+/// run a clause over, and the program is not refused for what nothing runs.
 ///
 /// Settled once, when this is made, by walking each body it runs once: which bodies run, which
 /// constructors a body calls and which published values it reaches. Every pass that asks what this

@@ -68,6 +68,7 @@ class AValueIsReadFromTheFormItIsWrittenInTest {
             .row("line none", "Line", "{\"price\":3,\"quantity\":0}")
             .row("line nfc", "Line", "{\"price\":1,\"quantity\":1,\"note\":\"か\\u3099\"}")
             .row("line cut", "Line", "{\"price\":3,")
+            .row("line and more", "Line", "{\"price\":3,\"quantity\":1}x")
             .row("line twice", "Line", "{\"price\":3,\"price\":-5,\"quantity\":1}")
             .row("line more", "Line", "{\"price\":3,\"quantity\":1,\"colour\":\"red\"}")
             .row("chain", "Chain", "{\"n\":1,\"next\":{\"n\":2}}")
@@ -108,6 +109,7 @@ class AValueIsReadFromTheFormItIsWrittenInTest {
                 line none: issues [@ invariant_violation module=wire type=Line]
                 line nfc: value {"price":1,"quantity":1,"note":"が"}
                 line cut: malformed at 11
+                line and more: malformed at 24
                 line twice: value {"price":3,"quantity":1}
                 line more: value {"price":3,"quantity":1}
                 chain: value {"n":1,"next":{"n":2}}
