@@ -1,8 +1,11 @@
 package souther.nativecode;
 
 import souther.compiler.diag.CompileException;
+import souther.compiler.meta.ModulePath;
 import souther.compiler.program.CheckedProgram;
+import souther.nativecode.php.PhpBindings;
 
+import java.io.File;
 import java.io.IOException;
 import java.io.PrintStream;
 import java.io.UncheckedIOException;
@@ -11,9 +14,22 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.stream.Stream;
 
-/** Compiles the sources named on the command line into one object file. */
+/**
+ * Compiles the sources named on the command line into one object file, or builds them into a
+ * library for a host and, if asked, the PHP binding of it.
+ *
+ * <p>Nothing here decides what a library or a binding is. The program is checked once, the driver
+ * writes the library from it ({@link NativeCompiler#library}), and the binding is generated from the
+ * manifest the driver wrote ({@link PhpBindings#generate}), never from the program a second time.
+ *
+ * <p>Each directory is replaced whole by what writes it, and the two are two directories: a binding
+ * refused after its library was written leaves the new library and the binding that was there
+ * before. What a binding would be refused for whatever the manifest says, a namespace PHP will not
+ * take or a directory holding what no generation wrote, is refused before the library is built.
+ */
 public final class Main {
 
     private static final int WROTE_IT = 0;
@@ -21,11 +37,55 @@ public final class Main {
     private static final int WRONG_COMMAND = 2;
 
     private static final String USAGE = """
-            usage: souther-native -o <object> <source>...
+            usage: souther-native [-cp <path>] -o <object> <source>...
+                   souther-native [-cp <path>] --library <dir> [--with <object>]...
+                                  [--php <dir> --namespace <ns>] <source>...
 
-              -o <object>   where to write the object file
-              <source>      a .sou file, or a directory holding some
+              -cp <path>         the class path of other builds the program imports, as the souther
+                                 command takes it (also --class-path)
+              -o <object>        where to write the object file
+              --library <dir>    where to write the library: object, headers, manifest, shared library
+              --with <object>    the object another build the program reaches was compiled to
+              --php <dir>        where to write the PHP binding of the library
+              --namespace <ns>   the PHP namespace the binding is written under
+              <source>           a .sou file, or a directory holding some
             """;
+
+    /** What a command asks to be written, each of which is a whole command. */
+    sealed interface Output {
+
+        /** One object file. */
+        record ObjectFile(Path into) implements Output {
+        }
+
+        /** A library, reaching {@code alongside}, and the PHP binding of it where one is asked for. */
+        record Library(Path into, List<Path> alongside, Optional<PhpBinding> php)
+                implements Output {
+        }
+    }
+
+    /** Where a PHP binding is written, and under which namespace. */
+    record PhpBinding(Path into, String namespace) {
+    }
+
+    /**
+     * A command as read: what it writes, from which sources, reading the other builds they import
+     * from {@code classPath}.
+     */
+    record Command(Output output, List<Path> sources, List<Path> classPath) {
+
+        CheckedProgram checked(List<String> read) {
+            return classPath.isEmpty() ? CheckedProgram.of(read)
+                    : CheckedProgram.of(read, ModulePath.ofClassPath(classPath));
+        }
+    }
+
+    /** A command line that is not a command, and why. */
+    static final class NotACommand extends Exception {
+        NotACommand(String why) {
+            super(why);
+        }
+    }
 
     private Main() {
     }
@@ -35,32 +95,20 @@ public final class Main {
     }
 
     static int run(String[] args, PrintStream out, PrintStream problems) {
-        Path into = null;
-        List<Path> sources = new ArrayList<>();
-        for (int at = 0; at < args.length; at++) {
-            String held = args[at];
-            if ("-o".equals(held)) {
-                if (++at == args.length) {
-                    problems.println("-o wants a path");
-                    return WRONG_COMMAND;
-                }
-                into = Path.of(args[at]);
-            } else if (held.startsWith("-")) {
-                problems.println("no such option: " + held);
-                problems.print(USAGE);
-                return WRONG_COMMAND;
-            } else {
-                sources.add(Path.of(held));
+        Command command;
+        try {
+            command = read(args);
+        } catch (NotACommand e) {
+            if (e.getMessage() != null) {
+                problems.println(e.getMessage());
             }
-        }
-        if (into == null || sources.isEmpty()) {
             problems.print(USAGE);
             return WRONG_COMMAND;
         }
 
         List<Path> files;
         try {
-            files = under(sources);
+            files = under(command.sources());
         } catch (IOException | UncheckedIOException e) {
             problems.println(e.getMessage());
             return WRONG_COMMAND;
@@ -70,13 +118,50 @@ public final class Main {
             return WRONG_COMMAND;
         }
 
-        byte[] written;
         try {
             List<String> read = new ArrayList<>(files.size());
             for (Path file : files) {
                 read.add(Files.readString(file, StandardCharsets.UTF_8));
             }
-            written = NativeCompiler.compile(CheckedProgram.of(read));
+            switch (command.output()) {
+                case Output.ObjectFile object -> {
+                    byte[] written = NativeCompiler.compile(command.checked(read));
+                    if (object.into().getParent() != null) {
+                        Files.createDirectories(object.into().getParent());
+                    }
+                    Files.write(object.into(), written);
+                    out.println("wrote " + object.into() + " from " + sources(files));
+                }
+                case Output.Library library -> {
+                    if (library.php().isPresent()) {
+                        PhpBinding php = library.php().get();
+                        try {
+                            PhpBindings.refuseAhead(php.into(), php.namespace());
+                        } catch (PhpBindings.NotBindable e) {
+                            problems.println(e.getMessage());
+                            return WRONG_COMMAND;
+                        }
+                    }
+                    List<byte[]> alongside = new ArrayList<>(library.alongside().size());
+                    for (Path object : library.alongside()) {
+                        alongside.add(Files.readAllBytes(object));
+                    }
+                    NativeCompiler.Library built = NativeCompiler.library(
+                            command.checked(read), alongside, library.into());
+                    out.println("wrote the library " + library.into() + " from " + sources(files));
+                    if (library.php().isPresent()) {
+                        PhpBinding php = library.php().get();
+                        try {
+                            PhpBindings.generate(built, php.into(), php.namespace());
+                        } catch (PhpBindings.NotBindable e) {
+                            problems.println("the PHP binding is not written: " + e.getMessage());
+                            return REFUSED;
+                        }
+                        out.println("wrote the PHP binding " + php.into() + " under "
+                                + php.namespace());
+                    }
+                }
+            }
         } catch (CompileException e) {
             problems.println(e.getMessage());
             return REFUSED;
@@ -93,19 +178,103 @@ public final class Main {
             problems.println("interrupted while the driver was running");
             return WRONG_COMMAND;
         }
-
-        try {
-            if (into.getParent() != null) {
-                Files.createDirectories(into.getParent());
-            }
-            Files.write(into, written);
-        } catch (IOException e) {
-            problems.println(e.getMessage());
-            return WRONG_COMMAND;
-        }
-        out.println("wrote " + into + " from " + files.size()
-                + (files.size() == 1 ? " source" : " sources"));
         return WROTE_IT;
+    }
+
+    /**
+     * The command {@code args} say, or why they say none: an option that belongs to one output
+     * named with the other, or with what it goes with missing, is refused here rather than read as
+     * something the command did not mean.
+     */
+    static Command read(String[] args) throws NotACommand {
+        Path object = null;
+        Path library = null;
+        List<Path> alongside = new ArrayList<>();
+        Path php = null;
+        String namespace = null;
+        List<Path> sources = new ArrayList<>();
+        List<Path> classPath = new ArrayList<>();
+        for (int at = 0; at < args.length; at++) {
+            String held = args[at];
+            switch (held) {
+                case "-o" -> object = once(held, object, Path.of(valueOf(args, ++at, held)));
+                case "--library" -> library = once(held, library, Path.of(valueOf(args, ++at, held)));
+                case "-cp", "--class-path" -> {
+                    for (String entry : valueOf(args, ++at, held).split(File.pathSeparator)) {
+                        if (!entry.isBlank()) {
+                            classPath.add(Path.of(entry));
+                        }
+                    }
+                }
+                case "--with" -> alongside.add(Path.of(valueOf(args, ++at, held)));
+                case "--php" -> php = once(held, php, Path.of(valueOf(args, ++at, held)));
+                case "--namespace" -> namespace = once(held, namespace, valueOf(args, ++at, held));
+                default -> {
+                    if (held.startsWith("-")) {
+                        throw new NotACommand("no such option: " + held);
+                    }
+                    sources.add(Path.of(held));
+                }
+            }
+        }
+        if (sources.isEmpty()) {
+            throw new NotACommand(null);
+        }
+        if (object != null && library != null) {
+            throw new NotACommand("-o and --library are two commands; name one");
+        }
+        if (library == null) {
+            for (var named : List.of(new Named("--with", !alongside.isEmpty()),
+                    new Named("--php", php != null), new Named("--namespace", namespace != null))) {
+                if (named.given()) {
+                    throw new NotACommand(named.option() + " goes with --library");
+                }
+            }
+            if (object == null) {
+                throw new NotACommand(null);
+            }
+            return new Command(new Output.ObjectFile(object), List.copyOf(sources),
+                    List.copyOf(classPath));
+        }
+        if (php != null && namespace == null) {
+            throw new NotACommand("--php wants --namespace, the namespace the binding is under");
+        }
+        if (namespace != null && php == null) {
+            throw new NotACommand("--namespace goes with --php");
+        }
+        if (php != null && (within(php, library) || within(library, php))) {
+            throw new NotACommand("--php and --library are each replaced whole, so neither can"
+                    + " hold the other");
+        }
+        Optional<PhpBinding> binding =
+                php == null ? Optional.empty() : Optional.of(new PhpBinding(php, namespace));
+        return new Command(new Output.Library(library, List.copyOf(alongside), binding),
+                List.copyOf(sources), List.copyOf(classPath));
+    }
+
+    private record Named(String option, boolean given) {
+    }
+
+    private static String valueOf(String[] args, int at, String option) throws NotACommand {
+        if (at == args.length) {
+            throw new NotACommand(option + " wants a value");
+        }
+        return args[at];
+    }
+
+    private static <T> T once(String option, T before, T now) throws NotACommand {
+        if (before != null) {
+            throw new NotACommand(option + " is named twice");
+        }
+        return now;
+    }
+
+    private static boolean within(Path inner, Path outer) {
+        return inner.toAbsolutePath().normalize().startsWith(outer.toAbsolutePath().normalize());
+    }
+
+    private static String sources(List<Path> files) {
+        return files.size() + (files.size() == 1 ? " source" : " sources");
     }
 
     private static List<Path> under(List<Path> named) throws IOException {

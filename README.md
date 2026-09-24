@@ -47,6 +47,47 @@ with no preprocessor does and run a generated PHP binding. Maven also runs Compo
 installed, for what the PHP runtime in `bindings/php/runtime` depends on, as its `composer.lock`
 fixes it.
 
+## From the command line
+
+What the API builds, the command line builds too, so an application needs no Java of its own to
+build what it runs. From the root of a clone:
+
+    mvn -q process-classes exec:java \
+        -Dargs='--library build/native --php build/php --namespace Acme\Shop model'
+
+`process-classes` builds the driver the command hands the program to; where it is built already,
+`mvn -q exec:java -Dargs='...'` is enough. The command ends with what `Main` ends with: 0 where it
+wrote everything, 1 where the program is refused (a compile error, what this backend does not write
+yet, a name PHP will not take) and 2 where the command is.
+
+    souther-native [-cp <path>] -o <object> <source>...
+    souther-native [-cp <path>] --library <dir> [--with <object>]...
+                   [--php <dir> --namespace <ns>] <source>...
+
+A source is a `.sou` file or a directory holding some. `--library` writes what a host is handed
+(below) into its directory, and `--php` the binding of it, from the manifest the library was written
+with. A program importing another build reads that build's modules from `-cp`, the class path the
+`souther` command takes, and has its object linked in with `--with`, one for each build.
+
+The two directories are each replaced whole, and they are two: a binding refused for a name in the
+model leaves the new library and the binding that was there before. A namespace PHP will not take,
+or a binding directory holding what no binding wrote, is refused before the library is built.
+
+Until the runtime is published, an application reaches it as a Composer path repository, which is
+the supported way for now:
+
+    {
+        "repositories": [
+            { "type": "path", "url": "<clone>/bindings/php/runtime" }
+        ],
+        "require": { "souther-lang/php-runtime": "@dev" },
+        "autoload": { "psr-4": { "Acme\\Shop\\": "build/php/" } }
+    }
+
+The binding is mapped by the application like its own classes, or loaded with the `autoload.php`
+written beside it. `scripts/php-from-the-command-line.sh` does all of this in CI, with no Java calling
+the API.
+
 ## Where it runs
 
 Unix hosts: what the object is written as is decided by the host's format, and Mach-O and ELF are

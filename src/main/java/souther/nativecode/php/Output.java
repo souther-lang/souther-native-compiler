@@ -37,11 +37,7 @@ final class Output {
      * @throws PhpBindings.NotBindable where {@code target} holds something no generation wrote
      */
     static Output replacing(Path target) throws IOException {
-        Path absolute = target.toAbsolutePath().normalize();
-        if (Files.exists(absolute) && !ours(absolute)) {
-            throw new PhpBindings.NotBindable(absolute + " holds files a binding did not write,"
-                    + " and a binding replaces the directory it is written to whole");
-        }
+        Path absolute = replaceable(target);
         Path parent = absolute.getParent();
         Files.createDirectories(parent);
         Path staging = Files.createTempDirectory(parent, absolute.getFileName() + ".writing-");
@@ -49,6 +45,20 @@ final class Output {
                 + " souther.json, and replaced whole on every generation.\n",
                 StandardCharsets.UTF_8);
         return new Output(absolute, staging);
+    }
+
+    /**
+     * {@code target} as it is replaced, where it is empty, absent or a binding this wrote.
+     *
+     * @throws PhpBindings.NotBindable where {@code target} holds something no generation wrote
+     */
+    static Path replaceable(Path target) throws IOException {
+        Path absolute = target.toAbsolutePath().normalize();
+        if (Files.exists(absolute) && !ours(absolute)) {
+            throw new PhpBindings.NotBindable(absolute + " holds files a binding did not write,"
+                    + " and a binding replaces the directory it is written to whole");
+        }
+        return absolute;
     }
 
     /** Where what is written goes until it is put in place. */
