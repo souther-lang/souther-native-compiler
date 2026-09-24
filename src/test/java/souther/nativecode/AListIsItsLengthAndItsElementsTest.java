@@ -15,8 +15,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  * A list built inside a run, and read back through the two kernels the language reads one with:
  * {@code List.length} and {@code List.get}.
  *
- * <p>Every other operation over a list is Souther written over those two (ADR-0051), so what is
- * asked here is what the backend owes a list and nothing the standard library builds on it. What a
+ * <p>{@code List.fold}, and the combinators the standard library writes over it, are Souther over
+ * {@code List.get} (ADR-0051) and not kernels, so what is asked here is how a list is laid out
+ * and read, and nothing the standard library builds on it. What a
  * behavior answers is an {@code Int}, so the list never leaves the run and what is asked is how it
  * is laid out and read, not how it is written out.
  */

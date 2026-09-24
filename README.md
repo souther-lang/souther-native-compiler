@@ -176,9 +176,10 @@ declaring build's, and for a type built from fields that build is also the only 
 which clause did not hold. Text read is canonicalized to NFC. What JSON is, is `souther-json-syntax`, a crate that knows
 no Souther type, no arena and no runtime, written to be what both runtimes read once #17 moves it.
 
-A `List` is laid out inside a run as its length and then its elements, one slot each, and read
-through the two kernels the language reads one with, `List.length` and `List.get`. Every other
-list operation is Souther written over those two, so nothing else about a list is a kernel here.
+A `List` is laid out inside a run as its length and then its elements, one slot each. Of the
+list kernels the standard library declares (the `intrinsic`s in `souther/list.sou`), this backend
+lowers `list.length` and `list.get`; the others are still ahead. `List.fold` is not one of them:
+it is an ordinary helper over `List.get` (ADR-0051), and so are the combinators written over it.
 In the external form a list is an array of its elements, and a mistake inside one is answered at
 the element's index (`/lines/2/quantity`). Two values of one type compare by what they are made
 of, a list element by element, through a comparator the object holds per type.
