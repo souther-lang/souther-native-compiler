@@ -1768,3 +1768,152 @@ fn a_binding_is_an_identity_and_not_a_position() {
     );
     reads_whole(&with_clauses(&counted, &holds, &[h(&[], &built)]));
 }
+
+/// A number names one binder in a body. The lowering has one place for a binding to stand in, and
+/// a binder that took the number of one in force would leave its value there for what is read after
+/// its scope has closed, so `(let 0 = 1 in 0) + 0` would lower as `1 + 1` and not as `1` and the
+/// parameter. A document doing it is refused as the two halves disagreeing, for a `let`, for a
+/// match arm, and for a function value's parameter alike, and a number in force again once its
+/// binder's scope has closed is a number free for another binder to take.
+#[test]
+fn a_number_names_one_binder_in_force() {
+    let adding = |left: String| {
+        with_outer_aborts(
+            &node(
+                "binary",
+                &format!(
+                    r#""op":"ADD","reading":{{"is":"astheystand"}},"left":{left},"right":{}"#,
+                    read(0, INT)
+                ),
+                INT,
+            ),
+            r#""REQUIRED_FORM_HAS_NO_PLACE""#,
+        )
+    };
+
+    // A `let` taking the number of the parameter in force.
+    is_the_halves_disagreeing(
+        &helpers(&[h(
+            &[INT],
+            &adding(let_(0, INT, &int(1), &read(0, INT), INT)),
+        )]),
+        "already in force",
+    );
+    // The same `let` under a number nothing has, and one taking a number free again after the
+    // scope of an earlier `let` closed.
+    reads_whole(&helpers(&[h(
+        &[INT],
+        &adding(let_(1, INT, &int(1), &read(1, INT), INT)),
+    )]));
+    let twice = with_outer_aborts(
+        &node(
+            "binary",
+            &format!(
+                r#""op":"ADD","reading":{{"is":"astheystand"}},"left":{},"right":{}"#,
+                let_(1, INT, &int(1), &read(1, INT), INT),
+                let_(1, INT, &int(2), &read(1, INT), INT)
+            ),
+            INT,
+        ),
+        r#""REQUIRED_FORM_HAS_NO_PLACE""#,
+    );
+    reads_whole(&helpers(&[h(&[INT], &twice)]));
+    // A `let` inside another that took its number.
+    is_the_halves_disagreeing(
+        &helpers(&[h(
+            &[INT],
+            &let_(
+                1,
+                INT,
+                &int(1),
+                &let_(1, INT, &int(2), &read(1, INT), INT),
+                INT,
+            ),
+        )]),
+        "already in force",
+    );
+
+    // A match arm taking the number of the parameter.
+    let optional = option_of(INT);
+    let forking = |binding: usize| {
+        node(
+            "match",
+            &format!(
+                r#""subject":{},"arms":[{},{}]"#,
+                read(1, &optional),
+                arm(
+                    r#"{"tests":"held"}"#,
+                    Some((binding, INT)),
+                    &read(binding, INT)
+                ),
+                arm(r#"{"tests":"nothing"}"#, None, &read(0, INT))
+            ),
+            INT,
+        )
+    };
+    is_the_halves_disagreeing(
+        &helpers(&[h(&[INT, &optional], &forking(0))]),
+        "already in force",
+    );
+    reads_whole(&helpers(&[h(&[INT, &optional], &forking(2))]));
+
+    // Two parameters of one function value under one number.
+    let block = |first: usize, second: usize| {
+        let function = fn_of(&[INT, INT], INT);
+        node(
+            "block",
+            &format!(
+                r#""site":0,"parameters":[{{"binding":{first},"name":"a"}},{{"binding":{second},"name":"b"}}],"body":{}"#,
+                read(first, INT)
+            ),
+            &function,
+        )
+    };
+    is_the_halves_disagreeing(&helpers(&[h(&[], &block(3, 3))]), "already in force");
+}
+
+/// An arm says what it reads its value as exactly where it binds one. The writer says both or
+/// neither, and an arm saying only `binds` is a statement the lowering would drop.
+#[test]
+fn an_arm_binds_and_says_what_it_reads_it_as_together() {
+    let optional = option_of(INT);
+    let forking = |arm_of: String| {
+        node(
+            "match",
+            &format!(
+                r#""subject":{},"arms":[{arm_of},{}]"#,
+                read(0, &optional),
+                arm(r#"{"tests":"nothing"}"#, None, &int(2))
+            ),
+            INT,
+        )
+    };
+    let document = |arm_of: String| helpers(&[h(&[&optional], &forking(arm_of))]);
+    let held = |binding: &str, binds: &str| {
+        format!(
+            r#"{{"selects":[{{"tests":"held"}}],"binding":{binding},"binds":{binds},"body":{}}}"#,
+            int(1)
+        )
+    };
+
+    reads_whole(&document(held("1", INT)));
+    reads_whole(&document(held("null", "null")));
+    is_the_halves_disagreeing(&document(held("null", INT)), "binds nothing");
+    is_the_halves_disagreeing(&document(held("1", "null")), "does not say");
+}
+
+/// What a value is handed is another value this module builds. The lowering reads the type of the
+/// handover and never what it carries, so a handover carrying nothing built would be a statement no
+/// reader held.
+#[test]
+fn a_handover_carries_a_value_the_module_builds() {
+    let value = |carries: &str| {
+        format!(
+            r#"{{"transport":13,"declarations":[],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[],"values":[{{"module":"m","name":"ks","handovers":[],"body":{}}},{{"module":"m","name":"ys","handovers":[{{"parameter":"dep","type":{INT},"carries":{{"module":"m","name":"{carries}"}}}}],"body":{}}}],"entries":[],"definitions":[],"examples":[]}}]}}"#,
+            int(1),
+            read(0, INT)
+        )
+    };
+    reads_whole(&value("ks"));
+    is_the_halves_disagreeing(&value("nothing"), "builds no value of");
+}

@@ -14,10 +14,18 @@
 //! Not a check that what is accepted is right: a different value for a field is very often a
 //! different program the checker would have written. That is held where each relation is, in
 //! `coherence.rs`; this finds the ones nobody thought to.
+//!
+//! A panic is the loud way a relation goes unheld. The quiet one is a document that reads, and
+//! lowers to something other than what it says: two readers of one rule (what a name stands for
+//! where it is read) that agree on every document the writer writes and part on one it does not.
+//! What is asked of such a document is that it means what its binders say and not what their
+//! numbers happen to be: renamed, binder by binder, into numbers nothing else uses, it must lower
+//! to the same object. The renaming below is the one place in this file that knows what a scope is,
+//! and it is written to the language's rule and not to any reader's.
 
 use serde_json::{Value, json};
-use souther_native_driver::object_for;
-use std::collections::BTreeMap;
+use souther_native_driver::{NotLowered, object_for};
+use std::collections::{BTreeMap, BTreeSet};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 /// How many mutants are tried in all. The documents have far more sites than this, and the ones
@@ -144,11 +152,26 @@ fn by_hand() -> Vec<(&'static str, Value)> {
         "core": "if",
         "cond": binary("LE", arithmetic, int(3), prim("BOOL"), json!([])),
         "then": int(1),
-        "else": binary(
-            "DIV", int(1), int(2), prim("RATIONAL"), json!(["DIVISION_BY_ZERO"])
-        ),
+        "else": int(2),
         "type": prim(INT), "aborts": []
     });
+    // A quotient answers a `Rational`, which nothing here lays out, so it stands in a document of
+    // its own: read, and refused as not lowered, which is a different thing for a change to hit.
+    let dividing = program(
+        json!([]),
+        json!([helper(
+            "m.quotient",
+            &[prim(INT), prim(INT)],
+            binary(
+                "DIV",
+                read(0, prim(INT)),
+                read(1, prim(INT)),
+                prim("RATIONAL"),
+                json!(["DIVISION_BY_ZERO"])
+            )
+        )]),
+        json!([]),
+    );
     let arithmetic = program(
         json!([]),
         json!([helper("m.calc", &[prim(INT), prim(INT)], compared)]),
@@ -167,11 +190,55 @@ fn by_hand() -> Vec<(&'static str, Value)> {
         json!(["m.R"]),
     );
 
+    // A `let` whose scope closes before a parameter is read, and a fork whose arm binds a value
+    // that the arm beside it does not: what a binder's number would mean if it were the number of
+    // something in force, and the reads that come after it.
+    let scoped = json!({
+        "core": "binary", "op": "ADD", "reading": { "is": "astheystand" },
+        "left": {
+            "core": "let", "binding": 1, "binds": prim(INT),
+            "value": binary("ADD", read(0, prim(INT)), int(1), prim(INT),
+                            json!(["REQUIRED_FORM_HAS_NO_PLACE"])),
+            "body": binary("MUL", read(1, prim(INT)), int(2), prim(INT),
+                           json!(["REQUIRED_FORM_HAS_NO_PLACE"])),
+            "type": prim(INT), "aborts": []
+        },
+        "right": read(0, prim(INT)),
+        "type": prim(INT), "aborts": ["REQUIRED_FORM_HAS_NO_PLACE"]
+    });
+    let scoping = program(
+        json!([]),
+        json!([helper("m.scoped", &[prim(INT)], scoped)]),
+        json!([]),
+    );
+    let beside = json!({
+        "core": "match", "subject": read(1, json!({ "option": prim(INT) })),
+        "arms": [
+            { "selects": [{ "tests": "held" }], "binding": 2, "binds": prim(INT),
+              "body": read(2, prim(INT)) },
+            { "selects": [{ "tests": "nothing" }], "binding": null, "binds": null,
+              "body": read(0, prim(INT)) }
+        ],
+        "type": prim(INT), "aborts": []
+    });
+    let arms = program(
+        json!([]),
+        json!([helper(
+            "m.beside",
+            &[prim(INT), json!({ "option": prim(INT) })],
+            beside
+        )]),
+        json!([]),
+    );
+
     vec![
+        ("binders whose scopes close before a read", scoping),
+        ("an arm that binds beside one that does not", arms),
         ("a construction that owes a clause", constructing),
         ("a kernel call", kernel),
         ("a fork on an optional", optional),
         ("arithmetic of every kind", arithmetic),
+        ("a quotient", dividing),
         ("an operator read in a type", reading),
     ]
 }
@@ -386,6 +453,13 @@ fn no_field_of_a_document_that_reads_can_be_changed_into_a_panic() {
             _ => None,
         })
         .collect();
+    let meaning_the_numbers: Vec<&String> = outcomes
+        .iter()
+        .filter_map(|it| match it {
+            Outcome::DependsOnNumbers(said) => Some(said),
+            _ => None,
+        })
+        .collect();
 
     let refused = outcomes
         .iter()
@@ -402,6 +476,18 @@ fn no_field_of_a_document_that_reads_can_be_changed_into_a_panic() {
         "no changed document read, so nothing reached the lowering"
     );
     assert!(
+        meaning_the_numbers.is_empty(),
+        "{} of {tried} changed documents that read lower to something else once their binders \
+         are renamed, e.g.:\n{}",
+        meaning_the_numbers.len(),
+        meaning_the_numbers
+            .iter()
+            .take(4)
+            .map(|it| it.chars().take(900).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+    assert!(
         panicked.is_empty(),
         "{} of {tried} changed documents made the driver panic, e.g.:\n{}",
         panicked.len(),
@@ -415,8 +501,11 @@ fn no_field_of_a_document_that_reads_can_be_changed_into_a_panic() {
 }
 
 enum Outcome {
-    /// The changed document was read.
+    /// The changed document was read, and lowers to the same object when its binders are renamed.
     Read,
+    /// The changed document was read and lowers to something else once its binders are renamed:
+    /// what it lowers to depends on the numbers and not on what they name.
+    DependsOnNumbers(String),
     /// It was refused, which is what nearly all of them are.
     Refused,
     /// It made the driver panic, and this says which field was changed to what.
@@ -439,7 +528,10 @@ fn try_change(
     }
     let text = mutant.to_string();
     match catch_unwind(AssertUnwindSafe(|| object_for(&text))) {
-        Ok(Ok(_)) => Outcome::Read,
+        Ok(Ok(object)) => match by_numbers(name, &mutant, &object) {
+            Some(said) => Outcome::DependsOnNumbers(said),
+            None => Outcome::Read,
+        },
         Ok(Err(_)) => Outcome::Refused,
         Err(cause) => {
             let said = cause
@@ -461,4 +553,350 @@ fn try_change(
             Outcome::Panicked(format!("{name}{steps} -> {to}: {said}"))
         }
     }
+}
+
+/// Every binder of every body renamed to a number nothing else uses, each read following the binder
+/// that is in force where it stands: a `let` for its body, a match arm for its body, a function
+/// value's parameter for its body, a field for the clauses of its declaration. What is a parameter
+/// of a helper, a value or a behavior stands as the position it is handed at and is not renamed.
+///
+/// Written to the rule and not to a reader: a name is what the nearest enclosing binder of that
+/// number says it is, and is that binder's alone for as long as its scope lasts.
+fn rename_binders(document: &mut Value, mode: Mode) {
+    let mut fresh = 1_000_000_000_000_u64;
+    // A declaration's fields are what its clauses read.
+    if let Some(declarations) = document
+        .get_mut("declarations")
+        .and_then(Value::as_array_mut)
+    {
+        for declaration in declarations {
+            let mut names: BTreeMap<u64, u64> = BTreeMap::new();
+            let mut fields: Vec<&mut Value> = Vec::new();
+            let is_product = declaration.get("is").and_then(Value::as_str) == Some("product");
+            if is_product
+                && let Some(all) = declaration.get_mut("fields").and_then(Value::as_array_mut)
+            {
+                fields.extend(all.iter_mut());
+            }
+            for field in fields {
+                if let Some(old) = field.get("binding").and_then(Value::as_u64) {
+                    fresh += 1;
+                    bind(&mut names, old, fresh);
+                    field["binding"] = Value::from(fresh);
+                }
+            }
+            if let Some(field) = declaration.get_mut("field")
+                && let Some(old) = field.get("binding").and_then(Value::as_u64)
+            {
+                fresh += 1;
+                bind(&mut names, old, fresh);
+                field["binding"] = Value::from(fresh);
+            }
+            if let Some(clauses) = declaration
+                .get_mut("invariants")
+                .and_then(Value::as_array_mut)
+            {
+                for clause in clauses {
+                    if let Some(condition) = clause.get_mut("condition") {
+                        rename(condition, &mut names.clone(), &mut fresh, mode, 0);
+                    }
+                }
+            }
+        }
+    }
+    if let Some(modules) = document.get_mut("modules").and_then(Value::as_array_mut) {
+        for module in modules {
+            for place in ["helpers", "values", "entries", "definitions", "examples"] {
+                if let Some(bodies) = module.get_mut(place).and_then(Value::as_array_mut) {
+                    for body in bodies {
+                        // What is handed to a body is numbered by where it stands and is in force
+                        // for all of it: a helper's or a behavior's parameters and a value's
+                        // handovers.
+                        let handed = ["parameters", "handovers"]
+                            .iter()
+                            .find_map(|key| body.get(*key).and_then(Value::as_array))
+                            .map_or(0, Vec::len) as u64;
+                        if let Some(node) = body.get_mut("body") {
+                            rename(node, &mut BTreeMap::new(), &mut fresh, mode, handed);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn rename(
+    node: &mut Value,
+    names: &mut BTreeMap<u64, u64>,
+    fresh: &mut u64,
+    mode: Mode,
+    handed: u64,
+) {
+    match node {
+        Value::Array(items) => {
+            for item in items {
+                rename(item, names, fresh, mode, handed);
+            }
+        }
+        Value::Object(fields) => match fields.get("core").and_then(Value::as_str) {
+            Some("read") => {
+                if let Some(old) = fields.get("binding").and_then(Value::as_u64)
+                    && let Some(new) = names.get(&old)
+                {
+                    fields.insert("binding".to_string(), Value::from(*new));
+                }
+            }
+            Some("let") => {
+                if let Some(value) = fields.get_mut("value") {
+                    rename(value, names, fresh, mode, handed);
+                }
+                let old = fields.get("binding").and_then(Value::as_u64);
+                let new = number(mode, names, handed, fields.get("body"), old, fresh);
+                let before = old.and_then(|old| bind(names, old, new));
+                fields.insert("binding".to_string(), Value::from(new));
+                if let Some(body) = fields.get_mut("body") {
+                    rename(body, names, fresh, mode, handed);
+                }
+                leave(names, old, before);
+            }
+            Some("match") => {
+                if let Some(subject) = fields.get_mut("subject") {
+                    rename(subject, names, fresh, mode, handed);
+                }
+                if let Some(arms) = fields.get_mut("arms").and_then(Value::as_array_mut) {
+                    for arm in arms {
+                        let old = arm.get("binding").and_then(Value::as_u64);
+                        let mut before = None;
+                        if let Some(old) = old {
+                            let new =
+                                number(mode, names, handed, arm.get("body"), Some(old), fresh);
+                            before = bind(names, old, new);
+                            arm["binding"] = Value::from(new);
+                        }
+                        if let Some(body) = arm.get_mut("body") {
+                            rename(body, names, fresh, mode, handed);
+                        }
+                        leave(names, old, before);
+                    }
+                }
+            }
+            Some("block") => {
+                let mut entered: Vec<(Option<u64>, Option<u64>)> = Vec::new();
+                if let Some(parameters) = fields.get_mut("parameters").and_then(Value::as_array_mut)
+                {
+                    for parameter in parameters {
+                        let old = parameter.get("binding").and_then(Value::as_u64);
+                        *fresh += 1;
+                        let before = old.and_then(|old| bind(names, old, *fresh));
+                        parameter["binding"] = Value::from(*fresh);
+                        entered.push((old, before));
+                    }
+                }
+                if let Some(body) = fields.get_mut("body") {
+                    rename(body, names, fresh, mode, handed);
+                }
+                for (old, before) in entered.into_iter().rev() {
+                    leave(names, old, before);
+                }
+            }
+            _ => {
+                for (_, inner) in fields.iter_mut() {
+                    rename(inner, names, fresh, mode, handed);
+                }
+            }
+        },
+        _ => {}
+    }
+}
+
+/// How a binder is renamed.
+#[derive(Clone, Copy)]
+enum Mode {
+    /// To a number nothing else uses.
+    Fresh,
+    /// To the smallest number already in force that its scope does not read, so that it shadows what
+    /// that number stood for without changing what any read in its scope says. A document renamed
+    /// this way means what it meant before, in the language's scope rule; whether a driver reads it
+    /// at all is its own answer, and one that does has to lower it as it lowered the original.
+    Collapse,
+}
+
+/// The number a binder is renamed to, for a scope `body`: fresh, or in `Collapse` mode one in force
+/// that the scope does not read.
+fn number(
+    mode: Mode,
+    names: &BTreeMap<u64, u64>,
+    handed: u64,
+    body: Option<&Value>,
+    old: Option<u64>,
+    fresh: &mut u64,
+) -> u64 {
+    if let (Mode::Collapse, Some(body), Some(old)) = (mode, body, old) {
+        let mut read = BTreeSet::new();
+        free_reads(body, &mut vec![old], &mut read);
+        let read: BTreeSet<u64> = read
+            .into_iter()
+            .map(|it| names.get(&it).copied().unwrap_or(it))
+            .collect();
+        let mut in_force: BTreeSet<u64> = (0..handed).collect();
+        in_force.extend(names.values().copied());
+        if let Some(target) = in_force.into_iter().find(|it| !read.contains(it)) {
+            return target;
+        }
+    }
+    *fresh += 1;
+    *fresh
+}
+
+/// Every number `node` reads that no binder inside it binds.
+fn free_reads(node: &Value, bound: &mut Vec<u64>, into: &mut BTreeSet<u64>) {
+    match node {
+        Value::Array(items) => items.iter().for_each(|it| free_reads(it, bound, into)),
+        Value::Object(fields) => match fields.get("core").and_then(Value::as_str) {
+            Some("read") => {
+                if let Some(number) = fields.get("binding").and_then(Value::as_u64)
+                    && !bound.contains(&number)
+                {
+                    into.insert(number);
+                }
+            }
+            Some("let") => {
+                if let Some(value) = fields.get("value") {
+                    free_reads(value, bound, into);
+                }
+                let own = fields.get("binding").and_then(Value::as_u64);
+                bound.extend(own);
+                if let Some(body) = fields.get("body") {
+                    free_reads(body, bound, into);
+                }
+                if own.is_some() {
+                    bound.pop();
+                }
+            }
+            Some("match") => {
+                if let Some(subject) = fields.get("subject") {
+                    free_reads(subject, bound, into);
+                }
+                for arm in fields
+                    .get("arms")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                {
+                    let own = arm.get("binding").and_then(Value::as_u64);
+                    bound.extend(own);
+                    if let Some(body) = arm.get("body") {
+                        free_reads(body, bound, into);
+                    }
+                    if own.is_some() {
+                        bound.pop();
+                    }
+                }
+            }
+            Some("block") => {
+                let own: Vec<u64> = fields
+                    .get("parameters")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|it| it.get("binding").and_then(Value::as_u64))
+                    .collect();
+                bound.extend(own.iter().copied());
+                if let Some(body) = fields.get("body") {
+                    free_reads(body, bound, into);
+                }
+                bound.truncate(bound.len() - own.len());
+            }
+            _ => fields.values().for_each(|it| free_reads(it, bound, into)),
+        },
+        _ => {}
+    }
+}
+
+/// `old` standing for `new` from here, answering what it stood for before.
+///
+/// Replacing what a number stood for is the point of this function: the renaming follows the
+/// language's rule, where a binder shadows an enclosing one of its number for as long as its scope
+/// lasts. That is why it is written here, and once.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the language's own rule: an inner binder shadows an enclosing one of its number"
+)]
+fn bind(names: &mut BTreeMap<u64, u64>, old: u64, new: u64) -> Option<u64> {
+    names.insert(old, new)
+}
+
+/// `old` back to what it stood for before its binder, or out of force where it stood for nothing.
+fn leave(names: &mut BTreeMap<u64, u64>, old: Option<u64>, before: Option<u64>) {
+    let Some(old) = old else { return };
+    match before {
+        Some(before) => {
+            bind(names, old, before);
+        }
+        None => {
+            names.remove(&old);
+        }
+    }
+}
+
+/// Whether what a document lowers to depends on the numbers of its binders and not on what they
+/// name, answered by renaming them both ways: to numbers nothing else uses, which a driver has to
+/// read and lower alike, and onto numbers already in force, which a driver may refuse and, if it
+/// reads, has to lower alike. `None` is that it does not.
+fn by_numbers(name: &str, document: &Value, object: &[u8]) -> Option<String> {
+    for (mode, kind, must_read) in [
+        (Mode::Fresh, "renamed to numbers nothing else uses", true),
+        (
+            Mode::Collapse,
+            "renamed onto numbers already in force",
+            false,
+        ),
+    ] {
+        let mut renamed = document.clone();
+        rename_binders(&mut renamed, mode);
+        if renamed == *document {
+            continue;
+        }
+        match catch_unwind(AssertUnwindSafe(|| object_for(&renamed.to_string()))) {
+            Ok(Ok(again)) if again == object => {}
+            Ok(Ok(_)) => {
+                return Some(format!(
+                    "{name}: lowers to something else {kind}\n  {document}\n  {renamed}"
+                ));
+            }
+            Ok(Err(refused)) if must_read => {
+                return Some(format!(
+                    "{name}: is read, and refused {kind} ({refused})\n  {document}\n  {renamed}"
+                ));
+            }
+            Ok(Err(_)) => {}
+            Err(_) => {
+                return Some(format!(
+                    "{name}: is read, and {kind} makes the driver panic\n  {document}\n  {renamed}"
+                ));
+            }
+        }
+    }
+    None
+}
+
+/// What a document means is its binders' and not their numbers, for every document held here as
+/// the writer wrote it, and for the ones written by hand for what the writer's do not hold.
+#[test]
+fn a_document_means_what_its_binders_say_and_not_what_their_numbers_are() {
+    let mut checked = 0;
+    for (name, document) in fixtures() {
+        // What this backend does not lower yet has no object to compare.
+        let object = match object_for(&document.to_string()) {
+            Ok(object) => object,
+            Err(refused) if refused.downcast_ref::<NotLowered>().is_some() => continue,
+            Err(refused) => panic!("{name} is read: {refused}"),
+        };
+        if let Some(said) = by_numbers(name, &document, &object) {
+            panic!("{said}");
+        }
+        checked += 1;
+    }
+    assert!(checked >= 10, "only {checked} documents were held to this");
 }

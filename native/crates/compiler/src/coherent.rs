@@ -217,7 +217,7 @@ impl<'a> Coherent<'a> {
                              halves disagree"
                         );
                     }
-                    (owner, fields_bound(declaration)?)
+                    (owner, fields_bound(declaration))
                 }
                 Owner::Example(example) => {
                     let behavior = format!("{}.{}", body.module, example.behavior);
@@ -392,6 +392,23 @@ impl<'a> Reached<'a> {
                     || format!("{module} builds two values both written {declared}"),
                 )?;
             }
+            // What a value's handover carries is another value this module builds, which the
+            // method it is handed to takes already built. The lowering reads the handover's type
+            // and never what it carries, so a handover naming a value nothing builds would be a
+            // statement nothing held.
+            for value in &written.values {
+                for handover in &value.handovers {
+                    let carried = handover.carries.declared();
+                    if !reached.values.contains_key(&(module, carried.clone())) {
+                        bail!(
+                            "{}: {} is handed {carried}, which {module} builds no value of: the \
+                             two halves disagree",
+                            value.declared(),
+                            handover.parameter
+                        );
+                    }
+                }
+            }
             for entry in &written.entries {
                 let declared = entry.value.declared();
                 if !reached.values.contains_key(&(module, declared.clone())) {
@@ -523,34 +540,43 @@ impl<'a> Walk<'_, 'a> {
         Ok(())
     }
 
-    /// `node` read with each of `bindings` in force at its type, and whatever they shadowed put
-    /// back afterwards.
+    /// `node` read with each of `bindings` in force at its type, and gone again afterwards.
+    ///
+    /// A number names one binder in a body: a binder whose number is already in force is refused,
+    /// as the two halves disagreeing. The writer counts a binder where it writes it, so no document
+    /// it writes shadows one, and a document that does is one whose meaning is a lexical scope this
+    /// reader, the closure planning and the lowering would each have to keep in step. Refused, they
+    /// agree because there is nothing for them to agree about.
     fn under(&mut self, bindings: Vec<(usize, Ty)>, node: &'a Node) -> Result<()> {
-        for (binding, ty) in &bindings {
-            self.declared
-                .resolves(&format!("{}: binding {binding}", self.owner), ty)?;
+        let mut entered: Vec<usize> = Vec::new();
+        for (binding, ty) in bindings {
+            let bound = self
+                .declared
+                .resolves(&format!("{}: binding {binding}", self.owner), &ty)
+                .and_then(|()| {
+                    index::once(&mut self.bound, binding, ty, || {
+                        format!(
+                            "{}: binding {binding} is bound where it is already in force: a \
+                             number names one binder in a body, and the two halves disagree",
+                            self.owner
+                        )
+                    })
+                });
+            if let Err(refused) = bound {
+                self.leave(&entered);
+                return Err(refused);
+            }
+            entered.push(binding);
         }
-        let shadowed: Vec<(usize, Option<Ty>)> = bindings
-            .into_iter()
-            .map(|(binding, ty)| (binding, self.scope(binding, Some(ty))))
-            .collect();
         let read = self.node(node);
-        for (binding, before) in shadowed.into_iter().rev() {
-            self.scope(binding, before);
-        }
+        self.leave(&entered);
         read
     }
 
-    /// `binding` in force at `ty`, or at nothing, answering what it was in force at before.
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "a binder shadows whatever an enclosing one bound under its number, on purpose, \
-                  and `under` puts it back when the scope closes"
-    )]
-    fn scope(&mut self, binding: usize, ty: Option<Ty>) -> Option<Ty> {
-        match ty {
-            Some(ty) => self.bound.insert(binding, ty),
-            None => self.bound.remove(&binding),
+    /// Each of `bound` out of force again, the last entered first.
+    fn leave(&mut self, bound: &[usize]) {
+        for binding in bound.iter().rev() {
+            self.bound.remove(binding);
         }
     }
 
@@ -1086,7 +1112,15 @@ impl<'a> Walk<'_, 'a> {
                         }
                     }
                     match (arm.binding, &arm.binds) {
-                        (None, _) => self.node(&arm.body)?,
+                        (None, None) => self.node(&arm.body)?,
+                        // The writer says both or neither, so an arm saying one is a statement
+                        // the lowering would drop: it reads what an arm binds only from an arm
+                        // that binds.
+                        (None, Some(_)) => bail!(
+                            "{}: an arm binds nothing and says what it reads it as: the two \
+                             halves disagree",
+                            self.owner
+                        ),
                         (Some(_), None) => bail!(
                             "{}: an arm binds a value and does not say what it reads it as",
                             self.owner
@@ -1720,19 +1754,12 @@ fn composes(
 /// Each field of `declaration` under the binding its clauses read it through, at the type it holds.
 ///
 /// Two fields under one binding would be a clause reading one name for two values.
-fn fields_bound(declaration: &Declaration) -> Result<Vec<(usize, Ty)>> {
-    let mut bound: Vec<(usize, Ty)> = Vec::new();
-    for field in declaration.fields() {
-        if bound.iter().any(|(binding, _)| *binding == field.binding) {
-            bail!(
-                "{} binds two fields under {}, which a clause reads as one value",
-                declaration.key(),
-                field.binding
-            );
-        }
-        bound.push((field.binding, field.codec.ty()));
-    }
-    Ok(bound)
+fn fields_bound(declaration: &Declaration) -> Vec<(usize, Ty)> {
+    declaration
+        .fields()
+        .iter()
+        .map(|field| (field.binding, field.codec.ty()))
+        .collect()
 }
 
 /// Refuses a test naming no case, or naming a sum where the checker answers the leaves it descends

@@ -983,8 +983,18 @@ impl<'a> Declared<'a> {
             {
                 bail!("{key} is declared by the language and has fields, which none of its has");
             }
+            // A field's binding is the number a clause reads it under and the constructor holds it
+            // under, so two fields under one is one name for two values, whether the declaration
+            // states a clause or not.
+            let mut bound = HashMap::new();
             for field in declaration.fields() {
                 declared.resolves(&format!("{key}'s field {}", field.name), &field.codec.ty())?;
+                index::once(&mut bound, field.binding, (), || {
+                    format!(
+                        "{key} binds two fields under {}, which a clause reads as one value",
+                        field.binding
+                    )
+                })?;
             }
             // A declaration's clauses cross exactly where this build is the one that runs them.
             if let Declaration::Product { invariants, .. } | Declaration::Newtype { invariants, .. } =
@@ -2174,22 +2184,29 @@ fn status_or_answer(
 ///
 /// A number is an identity and not a position, so it is a key and never an index: a table sized
 /// by the number would take as much room as the largest one a document happens to write, which the
-/// writer keeps small by counting and nothing in what is read does. A document numbering a binder
-/// with the largest number there is is a document like any other.
+/// writer keeps small by counting and nothing in what is read does.
+///
+/// A number names one binder in force at a time, which [`Coherent`] held. So binding one that is
+/// already in force is this compiler's own mistake and stops it, and is never a scope quietly
+/// replaced: a lowering that kept the inner binder after its scope closed would read it for what the
+/// outer one meant.
 #[derive(Default)]
 struct Bindings {
     held: HashMap<usize, Variable>,
 }
 
 impl Bindings {
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "a binder shadows whatever an enclosing one bound under its number, on purpose: \
-                  the number is the document's and a scope that reuses one is a scope that \
-                  replaced it"
-    )]
     fn at(&mut self, number: usize, variable: Variable) {
-        self.held.insert(number, variable);
+        let before = index::Index::put(&mut self.held, number, variable);
+        assert!(
+            before.is_none(),
+            "`Coherent` held every binder's number to name one binder in force"
+        );
+    }
+
+    /// `number` out of force, at the end of the scope that bound it.
+    fn leave(&mut self, number: usize) {
+        self.held.remove(&number);
     }
 
     fn of(&self, number: usize) -> Variable {
@@ -2256,7 +2273,9 @@ fn lower(
             let variable = builder.declare_var(machine_type(binds)?);
             builder.def_var(variable, held);
             bindings.at(*binding, variable);
-            lower(builder, lowering, module, bindings, abort, body)?
+            let answered = lower(builder, lowering, module, bindings, abort, body);
+            bindings.leave(*binding);
+            answered?
         }
         Node::Bool { value, ty, .. } => builder.ins().iconst(machine_type(ty)?, i64::from(*value)),
         Node::Str { value, .. } => text_in_the_object(builder, module, lowering.literals, value)?,
@@ -2567,8 +2586,11 @@ fn fork_on_what_it_is(
             builder.def_var(variable, held);
             bindings.at(number, variable);
         }
-        let answered = lower(builder, lowering, module, bindings, abort, &arm.body)?;
-        builder.ins().jump(after, &[answered.into()]);
+        let answered = lower(builder, lowering, module, bindings, abort, &arm.body);
+        if let Some(number) = arm.binding {
+            bindings.leave(number);
+        }
+        builder.ins().jump(after, &[answered?.into()]);
 
         builder.switch_to_block(next);
     }
