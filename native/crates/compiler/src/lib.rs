@@ -15,6 +15,7 @@ mod kernels;
 mod link;
 mod manifest;
 pub mod transport;
+mod versioned;
 
 use anyhow::{Result, anyhow, bail};
 use closures::{ClosureSites, Site};
@@ -46,7 +47,7 @@ use std::path::{Path, PathBuf};
 use transport::{
     AbortKind, AlternativesForm, Arm, Carrier, Case, Declaration, DeclaredBy, Definition, Ensures,
     Guard, Node, Op, Owner, Prim, Program, Publication, Reaches, Reading, Routing, Selects, Stage,
-    TRANSPORT_VERSION, Target, Ty,
+    Target, Ty,
 };
 
 /// A fork that ran out of arms, which is this compiler having emitted the wrong test rather than
@@ -172,13 +173,7 @@ fn not_lowered(what: impl Into<String>) -> NotLowered {
 /// compile, and a name `Coherent` held to be there and is not is this compiler's own mistake.
 /// Between them the host is asked for a code generator, which is neither.
 pub fn object_for(document: &str) -> Result<Vec<u8>> {
-    let program: Program = serde_json::from_str(document)?;
-    if program.transport != TRANSPORT_VERSION {
-        bail!(
-            "this driver reads transport {TRANSPORT_VERSION} and was handed {}",
-            program.transport
-        );
-    }
+    let program = Program::read(document)?;
     let coherent = Coherent::of(&program)?;
     let module = for_this_host()?;
     Ok(emit(&program, coherent, module)?)
@@ -890,6 +885,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
             name: &target.name,
             runs: reachable.of_behavior_named(&declared),
             inputs: &target.inputs,
+            names: target.names(),
             answers: target.answers(),
         });
     }
@@ -904,6 +900,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
             name: &entry.value.name,
             runs: reachable.of_published_value(&entry.value.module, &entry.value.name),
             inputs: &[],
+            names: Some(&[]),
             answers: entry.body.ty().clone(),
         })
         .collect();
@@ -952,6 +949,9 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
             name: &target.name,
             answered_by: reachable.of_behavior_named(&target.declared()),
             inputs: &target.inputs,
+            names: target
+                .names()
+                .expect("a behavior a host implements is declared, which a target is held to"),
             output: &target.output,
         })
         .collect();

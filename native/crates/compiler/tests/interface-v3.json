@@ -1,6 +1,6 @@
 {
   "format": "souther-native-interface",
-  "version": 2,
+  "version": 3,
   "abi": 3,
   "statuses": {
     "ANSWERED": 0,
@@ -170,17 +170,25 @@
       "behaviors": [
         {
           "name": "settle",
-          "takes": [
-            {
-              "kind": "declared",
-              "module": "shop",
-              "name": "Line"
-            },
-            {
-              "kind": "primitive",
-              "name": "Int"
-            }
-          ],
+          "parameters": {
+            "named": [
+              {
+                "name": "line",
+                "type": {
+                  "kind": "declared",
+                  "module": "shop",
+                  "name": "Line"
+                }
+              },
+              {
+                "name": "paid",
+                "type": {
+                  "kind": "primitive",
+                  "name": "Int"
+                }
+              }
+            ]
+          },
           "answers": {
             "kind": "declared",
             "module": "shop",
@@ -204,13 +212,18 @@
         },
         {
           "name": "owing",
-          "takes": [
-            {
-              "kind": "declared",
-              "module": "shop",
-              "name": "Outcome"
-            }
-          ],
+          "parameters": {
+            "named": [
+              {
+                "name": "outcome",
+                "type": {
+                  "kind": "declared",
+                  "module": "shop",
+                  "name": "Outcome"
+                }
+              }
+            ]
+          },
           "answers": {
             "kind": "primitive",
             "name": "Int"
@@ -227,16 +240,54 @@
             ],
             "answers": "status"
           }
+        },
+        {
+          "name": "stillOwing",
+          "parameters": {
+            "positional": [
+              {
+                "kind": "declared",
+                "module": "shop",
+                "name": "Line"
+              },
+              {
+                "kind": "primitive",
+                "name": "Int"
+              }
+            ]
+          },
+          "answers": {
+            "kind": "primitive",
+            "name": "Int"
+          },
+          "call": {
+            "name": "souther3_m_shop_b_stillOwing",
+            "takes": [
+              {
+                "given": "value"
+              },
+              {
+                "given": "int"
+              },
+              {
+                "room": "int"
+              }
+            ],
+            "answers": "status"
+          }
         }
       ],
       "injections": [
         {
           "name": "discountFor",
-          "takes": [
+          "parameters": [
             {
-              "kind": "declared",
-              "module": "shop",
-              "name": "Line"
+              "name": "line",
+              "type": {
+                "kind": "declared",
+                "module": "shop",
+                "name": "Line"
+              }
             }
           ],
           "answers": {

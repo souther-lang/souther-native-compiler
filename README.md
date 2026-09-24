@@ -221,9 +221,11 @@ it, or `null` where a host has no way in yet. Apart from its behaviors, each mod
 are the behaviors a host implements, published or not, each with what it takes and answers, the
 function type a host implements it as, and what it registers one through. The function type is not
 a function: every `name` of a function in the manifest is a symbol the library defines, and the
-type's is under `type`. A type is said by its
+type's is under `type`. What a behavior takes is `named`, under the names its signature gives them,
+or `positional` for a `>->` composition, which declares no parameters; the names are the
+signature's and never those a `let` binds. A type is said by its
 module and its name, never by the key the Java half hands this one. What a manifest may say is Rust
-types, and version 2 is `native/crates/compiler/tests/interface-v2.json`: a test holds a program's
+types, and version 3 is `native/crates/compiler/tests/interface-v3.json`: a test holds a program's
 manifest to it, and
 another reads it with those types and writes it back unchanged. The manifest carries its own
 `version`, moved when what it says is read differently, and the `abi` its functions answer to,

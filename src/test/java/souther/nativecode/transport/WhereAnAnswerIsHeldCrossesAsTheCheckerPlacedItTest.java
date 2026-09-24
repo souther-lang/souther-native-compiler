@@ -90,7 +90,8 @@ class WhereAnAnswerIsHeldCrossesAsTheCheckerPlacedItTest {
     @Test
     void anAnswerFromOutsideCrossesAsHeldWhereItCrossesIn() {
         assertThat(written()).contains("""
-                "name":"lookUp","is":"injected","inputs":[{"is":"scalar","scalar":"INT"}],\
+                "name":"lookUp","is":"injected",\
+                "parameters":{"named":[{"name":"a","input":{"is":"scalar","scalar":"INT"}}]},\
                 "output":{"is":"scalar","scalar":"INT"},\
                 "ensures":{"at":"crossing","contract":{"parameters":["a"],"rules":[\
                 {"guard":{"is":"always"},"value":1,""");
@@ -106,7 +107,8 @@ class WhereAnAnswerIsHeldCrossesAsTheCheckerPlacedItTest {
     @Test
     void aBehaviorThatDeclaresNothingCrossesAsHeldNowhere() {
         assertThat(written()).contains("""
-                "name":"twice","is":"body","inputs":[{"is":"scalar","scalar":"INT"}],\
+                "name":"twice","is":"body",\
+                "parameters":{"named":[{"name":"a","input":{"is":"scalar","scalar":"INT"}}]},\
                 "output":{"is":"scalar","scalar":"INT"},"ensures":{"at":"none"}}""");
     }
 }

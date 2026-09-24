@@ -305,6 +305,9 @@ pub(crate) struct Entry<'a> {
     pub name: &'a str,
     pub runs: FuncId,
     pub inputs: &'a [BoundaryInput],
+    /// The names the declaration gives `inputs`, and none for a composition, which declares no
+    /// parameters. A value takes nothing, and names nothing.
+    pub names: Option<&'a [String]>,
     pub answers: Ty,
 }
 
@@ -337,6 +340,7 @@ pub(crate) fn define_behaviors(
         surface.behavior(
             behavior.module,
             behavior.name,
+            behavior.names,
             &takes,
             &behavior.answers,
             emitting.declared,
@@ -472,6 +476,8 @@ pub(crate) struct Injected<'a> {
     pub name: &'a str,
     pub answered_by: FuncId,
     pub inputs: &'a [BoundaryInput],
+    /// The names the declaration gives `inputs`, which a behavior a host implements always has.
+    pub names: &'a [String],
     pub output: &'a BoundaryOutput,
 }
 
@@ -628,6 +634,7 @@ pub(crate) fn define_injections(
         surface.injection(
             behavior.module,
             behavior.name,
+            behavior.names,
             &takes,
             &answers,
             emitting.declared,

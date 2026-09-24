@@ -36,9 +36,10 @@ class AnAdditionCrossesAsWhatTheCheckerSettledTest {
         String written = ProgramWriter.written(CheckedProgram.of(List.of(ADDING)));
 
         assertThat(written).isEqualTo("""
-                {"transport":14,"declarations":[],\
+                {"transport":15,"declarations":[],\
                 "behaviors":[{"module":"calculation","name":"add","is":"body",\
-                "inputs":[{"is":"scalar","scalar":"INT"},{"is":"scalar","scalar":"INT"}],\
+                "parameters":{"named":[{"name":"a","input":{"is":"scalar","scalar":"INT"}},\
+                {"name":"b","input":{"is":"scalar","scalar":"INT"}}]},\
                 "output":{"is":"scalar","scalar":"INT"},"ensures":{"at":"none"}}],\
                 "modules":[{"name":"calculation","publishes":[],"helpers":[],"values":[],"entries":[],\
                 "definitions":[{"is":"body","declared":"calculation.add","parameters":["a","b"],\
@@ -47,6 +48,47 @@ class AnAdditionCrossesAsWhatTheCheckerSettledTest {
                 "left":{"core":"read","binding":0,"type":{"prim":"INT"},"aborts":[]},\
                 "right":{"core":"read","binding":1,"type":{"prim":"INT"},"aborts":[]},\
                 "type":{"prim":"INT"},"aborts":["REQUIRED_FORM_HAS_NO_PLACE"]}}],"examples":[]}]}""");
+    }
+
+    /**
+     * A parameter crosses under the name the signature gives it, and not under the one the
+     * {@code let} binds it to: the two correspond by place and may differ, and the signature's is
+     * the one a host is told. The body still says its own.
+     */
+    @Test
+    void aParameterCrossesUnderTheNameItsSignatureGivesIt() {
+        String written = ProgramWriter.written(CheckedProgram.of(List.of("""
+                module calculation exposing ( add )
+
+                behavior add : (augend: Int, addend: Int) -> Int
+
+                let add (a, b) = a + b
+                """)));
+
+        assertThat(written).contains("""
+                "parameters":{"named":[{"name":"augend","input":{"is":"scalar","scalar":"INT"}},\
+                {"name":"addend","input":{"is":"scalar","scalar":"INT"}}]}""");
+        assertThat(written).contains("\"parameters\":[\"a\",\"b\"]");
+    }
+
+    /** A composition declares no parameters, and takes what it takes in order and unnamed. */
+    @Test
+    void aCompositionCrossesWithItsInputsInOrderAndUnnamed() {
+        String written = ProgramWriter.written(CheckedProgram.of(List.of("""
+                module calculation exposing ( add, doubledSum : Int )
+
+                behavior add : (a: Int, b: Int) -> Int
+                let add (a, b) = a + b
+
+                behavior double : (n: Int) -> Int
+                let double (n) = n * 2
+
+                behavior doubledSum = add >-> double
+                """)));
+
+        assertThat(written).contains("""
+                "name":"doubledSum","is":"composed",\
+                "parameters":{"positional":[{"is":"scalar","scalar":"INT"},{"is":"scalar","scalar":"INT"}]}""");
     }
 
     /** What the driver compiles is what this writer wrote, and not a second thing like it. */
@@ -75,7 +117,7 @@ class AnAdditionCrossesAsWhatTheCheckerSettledTest {
                 let ignore (token) = 42
                 """)));
 
-        assertThat(written).contains("\"inputs\":[{\"is\":\"nominal\",\"declared\":\"demo.Token\"}]");
+        assertThat(written).contains("{\"name\":\"token\",\"input\":{\"is\":\"nominal\",\"declared\":\"demo.Token\"}}");
         assertThat(written).contains(
                 "{\"module\":\"demo\",\"name\":\"Token\",\"by\":\"amodule\",\"is\":\"product\"");
         // And what that one holds, which nothing but its declaration names: found while the

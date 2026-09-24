@@ -56,7 +56,7 @@ class ABoundaryCrossesAsTheCheckedShapeTest {
     @Test
     void anAnswerOfADeclaredTypeCrossesAsTheNominalShapeTheCheckerSettled() {
         assertThat(written()).contains(
-                "\"name\":\"openDoor\",\"is\":\"body\",\"inputs\":[{\"is\":\"scalar\",\"scalar\":\"INT\"}],"
+                "\"name\":\"openDoor\",\"is\":\"body\",\"parameters\":{\"named\":[{\"name\":\"n\",\"input\":{\"is\":\"scalar\",\"scalar\":\"INT\"}}]},"
                         + "\"output\":{\"is\":\"nominal\",\"declared\":\"shop.Door\"},"
                         + "\"ensures\":{\"at\":\"none\"}}");
     }
@@ -92,7 +92,7 @@ class ABoundaryCrossesAsTheCheckedShapeTest {
     @Test
     void anAnswerNobodyNamedCarriesItsCasesBesideItsType() {
         assertThat(written()).contains(
-                "\"name\":\"bill\",\"is\":\"body\",\"inputs\":[{\"is\":\"scalar\",\"scalar\":\"INT\"}],"
+                "\"name\":\"bill\",\"is\":\"body\",\"parameters\":{\"named\":[{\"name\":\"n\",\"input\":{\"is\":\"scalar\",\"scalar\":\"INT\"}}]},"
                         + "\"output\":{\"is\":\"cases\",\"type\":{\"union\":["
                         + "{\"is\":\"declared\",\"declared\":\"shop.Issued\"},"
                         + "{\"is\":\"declared\",\"declared\":\"shop.UnknownSku\"}]},"

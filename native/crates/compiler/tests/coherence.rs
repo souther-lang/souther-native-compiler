@@ -21,7 +21,7 @@ const P: &str = r#"{"declared":"m.P"}"#;
 fn document(behaviors: &[String], helpers: &[String], definitions: &[String]) -> String {
     format!(
         concat!(
-            r#"{{"transport":14,"declarations":["#,
+            r#"{{"transport":15,"declarations":["#,
             r#"{{"module":"m","name":"A","by":"amodule","is":"unit"}},"#,
             r#"{{"module":"m","name":"B","by":"amodule","is":"unit"}},"#,
             r#"{{"module":"m","name":"S","by":"amodule","is":"sum","#,
@@ -199,7 +199,7 @@ fn a_read_disagreeing_with_a_binder_that_has_no_layout_is_the_halves_disagreeing
 fn a_behaviors_read_is_typed_as_its_target_takes() {
     let target = |answers: &str| {
         format!(
-            r#"{{"module":"m","name":"b","is":"body","inputs":[{{"is":"scalar","scalar":"INT"}}],"output":{{"is":"scalar","scalar":"{answers}"}},"ensures":{{"at":"none"}}}}"#
+            r#"{{"module":"m","name":"b","is":"body","parameters":{{"named":[{{"name":"a","input":{{"is":"scalar","scalar":"INT"}}}}]}},"output":{{"is":"scalar","scalar":"{answers}"}},"ensures":{{"at":"none"}}}}"#
         )
     };
     let body = |read: String| {
@@ -253,7 +253,7 @@ fn a_call_of_a_helper_stands_at_what_the_helper_answers() {
 /// A call of a behavior stands at what its target answers.
 #[test]
 fn a_call_of_a_behavior_stands_at_what_its_target_answers() {
-    let target = r#"{"module":"m","name":"b","is":"body","inputs":[],"output":{"is":"scalar","scalar":"INT"},"ensures":{"at":"none"}}"#.to_string();
+    let target = r#"{"module":"m","name":"b","is":"body","parameters":{"named":[]},"output":{"is":"scalar","scalar":"INT"},"ensures":{"at":"none"}}"#.to_string();
     let body = format!(
         r#"{{"is":"body","declared":"m.b","parameters":[],"publication":"kept","body":{}}}"#,
         int(1)
@@ -510,7 +510,8 @@ fn a_call_of_a_published_value_stands_at_what_its_entry_answers() {
 fn two_stages(flag_takes: &str, outer_answers: &str) -> String {
     let target = |name: &str, is: &str, takes: &str, answers: &str| {
         format!(
-            r#"{{"module":"m","name":"{name}","is":"{is}","inputs":[{{"is":"scalar","scalar":"{takes}"}}],"output":{{"is":"scalar","scalar":"{answers}"}},"ensures":{{"at":"none"}}}}"#
+            r#"{{"module":"m","name":"{name}","is":"{is}","parameters":{},"output":{{"is":"scalar","scalar":"{answers}"}},"ensures":{{"at":"none"}}}}"#,
+            taking(is, &format!(r#"{{"is":"scalar","scalar":"{takes}"}}"#))
         )
     };
     let body = |name: &str, ty: &str| {
@@ -610,7 +611,7 @@ fn row(behavior: &str, at: usize, body: &str) -> String {
 /// `m.b`, taking nothing and answering an `Int` its body makes.
 fn b() -> (String, String) {
     (
-        r#"{"module":"m","name":"b","is":"body","inputs":[],"output":{"is":"scalar","scalar":"INT"},"ensures":{"at":"none"}}"#
+        r#"{"module":"m","name":"b","is":"body","parameters":{"named":[]},"output":{"is":"scalar","scalar":"INT"},"ensures":{"at":"none"}}"#
             .to_string(),
         format!(
             r#"{{"is":"body","declared":"m.b","parameters":[],"publication":"kept","body":{}}}"#,
@@ -692,7 +693,7 @@ fn a_row_written_twice_is_the_halves_disagreeing() {
 /// as that, and not as the target's `Decimal` having no layout.
 #[test]
 fn a_target_defined_here_with_nothing_defining_it_is_refused_before_its_signature_is_asked() {
-    let target = r#"{"module":"m","name":"b","is":"body","inputs":[],"output":{"is":"scalar","scalar":"DECIMAL"},"ensures":{"at":"none"}}"#;
+    let target = r#"{"module":"m","name":"b","is":"body","parameters":{"named":[]},"output":{"is":"scalar","scalar":"DECIMAL"},"ensures":{"at":"none"}}"#;
     is_the_halves_disagreeing(&document(&[target.to_string()], &[], &[]), "m.b");
 }
 
@@ -1018,7 +1019,7 @@ fn a_module_holds_no_name_as_both_a_helper_and_a_value() {
 /// in `m`'s object.
 #[test]
 fn a_module_defines_only_the_behaviors_it_declares() {
-    let target = r#"{"module":"other","name":"b","is":"body","inputs":[],"output":{"is":"scalar","scalar":"INT"},"ensures":{"at":"none"}}"#;
+    let target = r#"{"module":"other","name":"b","is":"body","parameters":{"named":[]},"output":{"is":"scalar","scalar":"INT"},"ensures":{"at":"none"}}"#;
     let body = format!(
         r#"{{"is":"body","declared":"other.b","parameters":[],"publication":"kept","body":{}}}"#,
         int(1)
@@ -1036,7 +1037,7 @@ fn a_behavior_implemented_elsewhere_is_of_a_module_this_document_does_not_build(
     // about one of this document's own is.
     let target = |module: &str, ensures: &str| {
         format!(
-            r#"{{"module":"{module}","name":"b","is":"elsewhere","inputs":[],"output":{{"is":"scalar","scalar":"INT"}},"ensures":{{"at":"{ensures}"}}}}"#
+            r#"{{"module":"{module}","name":"b","is":"elsewhere","parameters":{{"named":[]}},"output":{{"is":"scalar","scalar":"INT"}},"ensures":{{"at":"{ensures}"}}}}"#
         )
     };
     reads_whole(&document(&[target("other", "undecided")], &[], &[]));
@@ -1084,7 +1085,7 @@ fn a_name_no_symbol_can_carry_is_refused_where_it_is_read() {
         r#""name":"m$","publishes":[],"helpers""#,
     );
     is_the_halves_disagreeing(&dollar_module, "m$");
-    let dotted_behavior = r#"{"module":"other","name":"b.c","is":"elsewhere","inputs":[],"output":{"is":"scalar","scalar":"INT"},"ensures":{"at":"none"}}"#;
+    let dotted_behavior = r#"{"module":"other","name":"b.c","is":"elsewhere","parameters":{"named":[]},"output":{"is":"scalar","scalar":"INT"},"ensures":{"at":"none"}}"#;
     is_the_halves_disagreeing(
         &document(&[dotted_behavior.to_string()], &[behind()], &[]),
         "other.b.c",
@@ -1228,7 +1229,7 @@ fn a_concat_of_two_strings_reads_whole() {
 fn with_clauses(fields: &str, invariants: &str, helpers: &[String]) -> String {
     format!(
         concat!(
-            r#"{{"transport":14,"declarations":["#,
+            r#"{{"transport":15,"declarations":["#,
             r#"{{"module":"m","name":"R","by":"amodule","is":"product","#,
             r#""fields":[{}],"invariants":[{}]}}],"#,
             r#""behaviors":[],"#,
@@ -1732,7 +1733,7 @@ fn a_construction_of_another_builds_type_names_no_reason_but_a_clause() {
         );
         format!(
             concat!(
-                r#"{{"transport":14,"declarations":["#,
+                r#"{{"transport":15,"declarations":["#,
                 r#"{{"module":"m","name":"R","by":"onthepath","is":"product","#,
                 r#""fields":[{}]}}],"behaviors":[],"#,
                 r#""modules":[{{"name":"m","publishes":[],"helpers":[{}],"values":[],"#,
@@ -1911,7 +1912,7 @@ fn an_arm_binds_and_says_what_it_reads_it_as_together() {
 fn a_handover_carries_a_value_the_module_builds() {
     let value = |carries: &str| {
         format!(
-            r#"{{"transport":14,"declarations":[],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[],"values":[{{"module":"m","name":"ks","handovers":[],"body":{}}},{{"module":"m","name":"ys","handovers":[{{"parameter":"dep","type":{INT},"carries":{{"module":"m","name":"{carries}"}}}}],"body":{}}}],"entries":[],"definitions":[],"examples":[]}}]}}"#,
+            r#"{{"transport":15,"declarations":[],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[],"values":[{{"module":"m","name":"ks","handovers":[],"body":{}}},{{"module":"m","name":"ys","handovers":[{{"parameter":"dep","type":{INT},"carries":{{"module":"m","name":"{carries}"}}}}],"body":{}}}],"entries":[],"definitions":[],"examples":[]}}]}}"#,
             int(1),
             read(0, INT)
         )
@@ -1920,11 +1921,22 @@ fn a_handover_carries_a_value_the_module_builds() {
     is_the_halves_disagreeing(&value("nothing"), "builds no value of");
 }
 
+/// What a target answering as `is` takes, one `input`: under the name `a` where it is declared, which
+/// every clause here relates, and by its place alone where it is a composition, which declares none.
+fn taking(is: &str, input: &str) -> String {
+    if is == "composed" {
+        format!(r#"{{"positional":[{input}]}}"#)
+    } else {
+        format!(r#"{{"named":[{{"name":"a","input":{input}}}]}}"#)
+    }
+}
+
 /// `m.b`, taking one `Int`, answering what `output` says, answering as `is` says, and whose answer
 /// is held as `ensures` says.
 fn held(is: &str, output: &str, ensures: &str) -> String {
     format!(
-        r#"{{"module":"m","name":"b","is":"{is}","inputs":[{{"is":"scalar","scalar":"INT"}}],"output":{output},"ensures":{ensures}}}"#
+        r#"{{"module":"m","name":"b","is":"{is}","parameters":{},"output":{output},"ensures":{ensures}}}"#,
+        taking(is, r#"{"is":"scalar","scalar":"INT"}"#)
     )
 }
 
@@ -2008,7 +2020,7 @@ fn an_answer_is_held_where_the_behavior_has_a_place_for_it() {
 /// rule could relate its answer to.
 #[test]
 fn a_composition_holds_its_answer_to_nothing() {
-    let stage = r#"{"module":"m","name":"c","is":"body","inputs":[{"is":"scalar","scalar":"INT"}],"output":{"is":"scalar","scalar":"INT"},"ensures":{"at":"none"}}"#.to_string();
+    let stage = r#"{"module":"m","name":"c","is":"body","parameters":{"named":[{"name":"a","input":{"is":"scalar","scalar":"INT"}}]},"output":{"is":"scalar","scalar":"INT"},"ensures":{"at":"none"}}"#.to_string();
     let stage_body = format!(
         r#"{{"is":"body","declared":"m.c","parameters":["a"],"publication":"kept","body":{}}}"#,
         read(0, INT)
@@ -2048,7 +2060,7 @@ fn a_rule_is_decided_for_this_documents_behaviors_and_no_others() {
     );
     let foreign = |ensures: &str| {
         format!(
-            r#"{{"module":"other","name":"b","is":"elsewhere","inputs":[],"output":{ANSWERS_INT},"ensures":{ensures}}}"#
+            r#"{{"module":"other","name":"b","is":"elsewhere","parameters":{{"named":[]}},"output":{ANSWERS_INT},"ensures":{ensures}}}"#
         )
     };
     reads_whole(&document(&[foreign(r#"{"at":"undecided"}"#)], &[], &[]));
@@ -2058,10 +2070,10 @@ fn a_rule_is_decided_for_this_documents_behaviors_and_no_others() {
     );
 }
 
-/// A rule names as many parameters as its behavior takes, since it reads each under where it
-/// stands among them.
+/// A rule relates the parameters its behavior takes, since it reads each under where it stands
+/// among them: the clause's names and the declaration's are one list crossed twice.
 #[test]
-fn a_rule_names_as_many_parameters_as_its_behavior_takes() {
+fn a_rule_names_the_parameters_its_behavior_takes() {
     let rules = held_at(
         "callee",
         &["a", "z"],
@@ -2073,7 +2085,7 @@ fn a_rule_names_as_many_parameters_as_its_behavior_takes() {
             &[],
             &[defined(&read(0, INT))],
         ),
-        "names 2 parameters",
+        r#"its ensures relates ["a", "z"]"#,
     );
 }
 

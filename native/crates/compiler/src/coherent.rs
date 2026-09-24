@@ -1829,8 +1829,7 @@ fn holds_and_builds_nothing(owner: &str, condition: &Node) -> Result<()> {
 /// build's behavior is one nobody here decided about, and one of this document's own is one
 /// somebody did. Where it is decided, a check at the callee needs a callee whose answer is this
 /// object's to hold, and a check at each crossing an answer that arrives from outside; a composition
-/// carries no rule at all (spec §a-composition-carries-no-ensures). A rule over the parameters
-/// names as many as the behavior takes.
+/// carries no rule at all (spec §a-composition-carries-no-ensures).
 fn placed(name: &str, target: &Target, decided_here: bool) -> Result<()> {
     let placement = match &target.ensures {
         Ensures::Callee { .. } => "at the callee",
@@ -1856,16 +1855,7 @@ fn placed(name: &str, target: &Target, decided_here: bool) -> Result<()> {
             "{name} answers as {is:?} and its answer is held {placement}: the two halves disagree"
         ),
     }
-    if let Some(contract) = target.ensures.contract()
-        && contract.parameters.len() != target.inputs.len()
-    {
-        bail!(
-            "{name}'s ensures names {} parameters and its target takes {}: the two are one list \
-             crossed twice and this document's disagree",
-            contract.parameters.len(),
-            target.inputs.len()
-        );
-    }
+    // That the clause relates the parameters the behavior takes is held where a target is read.
     Ok(())
 }
 
