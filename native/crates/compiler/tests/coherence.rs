@@ -21,7 +21,7 @@ const P: &str = r#"{"declared":"m.P"}"#;
 fn document(behaviors: &[String], helpers: &[String], definitions: &[String]) -> String {
     format!(
         concat!(
-            r#"{{"transport":13,"declarations":["#,
+            r#"{{"transport":14,"declarations":["#,
             r#"{{"module":"m","name":"A","by":"amodule","is":"unit"}},"#,
             r#"{{"module":"m","name":"B","by":"amodule","is":"unit"}},"#,
             r#"{{"module":"m","name":"S","by":"amodule","is":"sum","#,
@@ -199,7 +199,7 @@ fn a_read_disagreeing_with_a_binder_that_has_no_layout_is_the_halves_disagreeing
 fn a_behaviors_read_is_typed_as_its_target_takes() {
     let target = |answers: &str| {
         format!(
-            r#"{{"module":"m","name":"b","is":"body","inputs":[{{"is":"scalar","scalar":"INT"}}],"output":{{"is":"scalar","scalar":"{answers}"}}}}"#
+            r#"{{"module":"m","name":"b","is":"body","inputs":[{{"is":"scalar","scalar":"INT"}}],"output":{{"is":"scalar","scalar":"{answers}"}},"ensures":{{"at":"none"}}}}"#
         )
     };
     let body = |read: String| {
@@ -253,7 +253,7 @@ fn a_call_of_a_helper_stands_at_what_the_helper_answers() {
 /// A call of a behavior stands at what its target answers.
 #[test]
 fn a_call_of_a_behavior_stands_at_what_its_target_answers() {
-    let target = r#"{"module":"m","name":"b","is":"body","inputs":[],"output":{"is":"scalar","scalar":"INT"}}"#.to_string();
+    let target = r#"{"module":"m","name":"b","is":"body","inputs":[],"output":{"is":"scalar","scalar":"INT"},"ensures":{"at":"none"}}"#.to_string();
     let body = format!(
         r#"{{"is":"body","declared":"m.b","parameters":[],"publication":"kept","body":{}}}"#,
         int(1)
@@ -510,7 +510,7 @@ fn a_call_of_a_published_value_stands_at_what_its_entry_answers() {
 fn two_stages(flag_takes: &str, outer_answers: &str) -> String {
     let target = |name: &str, is: &str, takes: &str, answers: &str| {
         format!(
-            r#"{{"module":"m","name":"{name}","is":"{is}","inputs":[{{"is":"scalar","scalar":"{takes}"}}],"output":{{"is":"scalar","scalar":"{answers}"}}}}"#
+            r#"{{"module":"m","name":"{name}","is":"{is}","inputs":[{{"is":"scalar","scalar":"{takes}"}}],"output":{{"is":"scalar","scalar":"{answers}"}},"ensures":{{"at":"none"}}}}"#
         )
     };
     let body = |name: &str, ty: &str| {
@@ -610,7 +610,7 @@ fn row(behavior: &str, at: usize, body: &str) -> String {
 /// `m.b`, taking nothing and answering an `Int` its body makes.
 fn b() -> (String, String) {
     (
-        r#"{"module":"m","name":"b","is":"body","inputs":[],"output":{"is":"scalar","scalar":"INT"}}"#
+        r#"{"module":"m","name":"b","is":"body","inputs":[],"output":{"is":"scalar","scalar":"INT"},"ensures":{"at":"none"}}"#
             .to_string(),
         format!(
             r#"{{"is":"body","declared":"m.b","parameters":[],"publication":"kept","body":{}}}"#,
@@ -692,7 +692,7 @@ fn a_row_written_twice_is_the_halves_disagreeing() {
 /// as that, and not as the target's `Decimal` having no layout.
 #[test]
 fn a_target_defined_here_with_nothing_defining_it_is_refused_before_its_signature_is_asked() {
-    let target = r#"{"module":"m","name":"b","is":"body","inputs":[],"output":{"is":"scalar","scalar":"DECIMAL"}}"#;
+    let target = r#"{"module":"m","name":"b","is":"body","inputs":[],"output":{"is":"scalar","scalar":"DECIMAL"},"ensures":{"at":"none"}}"#;
     is_the_halves_disagreeing(&document(&[target.to_string()], &[], &[]), "m.b");
 }
 
@@ -1018,7 +1018,7 @@ fn a_module_holds_no_name_as_both_a_helper_and_a_value() {
 /// in `m`'s object.
 #[test]
 fn a_module_defines_only_the_behaviors_it_declares() {
-    let target = r#"{"module":"other","name":"b","is":"body","inputs":[],"output":{"is":"scalar","scalar":"INT"}}"#;
+    let target = r#"{"module":"other","name":"b","is":"body","inputs":[],"output":{"is":"scalar","scalar":"INT"},"ensures":{"at":"none"}}"#;
     let body = format!(
         r#"{{"is":"body","declared":"other.b","parameters":[],"publication":"kept","body":{}}}"#,
         int(1)
@@ -1032,13 +1032,15 @@ fn a_module_defines_only_the_behaviors_it_declares() {
 /// A behavior another build implements is one of a module this document does not build.
 #[test]
 fn a_behavior_implemented_elsewhere_is_of_a_module_this_document_does_not_build() {
-    let target = |module: &str| {
+    // What is done about another build's clause is nobody's here to decide, and what is done
+    // about one of this document's own is.
+    let target = |module: &str, ensures: &str| {
         format!(
-            r#"{{"module":"{module}","name":"b","is":"elsewhere","inputs":[],"output":{{"is":"scalar","scalar":"INT"}}}}"#
+            r#"{{"module":"{module}","name":"b","is":"elsewhere","inputs":[],"output":{{"is":"scalar","scalar":"INT"}},"ensures":{{"at":"{ensures}"}}}}"#
         )
     };
-    reads_whole(&document(&[target("other")], &[], &[]));
-    is_the_halves_disagreeing(&document(&[target("m")], &[behind()], &[]), "m.b");
+    reads_whole(&document(&[target("other", "undecided")], &[], &[]));
+    is_the_halves_disagreeing(&document(&[target("m", "none")], &[behind()], &[]), "m.b");
 }
 
 /// What the language itself declares is a set of alternatives or a single value.
@@ -1082,7 +1084,7 @@ fn a_name_no_symbol_can_carry_is_refused_where_it_is_read() {
         r#""name":"m$","publishes":[],"helpers""#,
     );
     is_the_halves_disagreeing(&dollar_module, "m$");
-    let dotted_behavior = r#"{"module":"other","name":"b.c","is":"elsewhere","inputs":[],"output":{"is":"scalar","scalar":"INT"}}"#;
+    let dotted_behavior = r#"{"module":"other","name":"b.c","is":"elsewhere","inputs":[],"output":{"is":"scalar","scalar":"INT"},"ensures":{"at":"none"}}"#;
     is_the_halves_disagreeing(
         &document(&[dotted_behavior.to_string()], &[behind()], &[]),
         "other.b.c",
@@ -1226,7 +1228,7 @@ fn a_concat_of_two_strings_reads_whole() {
 fn with_clauses(fields: &str, invariants: &str, helpers: &[String]) -> String {
     format!(
         concat!(
-            r#"{{"transport":13,"declarations":["#,
+            r#"{{"transport":14,"declarations":["#,
             r#"{{"module":"m","name":"R","by":"amodule","is":"product","#,
             r#""fields":[{}],"invariants":[{}]}}],"#,
             r#""behaviors":[],"#,
@@ -1730,7 +1732,7 @@ fn a_construction_of_another_builds_type_names_no_reason_but_a_clause() {
         );
         format!(
             concat!(
-                r#"{{"transport":13,"declarations":["#,
+                r#"{{"transport":14,"declarations":["#,
                 r#"{{"module":"m","name":"R","by":"onthepath","is":"product","#,
                 r#""fields":[{}]}}],"behaviors":[],"#,
                 r#""modules":[{{"name":"m","publishes":[],"helpers":[{}],"values":[],"#,
@@ -1909,11 +1911,236 @@ fn an_arm_binds_and_says_what_it_reads_it_as_together() {
 fn a_handover_carries_a_value_the_module_builds() {
     let value = |carries: &str| {
         format!(
-            r#"{{"transport":13,"declarations":[],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[],"values":[{{"module":"m","name":"ks","handovers":[],"body":{}}},{{"module":"m","name":"ys","handovers":[{{"parameter":"dep","type":{INT},"carries":{{"module":"m","name":"{carries}"}}}}],"body":{}}}],"entries":[],"definitions":[],"examples":[]}}]}}"#,
+            r#"{{"transport":14,"declarations":[],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[],"values":[{{"module":"m","name":"ks","handovers":[],"body":{}}},{{"module":"m","name":"ys","handovers":[{{"parameter":"dep","type":{INT},"carries":{{"module":"m","name":"{carries}"}}}}],"body":{}}}],"entries":[],"definitions":[],"examples":[]}}]}}"#,
             int(1),
             read(0, INT)
         )
     };
     reads_whole(&value("ks"));
     is_the_halves_disagreeing(&value("nothing"), "builds no value of");
+}
+
+/// `m.b`, taking one `Int`, answering what `output` says, answering as `is` says, and whose answer
+/// is held as `ensures` says.
+fn held(is: &str, output: &str, ensures: &str) -> String {
+    format!(
+        r#"{{"module":"m","name":"b","is":"{is}","inputs":[{{"is":"scalar","scalar":"INT"}}],"output":{output},"ensures":{ensures}}}"#
+    )
+}
+
+const ANSWERS_INT: &str = r#"{"is":"scalar","scalar":"INT"}"#;
+const ANSWERS_S: &str = r#"{"is":"nominal","declared":"m.S"}"#;
+const ALWAYS: &str = r#"{"is":"always"}"#;
+
+/// Held `at` the place named, by these rules over the one parameter `a`.
+fn held_at(at: &str, parameters: &[&str], rules: &[String]) -> String {
+    let parameters: Vec<String> = parameters.iter().map(|it| format!(r#""{it}""#)).collect();
+    format!(
+        r#"{{"at":"{at}","contract":{{"parameters":[{}],"rules":[{}]}}}}"#,
+        parameters.join(","),
+        rules.join(",")
+    )
+}
+
+fn rule(guard: &str, value: usize, condition: &str) -> String {
+    format!(
+        r#"{{"guard":{guard},"value":{value},"condition":{condition},"readsanswer":true,"clause":null}}"#
+    )
+}
+
+/// What the answer read under `value` is at least: the answer against the parameter.
+fn answer_at_least_a(value: usize) -> String {
+    node(
+        "binary",
+        &format!(
+            r#""op":"GE","reading":{{"is":"astheystand"}},"left":{},"right":{}"#,
+            read(value, INT),
+            read(0, INT)
+        ),
+        BOOL,
+    )
+}
+
+/// `m.b`'s body, answering `body`.
+fn defined(body: &str) -> String {
+    format!(
+        r#"{{"is":"body","declared":"m.b","parameters":["a"],"publication":"kept","body":{body}}}"#
+    )
+}
+
+/// Where an answer is held is a place the behavior has: the callee, for a body this object holds,
+/// and each crossing, for an answer supplied from outside. Either one the other way round is a
+/// check nothing would run where it was placed.
+#[test]
+fn an_answer_is_held_where_the_behavior_has_a_place_for_it() {
+    let rules = held_at("callee", &["a"], &[rule(ALWAYS, 1, &answer_at_least_a(1))]);
+    reads_whole(&document(
+        &[held("body", ANSWERS_INT, &rules)],
+        &[],
+        &[defined(&read(0, INT))],
+    ));
+    is_the_halves_disagreeing(
+        &document(&[held("injected", ANSWERS_INT, &rules)], &[], &[]),
+        "m.b",
+    );
+
+    let rules = held_at(
+        "crossing",
+        &["a"],
+        &[rule(ALWAYS, 1, &answer_at_least_a(1))],
+    );
+    reads_whole(&document(
+        &[held("injected", ANSWERS_INT, &rules)],
+        &[],
+        &[],
+    ));
+    is_the_halves_disagreeing(
+        &document(
+            &[held("body", ANSWERS_INT, &rules)],
+            &[],
+            &[defined(&read(0, INT))],
+        ),
+        "m.b",
+    );
+}
+
+/// A composition carries no rule (spec §a-composition-carries-no-ensures): it names no parameter a
+/// rule could relate its answer to.
+#[test]
+fn a_composition_holds_its_answer_to_nothing() {
+    let stage = r#"{"module":"m","name":"c","is":"body","inputs":[{"is":"scalar","scalar":"INT"}],"output":{"is":"scalar","scalar":"INT"},"ensures":{"at":"none"}}"#.to_string();
+    let stage_body = format!(
+        r#"{{"is":"body","declared":"m.c","parameters":["a"],"publication":"kept","body":{}}}"#,
+        read(0, INT)
+    );
+    let composed = r#"{"is":"composed","declared":"m.b","publication":"kept","stages":[{"behavior":"m.c","routing":{"is":"always"}}]}"#.to_string();
+    let rules = held_at("callee", &["a"], &[rule(ALWAYS, 1, &answer_at_least_a(1))]);
+    reads_whole(&document(
+        &[
+            held("composed", ANSWERS_INT, r#"{"at":"none"}"#),
+            stage.clone(),
+        ],
+        &[],
+        &[composed.clone(), stage_body.clone()],
+    ));
+    is_the_halves_disagreeing(
+        &document(
+            &[held("composed", ANSWERS_INT, &rules), stage],
+            &[],
+            &[composed, stage_body],
+        ),
+        "m.b",
+    );
+}
+
+/// What is done about a behavior's rule is decided for every behavior of a module this document
+/// builds and for no other. Undecided for one of its own is a table nobody filled; decided for
+/// another build's is this document deciding what that build's clause is.
+#[test]
+fn a_rule_is_decided_for_this_documents_behaviors_and_no_others() {
+    is_the_halves_disagreeing(
+        &document(
+            &[held("body", ANSWERS_INT, r#"{"at":"undecided"}"#)],
+            &[],
+            &[defined(&read(0, INT))],
+        ),
+        "m.b",
+    );
+    let foreign = |ensures: &str| {
+        format!(
+            r#"{{"module":"other","name":"b","is":"elsewhere","inputs":[],"output":{ANSWERS_INT},"ensures":{ensures}}}"#
+        )
+    };
+    reads_whole(&document(&[foreign(r#"{"at":"undecided"}"#)], &[], &[]));
+    is_the_halves_disagreeing(
+        &document(&[foreign(r#"{"at":"none"}"#)], &[], &[]),
+        "other.b",
+    );
+}
+
+/// A rule names as many parameters as its behavior takes, since it reads each under where it
+/// stands among them.
+#[test]
+fn a_rule_names_as_many_parameters_as_its_behavior_takes() {
+    let rules = held_at(
+        "callee",
+        &["a", "z"],
+        &[rule(ALWAYS, 1, &answer_at_least_a(1))],
+    );
+    is_the_halves_disagreeing(
+        &document(
+            &[held("body", ANSWERS_INT, &rules)],
+            &[],
+            &[defined(&read(0, INT))],
+        ),
+        "names 2 parameters",
+    );
+}
+
+/// What has to hold is a truth.
+#[test]
+fn a_rule_is_a_truth() {
+    let rules = held_at("callee", &["a"], &[rule(ALWAYS, 1, &read(1, INT))]);
+    is_the_halves_disagreeing(
+        &document(
+            &[held("body", ANSWERS_INT, &rules)],
+            &[],
+            &[defined(&read(0, INT))],
+        ),
+        "where a clause is a truth",
+    );
+}
+
+/// A rule reads the answer under a number of its own, which is not a parameter's.
+#[test]
+fn a_rule_reads_the_answer_under_a_number_no_parameter_has() {
+    let rules = held_at("callee", &["a"], &[rule(ALWAYS, 0, &answer_at_least_a(0))]);
+    is_the_halves_disagreeing(
+        &document(
+            &[held("body", ANSWERS_INT, &rules)],
+            &[],
+            &[defined(&read(0, INT))],
+        ),
+        "already in force",
+    );
+}
+
+/// A rule over a case tests the answer for a case of it, and reads the answer as that case: read
+/// as the sum it was tested out of, it is two statements of one binding that disagree. A case of an
+/// answer that has none is a test of nothing the answer can be.
+#[test]
+fn a_rule_over_a_case_reads_the_answer_as_its_guard_says() {
+    let case = |binds: &str| {
+        format!(
+            r#"{{"is":"case","selects":{},"binds":{binds}}}"#,
+            which(&["m.A"])
+        )
+    };
+    // The answer read under 1 as `read_as`, and nothing asked of it but that it is there.
+    let reading = |read_as: &str| let_(2, read_as, &read(1, read_as), &truth(true), BOOL);
+    let rules = |binds: &str, read_as: &str| {
+        held_at(
+            "callee",
+            &["a"],
+            &[rule(&case(binds), 1, &reading(read_as))],
+        )
+    };
+    let answer = defined(&widen(&unit("m.A"), S));
+    reads_whole(&document(
+        &[held("body", ANSWERS_S, &rules(A, A))],
+        &[],
+        std::slice::from_ref(&answer),
+    ));
+    is_the_halves_disagreeing(
+        &document(&[held("body", ANSWERS_S, &rules(A, S))], &[], &[answer]),
+        "m.b",
+    );
+    is_the_halves_disagreeing(
+        &document(
+            &[held("body", ANSWERS_INT, &rules(A, A))],
+            &[],
+            &[defined(&read(0, INT))],
+        ),
+        "m.b",
+    );
 }
