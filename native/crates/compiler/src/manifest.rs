@@ -446,7 +446,9 @@ mod tests {
         let refused = Carried::read(earlier).expect_err("a surface of another version");
 
         assert!(
-            refused.to_string().contains("manifest version 2 and ABI generation 3"),
+            refused
+                .to_string()
+                .contains("manifest version 2 and ABI generation 3"),
             "{refused}"
         );
     }
