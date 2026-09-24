@@ -810,6 +810,254 @@ pub const HOST_RUNTIME: &[RuntimeFunction] = {
     ]
 };
 
+/// What generated code hands the runtime and is handed back: every word a host is ([`HostWord`]),
+/// and the ones that stay between generated code and the runtime.
+///
+/// Each is a kind of thing and not a width, for the reason [`HostWord`] is: two kinds one word wide
+/// are two words here, so a function said to take one and written to take the other is caught.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Word {
+    /// One a host is handed or hands over too.
+    Host(HostWord),
+    /// Room taken from the arena for generated code to write into.
+    Memory,
+    /// Which of two strings comes first: below, at or above nought.
+    Comparison,
+    /// A piece of the external form being built, owned by whoever [`EXTERNAL_NULL`] and the rest
+    /// say.
+    Form,
+    /// A place in a document being read.
+    Node,
+    /// Where a place in a document is, as the reading records it.
+    Path,
+}
+
+/// One parameter of a function of the runtime's that generated code calls.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Parameter {
+    /// The word itself.
+    Given(Word),
+    /// The address of room for one, which the function writes.
+    Room(Word),
+}
+
+impl From<HostParameter> for Parameter {
+    fn from(parameter: HostParameter) -> Parameter {
+        match parameter {
+            HostParameter::Given(word) => Parameter::Given(Word::Host(word)),
+            HostParameter::Room(word) => Parameter::Room(Word::Host(word)),
+        }
+    }
+}
+
+/// A function of the runtime's that generated code calls, with what it takes and answers.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct GeneratedCall {
+    /// Its symbol.
+    pub name: &'static str,
+    /// What it takes, in order.
+    pub takes: &'static [Parameter],
+    /// What it answers, where it answers anything.
+    pub answers: Option<Word>,
+}
+
+/// Every function of the runtime's that generated code calls, and nothing a host calls.
+///
+/// What the driver declares each of these as is lowered from here, and the runtime's own tests
+/// hold each of these to the function it names, as they hold [`HOST_RUNTIME`]. Between the two
+/// tables is every function the runtime defines, which those tests hold too.
+pub const GENERATED_RUNTIME: &[GeneratedCall] = {
+    use HostWord::{Bool, Bytes, Count, Decoded, Int, String, Value};
+    use Parameter::{Given, Room};
+    use Word::{Comparison, Form, Host, Memory, Node, Path};
+    &[
+        GeneratedCall {
+            name: ALLOCATE,
+            takes: &[Given(Host(Count))],
+            answers: Some(Memory),
+        },
+        GeneratedCall {
+            name: STRING_COMPARE,
+            takes: &[Given(Host(String)), Given(Host(String))],
+            answers: Some(Comparison),
+        },
+        GeneratedCall {
+            name: STRING_CONCAT,
+            takes: &[Given(Host(String)), Given(Host(String))],
+            answers: Some(Host(String)),
+        },
+        GeneratedCall {
+            name: EXTERNAL_NULL,
+            takes: &[],
+            answers: Some(Form),
+        },
+        GeneratedCall {
+            name: EXTERNAL_BOOL,
+            takes: &[Given(Host(Bool))],
+            answers: Some(Form),
+        },
+        GeneratedCall {
+            name: EXTERNAL_INT,
+            takes: &[Given(Host(Int))],
+            answers: Some(Form),
+        },
+        GeneratedCall {
+            name: EXTERNAL_STRING,
+            takes: &[Given(Host(String))],
+            answers: Some(Form),
+        },
+        GeneratedCall {
+            name: EXTERNAL_ARRAY,
+            takes: &[],
+            answers: Some(Form),
+        },
+        GeneratedCall {
+            name: EXTERNAL_APPEND,
+            takes: &[Given(Form), Given(Form)],
+            answers: None,
+        },
+        GeneratedCall {
+            name: EXTERNAL_OBJECT,
+            takes: &[],
+            answers: Some(Form),
+        },
+        GeneratedCall {
+            name: EXTERNAL_PUT,
+            takes: &[Given(Form), Given(Host(String)), Given(Form)],
+            answers: None,
+        },
+        GeneratedCall {
+            name: EXTERNAL_JSON,
+            takes: &[Given(Form)],
+            answers: Some(Host(String)),
+        },
+        GeneratedCall {
+            name: DECODE_BEGIN,
+            takes: &[Given(Host(Bytes)), Given(Host(Count))],
+            answers: Some(Host(Decoded)),
+        },
+        GeneratedCall {
+            name: DECODE_ROOT,
+            takes: &[Given(Host(Decoded))],
+            answers: Some(Node),
+        },
+        GeneratedCall {
+            name: DECODE_END,
+            takes: &[Given(Host(Decoded)), Given(Host(Value))],
+            answers: None,
+        },
+        GeneratedCall {
+            name: DECODE_ABANDON,
+            takes: &[Given(Host(Decoded))],
+            answers: None,
+        },
+        GeneratedCall {
+            name: PATH_BELOW,
+            takes: &[Given(Path), Given(Host(String))],
+            answers: Some(Path),
+        },
+        GeneratedCall {
+            name: READ_OBJECT,
+            takes: &[Given(Node), Given(Path), Given(Host(Decoded))],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: READ_MEMBER,
+            takes: &[Given(Node), Given(Host(String))],
+            answers: Some(Node),
+        },
+        GeneratedCall {
+            name: READ_MISSING,
+            takes: &[Given(Path), Given(Host(Decoded))],
+            answers: None,
+        },
+        GeneratedCall {
+            name: READ_NULL,
+            takes: &[Given(Node)],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: READ_INT,
+            takes: &[
+                Given(Node),
+                Given(Path),
+                Given(Host(Decoded)),
+                Room(Host(Int)),
+            ],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: READ_BOOL,
+            takes: &[
+                Given(Node),
+                Given(Path),
+                Given(Host(Decoded)),
+                Room(Host(Bool)),
+            ],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: READ_STRING,
+            takes: &[
+                Given(Node),
+                Given(Path),
+                Given(Host(Decoded)),
+                Room(Host(String)),
+            ],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: READ_CASE,
+            takes: &[Given(Node), Given(Path), Given(Host(Decoded))],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: READ_TAG,
+            takes: &[
+                Given(Node),
+                Given(Host(String)),
+                Given(Path),
+                Given(Host(Decoded)),
+            ],
+            answers: Some(Node),
+        },
+        GeneratedCall {
+            name: READ_IS,
+            takes: &[Given(Node), Given(Host(String))],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: READ_NOT_A_CASE,
+            takes: &[Given(Node), Given(Path), Given(Host(Decoded))],
+            answers: None,
+        },
+        GeneratedCall {
+            name: READ_INVARIANT,
+            takes: &[
+                Given(Path),
+                Given(Host(Decoded)),
+                Given(Host(String)),
+                Given(Host(String)),
+                Given(Host(String)),
+            ],
+            answers: None,
+        },
+    ]
+};
+
+/// What generated code declares `name` as: the one entry of [`GENERATED_RUNTIME`] naming it.
+///
+/// # Panics
+///
+/// Where no entry names it, which is generated code calling a function of the runtime's this crate
+/// does not say.
+pub fn generated_call(name: &str) -> &'static GeneratedCall {
+    GENERATED_RUNTIME
+        .iter()
+        .find(|call| call.name == name)
+        .unwrap_or_else(|| panic!("{name} is not a function of the runtime's generated code calls"))
+}
+
 /// What a generated function answers with instead of its value directly.
 ///
 /// A Souther computation ends with a value or without one, and a plain return can only ever say

@@ -17,11 +17,11 @@
 
 use souther_native_abi::{SLOT, TEXT_BYTES, TEXT_LENGTH, room_for_text};
 
+#[cfg(test)]
+mod contract;
 mod decoding;
 mod document;
 mod external;
-#[cfg(test)]
-mod host_table;
 use std::cell::RefCell;
 use std::cmp::Ordering;
 
@@ -109,6 +109,40 @@ impl Arena {
     }
 }
 
+/// Text of the layout `souther_native_abi` states, as the functions here take and answer it.
+///
+/// Nothing reads through this type: it is the address of a count of bytes and the text after it,
+/// which the functions below read as bytes. It is a type of its own so that an address of text is
+/// not an address of anything else where a function says what it takes, and what
+/// `souther_native_abi` says each function takes is held to that (`host_table`).
+#[repr(C)]
+pub struct Text {
+    _opaque: [u8; 0],
+}
+
+/// A value of a declared type, as the functions here take and answer one: an address the runtime
+/// never reads behind, a type of its own for the reason [`Text`] is.
+#[repr(C)]
+pub struct Value {
+    _opaque: [u8; 0],
+}
+
+/// How many of something there are, or where one stands among them: bytes, issues, entries. The
+/// same sixty-four bits as an `Int`, and not an `Int`, for the reason [`Text`] is a type.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Count(pub i64);
+
+/// Where the arena stood, to be given back to [`souther_reset`].
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Mark(pub i64);
+
+/// Which of two strings comes first: below, at or above nought.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Comparison(pub i64);
+
 /// Room for a value, reached by generated code.
 ///
 /// # Safety
@@ -121,15 +155,16 @@ impl Arena {
 /// than a program doing anything. Read as nought it would answer a slot and the run would carry on
 /// writing into room nobody asked for.
 #[unsafe(no_mangle)]
-pub extern "C" fn souther_alloc(size: i64) -> *mut u8 {
-    let wanted = usize::try_from(size).expect("room is asked for in bytes, and never fewer than 0");
+pub extern "C" fn souther_alloc(size: Count) -> *mut u8 {
+    let wanted =
+        usize::try_from(size.0).expect("room is asked for in bytes, and never fewer than 0");
     ARENA.with(|it| it.borrow_mut().room(wanted))
 }
 
 /// Where the arena stands, for a caller about to bracket a call.
 #[unsafe(no_mangle)]
-pub extern "C" fn souther_mark() -> i64 {
-    ARENA.with(|it| it.borrow().mark() as i64)
+pub extern "C" fn souther_mark() -> Mark {
+    Mark(ARENA.with(|it| it.borrow().mark() as i64))
 }
 
 /// Drops what a call made, back to `mark`.
@@ -138,8 +173,8 @@ pub extern "C" fn souther_mark() -> i64 {
 /// Where the mark is one this never issued. Read as nought it would drop what a caller further out
 /// is still holding, which is the one thing a mark is for.
 #[unsafe(no_mangle)]
-pub extern "C" fn souther_reset(mark: i64) {
-    let held = usize::try_from(mark).expect("a mark is one this arena answered");
+pub extern "C" fn souther_reset(mark: Mark) {
+    let held = usize::try_from(mark.0).expect("a mark is one this arena answered");
     ARENA.with(|it| it.borrow_mut().reset(held));
 }
 
@@ -171,7 +206,7 @@ unsafe fn text<'a>(at: *const u8) -> &'a [u8] {
 fn room_for_a_string(bytes: usize) -> *mut u8 {
     let bytes = i64::try_from(bytes).expect("a string is smaller than an Int");
     let wanted = room_for_text(bytes);
-    let at = souther_alloc(wanted);
+    let at = souther_alloc(Count(wanted));
     unsafe { at.offset(TEXT_LENGTH as isize).cast::<i64>().write(bytes) };
     at
 }
@@ -187,13 +222,16 @@ fn room_for_a_string(bytes: usize) -> *mut u8 {
 /// read through what they are handed — so a caller reaching this crate as a Rust library, which it
 /// is built as, could otherwise hand one of them anything at all and still be writing safe code.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_string_compare(left: *const u8, right: *const u8) -> i64 {
-    let ordering = unsafe { compare_utf8_as_utf16(text(left), text(right)) };
-    match ordering {
+pub unsafe extern "C" fn souther_string_compare(
+    left: *const Text,
+    right: *const Text,
+) -> Comparison {
+    let ordering = unsafe { compare_utf8_as_utf16(text(left.cast()), text(right.cast())) };
+    Comparison(match ordering {
         Ordering::Less => -1,
         Ordering::Equal => 0,
         Ordering::Greater => 1,
-    }
+    })
 }
 
 /// The two strings' text, one after the other, as a string of its own.
@@ -205,8 +243,8 @@ pub unsafe extern "C" fn souther_string_compare(left: *const u8, right: *const u
 ///
 /// As [`souther_string_compare`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_string_concat(left: *const u8, right: *const u8) -> *mut u8 {
-    let (before, after) = unsafe { (text(left), text(right)) };
+pub unsafe extern "C" fn souther_string_concat(left: *const Text, right: *const Text) -> *mut Text {
+    let (before, after) = unsafe { (text(left.cast()), text(right.cast())) };
     let at = room_for_a_string(before.len() + after.len());
     unsafe {
         let text = at.offset(TEXT_BYTES as isize);
@@ -214,7 +252,7 @@ pub unsafe extern "C" fn souther_string_concat(left: *const u8, right: *const u8
         text.add(before.len())
             .copy_from_nonoverlapping(after.as_ptr(), after.len());
     }
-    at
+    at.cast()
 }
 
 /// A string holding these bytes, for a caller outside a Souther program.
@@ -247,15 +285,15 @@ pub unsafe extern "C" fn souther_string_concat(left: *const u8, right: *const u8
 ///
 /// Where the length is below nought.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_string_of_utf8(bytes: *const u8, length: i64) -> *mut u8 {
+pub unsafe extern "C" fn souther_string_of_utf8(bytes: *const u8, length: Count) -> *mut Text {
     let held =
-        usize::try_from(length).expect("text is handed over as bytes, and never fewer than 0");
+        usize::try_from(length.0).expect("text is handed over as bytes, and never fewer than 0");
     let at = room_for_a_string(held);
     unsafe {
         at.offset(TEXT_BYTES as isize)
             .copy_from_nonoverlapping(bytes, held)
     };
-    at
+    at.cast()
 }
 
 /// How many bytes of text the string carries, for the same caller.
@@ -264,8 +302,8 @@ pub unsafe extern "C" fn souther_string_of_utf8(bytes: *const u8, length: i64) -
 ///
 /// As [`souther_string_compare`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_string_length(at: *const u8) -> i64 {
-    unsafe { length(at) as i64 }
+pub unsafe extern "C" fn souther_string_length(at: *const Text) -> Count {
+    Count(unsafe { length(at.cast()) as i64 })
 }
 
 /// Where that text stands.
@@ -274,8 +312,8 @@ pub unsafe extern "C" fn souther_string_length(at: *const u8) -> i64 {
 ///
 /// As [`souther_string_compare`]. What is answered is good for as long as the string is.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_string_bytes(at: *const u8) -> *const u8 {
-    unsafe { at.offset(TEXT_BYTES as isize) }
+pub unsafe extern "C" fn souther_string_bytes(at: *const Text) -> *const u8 {
+    unsafe { at.cast::<u8>().offset(TEXT_BYTES as isize) }
 }
 
 /// Two runs of text, compared by UTF-16 code unit.
@@ -370,8 +408,9 @@ impl<'a> Units<'a> {
 #[cfg(test)]
 mod tests {
     use super::{
-        souther_alloc, souther_mark, souther_reset, souther_string_bytes, souther_string_compare,
-        souther_string_concat, souther_string_length, souther_string_of_utf8,
+        Count, Text, souther_alloc, souther_mark, souther_reset, souther_string_bytes,
+        souther_string_compare, souther_string_concat, souther_string_length,
+        souther_string_of_utf8,
     };
 
     use souther_native_abi::SLOT;
@@ -381,31 +420,39 @@ mod tests {
     /// What the call owes is said here and not at every row below: the bytes are a `str`'s, so
     /// there are as many of them as this says and they are valid UTF-8; and every string these
     /// tests make is given back before the mark they were made under is reset.
-    fn made(text: &str) -> *mut u8 {
-        unsafe { souther_string_of_utf8(text.as_ptr(), text.len() as i64) }
+    fn made(text: &str) -> *mut Text {
+        unsafe { souther_string_of_utf8(text.as_ptr(), Count(text.len() as i64)) }
     }
 
     /// The two compared, and the two joined, under what [`made`] already owes.
-    fn compared(one: *const u8, other: *const u8) -> i64 {
-        unsafe { souther_string_compare(one, other) }
+    fn compared(one: *const Text, other: *const Text) -> i64 {
+        unsafe { souther_string_compare(one, other) }.0
     }
 
-    fn joined_text(one: *const u8, other: *const u8) -> *mut u8 {
+    fn joined_text(one: *const Text, other: *const Text) -> *mut Text {
         unsafe { souther_string_concat(one, other) }
     }
 
+    /// Room for `size` bytes, as generated code asks for it.
+    fn room(size: i64) -> *mut u8 {
+        souther_alloc(Count(size))
+    }
+
     /// What the string says, read back the way a host reads one.
-    fn said(at: *const u8) -> String {
+    fn said(at: *const Text) -> String {
         let bytes = unsafe {
-            std::slice::from_raw_parts(souther_string_bytes(at), souther_string_length(at) as usize)
+            std::slice::from_raw_parts(
+                souther_string_bytes(at),
+                souther_string_length(at).0 as usize,
+            )
         };
         String::from_utf8(bytes.to_vec()).expect("a string carries the text it was made from")
     }
 
     #[test]
     fn room_answered_twice_is_two_different_places() {
-        let one = souther_alloc(8);
-        let other = souther_alloc(8);
+        let one = room(8);
+        let other = room(8);
         assert_ne!(one, other);
     }
 
@@ -417,7 +464,7 @@ mod tests {
         let mark = souther_mark();
         for size in [1i64, 7, 8, 9, 16, 40, 4096] {
             for _ in 0..4 {
-                let at = souther_alloc(size);
+                let at = room(size);
                 assert_eq!(
                     at as usize % SLOT as usize,
                     0,
@@ -433,8 +480,8 @@ mod tests {
     #[test]
     fn room_for_less_than_a_slot_is_a_slot_of_its_own() {
         let mark = souther_mark();
-        let one = souther_alloc(1).cast::<i64>();
-        let other = souther_alloc(1).cast::<i64>();
+        let one = room(1).cast::<i64>();
+        let other = room(1).cast::<i64>();
         unsafe {
             one.write(-1);
             other.write(0);
@@ -446,7 +493,7 @@ mod tests {
     #[test]
     fn what_was_written_is_there_until_the_mark_is_reset() {
         let mark = souther_mark();
-        let held = souther_alloc(16).cast::<i64>();
+        let held = room(16).cast::<i64>();
         unsafe {
             held.write(7);
             held.add(1).write(11);
@@ -465,12 +512,12 @@ mod tests {
     #[test]
     fn room_taken_since_a_mark_is_taken_again_rather_than_added_to() {
         let mark = souther_mark();
-        let _taken = souther_alloc(32);
+        let _taken = room(32);
         let after_one = souther_mark();
         souther_reset(mark);
 
         for _ in 0..1000 {
-            let _taken = souther_alloc(32);
+            let _taken = room(32);
             assert_eq!(souther_mark(), after_one);
             souther_reset(mark);
         }
@@ -480,10 +527,10 @@ mod tests {
     /// A reset takes back what it was asked for and no more.
     #[test]
     fn what_was_taken_before_a_mark_stays_where_it_is() {
-        let held = souther_alloc(8).cast::<i64>();
+        let held = room(8).cast::<i64>();
         unsafe { held.write(42) };
         let mark = souther_mark();
-        let _dropped = souther_alloc(4096);
+        let _dropped = room(4096);
         souther_reset(mark);
         assert_eq!(unsafe { held.read() }, 42);
     }
@@ -494,7 +541,7 @@ mod tests {
         let mark = souther_mark();
         let mut held = Vec::new();
         for value in 0..4096i64 {
-            let at = souther_alloc(1024).cast::<i64>();
+            let at = room(1024).cast::<i64>();
             unsafe { at.write(value) };
             held.push(at);
         }

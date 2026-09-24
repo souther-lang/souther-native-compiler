@@ -32,10 +32,11 @@ use cranelift::object::{ObjectBuilder, ObjectModule};
 use interface::Surface;
 use kernels::LoweredKernel;
 use souther_native_abi::{
-    ALLOCATE, ANSWERED, HELD, NOTHING, SLOT, STRING_COMPARE, STRING_CONCAT, Status, TEXT_BYTES,
-    TEXT_LENGTH, TOKEN, WHICH, behavior_symbol, boundary_symbol, constructor_symbol,
-    example_symbol, field_at, held_symbol, home_symbol, member_at, room_for_fields, room_for_held,
-    room_for_members, room_for_text, spells_a_module, spells_a_name, type_symbol, value_symbol,
+    ALLOCATE, ANSWERED, HELD, NOTHING, Parameter, SLOT, STRING_COMPARE, STRING_CONCAT, Status,
+    TEXT_BYTES, TEXT_LENGTH, TOKEN, WHICH, Word, behavior_symbol, boundary_symbol,
+    constructor_symbol, example_symbol, field_at, generated_call, held_symbol, home_symbol,
+    member_at, room_for_fields, room_for_held, room_for_members, room_for_text, spells_a_module,
+    spells_a_name, type_symbol, value_symbol,
 };
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -308,24 +309,13 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
     let frontend = module.isa().frontend_config();
     let call_conv = module.isa().default_call_conv();
 
-    let mut taking_room = ir::Signature::new(call_conv);
-    taking_room.params.push(AbiParam::new(types::I64));
-    taking_room.returns.push(AbiParam::new(POINTER));
-    let allocate = accepted(module.declare_function(ALLOCATE, Linkage::Import, &taking_room));
+    let allocate = import_runtime(&mut module, ALLOCATE, call_conv);
 
     // What two strings are compared and joined through. Neither is emitted here: a comparison of
     // text is a walk over two runs of bytes, and one written into every site that says `==` would
     // be the same walk written as many times as the program says it.
-    let mut over_two_strings = ir::Signature::new(call_conv);
-    over_two_strings.params.push(AbiParam::new(POINTER));
-    over_two_strings.params.push(AbiParam::new(POINTER));
-    let mut comparing = over_two_strings.clone();
-    comparing.returns.push(AbiParam::new(types::I64));
-    let compare_text =
-        accepted(module.declare_function(STRING_COMPARE, Linkage::Import, &comparing));
-    let mut joining = over_two_strings;
-    joining.returns.push(AbiParam::new(POINTER));
-    let join_text = accepted(module.declare_function(STRING_CONCAT, Linkage::Import, &joining));
+    let compare_text = import_runtime(&mut module, STRING_COMPARE, call_conv);
+    let join_text = import_runtime(&mut module, STRING_CONCAT, call_conv);
 
     let literals = Literals::default();
 
@@ -1614,6 +1604,35 @@ fn lifted_signature(takes: &[Ty], answers: &Ty, call_conv: CallConv) -> Lowered<
     signature.params.push(AbiParam::new(POINTER));
     signature.returns.push(AbiParam::new(types::I32));
     Ok(signature)
+}
+
+/// A function of the runtime's, named in the object as `souther_native_abi` says generated code
+/// calls it. The signature is lowered from what that crate says it takes and answers, which the
+/// runtime's own tests hold to the function, so nothing here writes a width down a second time.
+fn import_runtime(module: &mut ObjectModule, name: &str, call_conv: CallConv) -> FuncId {
+    let call = generated_call(name);
+    let mut signature = ir::Signature::new(call_conv);
+    for taken in call.takes {
+        signature.params.push(AbiParam::new(match taken {
+            Parameter::Given(word) => word_on_the_machine(*word),
+            Parameter::Room(_) => POINTER,
+        }));
+    }
+    if let Some(word) = call.answers {
+        signature
+            .returns
+            .push(AbiParam::new(word_on_the_machine(word)));
+    }
+    accepted(module.declare_function(name, Linkage::Import, &signature))
+}
+
+/// What a word generated code hands the runtime is on the machine.
+fn word_on_the_machine(word: Word) -> types::Type {
+    match word {
+        Word::Host(word) => interface::machine(word),
+        Word::Comparison => types::I64,
+        Word::Memory | Word::Form | Word::Node | Word::Path => POINTER,
+    }
 }
 
 /// What a value of this type is on the machine.
