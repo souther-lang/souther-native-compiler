@@ -335,11 +335,15 @@ fn read(builder: &mut FunctionBuilder, at: usize, host: Host) {
 /// place among them.
 ///
 /// The cases a sum descends to, in the checker's order, which is what the document carries: a
-/// case that is a sum again is answered as the case of it the value is, so a host is told the one
-/// type whose readers it can go on to ask. A value that is none of them is not a value of the sum,
-/// which is a host having handed over something else or this compiler having built it wrongly, and
-/// traps the way a fork that runs out of arms does rather than answering a number that means
-/// nothing.
+/// case that is a sum again is answered as the case of it the value is, so a host is told the
+/// concrete case the value is. Whether a host can go on to read that case is a separate question,
+/// which the case's own publication answers: a case the module keeps has no readers here. A value
+/// that is none of them is not a value of the sum, which is a host having handed over something
+/// else or this compiler having built it wrongly, and traps the way a fork that runs out of arms
+/// does rather than answering a number that means nothing.
+///
+/// Defined only for a sum whose every case is a declared type, since only a value of one of those
+/// says which it is.
 fn which_case(
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,

@@ -158,7 +158,7 @@ impl<'a> Coherent<'a> {
             }
         }
 
-        let runs = Runs::of(program);
+        let runs = Runs::of(program, &declared)?;
         let mut owed = Owed::default();
         for (&name, &local) in &locals {
             let target = targets.named(name)?;
@@ -204,9 +204,10 @@ impl<'a> Coherent<'a> {
                     // A clause observes the value being built and builds none: the checker refuses
                     // one that constructs, through a helper as much as written out. So every value
                     // built here is built by a body, and a construction runs clauses that build
-                    // nothing in turn. A unit's value is asked about by neither, and is not asked
-                    // about here (`Node::builds` answers for it): it is built from no fields and runs
-                    // no clause, so naming one in a clause starts nothing in turn.
+                    // nothing in turn. A unit's value is not asked about: it is built from no
+                    // fields and runs no clause, and is laid out where it stands (`Construction`),
+                    // so naming one in a clause calls no constructor — which is what `Runs` rests
+                    // on when it settles what is built from the modules' bodies alone.
                     let mut built = None;
                     body.node.each(&mut |node| {
                         if let Node::Construct { declared, .. } = node {

@@ -109,6 +109,7 @@ impl Program {
 }
 
 /// One body of `Core`, where it stands, and what owns it.
+#[derive(Clone, Copy)]
 pub struct Body<'p> {
     /// The module it stands in, whose copy of a helper a call from it reaches.
     pub module: &'p str,
@@ -117,6 +118,7 @@ pub struct Body<'p> {
 }
 
 /// What a body is the body of.
+#[derive(Clone, Copy)]
 pub enum Owner<'p> {
     Helper(&'p Held),
     Value(&'p Value),
