@@ -1,6 +1,7 @@
-//! What a host reaches a value of a model's own type through: a constructor, a reader for each
-//! field, and for a sum a reader of which case a value is — each a function the object defines, so
-//! that nothing about where a value keeps what it holds leaves the object.
+//! What a host reaches a value of a model's own type through — building one, reading its fields or
+//! which case it is, and reading it from and writing it to the language's external form — each a
+//! function the object defines, so that nothing about where a value keeps what it holds leaves the
+//! object.
 //!
 //! A host holds a value as an address it never looks behind, and hands it back to these and to the
 //! behaviors. The layout is this backend's to change, and a host that read an offset would be a
@@ -21,22 +22,20 @@
 //! out a second one from which sums reach it would be this side deciding visibility.
 
 use super::{
-    Constructors, Declared, Lowered, NO_ARM, POINTER, Runs, TRUSTED, accepted, into_slot,
-    out_of_slot,
+    Declared, Emitting, Lowered, NO_ARM, POINTER, Runs, TRUSTED, accepted, into_slot, out_of_slot,
+    out_slot,
 };
+use crate::codec::write::Writing;
+use crate::codec::{Codecs, Runtime};
 use crate::transport::{Case, Declaration, DeclaredBy, Prim, Program, Ty};
-use cranelift::codegen::Context;
 use cranelift::codegen::ir::condcodes::IntCC;
-use cranelift::codegen::ir::{
-    self, AbiParam, Function, InstBuilder, TrapCode, UserFuncName, types,
-};
-use cranelift::codegen::isa::{CallConv, TargetFrontendConfig};
-use cranelift::frontend::{FunctionBuilder, FunctionBuilderContext};
+use cranelift::codegen::ir::{self, AbiParam, InstBuilder, TrapCode, types};
+use cranelift::frontend::FunctionBuilder;
 use cranelift::module::{FuncId, Linkage, Module};
 use cranelift::object::ObjectModule;
 use souther_native_abi::{
-    HELD, NOTHING, WHICH, field_at, host_case_symbol, host_constructor_symbol, host_field_symbol,
-    room_for_held,
+    ANSWERED, HELD, NOTHING, WHICH, field_at, host_case_symbol, host_constructor_symbol,
+    host_decode_symbol, host_encode_symbol, host_field_symbol, room_for_held,
 };
 
 /// How a value of a type is handed to a host and taken from one.
@@ -114,54 +113,77 @@ fn whole(ty: &Ty) -> Option<types::Type> {
     }
 }
 
-/// Where these are emitted from.
-pub(crate) struct Emitting<'a> {
-    pub module: &'a mut ObjectModule,
-    pub context: &'a mut Context,
-    pub shapes: &'a mut FunctionBuilderContext,
-    pub frontend: TargetFrontendConfig,
-    pub call_conv: CallConv,
-    pub declared: &'a Declared<'a>,
-    pub constructors: &'a Constructors,
-    pub allocate: FuncId,
-}
+/// What one of these is emitted by, handed the function's parameters.
+type Body<'b> =
+    dyn FnMut(&mut FunctionBuilder, &mut ObjectModule, &[ir::Value]) -> Lowered<()> + 'b;
 
 /// Defines what a host reaches every type a module of this build declares and publishes through.
-pub(crate) fn define(emitting: Emitting, program: &Program, runs: &Runs) -> Lowered<()> {
-    let Emitting {
-        module,
-        context,
-        shapes,
-        frontend,
-        call_conv,
-        declared,
-        constructors,
-        allocate,
-    } = emitting;
+pub(crate) fn define(
+    emitting: &mut Emitting,
+    codecs: &mut Codecs,
+    program: &Program,
+    runs: &Runs,
+) -> Lowered<()> {
+    let call_conv = emitting.call_conv;
+    let declared = emitting.declared;
+    let allocate = emitting.allocate;
     for declaration in &program.declarations {
         let key = declaration.key();
         if declaration.by() != DeclaredBy::AModule || !runs.publishes(&key) {
             continue;
         }
-        let mut emit =
-            |symbol: String,
-             signature: ir::Signature,
-             body: &mut dyn FnMut(&mut FunctionBuilder, &mut ObjectModule) -> Lowered<()>|
-             -> Lowered<()> {
-                let id = accepted(module.declare_function(&symbol, Linkage::Export, &signature));
-                context.clear();
-                context.func = Function::with_name_signature(UserFuncName::default(), signature);
-                let mut builder = FunctionBuilder::new(&mut context.func, shapes);
-                let entry = builder.create_block();
-                builder.append_block_params_for_function_params(entry);
-                builder.switch_to_block(entry);
-                builder.seal_block(entry);
-                body(&mut builder, module)?;
-                builder.seal_all_blocks();
-                builder.finalize(frontend);
-                accepted(module.define_function(id, context));
-                Ok(())
-            };
+        let emit = |emitting: &mut Emitting,
+                    symbol: String,
+                    signature: ir::Signature,
+                    body: &mut Body|
+         -> Lowered<()> {
+            let id = accepted(emitting.module.declare_function(
+                &symbol,
+                Linkage::Export,
+                &signature,
+            ));
+            emitting.function(id, signature, body)
+        };
+        if runs.carries(&key) {
+            let mut signature = ir::Signature::new(call_conv);
+            signature.params.push(AbiParam::new(POINTER));
+            signature.params.push(AbiParam::new(types::I64));
+            signature.params.push(AbiParam::new(POINTER));
+            signature.returns.push(AbiParam::new(types::I32));
+            emit(
+                emitting,
+                host_decode_symbol(declaration.module(), declaration.name()),
+                signature,
+                &mut |builder, module, given| {
+                    decode(builder, module, codecs, declared, &key, given);
+                    Ok(())
+                },
+            )?;
+            let mut signature = ir::Signature::new(call_conv);
+            signature.params.push(AbiParam::new(POINTER));
+            signature.returns.push(AbiParam::new(POINTER));
+            let literals = emitting.literals;
+            emit(
+                emitting,
+                host_encode_symbol(declaration.module(), declaration.name()),
+                signature,
+                &mut |builder, module, given| {
+                    let json = {
+                        let mut writing = Writing {
+                            builder: &mut *builder,
+                            module,
+                            declared,
+                            literals,
+                            codecs: &mut *codecs,
+                        };
+                        let form = writing.named(&key, given[0]);
+                        writing.call(Runtime::ExternalJson, &[form])
+                    };
+                    builder.ins().return_(&[json]);
+                    Ok(())
+                },
+            )?;
+        }
         if let Declaration::Sum { cases, .. } = declaration {
             if cases
                 .iter()
@@ -171,9 +193,12 @@ pub(crate) fn define(emitting: Emitting, program: &Program, runs: &Runs) -> Lowe
                 signature.params.push(AbiParam::new(POINTER));
                 signature.returns.push(AbiParam::new(types::I32));
                 emit(
+                    emitting,
                     host_case_symbol(declaration.module(), declaration.name()),
                     signature,
-                    &mut |builder, module| which_case(builder, module, declared, cases),
+                    &mut |builder, module, given| {
+                        which_case(builder, module, declared, cases, given)
+                    },
                 )?;
             }
             continue;
@@ -181,7 +206,7 @@ pub(crate) fn define(emitting: Emitting, program: &Program, runs: &Runs) -> Lowe
         let fields = declaration.fields();
         let handed: Option<Vec<Host>> = fields.iter().map(|it| Host::of(&it.codec.ty())).collect();
         if let Some(handed) = handed {
-            let constructor = constructors.of(&key)?;
+            let constructor = emitting.constructors.of(&key)?;
             let mut signature = ir::Signature::new(call_conv);
             for host in &handed {
                 for ty in host.given() {
@@ -191,9 +216,13 @@ pub(crate) fn define(emitting: Emitting, program: &Program, runs: &Runs) -> Lowe
             signature.params.push(AbiParam::new(POINTER));
             signature.returns.push(AbiParam::new(types::I32));
             emit(
+                emitting,
                 host_constructor_symbol(declaration.module(), declaration.name()),
                 signature,
-                &mut |builder, module| build(builder, module, allocate, constructor, &handed),
+                &mut |builder, module, given| {
+                    build(builder, module, allocate, constructor, &handed, given);
+                    Ok(())
+                },
             )?;
         }
         for (at, field) in fields.iter().enumerate() {
@@ -210,16 +239,85 @@ pub(crate) fn define(emitting: Emitting, program: &Program, runs: &Runs) -> Lowe
                 }
             }
             emit(
+                emitting,
                 host_field_symbol(declaration.module(), declaration.name(), &field.name),
                 signature,
-                &mut |builder, _| {
-                    read(builder, at, host);
+                &mut |builder, _, given| {
+                    read(builder, at, host, given);
                     Ok(())
                 },
             )?;
         }
     }
     Ok(())
+}
+
+/// A host's decoder: the bytes read as a document, the document read as a value of `key` by the
+/// type's reader, and the reading handed to the host, which asks it what it came to.
+///
+/// Where a clause the reading ran ended without a value, the reading is dropped and the host is
+/// answered that status, as it would be by the type's constructor: the document is not what went
+/// wrong, and a reading would say nothing true about it.
+fn decode(
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    codecs: &mut Codecs,
+    declared: &Declared,
+    key: &str,
+    given: &[ir::Value],
+) {
+    let [bytes, length, out] = given else {
+        unreachable!("a decoder takes bytes, how many, and room for the reading")
+    };
+    let begin = codecs.runtime(module, Runtime::DecodeBegin);
+    let root = codecs.runtime(module, Runtime::DecodeRoot);
+    let end = codecs.runtime(module, Runtime::DecodeEnd);
+    let abandon = codecs.runtime(module, Runtime::DecodeAbandon);
+    let reader = codecs.reader(module, declared, key);
+    let mut call = |builder: &mut FunctionBuilder, called: FuncId, arguments: &[ir::Value]| {
+        let reaching = module.declare_func_in_func(called, builder.func);
+        let call = builder.ins().call(reaching, arguments);
+        builder.inst_results(call).first().copied()
+    };
+
+    let reading = call(builder, begin, &[*bytes, *length]).expect("a reading");
+    let document = call(builder, root, &[reading]).expect("a root or none");
+
+    let read = builder.create_block();
+    let ended = builder.create_block();
+    builder.append_block_param(ended, POINTER);
+    let none = builder.ins().iconst(POINTER, NOTHING);
+    builder
+        .ins()
+        .brif(document, read, &[], ended, &[none.into()]);
+
+    builder.switch_to_block(read);
+    let room = out_slot(builder);
+    let at_the_root = builder.ins().iconst(POINTER, 0);
+    let status = call(builder, reader, &[document, at_the_root, reading, room]).expect("a status");
+    let answered = builder.create_block();
+    let abandoned = builder.create_block();
+    let is_answered = builder
+        .ins()
+        .icmp_imm_s(IntCC::Equal, status, i64::from(ANSWERED));
+    builder
+        .ins()
+        .brif(is_answered, answered, &[], abandoned, &[]);
+
+    builder.switch_to_block(abandoned);
+    call(builder, abandon, &[reading]);
+    builder.ins().return_(&[status]);
+
+    builder.switch_to_block(answered);
+    let value = builder.ins().load(POINTER, TRUSTED, room, 0);
+    builder.ins().jump(ended, &[value.into()]);
+
+    builder.switch_to_block(ended);
+    let value = builder.block_params(ended)[0];
+    call(builder, end, &[reading, value]);
+    builder.ins().store(TRUSTED, reading, *out, 0);
+    let ok = builder.ins().iconst(types::I32, i64::from(ANSWERED));
+    builder.ins().return_(&[ok]);
 }
 
 /// A host's constructor: what it was handed, turned into what the declaration's own constructor
@@ -234,11 +332,8 @@ fn build(
     allocate: FuncId,
     constructor: FuncId,
     handed: &[Host],
-) -> Lowered<()> {
-    let entry = builder
-        .current_block()
-        .expect("a body is built from its entry");
-    let params = builder.block_params(entry).to_vec();
+    params: &[ir::Value],
+) {
     let mut given = params.iter().copied();
     let mut fields = Vec::with_capacity(handed.len());
     for host in handed {
@@ -260,7 +355,6 @@ fn build(
     let called = builder.ins().call(reaching, &fields);
     let status = builder.inst_results(called)[0];
     builder.ins().return_(&[status]);
-    Ok(())
 }
 
 /// An optional as the generated code holds one, from a presence and a value: room holding the
@@ -297,11 +391,8 @@ fn held(
 
 /// A host's reader of the field at `at`: the value, or, for an optional, whether there is one,
 /// with the value written through the host's room only where there is.
-fn read(builder: &mut FunctionBuilder, at: usize, host: Host) {
-    let entry = builder
-        .current_block()
-        .expect("a body is read from its entry");
-    let owner = builder.block_params(entry)[0];
+fn read(builder: &mut FunctionBuilder, at: usize, host: Host, given: &[ir::Value]) {
+    let owner = given[0];
     let slot = builder
         .ins()
         .load(types::I64, TRUSTED, owner, field_at(at) as i32);
@@ -311,7 +402,7 @@ fn read(builder: &mut FunctionBuilder, at: usize, host: Host) {
             builder.ins().return_(&[value]);
         }
         Host::Present(ty) => {
-            let room = builder.block_params(entry)[1];
+            let room = given[1];
             let there = builder.create_block();
             let absent = builder.create_block();
             let present = builder.ins().icmp_imm_s(IntCC::NotEqual, slot, NOTHING);
@@ -349,11 +440,9 @@ fn which_case(
     module: &mut ObjectModule,
     declared: &Declared,
     cases: &[Case],
+    given: &[ir::Value],
 ) -> Lowered<()> {
-    let entry = builder
-        .current_block()
-        .expect("a body is read from its entry");
-    let value = builder.block_params(entry)[0];
+    let value = given[0];
     let which = builder.ins().load(POINTER, TRUSTED, value, WHICH as i32);
     for (place, case) in cases.iter().enumerate() {
         let Case::Declared { declared: key } = case else {

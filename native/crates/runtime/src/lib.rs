@@ -17,6 +17,8 @@
 
 use souther_native_abi::{SLOT, TEXT_BYTES, TEXT_LENGTH, room_for_text};
 
+mod decoding;
+mod document;
 mod external;
 use std::cell::RefCell;
 use std::cmp::Ordering;

@@ -98,9 +98,9 @@ by the same code the function lays a value out with, since there is nothing for 
 nothing the construction can end for.
 
 The function belongs to the build that declared the type, the way the type's token does. That
-build's object defines it for every type a body there builds through it and every type its modules
-publish,
-since another build can name and build one of those, and a build constructing a value of a type
+build's object defines it for every type a body there builds through it, every type its modules
+publish, since another build can name and build one of those, and every type a value of a published
+one is read through, kept or not, since reading one builds it. A build constructing a value of a type
 another declared calls that one: what a clause reads
 and calls, a helper among them, is the declaring build's own, and a copy run elsewhere would run
 without it. It is a call between objects this compiler built, under a symbol carrying the ABI
@@ -131,7 +131,7 @@ across yet has no reader, and keeps its type from having a host constructor, and
 siblings are still read. A type the module keeps has none of these, whichever published sum it is a
 case of.
 
-A clause of a type the module keeps and nothing here builds, or one whose fields have no
+A clause of a type the module keeps and nothing here builds or reads, or one whose fields have no
 representation here, is read, and refused if the two halves disagree about it, and is not run: no
 value of the type is built here to run it over.
 
@@ -146,6 +146,24 @@ own object or is wrapped beside it is read off the arm it was declared in. The e
 per declaration, so nothing about a declaration is kept for run time to interpret, and the runtime
 only holds the tree it is handed and writes it out. Which case a value is comes from the token the
 linker resolved, and is never what the case is written as.
+
+A value read from that form, and any value written to it. For each published type whose values
+have a form here there is `...$type$<Name>$decode`, taking JSON as bytes, and `...$encode`, taking a
+value and answering its JSON. The decoder is the encoder walked backwards over the same shapes, one
+reader per declaration: a field left out is absent where it may be and missing where it may not,
+`null` is absence where there is no key, a case is told apart by the key and the name the program
+carries for it, and a member the declaration does not name is not read. What was read is built by
+the one function every construction of the type goes through, so a value read is one its clauses
+hold of, checked in the order they are declared. A decoder answers a status where a clause ended
+without a value, and otherwise a reading the host asks what it came to: a value, the bytes not
+being JSON and where they stopped, or every issue found in the document — not the first — each with
+one of Raoh's codes, a JSON Pointer and its metadata as named entries. A clause that does not hold is
+`invariant_violation` at the value's path, naming the type's module and name and the clause where
+it has one. A value of a type another build declares is read by that build's object, under
+`souther2.<module>$read$<Name>`, whatever kind of type it is: how a declaration is read is the
+declaring build's, and for a type built from fields that build is also the only one that can say
+which clause did not hold. Text read is canonicalized to NFC. What JSON is, is `souther-json-syntax`, a crate that knows
+no Souther type, no arena and no runtime, written to be what both runtimes read once #17 moves it.
 
 Still ahead: a `Decimal`, the collections, a function value, every kernel but `Int.add`, a value
 that runs in the module declaring it, an attempted

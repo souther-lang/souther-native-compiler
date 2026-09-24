@@ -44,7 +44,11 @@ public final class NativeCompiler {
         return driven(ProgramWriter.written(program));
     }
 
-    private static byte[] driven(String document) throws IOException, InterruptedException {
+    /**
+     * The object a transport document is compiled to. Package-visible for a test that asks what the
+     * driver does with a document no checked program of today's language writes.
+     */
+    static byte[] driven(String document) throws IOException, InterruptedException {
         Path driver = driver();
         if (!Files.isExecutable(driver)) {
             throw new IOException("no driver at " + driver.toAbsolutePath()

@@ -1,0 +1,10 @@
+[package]
+name = "souther-json-syntax"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# Depends on nothing, and nothing of the native backend: this is the JSON both runtimes read, and
+# whatever it reached into here would be one more thing to carry when it moves out (#17).
+[dependencies]
