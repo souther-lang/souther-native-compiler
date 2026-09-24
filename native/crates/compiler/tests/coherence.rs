@@ -1226,3 +1226,34 @@ fn a_clause_builds_no_value() {
         "constructs m.R, where a clause builds no value",
     );
 }
+
+/// A clause this object does not run is read, and held to what the checker holds it to, and is not
+/// refused for what this backend cannot lower: no value of its declaration is built here, since what
+/// the declaration holds has no representation here. The same clause on a declaration whose values
+/// are built here is run, and refused as not lowered.
+///
+/// The clause makes a function taking a `Decimal`, which no lifted function here can take.
+#[test]
+fn a_clause_of_a_declaration_nothing_here_builds_is_not_run() {
+    let decimal_to_truth = fn_of(&[DECIMAL], BOOL);
+    let block = format!(
+        r#"{{"core":"block","site":0,"parameters":[{{"binding":1,"name":"x"}}],"body":{},"type":{decimal_to_truth},"aborts":[]}}"#,
+        truth(true)
+    );
+    let holds = clause(
+        None,
+        &let_(2, &decimal_to_truth, &block, &truth(true), BOOL),
+    );
+    let listed = r#"{"name":"items","binding":0,"codec":{"is":"listof","element":{"is":"scalar","scalar":"INT"}}}"#;
+    reads_whole(&with_clauses(listed, &holds, &[]));
+
+    let refused = object_for(&with_clauses(&field("count", 0, "INT"), &holds, &[]))
+        .expect_err("a value of it is built here, so its clause is run");
+    assert!(refused.downcast_ref::<NotLowered>().is_some(), "{refused}");
+
+    let disagreeing = clause(
+        None,
+        &let_(2, &decimal_to_truth, &block, &read(0, BOOL), BOOL),
+    );
+    is_the_halves_disagreeing(&with_clauses(listed, &disagreeing, &[]), "m.R's clause 0");
+}

@@ -56,7 +56,7 @@ use crate::transport::{
     AbortKind, Answers, Case, Declaration, Definition, Held, Node, Op, Owner, Prim, Program,
     Reaches, Routing, Selects, Target, Ty, Value,
 };
-use crate::{Declared, Targets, not_lowered, spelt};
+use crate::{Declared, Runs, Targets, not_lowered, spelt};
 use anyhow::{Result, anyhow, bail};
 use souther_native_abi::{spells_a_module, spells_a_name};
 use std::collections::HashMap;
@@ -67,7 +67,9 @@ pub(crate) struct Coherent<'a> {
     pub targets: Targets<'a>,
     /// Every local definition this object holds, by the name it defines.
     pub locals: HashMap<&'a str, &'a Definition>,
-    /// Every closure site the document holds, found once over the whole program.
+    /// What this object runs, which is narrower than what the document says.
+    pub runs: Runs<'a>,
+    /// Every closure site under what this object runs.
     pub closures: ClosureSites<'a>,
 }
 
@@ -81,7 +83,9 @@ impl<'a> Coherent<'a> {
                 declared.descends_to(&target.declared(), ty, cases)?;
             }
         }
-        let closures = ClosureSites::of_program(program)?;
+        // Every site the document holds is numbered once, whether or not this object runs it: a
+        // number two sites share is the two halves disagreeing wherever it stands.
+        ClosureSites::of(program.bodies())?;
 
         let reached = Reached::of(program)?;
 
@@ -132,6 +136,7 @@ impl<'a> Coherent<'a> {
             }
         }
 
+        let runs = Runs::of(program);
         let mut owed = Owed::default();
         for (&name, &local) in &locals {
             let target = targets.named(name)?;
@@ -159,7 +164,9 @@ impl<'a> Coherent<'a> {
                     positional(targets.named(declared)?.takes()),
                 ),
                 Owner::Invariant { declaration, at } => {
-                    let clause = &declaration.invariants()[at];
+                    let clause = &declaration.clauses().expect(
+                        "a clause is listed only of a declaration that carries its clauses",
+                    )[at];
                     let owner = match &clause.name {
                         Some(name) => format!("{}'s clause {name}", declaration.key()),
                         None => format!("{}'s clause {at}", declaration.key()),
@@ -213,16 +220,19 @@ impl<'a> Coherent<'a> {
                 reached: &reached,
                 bound: HashMap::new(),
                 owed: &mut owed,
+                runs: runs.runs(&body),
             }
             .under(bound, body.node)?;
         }
 
         owed.settle(&declared)?;
 
+        let closures = ClosureSites::of(runs.bodies())?;
         Ok(Coherent {
             declared,
             targets,
             locals,
+            runs,
             closures,
         })
     }
@@ -245,14 +255,22 @@ struct Owing {
     what: String,
     actual: Ty,
     expected: Ty,
+    /// Whether the relation stands in something this object runs. One that does not is still held
+    /// to the checker's answer, and not refused as not lowered where this backend cannot say.
+    runs: bool,
 }
 
 impl Owed {
     fn fits(&mut self, what: String, actual: &Ty, expected: &Ty) {
+        self.fits_where(true, what, actual, expected);
+    }
+
+    fn fits_where(&mut self, runs: bool, what: String, actual: &Ty, expected: &Ty) {
         self.fits.push(Owing {
             what,
             actual: actual.clone(),
             expected: expected.clone(),
+            runs,
         });
     }
 
@@ -270,11 +288,12 @@ impl Owed {
                     owing.actual.spelt(),
                     owing.expected.spelt()
                 ),
-                None => undecided.push(format!(
+                None if owing.runs => undecided.push(format!(
                     "whether a value of {} is one of {}",
                     owing.actual.spelt(),
                     owing.expected.spelt()
                 )),
+                None => {}
             }
         }
         if let Some(first) = self.not_lowered.into_iter().chain(undecided).next() {
@@ -443,6 +462,9 @@ struct Walk<'w, 'a> {
     /// What each binding in scope is in force at, as the node that made it says.
     bound: HashMap<usize, Ty>,
     owed: &'w mut Owed,
+    /// Whether this object runs the body. What this backend has no lowering for is refused only
+    /// where it would be lowered; the two halves disagreeing is refused wherever it stands.
+    runs: bool,
 }
 
 impl<'a> Walk<'_, 'a> {
@@ -462,11 +484,13 @@ impl<'a> Walk<'_, 'a> {
 
     fn fits(&mut self, what: &str, actual: &Ty, expected: &Ty) {
         let what = format!("{}: {what}", self.owner);
-        self.owed.fits(what, actual, expected);
+        self.owed.fits_where(self.runs, what, actual, expected);
     }
 
     fn not_lowered(&mut self, what: String) {
-        self.owed.not_lowered.push(what);
+        if self.runs {
+            self.owed.not_lowered.push(what);
+        }
     }
 
     fn arity(&self, what: &str, given: usize, taken: usize) -> Result<()> {
@@ -876,13 +900,19 @@ impl<'a> Walk<'_, 'a> {
                     );
                 }
                 // A construction ends without a value where a clause does not hold, and the checker
-                // says so of exactly the constructions of a type that states one.
-                let owed: &[AbortKind] = if shape.invariants().is_empty() {
-                    &[]
-                } else {
-                    &[AbortKind::InvariantNotHeld]
-                };
-                if aborts.as_slice() != owed {
+                // says so of exactly the constructions of a type that states one. Of a type another
+                // build builds, the clauses are that build's and not carried, so there is nothing
+                // here to hold what the construction says to.
+                let owed: Option<&[AbortKind]> = shape.clauses().map(|clauses| {
+                    if clauses.is_empty() {
+                        &[][..]
+                    } else {
+                        &[AbortKind::InvariantNotHeld][..]
+                    }
+                });
+                if let Some(owed) = owed
+                    && aborts.as_slice() != owed
+                {
                     let states = if owed.is_empty() {
                         "states no clause"
                     } else {

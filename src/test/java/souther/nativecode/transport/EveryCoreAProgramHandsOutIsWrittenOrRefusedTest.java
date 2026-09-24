@@ -40,7 +40,8 @@ class EveryCoreAProgramHandsOutIsWrittenOrRefusedTest {
             "souther.compiler.program.CheckedValue#body", "written as a value",
             "souther.compiler.program.CheckedValueEntry#body", "written as an entry",
             "souther.compiler.core.ValueShape$Invariant#condition",
-            "written as a declaration's clause",
+            "written as the clause of a declaration this build builds, and built by the declaring"
+                    + " build's object for one another build declares",
             "souther.compiler.core.Contract$Rule#condition",
             "refused: a behavior whose answer is held to a rule is not written yet");
 

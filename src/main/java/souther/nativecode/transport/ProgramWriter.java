@@ -174,6 +174,12 @@ public final class ProgramWriter {
             for (CheckedBehavior behavior : module.behaviors()) {
                 behaviorsMet.add(behavior.name());
             }
+            // Every declaration a module of this compile declares, whether a body here meets it
+            // or not: its token and its constructor are this build's to define, and another build
+            // constructing a value of it, or forking on one, reaches them here.
+            for (CheckedData data : module.data()) {
+                declarationsMet.add(data.name());
+            }
             modules.add(module(module));
         }
 
@@ -251,7 +257,7 @@ public final class ProgramWriter {
             case CheckedData.Product it -> {
                 Bindings bindings = fieldsBound(it);
                 yield identity + ",\"is\":\"product\",\"fields\":" + fields(it, bindings)
-                        + ",\"invariants\":" + invariants(it, bindings) + "}";
+                        + clauses(declared, it, bindings) + "}";
             }
             // A newtype holds one value and is told apart from a product of one field by what may
             // be written of it, which is the checker's business and settled before this. Its one
@@ -261,7 +267,7 @@ public final class ProgramWriter {
                 Bindings bindings = fieldsBound(it);
                 yield identity + ",\"is\":\"newtype\",\"field\":"
                         + field(it.fields().getFirst(), it.codecShapes().getFirst(), bindings)
-                        + ",\"invariants\":" + invariants(it, bindings) + "}";
+                        + clauses(declared, it, bindings) + "}";
             }
             // No field and no clause: a unit has neither, and writing an empty list of each would
             // be writing a place for them.
@@ -348,6 +354,26 @@ public final class ProgramWriter {
             bindings.number(field.binding());
         }
         return bindings;
+    }
+
+    /**
+     * What a value of this is held to, where this build is the one that runs it.
+     *
+     * <p>A declaration a module of this compile declares is built by this build's object, which
+     * runs its clauses; one a module on the path declares is built by the object of the build that
+     * checked it, and a construction here calls that one. So its clauses are that build's and not
+     * written here: what they read and call is that build's own, a helper it keeps among it, and a
+     * copy of the clauses would be run without the rest of what they were checked against.
+     */
+    private String clauses(Declared declared, CheckedData.WithFields held, Bindings bindings) {
+        return switch (declared.declaredBy()) {
+            case A_MODULE -> ",\"invariants\":" + invariants(held, bindings);
+            case A_MODULE_ON_THE_PATH -> "";
+            // What the language declares is a set of alternatives or a single value, and neither
+            // is built from fields.
+            case THE_LANGUAGE -> throw new IllegalStateException(
+                    held.name() + " is declared by the language and has fields");
+        };
     }
 
     /**

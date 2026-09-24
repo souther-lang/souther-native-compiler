@@ -28,7 +28,7 @@
 //! site's plan would otherwise answer for both.
 
 use crate::index;
-use crate::transport::{FnSignature, Node, Parameter, Program, Ty};
+use crate::transport::{Body, FnSignature, Node, Parameter, Ty};
 use anyhow::{Result, bail};
 use std::collections::{BTreeMap, HashSet};
 
@@ -66,9 +66,10 @@ pub struct ClosureSites<'a> {
 }
 
 impl<'a> ClosureSites<'a> {
-    pub fn of_program(program: &'a Program) -> Result<Self> {
+    /// Every closure site under `bodies`.
+    pub fn of(bodies: impl IntoIterator<Item = Body<'a>>) -> Result<Self> {
         let mut sites = ClosureSites::default();
-        for body in program.bodies() {
+        for body in bodies {
             Planner::new(&mut sites, body.module).free(body.node, &mut HashSet::new())?;
         }
         Ok(sites)
@@ -100,8 +101,8 @@ impl<'p, 'a> Planner<'p, 'a> {
     /// and `Match` arms) rather than cloned at every binder: a walk over a body nested `n` `Let`s
     /// deep clones a growing set at every one of them if a binder's scope is threaded down by
     /// value, which is quadratic in nesting depth for every top-level body this is run over —
-    /// including one with no closure in it at all, since `ClosureSites::of_program` runs
-    /// unconditionally over the whole program.
+    /// including one with no closure in it at all, since `ClosureSites::of` runs unconditionally
+    /// over every body it is handed.
     fn free(&mut self, node: &'a Node, bound: &mut HashSet<usize>) -> Result<Vec<(usize, Ty)>> {
         let mut acc = Vec::new();
         let mut seen = HashSet::new();

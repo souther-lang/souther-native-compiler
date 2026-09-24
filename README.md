@@ -90,8 +90,17 @@ A type that states what its values owe is built by one function per declaration,
 construction of it calls: it takes the fields, runs the clauses in the order the type states them,
 a clause a spread took in among them, and lays the value out only once all of them hold. The first
 that does not hold ends the run with `InvariantNotHeld`, and a clause that itself ends without a
-value, leaving an `Int`'s range, ends it for that reason. The function is kept to the object. What a
-host calls to build a value is a boundary of its own and not this.
+value, leaving an `Int`'s range, ends it for that reason.
+
+The function belongs to the build that declared the type, the way the type's token does. That
+build's object defines it for every type its modules declare, whether a body there builds one or
+not, and a build constructing a value of a type another declared calls that one: what a clause reads
+and calls, a helper among them, is the declaring build's own, and a copy run elsewhere would run
+without it. It is a call between objects this compiler built, under a symbol carrying the ABI
+generation. What a host calls to build a value is a boundary of its own and not this.
+
+A clause of a type whose fields have no representation here is read, and refused if the two halves
+disagree about it, and is not run: no value of the type is built here to run it over.
 
 An answer at the boundary, written as the language writes it. Every behavior the object defines
 and publishes, and every row, has a second entry that runs it and hands back its answer as JSON:

@@ -155,6 +155,36 @@ pub fn value_symbol(module: &str, value: &str) -> String {
     format!("souther{ABI}.{module}$value${value}")
 }
 
+/// The symbol a value of a declared type is built through: the constructor that takes its fields,
+/// runs what the type holds its values to, and lays the value out.
+///
+/// Defined by the object of the build that declared the type and reached by every other one, the
+/// way the type's token is. What a type's clauses read and call is that build's own — a helper it
+/// holds, one it keeps to itself — so a build constructing a value of a type another declared calls
+/// this rather than running a copy of the clauses it could not hold the whole of.
+///
+/// A call between objects this compiler built, and not what a host calls to build a value: the
+/// convention is the one every generated function has, the fields at their width and `status +
+/// out`. `souther<abi>.<module>$construct$<name>`, carrying the ABI generation the way
+/// [`value_symbol`] does, and apart from a behavior's spelling the same way.
+///
+/// # Panics
+///
+/// Where either name carries a dollar, or the type's name carries a dot, for the reason
+/// [`type_symbol`] gives.
+pub fn constructor_symbol(module: &str, name: &str) -> String {
+    assert!(
+        spells_a_module(module),
+        "a module's name carries no dollar, and the symbol is split on one: {module}"
+    );
+    assert!(
+        spells_a_name(name),
+        "a declared type's name carries neither dollar nor dot, and the symbol is split on \
+         both: {name}"
+    );
+    format!("souther{ABI}.{module}$construct${name}")
+}
+
 /// The symbol the object carries for one of a behavior's `example` rows.
 ///
 /// A row states the values to hand over, so what stands under this name takes nothing: the values
@@ -430,8 +460,8 @@ pub const ANSWERED: Status = 0;
 #[cfg(test)]
 mod tests {
     use super::{
-        FIRST_FIELD, SLOT, TOKEN, WHICH, behavior_symbol, boundary_symbol, example_symbol,
-        field_at, held_symbol, home_symbol, member_at, type_symbol, value_symbol,
+        FIRST_FIELD, SLOT, TOKEN, WHICH, behavior_symbol, boundary_symbol, constructor_symbol,
+        example_symbol, field_at, held_symbol, home_symbol, member_at, type_symbol, value_symbol,
     };
 
     #[test]
@@ -601,5 +631,30 @@ mod tests {
     #[should_panic(expected = "neither dollar nor dot")]
     fn a_published_values_name_carrying_a_dot_is_refused() {
         let _ = value_symbol("a", "b.c");
+    }
+
+    #[test]
+    fn a_type_is_built_through_its_module_and_its_name() {
+        assert_eq!(
+            constructor_symbol("pricing", "Amount"),
+            "souther2.pricing$construct$Amount"
+        );
+    }
+
+    /// A constructor is none of the other things a module's name reaches, whatever it is called:
+    /// not the type's token, not a behavior, not a published value.
+    #[test]
+    fn a_constructor_is_not_any_other_symbol_of_one_name() {
+        let built = constructor_symbol("pricing", "Amount");
+        assert_ne!(built, type_symbol("pricing", "Amount"));
+        assert_ne!(built, behavior_symbol("pricing", "Amount"));
+        assert_ne!(built, value_symbol("pricing", "Amount"));
+        assert_ne!(built, home_symbol("pricing", "Amount"));
+    }
+
+    #[test]
+    #[should_panic(expected = "neither dollar nor dot")]
+    fn a_constructed_types_name_carrying_a_dot_is_refused() {
+        let _ = constructor_symbol("a", "b.C");
     }
 }

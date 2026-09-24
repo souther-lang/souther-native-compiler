@@ -45,7 +45,8 @@ impl Program {
     pub fn bodies(&self) -> impl Iterator<Item = Body<'_>> {
         let clauses = self.declarations.iter().flat_map(|declaration| {
             declaration
-                .invariants()
+                .clauses()
+                .unwrap_or_default()
                 .iter()
                 .enumerate()
                 .map(move |(at, clause)| Body {
@@ -165,8 +166,11 @@ pub enum Declaration {
         by: DeclaredBy,
         fields: Vec<Field>,
         /// What every value of this owes, in the order a construction runs them and stops at the
-        /// first that does not hold.
-        invariants: Vec<Invariant>,
+        /// first that does not hold, where this build is the one that runs them: carried for a
+        /// declaration a module of this compile declares and for no other. One on the path is
+        /// built by its own build's object, and a construction here calls that.
+        #[serde(default)]
+        invariants: Option<Vec<Invariant>>,
     },
     /// One value under another name: one field, and not a list of them that happens to hold one.
     Newtype {
@@ -174,7 +178,8 @@ pub enum Declaration {
         name: String,
         by: DeclaredBy,
         field: Field,
-        invariants: Vec<Invariant>,
+        #[serde(default)]
+        invariants: Option<Vec<Invariant>>,
     },
     /// One value, and naming it is that value: no field, and no clause, since there is nothing
     /// for one to observe.
@@ -252,14 +257,16 @@ impl Declaration {
         self.fields().len()
     }
 
-    /// What every value of this owes, in the order a construction runs them; none for a unit,
-    /// which has nothing for a clause to read, and none for a sum, which is never built.
-    pub fn invariants(&self) -> &[Invariant] {
+    /// What every value of this owes, in the order a construction runs them, where this build
+    /// runs them; `None` for a declaration another build builds, whose clauses are that build's.
+    /// None to run for a unit, which has nothing for a clause to read, and none for a sum, which is
+    /// never built.
+    pub fn clauses(&self) -> Option<&[Invariant]> {
         match self {
             Declaration::Product { invariants, .. } | Declaration::Newtype { invariants, .. } => {
-                invariants
+                invariants.as_deref()
             }
-            Declaration::Unit { .. } | Declaration::Sum { .. } => &[],
+            Declaration::Unit { .. } | Declaration::Sum { .. } => Some(&[]),
         }
     }
 }
