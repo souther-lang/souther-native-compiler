@@ -9,7 +9,7 @@
 //! it ends, and a node of it is never what a Souther value is made of: a string read from one is
 //! copied into the arena as a string of the runtime's own layout.
 
-use souther_json_syntax::{Event, Malformed, Parser};
+use souther_json_syntax::{Event, Malformed, read};
 
 /// One place in a document.
 #[derive(Debug, PartialEq)]
@@ -62,29 +62,32 @@ enum Open {
 /// The document `bytes` are, or where they stopped being one.
 ///
 /// Built with a stack of its own rather than a frame per level, so reading a document takes no
-/// more native stack however it nests. How deep one may be is the parser's to limit.
+/// more native stack however it nests. How deep one may be is the parser's to limit, and whether
+/// the bytes are one document at all is the parser's to say: the root built here is answered only
+/// once [`read`] has answered that nothing follows it.
 pub(crate) fn parsed(bytes: &[u8]) -> Result<Node, Malformed> {
     let mut open: Vec<Open> = Vec::new();
-    for event in Parser::new(bytes) {
-        let whole = match event? {
+    let mut root = None;
+    read(bytes, |event| {
+        let whole = match event {
             Event::Null => Node::Null,
             Event::Bool(truth) => Node::Bool(truth),
             Event::Number(written) => Node::Number(written.into()),
             Event::String(text) => Node::String(text.bytes().collect()),
             Event::BeginArray => {
                 open.push(Open::Array(Vec::new()));
-                continue;
+                return;
             }
             Event::BeginObject => {
                 open.push(Open::Object(Vec::new(), None));
-                continue;
+                return;
             }
             Event::Key(text) => {
                 match open.last_mut() {
                     Some(Open::Object(_, key)) => *key = Some(text.bytes().collect()),
                     _ => unreachable!("the parser answers a key only inside an object"),
                 }
-                continue;
+                return;
             }
             Event::EndArray => match open.pop() {
                 Some(Open::Array(items)) => Node::Array(items),
@@ -96,7 +99,7 @@ pub(crate) fn parsed(bytes: &[u8]) -> Result<Node, Malformed> {
             },
         };
         match open.last_mut() {
-            None => return Ok(whole),
+            None => root = Some(whole),
             Some(Open::Array(items)) => items.push(whole),
             Some(Open::Object(members, key)) => {
                 let key = key
@@ -105,8 +108,8 @@ pub(crate) fn parsed(bytes: &[u8]) -> Result<Node, Malformed> {
                 members.push((key, whole));
             }
         }
-    }
-    unreachable!("the parser answers a whole value or where it stopped before it ends")
+    })?;
+    Ok(root.expect("a document the parser read whole has a root"))
 }
 
 #[cfg(test)]
@@ -148,5 +151,17 @@ mod tests {
     #[test]
     fn where_a_document_stops_being_one_is_answered() {
         assert_eq!(parsed(b"[1,").unwrap_err().at, 3);
+    }
+
+    /// A whole value is not a document while anything but whitespace follows it, however early
+    /// the tree was whole.
+    #[test]
+    fn a_value_followed_by_more_is_not_a_document() {
+        assert_eq!(parsed(b"1 2").unwrap_err().at, 2);
+        assert_eq!(parsed(b"1x").unwrap_err().at, 1);
+        assert_eq!(parsed(b"nulls").unwrap_err().at, 4);
+        assert_eq!(parsed(b"{}x").unwrap_err().at, 2);
+        assert_eq!(parsed(br#"{"a":1}{"b":2}"#).unwrap_err().at, 7);
+        assert_eq!(parsed(b" {} \n").unwrap(), Node::Object(Vec::new()));
     }
 }

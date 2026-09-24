@@ -7,6 +7,11 @@
 //! both runtimes read (#17): it takes a slice, answers events that borrow from it, and allocates
 //! nothing.
 //!
+//! Whether the bytes are one document is answered by [`read`] and by nothing else. A reader of the
+//! events is handed every one of them and is told the document is whole only once nothing but
+//! whitespace follows it, so no reader can take the first value it built for the document: `1 2`
+//! and `{}x` are refused however early a reader would have been content.
+//!
 //! What a document is, is RFC 8259, with one limit of this reader's own: how deep one may be nested
 //! ([`DEEPEST`]).
 //!
@@ -178,13 +183,25 @@ enum Next {
     Done,
 }
 
-/// Reads one document as the events it is written as.
+/// Reads `bytes` as one document, handing `on` every event it is written as, in order, and answers
+/// whether the bytes were one: `Ok` only once the last value is whole and nothing but whitespace
+/// follows it.
 ///
-/// An iterator of results: every event in order, then `None`, where the document is one; the
-/// events up to where it stopped being one, then one [`Malformed`] and `None`, where it is not. A
-/// reader that stops at the first error is handed everything it needs to say where.
+/// Where the bytes stop being a document, `on` has been handed the events before that point and
+/// the answer says where. What `on` built from them is not a document, and nothing here lets it be
+/// taken for one: the one way to learn a document is whole is this answering `Ok`.
+pub fn read<'a>(bytes: &'a [u8], mut on: impl FnMut(Event<'a>)) -> Result<(), Malformed> {
+    let mut parser = Parser::new(bytes);
+    while let Some(event) = parser.step() {
+        on(event?);
+    }
+    Ok(())
+}
+
+/// Where a reading of one document stands. Driven only by [`read`], which is what holds every
+/// reader to reading a document to its end.
 #[derive(Debug, Clone)]
-pub struct Parser<'a> {
+struct Parser<'a> {
     bytes: &'a [u8],
     at: usize,
     next: Next,
@@ -194,7 +211,7 @@ pub struct Parser<'a> {
 }
 
 impl<'a> Parser<'a> {
-    pub fn new(bytes: &'a [u8]) -> Self {
+    fn new(bytes: &'a [u8]) -> Self {
         Parser {
             bytes,
             at: 0,
@@ -448,13 +465,5 @@ impl<'a> Parser<'a> {
             Ok(event) => Some(Ok(event)),
             Err(malformed) => self.malformed(malformed.at),
         }
-    }
-}
-
-impl<'a> Iterator for Parser<'a> {
-    type Item = Result<Event<'a>, Malformed>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.step()
     }
 }

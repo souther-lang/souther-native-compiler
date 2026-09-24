@@ -4,13 +4,12 @@
 //! Where the wasm runtime's own reader answers a row differently today, the row says so. Those are
 //! the places the two copies have already come apart, and the reason #17 asks for one.
 
-use souther_json_syntax::{DEEPEST, Event, Malformed, Parser};
+use souther_json_syntax::{DEEPEST, Event, Malformed};
 
 /// The events a document is read as, written one per word, or where it stopped being one.
 fn read(document: &[u8]) -> Result<String, usize> {
     let mut said = Vec::new();
-    for event in Parser::new(document) {
-        let event = event.map_err(|Malformed { at }| at)?;
+    souther_json_syntax::read(document, |event| {
         said.push(match event {
             Event::Null => "null".to_string(),
             Event::Bool(truth) => truth.to_string(),
@@ -23,8 +22,9 @@ fn read(document: &[u8]) -> Result<String, usize> {
             Event::EndArray => "]".to_string(),
             Event::BeginObject => "{".to_string(),
             Event::EndObject => "}".to_string(),
-        });
-    }
+        })
+    })
+    .map_err(|Malformed { at }| at)?;
     Ok(said.join(" "))
 }
 
@@ -80,6 +80,12 @@ const REFUSED: &[(&str, usize)] = &[
     ("[", 1),
     ("]", 0),
     ("1 2", 2),
+    // A whole value followed by anything but whitespace is not one document, however whole the
+    // first value was.
+    ("1x", 1),
+    ("{}x", 2),
+    ("{\"a\":1}{\"b\":2}", 7),
+    ("[] []", 3),
     ("\"open", 5),
     ("\"\\x\"", 2),
     ("\"\\u12\"", 3),
@@ -137,8 +143,9 @@ fn how_deep_a_document_may_be_is_how_many_containers_are_open_at_once() {
 
 #[test]
 fn a_text_says_the_bytes_it_unescapes_to() {
-    let mut parser = Parser::new(br#""a\u00e9\n""#);
-    let Some(Ok(Event::String(text))) = parser.next() else {
+    let mut read = None;
+    souther_json_syntax::read(br#""a\u00e9\n""#, |event| read = Some(event)).unwrap();
+    let Some(Event::String(text)) = read else {
         panic!("a string");
     };
     assert!(text.says("aé\n".as_bytes()));
