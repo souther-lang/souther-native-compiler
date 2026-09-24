@@ -21,7 +21,7 @@
 
 use crate::manifest::{self, Carried, Manifest, Parameter, Word};
 use crate::transport::{self, AbortKind, Declaration, Prim, Ty};
-use crate::{Declared, POINTER, native_status};
+use crate::{Declared, POINTER, index, native_status};
 use anyhow::{Result, bail};
 use cranelift::codegen::ir::{self, AbiParam, types};
 use cranelift::codegen::isa::CallConv;
@@ -416,14 +416,8 @@ pub(crate) fn manifest_of(modules: Vec<manifest::Module>) -> Manifest {
         format: manifest::FORMAT.to_string(),
         version: manifest::VERSION,
         abi: ABI_GENERATION,
-        statuses: statuses()
-            .into_iter()
-            .map(|(name, number)| (name.to_string(), number))
-            .collect(),
-        outcomes: outcomes()
-            .into_iter()
-            .map(|(name, number)| (name.to_string(), number))
-            .collect(),
+        statuses: numbered(statuses()),
+        outcomes: numbered(outcomes()),
         runtime: HOST_RUNTIME
             .iter()
             .map(|function| {
@@ -527,20 +521,14 @@ pub(crate) fn declarations(manifest: &Manifest) -> String {
          \n",
         manifest.abi
     );
-    let statuses: Vec<String> = manifest
-        .statuses
-        .iter()
-        .map(|(name, number)| (number, format!("    SOUTHER_{name} = {number}")))
-        .collect::<BTreeMap<_, _>>()
-        .into_values()
+    let statuses: Vec<String> = in_order(&manifest.statuses)
+        .into_iter()
+        .map(|(name, number)| format!("    SOUTHER_{name} = {number}"))
         .collect();
     written.push_str(&format!("enum {{\n{}\n}};\n\n", statuses.join(",\n")));
-    let outcomes: Vec<String> = manifest
-        .outcomes
-        .iter()
-        .map(|(name, number)| (number, format!("    SOUTHER_DECODED_{name} = {number}")))
-        .collect::<BTreeMap<_, _>>()
-        .into_values()
+    let outcomes: Vec<String> = in_order(&manifest.outcomes)
+        .into_iter()
+        .map(|(name, number)| format!("    SOUTHER_DECODED_{name} = {number}"))
         .collect();
     written.push_str(&format!("enum {{\n{}\n}};\n", outcomes.join(",\n")));
 
@@ -585,6 +573,30 @@ pub(crate) fn declarations(manifest: &Manifest) -> String {
         }
     }
     written
+}
+
+/// Names and the numbers they stand for, as the manifest holds them: each name once, and each
+/// number once. Two names for one number is this compiler's own tables disagreeing — two reasons a
+/// computation ended answered alike — and nothing a host reads could tell them apart, so it stops
+/// here rather than reaching the manifest as two names and the header as whichever came last.
+fn numbered<N: Copy + Ord>(pairs: Vec<(&str, N)>) -> BTreeMap<String, N> {
+    let mut by_name = BTreeMap::new();
+    let mut by_number = BTreeMap::new();
+    for (name, number) in pairs {
+        index::unique(&mut by_number, number, name);
+        index::unique(&mut by_name, name.to_string(), number);
+    }
+    by_name
+}
+
+/// Names in the order of the numbers they stand for, every one of them.
+fn in_order<N: Copy + Ord>(named: &BTreeMap<String, N>) -> Vec<(&str, N)> {
+    let mut ordered: Vec<(&str, N)> = named
+        .iter()
+        .map(|(name, number)| (name.as_str(), *number))
+        .collect();
+    ordered.sort_by_key(|(_, number)| *number);
+    ordered
 }
 
 /// Every status a generated function answers, by the name the header gives it.

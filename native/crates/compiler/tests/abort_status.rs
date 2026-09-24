@@ -27,3 +27,20 @@ fn the_fixture_the_java_harness_is_held_to_is_what_native_status_answers_today()
     written.push('}');
     assert_eq!(FIXTURE.trim(), written);
 }
+
+/// Every reason a computation ends is its own number, and none is `ANSWERED`: a caller tells them
+/// apart by the number alone, and the Java harness, the header and the manifest all read it back
+/// that way. The fixture above would carry two names for one number without complaint.
+#[test]
+fn every_abort_answers_a_number_of_its_own() {
+    let mut seen = vec![souther_native_abi::ANSWERED];
+    for kind in AbortKind::ALL {
+        let number = native_status(kind);
+        assert!(
+            !seen.contains(&number),
+            "{} answers {number}, which is already answered",
+            kind.spelt()
+        );
+        seen.push(number);
+    }
+}

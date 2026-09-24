@@ -645,6 +645,13 @@ pub const DECODED_VALUE: i32 = 0;
 pub const DECODED_ISSUES: i32 = 1;
 /// The bytes are not JSON, and `DECODED_MALFORMED_AT` says where they stopped being it.
 pub const DECODED_MALFORMED: i32 = 2;
+/// That a reading's outcomes are three numbers and not fewer: a host tells them apart by the
+/// number, so two outcomes answered alike would be one it could not read.
+const _: () = assert!(
+    DECODED_VALUE != DECODED_ISSUES
+        && DECODED_ISSUES != DECODED_MALFORMED
+        && DECODED_VALUE != DECODED_MALFORMED
+);
 /// `(reading) -> value`.
 pub const DECODED_VALUE_OF: &str = "souther_decoded_value";
 /// `(reading) -> i64`: the offset of the first byte that could not be read.
