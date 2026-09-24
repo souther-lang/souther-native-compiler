@@ -80,18 +80,17 @@ class AValueOfATypeAnotherBuildDeclaresIsBuiltThereTest {
     @Test
     void aConstructionReachesTheConstructorOfTheBuildThatDeclaresTheType() throws Exception {
         CheckedProgram program = compiled();
-        byte[] before = NativeCompiler.compile(builtBefore());
-        try (Running running = Running.of(program, List.of(before))) {
-            CheckedModule module = program.modules().getFirst();
-            CheckedBehavior held = module.behaviors().getFirst();
+        byte[] before = NativeArtifacts.object(builtBefore());
+        Running running = Running.of(program, List.of(before));
+        CheckedModule module = program.modules().getFirst();
+        CheckedBehavior held = module.behaviors().getFirst();
 
-            assertThat(running.answeredOrEnded(module, held,
-                    List.of(new ObservedValue.Bool(false))))
-                    .isEqualTo(new RunOutcome.Answered(new ObservedValue.Integer(1)));
-            assertThat(running.answeredOrEnded(module, held,
-                    List.of(new ObservedValue.Bool(true))))
-                    .isEqualTo(new RunOutcome.Aborted(AbortKind.INVARIANT_NOT_HELD));
-        }
+        assertThat(running.answeredOrEnded(module, held,
+                List.of(new ObservedValue.Bool(false))))
+                .isEqualTo(new RunOutcome.Answered(new ObservedValue.Integer(1)));
+        assertThat(running.answeredOrEnded(module, held,
+                List.of(new ObservedValue.Bool(true))))
+                .isEqualTo(new RunOutcome.Aborted(AbortKind.INVARIANT_NOT_HELD));
     }
 
     private static CheckedProgram compiled() {

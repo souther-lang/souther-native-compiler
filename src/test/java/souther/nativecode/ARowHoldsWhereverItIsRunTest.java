@@ -435,43 +435,42 @@ class ARowHoldsWhereverItIsRunTest {
     static void assertEveryRowHolds(String... sources) throws Exception {
         CheckedProgram program = CheckedProgram.of(List.of(sources));
         int asked = 0;
-        try (Running running = Running.of(program)) {
-            for (CheckedModule module : program.modules()) {
-                for (CheckedBehavior behavior : module.behaviors()) {
-                    List<CheckedRow> rows = behavior.rows();
-                    for (int at = 0; at < rows.size(); at++) {
-                        CheckedRow row = rows.get(at);
-                        String where = row.identity() + " of " + behavior.name();
-                        switch (row.statement()) {
-                            case CheckedRow.SelfContained states -> {
-                                ObservedValue answered =
-                                        running.rowAnswering(module, behavior, at, List.of());
+        Running running = Running.of(program);
+        for (CheckedModule module : program.modules()) {
+            for (CheckedBehavior behavior : module.behaviors()) {
+                List<CheckedRow> rows = behavior.rows();
+                for (int at = 0; at < rows.size(); at++) {
+                    CheckedRow row = rows.get(at);
+                    String where = row.identity() + " of " + behavior.name();
+                    switch (row.statement()) {
+                        case CheckedRow.SelfContained states -> {
+                            ObservedValue answered =
+                                    running.rowAnswering(module, behavior, at, List.of());
 
-                                assertThat(states.holds(answered))
-                                        .as("%s answered %s", where, answered)
-                                        .isInstanceOf(Verdict.Held.class);
-                                asked++;
-                            }
-                            // A behavior that depends on another is run with what the row says
-                            // that other one answers, which is the object's undefined symbol being
-                            // given a definition rather than the run being arranged around it.
-                            case CheckedRow.WithStandIns states -> {
-                                ObservedValue answered = running.rowAnswering(
-                                        module, behavior, at, states.standsIn());
-
-                                assertThat(states.holds(answered))
-                                        .as("%s answered %s", where, answered)
-                                        .isInstanceOf(Verdict.Held.class);
-                                asked++;
-                            }
-                            case CheckedRow.AnswerOwed states -> throw new AssertionError(
-                                    where + " states no answer to hold anything to: " + states);
-                            // The compile did not run it, and says why. Left out silently, this
-                            // test would go on being green over fewer and fewer rows.
-                            case CheckedRow.NotReproducible why -> throw new AssertionError(
-                                    where + " was not run by the compile, so nothing about it was"
-                                            + " observed on the JVM either: " + why.why());
+                            assertThat(states.holds(answered))
+                                    .as("%s answered %s", where, answered)
+                                    .isInstanceOf(Verdict.Held.class);
+                            asked++;
                         }
+                        // A behavior that depends on another is run with what the row says
+                        // that other one answers, which is the object's undefined symbol being
+                        // given a definition rather than the run being arranged around it.
+                        case CheckedRow.WithStandIns states -> {
+                            ObservedValue answered = running.rowAnswering(
+                                    module, behavior, at, states.standsIn());
+
+                            assertThat(states.holds(answered))
+                                    .as("%s answered %s", where, answered)
+                                    .isInstanceOf(Verdict.Held.class);
+                            asked++;
+                        }
+                        case CheckedRow.AnswerOwed states -> throw new AssertionError(
+                                where + " states no answer to hold anything to: " + states);
+                        // The compile did not run it, and says why. Left out silently, this
+                        // test would go on being green over fewer and fewer rows.
+                        case CheckedRow.NotReproducible why -> throw new AssertionError(
+                                where + " was not run by the compile, so nothing about it was"
+                                        + " observed on the JVM either: " + why.why());
                     }
                 }
             }
