@@ -1,6 +1,6 @@
 {
   "format": "souther-native-interface",
-  "version": 2,
+  "version": 4,
   "abi": 3,
   "statuses": {
     "ANSWERED": 0,
@@ -170,21 +170,32 @@
       "behaviors": [
         {
           "name": "settle",
-          "takes": [
-            {
+          "parameters": {
+            "named": [
+              {
+                "name": "line",
+                "type": {
+                  "kind": "declared",
+                  "module": "shop",
+                  "name": "Line"
+                }
+              },
+              {
+                "name": "paid",
+                "type": {
+                  "kind": "primitive",
+                  "name": "Int"
+                }
+              }
+            ]
+          },
+          "answers": {
+            "type": {
               "kind": "declared",
               "module": "shop",
-              "name": "Line"
+              "name": "Outcome"
             },
-            {
-              "kind": "primitive",
-              "name": "Int"
-            }
-          ],
-          "answers": {
-            "kind": "declared",
-            "module": "shop",
-            "name": "Outcome"
+            "union": null
           },
           "call": {
             "name": "souther3_m_shop_b_settle",
@@ -204,16 +215,24 @@
         },
         {
           "name": "owing",
-          "takes": [
-            {
-              "kind": "declared",
-              "module": "shop",
-              "name": "Outcome"
-            }
-          ],
+          "parameters": {
+            "named": [
+              {
+                "name": "outcome",
+                "type": {
+                  "kind": "declared",
+                  "module": "shop",
+                  "name": "Outcome"
+                }
+              }
+            ]
+          },
           "answers": {
-            "kind": "primitive",
-            "name": "Int"
+            "type": {
+              "kind": "primitive",
+              "name": "Int"
+            },
+            "union": null
           },
           "call": {
             "name": "souther3_m_shop_b_owing",
@@ -227,16 +246,133 @@
             ],
             "answers": "status"
           }
+        },
+        {
+          "name": "stillOwing",
+          "parameters": {
+            "positional": [
+              {
+                "kind": "declared",
+                "module": "shop",
+                "name": "Line"
+              },
+              {
+                "kind": "primitive",
+                "name": "Int"
+              }
+            ]
+          },
+          "answers": {
+            "type": {
+              "kind": "primitive",
+              "name": "Int"
+            },
+            "union": null
+          },
+          "call": {
+            "name": "souther3_m_shop_b_stillOwing",
+            "takes": [
+              {
+                "given": "value"
+              },
+              {
+                "given": "int"
+              },
+              {
+                "room": "int"
+              }
+            ],
+            "answers": "status"
+          }
+        },
+        {
+          "name": "charge",
+          "parameters": {
+            "named": [
+              {
+                "name": "paid",
+                "type": {
+                  "kind": "primitive",
+                  "name": "Int"
+                }
+              }
+            ]
+          },
+          "answers": {
+            "type": {
+              "kind": "union",
+              "cases": [
+                {
+                  "kind": "declared",
+                  "module": "shop",
+                  "name": "Owed"
+                },
+                {
+                  "kind": "declared",
+                  "module": "shop",
+                  "name": "Settled"
+                }
+              ]
+            },
+            "union": {
+              "cases": [
+                {
+                  "kind": "declared",
+                  "module": "shop",
+                  "name": "Owed"
+                },
+                {
+                  "kind": "declared",
+                  "module": "shop",
+                  "name": "Free"
+                },
+                {
+                  "kind": "declared",
+                  "module": "shop",
+                  "name": "Paid"
+                },
+                {
+                  "kind": "declared",
+                  "module": "shop",
+                  "name": "Waived"
+                }
+              ],
+              "case": {
+                "name": "souther3_m_shop_b_charge_answer_case",
+                "takes": [
+                  {
+                    "given": "value"
+                  }
+                ],
+                "answers": "case"
+              }
+            }
+          },
+          "call": {
+            "name": "souther3_m_shop_b_charge",
+            "takes": [
+              {
+                "given": "int"
+              },
+              {
+                "room": "value"
+              }
+            ],
+            "answers": "status"
+          }
         }
       ],
       "injections": [
         {
           "name": "discountFor",
-          "takes": [
+          "parameters": [
             {
-              "kind": "declared",
-              "module": "shop",
-              "name": "Line"
+              "name": "line",
+              "type": {
+                "kind": "declared",
+                "module": "shop",
+                "name": "Line"
+              }
             }
           ],
           "answers": {

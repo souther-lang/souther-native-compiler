@@ -31,7 +31,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 class AHostCallsALibraryThroughItsHeaderTest {
 
     private static final String SHOP = """
-            module shop exposing ( Money, Line, Free, Paid, Owed, Settled, Outcome, settle, owing, stillOwing : Int )
+            module shop exposing ( Money, Line, Free, Paid, Owed, Settled, Outcome, settle, owing, stillOwing : Int,
+                                   charge )
 
             data Money = Int
                 invariant notNegative = value >= 0
@@ -60,6 +61,9 @@ class AHostCallsALibraryThroughItsHeaderTest {
                 | Settled -> 0
 
             behavior stillOwing = settle >-> owing
+
+            behavior charge : (paid: Int) -> Owed | Settled
+            let charge (paid) = if paid > 0 then Free else Owed { amount = Money(1), overdue = true }
 
             behavior twice : (n: Int) -> Int
             let twice (n) = n * 2
@@ -143,6 +147,14 @@ class AHostCallsALibraryThroughItsHeaderTest {
                        souther3_m_shop_t_Money_f_value(souther3_m_shop_t_Owed_f_amount(outcome)),
                        owing, owed);
 
+                souther_value owes = NULL;
+                status = souther3_m_shop_b_charge(0, &owes);
+                souther_value free = NULL;
+                souther_status freed = souther3_m_shop_b_charge(1, &free);
+                printf("charged: status %u, case %u, status %u, case %u\\n", status,
+                       souther3_m_shop_b_charge_answer_case(owes), freed,
+                       souther3_m_shop_b_charge_answer_case(free));
+
                 printf("written: ");
                 text(souther3_m_shop_t_Line_encode(line));
                 printf("\\n");
@@ -222,6 +234,13 @@ class AHostCallsALibraryThroughItsHeaderTest {
                             $ffi->souther3_m_shop_t_Owed_f_amount($outcome)),
                     ", owing $owing ", $owed->cdata, "\n";
 
+            $owes = $ffi->new("souther_value");
+            $status = $ffi->souther3_m_shop_b_charge(0, FFI::addr($owes));
+            $free = $ffi->new("souther_value");
+            $freed = $ffi->souther3_m_shop_b_charge(1, FFI::addr($free));
+            echo "charged: status $status, case ", $ffi->souther3_m_shop_b_charge_answer_case($owes),
+                    ", status $freed, case ", $ffi->souther3_m_shop_b_charge_answer_case($free), "\n";
+
             echo "written: ", text($ffi, $ffi->souther3_m_shop_t_Line_encode($line)), "\n";
             decoded($ffi, "read", '{"price": 4, "quantity": 5}');
             decoded($ffi, "read wrong", '{"price": -1, "quantity": 5}');
@@ -236,15 +255,16 @@ class AHostCallsALibraryThroughItsHeaderTest {
             below: 1
             line: status 0, note 1 gift wrap
             settled: status 0, case 3, amount 4, owing 0 4
+            charged: status 0, case 0, status 0, case 1
             written: {"price":3,"quantity":2,"note":"gift wrap"}
             read: status 0, quantity 5
             read wrong: status 0, [/price invariant_violation]
             not json: status 0, malformed at 8
             """;
 
-    /** What version 3 of the manifest is, for the program above. */
-    private static final Path INTERFACE_V3 =
-            Path.of("native", "crates", "compiler", "tests", "interface-v3.json");
+    /** What version 4 of the manifest is, for the program above. */
+    private static final Path INTERFACE_V4 =
+            Path.of("native", "crates", "compiler", "tests", "interface-v4.json");
 
     private static final JsonMapper JSON = JsonMapper.builder().build();
 
@@ -278,21 +298,21 @@ class AHostCallsALibraryThroughItsHeaderTest {
     }
 
     /**
-     * The manifest a binding is written against, as version 3 says it for this program. A change
+     * The manifest a binding is written against, as version 4 says it for this program. A change
      * to what the manifest says is a change here, and whether it moves the version is decided
      * looking at it.
      */
     @Test
-    void theManifestIsWhatVersionThreeSays(@TempDir Path into) throws Exception {
+    void theManifestIsWhatVersionFourSays(@TempDir Path into) throws Exception {
         NativeCompiler.Library library =
                 NativeCompiler.library(CheckedProgram.of(List.of(SHOP)), into);
 
         String written = Files.readString(library.manifest(), StandardCharsets.UTF_8);
-        String fixed = Files.exists(INTERFACE_V3)
-                ? Files.readString(INTERFACE_V3, StandardCharsets.UTF_8) : "";
+        String fixed = Files.exists(INTERFACE_V4)
+                ? Files.readString(INTERFACE_V4, StandardCharsets.UTF_8) : "";
         if (!written.equals(fixed)) {
             // Kept where it can be compared with the fixture, and copied over it once it is read.
-            Files.writeString(Path.of("target", "interface-v3.written.json"), written,
+            Files.writeString(Path.of("target", "interface-v4.written.json"), written,
                     StandardCharsets.UTF_8);
         }
         assertThat(written).isEqualTo(fixed);
@@ -344,35 +364,30 @@ class AHostCallsALibraryThroughItsHeaderTest {
         return declared;
     }
 
+    /**
+     * Every function the manifest names, wherever it names one: every member shaped as a function
+     * is (a name, what it takes and what it answers, and nothing else), and what a host registers
+     * an implementation through, and not what it registers, whose name is a type's. Found by
+     * walking the whole manifest rather than by a list of where functions are kept, so a function
+     * a later version puts somewhere new is held to the header and the library without this
+     * having to be told.
+     */
     private static Set<String> describedIn(JsonNode manifest) {
         Set<String> described = new TreeSet<>();
-        List<JsonNode> functions = new ArrayList<>();
-        manifest.get("runtime").forEach(functions::add);
-        for (JsonNode module : manifest.get("modules")) {
-            module.get("behaviors").forEach(it -> functions.add(it.get("call")));
-            module.get("values").forEach(it -> functions.add(it.get("read")));
-            // What a host registers through, and not what it registers, whose name is a type's.
-            module.get("injections").forEach(it -> described.add(it.get("register").stringValue()));
-            // Each kind has the members it has: a newtype one field, a sum its cases and no
-            // constructor. A member a kind has not got is absent, and one it has is here.
-            for (JsonNode declaration : module.get("declarations")) {
-                for (String operation : List.of("construct", "case", "decode", "encode")) {
-                    functions.add(declaration.get(operation));
-                }
-                if (declaration.has("fields")) {
-                    declaration.get("fields").forEach(it -> functions.add(it.get("read")));
-                }
-                if (declaration.has("field")) {
-                    functions.add(declaration.get("field").get("read"));
-                }
-            }
-        }
-        for (JsonNode function : functions) {
-            if (function != null && !function.isNull()) {
-                described.add(function.get("name").stringValue());
-            }
-        }
+        walk(manifest, described);
         return described;
+    }
+
+    private static void walk(JsonNode node, Set<String> described) {
+        if (node.isObject()) {
+            if (new TreeSet<>(node.propertyNames()).equals(Set.of("answers", "name", "takes"))) {
+                described.add(node.get("name").stringValue());
+            }
+            if (node.has("register")) {
+                described.add(node.get("register").stringValue());
+            }
+        }
+        node.forEach(it -> walk(it, described));
     }
 
     private static Set<String> exportedBy(Path library) throws IOException, InterruptedException {

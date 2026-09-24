@@ -360,7 +360,9 @@ impl Surface {
     /// A published behavior this object defines, and what a host calls it through, where a host
     /// can hand it what it takes and take what it answers.
     ///
-    /// `names` are what its declaration calls what it takes, and none for a composition.
+    /// `names` are what its declaration calls what it takes, and none for a composition. `union` is
+    /// where it answers a union no declaration names: the cases that descends to, and what a host
+    /// asks which of them an answer is through, where it can.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn behavior(
         &mut self,
@@ -369,6 +371,7 @@ impl Surface {
         names: Option<&[String]>,
         takes: &[Ty],
         answers: &Ty,
+        union: Option<(&[transport::Case], Option<&HostFunction>)>,
         declared: &Declared,
         call: Option<&HostFunction>,
     ) {
@@ -380,7 +383,13 @@ impl Surface {
                     takes.iter().map(|ty| type_of(ty, declared)).collect(),
                 ),
             },
-            answers: type_of(answers, declared),
+            answers: manifest::Answer {
+                ty: type_of(answers, declared),
+                union: union.map(|(cases, case)| manifest::UnionAnswer {
+                    cases: cases.iter().map(|it| case_of(it, declared)).collect(),
+                    case: case.map(HostFunction::described),
+                }),
+            },
             call: call.map(HostFunction::described),
         };
         self.module(module).behaviors.push(behavior);
@@ -539,12 +548,23 @@ pub(crate) fn written(manifest: &Manifest) -> String {
 /// Every function the manifest names, in the order the header declares them.
 fn functions(manifest: &Manifest) -> impl Iterator<Item = &manifest::Function> {
     let modules = manifest.modules.iter().flat_map(|module| {
-        let behaviors = module.behaviors.iter().filter_map(|it| it.call.as_ref());
+        let behaviors = module.behaviors.iter().flat_map(behavior_functions);
         let values = module.values.iter().filter_map(|it| it.read.as_ref());
         let declarations = module.declarations.iter().flat_map(declaration_functions);
         behaviors.chain(values).chain(declarations)
     });
     manifest.runtime.iter().chain(modules)
+}
+
+/// Every function a behavior is reached through, in the order the header declares them: its call,
+/// and which case its answer is.
+fn behavior_functions(behavior: &manifest::Behavior) -> impl Iterator<Item = &manifest::Function> {
+    let case = behavior
+        .answers
+        .union
+        .as_ref()
+        .and_then(|union| union.case.as_ref());
+    behavior.call.iter().chain(case)
 }
 
 /// Every function a declaration is reached through, in the order the header declares them.
@@ -646,9 +666,13 @@ pub(crate) fn declarations(manifest: &Manifest) -> String {
         let name = &module.name;
         written.push_str(&format!("\n/* {name} */\n"));
         for behavior in &module.behaviors {
-            if let Some(call) = &behavior.call {
-                written.push_str(&format!("/* behavior {name}.{} */\n", behavior.name));
-                written.push_str(&declared(call));
+            let functions: Vec<&manifest::Function> = behavior_functions(behavior).collect();
+            if functions.is_empty() {
+                continue;
+            }
+            written.push_str(&format!("/* behavior {name}.{} */\n", behavior.name));
+            for function in functions {
+                written.push_str(&declared(function));
                 written.push('\n');
             }
         }

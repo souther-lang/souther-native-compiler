@@ -26,7 +26,7 @@ import static net.unit8.raoh.json.JsonDecoders.string;
 import static net.unit8.raoh.json.JsonDecoders.strict;
 
 /**
- * What a manifest says, as this generator reads it: version 3 of {@code souther-native-interface},
+ * What a manifest says, as this generator reads it: version 4 of {@code souther-native-interface},
  * and nothing else.
  *
  * <p>Read strictly, as the driver writes it. A member this does not name, or a version or ABI
@@ -41,7 +41,7 @@ record Manifest(int abi, Map<String, Integer> statuses, Map<String, Integer> out
     static final String FORMAT = "souther-native-interface";
 
     /** The version of what a manifest says that this reads. */
-    static final int VERSION = 3;
+    static final int VERSION = 4;
 
     /** The ABI generation the functions this binds answer to. */
     static final int ABI = 3;
@@ -64,7 +64,21 @@ record Manifest(int abi, Map<String, Integer> statuses, Map<String, Integer> out
     }
 
     /** A published behavior, and what a host calls it through where it can. */
-    record Behavior(String name, Parameters parameters, Type answers, @Nullable Function call) {
+    record Behavior(String name, Parameters parameters, Answer answers, @Nullable Function call) {
+    }
+
+    /**
+     * What a behavior answers, and where that is a union no declaration names, what a host tells
+     * its cases apart by.
+     */
+    record Answer(Type type, @Nullable UnionAnswer union) {
+    }
+
+    /**
+     * The cases a union a behavior answers descends to, a member that is a sum as its own cases,
+     * and what says which of them a value is, in the order they are listed.
+     */
+    record UnionAnswer(List<Case> cases, @Nullable Function which) {
     }
 
     /** What a behavior takes: named as its declaration names them, or in order for a composition. */
@@ -253,10 +267,18 @@ record Manifest(int abi, Map<String, Integer> statuses, Map<String, Integer> out
             strict(field("positional", list(TYPE)).asDecoder()
                     .<Parameters>map(Parameters.Positional::new), Set.of("positional")));
 
+    private static final Decoder<JsonNode, UnionAnswer> UNION_ANSWER = combine(
+            field("cases", list(CASE)),
+            nullableField("case", FUNCTION)).strict(UnionAnswer::new);
+
+    private static final Decoder<JsonNode, Answer> ANSWER = combine(
+            field("type", TYPE),
+            nullableField("union", UNION_ANSWER)).strict(Answer::new);
+
     private static final Decoder<JsonNode, Behavior> BEHAVIOR = combine(
             field("name", string()),
             field("parameters", PARAMETERS),
-            field("answers", TYPE),
+            field("answers", ANSWER),
             nullableField("call", FUNCTION)).strict(Behavior::new);
 
     private static final Decoder<JsonNode, Implementation> IMPLEMENTATION = combine(

@@ -205,9 +205,10 @@ pub fn constructor_symbol(module: &str, name: &str) -> String {
 /// and `_`.
 ///
 /// `souther<abi>`, then the module, one `_m_<segment>` per segment of its dotted name, then what is
-/// reached under it: `_b_<behavior>`, `_v_<value>`, or `_t_<type>` and the operation — `_construct`,
-/// `_f_<field>`, `_case`, `_decode`, `_encode`. The ABI generation is in it for the reason it is in
-/// every other function symbol here.
+/// reached under it: `_b_<behavior>`, with `_register`, `_implementation` or `_answer_case` after it
+/// for what is reached of the behavior, `_v_<value>`, or `_t_<type>` and the operation —
+/// `_construct`, `_f_<field>`, `_case`, `_decode`, `_encode`. The ABI generation is in it for the
+/// reason it is in every other function symbol here.
 ///
 /// A name is written as it is where it is ASCII letters and digits, with `_` doubled and any other
 /// character as `_u<hex>_`, its code point in lower-case hexadecimal. So a name reads as itself in
@@ -271,6 +272,17 @@ pub fn host_behavior_symbol(module: &str, behavior: &str) -> String {
 /// the pointer once for what it registers and hands the same one over each time.
 pub fn host_register_symbol(module: &str, behavior: &str) -> String {
     format!("{}_register", host_under(module, 'b', behavior))
+}
+
+/// Where a host asks which case the answer of a behavior is, where the behavior answers a union no
+/// declaration names: `(value) -> case`, the case's place among the ones the union descends to,
+/// counted from nought, the way [`host_case_symbol`] answers for a sum.
+///
+/// Under the behavior and not under the union, which has no name to be spelt under and is not one
+/// thing a second behavior answering the same members would share: what is asked is what this
+/// behavior answered.
+pub fn host_behavior_answer_case_symbol(module: &str, behavior: &str) -> String {
+    format!("{}_answer_case", host_under(module, 'b', behavior))
 }
 
 /// What a host calls the type of the function it registers through [`host_register_symbol`]: what
@@ -1197,9 +1209,10 @@ mod tests {
         ABI_GENERATION, FIRST_FIELD, HOST_STATUSES, IMPLEMENTATION_ANSWERS,
         INJECTION_PROTOCOL_VIOLATION, INJECTION_UNBOUND, SLOT, TOKEN, WHICH, behavior_symbol,
         boundary_symbol, constructor_symbol, example_symbol, field_at, held_symbol, home_symbol,
-        host_behavior_symbol, host_case_symbol, host_constructor_symbol, host_decode_symbol,
-        host_encode_symbol, host_field_symbol, host_implementation_type, host_register_symbol,
-        host_value_symbol, member_at, reader_symbol, type_symbol, value_symbol,
+        host_behavior_answer_case_symbol, host_behavior_symbol, host_case_symbol,
+        host_constructor_symbol, host_decode_symbol, host_encode_symbol, host_field_symbol,
+        host_implementation_type, host_register_symbol, host_value_symbol, member_at,
+        reader_symbol, type_symbol, value_symbol,
     };
 
     #[test]
@@ -1430,6 +1443,10 @@ mod tests {
             host_value_symbol("lib.shop", "standard"),
             "souther3_m_lib_m_shop_v_standard"
         );
+        assert_eq!(
+            host_behavior_answer_case_symbol("lib.shop", "find"),
+            "souther3_m_lib_m_shop_b_find_answer_case"
+        );
     }
 
     #[test]
@@ -1583,6 +1600,13 @@ mod tests {
                         under(module, vec![named('b', name), operation(done)]),
                     );
                 }
+                hold(
+                    host_behavior_answer_case_symbol(module, name),
+                    under(
+                        module,
+                        vec![named('b', name), operation("answer"), operation("case")],
+                    ),
+                );
                 for (symbol, done) in [
                     (host_constructor_symbol(module, name), "construct"),
                     (host_case_symbol(module, name), "case"),
