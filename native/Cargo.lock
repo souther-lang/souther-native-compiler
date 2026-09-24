@@ -476,6 +476,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba467056f1b547ed52077911161fc86985becbc60e8e1857c8a144dab0def891"
 
 [[package]]
+name = "souther-json-syntax"
+version = "0.1.0"
+
+[[package]]
 name = "souther-native-abi"
 version = "0.1.0"
 
@@ -495,7 +499,9 @@ dependencies = [
 name = "souther-native-runtime"
 version = "0.1.0"
 dependencies = [
+ "souther-json-syntax",
  "souther-native-abi",
+ "unicode-normalization",
 ]
 
 [[package]]
@@ -535,10 +541,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "tinyvec"
+version = "1.13.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fd3ca314f692efd6c868f8408f53fe444634a845f96c028b97d35f6a1f79f0ee"
+
+[[package]]
 name = "unicode-ident"
 version = "1.0.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d245f478577f809a851594d02313b640fb437e0bb33866753cff937863096954"
+
+[[package]]
+name = "unicode-normalization"
+version = "0.1.25"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5fd4f6878c9cb28d874b009da9e8d183b5abc80117c40bbd187a1fde336be6e8"
+dependencies = [
+ "tinyvec",
+]
 
 [[package]]
 name = "wasmtime-internal-core"

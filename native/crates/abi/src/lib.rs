@@ -254,6 +254,63 @@ pub fn host_case_symbol(module: &str, name: &str) -> String {
     format!("{}$case", host_type_prefix(module, name))
 }
 
+/// Where a host reads a value of a declared type out of the language's external form: JSON as
+/// bytes it holds, `(bytes, length, out) -> status`.
+///
+/// The status is a Souther computation's, the way every other one is: a clause the reading runs
+/// that ends without a value — dividing by nought, leaving an `Int`'s range — answers why, and
+/// nothing is written through `out`. Otherwise `out` is handed a reading the host asks through the
+/// `DECODED_*` symbols below: a value, the issues found, or where the bytes stopped being JSON. A
+/// clause that does not hold is one of the issues and not a status: at the boundary it is what was
+/// written, not a computation that could not answer.
+///
+/// # Panics
+///
+/// Where either name does not stand in a symbol.
+pub fn host_decode_symbol(module: &str, name: &str) -> String {
+    format!("{}$decode", host_type_prefix(module, name))
+}
+
+/// Where a host writes a value of a declared type in the language's external form: `(value) ->
+/// string`, JSON in a string of the runtime's layout, in the arena. Writing a value ends with its
+/// form whatever the value is, so this answers no status.
+///
+/// # Panics
+///
+/// Where either name does not stand in a symbol.
+pub fn host_encode_symbol(module: &str, name: &str) -> String {
+    format!("{}$encode", host_type_prefix(module, name))
+}
+
+/// The symbol a value of a declared type is read out of a document through, by another object this
+/// compiler built: `(node, path, reading, out) -> status`, the three pointers being the runtime's
+/// and never looked behind.
+///
+/// Defined by the object of the build that declared the type, beside its constructor and for the
+/// same reason: a reading ends in the type's clauses, and which clause did not hold is something
+/// only the build that runs them can say. A build reading a value of a type another declared calls
+/// this rather than the constructor, whose status says a clause did not hold and not which.
+///
+/// Nothing is written through `out` unless the status is `ANSWERED`, and then what is written is
+/// the value, or nothing ([`NOTHING`]) where what stands there is not one and the reading was told
+/// why.
+///
+/// # Panics
+///
+/// Where either name does not stand in a symbol.
+pub fn reader_symbol(module: &str, name: &str) -> String {
+    assert!(
+        spells_a_module(module),
+        "a module's name carries no dollar, and the symbol is split on one: {module}"
+    );
+    assert!(
+        spells_a_name(name),
+        "a declared type's name carries neither dollar nor dot, and the symbol is split on \
+         both: {name}"
+    );
+    format!("souther{ABI}.{module}$read${name}")
+}
+
 /// The symbol the object carries for one of a behavior's `example` rows.
 ///
 /// A row states the values to hand over, so what stands under this name takes nothing: the values
@@ -504,6 +561,79 @@ pub const EXTERNAL_OBJECT: &str = "souther_external_object";
 pub const EXTERNAL_PUT: &str = "souther_external_put";
 /// `(form) -> string`: the whole tree written as JSON, and dropped.
 pub const EXTERNAL_JSON: &str = "souther_external_json";
+
+/// Reading a document, from its bytes to what a host is answered. Generated code begins one with
+/// the bytes, `(bytes, length) -> reading`; asks for its root, `(reading) -> node`, which is null
+/// where the bytes were not JSON; and ends it with what it read, `(reading, value)`, the value null
+/// where it read none. A reading whose clauses ended without a value is abandoned, `(reading)`, and
+/// not answered. The reading, its issues and every string they hold are taken from the arena; the
+/// document is not, and ending or abandoning a reading is what drops it.
+pub const DECODE_BEGIN: &str = "souther_decode_begin";
+/// `(reading) -> node`.
+pub const DECODE_ROOT: &str = "souther_decode_root";
+/// `(reading, value)`.
+pub const DECODE_END: &str = "souther_decode_end";
+/// `(reading)`.
+pub const DECODE_ABANDON: &str = "souther_decode_abandon";
+
+/// What a generated reader asks of one place in a document, and records where it is not what the
+/// declaration says. `path` is the place's, made with `PATH_BELOW` from the root, which is null.
+/// `(path, step string) -> path`.
+pub const PATH_BELOW: &str = "souther_path_below";
+/// `(node, path, reading) -> i8`: whether it is an object.
+pub const READ_OBJECT: &str = "souther_read_object";
+/// `(node, key string) -> node`: an object's member, null where there is none.
+pub const READ_MEMBER: &str = "souther_read_member";
+/// `(path, reading)`: a field every value has was not written.
+pub const READ_MISSING: &str = "souther_read_missing";
+/// `(node) -> i8`: whether it is `null`.
+pub const READ_NULL: &str = "souther_read_null";
+/// `(node, path, reading, out) -> i8`: an `Int` written through `out`.
+pub const READ_INT: &str = "souther_read_int";
+/// `(node, path, reading, out) -> i8`: a `Bool` written through `out` as one byte.
+pub const READ_BOOL: &str = "souther_read_bool";
+/// `(node, path, reading, out) -> i8`: a string of this crate's layout written through `out`.
+pub const READ_STRING: &str = "souther_read_string";
+/// `(node, path, reading) -> i8`: whether it is text naming a case.
+pub const READ_CASE: &str = "souther_read_case";
+/// `(node, key string, path, reading) -> node`: the text an object names its case with under a
+/// key, null where it names none.
+pub const READ_TAG: &str = "souther_read_tag";
+/// `(node, name string) -> i8`: whether the text is that name.
+pub const READ_IS: &str = "souther_read_is";
+/// `(node, path, reading)`: the text names no case there is.
+pub const READ_NOT_A_CASE: &str = "souther_read_not_a_case";
+/// `(path, reading, module string, name string, clause string)`: a value read there breaks a
+/// clause, the clause's name null where it has none.
+pub const READ_INVARIANT: &str = "souther_read_invariant";
+
+/// What a host asks a reading once a decoder has answered it. `(reading) -> i32`, one of the three
+/// below.
+pub const DECODED_OUTCOME: &str = "souther_decoded_outcome";
+/// The document was read as a value, which `DECODED_VALUE_OF` answers.
+pub const DECODED_VALUE: i32 = 0;
+/// The document is JSON and not a value of the type, and the issues say why.
+pub const DECODED_ISSUES: i32 = 1;
+/// The bytes are not JSON, and `DECODED_MALFORMED_AT` says where they stopped being it.
+pub const DECODED_MALFORMED: i32 = 2;
+/// `(reading) -> value`.
+pub const DECODED_VALUE_OF: &str = "souther_decoded_value";
+/// `(reading) -> i64`: the offset of the first byte that could not be read.
+pub const DECODED_MALFORMED_AT: &str = "souther_decoded_malformed_at";
+/// `(reading) -> i64`.
+pub const DECODED_ISSUE_COUNT: &str = "souther_decoded_issue_count";
+/// `(reading, i64) -> issue`, in the order they were found.
+pub const DECODED_ISSUE: &str = "souther_decoded_issue";
+/// `(issue) -> string`: one of Raoh's codes.
+pub const ISSUE_CODE: &str = "souther_issue_code";
+/// `(issue) -> string`: a JSON Pointer, empty for the document's root.
+pub const ISSUE_PATH: &str = "souther_issue_path";
+/// `(issue) -> i64`: how many named entries it carries, which is what Raoh calls its metadata.
+pub const ISSUE_META_COUNT: &str = "souther_issue_meta_count";
+/// `(issue, i64) -> string`: an entry's name.
+pub const ISSUE_META_KEY: &str = "souther_issue_meta_key";
+/// `(issue, i64) -> string`: what an entry says.
+pub const ISSUE_META_VALUE: &str = "souther_issue_meta_value";
 
 /// What a generated function answers with instead of its value directly.
 ///

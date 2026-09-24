@@ -10,3 +10,6 @@ crate-type = ["staticlib", "rlib"]
 
 [dependencies]
 souther-native-abi.workspace = true
+souther-json-syntax.workspace = true
+# What text arriving from outside is canonicalized to (spec §string-canonical).
+unicode-normalization = "0.1"
