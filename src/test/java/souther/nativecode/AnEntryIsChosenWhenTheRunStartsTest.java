@@ -53,7 +53,13 @@ class AnEntryIsChosenWhenTheRunStartsTest {
                 .isEqualTo(new ObservedValue.Integer(3));
 
         // Another Running of the same program, so that what is kept is not kept by the first.
-        Running second = Running.of(program);
+        // and of a program checked again from the same source, so that what is kept is kept by
+        // what the program says and not by which object happens to hold it.
+        CheckedProgram again = CheckedProgram.of(List.of(SOURCE));
+        CheckedModule moduleAgain = again.modules().stream()
+                .filter(it -> it.name().equals("entriesChosenLate")).findFirst().orElseThrow();
+        module = moduleAgain;
+        Running second = Running.of(again);
         assertThat(second.answering(module, behavior(module, "second"),
                 List.of(new ObservedValue.Integer(4), new ObservedValue.Integer(5))))
                 .isEqualTo(new ObservedValue.Integer(20));
@@ -62,6 +68,25 @@ class AnEntryIsChosenWhenTheRunStartsTest {
 
         assertThat(NativeArtifacts.compilationsOf(program)).isEqualTo(1);
         assertThat(NativeArtifacts.linksOf(program)).isEqualTo(1);
+    }
+
+    @Test
+    void whatIsKeptIsNotChangedByAnArrayAnyoneStillHolds() throws Exception {
+        CheckedProgram program = CheckedProgram.of(List.of(SOURCE.replace(
+                "entriesChosenLate", "entriesKeptApart")));
+
+        byte[] handedOut = NativeArtifacts.object(program);
+        byte[] before = handedOut.clone();
+        java.util.Arrays.fill(handedOut, (byte) 0);
+        assertThat(NativeArtifacts.object(program)).isEqualTo(before);
+
+        // An array given to Running is copied when it is given, so the key and the link are of
+        // the same bytes even if the caller writes to it afterwards.
+        byte[] beside = before.clone();
+        Running running = Running.of(program, List.of(beside));
+        java.util.Arrays.fill(beside, (byte) 0);
+        assertThat(running).isNotNull();
+        assertThat(NativeArtifacts.object(program)).isEqualTo(before);
     }
 
     private static CheckedBehavior behavior(CheckedModule module, String name) {

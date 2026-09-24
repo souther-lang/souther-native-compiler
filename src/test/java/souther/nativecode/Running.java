@@ -64,9 +64,9 @@ final class Running {
     private record Entry(String name, String symbol, List<Type> takes) {}
 
     private final CheckedProgram program;
-    private final List<byte[]> alongside;
+    private final List<NativeArtifacts.Bytes> alongside;
 
-    private Running(CheckedProgram program, List<byte[]> alongside) {
+    private Running(CheckedProgram program, List<NativeArtifacts.Bytes> alongside) {
         this.program = program;
         this.alongside = alongside;
     }
@@ -91,7 +91,8 @@ final class Running {
      * there is nothing here to release.
      */
     static Running of(CheckedProgram program, List<byte[]> alongside) {
-        return new Running(program, List.copyOf(alongside));
+        // The bytes are this Running's from here on, whatever the caller does with its arrays.
+        return new Running(program, alongside.stream().map(NativeArtifacts.Bytes::new).toList());
     }
 
     /**

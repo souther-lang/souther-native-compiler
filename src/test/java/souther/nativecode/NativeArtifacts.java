@@ -5,11 +5,11 @@ import souther.nativecode.transport.ProgramWriter;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
-import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -34,11 +34,42 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 final class NativeArtifacts {
 
+    /**
+     * Bytes as a value: copied when made and when read out, and equal by what they hold. An array
+     * handed across this boundary stays its owner's, so what the cache keys on, what it links and
+     * what it hands back are the same bytes and nobody's later write reaches them.
+     */
+    static final class Bytes {
+        private final byte[] held;
+
+        Bytes(byte[] given) {
+            this.held = given.clone();
+        }
+
+        byte[] copy() {
+            return held.clone();
+        }
+
+        @Override
+        public boolean equals(java.lang.Object other) {
+            return other instanceof Bytes it && Arrays.equals(held, it.held);
+        }
+
+        @Override
+        public int hashCode() {
+            return Arrays.hashCode(held);
+        }
+    }
+
     /** What the linker was handed to make one executable. */
-    private record Linked(String document, List<ByteBuffer> alongside, String harness) {}
+    private record Linked(String document, List<Bytes> alongside, String harness) {}
 
     /** An object, and the symbols it defines. */
-    record Built(byte[] bytes, Set<String> defined) {}
+    record Built(Bytes bytes, Set<String> defined) {
+        Built {
+            defined = Set.copyOf(defined);
+        }
+    }
 
     private static final ConcurrentMap<String, Built> OBJECTS = new ConcurrentHashMap<>();
     private static final ConcurrentMap<Linked, Path> EXECUTABLES = new ConcurrentHashMap<>();
@@ -72,7 +103,7 @@ final class NativeArtifacts {
      * {@link NativeCompiler#compile} itself, so that what it observes is not an earlier answer.
      */
     static byte[] object(CheckedProgram program) throws IOException, InterruptedException {
-        return built(program).bytes();
+        return built(program).bytes().copy();
     }
 
     static Built built(CheckedProgram program) throws IOException, InterruptedException {
@@ -82,7 +113,7 @@ final class NativeArtifacts {
                 try {
                     COMPILED.computeIfAbsent(document, d -> new AtomicInteger()).incrementAndGet();
                     byte[] bytes = NativeCompiler.compile(program);
-                    return new Built(bytes, definedIn(bytes));
+                    return new Built(new Bytes(bytes), definedIn(bytes));
                 } catch (IOException e) {
                     throw new UncheckedIOException(e);
                 } catch (InterruptedException e) {
@@ -96,19 +127,15 @@ final class NativeArtifacts {
     }
 
     /** The executable the linker makes of these, which is one wherever and however often asked. */
-    static Path executable(CheckedProgram program, List<byte[]> alongside, String harness)
+    static Path executable(CheckedProgram program, List<Bytes> alongside, String harness)
             throws IOException, InterruptedException {
         String document = ProgramWriter.written(program);
-        List<ByteBuffer> beside = new ArrayList<>();
-        for (byte[] built : alongside) {
-            beside.add(ByteBuffer.wrap(built.clone()).asReadOnlyBuffer());
-        }
-        Linked key = new Linked(document, List.copyOf(beside), harness);
+        Linked key = new Linked(document, List.copyOf(alongside), harness);
         Path already = EXECUTABLES.get(key);
         if (already != null) {
             return already;
         }
-        byte[] object = object(program);
+        Bytes object = built(program).bytes();
         try {
             return EXECUTABLES.computeIfAbsent(key, ignored -> {
                 try {
@@ -138,20 +165,20 @@ final class NativeArtifacts {
         return count == null ? 0 : count.get();
     }
 
-    private static Path link(byte[] object, List<byte[]> alongside, String harness)
+    private static Path link(Bytes object, List<Bytes> alongside, String harness)
             throws IOException, InterruptedException {
         Path into = Files.createDirectory(ROOT.resolve(Integer.toString(NUMBER.getAndIncrement())));
         Path source = into.resolve("harness.c");
         Files.writeString(source, harness, StandardCharsets.UTF_8);
         Path program = into.resolve("program.o");
-        Files.write(program, object);
+        Files.write(program, object.copy());
         Path executable = into.resolve("run");
 
         List<String> command = new ArrayList<>(List.of("cc", "-o", executable.toString(),
                 source.toString(), program.toString()));
         for (int at = 0; at < alongside.size(); at++) {
             Path beside = into.resolve("alongside." + at + ".o");
-            Files.write(beside, alongside.get(at));
+            Files.write(beside, alongside.get(at).copy());
             command.add(beside.toString());
         }
         command.add(RUNTIME.toString());
