@@ -30,7 +30,7 @@ use souther_native_abi::{
     room_for_text, spells_a_module, spells_a_name, type_symbol, value_symbol,
 };
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use transport::{
     AbortKind, AlternativesForm, Answers, Arm, Case, Declaration, DeclaredBy, Definition, Node, Op,
@@ -243,6 +243,19 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
         index::unique(&mut lifted, site, id);
     }
 
+    // The constructor of every declaration built here, declared before any body is, since every
+    // construction calls one and a clause may build a value of its own type.
+    let mut constructors = Constructors::default();
+    for key in constructed(program, &declared) {
+        let declaration = declared.laid(key);
+        let signature = constructor_signature(declaration, call_conv)?;
+        // Kept to this object. It is how the language builds a value of the type, and what a host
+        // calls to build one is a boundary of its own to design, not this.
+        let symbol = format!("$construct${}${}", declaration.module(), declaration.name());
+        let id = accepted(module.declare_function(&symbol, Linkage::Local, &signature));
+        index::unique(&mut constructors.by_key, key.to_string(), id);
+    }
+
     // Every function is declared before any is defined, because a body may reach one written
     // after it — a definition that calls itself reaches itself, and two that call each other
     // reach one another. Nothing here orders the program to make that go away.
@@ -383,6 +396,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
                 lifted: &lifted,
                 targets: &targets,
                 literals: &literals,
+                constructors: &constructors,
             };
             define(
                 &mut context.func,
@@ -412,6 +426,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
                 lifted: &lifted,
                 targets: &targets,
                 literals: &literals,
+                constructors: &constructors,
             };
             define(
                 &mut context.func,
@@ -440,6 +455,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
                 lifted: &lifted,
                 targets: &targets,
                 literals: &literals,
+                constructors: &constructors,
             };
             // Taking nothing, the same as a row's entry: what a value needs is handed over inside
             // its own body (`Reaches::Value`, threading each handover), never by a caller of this
@@ -480,6 +496,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
                         lifted: &lifted,
                         targets: &targets,
                         literals: &literals,
+                        constructors: &constructors,
                     };
                     define(
                         &mut context.func,
@@ -514,6 +531,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
                         lifted: &lifted,
                         targets: &targets,
                         literals: &literals,
+                        constructors: &constructors,
                     };
                     define_composed(
                         &mut context.func,
@@ -547,6 +565,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
                 lifted: &lifted,
                 targets: &targets,
                 literals: &literals,
+                constructors: &constructors,
             };
             // Taking nothing: what the row states is written into the body, so an entry with
             // parameters would be a row whose values came from whoever ran it.
@@ -585,11 +604,41 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
             lifted: &lifted,
             targets: &targets,
             literals: &literals,
+            constructors: &constructors,
         };
         define_closure(
             &mut context.func,
             &mut shapes,
             plan,
+            frontend,
+            &lowering,
+            &mut module,
+        )?;
+        accepted(module.define_function(id, &mut context));
+    }
+
+    for (key, &id) in &constructors.by_key {
+        let declaration = declared.laid(key);
+        let signature = constructor_signature(declaration, call_conv)?;
+        context.clear();
+        context.func = Function::with_name_signature(UserFuncName::default(), signature);
+        let lowering = Lowering {
+            declared: &declared,
+            reachable: &reachable,
+            carrier: declaration.module(),
+            allocate,
+            compare_text,
+            join_text,
+            closures: &closures,
+            lifted: &lifted,
+            targets: &targets,
+            literals: &literals,
+            constructors: &constructors,
+        };
+        define_constructor(
+            &mut context.func,
+            &mut shapes,
+            declaration,
             frontend,
             &lowering,
             &mut module,
@@ -838,26 +887,20 @@ fn handover_types(value: &transport::Value) -> Vec<Ty> {
 fn published_value_calls(program: &Program) -> BTreeMap<(String, String), Ty> {
     let mut found = BTreeMap::new();
     for body in program.bodies() {
-        walk_calls(body.node, &mut found);
+        body.node.each(&mut |node| {
+            if let Node::Call {
+                reaches: Reaches::PublishedValue { module, name },
+                ty,
+                ..
+            } = node
+            {
+                found
+                    .entry((module.clone(), name.clone()))
+                    .or_insert_with(|| ty.clone());
+            }
+        });
     }
     found
-}
-
-/// Every `Reaches::PublishedValue` under `node`, depth first.
-fn walk_calls(node: &Node, found: &mut BTreeMap<(String, String), Ty>) {
-    if let Node::Call {
-        reaches: Reaches::PublishedValue { module, name },
-        ty,
-        ..
-    } = node
-    {
-        found
-            .entry((module.clone(), name.clone()))
-            .or_insert_with(|| ty.clone());
-    }
-    for child in node.children() {
-        walk_calls(child, found);
-    }
 }
 
 /// Every declared type of the program, by the key a reference to one says.
@@ -1252,6 +1295,8 @@ struct Lowering<'a> {
     lifted: &'a BTreeMap<usize, FuncId>,
     /// What string literals this object already holds.
     literals: &'a Literals,
+    /// The constructor of every declaration a body here builds a value of.
+    constructors: &'a Constructors,
     /// Every behavior the document names, which is where what a composition's stage answers is
     /// read.
     targets: &'a Targets<'a>,
@@ -1645,6 +1690,157 @@ fn define_closure(
     Ok(())
 }
 
+/// The one function a value of a declaration is built by, for every declaration this object
+/// builds a value of.
+///
+/// Built from the declarations `constructed` found, so asking for one nothing here builds is this
+/// compiler's mistake.
+#[derive(Default)]
+struct Constructors {
+    by_key: BTreeMap<String, FuncId>,
+}
+
+impl Constructors {
+    fn of(&self, declared: &str) -> FuncId {
+        *self.by_key.get(declared).expect(
+            "every declaration a body builds was given a constructor before any was defined",
+        )
+    }
+}
+
+/// Every declaration a value of which is built here: one a body outside a clause builds, and one a
+/// clause of such a declaration builds, since the clause runs wherever its own declaration's value
+/// is built.
+///
+/// Not every declaration the document carries. Reading a declaration and laying a value of it out
+/// are two questions, and a declaration nothing builds a value of is not asked the second: its
+/// fields may be of a type with no representation here, and the program is not refused for it.
+fn constructed<'p>(program: &'p Program, declared: &Declared<'p>) -> BTreeSet<&'p str> {
+    let mut built: BTreeSet<&'p str> = BTreeSet::new();
+    let mut pending: Vec<&'p str> = Vec::new();
+    let note = |node: &'p Node, built: &mut BTreeSet<&'p str>, pending: &mut Vec<&'p str>| {
+        each_construction(node, &mut |key| {
+            if built.insert(key) {
+                pending.push(key);
+            }
+        });
+    };
+    for body in program.bodies() {
+        if !matches!(body.owner, transport::Owner::Invariant { .. }) {
+            note(body.node, &mut built, &mut pending);
+        }
+    }
+    while let Some(key) = pending.pop() {
+        for clause in declared.laid(key).invariants() {
+            note(&clause.condition, &mut built, &mut pending);
+        }
+    }
+    built
+}
+
+/// The declaration of every construction under `node`.
+fn each_construction<'p>(node: &'p Node, found: &mut impl FnMut(&'p str)) {
+    node.each(&mut |it| {
+        if let Node::Construct { declared, .. } = it {
+            found(declared);
+        }
+    });
+}
+
+/// What a declaration's constructor takes and answers: its fields, in the order they are laid out,
+/// and a value of it, in the `status + out` shape every generated function shares.
+fn constructor_signature(declaration: &Declaration, call_conv: CallConv) -> Lowered<ir::Signature> {
+    let takes: Vec<Ty> = declaration
+        .fields()
+        .iter()
+        .map(|field| field.codec.ty())
+        .collect();
+    signature_over(
+        &takes,
+        &Ty::Declared {
+            declared: declaration.key(),
+        },
+        call_conv,
+    )
+}
+
+/// A declaration's constructor: every clause run over the fields it was handed, in the order the
+/// declaration states them, and the value laid out only once all of them hold.
+///
+/// A field is put under the binding its clauses read it through and not under where it sits, which
+/// is what lets a clause a spread took in read the field the declaration that wrote it named.
+///
+/// A clause that does not hold ends the construction with `InvariantNotHeld`, and nothing after it
+/// runs. A clause that itself ends without a value, dividing by nought or leaving an `Int`'s range,
+/// ends it for that reason instead: the clause did not answer false, it did not answer.
+///
+/// Nothing is laid out before every clause has held, so a value that is not one of the type never
+/// exists, even in the arena.
+fn define_constructor(
+    function: &mut Function,
+    shapes: &mut FunctionBuilderContext,
+    declaration: &Declaration,
+    frontend: TargetFrontendConfig,
+    lowering: &Lowering,
+    module: &mut ObjectModule,
+) -> Lowered<()> {
+    let mut builder = FunctionBuilder::new(function, shapes);
+    let entry = builder.create_block();
+    builder.append_block_params_for_function_params(entry);
+    builder.switch_to_block(entry);
+    builder.seal_block(entry);
+
+    let fields = declaration.fields();
+    let mut bindings = Bindings::default();
+    let mut given = Vec::with_capacity(fields.len());
+    for (at, field) in fields.iter().enumerate() {
+        let value = builder.block_params(entry)[at];
+        let variable = builder.declare_var(machine_type(&field.codec.ty())?);
+        builder.def_var(variable, value);
+        bindings.at(field.binding, variable);
+        given.push(value);
+    }
+    let out = builder.block_params(entry)[fields.len()];
+
+    let abort = builder.create_block();
+    builder.append_block_param(abort, types::I32);
+
+    let not_held = native_status(AbortKind::InvariantNotHeld);
+    for clause in declaration.invariants() {
+        let holds = lower(
+            &mut builder,
+            lowering,
+            module,
+            &mut bindings,
+            abort,
+            &clause.condition,
+        )?;
+        let fails = builder.ins().icmp_imm_u(IntCC::Equal, holds, 0);
+        abort_where(&mut builder, abort, not_held, fails);
+    }
+
+    let value = lowering.room(&mut builder, module, room_for_fields(fields.len()));
+    let which = tag_of(&mut builder, lowering, module, &declaration.key())?;
+    builder.ins().store(TRUSTED, which, value, WHICH as i32);
+    for (at, field) in given.into_iter().enumerate() {
+        let held = into_slot(&mut builder, field);
+        builder
+            .ins()
+            .store(TRUSTED, held, value, field_at(at) as i32);
+    }
+    builder.ins().store(TRUSTED, value, out, 0);
+    let ok = builder.ins().iconst(types::I32, i64::from(ANSWERED));
+    builder.ins().return_(&[ok]);
+
+    builder.seal_block(abort);
+    builder.switch_to_block(abort);
+    let status = builder.block_params(abort)[0];
+    builder.ins().return_(&[status]);
+
+    builder.finalize(frontend);
+    Ok(())
+}
+
 /// A behavior written as stages applied in order, each offered what the one before answered.
 ///
 /// Nothing here is worked out again: which cases a stage is offered and what leaves the main line
@@ -1986,36 +2182,19 @@ fn lower(
             builder.ins().store(flags, which, value, WHICH as i32);
             value
         }
+        // What a construction does is its declaration's constructor's to do: the fields are worked
+        // out here, in the order they are written, and handed over. Whether the value is one the
+        // type admits, and how one is laid out, is answered in the one place every construction of
+        // the type reaches, so no site holds a copy of either.
         Node::Construct {
             declared, values, ..
         } => {
-            let shape = lowering.declared.laid(declared);
-            // A construction runs the type's clauses and stops at the first that does not hold,
-            // which is an abort and not a value. Nothing here runs one, and building the value
-            // without running them would make a type's invariant true of what this emits by
-            // omission.
-            if shape.invariants() > 0 {
-                return Err(not_lowered(format!(
-                    "a construction of {declared}, which states what every one of its values owes"
-                )));
-            }
-            // The fields are worked out before any room is taken, because working one out can
-            // take room of its own and what is half-written is not a value.
-            let mut held = Vec::with_capacity(values.len());
+            let mut given = Vec::with_capacity(values.len());
             for value in values {
-                let answered = lower(builder, lowering, module, bindings, abort, value)?;
-                held.push(into_slot(builder, answered));
+                given.push(lower(builder, lowering, module, bindings, abort, value)?);
             }
-            let flags = TRUSTED;
-            let value = lowering.room(builder, module, room_for_fields(values.len()));
-            let which = tag_of(builder, lowering, module, declared)?;
-            builder.ins().store(flags, which, value, WHICH as i32);
-            for (at, field) in held.into_iter().enumerate() {
-                builder
-                    .ins()
-                    .store(flags, field, value, field_at(at) as i32);
-            }
-            value
+            let constructor = lowering.constructors.of(declared);
+            call_reached(builder, module, abort, constructor, POINTER, &given)?
         }
         Node::Field {
             target, field, ty, ..

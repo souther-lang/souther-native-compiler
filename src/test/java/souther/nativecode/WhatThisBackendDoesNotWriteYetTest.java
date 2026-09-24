@@ -112,29 +112,6 @@ class WhatThisBackendDoesNotWriteYetTest {
     }
 
     /**
-     * A construction runs the type's clauses and stops at the first that does not hold. Nothing
-     * here runs one, and building the value anyway would make the type's invariant true of what
-     * this emits by leaving it out.
-     */
-    @Test
-    void aTypeThatSaysWhatItsValuesOweIsOneNothingIsBuiltOfYet() {
-        assertThatThrownBy(() -> NativeCompiler.compile(CheckedProgram.of(List.of("""
-                module owing
-
-                data Amount = { value: Int }
-                    invariant value >= 0
-
-                behavior of : (a: Int) -> Int
-                let of (a) = {
-                    let held = Amount { value = a }
-                    held.value
-                }
-                """))))
-                .isInstanceOf(NotLowered.class)
-                .hasMessageContaining("owing.Amount");
-    }
-
-    /**
      * A row states its values and the object carries an entry that runs them, so a value with no
      * expression to make it is a row the object cannot run.
      *

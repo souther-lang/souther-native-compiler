@@ -82,7 +82,7 @@ public final class ProgramWriter {
      * written moves, so that a driver and a writer that disagree say so rather than producing an
      * object that is wrong quietly.
      */
-    public static final int TRANSPORT_VERSION = 11;
+    public static final int TRANSPORT_VERSION = 12;
 
     private final CheckedProgram program;
 
@@ -247,17 +247,21 @@ public final class ProgramWriter {
                 + ",\"name\":" + quoted(name.name())
                 + ",\"by\":" + quoted(by(declared.declaredBy()));
         return switch (declared.data()) {
-            case CheckedData.Product it -> identity
-                    + ",\"is\":\"product\",\"fields\":" + fields(it)
-                    + ",\"invariants\":" + it.invariants().size() + "}";
+            case CheckedData.Product it -> {
+                Bindings bindings = fieldsBound(it);
+                yield identity + ",\"is\":\"product\",\"fields\":" + fields(it, bindings)
+                        + ",\"invariants\":" + invariants(it, bindings) + "}";
+            }
             // A newtype holds one value and is told apart from a product of one field by what may
             // be written of it, which is the checker's business and settled before this. Its one
             // field is written as one: a list that happens to hold one would be a shape the reader
             // has to be told is never longer.
-            case CheckedData.Newtype it -> identity
-                    + ",\"is\":\"newtype\",\"field\":"
-                    + field(it.fields().getFirst(), it.codecShapes().getFirst())
-                    + ",\"invariants\":" + it.invariants().size() + "}";
+            case CheckedData.Newtype it -> {
+                Bindings bindings = fieldsBound(it);
+                yield identity + ",\"is\":\"newtype\",\"field\":"
+                        + field(it.fields().getFirst(), it.codecShapes().getFirst(), bindings)
+                        + ",\"invariants\":" + invariants(it, bindings) + "}";
+            }
             // No field and no clause: a unit has neither, and writing an empty list of each would
             // be writing a place for them.
             case CheckedData.Unit it -> identity + ",\"is\":\"unit\"}";
@@ -304,7 +308,7 @@ public final class ProgramWriter {
      * only a field holds is met here — a declaration is where a type stops being reachable from
      * anything but itself.
      */
-    private String fields(CheckedData.WithFields held) {
+    private String fields(CheckedData.WithFields held, Bindings bindings) {
         List<ValueShape.Field> fields = held.fields();
         List<CheckedCodecShape> codecs = held.codecShapes();
         if (fields.size() != codecs.size()) {
@@ -313,13 +317,54 @@ public final class ProgramWriter {
         }
         StringJoiner written = new StringJoiner(",", "[", "]");
         for (int at = 0; at < fields.size(); at++) {
-            written.add(field(fields.get(at), codecs.get(at)));
+            written.add(field(fields.get(at), codecs.get(at), bindings));
         }
         return written.toString();
     }
 
-    private String field(ValueShape.Field field, CheckedCodecShape codec) {
-        return "{\"name\":" + quoted(field.name()) + ",\"codec\":" + codec(codec) + "}";
+    /**
+     * A field, what it carries, and the number a clause reads it under.
+     *
+     * <p>The number is the binding the checker gave the field, counted in this declaration's own
+     * {@link Bindings}, and not where the field sits. A clause a spread takes in reads the binding of
+     * the declaration that wrote the field, so the two are different facts that happen to agree
+     * most of the time, and a reader putting a field's value under its position would be running a
+     * clause over a value it was not written about the first time they did not.
+     */
+    private String field(ValueShape.Field field, CheckedCodecShape codec, Bindings bindings) {
+        return "{\"name\":" + quoted(field.name())
+                + ",\"binding\":" + bindings.of(field.binding(), field.name())
+                + ",\"codec\":" + codec(codec) + "}";
+    }
+
+    /**
+     * The bindings a declaration's clauses read its fields through, numbered before any clause is
+     * written: a clause reads a field and binds nothing a field is.
+     */
+    private static Bindings fieldsBound(CheckedData.WithFields held) {
+        Bindings bindings = new Bindings();
+        for (ValueShape.Field field : held.fields()) {
+            bindings.number(field.binding());
+        }
+        return bindings;
+    }
+
+    /**
+     * Every clause a value of this has to hold, in the order a failure is decided in: the name it
+     * is reported under, where the author gave one, and the condition as the checker elaborated
+     * it over the fields' bindings.
+     *
+     * <p>Every clause that applies and not the ones this declaration wrote, since a spread carries
+     * the clauses of what it takes in, and the checker has already said which those are.
+     */
+    private String invariants(CheckedData.WithFields held, Bindings bindings) {
+        StringJoiner written = new StringJoiner(",", "[", "]");
+        for (ValueShape.Invariant clause : held.invariants()) {
+            String name = clause.name().map(ProgramWriter::quoted).orElse("null");
+            written.add("{\"name\":" + name
+                    + ",\"condition\":" + core(clause.condition(), bindings) + "}");
+        }
+        return written.toString();
     }
 
     /** What a field carries across the boundary, as the check derived it. */

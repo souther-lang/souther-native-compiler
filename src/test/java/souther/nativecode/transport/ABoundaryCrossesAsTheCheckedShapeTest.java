@@ -64,10 +64,10 @@ class ABoundaryCrossesAsTheCheckedShapeTest {
     void aFieldCarriesItsCodecShapeWithItsName() {
         assertThat(written()).contains(
                 "\"name\":\"Holder\",\"by\":\"amodule\",\"is\":\"product\",\"fields\":["
-                        + "{\"name\":\"state\",\"codec\":{\"is\":\"named\",\"declared\":\"shop.Closed\"}},"
-                        + "{\"name\":\"note\",\"codec\":{\"is\":\"optionof\","
+                        + "{\"name\":\"state\",\"binding\":0,\"codec\":{\"is\":\"named\",\"declared\":\"shop.Closed\"}},"
+                        + "{\"name\":\"note\",\"binding\":1,\"codec\":{\"is\":\"optionof\","
                         + "\"present\":{\"is\":\"scalar\",\"scalar\":\"STRING\"}}},"
-                        + "{\"name\":\"phase\",\"codec\":{\"is\":\"named\",\"declared\":\"shop.Phase\"}}]");
+                        + "{\"name\":\"phase\",\"binding\":2,\"codec\":{\"is\":\"named\",\"declared\":\"shop.Phase\"}}]");
     }
 
     @Test
@@ -123,7 +123,7 @@ class ABoundaryCrossesAsTheCheckedShapeTest {
                 """)));
 
         assertThat(written).contains(
-                "{\"name\":\"items\",\"codec\":{\"is\":\"listof\","
+                "{\"name\":\"items\",\"binding\":0,\"codec\":{\"is\":\"listof\","
                         + "\"element\":{\"is\":\"scalar\",\"scalar\":\"INT\"}}}");
     }
 }

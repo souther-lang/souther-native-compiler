@@ -53,8 +53,8 @@
 use crate::closures::ClosureSites;
 use crate::index;
 use crate::transport::{
-    AbortKind, Answers, Case, Definition, Held, Node, Op, Owner, Prim, Program, Reaches, Routing,
-    Selects, Target, Ty, Value,
+    AbortKind, Answers, Case, Declaration, Definition, Held, Node, Op, Owner, Prim, Program,
+    Reaches, Routing, Selects, Target, Ty, Value,
 };
 use crate::{Declared, Targets, not_lowered, spelt};
 use anyhow::{Result, anyhow, bail};
@@ -139,18 +139,40 @@ impl<'a> Coherent<'a> {
         }
 
         for body in program.bodies() {
-            let (owner, takes) = match body.owner {
-                Owner::Helper(held) => (held.declared.clone(), held.takes()),
+            // What each body is handed, bound under the number the writer gave it: a parameter's
+            // is where it stands among the parameters, and a field's is the binding the checker
+            // gave the field, which is not where the field sits.
+            let positional =
+                |takes: Vec<Ty>| -> Vec<(usize, Ty)> { takes.into_iter().enumerate().collect() };
+            let (owner, bound) = match body.owner {
+                Owner::Helper(held) => (held.declared.clone(), positional(held.takes())),
                 Owner::Value(value) => (
                     value.declared(),
-                    value.handovers.iter().map(|it| it.ty.clone()).collect(),
+                    positional(value.handovers.iter().map(|it| it.ty.clone()).collect()),
                 ),
                 Owner::Entry(entry) => (
                     format!("the entry for {}", entry.value.declared()),
                     Vec::new(),
                 ),
-                Owner::Definition(declared) => {
-                    (declared.to_string(), targets.named(declared)?.takes())
+                Owner::Definition(declared) => (
+                    declared.to_string(),
+                    positional(targets.named(declared)?.takes()),
+                ),
+                Owner::Invariant { declaration, at } => {
+                    let clause = &declaration.invariants()[at];
+                    let owner = match &clause.name {
+                        Some(name) => format!("{}'s clause {name}", declaration.key()),
+                        None => format!("{}'s clause {at}", declaration.key()),
+                    };
+                    // What has to hold is a truth, whatever it reads.
+                    let truth = Ty::Prim { prim: Prim::Bool };
+                    if body.node.ty() != &truth {
+                        bail!(
+                            "{owner} is typed {}, where a clause is a truth",
+                            body.node.ty().spelt()
+                        );
+                    }
+                    (owner, fields_bound(declaration)?)
                 }
                 Owner::Example(example) => {
                     let behavior = format!("{}.{}", body.module, example.behavior);
@@ -176,7 +198,7 @@ impl<'a> Coherent<'a> {
                 bound: HashMap::new(),
                 owed: &mut owed,
             }
-            .under(takes.into_iter().enumerate().collect(), body.node)?;
+            .under(bound, body.node)?;
         }
 
         owed.settle(&declared)?;
@@ -816,7 +838,7 @@ impl<'a> Walk<'_, 'a> {
                 declared,
                 values,
                 ty,
-                ..
+                aborts,
             } => {
                 self.same(
                     &format!("a construction of {declared}"),
@@ -835,6 +857,26 @@ impl<'a> Walk<'_, 'a> {
                     bail!(
                         "{}: {declared} is constructed and is not declared with fields to build",
                         self.owner
+                    );
+                }
+                // A construction ends without a value where a clause does not hold, and the checker
+                // says so of exactly the constructions of a type that states one.
+                let owed: &[AbortKind] = if shape.invariants().is_empty() {
+                    &[]
+                } else {
+                    &[AbortKind::InvariantNotHeld]
+                };
+                if aborts.as_slice() != owed {
+                    let states = if owed.is_empty() {
+                        "states no clause"
+                    } else {
+                        "states what its values owe"
+                    };
+                    bail!(
+                        "{}: a construction of {declared}, whose type {states}, names {:?} as what \
+                         it can end without a value for: the two halves disagree",
+                        self.owner,
+                        aborts
                     );
                 }
                 if shape.field_count() != values.len() {
@@ -1467,6 +1509,24 @@ fn composes(
         &answers,
     );
     Ok(())
+}
+
+/// Each field of `declaration` under the binding its clauses read it through, at the type it holds.
+///
+/// Two fields under one binding would be a clause reading one name for two values.
+fn fields_bound(declaration: &Declaration) -> Result<Vec<(usize, Ty)>> {
+    let mut bound: Vec<(usize, Ty)> = Vec::new();
+    for field in declaration.fields() {
+        if bound.iter().any(|(binding, _)| *binding == field.binding) {
+            bail!(
+                "{} binds two fields under {}, which a clause reads as one value",
+                declaration.key(),
+                field.binding
+            );
+        }
+        bound.push((field.binding, field.codec.ty()));
+    }
+    Ok(bound)
 }
 
 /// Refuses a test naming no case, or naming a sum where the checker answers the leaves it descends

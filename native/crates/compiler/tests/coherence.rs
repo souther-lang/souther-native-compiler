@@ -21,14 +21,14 @@ const P: &str = r#"{"declared":"m.P"}"#;
 fn document(behaviors: &[String], helpers: &[String], definitions: &[String]) -> String {
     format!(
         concat!(
-            r#"{{"transport":11,"declarations":["#,
+            r#"{{"transport":12,"declarations":["#,
             r#"{{"module":"m","name":"A","by":"amodule","is":"unit"}},"#,
             r#"{{"module":"m","name":"B","by":"amodule","is":"unit"}},"#,
             r#"{{"module":"m","name":"S","by":"amodule","is":"sum","#,
             r#""cases":[{{"is":"declared","declared":"m.A"}},{{"is":"declared","declared":"m.B"}}],"#,
             r#""form":{{"is":"enumeration"}}}},"#,
             r#"{{"module":"m","name":"P","by":"amodule","is":"product","#,
-            r#""fields":[{{"name":"f","codec":{{"is":"named","declared":"m.S"}}}}],"invariants":0}}],"#,
+            r#""fields":[{{"name":"f","binding":0,"codec":{{"is":"named","declared":"m.S"}}}}],"invariants":[]}}],"#,
             r#""behaviors":[{}],"#,
             r#""modules":[{{"name":"m","helpers":[{}],"values":[],"entries":[],"definitions":[{}],"#,
             r#""examples":[]}}]}}"#
@@ -1099,4 +1099,109 @@ fn a_concat_of_two_strings_reads_whole() {
         INT,
     );
     is_the_halves_disagreeing(&helpers(&[h(&[STRING, STRING], &answered_wrong)]), "++");
+}
+
+/// The product `m.R` with the fields and clauses given, and the helpers given; one module `m`.
+fn with_clauses(fields: &str, invariants: &str, helpers: &[String]) -> String {
+    format!(
+        concat!(
+            r#"{{"transport":12,"declarations":["#,
+            r#"{{"module":"m","name":"R","by":"amodule","is":"product","#,
+            r#""fields":[{}],"invariants":[{}]}}],"#,
+            r#""behaviors":[],"#,
+            r#""modules":[{{"name":"m","helpers":[{}],"values":[],"entries":[],"definitions":[],"#,
+            r#""examples":[]}}]}}"#
+        ),
+        fields,
+        invariants,
+        helpers.join(",")
+    )
+}
+
+fn field(name: &str, binding: usize, scalar: &str) -> String {
+    format!(
+        r#"{{"name":"{name}","binding":{binding},"codec":{{"is":"scalar","scalar":"{scalar}"}}}}"#
+    )
+}
+
+fn clause(name: Option<&str>, condition: &str) -> String {
+    let name = name.map_or("null".to_string(), |it| format!(r#""{it}""#));
+    format!(r#"{{"name":{name},"condition":{condition}}}"#)
+}
+
+fn at_least(left: &str, right: &str) -> String {
+    node(
+        "binary",
+        &format!(r#""op":"GE","left":{left},"right":{right}"#),
+        BOOL,
+    )
+}
+
+/// A clause reads each field under the binding the field is bound at, which need not be where the
+/// field sits: here the `Bool` is laid out first and bound second.
+#[test]
+fn a_clause_reads_a_field_under_its_binding_and_not_its_position() {
+    let fields = [field("flag", 1, "BOOL"), field("count", 0, "INT")].join(",");
+    let holds = clause(Some("counted"), &at_least(&read(0, INT), &int(0)));
+    reads_whole(&with_clauses(&fields, &holds, &[]));
+
+    let by_position = clause(Some("counted"), &at_least(&read(1, INT), &int(0)));
+    is_the_halves_disagreeing(
+        &with_clauses(&fields, &by_position, &[]),
+        "m.R's clause counted",
+    );
+}
+
+/// What a clause reads is one of the fields and nothing else.
+#[test]
+fn a_clause_reads_only_what_its_fields_bind() {
+    let fields = field("count", 0, "INT");
+    let stray = clause(None, &at_least(&read(3, INT), &int(0)));
+    is_the_halves_disagreeing(&with_clauses(&fields, &stray, &[]), "m.R's clause 0");
+}
+
+/// A clause is something that has to hold, so it is a truth.
+#[test]
+fn a_clause_is_a_truth() {
+    let fields = field("count", 0, "INT");
+    is_the_halves_disagreeing(
+        &with_clauses(&fields, &clause(None, &read(0, INT)), &[]),
+        "where a clause is a truth",
+    );
+}
+
+/// Two fields under one binding would be one name read for two values.
+#[test]
+fn no_two_fields_share_a_binding() {
+    let fields = [field("one", 0, "INT"), field("other", 0, "INT")].join(",");
+    let holds = clause(None, &at_least(&read(0, INT), &int(0)));
+    is_the_halves_disagreeing(
+        &with_clauses(&fields, &holds, &[]),
+        "binds two fields under 0",
+    );
+}
+
+/// A construction of a type that states a clause names `INVARIANT_NOT_HELD` as what it can end
+/// with, and one of a type that states none names nothing: the checker says so, and a document
+/// saying otherwise disagrees about the type.
+#[test]
+fn a_construction_says_it_can_fail_exactly_where_its_type_states_a_clause() {
+    let built = |aborts: &str| {
+        format!(
+            r#"{{"core":"construct","declared":"m.R","values":[{}],"type":{{"declared":"m.R"}},"aborts":{aborts}}}"#,
+            int(1)
+        )
+    };
+    let fields = field("count", 0, "INT");
+    let holds = clause(None, &at_least(&read(0, INT), &int(0)));
+    let owing = |aborts: &str| with_clauses(&fields, &holds, &[h(&[], &built(aborts))]);
+    let owing_nothing = |aborts: &str| with_clauses(&fields, "", &[h(&[], &built(aborts))]);
+
+    reads_whole(&owing(r#"["INVARIANT_NOT_HELD"]"#));
+    reads_whole(&owing_nothing("[]"));
+    is_the_halves_disagreeing(&owing("[]"), "states what its values owe");
+    is_the_halves_disagreeing(
+        &owing_nothing(r#"["INVARIANT_NOT_HELD"]"#),
+        "states no clause",
+    );
 }

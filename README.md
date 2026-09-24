@@ -86,8 +86,12 @@ owns, under a name the linker resolves, so a fork in one object over a value bui
 compares what the linker resolved for both. A type whose representation is still to be designed
 does not cross, and the signature is where that is said.
 
-A type that states what its values owe is not built: a construction runs those clauses and stops at
-the first that does not hold, and nothing here runs one.
+A type that states what its values owe is built by one function per declaration, which every
+construction of it calls: it takes the fields, runs the clauses in the order the type states them,
+a clause a spread took in among them, and lays the value out only once all of them hold. The first
+that does not hold ends the run with `InvariantNotHeld`, and a clause that itself ends without a
+value, leaving an `Int`'s range, ends it for that reason. The function is kept to the object. What a
+host calls to build a value is a boundary of its own and not this.
 
 An answer at the boundary, written as the language writes it. Every behavior the object defines
 and publishes, and every row, has a second entry that runs it and hands back its answer as JSON:
@@ -102,7 +106,8 @@ only holds the tree it is handed and writes it out. Which case a value is comes 
 linker resolved, and is never what the case is written as.
 
 Still ahead: a `Decimal`, the collections, a function value, every kernel but `Int.add`, a value
-that runs in the module declaring it, and negating anything other than a literal. A collection and
+that runs in the module declaring it, negating anything other than a literal, and an attempted
+construction, which takes an arm by the clause that did not hold instead of ending the run. A collection and
 a `Decimal` are read off the program whole and refused where one would be laid out or written: how
 every carrier orders a set's members, spells a map's keys and writes a decimal is for the language
 to state before a backend writes one.
