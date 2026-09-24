@@ -35,12 +35,13 @@ use cranelift::object::{ObjectBuilder, ObjectModule};
 use interface::Surface;
 use kernels::LoweredKernel;
 use souther_native_abi::{
-    ALLOCATE, ANSWERED, HELD, HOST_STATUSES, INJECTION_EXCHANGE, INJECTION_GET, LIST_LENGTH,
-    NOTHING, Parameter, SLOT, STRING_COMPARE, STRING_CONCAT, Status, TEXT_BYTES, TEXT_LENGTH,
-    TOKEN, WHICH, Word, behavior_symbol, boundary_symbol, constructor_symbol, example_symbol,
-    field_at, generated_call, held_symbol, home_symbol, list_at, member_at, room_for_fields,
-    room_for_held, room_for_list, room_for_members, room_for_text, spells_a_module, spells_a_name,
-    type_symbol, value_symbol,
+    ALLOCATE, ANSWERED, CARRIED, HELD, HOST_STATUSES, INJECTION_EXCHANGE, INJECTION_GET,
+    LIST_LENGTH, NOTHING, Parameter, SLOT, STRING_CODE_POINTS, STRING_COMPARE, STRING_CONCAT,
+    Status, TEXT_BYTES, TEXT_LENGTH, TOKEN, WHICH, Word, behavior_symbol, boundary_symbol,
+    built_in_case_symbol, constructor_symbol, example_symbol, field_at, generated_call,
+    held_symbol, home_symbol, list_at, member_at, room_for_carried, room_for_fields, room_for_held,
+    room_for_list, room_for_members, room_for_text, spells_a_module, spells_a_name, type_symbol,
+    value_symbol,
 };
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -49,8 +50,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use transport::{
     AbortKind, AlternativesForm, Arm, Carrier, Case, Declaration, DeclaredBy, Definition, Ensures,
-    Guard, Node, Op, Owner, Prim, Program, Publication, Reaches, Reading, Routing, Selects, Stage,
-    Target, Ty,
+    Guard, LanguageCase, Node, Op, Owner, Prim, Program, Publication, Reaches, Reading, Routing,
+    Selects, Stage, Target, Ty,
 };
 
 /// A fork that ran out of arms, which is this compiler having emitted the wrong test rather than
@@ -384,6 +385,9 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
     // be the same walk written as many times as the program says it.
     let compare_text = import_runtime(&mut module, STRING_COMPARE, call_conv);
     let join_text = import_runtime(&mut module, STRING_CONCAT, call_conv);
+    // And what a string's length is counted through, for the same reason: it is a walk over the
+    // bytes, counting what starts a code point.
+    let count_text = import_runtime(&mut module, STRING_CODE_POINTS, call_conv);
 
     // What a host registered for a behavior this object answers is kept by the runtime, per thread.
     let registrations = host::Registrations {
@@ -649,6 +653,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
         allocate,
         compare_text,
         join_text,
+        count_text,
         closures: &closures,
         lifted: &lifted,
         targets: &targets,
@@ -800,7 +805,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
             define_composed(
                 &mut context.func,
                 &mut shapes,
-                target.takes().len(),
+                target,
                 stages,
                 frontend,
                 &lowerings,
@@ -1567,6 +1572,26 @@ impl<'a> Declared<'a> {
         Ok(all)
     }
 
+    /// Whether a value of `ty` is one a test of which case it is can stand over: a union, or a
+    /// declared sum. The checker's own answer (`CaseSpace.of`) and no wider — a product, a newtype
+    /// or a unit is a value with one case, and a primitive, an optional or a tuple has none — so a
+    /// document testing anything else is the two halves disagreeing.
+    ///
+    /// Every such type says its case ([`says_its_case`]), which is what the test reads.
+    fn has_cases(&self, ty: &Ty) -> Result<bool> {
+        Ok(match ty {
+            Ty::Union { .. } => true,
+            Ty::Declared { declared } => matches!(self.shape(declared)?, Declaration::Sum { .. }),
+            Ty::Prim { .. }
+            | Ty::Option { .. }
+            | Ty::List { .. }
+            | Ty::Set { .. }
+            | Ty::Map { .. }
+            | Ty::Tuple { .. }
+            | Ty::Fn { .. } => false,
+        })
+    }
+
     /// The cases a value of `ty` can be, where it is a type made of cases: a declared type, a
     /// union, or a primitive, which is a case of a union that names it.
     fn cases_of(&self, ty: &Ty) -> Result<Option<Vec<Case>>> {
@@ -1637,18 +1662,6 @@ impl<'a> Declared<'a> {
     }
 }
 
-/// The address of the declaration's token, as a value of it says which type it is.
-fn tag_of(
-    builder: &mut FunctionBuilder,
-    lowering: &Lowerings,
-    module: &mut ObjectModule,
-    declared: &str,
-) -> Lowered<ir::Value> {
-    let token = lowering.declared.tag(module, declared)?;
-    let named = module.declare_data_in_func(token, builder.func);
-    Ok(builder.ins().symbol_value(POINTER, named))
-}
-
 /// A value the lowering has made, and what the language says it is.
 ///
 /// The two travel together because apart they are what a wrong answer is made of. An `Int` and
@@ -1689,6 +1702,7 @@ struct Lowerings<'a> {
     allocate: FuncId,
     compare_text: FuncId,
     join_text: FuncId,
+    count_text: FuncId,
     /// Every closure site the whole document holds, and what each one reaches — read here rather
     /// than re-walked per body, since a `Node::Block` nested under one top-level body may be
     /// referenced (its captures restored) while defining a different site's own lifted function.
@@ -1842,16 +1856,17 @@ fn machine_type(ty: &Ty) -> Lowered<types::Type> {
         // the elements are is the static type's and is not asked here: every element is a slot.
         Ty::List { .. } => Ok(POINTER),
         // What holds a union holds one of its members, and says which by the token at the front of
-        // it. A primitive or a case the language gives carries no token, so a union with one among
-        // its members has no representation here yet: the members would not say which they are.
-        Ty::Union { union } => match union.iter().find(|it| !matches!(it, Case::Declared { .. })) {
-            None => Ok(POINTER),
-            Some(case) => Err(not_lowered(format!(
-                "a value of {}, whose case {} carries no token to say which case it is",
-                ty.spelt(),
-                case.spelt()
-            ))),
-        },
+        // it: a value of a declared type as it is, and a primitive or a case the language gives
+        // carried with the runtime's token for it (`carry`). A member with no token is one no value
+        // of the union could say it is.
+        Ty::Union { union } => {
+            for case in union {
+                if !matches!(case, Case::Declared { .. }) {
+                    built_in_case(case)?;
+                }
+            }
+            Ok(POINTER)
+        }
         // A collection other than a list is a value with a layout to design, and none is designed
         // yet. Read whole off the wire all the same: whether a type crosses and whether it can be
         // laid out here are two questions, and only this one is this backend's.
@@ -1882,6 +1897,244 @@ fn machine_type(ty: &Ty) -> Lowered<types::Type> {
             | Prim::Raw => Err(not_lowered(format!("a value of type {}", prim.spelt()))),
         },
     }
+}
+
+/// The name the runtime's token for a case no declaration names is defined under, where there is
+/// one.
+///
+/// Every primitive and every case the language gives is named, for the reason `machine_type` names
+/// them. A primitive has a token where it has a representation to carry, and a case the language
+/// gives where it is a case a union can have: an optional's two are told apart by a null pointer
+/// and are never a member of one.
+fn built_in_case(case: &Case) -> Lowered<&'static str> {
+    let name = match case {
+        Case::Declared { declared } => unreachable!(
+            "{declared} is tagged by its declaration's token, and asked for through `tag`"
+        ),
+        Case::Primitive { prim } => match prim {
+            Prim::Int => "Int",
+            Prim::Bool => "Bool",
+            Prim::String => "String",
+            Prim::Decimal
+            | Prim::Rational
+            | Prim::Date
+            | Prim::Time
+            | Prim::DateTime
+            | Prim::Instant
+            | Prim::Raw => {
+                return Err(not_lowered(format!(
+                    "a value of the case {}, which has no representation to carry",
+                    prim.spelt()
+                )));
+            }
+        },
+        Case::Language { case } => match case {
+            LanguageCase::DivisionByZero => "DivisionByZero",
+            LanguageCase::NotANumber => "NotANumber",
+            LanguageCase::NotADate => "NotADate",
+            LanguageCase::NotATime => "NotATime",
+            LanguageCase::NotWhole => "NotWhole",
+            LanguageCase::NotAFiniteDecimal => "NotAFiniteDecimal",
+            LanguageCase::Some | LanguageCase::None => {
+                return Err(not_lowered(format!(
+                    "a union with {} among its cases, which an optional is told apart by \
+                     rather than carried as",
+                    case.spelt()
+                )));
+            }
+        },
+    };
+    Ok(name)
+}
+
+/// Whether a value of this type says which case it is, by the token at the front of it.
+///
+/// A declared type and a union do; nothing else does. A primitive standing as one of their cases
+/// is carried so that it says so too (`carry`), which is what makes this a fact about the type and
+/// not about which case a value happens to be.
+pub(crate) fn says_its_case(ty: &Ty) -> bool {
+    matches!(ty, Ty::Declared { .. } | Ty::Union { .. })
+}
+
+/// A value whose type says which case it is ([`says_its_case`]), so a token stands at [`WHICH`].
+///
+/// The only way [`WHICH`] is read. A test of which case a value is loads through the value's
+/// address, and a value of any other type is a number, a truth or an address laid out some other
+/// way: a load through it is a read of memory the value does not own, and nothing at run time
+/// would say so. So the type is asked where the value is made into one of these, and a caller
+/// holding one has already been answered.
+///
+/// What makes asking it here enough is [`Coherent`]: a test of which case a value is stands only
+/// over a union or a sum, and a composition routes on cases only where what runs is a declared type
+/// or a union, as the checker decides both. A document saying otherwise is refused as the two halves
+/// disagreeing before anything is lowered, so reaching [`Tagged::of`] with another type is this
+/// compiler's own mistake.
+#[derive(Clone, Copy)]
+pub(crate) struct Tagged(ir::Value);
+
+impl Tagged {
+    /// `value`, of type `ty`, as one whose token can be read.
+    ///
+    /// # Panics
+    ///
+    /// Where `ty` does not say its case, which [`Coherent`] held no test or routing to reach.
+    pub(crate) fn of(value: ir::Value, ty: &Ty) -> Tagged {
+        assert!(
+            says_its_case(ty),
+            "`Coherent` held every test of which case a value is to stand over a type that says \
+             it, and {} does not",
+            ty.spelt()
+        );
+        Tagged(value)
+    }
+
+    /// The value itself, to be read as the case a test found it to be.
+    pub(crate) fn value(self) -> ir::Value {
+        self.0
+    }
+
+    /// The token the value carries.
+    pub(crate) fn which(self, builder: &mut FunctionBuilder) -> ir::Value {
+        builder.ins().load(POINTER, TRUSTED, self.0, WHICH as i32)
+    }
+}
+
+/// Whether a value of `one` is held exactly the way a value of `other` is, so that one standing as
+/// the other is no operation.
+///
+/// Two types that say their case are, whichever cases they have: every value of either is the
+/// address of something with its token at the front. A primitive and a type that says its case are
+/// not. An optional, a tuple, a list and a function are held alike where what they are made of is:
+/// a `List<A>` standing as a `List<S>` is the same list, and a `List<Int>` standing as a
+/// `List<Int | A>` would need every element carried.
+///
+/// Every type is named on the left, with no arm standing for the rest, so a type laid out later has
+/// to say here how its values are held before one stands as another.
+fn held_alike(one: &Ty, other: &Ty) -> bool {
+    if one == other || (says_its_case(one) && says_its_case(other)) {
+        return true;
+    }
+    match (one, other) {
+        (Ty::Option { option: one }, Ty::Option { option: other }) => held_alike(one, other),
+        (Ty::List { list: one }, Ty::List { list: other }) => held_alike(one, other),
+        (Ty::Tuple { tuple: one }, Ty::Tuple { tuple: other }) => {
+            one.len() == other.len() && one.iter().zip(other).all(|(a, b)| held_alike(a, b))
+        }
+        (Ty::Fn { fn_: one }, Ty::Fn { fn_: other }) => {
+            one.takes.len() == other.takes.len()
+                && one
+                    .takes
+                    .iter()
+                    .zip(&other.takes)
+                    .all(|(a, b)| held_alike(a, b))
+                && held_alike(&one.answers, &other.answers)
+        }
+        // Equal types were answered above, and so were two that say their case; what is left of
+        // these is a primitive beside something else, or one of them beside another kind. A set
+        // and a map have no layout yet, and are asked of nothing until they do.
+        (
+            Ty::Prim { .. }
+            | Ty::Declared { .. }
+            | Ty::Union { .. }
+            | Ty::Option { .. }
+            | Ty::List { .. }
+            | Ty::Tuple { .. }
+            | Ty::Fn { .. }
+            | Ty::Set { .. }
+            | Ty::Map { .. },
+            _,
+        ) => false,
+    }
+}
+
+/// A value of `from`, held as a value of `to`.
+///
+/// The one place a value's representation changes because of where it stands, whatever made it
+/// stand there: a `Widen`, what an arm or a guard binds, what a composition hands a stage or
+/// answers. Where the two are held alike ([`held_alike`]) this is no operation. A primitive
+/// standing as a case of a type that says its case is carried with its token, and one read back
+/// out of such a type is read out of what carries it.
+///
+/// The second is only ever asked once a test has said the value is that primitive's case: the
+/// value is not asked again here. Anything else would need what a value is made of rebuilt — an
+/// optional of an `Int` standing as an optional of a union — and is refused as not lowered.
+fn restate(
+    builder: &mut FunctionBuilder,
+    lowering: &Lowerings,
+    module: &mut ObjectModule,
+    value: ir::Value,
+    from: &Ty,
+    to: &Ty,
+) -> Lowered<ir::Value> {
+    if held_alike(from, to) {
+        return Ok(value);
+    }
+    match (from, to) {
+        (Ty::Prim { prim }, _) if says_its_case(to) => carry(
+            builder,
+            lowering,
+            module,
+            &Case::Primitive { prim: *prim },
+            Some(value),
+        ),
+        (_, Ty::Prim { .. }) if says_its_case(from) => {
+            let held = builder
+                .ins()
+                .load(types::I64, TRUSTED, value, CARRIED as i32);
+            Ok(out_of_slot(builder, held, machine_type(to)?))
+        }
+        _ => Err(not_lowered(format!(
+            "a value of {} standing as {}, which holds what it is made of another way",
+            from.spelt(),
+            to.spelt()
+        ))),
+    }
+}
+
+/// A value of a case no declaration names, made to say which case it is: room with the runtime's
+/// token for the case at [`WHICH`], and what the case holds, if it holds anything, at [`CARRIED`].
+///
+/// A primitive holds itself; a case the language gives holds nothing.
+fn carry(
+    builder: &mut FunctionBuilder,
+    lowering: &Lowerings,
+    module: &mut ObjectModule,
+    case: &Case,
+    holds: Option<ir::Value>,
+) -> Lowered<ir::Value> {
+    let token = token_of(builder, lowering, module, case)?;
+    let room = match holds {
+        Some(_) => room_for_carried(),
+        None => room_for_fields(0),
+    };
+    let value = lowering.room(builder, module, room);
+    builder.ins().store(TRUSTED, token, value, WHICH as i32);
+    if let Some(held) = holds {
+        let held = into_slot(builder, held);
+        builder.ins().store(TRUSTED, held, value, CARRIED as i32);
+    }
+    Ok(value)
+}
+
+/// The address a value of this case carries at [`WHICH`]: its declaration's token, or the
+/// runtime's for a case no declaration names.
+pub(crate) fn token_of(
+    builder: &mut FunctionBuilder,
+    lowering: &Lowerings,
+    module: &mut ObjectModule,
+    case: &Case,
+) -> Lowered<ir::Value> {
+    let token = match case {
+        Case::Declared { declared } => lowering.declared.tag(module, declared)?,
+        Case::Primitive { .. } | Case::Language { .. } => accepted(module.declare_data(
+            &built_in_case_symbol(built_in_case(case)?),
+            Linkage::Import,
+            false,
+            false,
+        )),
+    };
+    let named = module.declare_data_in_func(token, builder.func);
+    Ok(builder.ins().symbol_value(POINTER, named))
 }
 
 /// Holds the signature of a behavior the object does not define to what a value still means in
@@ -1957,7 +2210,14 @@ fn means_the_same_elsewhere(ty: &Ty) -> bool {
         // question, and answering it here would be answering it with the wrong thing.
         Ty::Declared { .. } => true,
         // Written nowhere at run time: what holds a union holds one of its members, and each of
-        // those says which type it is.
+        // those says which case it is by a token the linker resolves.
+        //
+        // Only a declared case, though a primitive or a case the language gives carries the
+        // runtime's token, which every object in a library reaches too. Nothing runs that yet: the
+        // two places objects meet are a published behavior and a published value, and the build
+        // publishing one also writes its answer's external form, which no such case has here
+        // (`codec`). A claim about what two objects agree on is made once two objects are run on
+        // it, the way a declared case's is (`ABehaviorAnotherBuildImplementsTest`).
         Ty::Union { union } => union.iter().all(|it| matches!(it, Case::Declared { .. })),
         Ty::Option { option } => means_the_same_elsewhere(option),
         // A length and slots, laid out in the crate both halves read, so a list means what its
@@ -2689,12 +2949,14 @@ fn lay_out(
 fn define_composed(
     function: &mut Function,
     shapes: &mut FunctionBuilderContext,
-    takes: usize,
+    composed: &Target,
     stages: &[Stage],
     frontend: TargetFrontendConfig,
     lowering: &Lowerings,
     module: &mut ObjectModule,
 ) -> Lowered<()> {
+    let takes = composed.takes().len();
+    let answers = composed.answers();
     let mut builder = FunctionBuilder::new(function, shapes);
     let entry = builder.create_block();
     builder.append_block_params_for_function_params(entry);
@@ -2717,22 +2979,31 @@ fn define_composed(
         &first.behavior,
         &arguments,
     )?;
+    // What the value running is, which is what a stage is handed it from and what the composition
+    // answers it from: a stage takes it, and the composition answers it, as a type of their own,
+    // and `restate` holds it the way that type is held.
+    let mut running_is = lowering.targets.reached(&first.behavior).answers();
 
     for stage in rest {
+        let reached = lowering.targets.reached(&stage.behavior);
+        let [taken] = reached.takes().try_into().unwrap_or_else(|_: Vec<Ty>| {
+            unreachable!("`Coherent` held every stage after the first to take one value")
+        });
         match &stage.routing {
             Routing::Always => {
+                let handed = restate(&mut builder, lowering, module, running, &running_is, &taken)?;
                 running = call_behavior(
                     &mut builder,
                     lowering,
                     module,
                     abort,
                     &stage.behavior,
-                    &[running],
+                    &[handed],
                 )?;
             }
             Routing::OnCases { accepted } => {
-                let accepts =
-                    is_one_of_declared_cases(&mut builder, lowering, module, running, accepted)?;
+                let tagged = Tagged::of(running, &running_is);
+                let accepts = is_one_of_cases(&mut builder, lowering, module, tagged, accepted)?;
                 let offer = builder.create_block();
                 let leave = builder.create_block();
                 builder.ins().brif(accepts, offer, &[], leave, &[]);
@@ -2742,24 +3013,42 @@ fn define_composed(
                 // What left the main line is answered here, at the stage that did not accept it,
                 // rather than carried along to be tested against a stage further on.
                 builder.switch_to_block(leave);
-                builder.ins().store(TRUSTED, running, out, 0);
+                let left = restate(
+                    &mut builder,
+                    lowering,
+                    module,
+                    running,
+                    &running_is,
+                    &answers,
+                )?;
+                builder.ins().store(TRUSTED, left, out, 0);
                 let ok = builder.ins().iconst(types::I32, i64::from(ANSWERED));
                 builder.ins().return_(&[ok]);
 
                 builder.switch_to_block(offer);
+                let handed = restate(&mut builder, lowering, module, running, &running_is, &taken)?;
                 running = call_behavior(
                     &mut builder,
                     lowering,
                     module,
                     abort,
                     &stage.behavior,
-                    &[running],
+                    &[handed],
                 )?;
             }
         }
+        running_is = reached.answers();
     }
 
-    builder.ins().store(TRUSTED, running, out, 0);
+    let answered = restate(
+        &mut builder,
+        lowering,
+        module,
+        running,
+        &running_is,
+        &answers,
+    )?;
+    builder.ins().store(TRUSTED, answered, out, 0);
     let ok = builder.ins().iconst(types::I32, i64::from(ANSWERED));
     builder.ins().return_(&[ok]);
 
@@ -2983,11 +3272,19 @@ fn define_rules(
             Guard::Case { selects, binds } => {
                 let selects = std::slice::from_ref(selects);
                 let applies = builder.create_block();
-                let asked = tests(&mut builder, &lowering, module, answer, selects)?;
+                let asked = tests(&mut builder, &lowering, module, answer, &answers, selects)?;
                 builder.ins().brif(asked, applies, &[], next, &[]);
                 builder.seal_block(applies);
                 builder.switch_to_block(applies);
-                self::binds(&mut builder, answer, selects, machine_type(binds)?)
+                self::binds(
+                    &mut builder,
+                    &lowering,
+                    module,
+                    answer,
+                    &answers,
+                    selects,
+                    binds,
+                )?
             }
         };
         let variable = builder.declare_var(machine_type(rule.guard.reads_as(&answers))?);
@@ -3300,6 +3597,7 @@ fn lower(
                 abort,
                 value,
                 ForkArms {
+                    subject: subject.ty(),
                     arms,
                     answers: machine_type(ty)?,
                 },
@@ -3445,18 +3743,54 @@ fn lower(
                     let nothing = builder.ins().iconst(POINTER, NOTHING);
                     builder.ins().select(inside, slot, nothing)
                 }
+                Some(
+                    divided @ (LoweredKernel::IntTruncatingDivide
+                    | LoweredKernel::IntTruncatingRemainder),
+                ) => {
+                    let [dividend, divisor] = arguments.as_slice() else {
+                        unreachable!("`Coherent` held {kernel} to the two arguments it takes");
+                    };
+                    let dividend = lower(builder, lowering, module, bindings, abort, dividend)?;
+                    let divisor = lower(builder, lowering, module, bindings, abort, divisor)?;
+                    let answering = match divided {
+                        LoweredKernel::IntTruncatingDivide => Division::Quotient,
+                        _ => Division::Remainder,
+                    };
+                    let division = Dividing {
+                        answering,
+                        dividend,
+                        divisor,
+                        aborts,
+                    };
+                    truncating_division(builder, lowering, module, abort, division)?
+                }
+                Some(LoweredKernel::StringLength) => {
+                    let [text] = arguments.as_slice() else {
+                        unreachable!("`Coherent` held string.length to the one argument it takes");
+                    };
+                    let text = lower(builder, lowering, module, bindings, abort, text)?;
+                    let counting = module.declare_func_in_func(lowering.count_text, builder.func);
+                    let counted = builder.ins().call(counting, &[text]);
+                    builder.inst_results(counted)[0]
+                }
                 None => return Err(not_lowered(format!("a call to the kernel {kernel}"))),
             },
         },
         // Standing as a wider type is no operation in the language, and here it costs nothing
-        // either: every type laid out here holds a value of any type it may stand as the way it
-        // holds one of its own — a case and the sum it is a case of are both the address of a
-        // value carrying its token, and an optional, a tuple or a function over them is laid out
-        // alike. The type it stands as is asked for its representation all the same, so one this
-        // backend has none for is refused here as it is anywhere else.
-        Node::Widen { value, ty, .. } => {
+        // almost everywhere: a case and the sum or union it is a case of are both the address of
+        // a value carrying its token, and an optional, a tuple or a function over them is laid out
+        // alike. A primitive is the exception, since it carries no token and a union's value has
+        // to say which case it is; `restate` carries it. The type it stands as is asked for its
+        // representation all the same, so one this backend has none for is refused here as it is
+        // anywhere else.
+        Node::Widen {
+            value: narrower,
+            ty,
+            ..
+        } => {
             machine_type(ty)?;
-            lower(builder, lowering, module, bindings, abort, value)?
+            let held = lower(builder, lowering, module, bindings, abort, narrower)?;
+            restate(builder, lowering, module, held, narrower.ty(), ty)?
         }
         Node::Member { tuple, at, ty, .. } => {
             let value = lower(builder, lowering, module, bindings, abort, tuple)?;
@@ -3534,6 +3868,8 @@ fn lower(
 /// within the width every function here is held to instead of adding a sixth thing this and
 /// `lower` would otherwise both have to keep passing down separately.
 struct ForkArms<'a> {
+    /// What the value forked on is, which an arm binding it reads it out of.
+    subject: &'a Ty,
     arms: &'a [Arm],
     answers: types::Type,
 }
@@ -3547,14 +3883,18 @@ fn fork_on_what_it_is(
     value: ir::Value,
     over: ForkArms,
 ) -> Lowered<ir::Value> {
-    let ForkArms { arms, answers } = over;
+    let ForkArms {
+        subject,
+        arms,
+        answers,
+    } = over;
     let after = builder.create_block();
     builder.append_block_param(after, answers);
 
     for arm in arms {
         let taken = builder.create_block();
         let next = builder.create_block();
-        let asked = tests(builder, lowering, module, value, &arm.selects)?;
+        let asked = tests(builder, lowering, module, value, subject, &arm.selects)?;
         builder.ins().brif(asked, taken, &[], next, &[]);
         builder.seal_block(taken);
         builder.seal_block(next);
@@ -3565,7 +3905,15 @@ fn fork_on_what_it_is(
                 .binds
                 .as_ref()
                 .expect("`Coherent` held every arm that binds to say what it reads the value as");
-            let held = binds(builder, value, &arm.selects, machine_type(read_as)?);
+            let held = binds(
+                builder,
+                lowering,
+                module,
+                value,
+                subject,
+                &arm.selects,
+                read_as,
+            )?;
             let variable = builder.declare_var(machine_type(read_as)?);
             builder.def_var(variable, held);
             bindings.at(number, variable);
@@ -3600,13 +3948,15 @@ fn tests(
     lowering: &Lowerings,
     module: &mut ObjectModule,
     value: ir::Value,
+    subject: &Ty,
     selects: &[Selects],
 ) -> Lowered<ir::Value> {
     let mut asked: Option<ir::Value> = None;
     for one in selects {
         let this = match one {
             Selects::Which { atoms } => {
-                is_one_of_declared_cases(builder, lowering, module, value, atoms)?
+                let tagged = Tagged::of(value, subject);
+                is_one_of_cases(builder, lowering, module, tagged, atoms)?
             }
             Selects::Held => builder.ins().icmp_imm_s(IntCC::NotEqual, value, NOTHING),
             Selects::Nothing => builder.ins().icmp_imm_s(IntCC::Equal, value, NOTHING),
@@ -3619,36 +3969,31 @@ fn tests(
     Ok(asked.expect("`Coherent` held every arm to test at least one case"))
 }
 
-/// Whether the value is one of these declared cases.
+/// Whether the value is one of these cases.
 ///
-/// What a value says it is and what a case is are both the address of a declaration's token, so
-/// this is a comparison of two addresses. The one the value carries was written where it was built
-/// — possibly in an object built from another document — and the one compared against is named
-/// here; they are equal exactly when the linker resolved both to the one declaration, which is
-/// what makes the answer mean the same thing on either side of an object boundary.
+/// What a value says it is and what a case is are both the address of a token, so this is a
+/// comparison of two addresses. The one the value carries was written where it was built —
+/// possibly in an object built from another document — and the one compared against is named
+/// here; they are equal exactly when the linker resolved both to the one token, which is what
+/// makes the answer mean the same thing on either side of an object boundary. A declared case's
+/// token is its declaration's, and a case no declaration names has the runtime's, which the value
+/// was carried with (`carry`).
 ///
 /// Shared by a `match` arm testing what a value is and a composition's routing testing what a
 /// stage accepts: a composition's routing is that same test at a different place, not a second
-/// kind of test, and the primitive both read is the one Issue #6 settled — a type token's address
+/// kind of test, and the primitive both read is the one Issue #6 settled — a token's address
 /// compared as the linker resolves it.
-fn is_one_of_declared_cases(
+fn is_one_of_cases(
     builder: &mut FunctionBuilder,
     lowering: &Lowerings,
     module: &mut ObjectModule,
-    value: ir::Value,
+    value: Tagged,
     cases: &[Case],
 ) -> Lowered<ir::Value> {
-    let flags = TRUSTED;
-    let which = builder.ins().load(POINTER, flags, value, WHICH as i32);
+    let which = value.which(builder);
     let mut any: Option<ir::Value> = None;
     for case in cases {
-        let Case::Declared { declared } = case else {
-            return Err(not_lowered(format!(
-                "a test for the case {}, which carries no token to compare",
-                case.spelt()
-            )));
-        };
-        let expected = tag_of(builder, lowering, module, declared)?;
+        let expected = token_of(builder, lowering, module, case)?;
         let same = builder.ins().icmp(IntCC::Equal, which, expected);
         any = Some(match any {
             None => same,
@@ -3660,21 +4005,24 @@ fn is_one_of_declared_cases(
 
 /// What the arm reads the value as, once it is known to be one of its cases.
 ///
-/// An arm over an optional's present carrier reads what it holds; every other arm reads the value
-/// itself, which is already the case it selected. What comes out of the slot is narrowed to what
-/// the arm says it reads the value as — which the arm carries, because the test it was selected by
-/// does not say it.
+/// An arm over an optional's present carrier reads what it holds, narrowed to what the arm says it
+/// reads the value as. Every other arm reads the value as the case it selected, which is the value
+/// itself unless that case is a primitive a union carried ([`restate`]). What the arm reads it as
+/// is carried on the arm, because the test it was selected by does not say it.
 fn binds(
     builder: &mut FunctionBuilder,
+    lowering: &Lowerings,
+    module: &mut ObjectModule,
     value: ir::Value,
+    subject: &Ty,
     selects: &[Selects],
-    read_as: types::Type,
-) -> ir::Value {
+    read_as: &Ty,
+) -> Lowered<ir::Value> {
     if selects.iter().any(|it| matches!(it, Selects::Held)) {
         let held = builder.ins().load(types::I64, TRUSTED, value, HELD as i32);
-        out_of_slot(builder, held, read_as)
+        Ok(out_of_slot(builder, held, machine_type(read_as)?))
     } else {
-        value
+        restate(builder, lowering, module, value, subject, read_as)
     }
 }
 
@@ -4119,6 +4467,70 @@ fn difference(
     let moved = builder.ins().bxor(a, difference);
     abort_where_the_sign_bit_is_set(builder, abort, status, apart, moved);
     Ok(difference)
+}
+
+/// Which of the two a truncating division answers.
+#[derive(Clone, Copy)]
+enum Division {
+    /// The quotient, truncated toward zero.
+    Quotient,
+    /// What is left once the quotient is truncated toward zero, which takes the dividend's sign.
+    Remainder,
+}
+
+/// A truncating division as a kernel call hands it over: which answer, the two operands already
+/// lowered, and what the call names as the reason it can end, which is nothing for a remainder.
+struct Dividing<'a> {
+    answering: Division,
+    dividend: ir::Value,
+    divisor: ir::Value,
+    aborts: &'a [AbortKind],
+}
+
+/// A whole-number division truncated toward zero, answering `Int | DivisionByZero`.
+///
+/// A zero divisor is a case of the answer and not a reason to end, so it is answered as
+/// `DivisionByZero` and nothing is divided. The one pair whose quotient no `Int` holds, the
+/// smallest `Int` over -1, ends a quotient with the reason the call names ([`overflow_status`]).
+/// Its remainder is nought, which Cranelift's `srem` answers for it. Every other pair is divided,
+/// and the answer carried as the union's `Int` case.
+///
+/// The zero divisor and the quotient past the range are asked before the machine divides, because
+/// `sdiv` traps on both and `srem` on the first.
+fn truncating_division(
+    builder: &mut FunctionBuilder,
+    lowering: &Lowerings,
+    module: &mut ObjectModule,
+    abort: ir::Block,
+    division: Dividing,
+) -> Lowered<ir::Value> {
+    let Dividing {
+        answering,
+        dividend,
+        divisor,
+        aborts,
+    } = division;
+    let by_nought = builder.ins().icmp_imm_s(IntCC::Equal, divisor, 0);
+    fork(builder, by_nought, POINTER, |builder, taken| {
+        if taken {
+            let nothing_divided = Case::Language {
+                case: LanguageCase::DivisionByZero,
+            };
+            return carry(builder, lowering, module, &nothing_divided, None);
+        }
+        let answered = match answering {
+            Division::Quotient => {
+                let smallest = builder.ins().icmp_imm_s(IntCC::Equal, dividend, i64::MIN);
+                let minus_one = builder.ins().icmp_imm_s(IntCC::Equal, divisor, -1);
+                let past = builder.ins().band(smallest, minus_one);
+                abort_where(builder, abort, overflow_status(aborts), past);
+                builder.ins().sdiv(dividend, divisor)
+            }
+            Division::Remainder => builder.ins().srem(dividend, divisor),
+        };
+        let whole = Case::Primitive { prim: Prim::Int };
+        carry(builder, lowering, module, &whole, Some(answered))
+    })
 }
 
 /// A product that left the range an `Int` holds ends the computation.

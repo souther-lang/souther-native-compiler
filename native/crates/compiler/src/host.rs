@@ -35,8 +35,8 @@
 //! the manifest say it defines are one decision.
 
 use super::{
-    Declared, Emitting, Lowered, NO_ARM, POINTER, Runs, TRUSTED, accepted, into_slot, machine_type,
-    not_lowered, out_of_slot, out_slot,
+    Declared, Emitting, Lowered, NO_ARM, POINTER, Runs, TRUSTED, Tagged, accepted, into_slot,
+    machine_type, not_lowered, out_of_slot, out_slot,
 };
 use crate::codec::write::Writing;
 use crate::codec::{Codecs, Runtime};
@@ -51,7 +51,7 @@ use cranelift::module::{DataDescription, FuncId, Linkage, Module};
 use cranelift::object::ObjectModule;
 use souther_native_abi::{
     ANSWERED, HELD, HostParameter, HostWord, IMPLEMENTATION_ANSWERS, INJECTION_PROTOCOL_VIOLATION,
-    INJECTION_UNBOUND, NOTHING, TOKEN, WHICH, field_at, host_behavior_answer_case_symbol,
+    INJECTION_UNBOUND, NOTHING, TOKEN, field_at, host_behavior_answer_case_symbol,
     host_behavior_symbol, host_case_symbol, host_constructor_symbol, host_decode_symbol,
     host_encode_symbol, host_field_symbol, host_implementation_type, host_register_symbol,
     host_value_symbol, room_for_held,
@@ -129,9 +129,10 @@ fn whole(ty: &Ty) -> Option<HostWord> {
             | Prim::Raw => None,
         },
         Ty::Declared { .. } => Some(HostWord::Value),
-        // What holds a union holds one of its members, each of which says which it is — where
-        // every member is a declared type. A host asks which through a sum's own reader, or,
-        // for a union a behavior answers, through the behavior's.
+        // What holds a union holds one of its members, each of which says which it is. A host is
+        // handed one where every member is a declared type, and asks which through a sum's own
+        // reader, or, for a union a behavior answers, through the behavior's. What carries a
+        // primitive or a case the language gives is not something a host is handed yet.
         Ty::Union { union } => union
             .iter()
             .all(|case| matches!(case, Case::Declared { .. }))
@@ -232,8 +233,11 @@ pub(crate) fn define(
             )?);
         }
         if let Declaration::Sum { cases, .. } = declaration {
-            if let Some(casing) = expose_case(emitting, host_case_symbol(module_name, name), cases)?
-            {
+            let sum = Ty::Declared {
+                declared: key.clone(),
+            };
+            let symbol = host_case_symbol(module_name, name);
+            if let Some(casing) = expose_case(emitting, symbol, &sum, cases)? {
                 described.cased_by(&casing);
             }
             surface.declaration(module_name, described);
@@ -291,14 +295,16 @@ pub(crate) fn define(
     Ok(())
 }
 
-/// Defines what a host asks which of `cases` a value is through, under `symbol`, where every one of
-/// them is a declared type: only a value of one of those says which it is. None where one is not.
+/// Defines what a host asks which of `cases` a value of `ty` is through, under `symbol`, where every
+/// one of them is a declared type. None where one is not: a host is handed a value of a declared
+/// type, and never what carries a primitive or a case the language gives.
 ///
 /// The one reader of a case a host is given, whatever the cases are the cases of: a sum's, or a
 /// union's a behavior answers.
 fn expose_case(
     emitting: &mut Emitting,
     symbol: String,
+    ty: &Ty,
     cases: &[Case],
 ) -> Lowered<Option<HostFunction>> {
     if !cases
@@ -314,7 +320,8 @@ fn expose_case(
     };
     let declared = emitting.declared;
     expose(emitting, casing, &mut |builder, module, given| {
-        which_case(builder, module, declared, cases, given)
+        let value = Tagged::of(given[0], ty);
+        which_case(builder, module, declared, cases, value)
     })
     .map(Some)
 }
@@ -368,6 +375,7 @@ pub(crate) fn define_behaviors(
                     Some(_) => expose_case(
                         emitting,
                         host_behavior_answer_case_symbol(behavior.module, behavior.name),
+                        &behavior.answers,
                         cases,
                     )?,
                     None => None,
@@ -867,17 +875,15 @@ fn read(builder: &mut FunctionBuilder, at: usize, host: Host, given: &[ir::Value
 /// having handed over something else or this compiler having built it wrongly, and traps the way a
 /// fork that runs out of arms does rather than answering a number that means nothing.
 ///
-/// Defined only where every case is a declared type, since only a value of one of those says which
-/// it is.
+/// Defined only where every case is a declared type, since a host is handed nothing else.
 fn which_case(
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
     declared: &Declared,
     cases: &[Case],
-    given: &[ir::Value],
+    value: Tagged,
 ) -> Lowered<()> {
-    let value = given[0];
-    let which = builder.ins().load(POINTER, TRUSTED, value, WHICH as i32);
+    let which = value.which(builder);
     for (place, case) in cases.iter().enumerate() {
         let Case::Declared { declared: key } = case else {
             unreachable!("a case reader is defined only where every case is declared");

@@ -503,8 +503,13 @@ version = "0.1.0"
 dependencies = [
  "souther-json-syntax",
  "souther-native-abi",
+ "souther-text",
  "unicode-normalization",
 ]
+
+[[package]]
+name = "souther-text"
+version = "0.1.0"
 
 [[package]]
 name = "stable_deref_trait"

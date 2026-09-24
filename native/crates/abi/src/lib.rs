@@ -448,7 +448,52 @@ pub fn boundary_symbol(entry: &str) -> String {
 /// One byte, whose value means nothing and which nothing ever reads. What the token is for is its
 /// address, and a byte is what gives it one of its own: two symbols with no bytes between them may
 /// be laid at one address, and two declarations would then be tagged the same way.
+///
+/// A case no declaration names stands under a [`BUILT_IN_CASES`] symbol, which is the same byte.
 pub const TOKEN: &[u8] = &[0];
+
+/// Every case no declaration names that a value can say it is: the primitives a value of a union
+/// can be, and the cases the language gives. The name is what the language writes the case as.
+///
+/// A primitive says nothing about which type it is, and a case the language gives is declared by
+/// no module, so neither has a declared type's token to carry. The runtime defines one for each of
+/// these, under [`built_in_case_symbol`], and a value of a union carries its address the way a
+/// value of a declared type carries its declaration's.
+///
+/// The runtime's and not an object's, because the runtime is the one thing every object in a
+/// library shares: two objects naming one of these reach one address for the reason two naming one
+/// declaration do, and no object is where a case the language gives is at home.
+///
+/// Not `Some` and `None`. An optional says whether it holds something by whether it is a null
+/// pointer ([`NOTHING`]), and is never a member of a union.
+pub const BUILT_IN_CASES: &[&str] = &[
+    "Int",
+    "Bool",
+    "String",
+    "DivisionByZero",
+    "NotANumber",
+    "NotADate",
+    "NotATime",
+    "NotWhole",
+    "NotAFiniteDecimal",
+];
+
+/// The symbol whose address a value of a case in [`BUILT_IN_CASES`] carries as its tag.
+///
+/// `souther$case$<name>`, apart from [`type_symbol`]'s `souther$type$` so that no declaration a
+/// module makes can be spelt as one of these.
+///
+/// # Panics
+///
+/// Where the name is not one of [`BUILT_IN_CASES`]: a symbol for any other would name something
+/// the runtime does not define, and the link would say so far from here.
+pub fn built_in_case_symbol(name: &str) -> String {
+    assert!(
+        BUILT_IN_CASES.contains(&name),
+        "{name} is not a case the runtime defines a token for"
+    );
+    format!("souther$case${name}")
+}
 
 /// How wide a slot is, and so what a value made of slots is measured in.
 ///
@@ -481,6 +526,20 @@ pub const fn field_at(position: usize) -> i64 {
 /// type and nothing matches on one, so its members start where they are.
 pub const fn member_at(position: usize) -> i64 {
     SLOT * position as i64
+}
+
+/// Where a value of a primitive case is, in what carries it as a value of a union.
+///
+/// A primitive carries no tag, so where a union holds one it holds the address of room laid out as
+/// a value with one field: [`WHICH`] is the primitive's [`built_in_case_symbol`] token and this is
+/// the primitive. A case the language gives has nothing in it, and is carried as a value with no
+/// fields. Either way what stands at [`WHICH`] says which case the value is, as it does for a value
+/// of a declared type, so a test of which case a value is reads one slot whatever the case is.
+pub const CARRIED: i64 = field_at(0);
+
+/// How much room what carries a primitive as a value of a union takes.
+pub const fn room_for_carried() -> i64 {
+    room_for_fields(1)
 }
 
 /// How much room a value of a declared type takes, by how many fields it has.
@@ -547,6 +606,7 @@ const _: () = {
         fields += 1;
     }
     assert!(WHICH + SLOT <= room_for_fields(0));
+    assert!(CARRIED + SLOT <= room_for_carried());
     assert!(HELD + SLOT <= room_for_held());
     assert!(LIST_LENGTH + SLOT <= room_for_list(0));
     assert!(TEXT_LENGTH + SLOT <= room_for_text(0));
@@ -603,6 +663,13 @@ pub const STRING_COMPARE: &str = "souther_string_compare";
 
 /// The symbol two strings are joined through. Answers a new string and touches neither operand.
 pub const STRING_CONCAT: &str = "souther_string_concat";
+
+/// The symbol a string's length is counted through, in code points, which is what the language
+/// counts a string in.
+///
+/// Not [`STRING_LENGTH`], which answers the bytes [`TEXT_LENGTH`] holds and is what a caller outside
+/// a Souther program reads the text back by. The two agree only on ASCII.
+pub const STRING_CODE_POINTS: &str = "souther_string_code_points";
 
 /// The symbol a caller outside a Souther program makes a string with, from bytes it holds.
 ///
@@ -1000,6 +1067,11 @@ pub const GENERATED_RUNTIME: &[GeneratedCall] = {
             name: STRING_CONCAT,
             takes: &[Given(Host(String)), Given(Host(String))],
             answers: Some(Host(String)),
+        },
+        GeneratedCall {
+            name: STRING_CODE_POINTS,
+            takes: &[Given(Host(String))],
+            answers: Some(Host(Int)),
         },
         GeneratedCall {
             name: EXTERNAL_NULL,

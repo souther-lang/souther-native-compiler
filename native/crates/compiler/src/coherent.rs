@@ -58,7 +58,7 @@ use crate::transport::{
     AbortKind, Answers, Carrier, Case, Declaration, Definition, Ensures, Guard, Held, Node, Op,
     Owner, Prim, Program, Reaches, Reading, Routing, Selects, Target, Ty, Value,
 };
-use crate::{Declared, Runs, Targets, not_lowered, spelt};
+use crate::{Declared, Runs, Targets, not_lowered, says_its_case, spelt};
 use anyhow::{Result, anyhow, bail};
 use souther_native_abi::{spells_a_module, spells_a_name};
 use std::collections::HashMap;
@@ -1444,10 +1444,13 @@ impl<'a> Walk<'_, 'a> {
             match one {
                 Selects::Which { atoms } => {
                     self.leaves(what, atoms)?;
-                    if optional {
+                    // What the test is lowered to reads the token at the front of the value, which
+                    // a value of any other type does not have: the load would be through a number
+                    // or an address laid out another way.
+                    if !self.declared.has_cases(subject)? {
                         bail!(
-                            "{}: {what} tests which case {} is, which an optional answers by \
-                             holding or not: the two halves disagree",
+                            "{}: {what} tests which case {} is, and only a union or a sum has cases \
+                             to test: the two halves disagree",
                             self.owner,
                             subject.spelt()
                         );
@@ -1753,6 +1756,23 @@ fn composes(
                 spelt(&takes)
             )
         })?;
+        // What runs is offered by its cases exactly where it is a declared type or a union, and
+        // whole otherwise: the checker's own rule (`PipelineSigs`, over `TypeOps.isDataLike`).
+        // Routed on cases, it is tested by the token at its front, which nothing else has.
+        let routed = matches!(stage.routing, Routing::OnCases { .. });
+        if routed != says_its_case(&running) {
+            bail!(
+                "{name}'s stage {} is {} {}, and what runs is offered by its cases exactly where it \
+                 is a declared type or a union: the two halves disagree",
+                stage.behavior,
+                if routed {
+                    "routed on the cases of"
+                } else {
+                    "handed whole"
+                },
+                running.spelt()
+            );
+        }
         match &stage.routing {
             Routing::Always => owed.fits(
                 format!("{name} hands what runs to its stage {}", stage.behavior),
@@ -1765,6 +1785,20 @@ fn composes(
                     &format!("{name}'s stage {}", stage.behavior),
                     accepted,
                 )?;
+                // A stage accepting a case no declaration names is one the checker's own backend
+                // does not compile yet, so nothing has run one: it is not lowered until something
+                // can hold what it answers to what the language says.
+                if let Some(case) = accepted
+                    .iter()
+                    .find(|case| !matches!(case, Case::Declared { .. }))
+                {
+                    owed.not_lowered.push(format!(
+                        "{name}'s stage {}, routed the case {} of {}",
+                        stage.behavior,
+                        case.spelt(),
+                        running.spelt()
+                    ));
+                }
                 let running_cases = declared.cases_of(&running)?.ok_or_else(|| {
                     anyhow!(
                         "{name}'s stage {} is offered cases of {}, which has none",

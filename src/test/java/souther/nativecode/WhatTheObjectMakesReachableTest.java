@@ -79,7 +79,7 @@ class WhatTheObjectMakesReachableTest {
                     invariant n >= 0
                 data Plain = { n: Int }
                 data Secret = String
-                    invariant String.length(value) > 0
+                    invariant String.matches("[a-z]+", value)
 
                 behavior made : (n: Int) -> Open
                 let made (n) = {

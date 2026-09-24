@@ -517,7 +517,8 @@ impl Reading<'_, '_> {
         for case in cases {
             let Case::Declared { declared: key } = case else {
                 return Err(not_lowered(format!(
-                    "the case {}, which carries no token to be told apart by",
+                    "the case {}, which this backend does not read as one of a set of \
+                     alternatives yet",
                     case.spelt()
                 )));
             };

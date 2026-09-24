@@ -21,7 +21,7 @@
 //! arguments stand in: what it takes, and which fact it carries, are its own kernel's, and the
 //! two halves disagreeing about them is refused as this backend not lowering the kernel.
 
-use crate::transport::{AbortKind, KernelFact, Prim, Ty};
+use crate::transport::{AbortKind, Case, KernelFact, LanguageCase, Prim, Ty};
 
 /// What this backend knows of a kernel it lowers.
 pub(crate) struct Contract {
@@ -39,8 +39,9 @@ pub(crate) struct Contract {
 
 /// A type a kernel is known to take or answer, where some part of it may be any type.
 ///
-/// As much of a type as a kernel's contract has needed, and no more: a primitive, a list and an
-/// optional, and a variable standing for whatever one call settles it as. It is not the language's
+/// As much of a type as a kernel's contract has needed, and no more: a primitive, a list, an
+/// optional and a fixed union of cases, and a variable standing for whatever one call settles it
+/// as. It is not the language's
 /// type and does not check one; it is matched against the types the checker settled, which are
 /// concrete. A kernel taking a function or a tuple adds its shape here when it is lowered.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -50,6 +51,9 @@ pub(crate) enum Shape {
     Var(usize),
     List(Box<Shape>),
     Option(Box<Shape>),
+    /// A union of exactly these cases, in the order the checker writes them: what a truncating
+    /// division answers, which has no variable in it.
+    Cases(Vec<Case>),
 }
 
 /// What a contract's variables were settled as by one call.
@@ -76,7 +80,8 @@ impl Shape {
             }
             (Shape::List(element), Ty::List { list }) => element.binds(list, bound),
             (Shape::Option(held), Ty::Option { option }) => held.binds(option, bound),
-            (Shape::Prim(_) | Shape::List(_) | Shape::Option(_), _) => false,
+            (Shape::Cases(cases), Ty::Union { union }) => cases == union,
+            (Shape::Prim(_) | Shape::List(_) | Shape::Option(_) | Shape::Cases(_), _) => false,
         }
     }
 
@@ -91,6 +96,9 @@ impl Shape {
             Shape::Option(held) => Ty::Option {
                 option: Box::new(held.settled(bound)?),
             },
+            Shape::Cases(cases) => Ty::Union {
+                union: cases.clone(),
+            },
         })
     }
 
@@ -101,6 +109,11 @@ impl Shape {
             Shape::Var(at) => format!("'{}", (b'a' + *at as u8) as char),
             Shape::List(element) => format!("a List of {}", element.spelt()),
             Shape::Option(held) => format!("an optional {}", held.spelt()),
+            Shape::Cases(cases) => cases
+                .iter()
+                .map(Case::spelt)
+                .collect::<Vec<_>>()
+                .join(" | "),
         }
     }
 }
@@ -146,6 +159,14 @@ pub(crate) enum LoweredKernel {
     ListLength,
     /// `list.get`: an index and a list, and the element at the index where there is one.
     ListGet,
+    /// `int.truncatingDivide`: a dividend and a divisor, and the quotient truncated toward zero,
+    /// or `DivisionByZero`.
+    IntTruncatingDivide,
+    /// `int.truncatingRemainder`: a dividend and a divisor, and what is left over once the
+    /// quotient is truncated toward zero, or `DivisionByZero`.
+    IntTruncatingRemainder,
+    /// `string.length`: a string, and how many code points it holds.
+    StringLength,
 }
 
 impl LoweredKernel {
@@ -155,6 +176,9 @@ impl LoweredKernel {
             "int.add" => Some(LoweredKernel::IntAdd),
             "list.length" => Some(LoweredKernel::ListLength),
             "list.get" => Some(LoweredKernel::ListGet),
+            "int.truncatingDivide" => Some(LoweredKernel::IntTruncatingDivide),
+            "int.truncatingRemainder" => Some(LoweredKernel::IntTruncatingRemainder),
+            "string.length" => Some(LoweredKernel::StringLength),
             _ => None,
         }
     }
@@ -182,8 +206,40 @@ impl LoweredKernel {
                 fact: FactContract::None,
                 aborts: Vec::new(),
             },
+            // A zero divisor is a case of the answer and not a reason to end: that is what the
+            // union says. What ends a quotient is the one pair whose quotient no `Int` holds, the
+            // smallest `Int` over -1. The remainder of that pair is nought, which an `Int` holds,
+            // so the remainder ends for nothing.
+            LoweredKernel::IntTruncatingDivide => Contract {
+                takes: vec![Shape::Prim(Prim::Int); 2],
+                answers: int_or_division_by_zero(),
+                fact: FactContract::None,
+                aborts: vec![AbortKind::RequiredFormHasNoPlace],
+            },
+            LoweredKernel::IntTruncatingRemainder => Contract {
+                takes: vec![Shape::Prim(Prim::Int); 2],
+                answers: int_or_division_by_zero(),
+                fact: FactContract::None,
+                aborts: Vec::new(),
+            },
+            LoweredKernel::StringLength => Contract {
+                takes: vec![Shape::Prim(Prim::String)],
+                answers: Shape::Prim(Prim::Int),
+                fact: FactContract::None,
+                aborts: Vec::new(),
+            },
         }
     }
+}
+
+/// What a truncating division answers, its members in the order the checker writes this union in.
+fn int_or_division_by_zero() -> Shape {
+    Shape::Cases(vec![
+        Case::Language {
+            case: LanguageCase::DivisionByZero,
+        },
+        Case::Primitive { prim: Prim::Int },
+    ])
 }
 
 #[cfg(test)]
@@ -219,24 +275,43 @@ mod tests {
         }
     }
 
-    const LOWERED: [LoweredKernel; 3] = [
-        LoweredKernel::IntAdd,
-        LoweredKernel::ListLength,
-        LoweredKernel::ListGet,
+    const LOWERED: [(&str, LoweredKernel); 6] = [
+        ("int.add", LoweredKernel::IntAdd),
+        ("int.truncatingDivide", LoweredKernel::IntTruncatingDivide),
+        (
+            "int.truncatingRemainder",
+            LoweredKernel::IntTruncatingRemainder,
+        ),
+        ("string.length", LoweredKernel::StringLength),
+        ("list.length", LoweredKernel::ListLength),
+        ("list.get", LoweredKernel::ListGet),
     ];
 
     /// No kernel lowered here settles a fact, which is a fact about this backend's reading of them.
     #[test]
     fn no_lowered_kernel_settles_a_fact() {
-        for kernel in LOWERED {
-            assert_eq!(kernel.contract().fact, FactContract::None);
+        for (key, kernel) in LOWERED {
+            assert_eq!(kernel.contract().fact, FactContract::None, "{key}");
         }
+    }
+
+    /// Each key reaches its own kernel, and a key the language does not write reaches none: this
+    /// backend does not accept a name the standard library has no declaration for.
+    #[test]
+    fn a_key_reaches_the_kernel_it_names_and_no_other() {
+        for (key, kernel) in LOWERED {
+            assert_eq!(LoweredKernel::of(key), Some(kernel));
+        }
+        assert_eq!(LoweredKernel::of("int.divide"), None);
     }
 
     fn some_shape_of(kernel: LoweredKernel) -> Vec<Ty> {
         let int = Ty::Prim { prim: Prim::Int };
         match kernel {
-            LoweredKernel::IntAdd => vec![int.clone(), int],
+            LoweredKernel::IntAdd
+            | LoweredKernel::IntTruncatingDivide
+            | LoweredKernel::IntTruncatingRemainder => vec![int.clone(), int],
+            LoweredKernel::StringLength => vec![Ty::Prim { prim: Prim::String }],
             LoweredKernel::ListLength => vec![Ty::List {
                 list: Box::new(Ty::Prim { prim: Prim::Bool }),
             }],
@@ -253,13 +328,48 @@ mod tests {
     /// takes binds would leave the answer unknown however a call is settled.
     #[test]
     fn what_a_kernel_takes_settles_what_it_answers() {
-        for kernel in LOWERED {
+        for (key, kernel) in LOWERED {
             let contract = kernel.contract();
             let mut bound = Bound::default();
             for (shape, ty) in contract.takes.iter().zip(some_shape_of(kernel)) {
-                assert!(shape.binds(&ty, &mut bound), "{kernel:?}");
+                assert!(shape.binds(&ty, &mut bound), "{key}");
             }
-            assert!(contract.answers.settled(&bound).is_some(), "{kernel:?}");
+            assert!(contract.answers.settled(&bound).is_some(), "{key}");
+        }
+    }
+
+    /// A zero divisor is answered, so it is a case of what the division answers and never a reason
+    /// it ends; and the cases are what the division answers whatever it is handed.
+    #[test]
+    fn a_zero_divisor_is_a_case_of_the_answer_and_not_an_abort() {
+        let answer = Ty::Union {
+            union: vec![
+                Case::Language {
+                    case: LanguageCase::DivisionByZero,
+                },
+                Case::Primitive { prim: Prim::Int },
+            ],
+        };
+        for kernel in [
+            LoweredKernel::IntTruncatingDivide,
+            LoweredKernel::IntTruncatingRemainder,
+        ] {
+            let contract = kernel.contract();
+            assert!(!contract.aborts.contains(&AbortKind::DivisionByZero));
+            assert_eq!(
+                contract.answers.settled(&Bound::default()),
+                Some(answer.clone())
+            );
+            assert!(contract.answers.binds(&answer, &mut Bound::default()));
+            let reordered = Ty::Union {
+                union: vec![
+                    Case::Primitive { prim: Prim::Int },
+                    Case::Language {
+                        case: LanguageCase::DivisionByZero,
+                    },
+                ],
+            };
+            assert!(!contract.answers.binds(&reordered, &mut Bound::default()));
         }
     }
 

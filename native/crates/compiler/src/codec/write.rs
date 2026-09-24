@@ -9,18 +9,18 @@
 
 use super::{Codecs, Runtime};
 use crate::transport::{
-    AlternativesForm, BoundaryOutput, Case, CodecShape, Declaration, Field, LeafScalar, Prim,
+    AlternativesForm, BoundaryOutput, Case, CodecShape, Declaration, Field, LeafScalar, Prim, Ty,
 };
 use crate::{
-    Declared, Emitting, Literals, Lowered, NO_ARM, POINTER, TRUSTED, machine_type, not_lowered,
-    out_of_slot, text_in_the_object,
+    Declared, Emitting, Literals, Lowered, NO_ARM, POINTER, TRUSTED, Tagged, machine_type,
+    not_lowered, out_of_slot, text_in_the_object,
 };
 use cranelift::codegen::ir::condcodes::IntCC;
 use cranelift::codegen::ir::{self, InstBuilder, TrapCode, types};
 use cranelift::frontend::FunctionBuilder;
 use cranelift::module::{FuncId, Module};
 use cranelift::object::ObjectModule;
-use souther_native_abi::{HELD, LIST_ELEMENTS, LIST_LENGTH, NOTHING, SLOT, WHICH, field_at};
+use souther_native_abi::{HELD, LIST_ELEMENTS, LIST_LENGTH, NOTHING, SLOT, field_at};
 
 /// Defines the writer of `key`.
 pub(super) fn define(
@@ -103,7 +103,9 @@ impl Writing<'_, '_> {
         match output {
             BoundaryOutput::Scalar { scalar } => self.scalar(*scalar, answer),
             BoundaryOutput::Nominal { declared } => Ok(self.named(declared, answer)),
-            BoundaryOutput::Cases { cases, form, .. } => self.alternatives(cases, form, answer),
+            BoundaryOutput::Cases { ty, cases, form } => {
+                self.alternatives(cases, form, Tagged::of(answer, ty))
+            }
             BoundaryOutput::ListOf { .. }
             | BoundaryOutput::SetOf { .. }
             | BoundaryOutput::MapOf { .. } => Err(not_lowered(format!(
@@ -279,7 +281,12 @@ impl Writing<'_, '_> {
                 self.value(&field.codec, inner)
             }
             Declaration::Unit { .. } => Ok(self.object()),
-            Declaration::Sum { cases, form, .. } => self.alternatives(cases, form, value),
+            Declaration::Sum { cases, form, .. } => {
+                let sum = Ty::Declared {
+                    declared: key.to_string(),
+                };
+                self.alternatives(cases, form, Tagged::of(value, &sum))
+            }
         }
     }
 
@@ -289,19 +296,17 @@ impl Writing<'_, '_> {
         &mut self,
         cases: &[Case],
         form: &AlternativesForm,
-        value: ir::Value,
+        tagged: Tagged,
     ) -> Lowered<ir::Value> {
-        let which = self
-            .builder
-            .ins()
-            .load(POINTER, TRUSTED, value, WHICH as i32);
+        let which = tagged.which(self.builder);
         let written = self.builder.create_block();
         self.builder.append_block_param(written, POINTER);
 
         for case in cases {
             let Case::Declared { declared: key } = case else {
                 return Err(not_lowered(format!(
-                    "the case {}, which carries no token to be told apart by",
+                    "the case {}, which this backend does not write as one of a set of \
+                     alternatives yet",
                     case.spelt()
                 )));
             };
@@ -315,7 +320,7 @@ impl Writing<'_, '_> {
 
             self.builder.switch_to_block(this);
             let shape = self.declared.laid(key);
-            let form = self.case(key, shape, form, value)?;
+            let form = self.case(key, shape, form, tagged.value())?;
             self.builder.ins().jump(written, &[form.into()]);
             self.builder.switch_to_block(next);
         }
