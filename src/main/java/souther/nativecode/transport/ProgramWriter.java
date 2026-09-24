@@ -82,7 +82,7 @@ public final class ProgramWriter {
      * written moves, so that a driver and a writer that disagree say so rather than producing an
      * object that is wrong quietly.
      */
-    public static final int TRANSPORT_VERSION = 10;
+    public static final int TRANSPORT_VERSION = 11;
 
     private final CheckedProgram program;
 
@@ -933,6 +933,10 @@ public final class ProgramWriter {
             case Core.Neg it -> "{\"core\":\"neg\",\"operand\":" + core(it.operand(), bindings)
                     + ",\"type\":" + type(it.type()) + ",\"aborts\":" + aborts(it) + "}";
             case Core.LetIn it -> letIn(it, bindings);
+            // Where the checker let a value stand as a type other than its own, which it decided
+            // and this writes: what is evaluated, and the type the position takes it as.
+            case Core.Widen it -> "{\"core\":\"widen\",\"value\":" + core(it.value(), bindings)
+                    + ",\"type\":" + type(it.type()) + ",\"aborts\":" + aborts(it) + "}";
             case Core.If it -> "{\"core\":\"if\",\"cond\":" + core(it.cond(), bindings)
                     + ",\"then\":" + core(it.then(), bindings)
                     + ",\"else\":" + core(it.els(), bindings)

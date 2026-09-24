@@ -21,7 +21,7 @@ const P: &str = r#"{"declared":"m.P"}"#;
 fn document(behaviors: &[String], helpers: &[String], definitions: &[String]) -> String {
     format!(
         concat!(
-            r#"{{"transport":10,"declarations":["#,
+            r#"{{"transport":11,"declarations":["#,
             r#"{{"module":"m","name":"A","by":"amodule","is":"unit"}},"#,
             r#"{{"module":"m","name":"B","by":"amodule","is":"unit"}},"#,
             r#"{{"module":"m","name":"S","by":"amodule","is":"sum","#,
@@ -62,6 +62,12 @@ fn helpers(helpers: &[String]) -> String {
 
 fn node(core: &str, fields: &str, ty: &str) -> String {
     format!(r#"{{"core":"{core}",{fields},"type":{ty},"aborts":[]}}"#)
+}
+
+/// `value` standing as `ty`, as the checker says it wherever a value stands as a type other than its
+/// own.
+fn widen(value: &str, ty: &str) -> String {
+    node("widen", &format!(r#""value":{value}"#), ty)
 }
 
 fn read(binding: usize, ty: &str) -> String {
@@ -201,10 +207,10 @@ fn a_behaviors_read_is_typed_as_its_target_takes() {
 fn a_read_of_a_let_is_typed_as_the_let_binds_it() {
     reads_whole(&helpers(&[h(
         &[],
-        &let_(0, S, &unit("m.A"), &read(0, S), S),
+        &let_(0, S, &widen(&unit("m.A"), S), &read(0, S), S),
     )]));
     is_the_halves_disagreeing(
-        &helpers(&[h(&[], &let_(0, S, &unit("m.A"), &read(0, A), A))]),
+        &helpers(&[h(&[], &let_(0, S, &widen(&unit("m.A"), S), &read(0, A), A))]),
         "m.h",
     );
 }
@@ -249,14 +255,14 @@ fn a_call_of_a_behavior_stands_at_what_its_target_answers() {
     );
 }
 
-/// What a call hands over is a value of what the callee takes.
+/// What a call hands over is what the callee takes.
 #[test]
 fn an_argument_is_a_value_of_what_the_callee_takes() {
     let g = helper("m.g", &[S], &read(0, S));
     let reaches = r#"{"is":"helper","declared":"m.g"}"#;
     reads_whole(&helpers(&[
         g.clone(),
-        h(&[], &call(reaches, &[unit("m.A")], S)),
+        h(&[], &call(reaches, &[widen(&unit("m.A"), S)], S)),
     ]));
     is_the_halves_disagreeing(&helpers(&[g, h(&[], &call(reaches, &[int(1)], S))]), "m.g");
 }
@@ -290,7 +296,7 @@ fn a_member_is_typed_as_the_tuple_holds_it() {
 fn a_field_is_read_as_its_declaration_types_it() {
     let built = node(
         "construct",
-        &format!(r#""declared":"m.P","values":[{}]"#, unit("m.A")),
+        &format!(r#""declared":"m.P","values":[{}]"#, widen(&unit("m.A"), S)),
         P,
     );
     let field = |ty: &str| node("field", &format!(r#""target":{built},"field":"f""#), ty);
@@ -304,7 +310,7 @@ fn a_construction_is_typed_as_what_it_builds() {
     let built = |ty: &str| {
         node(
             "construct",
-            &format!(r#""declared":"m.P","values":[{}]"#, unit("m.A")),
+            &format!(r#""declared":"m.P","values":[{}]"#, widen(&unit("m.A"), S)),
             ty,
         )
     };
@@ -312,7 +318,8 @@ fn a_construction_is_typed_as_what_it_builds() {
     is_the_halves_disagreeing(&helpers(&[h(&[], &built(A))]), "m.P");
 }
 
-/// Each branch of a fork answers a value of what the fork answers: a case of it, or it.
+/// Each branch of a fork answers what the fork answers: the fork's type, or a case of it standing as
+/// that type.
 #[test]
 fn a_forks_branches_answer_values_of_what_it_answers() {
     let fork = |els: &str, ty: &str| {
@@ -321,12 +328,12 @@ fn a_forks_branches_answer_values_of_what_it_answers() {
             &format!(
                 r#""cond":{},"then":{},"else":{els}"#,
                 truth(true),
-                unit("m.A")
+                widen(&unit("m.A"), ty)
             ),
             ty,
         )
     };
-    reads_whole(&helpers(&[h(&[], &fork(&unit("m.B"), S))]));
+    reads_whole(&helpers(&[h(&[], &fork(&widen(&unit("m.B"), S), S))]));
     is_the_halves_disagreeing(&helpers(&[h(&[], &fork(&unit("m.B"), A))]), "m.h");
 }
 
@@ -360,7 +367,7 @@ fn an_arm_reads_a_present_value_as_what_the_optional_holds() {
                 r#""subject":{},"arms":[{},{}]"#,
                 read(0, &optional),
                 arm(r#"{"tests":"held"}"#, Some((1, binds)), &read(1, binds)),
-                arm(r#"{"tests":"nothing"}"#, None, &unit("m.A"))
+                arm(r#"{"tests":"nothing"}"#, None, &widen(&unit("m.A"), S))
             ),
             S,
         )
@@ -369,11 +376,11 @@ fn an_arm_reads_a_present_value_as_what_the_optional_holds() {
     is_the_halves_disagreeing(&helpers(&[h(&[&optional], &fork(A))]), "m.h");
 }
 
-/// What a present value holds is a value of what the optional holds.
+/// What a present value holds is what the optional holds.
 #[test]
 fn a_present_value_holds_a_value_of_what_its_optional_holds() {
     let some = |value: &str| node("some", &format!(r#""value":{value}"#), &option_of(S));
-    reads_whole(&helpers(&[h(&[], &some(&unit("m.A")))]));
+    reads_whole(&helpers(&[h(&[], &some(&widen(&unit("m.A"), S)))]));
     is_the_halves_disagreeing(&helpers(&[h(&[], &some(&int(1)))]), "m.h");
 }
 
@@ -435,7 +442,7 @@ fn a_capture_is_read_as_its_binder_outside_binds_it() {
     is_the_halves_disagreeing(&helpers(&[h(&[INT], &block(BOOL))]), "m.h");
 }
 
-/// What a function value is applied to is a value of what it takes.
+/// What a function value is applied to is what it takes.
 #[test]
 fn a_function_value_is_applied_to_values_of_what_it_takes() {
     let function = fn_of(&[S], S);
@@ -449,7 +456,10 @@ fn a_function_value_is_applied_to_values_of_what_it_takes() {
             S,
         )
     };
-    reads_whole(&helpers(&[h(&[&function], &applied(unit("m.A")))]));
+    reads_whole(&helpers(&[h(
+        &[&function],
+        &applied(widen(&unit("m.A"), S)),
+    )]));
     is_the_halves_disagreeing(&helpers(&[h(&[&function], &applied(int(1)))]), "m.h");
 }
 
@@ -532,7 +542,7 @@ fn a_disagreement_anywhere_is_refused_before_anything_is_not_lowered() {
         &let_(
             1,
             &listed(S),
-            &read(0, &listed(A)),
+            &widen(&read(0, &listed(A)), &listed(S)),
             &read(1, &listed(S)),
             &listed(S),
         ),
@@ -965,4 +975,128 @@ fn a_name_no_symbol_can_carry_is_refused_where_it_is_read() {
 fn a_negation_answers_a_number() {
     let negated = node("neg", &format!(r#""operand":{}"#, read(0, BOOL)), BOOL);
     is_the_halves_disagreeing(&helpers(&[behind(), h(&[BOOL], &negated)]), "a number");
+}
+
+/// A value in a slot is of exactly the type the slot takes it at, and where the checker let a
+/// narrower one stand there it says so with a `Widen`. A case standing bare where its sum is taken
+/// is a document the checker does not write.
+#[test]
+fn a_narrower_value_stands_in_a_slot_only_under_a_widen() {
+    let fork = |then: &str| {
+        node(
+            "if",
+            &format!(
+                r#""cond":{},"then":{then},"else":{}"#,
+                truth(true),
+                widen(&unit("m.B"), S)
+            ),
+            S,
+        )
+    };
+    reads_whole(&helpers(&[h(&[], &fork(&widen(&unit("m.A"), S)))]));
+    is_the_halves_disagreeing(&helpers(&[h(&[], &fork(&unit("m.A")))]), "m.h");
+}
+
+/// A `Widen` is the checker's answer that its value may stand as the type it names, and a value of
+/// one unit standing as another is not one it gives.
+#[test]
+fn a_widen_stands_a_value_only_as_what_it_is_a_value_of() {
+    reads_whole(&helpers(&[h(&[], &widen(&unit("m.A"), S))]));
+    is_the_halves_disagreeing(
+        &helpers(&[h(&[], &widen(&unit("m.A"), r#"{"declared":"m.B"}"#))]),
+        "a value standing as a wider type",
+    );
+}
+
+/// A `Widen` says only what differs: one over a value of its own type, or over another `Widen`, is
+/// a statement the checker never makes.
+#[test]
+fn a_widen_says_only_what_differs() {
+    is_the_halves_disagreeing(&helpers(&[h(&[], &widen(&unit("m.A"), A))]), "its own type");
+    let union =
+        r#"{"union":[{"is":"declared","declared":"m.A"},{"is":"declared","declared":"m.B"}]}"#;
+    is_the_halves_disagreeing(
+        &helpers(&[h(&[], &widen(&widen(&unit("m.A"), union), S))]),
+        "at one position once",
+    );
+}
+
+/// A value standing as a type this backend has no representation for is not lowered, which is a
+/// different answer from the two halves disagreeing: a union with a primitive among its members is
+/// one the checker writes and nothing here lays out.
+#[test]
+fn a_widen_to_a_type_with_no_representation_is_not_lowered() {
+    let union = r#"{"union":[{"is":"primitive","prim":"INT"},{"is":"declared","declared":"m.A"}]}"#;
+    let refused = object_for(&helpers(&[h(&[], &widen(&int(1), union))]))
+        .expect_err("a union with a primitive among its members has no representation");
+    assert!(refused.downcast_ref::<NotLowered>().is_some(), "{refused}");
+}
+
+/// A function taking a sum stands as one taking a case of it, and one answering a case stands as
+/// one answering the sum: what the position hands it is a value it takes, and what it answers is a
+/// value of what the position answers. The other way round is not a function the position can use.
+#[test]
+fn a_function_stands_as_one_taking_less_and_answering_more() {
+    let wide = fn_of(&[S], A);
+    let narrow = fn_of(&[A], S);
+    reads_whole(&helpers(&[h(&[&wide], &widen(&read(0, &wide), &narrow))]));
+    is_the_halves_disagreeing(
+        &helpers(&[h(&[&narrow], &widen(&read(0, &narrow), &wide))]),
+        "a value standing as a wider type",
+    );
+}
+
+/// Both sides of `++` stand as the list it answers, each under a `Widen` where it holds a narrower
+/// element. A document with one side left at its own list is one the checker does not write, and it
+/// is refused as that and not as a list this backend does not lay out.
+#[test]
+fn a_concat_operand_narrower_than_its_slot_without_a_widen_is_the_halves_disagreeing() {
+    let listed = |of: &str| format!(r#"{{"list":{of}}}"#);
+    let b = r#"{"declared":"m.B"}"#;
+    let joined = |left: &str, right: &str| {
+        node(
+            "binary",
+            &format!(r#""op":"CONCAT","left":{left},"right":{right}"#),
+            &listed(S),
+        )
+    };
+    let takes = [listed(A), listed(b)];
+    let takes: Vec<&str> = takes.iter().map(String::as_str).collect();
+    let both = joined(
+        &widen(&read(0, &listed(A)), &listed(S)),
+        &widen(&read(1, &listed(b)), &listed(S)),
+    );
+    let refused = object_for(&helpers(&[h(&takes, &both)])).expect_err("nothing lays a list out");
+    assert!(refused.downcast_ref::<NotLowered>().is_some(), "{refused}");
+
+    let bare = joined(
+        &read(0, &listed(A)),
+        &widen(&read(1, &listed(b)), &listed(S)),
+    );
+    is_the_halves_disagreeing(&helpers(&[h(&takes, &bare)]), "the left side of ++");
+}
+
+/// Two strings joined are a string, and each side is one.
+#[test]
+fn a_concat_of_two_strings_reads_whole() {
+    let joined = node(
+        "binary",
+        &format!(
+            r#""op":"CONCAT","left":{},"right":{}"#,
+            read(0, STRING),
+            read(1, STRING)
+        ),
+        STRING,
+    );
+    reads_whole(&helpers(&[h(&[STRING, STRING], &joined)]));
+    let answered_wrong = node(
+        "binary",
+        &format!(
+            r#""op":"CONCAT","left":{},"right":{}"#,
+            read(0, STRING),
+            read(1, STRING)
+        ),
+        INT,
+    );
+    is_the_halves_disagreeing(&helpers(&[h(&[STRING, STRING], &answered_wrong)]), "++");
 }

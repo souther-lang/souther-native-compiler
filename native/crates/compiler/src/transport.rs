@@ -18,7 +18,7 @@ use serde::Deserialize;
 
 /// What this side reads. A document written to say anything else is refused rather than read as
 /// much of as happens to parse.
-pub const TRANSPORT_VERSION: u32 = 10;
+pub const TRANSPORT_VERSION: u32 = 11;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1195,6 +1195,18 @@ pub enum Node {
         ty: Ty,
         aborts: Vec<AbortKind>,
     },
+    /// A value standing as a type other than its own, where the checker decided that it may.
+    ///
+    /// `value` is what is evaluated, at the type it was worked out at, and `ty` is what the position
+    /// it stands in takes it as. Written only where the two differ, so every other position holds a
+    /// value of exactly the type it takes. Why the checker let it stand there is not carried, and
+    /// nothing here works it out again.
+    Widen {
+        value: Box<Node>,
+        #[serde(rename = "type")]
+        ty: Ty,
+        aborts: Vec<AbortKind>,
+    },
 }
 
 /// One parameter of a [`Node::Block`], numbered the way any other binder on the wire is: where it
@@ -1281,6 +1293,44 @@ pub enum Selects {
 }
 
 impl Node {
+    /// The nodes directly under this one, in the order they are written.
+    ///
+    /// No arm standing for the rest: a node added to the document is one whose children every walk
+    /// over this would otherwise silently never reach.
+    pub fn children(&self) -> Vec<&Node> {
+        match self {
+            Node::Binary { left, right, .. } => vec![left, right],
+            Node::Neg { operand, .. } => vec![operand],
+            Node::Let { value, body, .. } => vec![value, body],
+            Node::If {
+                cond, then, els, ..
+            } => vec![cond, then, els],
+            Node::Construct { values, .. } => values.iter().collect(),
+            Node::Field { target, .. } => vec![target],
+            Node::Match { subject, arms, .. } => std::iter::once(subject.as_ref())
+                .chain(arms.iter().map(|arm| &arm.body))
+                .collect(),
+            Node::Some { value, .. } | Node::Widen { value, .. } => vec![value],
+            Node::Tuple { members, .. } => members.iter().collect(),
+            Node::Member { tuple, .. } => vec![tuple],
+            Node::Call { arguments, .. } => arguments.iter().collect(),
+            Node::Block { body, .. } => vec![body],
+            Node::Apply {
+                function,
+                arguments,
+                ..
+            } => std::iter::once(function.as_ref())
+                .chain(arguments.iter())
+                .collect(),
+            Node::Int { .. }
+            | Node::Read { .. }
+            | Node::Bool { .. }
+            | Node::Str { .. }
+            | Node::Unit { .. }
+            | Node::None { .. } => Vec::new(),
+        }
+    }
+
     /// The type the checker decided for this expression.
     ///
     /// Read off the node rather than worked out from where it sits: what a comparison compares is
@@ -1306,7 +1356,8 @@ impl Node {
             | Node::Member { ty, .. }
             | Node::Call { ty, .. }
             | Node::Block { ty, .. }
-            | Node::Apply { ty, .. } => ty,
+            | Node::Apply { ty, .. }
+            | Node::Widen { ty, .. } => ty,
         }
     }
 }
