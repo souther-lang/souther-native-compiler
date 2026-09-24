@@ -225,7 +225,7 @@ class APhpBindingIsWrittenFromTheManifestTest {
                 "Acme\\Billing"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("is version 3 of souther-native-interface for ABI generation"
-                        + " 3, and this generator reads version 4")
+                        + " 3, and this generator reads version 5")
                 .hasMessageNotContaining("answers");
     }
 

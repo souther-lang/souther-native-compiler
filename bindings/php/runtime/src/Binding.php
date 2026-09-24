@@ -16,7 +16,7 @@ abstract class Binding
      * binding generated before would call something this does not have, or call it as something it
      * is not; a binding says which it was generated for and refuses to load over any other.
      */
-    public const PROTOCOL = 1;
+    public const PROTOCOL = 2;
 
     /**
      * @param array<string, InjectionSlot> $slots by the declared name of the behavior each is for
