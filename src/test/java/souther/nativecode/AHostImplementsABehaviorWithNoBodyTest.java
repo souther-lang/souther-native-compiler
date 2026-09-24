@@ -40,10 +40,16 @@ class AHostImplementsABehaviorWithNoBodyTest {
             """;
 
     /**
-     * A binding's shape, written by hand: an implementation is registered around the one call it
-     * is for and what it replaced is put back after, an exception thrown by an implementation is
-     * kept, answered as a status, and thrown again where the outermost call returns. PHP cannot
-     * throw through a C frame, and nothing unwinds through generated code anyway.
+     * A binding's shape, written by hand: an implementation is made into a C function pointer
+     * once, registered around each call it is for, and what it replaced is put back after. An
+     * exception thrown by an implementation is kept, answered as a status, and thrown again where
+     * the outermost call returns: PHP cannot throw through a C frame, and nothing unwinds through
+     * generated code anyway.
+     *
+     * <p>Made into a pointer once and not handed over as a closure each call: PHP makes a new C
+     * entry for a closure every time one is handed to C as a function pointer, and keeps each
+     * until the request ends, so a binding handing its closure over on every call grows for as
+     * long as the process lives. The script holds itself to that.
      */
     private static final String PHP = """
             <?php
@@ -53,8 +59,10 @@ class AHostImplementsABehaviorWithNoBodyTest {
                 public static ?Throwable $thrown = null;
             }
 
-            function registered(FFI $ffi, callable $implementation): Closure {
-                return function (int $a, $out) use ($ffi, $implementation): int {
+            /** The implementation as C calls it, made once and held for as long as it is used. */
+            function implementing(FFI $ffi, callable $implementation): FFI\\CData {
+                $held = $ffi->new("souther3_m_pricing_b_lookUp_implementation[1]");
+                $held[0] = function (int $a, $out) use ($ffi, $implementation): int {
                     try {
                         $out[0] = $implementation($a);
                         return $ffi->SOUTHER_ANSWERED;
@@ -63,6 +71,7 @@ class AHostImplementsABehaviorWithNoBodyTest {
                         return $ffi->SOUTHER_HOST_EXCEPTION;
                     }
                 };
+                return $held[0];
             }
 
             function twice(FFI $ffi, int $a): int {
@@ -79,10 +88,8 @@ class AHostImplementsABehaviorWithNoBodyTest {
                 return $answer->cdata;
             }
 
-            function bound(FFI $ffi, callable $implementation, int $a): int {
-                // Held for as long as it is registered, so the pointer C holds stays good.
-                $held = registered($ffi, $implementation);
-                $before = $ffi->souther3_m_pricing_b_lookUp_register($held);
+            function bound(FFI $ffi, FFI\\CData $implementation, int $a): int {
+                $before = $ffi->souther3_m_pricing_b_lookUp_register($implementation);
                 try {
                     return twice($ffi, $a);
                 } finally {
@@ -97,23 +104,26 @@ class AHostImplementsABehaviorWithNoBodyTest {
                         ? "unbound" : $unbound->getMessage(), "\\n";
             }
 
-            echo "added: ", bound($ffi, fn(int $a): int => $a + 20, 1), "\\n";
+            $added = implementing($ffi, fn(int $a): int => $a + 20);
+            echo "added: ", bound($ffi, $added, 1), "\\n";
 
             $down = new LogicException("the database is down");
+            $throwing = implementing($ffi, function (int $a) use ($down): int { throw $down; });
             try {
-                bound($ffi, function (int $a) use ($down): int { throw $down; }, 1);
+                bound($ffi, $throwing, 1);
             } catch (LogicException $caught) {
                 echo "thrown: ", $caught === $down ? "the same one" : "another", "\\n";
             }
 
             // One implementation calling the program with another bound inside it, and then again
             // with nothing bound anew: the second call is answered by the first implementation.
-            $outer = function (int $a) use ($ffi): int {
+            $inner = implementing($ffi, fn(int $a): int => $a + 1);
+            $outer = implementing($ffi, function (int $a) use ($ffi, $inner): int {
                 if ($a === 2) {
                     return 100;
                 }
-                return bound($ffi, fn(int $a): int => $a + 1, 5) + twice($ffi, 2);
-            };
+                return bound($ffi, $inner, 5) + twice($ffi, 2);
+            });
             echo "nested: ", bound($ffi, $outer, 1), "\\n";
 
             try {
@@ -122,6 +132,16 @@ class AHostImplementsABehaviorWithNoBodyTest {
                 echo "after: ", $unbound->getMessage() === "status " . $ffi->SOUTHER_INJECTION_UNBOUND
                         ? "unbound" : $unbound->getMessage(), "\\n";
             }
+
+            // Registered around ten thousand calls, and PHP holds no more than it did. A closure
+            // handed over on each call would hold a C entry for every one of them, which is
+            // megabytes, well past what PHP's own allocator moves by.
+            $before = memory_get_usage();
+            for ($call = 0; $call < 10000; $call++) {
+                bound($ffi, $added, $call);
+            }
+            $grown = memory_get_usage() - $before;
+            echo "repeated: ", $grown < 64 * 1024 ? "steady" : "grew $grown bytes", "\\n";
             """;
 
     @Test
@@ -146,6 +166,7 @@ class AHostImplementsABehaviorWithNoBodyTest {
                         thrown: the same one
                         nested: 424
                         after: unbound
+                        repeated: steady
                         """);
     }
 

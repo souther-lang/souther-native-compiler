@@ -449,7 +449,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
             // Answered by this object, with what a host registered for it: a module this document
             // builds declares it, and the declaring build's object is the one place that is
             // defined, however many objects call it.
-            Answers::Injected if injected.iter().any(|it| std::ptr::eq(*it, target)) => {
+            Answers::Injected if injected.contains_key(&target.declared()) => {
                 crosses_objects(target)?;
                 Linkage::Export
             }
@@ -922,7 +922,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
     host::define_values(&mut emitting, &mut surface, &values)?;
     // What a host implements, and registers an implementation through.
     let injections: Vec<host::Injected> = injected
-        .iter()
+        .values()
         .map(|target| host::Injected {
             module: &target.module,
             name: &target.name,

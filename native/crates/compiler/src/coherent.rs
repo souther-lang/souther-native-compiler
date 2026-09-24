@@ -61,7 +61,7 @@ use crate::transport::{
 use crate::{Declared, Runs, Targets, not_lowered, spelt};
 use anyhow::{Result, anyhow, bail};
 use souther_native_abi::{spells_a_module, spells_a_name};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// A document every relation of which holds, and what reading it built.
 pub(crate) struct Coherent<'a> {
@@ -74,9 +74,10 @@ pub(crate) struct Coherent<'a> {
     /// Every closure site under what this object runs.
     pub closures: ClosureSites<'a>,
     /// Every behavior a module this document builds declares with no body and nothing to depend
-    /// on. This object answers each, with what a host registered for it; an object built from
-    /// another document that names one only calls it.
-    pub injected: Vec<&'a Target>,
+    /// on, by the name it is declared under. This object answers each, with what a host registered
+    /// for it; an object built from another document that names one only calls it. Asked of by
+    /// name for every target the object declares, so a lookup and not a walk.
+    pub injected: BTreeMap<String, &'a Target>,
 }
 
 impl<'a> Coherent<'a> {
@@ -134,7 +135,7 @@ impl<'a> Coherent<'a> {
                 })?;
             }
         }
-        let mut injected = Vec::new();
+        let mut injected = BTreeMap::new();
         for target in &program.behaviors {
             let name = target.declared();
             if !spells_a_module(&target.module) || !spells_a_name(&target.name) {
@@ -164,7 +165,7 @@ impl<'a> Coherent<'a> {
             let declared_here = reached.modules.contains_key(target.module.as_str());
             placed(&name, target, declared_here)?;
             if target.is == Answers::Injected && declared_here {
-                injected.push(target);
+                index::unique(&mut injected, name.clone(), target);
             }
         }
 
