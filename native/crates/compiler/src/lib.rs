@@ -244,9 +244,9 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
     }
 
     // The constructor of every declaration built here, declared before any body is, since every
-    // construction calls one and a clause may build a value of its own type.
+    // construction calls one.
     let mut constructors = Constructors::default();
-    for key in constructed(program, &declared) {
+    for key in constructed(program) {
         let declaration = declared.laid(key);
         let signature = constructor_signature(declaration, call_conv)?;
         // Kept to this object. It is how the language builds a value of the type, and what a host
@@ -1708,43 +1708,22 @@ impl Constructors {
     }
 }
 
-/// Every declaration a value of which is built here: one a body outside a clause builds, and one a
-/// clause of such a declaration builds, since the clause runs wherever its own declaration's value
-/// is built.
+/// Every declaration a value of which is built here, which is every one a body builds: a clause
+/// builds none, as [`Coherent`] held.
 ///
 /// Not every declaration the document carries. Reading a declaration and laying a value of it out
 /// are two questions, and a declaration nothing builds a value of is not asked the second: its
 /// fields may be of a type with no representation here, and the program is not refused for it.
-fn constructed<'p>(program: &'p Program, declared: &Declared<'p>) -> BTreeSet<&'p str> {
-    let mut built: BTreeSet<&'p str> = BTreeSet::new();
-    let mut pending: Vec<&'p str> = Vec::new();
-    let note = |node: &'p Node, built: &mut BTreeSet<&'p str>, pending: &mut Vec<&'p str>| {
-        each_construction(node, &mut |key| {
-            if built.insert(key) {
-                pending.push(key);
+fn constructed(program: &Program) -> BTreeSet<&str> {
+    let mut built = BTreeSet::new();
+    for body in program.bodies() {
+        body.node.each(&mut |node| {
+            if let Node::Construct { declared, .. } = node {
+                built.insert(declared.as_str());
             }
         });
-    };
-    for body in program.bodies() {
-        if !matches!(body.owner, transport::Owner::Invariant { .. }) {
-            note(body.node, &mut built, &mut pending);
-        }
-    }
-    while let Some(key) = pending.pop() {
-        for clause in declared.laid(key).invariants() {
-            note(&clause.condition, &mut built, &mut pending);
-        }
     }
     built
-}
-
-/// The declaration of every construction under `node`.
-fn each_construction<'p>(node: &'p Node, found: &mut impl FnMut(&'p str)) {
-    node.each(&mut |it| {
-        if let Node::Construct { declared, .. } = it {
-            found(declared);
-        }
-    });
 }
 
 /// What a declaration's constructor takes and answers: its fields, in the order they are laid out,

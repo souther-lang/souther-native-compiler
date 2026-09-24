@@ -4,6 +4,7 @@ import souther.compiler.abort.AbortKind;
 import souther.compiler.abort.AbortSet;
 import souther.compiler.core.Composition;
 import souther.compiler.core.Core;
+import souther.compiler.core.EnsuresEnforcement;
 import souther.compiler.core.Kernel;
 import souther.compiler.core.ValueShape;
 import souther.compiler.observe.ObservedValue;
@@ -482,6 +483,7 @@ public final class ProgramWriter {
     private String module(CheckedModule module) {
         StringJoiner definitions = new StringJoiner(",", "[", "]");
         for (CheckedBehavior behavior : module.behaviors()) {
+            ensured(module, behavior);
             switch (behavior.implementation()) {
                 case CheckedImplementation.Body written -> definitions.add(body(module, behavior, written));
                 case CheckedImplementation.Composed written -> definitions.add(composed(module, behavior, written));
@@ -521,6 +523,29 @@ public final class ProgramWriter {
                 + ",\"entries\":" + entries
                 + ",\"definitions\":" + definitions
                 + ",\"examples\":" + examples + "}";
+    }
+
+    /**
+     * Refuses a behavior whose answer is held to a rule here, which nothing on the wire carries yet.
+     *
+     * <p>The rule is {@code Core} the program hands out as much as a body is, and a run that
+     * answered without it would make what the behavior declares true of this object by leaving it
+     * out. Where the check goes is the checker's answer: at the callee for a body, at every crossing
+     * for an answer from outside. Either one is a check this object would have to run.
+     */
+    private static void ensured(CheckedModule module, CheckedBehavior behavior) {
+        String name = module.name() + "." + behavior.name().name();
+        switch (behavior.ensures()) {
+            case EnsuresEnforcement.AtTheCallee it ->
+                    throw notYet("`" + name + "`, whose answer is held to what it declares");
+            case EnsuresEnforcement.AtEachCrossing it ->
+                    throw notYet("`" + name + "`, whose answer is held to what it declares where it"
+                            + " crosses in");
+            case EnsuresEnforcement.NoContract it -> { }
+            // Another module's behavior, whose own build decided where its check goes. No
+            // behavior of a module this compile checked is one.
+            case EnsuresEnforcement.NotDecidedHere it -> { }
+        }
     }
 
     /**

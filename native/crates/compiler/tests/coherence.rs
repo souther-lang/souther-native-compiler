@@ -1205,3 +1205,24 @@ fn a_construction_says_it_can_fail_exactly_where_its_type_states_a_clause() {
         "states no clause",
     );
 }
+
+/// A clause observes the value being built and builds none, which the checker holds to: so a
+/// construction runs clauses that construct nothing in turn.
+#[test]
+fn a_clause_builds_no_value() {
+    let fields = field("count", 0, "INT");
+    let built = format!(
+        r#"{{"core":"construct","declared":"m.R","values":[{}],"type":{{"declared":"m.R"}},"aborts":["INVARIANT_NOT_HELD"]}}"#,
+        read(0, INT)
+    );
+    let read_back = node(
+        "field",
+        &format!(r#""target":{built},"field":"count""#),
+        INT,
+    );
+    let building = clause(None, &at_least(&read_back, &int(0)));
+    is_the_halves_disagreeing(
+        &with_clauses(&fields, &building, &[]),
+        "constructs m.R, where a clause builds no value",
+    );
+}

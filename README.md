@@ -106,8 +106,10 @@ only holds the tree it is handed and writes it out. Which case a value is comes 
 linker resolved, and is never what the case is written as.
 
 Still ahead: a `Decimal`, the collections, a function value, every kernel but `Int.add`, a value
-that runs in the module declaring it, negating anything other than a literal, and an attempted
-construction, which takes an arm by the clause that did not hold instead of ending the run. A collection and
+that runs in the module declaring it, negating anything other than a literal, an attempted
+construction, which takes an arm by the clause that did not hold instead of ending the run, and a
+behavior that declares what its answer owes, which is refused rather than answered without the
+rule being run. A collection and
 a `Decimal` are read off the program whole and refused where one would be laid out or written: how
 every carrier orders a set's members, spells a map's keys and writes a decimal is for the language
 to state before a backend writes one.
