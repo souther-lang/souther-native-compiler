@@ -57,8 +57,8 @@ build what it runs. From the root of a clone:
 
 `process-classes` builds the driver the command hands the program to; where it is built already,
 `mvn -q exec:java -Dargs='...'` is enough. The command ends with what `Main` ends with: 0 where it
-wrote everything, 1 where the program is refused (a compile error, what this backend does not write
-yet, a name PHP will not take) and 2 where the command is.
+wrote everything, 1 where the build is refused (a compile error, what this backend does not write
+yet, or a name from the model PHP will not take), and 2 where the command is refused.
 
     souther-native [-cp <path>] -o <object> <source>...
     souther-native [-cp <path>] --library <dir> [--with <object>]...
