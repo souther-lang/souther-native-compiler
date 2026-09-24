@@ -204,7 +204,9 @@ impl<'a> Coherent<'a> {
                     // A clause observes the value being built and builds none: the checker refuses
                     // one that constructs, through a helper as much as written out. So every value
                     // built here is built by a body, and a construction runs clauses that build
-                    // nothing in turn.
+                    // nothing in turn. A unit's value is asked about by neither, and is not asked
+                    // about here (`Node::builds` answers for it): it is built from no fields and runs
+                    // no clause, so naming one in a clause starts nothing in turn.
                     let mut built = None;
                     body.node.each(&mut |node| {
                         if let Node::Construct { declared, .. } = node {

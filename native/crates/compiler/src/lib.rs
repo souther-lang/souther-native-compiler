@@ -7,6 +7,7 @@
 mod boundary;
 mod closures;
 mod coherent;
+mod host;
 mod index;
 mod kernels;
 pub mod transport;
@@ -279,9 +280,14 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
             // construction's own fields are refused over.
             DeclaredBy::AModule => continue,
             DeclaredBy::OnThePath => {}
-            DeclaredBy::TheLanguage => unreachable!(
-                "`Declared` held that nothing the language declares is built from fields"
-            ),
+            // A unit the language declares: no build of a module defines it, so there is nothing
+            // to reach. `Declared` held that nothing else the language declares is built at all.
+            DeclaredBy::TheLanguage => {
+                return Err(not_lowered(format!(
+                    "a value of {key}, which the language declares and no build of a module \
+                     defines"
+                )));
+            }
         }
         for field in declaration.fields() {
             crosses_object(
@@ -688,6 +694,23 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
         accepted(module.define_function(id, &mut context));
     }
 
+    // What a host builds and reads a value of a published type through, each running on the
+    // constructors just defined and the layout they write.
+    host::define(
+        host::Emitting {
+            module: &mut module,
+            context: &mut context,
+            shapes: &mut shapes,
+            frontend,
+            call_conv,
+            declared: &declared,
+            constructors: &constructors,
+            allocate,
+        },
+        program,
+        &runs,
+    )?;
+
     // What a host reaches for an answer as the language writes it: every behavior this object
     // defines and publishes, and every row. A behavior another build implements is that build's
     // to give a boundary to, so one object never answers for a second entry under the same name.
@@ -988,6 +1011,13 @@ impl<'a> Declared<'a> {
             // states a clause or not.
             let mut bound = HashMap::new();
             for field in declaration.fields() {
+                // A host reads a field by a symbol its name is the last segment of.
+                if !spells_a_name(&field.name) {
+                    bail!(
+                        "{key} declares a field written {}, which no symbol can carry",
+                        field.name
+                    );
+                }
                 declared.resolves(&format!("{key}'s field {}", field.name), &field.codec.ty())?;
                 index::once(&mut bound, field.binding, (), || {
                     format!(
@@ -1797,46 +1827,43 @@ pub(crate) struct Runs<'p> {
 
 impl<'p> Runs<'p> {
     pub(crate) fn of(program: &'p Program) -> Self {
-        let published: BTreeSet<String> = program
+        let mut published: BTreeSet<String> = program
             .modules
             .iter()
             .flat_map(|module| module.publishes.iter().cloned())
             .collect();
-        // Every declaration a body of a module constructs a value of. A clause constructs none,
-        // as `Coherent` holds, so what a clause would ask for is never among what is built.
-        let mut constructed = BTreeSet::new();
-        for body in program.bodies() {
-            if matches!(body.owner, transport::Owner::Invariant { .. }) {
-                continue;
+        // What this object builds is what a body it runs builds a value of, and it runs the clauses
+        // of what it builds — so a clause is asked too, once what it belongs to is built. A clause
+        // builds nothing from fields, as `Coherent` holds, and may still name a unit; so this
+        // settles in a round or two, and is asked until it does rather than counting on how many.
+        let mut built = BTreeSet::new();
+        loop {
+            let runs = Runs {
+                program,
+                built,
+                published,
+            };
+            let constructed = constructed(&runs);
+            let now: BTreeSet<String> = program
+                .declarations
+                .iter()
+                .filter(|declaration| {
+                    let key = declaration.key();
+                    declaration.by() == DeclaredBy::AModule
+                        && !matches!(declaration, Declaration::Sum { .. })
+                        && (runs.published.contains(&key) || constructed.contains(key.as_str()))
+                        && declaration
+                            .fields()
+                            .iter()
+                            .all(|field| machine_type(&field.codec.ty()).is_ok())
+                })
+                .map(Declaration::key)
+                .collect();
+            if now == runs.built {
+                return runs;
             }
-            body.node.each(&mut |node| {
-                if let Node::Construct { declared, .. } = node {
-                    constructed.insert(declared.clone());
-                }
-            });
-        }
-        let built = program
-            .declarations
-            .iter()
-            .filter(|declaration| {
-                let key = declaration.key();
-                declaration.by() == DeclaredBy::AModule
-                    && matches!(
-                        declaration,
-                        Declaration::Product { .. } | Declaration::Newtype { .. }
-                    )
-                    && (published.contains(&key) || constructed.contains(&key))
-                    && declaration
-                        .fields()
-                        .iter()
-                        .all(|field| machine_type(&field.codec.ty()).is_ok())
-            })
-            .map(Declaration::key)
-            .collect();
-        Runs {
-            program,
-            built,
-            published,
+            built = now;
+            published = runs.published;
         }
     }
 
@@ -1868,14 +1895,14 @@ impl<'p> Runs<'p> {
     }
 }
 
-/// Every declaration a body this object runs constructs a value of. A clause constructs none, as
-/// [`Coherent`] held.
+/// Every declaration a body this object runs builds a value of ([`Node::builds`]). A clause builds
+/// none from fields, as [`Coherent`] held, and may name a unit.
 fn constructed<'p>(runs: &Runs<'p>) -> BTreeSet<&'p str> {
     let mut built = BTreeSet::new();
     for body in runs.bodies() {
         body.node.each(&mut |node| {
-            if let Node::Construct { declared, .. } = node {
-                built.insert(declared.as_str());
+            if let Some(declared) = node.builds() {
+                built.insert(declared);
             }
         });
     }
@@ -2320,12 +2347,11 @@ fn lower(
                 )
             })?
         }
+        // A unit's value is a construction from no fields, and is built where every construction
+        // of its type is, so how one is laid out is said in one place.
         Node::Unit { declared, .. } => {
-            let flags = TRUSTED;
-            let value = lowering.room(builder, module, room_for_fields(0));
-            let which = tag_of(builder, lowering, module, declared)?;
-            builder.ins().store(flags, which, value, WHICH as i32);
-            value
+            let constructor = lowering.constructors.of(declared)?;
+            call_reached(builder, module, abort, constructor, POINTER, &[])?
         }
         // What a construction does is its declaration's constructor's to do: the fields are worked
         // out here, in the order they are written, and handed over. Whether the value is one the

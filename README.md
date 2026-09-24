@@ -88,8 +88,8 @@ owns, under a name the linker resolves, so a fork in one object over a value bui
 compares what the linker resolved for both. A type whose representation is still to be designed
 does not cross, and the signature is where that is said.
 
-A type that states what its values owe is built by one function per declaration, which every
-construction of it calls: it takes the fields, runs the clauses in the order the type states them,
+A value of a declared type is built by one function per declaration, which every construction of
+it calls, a unit's value among them: it takes the fields, runs the clauses in the order the type states them,
 a clause a spread took in among them, and lays the value out only once all of them hold. The first
 that does not hold ends the run with `InvariantNotHeld`, and a clause that itself ends without a
 value, leaving an `Int`'s range, ends it for that reason.
@@ -101,6 +101,28 @@ another declared calls that one: what a clause reads
 and calls, a helper among them, is the declaring build's own, and a copy run elsewhere would run
 without it. It is a call between objects this compiler built, under a symbol carrying the ABI
 generation. What a host calls to build a value is a boundary of its own and not this.
+
+A host builds and reads a value of a type the module publishes through functions the object
+defines for it, and never through where the value keeps anything. A host holds a value as an
+address it does not look behind, good until the mark taken before it was made is reset, and hands
+it back to these and to the behaviors. For each published type with fields or none there is a
+constructor, `souther2.<module>$type$<Name>$construct`, taking the fields and answering `status +
+out` the way the type's own constructor does, since it is that constructor it runs: a value whose
+clauses do not hold is answered `InvariantNotHeld` and nothing is written through `out`, and a type
+with no clause answers a status too, so a clause added later does not change how a host calls it.
+For each field there is a reader, `...$field$<field>`, answering the field itself. For a published
+sum there is `...$case`, answering which of the cases the sum descends to the value is, as its
+place among them counted from nought; the address the value is tagged with never leaves the object.
+
+An `Int` crosses as 64 bits, a `Bool` as a byte, and text and a value of a declared type as an
+address. An optional crosses as a presence beside the value: a constructor takes a byte and the
+value, which is ignored where the byte is nought, and a reader answers the byte and writes the value
+through a pointer only where there is one. How the generated code keeps an optional is not what a
+host is told. What a host is handed is decided apart from what another object built by this
+compiler reads the same way, because the two are different questions. A field of a type with no way
+across yet has no reader, and keeps its type from having a host constructor, and nothing else: its
+siblings are still read. A type the module keeps has none of these, whichever published sum it is a
+case of.
 
 A clause of a type the module keeps and nothing here builds, or one whose fields have no
 representation here, is read, and refused if the two halves disagree about it, and is not run: no

@@ -1681,6 +1681,36 @@ impl Node {
         }
     }
 
+    /// The declaration this node builds a value of, where it builds one: a construction from
+    /// fields, and a unit's value, which is a construction from none.
+    ///
+    /// Asked here, once, by everything that has to know what a body builds — which constructors an
+    /// object defines and which it reaches — so that what counts as building a value is not a list
+    /// of kinds each of them keeps.
+    pub fn builds(&self) -> Option<&str> {
+        match self {
+            Node::Construct { declared, .. } | Node::Unit { declared, .. } => Some(declared),
+            Node::Int { .. }
+            | Node::Read { .. }
+            | Node::Bool { .. }
+            | Node::Str { .. }
+            | Node::Binary { .. }
+            | Node::Neg { .. }
+            | Node::Let { .. }
+            | Node::If { .. }
+            | Node::Field { .. }
+            | Node::Match { .. }
+            | Node::Some { .. }
+            | Node::None { .. }
+            | Node::Tuple { .. }
+            | Node::Member { .. }
+            | Node::Call { .. }
+            | Node::Block { .. }
+            | Node::Apply { .. }
+            | Node::Widen { .. } => None,
+        }
+    }
+
     /// Every node under this one, this one first, depth first and in the order they are written.
     pub fn each<'n>(&'n self, visit: &mut impl FnMut(&'n Node)) {
         visit(self);
