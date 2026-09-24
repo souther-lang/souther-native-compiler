@@ -922,24 +922,20 @@ impl<'a> Walk<'_, 'a> {
                     );
                 }
                 // A construction ends without a value where a clause does not hold, and the checker
-                // says so of exactly the constructions of a type that states one. Of a type another
-                // build builds, the clauses are that build's and not carried, so there is nothing
-                // here to hold what the construction says to.
-                let owed: Option<&[AbortKind]> = shape.clauses().map(|clauses| {
-                    if clauses.is_empty() {
-                        &[][..]
-                    } else {
-                        &[AbortKind::InvariantNotHeld][..]
-                    }
-                });
-                if let Some(owed) = owed
-                    && aborts.as_slice() != owed
-                {
-                    let states = if owed.is_empty() {
-                        "states no clause"
-                    } else {
-                        "states what its values owe"
-                    };
+                // says so of exactly the constructions of a type that states one. Of a type
+                // another build builds the clauses are that build's and not carried, so whether
+                // this construction names the one reason is not held, and that it names no other
+                // is.
+                let owes = [AbortKind::InvariantNotHeld];
+                let (holds, states) = match shape.clauses() {
+                    Some([]) => (aborts.is_empty(), "states no clause"),
+                    Some(_) => (aborts.as_slice() == owes, "states what its values owe"),
+                    None => (
+                        aborts.is_empty() || aborts.as_slice() == owes,
+                        "is built by another build, which states what its values owe or nothing",
+                    ),
+                };
+                if !holds {
                     bail!(
                         "{}: a construction of {declared}, whose type {states}, names {:?} as what \
                          it can end without a value for: the two halves disagree",
@@ -1007,22 +1003,21 @@ impl<'a> Walk<'_, 'a> {
             } => {
                 self.node(operand)?;
                 self.number("a negation", ty)?;
-                // A literal's sign is folded, and nothing else about one can leave the range. Of
-                // anything else, negating the smallest `Int` leaves it, and a `Decimal` or a
-                // `Rational` only changes sign: the checker names one reason for the first and none
-                // for the others.
-                if !matches!(operand.as_ref(), Node::Int { .. }) {
-                    if matches!(ty, Ty::Prim { prim: Prim::Int }) {
-                        self.overflows("a negation of an Int", aborts)?;
-                    } else if !aborts.is_empty() {
-                        bail!(
-                            "{}: a negation of {} names {:?} as what it can end without a value \
-                             for, where it only changes sign: the two halves disagree",
-                            self.owner,
-                            ty.spelt(),
-                            aborts
-                        );
-                    }
+                // What a negation can end without a value for is decided by the type it answers,
+                // and not by what it negates: the smallest `Int` has no counterpart, so a
+                // negation of an `Int` names one reason, a literal's included, and a `Decimal` or
+                // a `Rational` only changes sign and names none. That the lowering folds a
+                // literal's sign is its own, and says nothing of what the checker states.
+                if matches!(ty, Ty::Prim { prim: Prim::Int }) {
+                    self.overflows("a negation of an Int", aborts)?;
+                } else if !aborts.is_empty() {
+                    bail!(
+                        "{}: a negation of {} names {:?} as what it can end without a value \
+                         for, where it only changes sign: the two halves disagree",
+                        self.owner,
+                        ty.spelt(),
+                        aborts
+                    );
                 }
                 Ok(())
             }
@@ -1471,7 +1466,7 @@ impl<'a> Walk<'_, 'a> {
                     }
                     // What was settled beside what it takes is held to the same contract: a fact
                     // the checker attaches to another kernel is not one it attaches to this.
-                    if fact != &contract.fact {
+                    if !contract.fact.accepts(fact) {
                         bail!(
                             "{}: an application of {kernel} settles {fact:?} where the kernel \
                              settles {:?}: the two halves disagree",

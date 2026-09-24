@@ -1602,12 +1602,27 @@ impl Node {
     /// Whether a node of this kind is one the checker ever gives a reason to end a run without a
     /// value: arithmetic and negation over a number, a construction of a type that states a
     /// clause, and a call to a kernel. Every other kind is total in itself, and what a call to a
-    /// behavior, a helper or a value ends with is the callee's own. Named for every kind, with no
-    /// arm standing for the rest, so a kind added to the document has to be said to be one or the
-    /// other.
+    /// behavior, a helper or a value ends with is the callee's own.
+    ///
+    /// Asked of what decides it and not of the kind alone: a binary operator by which operator it
+    /// is, since a comparison, a truth operator and a join end no run and arithmetic may, and a call
+    /// by what it reaches. Named for every kind and every operator, with no arm standing for the
+    /// rest, so one added to the document has to be said to be one or the other.
     pub fn can_end_without_a_value(&self) -> bool {
         match self {
-            Node::Binary { .. } | Node::Neg { .. } | Node::Construct { .. } => true,
+            Node::Binary { op, .. } => match op {
+                Op::Add | Op::Sub | Op::Mul | Op::Div => true,
+                Op::Eq
+                | Op::Ne
+                | Op::Lt
+                | Op::Le
+                | Op::Gt
+                | Op::Ge
+                | Op::And
+                | Op::Or
+                | Op::Concat => false,
+            },
+            Node::Neg { .. } | Node::Construct { .. } => true,
             Node::Call { reaches, .. } => matches!(reaches, Reaches::Kernel { .. }),
             Node::Int { .. }
             | Node::Read { .. }

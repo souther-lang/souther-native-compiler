@@ -1560,3 +1560,97 @@ fn only_the_kinds_that_can_end_a_run_name_a_reason_to() {
         "ends no run without a value",
     );
 }
+
+/// What a binary operator can end a run for is decided by which operator it is: arithmetic may, and
+/// a comparison, a truth operator and a join never do. One of those naming a reason is a document
+/// the checker does not write, and is refused as that: the lowering of a comparison does not read
+/// a reason at all, so a document that got past here would be made into an object.
+#[test]
+fn only_arithmetic_names_a_reason_to_end_a_run() {
+    let over = |op: &str, ty: &str, answers: &str| {
+        node(
+            "binary",
+            &format!(
+                r#""op":"{op}","reading":{{"is":"astheystand"}},"left":{},"right":{}"#,
+                read(0, ty),
+                read(1, ty)
+            ),
+            answers,
+        )
+    };
+    let with_reason = |body: String| with_outer_aborts(&body, r#""DIVISION_BY_ZERO""#);
+
+    for (op, ty, answers) in [
+        ("EQ", INT, BOOL),
+        ("NE", INT, BOOL),
+        ("LT", INT, BOOL),
+        ("GE", INT, BOOL),
+        ("AND", BOOL, BOOL),
+        ("OR", BOOL, BOOL),
+        ("CONCAT", STRING, STRING),
+    ] {
+        reads_whole(&helpers(&[h(&[ty, ty], &over(op, ty, answers))]));
+        is_the_halves_disagreeing(
+            &helpers(&[h(&[ty, ty], &with_reason(over(op, ty, answers)))]),
+            "ends no run without a value",
+        );
+    }
+}
+
+/// What a negation can end a run for is decided by the type it answers and not by what it negates:
+/// the smallest `Int` has no counterpart, a literal's included, so a negation of an `Int` names one
+/// reason whatever its operand is. That the lowering folds a literal's sign says nothing of what the
+/// checker states.
+#[test]
+fn a_negation_of_an_int_names_its_reason_whatever_it_negates() {
+    let negated = |operand: String, reasons: &str| {
+        with_outer_aborts(
+            &node("neg", &format!(r#""operand":{operand}"#), INT),
+            reasons,
+        )
+    };
+    let one = r#""REQUIRED_FORM_HAS_NO_PLACE""#;
+
+    reads_whole(&helpers(&[h(&[INT], &negated(int(5), one))]));
+    reads_whole(&helpers(&[h(&[INT], &negated(read(0, INT), one))]));
+    is_the_halves_disagreeing(
+        &helpers(&[h(&[INT], &negated(int(5), ""))]),
+        "negation of an Int",
+    );
+    is_the_halves_disagreeing(
+        &helpers(&[h(&[INT], &negated(read(0, INT), ""))]),
+        "negation of an Int",
+    );
+}
+
+/// A type another build builds carries no clauses here, so whether a construction of one names the
+/// one reason a clause can end it for is not held. That it names no other is: a construction ends a
+/// run for nothing but a clause that does not hold.
+#[test]
+fn a_construction_of_another_builds_type_names_no_reason_but_a_clause() {
+    let document = |aborts: &str| {
+        let built = with_outer_aborts(
+            &node(
+                "construct",
+                &format!(r#""declared":"m.R","values":[{}]"#, int(1)),
+                r#"{"declared":"m.R"}"#,
+            ),
+            aborts,
+        );
+        format!(
+            concat!(
+                r#"{{"transport":13,"declarations":["#,
+                r#"{{"module":"m","name":"R","by":"onthepath","is":"product","#,
+                r#""fields":[{}]}}],"behaviors":[],"#,
+                r#""modules":[{{"name":"m","publishes":[],"helpers":[{}],"values":[],"#,
+                r#""entries":[],"definitions":[],"examples":[]}}]}}"#
+            ),
+            field("count", 0, "INT"),
+            h(&[], &built)
+        )
+    };
+
+    reads_whole(&document(""));
+    reads_whole(&document(r#""INVARIANT_NOT_HELD""#));
+    is_the_halves_disagreeing(&document(r#""DIVISION_BY_ZERO""#), "another build");
+}
