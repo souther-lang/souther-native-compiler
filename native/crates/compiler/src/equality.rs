@@ -42,8 +42,8 @@ use crate::{
 /// and the ones whose body is still to be written.
 #[derive(Default)]
 pub(crate) struct Comparators {
-    /// By the type, spelt as it is read off the document, which is one spelling per type.
-    by_type: RefCell<HashMap<String, FuncId>>,
+    /// By the type itself, which is what a comparator is one of per object.
+    by_type: RefCell<HashMap<Ty, FuncId>>,
     owed: RefCell<Vec<Owed>>,
 }
 
@@ -51,8 +51,7 @@ impl Comparators {
     /// The function comparing two values of `ty`, given an id now where none was yet and owed a
     /// body until [`Comparators::owed`] hands it out.
     fn of(&self, module: &mut ObjectModule, ty: &Ty, call_conv: CallConv) -> Lowered<FuncId> {
-        let key = format!("{ty:?}");
-        if let Some(id) = self.by_type.borrow().get(&key) {
+        if let Some(id) = self.by_type.borrow().get(ty) {
             return Ok(*id);
         }
         let held = machine_type(ty)?;
@@ -61,7 +60,7 @@ impl Comparators {
         signature.params.push(AbiParam::new(held));
         signature.returns.push(AbiParam::new(types::I8));
         let id = accepted(module.declare_anonymous_function(&signature));
-        crate::index::unique(&mut *self.by_type.borrow_mut(), key, id);
+        crate::index::unique(&mut *self.by_type.borrow_mut(), ty.clone(), id);
         self.owed.borrow_mut().push(Owed {
             id,
             ty: ty.clone(),

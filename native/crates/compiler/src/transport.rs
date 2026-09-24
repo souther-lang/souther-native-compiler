@@ -1128,7 +1128,7 @@ pub struct Invariant {
 
 /// Which case a name is: one a module declares, a primitive standing as a case, or one the
 /// language gives. The identity only — how a case is written is read off what it reaches.
-#[derive(Debug, Deserialize, PartialEq, Eq, Clone)]
+#[derive(Debug, Deserialize, PartialEq, Eq, Hash, Clone)]
 #[serde(tag = "is", rename_all = "lowercase", deny_unknown_fields)]
 pub enum Case {
     Declared { declared: String },
@@ -1147,7 +1147,7 @@ impl Case {
 }
 
 /// The cases the language itself gives, a closed set.
-#[derive(Debug, Deserialize, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, Deserialize, PartialEq, Eq, Hash, Clone, Copy)]
 pub enum LanguageCase {
     #[serde(rename = "SOME")]
     Some,
@@ -1237,7 +1237,7 @@ pub struct HeldParameter {
     pub ty: Ty,
 }
 
-#[derive(Debug, Deserialize, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, Deserialize, PartialEq, Eq, Hash, Clone, Copy)]
 pub enum Prim {
     #[serde(rename = "INT")]
     Int,
@@ -1283,7 +1283,7 @@ impl Prim {
 ///
 /// Told apart by which key is written rather than by a word beside it, since each of these is a
 /// different shape and no two of them are ever both readable.
-#[derive(Debug, Deserialize, PartialEq, Eq, Clone)]
+#[derive(Debug, Deserialize, PartialEq, Eq, Hash, Clone)]
 #[serde(untagged, deny_unknown_fields)]
 pub enum Ty {
     Prim {
@@ -1327,7 +1327,7 @@ pub enum Ty {
     },
 }
 
-#[derive(Debug, Deserialize, PartialEq, Eq, Clone)]
+#[derive(Debug, Deserialize, PartialEq, Eq, Hash, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct MapTy {
     pub key: Box<Ty>,
@@ -1338,7 +1338,7 @@ pub struct MapTy {
 /// `takes`/`answers` siblings of it — the same reason [`Reaches`]'s own shape is nested: a reader
 /// telling a function type apart from every other [`Ty`] shape by which key is present must not
 /// also have to notice a document naming `fn` beside `option` or `tuple` on the same object.
-#[derive(Debug, Deserialize, PartialEq, Eq, Clone)]
+#[derive(Debug, Deserialize, PartialEq, Eq, Hash, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct FnSignature {
     pub takes: Vec<Ty>,
