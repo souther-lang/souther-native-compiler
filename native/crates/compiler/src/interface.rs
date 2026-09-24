@@ -8,10 +8,10 @@
 //! fields and cases, what a behavior takes — is read off the document, since that is a description
 //! and not a decision about what is emitted.
 //!
-//! Everything a host is handed is a projection of this: the header ([`Surface::header`]), the
-//! manifest ([`Surface::manifest`]), and what a shared library exports ([`Surface::exported`]).
-//! None of them is written from anything else, so none of them can say a function the others do
-//! not.
+//! Everything a host is handed is a projection of the [`Manifest`] this makes: the header's
+//! declarations ([`declarations`]), the manifest itself, and what a shared library exports
+//! ([`exported`]). None of them is written from anything else, so none of them can say a function
+//! the others do not.
 //!
 //! The manifest is not the document the Java half wrote. That one is a protocol between two halves
 //! of one compiler, versioned by [`TRANSPORT_VERSION`](crate::transport::TRANSPORT_VERSION), and the
@@ -19,23 +19,19 @@
 //! type is the key the document reaches it by and never leaves it: the manifest says the module
 //! and the name apart, read off the declaration.
 
-use crate::transport::{AbortKind, Case, Declaration, Prim, Ty};
+use crate::manifest::{self, Manifest, Parameter, Word};
+use crate::transport::{self, AbortKind, Declaration, Prim, Ty};
 use crate::{Declared, POINTER, native_status};
 use cranelift::codegen::ir::{self, AbiParam, types};
 use cranelift::codegen::isa::CallConv;
-use serde_json::{Value, json};
 use souther_native_abi::{
     ABI_GENERATION, ANSWERED, DECODED_ISSUES, DECODED_MALFORMED, DECODED_VALUE, HOST_RUNTIME,
     HostParameter, HostWord,
 };
 use std::collections::BTreeMap;
 
-/// What the manifest is. Moved when what a manifest says is read differently, and not when the
-/// functions it names are called differently: that is [`ABI_GENERATION`], which the manifest
-/// carries beside this.
-const MANIFEST_VERSION: u32 = 1;
-
-/// A function a host calls: its symbol, which is its name in C, and what it takes and answers.
+/// A function a host calls, as it is emitted: its symbol, which is its name in C, and what it
+/// takes and answers.
 #[derive(Clone, Debug)]
 pub(crate) struct HostFunction {
     pub symbol: String,
@@ -60,37 +56,13 @@ impl HostFunction {
         signature
     }
 
-    fn declared(&self) -> String {
-        let taken: Vec<String> = self
-            .takes
-            .iter()
-            .map(|taken| match taken {
-                HostParameter::Given(word) => c_word(*word).to_string(),
-                HostParameter::Room(word) => pointer_to(c_word(*word)),
-            })
-            .collect();
-        let answers = self.answers.map_or("void", c_word);
-        format!(
-            "{answers}{}{}({});",
-            if answers.ends_with('*') { "" } else { " " },
-            self.symbol,
-            if taken.is_empty() {
-                "void".to_string()
-            } else {
-                taken.join(", ")
-            }
-        )
-    }
-
-    fn described(&self) -> Value {
-        json!({
-            "name": self.symbol,
-            "takes": self.takes.iter().map(|taken| match taken {
-                HostParameter::Given(word) => json!({ "given": word_name(*word) }),
-                HostParameter::Room(word) => json!({ "room": word_name(*word) }),
-            }).collect::<Vec<_>>(),
-            "answers": self.answers.map(word_name),
-        })
+    /// What a host is told of it.
+    fn described(&self) -> manifest::Function {
+        manifest::Function {
+            name: self.symbol.clone(),
+            takes: self.takes.iter().copied().map(Parameter::from).collect(),
+            answers: self.answers.map(Word::from),
+        }
     }
 }
 
@@ -110,24 +82,24 @@ pub(crate) fn machine(word: HostWord) -> types::Type {
 
 /// What a word is called in the header. An address a host never reads behind is a pointer to a
 /// struct nothing defines, so that a C compiler refuses one where another was meant.
-fn c_word(word: HostWord) -> &'static str {
+fn c_word(word: Word) -> &'static str {
     match word {
-        HostWord::Status => "souther_status",
-        HostWord::Int => "int64_t",
-        HostWord::Bool => "uint8_t",
-        HostWord::Case => "uint32_t",
-        HostWord::Outcome => "int32_t",
-        HostWord::Count => "int64_t",
-        HostWord::Mark => "int64_t",
-        HostWord::Bytes => "const uint8_t *",
-        HostWord::Value => "souther_value",
-        HostWord::String => "souther_string",
-        HostWord::Decoded => "souther_decoded",
-        HostWord::Issue => "souther_issue",
+        Word::Status => "souther_status",
+        Word::Int => "int64_t",
+        Word::Bool => "uint8_t",
+        Word::Case => "uint32_t",
+        Word::Outcome => "int32_t",
+        Word::Count => "int64_t",
+        Word::Mark => "int64_t",
+        Word::Bytes => "const uint8_t *",
+        Word::Value => "souther_value",
+        Word::String => "souther_string",
+        Word::Decoded => "souther_decoded",
+        Word::Issue => "souther_issue",
     }
 }
 
-/// A pointer to what C calls `word`, spelt the way the header spells one.
+/// A pointer to what C calls a word, spelt the way the header spells one.
 fn pointer_to(word: &str) -> String {
     if word.ends_with('*') {
         format!("{word}*")
@@ -136,94 +108,78 @@ fn pointer_to(word: &str) -> String {
     }
 }
 
-/// What a word is called in the manifest.
-fn word_name(word: HostWord) -> &'static str {
-    match word {
-        HostWord::Status => "status",
-        HostWord::Int => "int",
-        HostWord::Bool => "bool",
-        HostWord::Case => "case",
-        HostWord::Outcome => "outcome",
-        HostWord::Count => "count",
-        HostWord::Mark => "mark",
-        HostWord::Bytes => "bytes",
-        HostWord::Value => "value",
-        HostWord::String => "string",
-        HostWord::Decoded => "decoded",
-        HostWord::Issue => "issue",
-    }
+/// A function as the header declares it.
+fn declared(function: &manifest::Function) -> String {
+    let taken: Vec<String> = function
+        .takes
+        .iter()
+        .map(|taken| match taken {
+            Parameter::Given(word) => c_word(*word).to_string(),
+            Parameter::Room(word) => pointer_to(c_word(*word)),
+        })
+        .collect();
+    let answers = function.answers.map_or("void", c_word);
+    format!(
+        "{answers}{}{}({});",
+        if answers.ends_with('*') { "" } else { " " },
+        function.name,
+        if taken.is_empty() {
+            "void".to_string()
+        } else {
+            taken.join(", ")
+        }
+    )
 }
 
-/// Everything a host can call in one object and the runtime it is linked with.
+/// What one object makes reachable to a host, module by module.
 #[derive(Default)]
 pub(crate) struct Surface {
-    modules: BTreeMap<String, ModuleSurface>,
-}
-
-#[derive(Default)]
-struct ModuleSurface {
-    behaviors: Vec<BehaviorSurface>,
-    values: Vec<ValueSurface>,
-    declarations: Vec<DeclarationSurface>,
-}
-
-struct BehaviorSurface {
-    name: String,
-    takes: Vec<Value>,
-    answers: Value,
-    call: Option<HostFunction>,
-}
-
-struct ValueSurface {
-    name: String,
-    ty: Value,
-    read: Option<HostFunction>,
+    modules: BTreeMap<String, manifest::Module>,
 }
 
 /// A published declaration, and whichever of the functions a host reaches one through the object
-/// defines for it.
+/// defines for it, gathered while they are emitted.
 pub(crate) struct DeclarationSurface {
-    kind: &'static str,
     name: String,
-    fields: Vec<FieldSurface>,
-    cases: Option<Vec<Value>>,
-    construct: Option<HostFunction>,
-    case: Option<HostFunction>,
-    decode: Option<HostFunction>,
-    encode: Option<HostFunction>,
+    shape: Shape,
+    fields: Vec<manifest::Field>,
+    construct: Option<manifest::Function>,
+    case: Option<manifest::Function>,
+    decode: Option<manifest::Function>,
+    encode: Option<manifest::Function>,
 }
 
-struct FieldSurface {
-    name: String,
-    ty: Value,
-    read: Option<HostFunction>,
+/// Which of the declaration's kinds it is, with what only that kind has.
+enum Shape {
+    Product,
+    Newtype,
+    Unit,
+    Sum(Vec<manifest::Case>),
 }
 
 impl DeclarationSurface {
     /// A declaration as the model says it, with none of its functions yet.
     pub(crate) fn of(declaration: &Declaration, declared: &Declared) -> DeclarationSurface {
-        let (kind, cases) = match declaration {
-            Declaration::Product { .. } => ("product", None),
-            Declaration::Newtype { .. } => ("newtype", None),
-            Declaration::Unit { .. } => ("unit", None),
-            Declaration::Sum { cases, .. } => (
-                "sum",
-                Some(cases.iter().map(|case| case_of(case, declared)).collect()),
-            ),
+        let shape = match declaration {
+            Declaration::Product { .. } => Shape::Product,
+            Declaration::Newtype { .. } => Shape::Newtype,
+            Declaration::Unit { .. } => Shape::Unit,
+            Declaration::Sum { cases, .. } => {
+                Shape::Sum(cases.iter().map(|case| case_of(case, declared)).collect())
+            }
         };
         DeclarationSurface {
-            kind,
             name: declaration.name().to_string(),
+            shape,
             fields: declaration
                 .fields()
                 .iter()
-                .map(|field| FieldSurface {
+                .map(|field| manifest::Field {
                     name: field.name.clone(),
                     ty: type_of(&field.codec.ty(), declared),
                     read: None,
                 })
                 .collect(),
-            cases,
             construct: None,
             case: None,
             decode: None,
@@ -231,39 +187,98 @@ impl DeclarationSurface {
         }
     }
 
-    pub(crate) fn constructed_by(&mut self, function: HostFunction) {
-        self.construct = Some(function);
+    pub(crate) fn constructed_by(&mut self, function: &HostFunction) {
+        self.construct = Some(function.described());
     }
 
-    pub(crate) fn cased_by(&mut self, function: HostFunction) {
-        self.case = Some(function);
+    pub(crate) fn cased_by(&mut self, function: &HostFunction) {
+        self.case = Some(function.described());
     }
 
-    pub(crate) fn decoded_by(&mut self, function: HostFunction) {
-        self.decode = Some(function);
+    pub(crate) fn decoded_by(&mut self, function: &HostFunction) {
+        self.decode = Some(function.described());
     }
 
-    pub(crate) fn encoded_by(&mut self, function: HostFunction) {
-        self.encode = Some(function);
+    pub(crate) fn encoded_by(&mut self, function: &HostFunction) {
+        self.encode = Some(function.described());
     }
 
     /// The field at `at` is read by `function`.
-    pub(crate) fn field_read_by(&mut self, at: usize, function: HostFunction) {
-        self.fields[at].read = Some(function);
+    pub(crate) fn field_read_by(&mut self, at: usize, function: &HostFunction) {
+        self.fields[at].read = Some(function.described());
     }
 
-    fn functions(&self) -> impl Iterator<Item = &HostFunction> {
-        [&self.construct, &self.case, &self.decode, &self.encode]
-            .into_iter()
-            .flatten()
-            .chain(self.fields.iter().filter_map(|field| field.read.as_ref()))
+    /// The declaration as the manifest says it. A function a kind has no place for is this
+    /// compiler having emitted one it should not have.
+    fn described(self) -> manifest::Declaration {
+        let DeclarationSurface {
+            name,
+            shape,
+            fields,
+            construct,
+            case,
+            decode,
+            encode,
+        } = self;
+        let no_case = |kind: &str| {
+            assert!(case.is_none(), "a {kind} is not a sum and has no case");
+        };
+        match shape {
+            Shape::Product => {
+                no_case("product");
+                manifest::Declaration::Product {
+                    name,
+                    fields,
+                    construct,
+                    decode,
+                    encode,
+                }
+            }
+            Shape::Newtype => {
+                no_case("newtype");
+                let [field] =
+                    <[manifest::Field; 1]>::try_from(fields).expect("a newtype has one field");
+                manifest::Declaration::Newtype {
+                    name,
+                    field,
+                    construct,
+                    decode,
+                    encode,
+                }
+            }
+            Shape::Unit => {
+                no_case("unit");
+                assert!(fields.is_empty(), "a unit has no field");
+                manifest::Declaration::Unit {
+                    name,
+                    construct,
+                    decode,
+                    encode,
+                }
+            }
+            Shape::Sum(cases) => {
+                assert!(
+                    fields.is_empty() && construct.is_none(),
+                    "a sum is never built"
+                );
+                manifest::Declaration::Sum {
+                    name,
+                    cases,
+                    case,
+                    decode,
+                    encode,
+                }
+            }
+        }
     }
 }
 
 impl Surface {
     /// A published declaration of `module`, and what a host reaches it through.
     pub(crate) fn declaration(&mut self, module: &str, declaration: DeclarationSurface) {
-        self.module(module).declarations.push(declaration);
+        self.module(module)
+            .declarations
+            .push(declaration.described());
     }
 
     /// A published behavior this object defines, and what a host calls it through, where a host
@@ -275,13 +290,13 @@ impl Surface {
         takes: &[Ty],
         answers: &Ty,
         declared: &Declared,
-        call: Option<HostFunction>,
+        call: Option<&HostFunction>,
     ) {
-        let behavior = BehaviorSurface {
+        let behavior = manifest::Behavior {
             name: name.to_string(),
             takes: takes.iter().map(|ty| type_of(ty, declared)).collect(),
             answers: type_of(answers, declared),
-            call,
+            call: call.map(HostFunction::described),
         };
         self.module(module).behaviors.push(behavior);
     }
@@ -293,195 +308,208 @@ impl Surface {
         name: &str,
         ty: &Ty,
         declared: &Declared,
-        read: Option<HostFunction>,
+        read: Option<&HostFunction>,
     ) {
-        let value = ValueSurface {
+        let value = manifest::PublishedValue {
             name: name.to_string(),
             ty: type_of(ty, declared),
-            read,
+            read: read.map(HostFunction::described),
         };
         self.module(module).values.push(value);
     }
 
-    fn module(&mut self, name: &str) -> &mut ModuleSurface {
-        self.modules.entry(name.to_string()).or_default()
-    }
-
-    /// Every function a host calls in the object, in the order the header declares them.
-    fn object_functions(&self) -> impl Iterator<Item = &HostFunction> {
-        self.modules.values().flat_map(|module| {
-            let behaviors = module.behaviors.iter().filter_map(|it| it.call.as_ref());
-            let values = module.values.iter().filter_map(|it| it.read.as_ref());
-            let declarations = module
-                .declarations
-                .iter()
-                .flat_map(DeclarationSurface::functions);
-            behaviors.chain(values).chain(declarations)
-        })
-    }
-
-    /// Every function a host calls in the object, as the runtime's are described.
-    fn runtime_functions() -> Vec<HostFunction> {
-        HOST_RUNTIME
-            .iter()
-            .map(|function| HostFunction {
-                symbol: function.name.to_string(),
-                takes: function.takes.to_vec(),
-                answers: function.answers,
+    fn module(&mut self, name: &str) -> &mut manifest::Module {
+        self.modules
+            .entry(name.to_string())
+            .or_insert_with(|| manifest::Module {
+                name: name.to_string(),
+                behaviors: Vec::new(),
+                values: Vec::new(),
+                declarations: Vec::new(),
             })
-            .collect()
     }
 
-    /// Every symbol a shared library of the object and the runtime exports: what a host calls, and
-    /// nothing else.
-    pub(crate) fn exported(&self) -> Vec<String> {
-        Self::runtime_functions()
-            .into_iter()
-            .map(|it| it.symbol)
-            .chain(self.object_functions().map(|it| it.symbol.clone()))
-            .collect()
+    /// Every module of this object, as the manifest says it.
+    pub(crate) fn modules(self) -> Vec<manifest::Module> {
+        self.modules.into_values().collect()
     }
+}
 
-    /// The C header declaring every function a host calls.
-    ///
-    /// Only declarations, the typedefs they are written in and the numbers a host compares a status
-    /// and a reading's outcome with, as an enumeration rather than a macro: an FFI that reads C
-    /// declarations reads those, and it reads no preprocessor. What is said about each function in
-    /// the model's terms is a comment, and the manifest is where it is said to be read.
-    pub(crate) fn header(&self) -> String {
-        let mut header = format!(
-            "/* What a host calls in a Souther program built by souther-native-compiler, and in the\n \
-             * runtime it is linked with. Written by the build; souther.json describes the same\n \
-             * functions in the model's terms. ABI generation {ABI_GENERATION}. */\n\
-             #ifndef SOUTHER_H\n\
-             #define SOUTHER_H\n\
-             \n\
-             #include <stdint.h>\n\
-             \n\
-             #ifdef __cplusplus\n\
-             extern \"C\" {{\n\
-             #endif\n\
-             \n\
-             typedef uint32_t souther_status;\n\
-             typedef const struct souther_value_ *souther_value;\n\
-             typedef const struct souther_string_ *souther_string;\n\
-             typedef const struct souther_decoded_ *souther_decoded;\n\
-             typedef const struct souther_issue_ *souther_issue;\n\
-             \n"
-        );
-        let statuses: Vec<String> = statuses()
+/// The manifest of a library holding these modules.
+pub(crate) fn manifest_of(modules: Vec<manifest::Module>) -> Manifest {
+    Manifest {
+        format: manifest::FORMAT.to_string(),
+        version: manifest::VERSION,
+        abi: ABI_GENERATION,
+        statuses: statuses()
             .into_iter()
-            .map(|(name, number)| format!("    SOUTHER_{name} = {number}"))
-            .collect();
-        header.push_str(&format!("enum {{\n{}\n}};\n\n", statuses.join(",\n")));
-        let outcomes: Vec<String> = outcomes()
+            .map(|(name, number)| (name.to_string(), number))
+            .collect(),
+        outcomes: outcomes()
             .into_iter()
-            .map(|(name, number)| format!("    SOUTHER_DECODED_{name} = {number}"))
-            .collect();
-        header.push_str(&format!("enum {{\n{}\n}};\n\n", outcomes.join(",\n")));
-
-        header.push_str("/* The runtime. */\n");
-        for function in Self::runtime_functions() {
-            header.push_str(&function.declared());
-            header.push('\n');
-        }
-        for (name, module) in &self.modules {
-            header.push_str(&format!("\n/* {name} */\n"));
-            for behavior in &module.behaviors {
-                if let Some(call) = &behavior.call {
-                    header.push_str(&format!("/* behavior {name}.{} */\n", behavior.name));
-                    header.push_str(&call.declared());
-                    header.push('\n');
-                }
-            }
-            for value in &module.values {
-                if let Some(read) = &value.read {
-                    header.push_str(&format!("/* value {name}.{} */\n", value.name));
-                    header.push_str(&read.declared());
-                    header.push('\n');
-                }
-            }
-            for declaration in &module.declarations {
-                let functions: Vec<&HostFunction> = declaration.functions().collect();
-                if functions.is_empty() {
-                    continue;
-                }
-                header.push_str(&format!(
-                    "/* {} {name}.{} */\n",
-                    declaration.kind, declaration.name
-                ));
-                for function in functions {
-                    header.push_str(&function.declared());
-                    header.push('\n');
-                }
-            }
-        }
-        header.push_str(
-            "\n#ifdef __cplusplus\n\
-             }\n\
-             #endif\n\
-             \n\
-             #endif\n",
-        );
-        header
-    }
-
-    /// The manifest: every function the header declares, each under the part of the model it
-    /// reaches, and the model a binding is written against.
-    pub(crate) fn manifest(&self) -> String {
-        let modules: Vec<Value> = self
-            .modules
+            .map(|(name, number)| (name.to_string(), number))
+            .collect(),
+        runtime: HOST_RUNTIME
             .iter()
-            .map(|(name, module)| {
-                json!({
-                    "name": name,
-                    "behaviors": module.behaviors.iter().map(|behavior| json!({
-                        "name": behavior.name,
-                        "takes": behavior.takes,
-                        "answers": behavior.answers,
-                        "call": behavior.call.as_ref().map(HostFunction::described),
-                    })).collect::<Vec<_>>(),
-                    "values": module.values.iter().map(|value| json!({
-                        "name": value.name,
-                        "type": value.ty,
-                        "read": value.read.as_ref().map(HostFunction::described),
-                    })).collect::<Vec<_>>(),
-                    "declarations": module.declarations.iter().map(|declaration| {
-                        let mut described = json!({
-                            "kind": declaration.kind,
-                            "name": declaration.name,
-                            "fields": declaration.fields.iter().map(|field| json!({
-                                "name": field.name,
-                                "type": field.ty,
-                                "read": field.read.as_ref().map(HostFunction::described),
-                            })).collect::<Vec<_>>(),
-                            "construct": declaration.construct.as_ref().map(HostFunction::described),
-                            "case": declaration.case.as_ref().map(HostFunction::described),
-                            "decode": declaration.decode.as_ref().map(HostFunction::described),
-                            "encode": declaration.encode.as_ref().map(HostFunction::described),
-                        });
-                        if let Some(cases) = &declaration.cases {
-                            described["cases"] = json!(cases);
-                        }
-                        described
-                    }).collect::<Vec<_>>(),
-                })
+            .map(|function| {
+                HostFunction {
+                    symbol: function.name.to_string(),
+                    takes: function.takes.to_vec(),
+                    answers: function.answers,
+                }
+                .described()
             })
-            .collect();
-        let manifest = json!({
-            "format": "souther-native-interface",
-            "version": MANIFEST_VERSION,
-            "abi": ABI_GENERATION,
-            "statuses": statuses().into_iter().collect::<BTreeMap<_, _>>(),
-            "outcomes": outcomes().into_iter().collect::<BTreeMap<_, _>>(),
-            "runtime": Self::runtime_functions().iter().map(HostFunction::described).collect::<Vec<_>>(),
-            "modules": modules,
-        });
-        let mut written =
-            serde_json::to_string_pretty(&manifest).expect("a manifest is JSON whatever it holds");
+            .collect(),
+        modules,
+    }
+}
+
+/// The manifest as it is written.
+pub(crate) fn written(manifest: &Manifest) -> String {
+    let mut written =
+        serde_json::to_string_pretty(manifest).expect("a manifest is JSON whatever it holds");
+    written.push('\n');
+    written
+}
+
+/// Every function the manifest names, in the order the header declares them.
+fn functions(manifest: &Manifest) -> impl Iterator<Item = &manifest::Function> {
+    let modules = manifest.modules.iter().flat_map(|module| {
+        let behaviors = module.behaviors.iter().filter_map(|it| it.call.as_ref());
+        let values = module.values.iter().filter_map(|it| it.read.as_ref());
+        let declarations = module.declarations.iter().flat_map(declaration_functions);
+        behaviors.chain(values).chain(declarations)
+    });
+    manifest.runtime.iter().chain(modules)
+}
+
+/// Every function a declaration is reached through, in the order the header declares them.
+fn declaration_functions(
+    declaration: &manifest::Declaration,
+) -> impl Iterator<Item = &manifest::Function> {
+    let (operations, fields): ([&Option<manifest::Function>; 4], &[manifest::Field]) =
+        match declaration {
+            manifest::Declaration::Product {
+                fields,
+                construct,
+                decode,
+                encode,
+                ..
+            } => ([construct, &None, decode, encode], fields),
+            manifest::Declaration::Newtype {
+                field,
+                construct,
+                decode,
+                encode,
+                ..
+            } => (
+                [construct, &None, decode, encode],
+                std::slice::from_ref(field),
+            ),
+            manifest::Declaration::Unit {
+                construct,
+                decode,
+                encode,
+                ..
+            } => ([construct, &None, decode, encode], &[]),
+            manifest::Declaration::Sum {
+                case,
+                decode,
+                encode,
+                ..
+            } => ([&None, case, decode, encode], &[]),
+        };
+    operations
+        .into_iter()
+        .flatten()
+        .chain(fields.iter().filter_map(|field| field.read.as_ref()))
+}
+
+/// Every symbol a shared library with this manifest exports: what a host calls, and nothing else.
+pub(crate) fn exported(manifest: &Manifest) -> Vec<String> {
+    functions(manifest)
+        .map(|function| function.name.clone())
+        .collect()
+}
+
+/// The declarations of every function a host calls, the typedefs they are written in, and the
+/// numbers a host compares a status and a reading's outcome with, as C and nothing else: no
+/// directive, no macro, nothing a reader of C declarations that has no preprocessor would have to
+/// run one for. `int64_t` and the rest are named as `<stdint.h>` names them, which such a reader
+/// knows, and a C compiler reads this after the header that includes that.
+pub(crate) fn declarations(manifest: &Manifest) -> String {
+    let mut written = format!(
+        "/* What a host calls in a Souther program built by souther-native-compiler, and in the\n \
+         * runtime it is linked with, as declarations and nothing else, for a reader of C\n \
+         * declarations that has no preprocessor. A C or C++ compiler includes souther.h.\n \
+         * souther.json describes the same functions in the model's terms. ABI generation {}. */\n\
+         \n\
+         typedef uint32_t souther_status;\n\
+         typedef const struct souther_value_ *souther_value;\n\
+         typedef const struct souther_string_ *souther_string;\n\
+         typedef const struct souther_decoded_ *souther_decoded;\n\
+         typedef const struct souther_issue_ *souther_issue;\n\
+         \n",
+        manifest.abi
+    );
+    let statuses: Vec<String> = manifest
+        .statuses
+        .iter()
+        .map(|(name, number)| (number, format!("    SOUTHER_{name} = {number}")))
+        .collect::<BTreeMap<_, _>>()
+        .into_values()
+        .collect();
+    written.push_str(&format!("enum {{\n{}\n}};\n\n", statuses.join(",\n")));
+    let outcomes: Vec<String> = manifest
+        .outcomes
+        .iter()
+        .map(|(name, number)| (number, format!("    SOUTHER_DECODED_{name} = {number}")))
+        .collect::<BTreeMap<_, _>>()
+        .into_values()
+        .collect();
+    written.push_str(&format!("enum {{\n{}\n}};\n", outcomes.join(",\n")));
+
+    written.push_str("\n/* The runtime. */\n");
+    for function in &manifest.runtime {
+        written.push_str(&declared(function));
         written.push('\n');
-        written
     }
+    for module in &manifest.modules {
+        let name = &module.name;
+        written.push_str(&format!("\n/* {name} */\n"));
+        for behavior in &module.behaviors {
+            if let Some(call) = &behavior.call {
+                written.push_str(&format!("/* behavior {name}.{} */\n", behavior.name));
+                written.push_str(&declared(call));
+                written.push('\n');
+            }
+        }
+        for value in &module.values {
+            if let Some(read) = &value.read {
+                written.push_str(&format!("/* value {name}.{} */\n", value.name));
+                written.push_str(&declared(read));
+                written.push('\n');
+            }
+        }
+        for declaration in &module.declarations {
+            let functions: Vec<&manifest::Function> = declaration_functions(declaration).collect();
+            if functions.is_empty() {
+                continue;
+            }
+            let (kind, declared_name) = match declaration {
+                manifest::Declaration::Product { name, .. } => ("product", name),
+                manifest::Declaration::Newtype { name, .. } => ("newtype", name),
+                manifest::Declaration::Unit { name, .. } => ("unit", name),
+                manifest::Declaration::Sum { name, .. } => ("sum", name),
+            };
+            written.push_str(&format!("/* {kind} {name}.{declared_name} */\n"));
+            for function in functions {
+                written.push_str(&declared(function));
+                written.push('\n');
+            }
+        }
+    }
+    written
 }
 
 /// Every status a generated function answers, by the name the header gives it.
@@ -505,55 +533,81 @@ fn outcomes() -> Vec<(&'static str, i32)> {
 }
 
 /// A type as the manifest says it: what it is in the model, and never a key of the document's.
-fn type_of(ty: &Ty, declared: &Declared) -> Value {
+fn type_of(ty: &Ty, declared: &Declared) -> manifest::Type {
+    let each = |types: &[Ty]| types.iter().map(|it| type_of(it, declared)).collect();
+    let boxed = |ty: &Ty| Box::new(type_of(ty, declared));
     match ty {
-        Ty::Prim { prim } => primitive(*prim),
+        Ty::Prim { prim } => manifest::Type::Primitive {
+            name: primitive(*prim),
+        },
         Ty::Declared { declared: key } => {
             let declaration = declared.laid(key);
-            json!({
-                "kind": "declared",
-                "module": declaration.module(),
-                "name": declaration.name(),
-            })
+            manifest::Type::Declared {
+                module: declaration.module().to_string(),
+                name: declaration.name().to_string(),
+            }
         }
-        Ty::Union { union } => json!({
-            "kind": "union",
-            "cases": union.iter().map(|case| case_of(case, declared)).collect::<Vec<_>>(),
-        }),
-        Ty::Option { option } => json!({ "kind": "option", "of": type_of(option, declared) }),
-        Ty::Tuple { tuple } => json!({
-            "kind": "tuple",
-            "of": tuple.iter().map(|it| type_of(it, declared)).collect::<Vec<_>>(),
-        }),
-        Ty::Fn { fn_ } => json!({
-            "kind": "function",
-            "takes": fn_.takes.iter().map(|it| type_of(it, declared)).collect::<Vec<_>>(),
-            "answers": type_of(&fn_.answers, declared),
-        }),
-        Ty::List { list } => json!({ "kind": "list", "of": type_of(list, declared) }),
-        Ty::Set { set } => json!({ "kind": "set", "of": type_of(set, declared) }),
-        Ty::Map { map } => json!({
-            "kind": "map",
-            "key": type_of(&map.key, declared),
-            "value": type_of(&map.value, declared),
-        }),
+        Ty::Union { union } => manifest::Type::Union {
+            cases: union.iter().map(|case| case_of(case, declared)).collect(),
+        },
+        Ty::Option { option } => manifest::Type::Option { of: boxed(option) },
+        Ty::Tuple { tuple } => manifest::Type::Tuple { of: each(tuple) },
+        Ty::Fn { fn_ } => manifest::Type::Function {
+            takes: each(&fn_.takes),
+            answers: boxed(&fn_.answers),
+        },
+        Ty::List { list } => manifest::Type::List { of: boxed(list) },
+        Ty::Set { set } => manifest::Type::Set { of: boxed(set) },
+        Ty::Map { map } => manifest::Type::Map {
+            key: boxed(&map.key),
+            value: boxed(&map.value),
+        },
     }
 }
 
-fn primitive(prim: Prim) -> Value {
-    json!({ "kind": "primitive", "name": prim.spelt() })
+/// A primitive as the manifest names it. Every one named, for the reason `machine_type` names
+/// them.
+fn primitive(prim: Prim) -> manifest::Primitive {
+    match prim {
+        Prim::Int => manifest::Primitive::Int,
+        Prim::String => manifest::Primitive::String,
+        Prim::Bool => manifest::Primitive::Bool,
+        Prim::Decimal => manifest::Primitive::Decimal,
+        Prim::Rational => manifest::Primitive::Rational,
+        Prim::Date => manifest::Primitive::Date,
+        Prim::Time => manifest::Primitive::Time,
+        Prim::DateTime => manifest::Primitive::DateTime,
+        Prim::Instant => manifest::Primitive::Instant,
+        Prim::Raw => manifest::Primitive::Raw,
+    }
 }
 
 /// A case as the manifest says it.
-fn case_of(case: &Case, declared: &Declared) -> Value {
+fn case_of(case: &transport::Case, declared: &Declared) -> manifest::Case {
     match case {
-        Case::Declared { declared: key } => type_of(
-            &Ty::Declared {
-                declared: key.clone(),
+        transport::Case::Declared { declared: key } => {
+            let declaration = declared.laid(key);
+            manifest::Case::Declared {
+                module: declaration.module().to_string(),
+                name: declaration.name().to_string(),
+            }
+        }
+        transport::Case::Primitive { prim } => manifest::Case::Primitive {
+            name: primitive(*prim),
+        },
+        transport::Case::Language { case } => manifest::Case::Language {
+            name: match case {
+                transport::LanguageCase::Some => manifest::LanguageCase::Some,
+                transport::LanguageCase::None => manifest::LanguageCase::None,
+                transport::LanguageCase::DivisionByZero => manifest::LanguageCase::DivisionByZero,
+                transport::LanguageCase::NotANumber => manifest::LanguageCase::NotANumber,
+                transport::LanguageCase::NotADate => manifest::LanguageCase::NotADate,
+                transport::LanguageCase::NotATime => manifest::LanguageCase::NotATime,
+                transport::LanguageCase::NotWhole => manifest::LanguageCase::NotWhole,
+                transport::LanguageCase::NotAFiniteDecimal => {
+                    manifest::LanguageCase::NotAFiniteDecimal
+                }
             },
-            declared,
-        ),
-        Case::Primitive { prim } => primitive(*prim),
-        Case::Language { case } => json!({ "kind": "language", "name": case.spelt() }),
+        },
     }
 }

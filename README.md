@@ -40,8 +40,9 @@ abstraction over the two is written to make it look as though something is.
     mvn test
 
 Cargo is what builds the Rust half; Maven runs it. The toolchain is pinned in
-`rust-toolchain.toml`, so a clone needs rustup and nothing else installed by hand. A C compiler is
-needed too, by the test that links what came out and runs it.
+`rust-toolchain.toml`, so a clone needs rustup and nothing else installed by hand. A C and a C++
+compiler are needed too, by the tests that link what came out and run it, and PHP with FFI, by the
+test that reads what a host is handed the way an FFI with no preprocessor does.
 
 ## Where it runs
 
@@ -178,14 +179,15 @@ to state before a backend writes one.
 
 ## What a host is handed
 
-A build for a host writes four things into a directory: the object, `souther.o`; a C header,
+A build for a host writes five things into a directory: the object, `souther.o`; the declarations
+of every function a host calls, `souther.ffi.h`; a header a C or C++ compiler includes,
 `souther.h`; a manifest, `souther.json`; and a shared library of the object and the runtime,
 `libsouther.dylib` or `libsouther.so`. The driver writes them when run with `--library <directory>`,
 and `NativeCompiler.library` is that from Java. Nothing on the Java side reads the program to say
 what a host can call. Every function a host calls is put on one surface where its code is emitted,
-and the header, the manifest and what the library exports are each written from that surface, so
-none of them names a function the others do not. A test holds the three, and what the object
-defines, to one set, reading each of them as it is.
+and the declarations, the manifest and what the library exports are each written from that
+surface, so none of them names a function the others do not. A test holds the three, and what the
+object defines, to one set, reading each of them as it is.
 
 A host calls a function by a C identifier. The symbols one object built here calls in another carry
 `.` and `$`, and no C compiler or FFI that reads C declarations can name those. So what a host
@@ -202,15 +204,23 @@ parties, and the day one of them takes a value in a form a host does not hand on
 host's entry still takes what a host hands over. An operation on a published type is called by a
 host and by nothing else, so it has the one symbol.
 
-The header declares every function a host calls, the runtime's among them, and the numbers a status
-and a reading's outcome are compared with, as enumerations rather than macros: it is declarations
-and nothing an FFI reading C declarations would have to preprocess. The manifest says the same
-functions in the model's terms, for a binding to be written from without reading the program: each
-module's behaviors with what they take and answer, its published values, and its published types
-with their fields and cases, each beside the function that reaches it, or `null` where a host has no
-way in yet. A type is said by its module and its name, never by the key the Java half hands this
-one. The manifest carries its own `version`, moved when what it says is read differently, and the
-`abi` its functions answer to, which is the generation in every symbol.
+The declarations are every function a host calls, the runtime's among them, and the numbers a
+status and a reading's outcome are compared with, as enumerations rather than macros. They are C
+and nothing else — no directive, no guard — because a reader of C declarations with no
+preprocessor, PHP's `FFI::cdef` among them, takes them as they are, and a test hands them to it.
+What a C or C++ compiler wants around them is `souther.h`, the same text for every library: a
+guard, `<stdint.h>`, C linkage for C++, and the declarations included. So the surface is written
+into C once, and the two readers are given what each can read.
+
+The manifest says the same functions in the model's terms, for a binding to be written from
+without reading the program: each module's behaviors with what they take and answer, its published
+values, and its published types with their fields and cases, each beside the function that reaches
+it, or `null` where a host has no way in yet. A type is said by its module and its name, never by
+the key the Java half hands this one. What a manifest may say is Rust types, and version 1 is
+`native/crates/compiler/tests/interface-v1.json`: a test holds a program's manifest to it, and
+another reads it with those types and writes it back unchanged. The manifest carries its own
+`version`, moved when what it says is read differently, and the `abi` its functions answer to,
+which is the generation in every symbol.
 
 What the library exports is what the header declares, and nothing else. A row's entry and a
 boundary stay in the object, since running the program's own rows is what they are for, and so does

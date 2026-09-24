@@ -1,0 +1,683 @@
+{
+  "format": "souther-native-interface",
+  "version": 1,
+  "abi": 2,
+  "statuses": {
+    "ANSWERED": 0,
+    "DIVISION_BY_ZERO": 4,
+    "ENSURES_NOT_HELD": 2,
+    "INVALID_BOUNDS": 6,
+    "INVARIANT_NOT_HELD": 1,
+    "REQUIRED_FORM_HAS_NO_PLACE": 5,
+    "UNREACHABLE_REACHED": 3
+  },
+  "outcomes": {
+    "ISSUES": 1,
+    "MALFORMED": 2,
+    "VALUE": 0
+  },
+  "runtime": [
+    {
+      "name": "souther_mark",
+      "takes": [],
+      "answers": "mark"
+    },
+    {
+      "name": "souther_reset",
+      "takes": [
+        {
+          "given": "mark"
+        }
+      ],
+      "answers": null
+    },
+    {
+      "name": "souther_string_of_utf8",
+      "takes": [
+        {
+          "given": "bytes"
+        },
+        {
+          "given": "count"
+        }
+      ],
+      "answers": "string"
+    },
+    {
+      "name": "souther_string_length",
+      "takes": [
+        {
+          "given": "string"
+        }
+      ],
+      "answers": "count"
+    },
+    {
+      "name": "souther_string_bytes",
+      "takes": [
+        {
+          "given": "string"
+        }
+      ],
+      "answers": "bytes"
+    },
+    {
+      "name": "souther_decoded_outcome",
+      "takes": [
+        {
+          "given": "decoded"
+        }
+      ],
+      "answers": "outcome"
+    },
+    {
+      "name": "souther_decoded_value",
+      "takes": [
+        {
+          "given": "decoded"
+        }
+      ],
+      "answers": "value"
+    },
+    {
+      "name": "souther_decoded_malformed_at",
+      "takes": [
+        {
+          "given": "decoded"
+        }
+      ],
+      "answers": "count"
+    },
+    {
+      "name": "souther_decoded_issue_count",
+      "takes": [
+        {
+          "given": "decoded"
+        }
+      ],
+      "answers": "count"
+    },
+    {
+      "name": "souther_decoded_issue",
+      "takes": [
+        {
+          "given": "decoded"
+        },
+        {
+          "given": "count"
+        }
+      ],
+      "answers": "issue"
+    },
+    {
+      "name": "souther_issue_code",
+      "takes": [
+        {
+          "given": "issue"
+        }
+      ],
+      "answers": "string"
+    },
+    {
+      "name": "souther_issue_path",
+      "takes": [
+        {
+          "given": "issue"
+        }
+      ],
+      "answers": "string"
+    },
+    {
+      "name": "souther_issue_meta_count",
+      "takes": [
+        {
+          "given": "issue"
+        }
+      ],
+      "answers": "count"
+    },
+    {
+      "name": "souther_issue_meta_key",
+      "takes": [
+        {
+          "given": "issue"
+        },
+        {
+          "given": "count"
+        }
+      ],
+      "answers": "string"
+    },
+    {
+      "name": "souther_issue_meta_value",
+      "takes": [
+        {
+          "given": "issue"
+        },
+        {
+          "given": "count"
+        }
+      ],
+      "answers": "string"
+    }
+  ],
+  "modules": [
+    {
+      "name": "shop",
+      "behaviors": [
+        {
+          "name": "settle",
+          "takes": [
+            {
+              "kind": "declared",
+              "module": "shop",
+              "name": "Line"
+            },
+            {
+              "kind": "primitive",
+              "name": "Int"
+            }
+          ],
+          "answers": {
+            "kind": "declared",
+            "module": "shop",
+            "name": "Outcome"
+          },
+          "call": {
+            "name": "souther2_m_shop_b_settle",
+            "takes": [
+              {
+                "given": "value"
+              },
+              {
+                "given": "int"
+              },
+              {
+                "room": "value"
+              }
+            ],
+            "answers": "status"
+          }
+        },
+        {
+          "name": "owing",
+          "takes": [
+            {
+              "kind": "declared",
+              "module": "shop",
+              "name": "Outcome"
+            }
+          ],
+          "answers": {
+            "kind": "primitive",
+            "name": "Int"
+          },
+          "call": {
+            "name": "souther2_m_shop_b_owing",
+            "takes": [
+              {
+                "given": "value"
+              },
+              {
+                "room": "int"
+              }
+            ],
+            "answers": "status"
+          }
+        }
+      ],
+      "values": [],
+      "declarations": [
+        {
+          "kind": "newtype",
+          "name": "Money",
+          "field": {
+            "name": "value",
+            "type": {
+              "kind": "primitive",
+              "name": "Int"
+            },
+            "read": {
+              "name": "souther2_m_shop_t_Money_f_value",
+              "takes": [
+                {
+                  "given": "value"
+                }
+              ],
+              "answers": "int"
+            }
+          },
+          "construct": {
+            "name": "souther2_m_shop_t_Money_construct",
+            "takes": [
+              {
+                "given": "int"
+              },
+              {
+                "room": "value"
+              }
+            ],
+            "answers": "status"
+          },
+          "decode": {
+            "name": "souther2_m_shop_t_Money_decode",
+            "takes": [
+              {
+                "given": "bytes"
+              },
+              {
+                "given": "count"
+              },
+              {
+                "room": "decoded"
+              }
+            ],
+            "answers": "status"
+          },
+          "encode": {
+            "name": "souther2_m_shop_t_Money_encode",
+            "takes": [
+              {
+                "given": "value"
+              }
+            ],
+            "answers": "string"
+          }
+        },
+        {
+          "kind": "product",
+          "name": "Line",
+          "fields": [
+            {
+              "name": "price",
+              "type": {
+                "kind": "declared",
+                "module": "shop",
+                "name": "Money"
+              },
+              "read": {
+                "name": "souther2_m_shop_t_Line_f_price",
+                "takes": [
+                  {
+                    "given": "value"
+                  }
+                ],
+                "answers": "value"
+              }
+            },
+            {
+              "name": "quantity",
+              "type": {
+                "kind": "primitive",
+                "name": "Int"
+              },
+              "read": {
+                "name": "souther2_m_shop_t_Line_f_quantity",
+                "takes": [
+                  {
+                    "given": "value"
+                  }
+                ],
+                "answers": "int"
+              }
+            },
+            {
+              "name": "note",
+              "type": {
+                "kind": "option",
+                "of": {
+                  "kind": "primitive",
+                  "name": "String"
+                }
+              },
+              "read": {
+                "name": "souther2_m_shop_t_Line_f_note",
+                "takes": [
+                  {
+                    "given": "value"
+                  },
+                  {
+                    "room": "string"
+                  }
+                ],
+                "answers": "bool"
+              }
+            }
+          ],
+          "construct": {
+            "name": "souther2_m_shop_t_Line_construct",
+            "takes": [
+              {
+                "given": "value"
+              },
+              {
+                "given": "int"
+              },
+              {
+                "given": "bool"
+              },
+              {
+                "given": "string"
+              },
+              {
+                "room": "value"
+              }
+            ],
+            "answers": "status"
+          },
+          "decode": {
+            "name": "souther2_m_shop_t_Line_decode",
+            "takes": [
+              {
+                "given": "bytes"
+              },
+              {
+                "given": "count"
+              },
+              {
+                "room": "decoded"
+              }
+            ],
+            "answers": "status"
+          },
+          "encode": {
+            "name": "souther2_m_shop_t_Line_encode",
+            "takes": [
+              {
+                "given": "value"
+              }
+            ],
+            "answers": "string"
+          }
+        },
+        {
+          "kind": "unit",
+          "name": "Free",
+          "construct": {
+            "name": "souther2_m_shop_t_Free_construct",
+            "takes": [
+              {
+                "room": "value"
+              }
+            ],
+            "answers": "status"
+          },
+          "decode": {
+            "name": "souther2_m_shop_t_Free_decode",
+            "takes": [
+              {
+                "given": "bytes"
+              },
+              {
+                "given": "count"
+              },
+              {
+                "room": "decoded"
+              }
+            ],
+            "answers": "status"
+          },
+          "encode": {
+            "name": "souther2_m_shop_t_Free_encode",
+            "takes": [
+              {
+                "given": "value"
+              }
+            ],
+            "answers": "string"
+          }
+        },
+        {
+          "kind": "product",
+          "name": "Paid",
+          "fields": [
+            {
+              "name": "amount",
+              "type": {
+                "kind": "declared",
+                "module": "shop",
+                "name": "Money"
+              },
+              "read": {
+                "name": "souther2_m_shop_t_Paid_f_amount",
+                "takes": [
+                  {
+                    "given": "value"
+                  }
+                ],
+                "answers": "value"
+              }
+            }
+          ],
+          "construct": {
+            "name": "souther2_m_shop_t_Paid_construct",
+            "takes": [
+              {
+                "given": "value"
+              },
+              {
+                "room": "value"
+              }
+            ],
+            "answers": "status"
+          },
+          "decode": {
+            "name": "souther2_m_shop_t_Paid_decode",
+            "takes": [
+              {
+                "given": "bytes"
+              },
+              {
+                "given": "count"
+              },
+              {
+                "room": "decoded"
+              }
+            ],
+            "answers": "status"
+          },
+          "encode": {
+            "name": "souther2_m_shop_t_Paid_encode",
+            "takes": [
+              {
+                "given": "value"
+              }
+            ],
+            "answers": "string"
+          }
+        },
+        {
+          "kind": "product",
+          "name": "Owed",
+          "fields": [
+            {
+              "name": "amount",
+              "type": {
+                "kind": "declared",
+                "module": "shop",
+                "name": "Money"
+              },
+              "read": {
+                "name": "souther2_m_shop_t_Owed_f_amount",
+                "takes": [
+                  {
+                    "given": "value"
+                  }
+                ],
+                "answers": "value"
+              }
+            },
+            {
+              "name": "overdue",
+              "type": {
+                "kind": "primitive",
+                "name": "Bool"
+              },
+              "read": {
+                "name": "souther2_m_shop_t_Owed_f_overdue",
+                "takes": [
+                  {
+                    "given": "value"
+                  }
+                ],
+                "answers": "bool"
+              }
+            }
+          ],
+          "construct": {
+            "name": "souther2_m_shop_t_Owed_construct",
+            "takes": [
+              {
+                "given": "value"
+              },
+              {
+                "given": "bool"
+              },
+              {
+                "room": "value"
+              }
+            ],
+            "answers": "status"
+          },
+          "decode": {
+            "name": "souther2_m_shop_t_Owed_decode",
+            "takes": [
+              {
+                "given": "bytes"
+              },
+              {
+                "given": "count"
+              },
+              {
+                "room": "decoded"
+              }
+            ],
+            "answers": "status"
+          },
+          "encode": {
+            "name": "souther2_m_shop_t_Owed_encode",
+            "takes": [
+              {
+                "given": "value"
+              }
+            ],
+            "answers": "string"
+          }
+        },
+        {
+          "kind": "sum",
+          "name": "Settled",
+          "cases": [
+            {
+              "kind": "declared",
+              "module": "shop",
+              "name": "Free"
+            },
+            {
+              "kind": "declared",
+              "module": "shop",
+              "name": "Paid"
+            },
+            {
+              "kind": "declared",
+              "module": "shop",
+              "name": "Waived"
+            }
+          ],
+          "case": {
+            "name": "souther2_m_shop_t_Settled_case",
+            "takes": [
+              {
+                "given": "value"
+              }
+            ],
+            "answers": "case"
+          },
+          "decode": {
+            "name": "souther2_m_shop_t_Settled_decode",
+            "takes": [
+              {
+                "given": "bytes"
+              },
+              {
+                "given": "count"
+              },
+              {
+                "room": "decoded"
+              }
+            ],
+            "answers": "status"
+          },
+          "encode": {
+            "name": "souther2_m_shop_t_Settled_encode",
+            "takes": [
+              {
+                "given": "value"
+              }
+            ],
+            "answers": "string"
+          }
+        },
+        {
+          "kind": "sum",
+          "name": "Outcome",
+          "cases": [
+            {
+              "kind": "declared",
+              "module": "shop",
+              "name": "Free"
+            },
+            {
+              "kind": "declared",
+              "module": "shop",
+              "name": "Paid"
+            },
+            {
+              "kind": "declared",
+              "module": "shop",
+              "name": "Waived"
+            },
+            {
+              "kind": "declared",
+              "module": "shop",
+              "name": "Owed"
+            }
+          ],
+          "case": {
+            "name": "souther2_m_shop_t_Outcome_case",
+            "takes": [
+              {
+                "given": "value"
+              }
+            ],
+            "answers": "case"
+          },
+          "decode": {
+            "name": "souther2_m_shop_t_Outcome_decode",
+            "takes": [
+              {
+                "given": "bytes"
+              },
+              {
+                "given": "count"
+              },
+              {
+                "room": "decoded"
+              }
+            ],
+            "answers": "status"
+          },
+          "encode": {
+            "name": "souther2_m_shop_t_Outcome_encode",
+            "takes": [
+              {
+                "given": "value"
+              }
+            ],
+            "answers": "string"
+          }
+        }
+      ]
+    }
+  ]
+}

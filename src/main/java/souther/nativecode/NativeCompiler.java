@@ -47,11 +47,14 @@ public final class NativeCompiler {
     }
 
     /**
-     * What a build for a host writes: the object, a C header declaring every function a host
-     * calls, a manifest describing the same functions in the model's terms, and a shared library
-     * of the object and the runtime exporting those functions and nothing else.
+     * What a build for a host writes: the object; a header a C or C++ compiler includes; the
+     * declarations it includes, which are C and nothing a preprocessor has to run over, for an FFI
+     * that reads C declarations; a manifest describing the same functions in the model's terms;
+     * and a shared library of the object and the runtime exporting those functions and nothing
+     * else.
      */
-    public record Library(Path object, Path header, Path manifest, Path library) {}
+    public record Library(Path object, Path header, Path declarations, Path manifest,
+                          Path library) {}
 
     /**
      * The program built for a host, into {@code into}.
@@ -67,10 +70,11 @@ public final class NativeCompiler {
         // Where the driver wrote each, one to a line, which is how what a shared library is called
         // on this host is said by the side that named it.
         List<Path> written = new String(said, StandardCharsets.UTF_8).lines().map(Path::of).toList();
-        if (written.size() != 4) {
+        if (written.size() != 5) {
             throw new IOException("the driver said it wrote " + written);
         }
-        return new Library(written.get(0), written.get(1), written.get(2), written.get(3));
+        return new Library(written.get(0), written.get(1), written.get(2), written.get(3),
+                written.get(4));
     }
 
     /**

@@ -54,13 +54,16 @@ fn described_in(manifest: &Value) -> BTreeSet<String> {
         for value in module["values"].as_array().unwrap() {
             add(&value["read"]);
         }
+        // Each kind has the members it has: a newtype one field, a sum its cases and no
+        // constructor. A member a kind has not got is absent, and indexing it answers null.
         for declaration in module["declarations"].as_array().unwrap() {
             for operation in ["construct", "case", "decode", "encode"] {
                 add(&declaration[operation]);
             }
-            for field in declaration["fields"].as_array().unwrap() {
+            for field in declaration["fields"].as_array().into_iter().flatten() {
                 add(&field["read"]);
             }
+            add(&declaration["field"]["read"]);
         }
     }
     named
@@ -97,7 +100,12 @@ fn the_header_the_manifest_and_the_library_name_one_set_of_functions() {
         let into = tempdir().unwrap();
         let built = library_for(document, support::runtime(), into.path()).unwrap();
 
-        let header = declared_in(&fs::read_to_string(&built.header).unwrap());
+        let declarations = fs::read_to_string(&built.declarations).unwrap();
+        // What an FFI with no preprocessor reads: not one directive, whatever the program is.
+        for line in declarations.lines() {
+            assert!(!line.trim_start().starts_with('#'), "{line}");
+        }
+        let header = declared_in(&declarations);
         let manifest: Value =
             serde_json::from_str(&fs::read_to_string(&built.manifest).unwrap()).unwrap();
         let described = described_in(&manifest);
@@ -188,13 +196,30 @@ int main(void) {
 }
 "#;
 
+/// The same behavior from C++, through the same header: C linkage is the header's to say.
+const CALLING_FROM_CPP: &str = r#"
+#include <cstdio>
+#include "souther.h"
+
+int main() {
+    int64_t answer = -1;
+    souther_status status = souther2_m_calculation_b_add(2, 3, &answer);
+    std::printf("%u %lld\n", status, static_cast<long long>(answer));
+    return 0;
+}
+"#;
+
 fn ran(document: &str, program: &str) -> String {
+    ran_as(document, program, "cc", "host.c")
+}
+
+fn ran_as(document: &str, program: &str, compiler: &str, named: &str) -> String {
     let into = tempdir().unwrap();
     let built = library_for(document, support::runtime(), into.path()).unwrap();
-    let source = into.path().join("host.c");
+    let source = into.path().join(named);
     fs::write(&source, program).unwrap();
     let executable = into.path().join("host");
-    let compiled = Command::new("cc")
+    let compiled = Command::new(compiler)
         .args(["-Wall", "-Werror", "-o"])
         .arg(&executable)
         .arg(&source)
@@ -231,4 +256,9 @@ fn a_host_builds_reads_and_writes_a_value_through_the_header_and_the_library() {
         ran(VALUES, VALUING),
         "0 7\n{\"n\":7}\n0 1 9\n0 1 1 missing_field\n0 42\n"
     );
+}
+
+#[test]
+fn a_cpp_program_calls_a_behavior_through_the_same_header() {
+    assert_eq!(ran_as(ADDING, CALLING_FROM_CPP, "c++", "host.cpp"), "0 5\n");
 }

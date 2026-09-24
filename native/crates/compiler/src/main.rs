@@ -4,8 +4,9 @@
 //! is nothing here for an in-process call to make faster, and a panic on this side ends this
 //! process rather than the one that started it.
 //!
-//! `--library <directory>` writes, into the directory, the object, a C header, a manifest and a
-//! shared library of the object and the runtime, and on stdout where it wrote each of them, one to a
+//! `--library <directory>` writes, into the directory, the object, a C header, the declarations it
+//! includes, a manifest and a shared library of the object and the runtime, and on stdout where it
+//! wrote each of them, one to a
 //! line and in that order, so what a library is called on this host is said by the one that named
 //! it. The runtime is the static archive the same `cargo build` put beside this executable, or the
 //! one `--runtime <archive>` names.
@@ -83,6 +84,7 @@ fn main() -> ExitCode {
                 for path in [
                     &written.object,
                     &written.header,
+                    &written.declarations,
                     &written.manifest,
                     &written.library,
                 ] {

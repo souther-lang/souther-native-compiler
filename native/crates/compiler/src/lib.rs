@@ -13,6 +13,7 @@ mod index;
 mod interface;
 mod kernels;
 mod link;
+mod manifest;
 pub mod transport;
 
 use anyhow::{Result, anyhow, bail};
@@ -168,8 +169,12 @@ fn built(document: &str) -> Result<(Vec<u8>, Surface)> {
 pub struct Library {
     /// The object, which is what another Souther build's object is linked with.
     pub object: PathBuf,
-    /// The C header declaring every function a host calls.
+    /// The header a C or C++ compiler includes: the declarations below, with what a compiler wants
+    /// around them and a reader of declarations cannot read.
     pub header: PathBuf,
+    /// Every function a host calls, declared in C and in nothing a preprocessor has to run over,
+    /// for an FFI that reads C declarations.
+    pub declarations: PathBuf,
     /// The same functions described in the model's terms, for a binding to be written from.
     pub manifest: PathBuf,
     /// The object and the runtime linked into one shared library, exporting what the header
@@ -177,28 +182,62 @@ pub struct Library {
     pub library: PathBuf,
 }
 
-/// The object for a document, and beside it what a host needs to call it: a header, a manifest,
-/// and a shared library of the object and `runtime`, the runtime's static archive.
+/// What the declarations are called beside the header, which includes them by this name.
+const DECLARATIONS: &str = "souther.ffi.h";
+
+/// The header a C or C++ compiler includes. The same text for every library: what is declared is
+/// in [`DECLARATIONS`], written from the surface once, and this is only what a compiler needs
+/// around it — a guard, the header `int64_t` and the rest come from, and C linkage for C++ — none
+/// of which a reader with no preprocessor could read.
+fn header() -> String {
+    format!(
+        "/* What a host calls in a Souther program built by souther-native-compiler: the\n \
+         * declarations in {DECLARATIONS}, for a C or C++ compiler. */\n\
+         #ifndef SOUTHER_H\n\
+         #define SOUTHER_H\n\
+         \n\
+         #include <stdint.h>\n\
+         \n\
+         #ifdef __cplusplus\n\
+         extern \"C\" {{\n\
+         #endif\n\
+         \n\
+         #include \"{DECLARATIONS}\"\n\
+         \n\
+         #ifdef __cplusplus\n\
+         }}\n\
+         #endif\n\
+         \n\
+         #endif\n"
+    )
+}
+
+/// The object for a document, and beside it what a host needs to call it: a header and the
+/// declarations it includes, a manifest, and a shared library of the object and `runtime`, the
+/// runtime's static archive.
 ///
-/// All three of what a host reads are written from the one surface the object's emission put its
-/// functions on, so none of them can name a function the others do not.
+/// Everything a host reads is written from the one manifest the object's emission put its
+/// functions on, so none of it can name a function the rest does not.
 pub fn library_for(document: &str, runtime: &Path, into: &Path) -> Result<Library> {
     let linker = link::Linker::of_this_host()?;
     let (object, surface) = built(document)?;
+    let manifest = interface::manifest_of(surface.modules());
     fs::create_dir_all(into)?;
     let written = Library {
         object: into.join("souther.o"),
         header: into.join("souther.h"),
+        declarations: into.join(DECLARATIONS),
         manifest: into.join("souther.json"),
         library: into.join(linker.library()),
     };
     fs::write(&written.object, object)?;
-    fs::write(&written.header, surface.header())?;
-    fs::write(&written.manifest, surface.manifest())?;
+    fs::write(&written.header, header())?;
+    fs::write(&written.declarations, interface::declarations(&manifest))?;
+    fs::write(&written.manifest, interface::written(&manifest))?;
     linker.shared_library(
         &[&written.object],
         runtime,
-        &surface.exported(),
+        &interface::exported(&manifest),
         &written.library,
     )?;
     Ok(written)

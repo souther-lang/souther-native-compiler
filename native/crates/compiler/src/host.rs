@@ -186,7 +186,7 @@ pub(crate) fn define(
                 ],
                 answers: Some(HostWord::Status),
             };
-            described.decoded_by(expose(
+            described.decoded_by(&expose(
                 emitting,
                 decoding,
                 &mut |builder, module, given| {
@@ -200,7 +200,7 @@ pub(crate) fn define(
                 answers: Some(HostWord::String),
             };
             let literals = emitting.literals;
-            described.encoded_by(expose(
+            described.encoded_by(&expose(
                 emitting,
                 encoding,
                 &mut |builder, module, given| {
@@ -230,7 +230,7 @@ pub(crate) fn define(
                     takes: vec![HostParameter::Given(HostWord::Value)],
                     answers: Some(HostWord::Case),
                 };
-                described.cased_by(expose(emitting, casing, &mut |builder, module, given| {
+                described.cased_by(&expose(emitting, casing, &mut |builder, module, given| {
                     which_case(builder, module, declared, cases, given)
                 })?);
             }
@@ -249,7 +249,7 @@ pub(crate) fn define(
                 takes,
                 answers: Some(HostWord::Status),
             };
-            described.constructed_by(expose(
+            described.constructed_by(&expose(
                 emitting,
                 constructing,
                 &mut |builder, module, given| {
@@ -278,7 +278,7 @@ pub(crate) fn define(
             };
             described.field_read_by(
                 at,
-                expose(emitting, reading, &mut |builder, _, given| {
+                &expose(emitting, reading, &mut |builder, _, given| {
                     read(builder, at, host, given);
                     Ok(())
                 })?,
@@ -316,7 +316,7 @@ pub(crate) fn define_behaviors(
             &behavior.takes,
             &behavior.answers,
             emitting.declared,
-            call,
+            call.as_ref(),
         );
     }
     Ok(())
@@ -337,7 +337,7 @@ pub(crate) fn define_values(
             value.name,
             &value.answers,
             emitting.declared,
-            read,
+            read.as_ref(),
         );
     }
     Ok(())
