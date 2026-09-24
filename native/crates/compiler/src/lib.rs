@@ -2171,24 +2171,31 @@ fn status_or_answer(
 /// Held by the number rather than pushed in the order they are met: the writer numbers a binder
 /// where it writes it and this lowers a binding's value before the binder exists, so an order
 /// either side happened to have would only agree until a binding's value held a binding of its own.
+///
+/// A number is an identity and not a position, so it is a key and never an index: a table sized
+/// by the number would take as much room as the largest one a document happens to write, which the
+/// writer keeps small by counting and nothing in what is read does. A document numbering a binder
+/// with the largest number there is is a document like any other.
 #[derive(Default)]
 struct Bindings {
-    held: Vec<Option<Variable>>,
+    held: HashMap<usize, Variable>,
 }
 
 impl Bindings {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a binder shadows whatever an enclosing one bound under its number, on purpose: \
+                  the number is the document's and a scope that reuses one is a scope that \
+                  replaced it"
+    )]
     fn at(&mut self, number: usize, variable: Variable) {
-        if self.held.len() <= number {
-            self.held.resize(number + 1, None);
-        }
-        self.held[number] = Some(variable);
+        self.held.insert(number, variable);
     }
 
     fn of(&self, number: usize) -> Variable {
-        self.held
-            .get(number)
-            .copied()
-            .flatten()
+        *self
+            .held
+            .get(&number)
             .expect("`Coherent` held every read to be of a binding in scope")
     }
 }

@@ -8,8 +8,8 @@
 //! the other, and the lowering reads the kernel from here and not from the spelling of its key.
 //!
 //! What a kernel is known as is one [`Contract`], so that a kernel added to this table has to say
-//! what it takes, what it answers and what kind of fact it settles, and cannot say two of the
-//! three. A contract holds what this backend reads and not what the checker answered: `int.add`
+//! what it takes, what it answers, what kind of fact it settles and what it can end a run for, and
+//! cannot say three of the four. A contract holds what this backend reads and not what the checker answered: `int.add`
 //! takes two `Int`s and that is the backend's own, and a pattern is a kind of fact the kernel
 //! settles and never a value it is known to settle. A kernel taking a type variable would need its
 //! `takes` and `answers` to be a shape in the same way, and this table has no kernel that does yet.
@@ -19,7 +19,7 @@
 //! arguments stand in: what it takes, and which fact it carries, are its own kernel's, and the
 //! two halves disagreeing about them is refused as this backend not lowering the kernel.
 
-use crate::transport::{KernelFact, Prim, Ty};
+use crate::transport::{AbortKind, KernelFact, Prim, Ty};
 
 /// What this backend knows of a kernel it lowers.
 pub(crate) struct Contract {
@@ -29,6 +29,10 @@ pub(crate) struct Contract {
     pub(crate) answers: Ty,
     /// The kind of fact the checker settles about an application of it beside what it takes.
     pub(crate) fact: FactContract,
+    /// Every reason an application of it can end a run without a value, exactly. What the kernel
+    /// ends for is the kernel's and not the call's, and the lowering turns the reason it is given
+    /// into the status the run ends with.
+    pub(crate) aborts: Vec<AbortKind>,
 }
 
 /// The kind of fact a kernel settles, and not a fact.
@@ -86,6 +90,7 @@ impl LoweredKernel {
                 takes: vec![Ty::Prim { prim: Prim::Int }; 2],
                 answers: Ty::Prim { prim: Prim::Int },
                 fact: FactContract::None,
+                aborts: vec![AbortKind::RequiredFormHasNoPlace],
             },
         }
     }

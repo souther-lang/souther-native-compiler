@@ -994,7 +994,7 @@ impl<'a> Walk<'_, 'a> {
                 self.node(left)?;
                 self.node(right)?;
                 self.reading(*op, reading, left.ty(), right.ty())?;
-                self.operator(*op, reading, left.ty(), ty, aborts)
+                self.operator(*op, reading, (left.ty(), right.ty()), ty, aborts)
             }
             Node::Neg {
                 operand,
@@ -1008,15 +1008,21 @@ impl<'a> Walk<'_, 'a> {
                 // negation of an `Int` names one reason, a literal's included, and a `Decimal` or
                 // a `Rational` only changes sign and names none. That the lowering folds a
                 // literal's sign is its own, and says nothing of what the checker states.
-                if matches!(ty, Ty::Prim { prim: Prim::Int }) {
-                    self.overflows("a negation of an Int", aborts)?;
-                } else if !aborts.is_empty() {
+                let owed: &[AbortKind] = if matches!(ty, Ty::Prim { prim: Prim::Int }) {
+                    &[AbortKind::RequiredFormHasNoPlace]
+                } else {
+                    &[]
+                };
+                self.ends_for(&format!("a negation of {}", ty.spelt()), aborts, owed)?;
+                // A literal is a magnitude the checker writes in `[0, Int.MAX]`: `-Int.MIN` is not
+                // one a source can name, and the lowering negates it as it stands.
+                if let Node::Int { value, .. } = operand.as_ref()
+                    && *value == i64::MIN
+                {
                     bail!(
-                        "{}: a negation of {} names {:?} as what it can end without a value \
-                         for, where it only changes sign: the two halves disagree",
-                        self.owner,
-                        ty.spelt(),
-                        aborts
+                        "{}: a negation of the literal {value}, which is no magnitude the checker \
+                         writes: the two halves disagree",
+                        self.owner
                     );
                 }
                 Ok(())
@@ -1045,9 +1051,38 @@ impl<'a> Walk<'_, 'a> {
                     if arm.selects.is_empty() {
                         bail!("{}: an arm tests for nothing", self.owner);
                     }
+                    // What an arm tests is held against what it forks on, whether the arm binds a value
+                    // or not: the lowering turns each test into one comparison of the value, and
+                    // a test of absence is a comparison with no case in it, so it means something
+                    // only of an optional, and a test of a case only of a value that is not one.
+                    let optional = matches!(subject.ty(), Ty::Option { .. });
                     for selects in &arm.selects {
-                        if let Selects::Which { atoms } = selects {
-                            self.leaves("an arm", atoms)?;
+                        match selects {
+                            Selects::Which { atoms } => {
+                                self.leaves("an arm", atoms)?;
+                                if optional {
+                                    bail!(
+                                        "{}: an arm tests which case {} is, which an optional \
+                                         answers by holding or not: the two halves disagree",
+                                        self.owner,
+                                        subject.ty().spelt()
+                                    );
+                                }
+                                self.fits(
+                                    "a case an arm tests is one of what it forks on",
+                                    &Ty::Union {
+                                        union: atoms.clone(),
+                                    },
+                                    subject.ty(),
+                                );
+                            }
+                            Selects::Held | Selects::Nothing if !optional => bail!(
+                                "{}: an arm tests whether {} holds a value, which only an \
+                                 optional does: the two halves disagree",
+                                self.owner,
+                                subject.ty().spelt()
+                            ),
+                            Selects::Held | Selects::Nothing => {}
                         }
                     }
                     match (arm.binding, &arm.binds) {
@@ -1252,7 +1287,7 @@ impl<'a> Walk<'_, 'a> {
         &mut self,
         op: Op,
         reading: &Reading,
-        left: &Ty,
+        (left, right): (&Ty, &Ty),
         ty: &Ty,
         aborts: &[AbortKind],
     ) -> Result<()> {
@@ -1266,24 +1301,47 @@ impl<'a> Walk<'_, 'a> {
             Op::Eq | Op::Ne | Op::Lt | Op::Le | Op::Gt | Op::Ge => {
                 self.same(&what, ty, &truth, "what the operator answers")
             }
-            Op::Div => self.same(&what, ty, &rational, "what a quotient is"),
+            Op::Div => {
+                self.same(&what, ty, &rational, "what a quotient is")?;
+                // A quotient ends a run for a zero divisor, and for an answer with no place where
+                // an operand is already exact.
+                let exact = |it: &Ty| {
+                    matches!(
+                        it,
+                        Ty::Prim {
+                            prim: Prim::Rational
+                        }
+                    )
+                };
+                let owed: &[AbortKind] = if exact(left) || exact(right) {
+                    &[AbortKind::DivisionByZero, AbortKind::RequiredFormHasNoPlace]
+                } else {
+                    &[AbortKind::DivisionByZero]
+                };
+                self.ends_for(&format!("a quotient of {}", left.spelt()), aborts, owed)
+            }
             // Both sides stand at what it answers, which its slots hold; that is all a join says
             // of itself.
             Op::Concat => Ok(()),
-            Op::Add | Op::Sub | Op::Mul => match reading {
-                Reading::AsTheyStand => {
-                    self.number(&what, ty)?;
-                    self.same(&what, ty, left, "what its operands are read as")?;
-                    if matches!(left, Ty::Prim { prim: Prim::Int }) {
-                        self.overflows(&format!("{} over two Ints", op.spelt()), aborts)?;
+            Op::Add | Op::Sub | Op::Mul => {
+                match reading {
+                    Reading::AsTheyStand => {
+                        self.number(&what, ty)?;
+                        self.same(&what, ty, left, "what its operands are read as")?;
                     }
-                    Ok(())
+                    Reading::ExactNumbers => {
+                        self.same(&what, ty, &rational, "what exact values come to")?;
+                    }
+                    Reading::In { .. } => self.number(&what, ty)?,
                 }
-                Reading::ExactNumbers => {
-                    self.same(&what, ty, &rational, "what exact values come to")
-                }
-                Reading::In { .. } => self.number(&what, ty),
-            },
+                // A sum, a difference or a product of numbers leaves the range its answer holds,
+                // whichever reading its operands have, and names the one reason for it.
+                self.ends_for(
+                    &format!("{} over {}", op.spelt(), left.spelt()),
+                    aborts,
+                    &[AbortKind::RequiredFormHasNoPlace],
+                )
+            }
         }
     }
 
@@ -1307,16 +1365,17 @@ impl<'a> Walk<'_, 'a> {
         Ok(())
     }
 
-    /// Refuses a site that can leave its type's range and does not name exactly one reason for
-    /// ending without a value: the checker and this backend would disagree about what kind of site
-    /// it is, and answering a wrong value because the checker said none would be worse.
-    fn overflows(&self, what: &str, aborts: &[AbortKind]) -> Result<()> {
-        if aborts.len() != 1 {
+    /// Refuses a site that names other than the reasons it owes for ending without a value.
+    ///
+    /// The reasons themselves and not how many there are: the lowering turns the one it is given
+    /// into the status the run ends with, so a document naming another reason for a site would be
+    /// lowered to a run that ends for a reason the checker never gave it.
+    fn ends_for(&self, what: &str, aborts: &[AbortKind], owed: &[AbortKind]) -> Result<()> {
+        if aborts != owed {
             bail!(
-                "{}: {what} may leave its type's range and names {} reasons for ending without a \
-                 value, where it has exactly one",
-                self.owner,
-                aborts.len()
+                "{}: {what} names {aborts:?} as what it can end without a value for, where the \
+                 checker names {owed:?}: the two halves disagree",
+                self.owner
             );
         }
         Ok(())
@@ -1482,11 +1541,7 @@ impl<'a> Walk<'_, 'a> {
                             "what it takes",
                         )?;
                     }
-                    match known {
-                        LoweredKernel::IntAdd => {
-                            self.overflows("a call of int.add", aborts)?;
-                        }
-                    }
+                    self.ends_for(&format!("a call of {kernel}"), aborts, &contract.aborts)?;
                     self.same(
                         &format!("a call of {kernel}"),
                         ty,

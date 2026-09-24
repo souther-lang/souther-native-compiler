@@ -738,14 +738,17 @@ fn a_quotient_is_a_rational() {
 fn numbers_of_two_types_are_told_apart_by_how_the_operator_reads_them() {
     let rational = r#"{"prim":"RATIONAL"}"#;
     let added = |other: &str, reading: &str| {
-        node(
-            "binary",
-            &format!(
-                r#""op":"ADD","reading":{{"is":"{reading}"}},"left":{},"right":{}"#,
-                read(0, INT),
-                read(1, other)
+        with_outer_aborts(
+            &node(
+                "binary",
+                &format!(
+                    r#""op":"ADD","reading":{{"is":"{reading}"}},"left":{},"right":{}"#,
+                    read(0, INT),
+                    read(1, other)
+                ),
+                rational,
             ),
-            rational,
+            r#""REQUIRED_FORM_HAS_NO_PLACE""#,
         )
     };
     let refused = object_for(&helpers(&[h(
@@ -783,7 +786,86 @@ fn arithmetic_that_can_overflow_names_one_reason() {
         &[],
         &added(r#""REQUIRED_FORM_HAS_NO_PLACE""#),
     )]));
-    is_the_halves_disagreeing(&helpers(&[behind(), h(&[], &added(""))]), "reasons");
+    // None, and another reason. The lowering turns the reason into the status a run that leaves the
+    // range ends with, so a reason the checker never gave a sum would end the run for it.
+    for wrong in ["", r#""DIVISION_BY_ZERO""#, r#""INVARIANT_NOT_HELD""#] {
+        is_the_halves_disagreeing(
+            &helpers(&[behind(), h(&[], &added(wrong))]),
+            "where the checker names",
+        );
+    }
+}
+
+/// What every arithmetic site owes, by what decides it: a sum, a difference and a product name the
+/// one reason whatever type they are over, and a quotient names a zero divisor, and an answer with no
+/// place where an operand is already exact.
+#[test]
+fn every_arithmetic_site_names_exactly_the_reasons_it_owes() {
+    let rational = r#"{"prim":"RATIONAL"}"#;
+    let over = |op: &str, ty: &str, answers: &str, reading: &str, reasons: &str| {
+        with_outer_aborts(
+            &node(
+                "binary",
+                &format!(
+                    r#""op":"{op}","reading":{{"is":"{reading}"}},"left":{},"right":{}"#,
+                    read(0, ty),
+                    read(1, ty)
+                ),
+                answers,
+            ),
+            reasons,
+        )
+    };
+    let no_place = r#""REQUIRED_FORM_HAS_NO_PLACE""#;
+    let zero = r#""DIVISION_BY_ZERO""#;
+    let both = format!("{zero},{no_place}");
+
+    for (op, reasons, wrong) in [
+        ("ADD", no_place, zero),
+        ("SUB", no_place, zero),
+        ("MUL", no_place, ""),
+    ] {
+        reads_whole(&helpers(&[h(
+            &[INT, INT],
+            &over(op, INT, INT, "astheystand", reasons),
+        )]));
+        is_the_halves_disagreeing(
+            &helpers(&[h(&[INT, INT], &over(op, INT, INT, "astheystand", wrong))]),
+            "where the checker names",
+        );
+    }
+    // A quotient of two Ints names a zero divisor, and of two Rationals a place too.
+    let _ = reads_whole_or_not_lowered(&helpers(&[h(
+        &[INT, INT],
+        &over("DIV", INT, rational, "astheystand", zero),
+    )]));
+    for (ty, right, wrong) in [
+        (INT, zero, no_place),
+        (INT, zero, ""),
+        (rational, both.as_str(), zero),
+    ] {
+        let refused = object_for(&helpers(&[h(
+            &[ty, ty],
+            &over("DIV", ty, rational, "astheystand", wrong),
+        )]))
+        .expect_err("a quotient names the reasons it owes");
+        assert!(
+            refused.to_string().contains("where the checker names"),
+            "{right}: {refused}"
+        );
+    }
+}
+
+/// A document Coherent reads whole and the lowering then refuses as not lowered is one this backend
+/// is behind on; either answer is not the two halves disagreeing.
+fn reads_whole_or_not_lowered(document: &str) -> bool {
+    match object_for(document) {
+        Ok(_) => true,
+        Err(refused) => {
+            assert!(refused.downcast_ref::<NotLowered>().is_some(), "{refused}");
+            false
+        }
+    }
 }
 
 /// A row is a body like any other: a published value it calls is declared, and a closure it
@@ -1613,13 +1695,22 @@ fn a_negation_of_an_int_names_its_reason_whatever_it_negates() {
 
     reads_whole(&helpers(&[h(&[INT], &negated(int(5), one))]));
     reads_whole(&helpers(&[h(&[INT], &negated(read(0, INT), one))]));
+    // None, and another reason: what is named is the reason itself and not how many there are, and
+    // the lowering turns the one it is given into the status the run ends with.
+    for wrong in ["", r#""DIVISION_BY_ZERO""#] {
+        is_the_halves_disagreeing(
+            &helpers(&[h(&[INT], &negated(int(5), wrong))]),
+            "a negation of Int",
+        );
+        is_the_halves_disagreeing(
+            &helpers(&[h(&[INT], &negated(read(0, INT), wrong))]),
+            "a negation of Int",
+        );
+    }
+    // A magnitude the checker never writes, which the lowering would negate as it stands.
     is_the_halves_disagreeing(
-        &helpers(&[h(&[INT], &negated(int(5), ""))]),
-        "negation of an Int",
-    );
-    is_the_halves_disagreeing(
-        &helpers(&[h(&[INT], &negated(read(0, INT), ""))]),
-        "negation of an Int",
+        &helpers(&[h(&[INT], &negated(int(i64::MIN), one))]),
+        "no magnitude the checker writes",
     );
 }
 
@@ -1653,4 +1744,27 @@ fn a_construction_of_another_builds_type_names_no_reason_but_a_clause() {
     reads_whole(&document(""));
     reads_whole(&document(r#""INVARIANT_NOT_HELD""#));
     is_the_halves_disagreeing(&document(r#""DIVISION_BY_ZERO""#), "another build");
+}
+
+/// A binding's number is its identity and not its position, so a document numbering its binders with
+/// the largest numbers there are is a document like any other. A table sized by the number would take
+/// as much room as the largest one, and the writer only keeps them small by counting.
+#[test]
+fn a_binding_is_an_identity_and_not_a_position() {
+    let huge = usize::MAX;
+    let bound = let_(huge, INT, &int(1), &read(huge, INT), INT);
+    reads_whole(&helpers(&[h(&[], &bound)]));
+
+    // A field a clause reads, and the construction that runs the clause over it.
+    let counted = field("count", huge, "INT");
+    let holds = clause(Some("counted"), &at_least(&read(huge, INT), &int(0)));
+    let built = with_outer_aborts(
+        &node(
+            "construct",
+            &format!(r#""declared":"m.R","values":[{}]"#, int(1)),
+            r#"{"declared":"m.R"}"#,
+        ),
+        r#""INVARIANT_NOT_HELD""#,
+    );
+    reads_whole(&with_clauses(&counted, &holds, &[h(&[], &built)]));
 }

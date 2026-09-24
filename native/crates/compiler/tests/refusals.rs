@@ -37,8 +37,15 @@ fn over(op: &str, left: &str, right: &str) -> String {
 fn over_answering(op: &str, left: &str, right: &str, answers: &str) -> String {
     let read =
         |at: u32, ty: &str| format!(r#"{{"core":"read","binding":{at},"type":{ty},"aborts":[]}}"#);
+    // What the operator owes, as the checker names it: arithmetic ends a run that leaves its range,
+    // a quotient one with a zero divisor, and nothing else ends one.
+    let owes = match op {
+        "ADD" | "SUB" | "MUL" => r#""REQUIRED_FORM_HAS_NO_PLACE""#,
+        "DIV" => r#""DIVISION_BY_ZERO""#,
+        _ => "",
+    };
     let body = format!(
-        r#"{{"core":"binary","op":"{op}","reading":{{"is":"astheystand"}},"left":{},"right":{},"type":{answers},"aborts":[]}}"#,
+        r#"{{"core":"binary","op":"{op}","reading":{{"is":"astheystand"}},"left":{},"right":{},"type":{answers},"aborts":[{owes}]}}"#,
         read(0, left),
         read(1, right)
     );
