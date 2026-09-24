@@ -93,6 +93,19 @@ public final class PhpBindings {
     }
 
     /**
+     * Refuses what a generation into {@code into} under {@code namespace} would refuse whatever the
+     * manifest said: a namespace PHP will not take, and a directory holding what no generation
+     * wrote. For a caller that builds the library in the same step, so that a binding it was never
+     * going to write is refused before the library is.
+     *
+     * @throws NotBindable where the namespace or the directory would be refused
+     */
+    public static void refuseAhead(Path into, String namespace) throws IOException {
+        PhpNames.rootNamespace(namespace);
+        Output.replaceable(into);
+    }
+
+    /**
      * Writes the binding of what {@code manifest} describes into {@code into}, which is then that
      * binding and nothing else: it is written beside it and put in place whole ({@link Output}), so
      * a class the model no longer declares does not survive a generation, and a refused one leaves

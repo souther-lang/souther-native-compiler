@@ -65,6 +65,10 @@ jobs:
       # holds if this step is kept from overriding it.
       - run: mvn --batch-mode --no-snapshot-updates test
 
+      # What an application does, with no Java calling the API: the command line builds a library
+      # and its binding, Composer installs the runtime from its path, and PHP calls the library.
+      - run: scripts/php-from-the-command-line.sh
+
   # Every souther issue this repository names is a premise that the pinned souther does not yet
   # answer it, and the code around the reference works around the gap. A premise the pin has
   # overtaken is a workaround for an answer the program now gives, and nothing else would say so.

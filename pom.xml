@@ -37,6 +37,8 @@
         <junit.version>5.14.0</junit.version>
         <assertj.version>3.27.6</assertj.version>
         <jackson.version>3.2.2</jackson.version>
+        <!-- What `mvn exec:java` hands the command line, none unless given. -->
+        <args></args>
     </properties>
 
     <!-- A SNAPSHOT of the compiler is published here and not to Maven Central proper. -->
@@ -118,6 +120,22 @@
                     <workingDirectory>${project.basedir}/native</workingDirectory>
                 </configuration>
                 <executions>
+                    <!-- The command line, as `mvn exec:java -Dargs='...'` runs it, in the directory
+                         Maven was started in, where the driver is found as `native/target/debug`.
+                         Its arguments are `args` and not `exec.args`, which every execution of this
+                         plugin reads, so that one command can build first with `process-classes`
+                         without Cargo being handed them too. System.exit is left to end Maven, so
+                         what the command ended with is what Maven ends with. -->
+                    <execution>
+                        <id>default-cli</id>
+                        <goals>
+                            <goal>java</goal>
+                        </goals>
+                        <configuration>
+                            <mainClass>souther.nativecode.Main</mainClass>
+                            <commandlineArgs>${args}</commandlineArgs>
+                        </configuration>
+                    </execution>
                     <!-- Before the Java tests, because one of them reaches the driver over the
                          process boundary and a clone that had not built it would report the
                          boundary as broken. -->
