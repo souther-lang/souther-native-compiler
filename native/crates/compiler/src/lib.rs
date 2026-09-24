@@ -6,6 +6,7 @@
 
 mod boundary;
 mod closures;
+mod codec;
 mod coherent;
 mod host;
 mod index;
@@ -272,6 +273,12 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
         let symbol = constructor_symbol(declaration.module(), declaration.name());
         let id = accepted(module.declare_function(&symbol, linkage, &signature));
         index::unique(&mut constructors.by_key, key.to_string(), id);
+        let checked = accepted(module.declare_function(
+            &format!("$checked${key}"),
+            Linkage::Local,
+            &checked_signature(declaration, call_conv)?,
+        ));
+        index::unique(&mut constructors.checked, key.to_string(), checked);
     }
     for key in runs.calls() {
         let declaration = declared.laid(key);
@@ -661,9 +668,24 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
     }
 
     for key in runs.built() {
-        let id = constructors.of(key)?;
         let declaration = declared.laid(key);
-        let signature = constructor_signature(declaration, call_conv)?;
+        let checked = constructors.checked(key)?;
+        context.clear();
+        context.func = Function::with_name_signature(
+            UserFuncName::default(),
+            constructor_signature(declaration, call_conv)?,
+        );
+        define_constructor(
+            &mut context.func,
+            &mut shapes,
+            declaration.field_count(),
+            checked,
+            frontend,
+            &mut module,
+        );
+        accepted(module.define_function(constructors.of(key)?, &mut context));
+
+        let signature = checked_signature(declaration, call_conv)?;
         context.clear();
         context.func = Function::with_name_signature(UserFuncName::default(), signature);
         let lowering = Lowering {
@@ -679,7 +701,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
             literals: &literals,
             constructors: &constructors,
         };
-        define_constructor(
+        define_checked(
             &mut context.func,
             &mut shapes,
             declaration,
@@ -687,25 +709,8 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
             &lowering,
             &mut module,
         )?;
-        accepted(module.define_function(id, &mut context));
+        accepted(module.define_function(checked, &mut context));
     }
-
-    // What a host builds and reads a value of a published type through, each running on the
-    // constructors just defined and the layout they write.
-    host::define(
-        host::Emitting {
-            module: &mut module,
-            context: &mut context,
-            shapes: &mut shapes,
-            frontend,
-            call_conv,
-            declared: &declared,
-            constructors: &constructors,
-            allocate,
-        },
-        program,
-        &runs,
-    )?;
 
     // What a host reaches for an answer as the language writes it: every behavior this object
     // defines and publishes, and every row. A behavior another build implements is that build's
@@ -745,20 +750,65 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
             });
         }
     }
-    boundary::define(
-        boundary::Emitting {
-            module: &mut module,
-            context: &mut context,
-            shapes: &mut shapes,
-            frontend,
-            call_conv,
-            declared: &declared,
-            literals: &literals,
-        },
-        &boundaries,
-    )?;
+    let mut emitting = Emitting {
+        module: &mut module,
+        context: &mut context,
+        shapes: &mut shapes,
+        frontend,
+        call_conv,
+        declared: &declared,
+        literals: &literals,
+        constructors: &constructors,
+        allocate,
+    };
+    let mut codecs = codec::Codecs::new(call_conv);
+    // What a host builds, reads, decodes and encodes a value of a published type through, each
+    // running on the constructors just defined and the layout they write.
+    host::define(&mut emitting, &mut codecs, program, &runs)?;
+    boundary::define(&mut emitting, &mut codecs, &boundaries)?;
+    // Every writer and reader the entries above reached.
+    codecs.define(&mut emitting)?;
 
     Ok(accepted(module.finish().emit()))
+}
+
+/// Where a definition that is not a body is emitted from: a host's entries, a boundary, a writer
+/// or a reader. The same handful of things for each, and one way of putting a function under an id.
+pub(crate) struct Emitting<'a> {
+    pub module: &'a mut ObjectModule,
+    pub context: &'a mut Context,
+    pub shapes: &'a mut FunctionBuilderContext,
+    pub frontend: TargetFrontendConfig,
+    pub call_conv: CallConv,
+    pub declared: &'a Declared<'a>,
+    pub literals: &'a Literals,
+    pub constructors: &'a Constructors,
+    pub allocate: FuncId,
+}
+
+impl Emitting<'_> {
+    /// Defines `id` as what `body` emits, handed the function's parameters from its entry block.
+    /// Every block is sealed once the body has emitted all of them, so a body jumps to a block it
+    /// has not written yet without saying so.
+    pub(crate) fn function(
+        &mut self,
+        id: FuncId,
+        signature: ir::Signature,
+        body: impl FnOnce(&mut FunctionBuilder, &mut ObjectModule, &[ir::Value]) -> Lowered<()>,
+    ) -> Lowered<()> {
+        self.context.clear();
+        self.context.func = Function::with_name_signature(UserFuncName::default(), signature);
+        let mut builder = FunctionBuilder::new(&mut self.context.func, self.shapes);
+        let entry = builder.create_block();
+        builder.append_block_params_for_function_params(entry);
+        builder.switch_to_block(entry);
+        let given = builder.block_params(entry).to_vec();
+        body(&mut builder, self.module, &given)?;
+        builder.seal_all_blocks();
+        builder.finalize(self.frontend);
+        accepted(self.module.define_function(id, self.context));
+        Ok(())
+    }
 }
 
 /// Every behavior the document names, by the key a reference to it says.
@@ -1755,6 +1805,9 @@ fn define_closure(
 #[derive(Default)]
 struct Constructors {
     by_key: BTreeMap<String, FuncId>,
+    /// What decides a construction of each declaration this object builds ([`define_checked`]),
+    /// which its constructor and its reader both call.
+    checked: BTreeMap<String, FuncId>,
 }
 
 impl Constructors {
@@ -1764,6 +1817,15 @@ impl Constructors {
         self.by_key.get(declared).copied().ok_or_else(|| {
             not_lowered(format!(
                 "a value of {declared}, whose fields have no representation here"
+            ))
+        })
+    }
+
+    /// What decides a construction of `declared`, which this object builds.
+    fn checked(&self, declared: &str) -> Lowered<FuncId> {
+        self.checked.get(declared).copied().ok_or_else(|| {
+            not_lowered(format!(
+                "a value of {declared} read here, which this object does not build"
             ))
         })
     }
@@ -1790,6 +1852,8 @@ pub(crate) struct Runs<'p> {
     bodies: Vec<transport::Body<'p>>,
     built: BTreeSet<String>,
     published: BTreeSet<String>,
+    /// Every declaration with an external form this backend reads and writes ([`codec::carried`]).
+    carried: BTreeSet<String>,
     reach: Reach<'p>,
 }
 
@@ -1862,6 +1926,19 @@ impl<'p> Runs<'p> {
         for body in &bodies {
             reach.of(body, declared)?;
         }
+        // A host reads a value of every published type of this build that has an external form,
+        // and reading one builds a value of every type it holds, published or kept: so each of
+        // those is built here, by a construction a reader calls.
+        let carried = codec::carried(&program.declarations, declared);
+        let read = codec::reached_from(
+            program
+                .declarations
+                .iter()
+                .map(Declaration::key)
+                .filter(|key| published.contains(key) && carried.contains(key))
+                .filter(|key| declared.laid(key).by() == DeclaredBy::AModule),
+            declared,
+        );
         let built: BTreeSet<String> = program
             .declarations
             .iter()
@@ -1869,7 +1946,9 @@ impl<'p> Runs<'p> {
                 let key = declaration.key();
                 declaration.by() == DeclaredBy::AModule
                     && !matches!(declaration, Declaration::Sum { .. })
-                    && (published.contains(&key) || reach.calls.contains(key.as_str()))
+                    && (published.contains(&key)
+                        || reach.calls.contains(key.as_str())
+                        || read.contains(&key))
                     && declaration
                         .fields()
                         .iter()
@@ -1881,6 +1960,7 @@ impl<'p> Runs<'p> {
             bodies,
             built,
             published,
+            carried,
             reach: Reach::default(),
         };
         for clause in clauses {
@@ -1897,6 +1977,11 @@ impl<'p> Runs<'p> {
     /// publishes it, so another build can name it.
     fn publishes(&self, declared: &str) -> bool {
         self.published.contains(declared)
+    }
+
+    /// Whether a value of `declared` has an external form this backend reads and writes.
+    fn carries(&self, declared: &str) -> bool {
+        self.carried.contains(declared)
     }
 
     /// Every declaration this object defines a constructor for, by the key a reference to it says.
@@ -1970,19 +2055,37 @@ fn constructor_signature(declaration: &Declaration, call_conv: CallConv) -> Lowe
     )
 }
 
-/// A declaration's constructor: every clause run over the fields it was handed, in the order the
-/// declaration states them, and the value laid out only once all of them hold.
+/// What [`define_checked`] takes and answers: what the constructor does, with room for which
+/// clause did not hold after the room for the value.
+fn checked_signature(declaration: &Declaration, call_conv: CallConv) -> Lowered<ir::Signature> {
+    let mut signature = constructor_signature(declaration, call_conv)?;
+    let answered = signature.params.len();
+    signature.params.insert(answered, AbiParam::new(POINTER));
+    Ok(signature)
+}
+
+/// What a construction of a declaration is decided by: every clause run over the fields it was
+/// handed, in the order the declaration states them, and the value laid out only once all of them
+/// hold.
+///
+/// One function for every way a value of the declaration is made, so there is one place what a
+/// value of the type is gets decided. The constructor a body or another build calls is this with
+/// its answer read as a status ([`define_constructor`]); a reader calls it directly, since a reader
+/// reports which clause did not hold and a status says only that one did not.
+///
+/// It takes the fields, room for the value and room for which clause did not hold, and answers a
+/// status. `ANSWERED` with the clause's room holding below nought is a value, written through its
+/// room. `ANSWERED` with the clause's room holding a clause's place among the declaration's, counted
+/// from nought, is that clause not holding, and nothing after it runs and nothing is laid out. A
+/// clause that itself ends without a value, dividing by nought or leaving an `Int`'s range, ends
+/// the construction with that status instead: the clause did not answer false, it did not answer.
 ///
 /// A field is put under the binding its clauses read it through and not under where it sits, which
 /// is what lets a clause a spread took in read the field the declaration that wrote it named.
 ///
-/// A clause that does not hold ends the construction with `InvariantNotHeld`, and nothing after it
-/// runs. A clause that itself ends without a value, dividing by nought or leaving an `Int`'s range,
-/// ends it for that reason instead: the clause did not answer false, it did not answer.
-///
 /// Nothing is laid out before every clause has held, so a value that is not one of the type never
 /// exists, even in the arena.
-fn define_constructor(
+fn define_checked(
     function: &mut Function,
     shapes: &mut FunctionBuilderContext,
     declaration: &Declaration,
@@ -2007,15 +2110,17 @@ fn define_constructor(
         given.push(value);
     }
     let out = builder.block_params(entry)[fields.len()];
+    let which_clause = builder.block_params(entry)[fields.len() + 1];
 
     let abort = builder.create_block();
     builder.append_block_param(abort, types::I32);
+    let broken = builder.create_block();
+    builder.append_block_param(broken, types::I64);
 
-    let not_held = native_status(AbortKind::InvariantNotHeld);
     let clauses = declaration
         .clauses()
         .expect("a constructor is defined only for a declaration this build runs the clauses of");
-    for clause in clauses {
+    for (at, clause) in clauses.iter().enumerate() {
         let holds = lower(
             &mut builder,
             lowering,
@@ -2024,12 +2129,36 @@ fn define_constructor(
             abort,
             &clause.condition,
         )?;
-        let fails = builder.ins().icmp_imm_u(IntCC::Equal, holds, 0);
-        abort_where(&mut builder, abort, not_held, fails);
+        let held = builder.create_block();
+        let place = builder.ins().iconst(
+            types::I64,
+            i64::try_from(at).expect("fewer clauses than an Int counts"),
+        );
+        builder
+            .ins()
+            .brif(holds, held, &[], broken, &[place.into()]);
+        builder.seal_block(held);
+        builder.switch_to_block(held);
     }
 
-    let value = lay_out(&mut builder, lowering, module, declaration, &given)?;
+    let value = lay_out(
+        &mut builder,
+        module,
+        lowering.declared,
+        lowering.allocate,
+        declaration,
+        &given,
+    )?;
     builder.ins().store(TRUSTED, value, out, 0);
+    let none = builder.ins().iconst(types::I64, -1);
+    builder.ins().store(TRUSTED, none, which_clause, 0);
+    let ok = builder.ins().iconst(types::I32, i64::from(ANSWERED));
+    builder.ins().return_(&[ok]);
+
+    builder.seal_block(broken);
+    builder.switch_to_block(broken);
+    let place = builder.block_params(broken)[0];
+    builder.ins().store(TRUSTED, place, which_clause, 0);
     let ok = builder.ins().iconst(types::I32, i64::from(ANSWERED));
     builder.ins().return_(&[ok]);
 
@@ -2040,6 +2169,70 @@ fn define_constructor(
 
     builder.finalize(frontend);
     Ok(())
+}
+
+/// A declaration's constructor: [`define_checked`]'s decision, with a clause that does not hold
+/// answered as `InvariantNotHeld`, which is what it is inside a body — a computation among values
+/// that ends without one — and what another build calling this is told.
+fn define_constructor(
+    function: &mut Function,
+    shapes: &mut FunctionBuilderContext,
+    fields: usize,
+    checked: FuncId,
+    frontend: TargetFrontendConfig,
+    module: &mut ObjectModule,
+) {
+    let mut builder = FunctionBuilder::new(function, shapes);
+    let entry = builder.create_block();
+    builder.append_block_params_for_function_params(entry);
+    builder.switch_to_block(entry);
+    let given = builder.block_params(entry).to_vec();
+    let (fields, out) = given.split_at(fields);
+
+    let value_room = out_slot(&mut builder);
+    let clause_room = out_slot(&mut builder);
+    let mut arguments = fields.to_vec();
+    arguments.push(value_room);
+    arguments.push(clause_room);
+    let reaching = module.declare_func_in_func(checked, builder.func);
+    let called = builder.ins().call(reaching, &arguments);
+    let status = builder.inst_results(called)[0];
+
+    let answered = builder.create_block();
+    let not_answered = builder.create_block();
+    let is_answered = builder
+        .ins()
+        .icmp_imm_s(IntCC::Equal, status, i64::from(ANSWERED));
+    builder
+        .ins()
+        .brif(is_answered, answered, &[], not_answered, &[]);
+
+    builder.switch_to_block(not_answered);
+    builder.ins().return_(&[status]);
+
+    builder.switch_to_block(answered);
+    let clause = builder.ins().load(types::I64, TRUSTED, clause_room, 0);
+    let broken = builder.create_block();
+    let held = builder.create_block();
+    let breaks = builder
+        .ins()
+        .icmp_imm_s(IntCC::SignedGreaterThanOrEqual, clause, 0);
+    builder.ins().brif(breaks, broken, &[], held, &[]);
+
+    builder.switch_to_block(broken);
+    let not_held = builder.ins().iconst(
+        types::I32,
+        i64::from(native_status(AbortKind::InvariantNotHeld)),
+    );
+    builder.ins().return_(&[not_held]);
+
+    builder.switch_to_block(held);
+    let value = builder.ins().load(POINTER, TRUSTED, value_room, 0);
+    builder.ins().store(TRUSTED, value, out[0], 0);
+    builder.ins().return_(&[status]);
+
+    builder.seal_all_blocks();
+    builder.finalize(frontend);
 }
 
 /// A value of `declared` built from `fields`, the way [`construction`] says one is made where it
@@ -2054,7 +2247,14 @@ fn construct(
 ) -> Lowered<ir::Value> {
     let declaration = lowering.declared.laid(declared);
     match construction(declaration) {
-        Construction::Laid => lay_out(builder, lowering, module, declaration, fields),
+        Construction::Laid => lay_out(
+            builder,
+            module,
+            lowering.declared,
+            lowering.allocate,
+            declaration,
+            fields,
+        ),
         Construction::Called => {
             let constructor = lowering.constructors.of(declared)?;
             call_reached(builder, module, abort, constructor, POINTER, fields)
@@ -2069,13 +2269,21 @@ fn construct(
 /// clauses hold or a construction with none to run lays it out where it stands.
 fn lay_out(
     builder: &mut FunctionBuilder,
-    lowering: &Lowering,
     module: &mut ObjectModule,
+    declared: &Declared,
+    allocate: FuncId,
     declaration: &Declaration,
     fields: &[ir::Value],
 ) -> Lowered<ir::Value> {
-    let value = lowering.room(builder, module, room_for_fields(fields.len()));
-    let which = tag_of(builder, lowering, module, &declaration.key())?;
+    let taking = module.declare_func_in_func(allocate, builder.func);
+    let size = builder
+        .ins()
+        .iconst(types::I64, room_for_fields(fields.len()));
+    let taken = builder.ins().call(taking, &[size]);
+    let value = builder.inst_results(taken)[0];
+    let token = declared.tag(module, &declaration.key())?;
+    let named = module.declare_data_in_func(token, builder.func);
+    let which = builder.ins().symbol_value(POINTER, named);
     builder.ins().store(TRUSTED, which, value, WHICH as i32);
     for (at, &field) in fields.iter().enumerate() {
         let held = into_slot(builder, field);

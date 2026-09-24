@@ -153,6 +153,14 @@ final class NativeArtifacts {
         }
     }
 
+    /**
+     * An object no program here was compiled to, linked with a harness and not kept: a test that
+     * compiled a document itself is asking about that document, and nothing else will ask again.
+     */
+    static Path linked(byte[] object, String harness) throws IOException, InterruptedException {
+        return link(new Bytes(object), List.of(), harness);
+    }
+
     /** How many times this program was compiled, for a test holding that to be once. */
     static int compilationsOf(CheckedProgram program) {
         AtomicInteger count = COMPILED.get(ProgramWriter.written(program));
