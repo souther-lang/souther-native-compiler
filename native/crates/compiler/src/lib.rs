@@ -82,8 +82,7 @@ pub fn native_status(kind: AbortKind) -> Status {
 /// An arithmetic site names exactly one reason, which [`Coherent`] held every such site to: zero
 /// or more than one would be the two halves disagreeing about what kind of site this is, and
 /// answering a wrong value because the checker said `NONE` would be worse than refusing the
-/// program. `Core.Neg` names none today (souther-lang/souther#1878), and a negation is refused as
-/// not lowered there rather than reaching this.
+/// program.
 fn overflow_status(aborts: &[AbortKind]) -> Status {
     match aborts {
         [only] => native_status(*only),
@@ -246,19 +245,21 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
 
     // The constructor of every declaration a value is built of, declared before any body is,
     // since every construction calls one. A declaration is built by the object of the build that
-    // declared it, the way its token is defined there: this object defines the constructor of every
-    // declaration it builds, whether a body here constructs one or not, since another build may,
-    // and reaches the constructor of one a module on the path declares.
+    // declared it, the way its token is defined there: this object defines the constructor of each
+    // declaration it builds (`Runs`), and reaches the constructor of one a module on the path
+    // declares.
     let mut constructors = Constructors::default();
     for key in runs.built() {
         let declaration = declared.laid(key);
         let signature = constructor_signature(declaration, call_conv)?;
-        // Reached from another object where a value of it means the same there, as a behavior
-        // taking the fields would be; a field that does not keeps it to this object.
-        let linkage = if declaration
-            .fields()
-            .iter()
-            .all(|field| means_the_same_elsewhere(&field.codec.ty()))
+        // Reached from another build where the module publishes the type, which is what lets
+        // another build name it, and where a value of each field means the same there, as a
+        // behavior taking the fields would be. Otherwise it is this object's own.
+        let linkage = if runs.publishes(key)
+            && declaration
+                .fields()
+                .iter()
+                .all(|field| means_the_same_elsewhere(&field.codec.ty()))
         {
             Linkage::Export
         } else {
@@ -337,6 +338,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
         // rather than `entries`, which stays free for this loop's own row-entry table below.
         let transport::Module {
             name,
+            publishes: _,
             helpers,
             values,
             entries: value_entries,
@@ -409,6 +411,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
     for written in &program.modules {
         let transport::Module {
             name,
+            publishes: _,
             helpers,
             values,
             entries: value_entries,
@@ -1270,10 +1273,10 @@ impl<'a> Declared<'a> {
             );
         }
         let linkage = match declaration.by() {
-            // At home here. Exported rather than kept, because another build naming this
-            // declaration reaches this object's token and nothing else — and whether the module
-            // publishes the type is a question the program API answers for a behavior and not yet
-            // for a declaration, so this object cannot ask it.
+            // At home here, and exported whether the module publishes the type or keeps it: a type
+            // the module keeps may still be a case of a sum it publishes, and another build
+            // writing or forking on a value of the sum compares against this token. Which of its
+            // cases another build can reach is the checker's to say, and not asked here.
             DeclaredBy::AModule => Linkage::Export,
             DeclaredBy::OnThePath => Linkage::Import,
             DeclaredBy::TheLanguage => {
@@ -1763,11 +1766,12 @@ impl Constructors {
 
 /// What this object runs, which is narrower than what the document says.
 ///
-/// Every body of a module, and the clauses of each declaration this object builds: one a module of
-/// this compile declares, whose fields all have a representation here. A clause of a declaration
-/// whose values cannot be laid out here is read and held to what the checker held it to, and not
-/// run: no value of it is built here to run it over, and the program is not refused for what
-/// nothing runs.
+/// Every body of a module, and the clauses of each declaration this object builds. It builds a
+/// declaration a module of this compile declares, whose fields all have a representation here,
+/// where a body here constructs a value of it or the module publishes it, since another build may
+/// then construct one through this object. A declaration neither holds is read, and its clauses
+/// held to what the checker held them to, and nothing of it is run here: no value of it is built
+/// here to run a clause over, and the program is not refused for what nothing runs.
 ///
 /// Every pass that asks what this object will emit (the closure sites it lifts, the published
 /// values it imports, the declarations it builds) walks this and not [`Program::bodies`], which is
@@ -1775,19 +1779,40 @@ impl Constructors {
 pub(crate) struct Runs<'p> {
     program: &'p Program,
     built: BTreeSet<String>,
+    published: BTreeSet<String>,
 }
 
 impl<'p> Runs<'p> {
     pub(crate) fn of(program: &'p Program) -> Self {
+        let published: BTreeSet<String> = program
+            .modules
+            .iter()
+            .flat_map(|module| module.publishes.iter().cloned())
+            .collect();
+        // Every declaration a body of a module constructs a value of. A clause constructs none,
+        // as `Coherent` holds, so what a clause would ask for is never among what is built.
+        let mut constructed = BTreeSet::new();
+        for body in program.bodies() {
+            if matches!(body.owner, transport::Owner::Invariant { .. }) {
+                continue;
+            }
+            body.node.each(&mut |node| {
+                if let Node::Construct { declared, .. } = node {
+                    constructed.insert(declared.clone());
+                }
+            });
+        }
         let built = program
             .declarations
             .iter()
             .filter(|declaration| {
+                let key = declaration.key();
                 declaration.by() == DeclaredBy::AModule
                     && matches!(
                         declaration,
                         Declaration::Product { .. } | Declaration::Newtype { .. }
                     )
+                    && (published.contains(&key) || constructed.contains(&key))
                     && declaration
                         .fields()
                         .iter()
@@ -1795,7 +1820,17 @@ impl<'p> Runs<'p> {
             })
             .map(Declaration::key)
             .collect();
-        Runs { program, built }
+        Runs {
+            program,
+            built,
+            published,
+        }
+    }
+
+    /// Whether another build may build a value of `declared` through this object: the module
+    /// publishes it, so another build can name it.
+    fn publishes(&self, declared: &str) -> bool {
+        self.published.contains(declared)
     }
 
     /// Every declaration this object builds, by the key a reference to it says.
@@ -2192,23 +2227,12 @@ fn lower(
         Node::Neg {
             operand, aborts, ..
         } => {
-            // `program.abortsAt` answers AbortSet.NONE for Core.Neg today (souther-lang/souther
-            // #1878), citing only the JVM backend's own codegen — which is exactly the kind of
-            // backend-specific re-derivation issue #9 exists to stop this file from doing on its
-            // own account. So this does not trust it the way every other arithmetic site here
-            // trusts what it is given: `-Int.MIN` overflows for the same representational reason
-            // `Int.MIN - 1` does, and answering it as though it did not would be a wrong value
-            // returned as a right one — worse than refusing a program this backend can lower
-            // correctly once #1878 is resolved. (A literal operand does not reach here at all —
-            // see the arm above — so this is only ever a variable's own value.)
-            if aborts.is_empty() {
-                return Err(not_lowered(
-                    "a negation of something other than a literal, whose overflow this backend \
-                     does not yet trust program.abortsAt for — see souther-lang/souther#1878",
-                ));
-            }
+            // The width first: a `Decimal` or a `Rational` has none here, and is refused before its
+            // negation is asked what it can end for. An `Int` names the one reason `Coherent` held
+            // it to.
+            let width = machine_type(operand.ty())?;
             let held = lower(builder, lowering, module, bindings, abort, operand)?;
-            let nought = builder.ins().iconst(machine_type(operand.ty())?, 0);
+            let nought = builder.ins().iconst(width, 0);
             difference(builder, abort, overflow_status(aborts), nought, held)?
         }
         Node::Let {

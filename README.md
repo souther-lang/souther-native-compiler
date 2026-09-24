@@ -12,6 +12,10 @@ this needs that the program API does not carry is a question for Souther rather 
 reach around, so it is raised there. This project is the second reader of that boundary, and what
 it finds the boundary does not answer is the most useful thing it produces.
 
+Where the code works around something Souther does not answer yet, it names the Souther issue that
+asks for it. `scripts/upstream-premises.sh`, run in CI, fails once the Souther this build pins has
+the fix, so a workaround does not outlive what it worked around.
+
 ## The two halves
 
 The Java half reads a checked program and writes it out. It decides nothing: the projection over
@@ -50,10 +54,8 @@ anything there.
 
 Over `Int` and `Bool`: `+`, `-`, `*`, the six comparisons, `&&` and `||`, `if`, and a name for a
 value. `/` answers the exact quotient, which is a `Rational` and has no representation here. Unary
-`-` of a literal compiles — it is folded at compile time and needs no overflow check either way —
-but `-` of anything else does not yet: `CheckedProgram#abortsAt` answers wrong for what a runtime
-negation can end without a value for (souther-lang/souther#1878), and this backend refuses rather
-than trust a known-wrong answer or decide the question itself.
+`-` of a literal is folded at compile time, and of anything else ends the run where it leaves the
+range, the way `+`, `-` and `*` do.
 
 An operation the language implements as a kernel: `Int.add` today, reusing the same instructions
 `+` does. Every other kernel is still ahead — including everything a program does with text beyond
@@ -93,14 +95,16 @@ that does not hold ends the run with `InvariantNotHeld`, and a clause that itsel
 value, leaving an `Int`'s range, ends it for that reason.
 
 The function belongs to the build that declared the type, the way the type's token does. That
-build's object defines it for every type its modules declare, whether a body there builds one or
-not, and a build constructing a value of a type another declared calls that one: what a clause reads
+build's object defines it for every type a body there builds and every type its modules publish,
+since another build can name and build one of those, and a build constructing a value of a type
+another declared calls that one: what a clause reads
 and calls, a helper among them, is the declaring build's own, and a copy run elsewhere would run
 without it. It is a call between objects this compiler built, under a symbol carrying the ABI
 generation. What a host calls to build a value is a boundary of its own and not this.
 
-A clause of a type whose fields have no representation here is read, and refused if the two halves
-disagree about it, and is not run: no value of the type is built here to run it over.
+A clause of a type the module keeps and nothing here builds, or one whose fields have no
+representation here, is read, and refused if the two halves disagree about it, and is not run: no
+value of the type is built here to run it over.
 
 An answer at the boundary, written as the language writes it. Every behavior the object defines
 and publishes, and every row, has a second entry that runs it and hands back its answer as JSON:
@@ -115,7 +119,7 @@ only holds the tree it is handed and writes it out. Which case a value is comes 
 linker resolved, and is never what the case is written as.
 
 Still ahead: a `Decimal`, the collections, a function value, every kernel but `Int.add`, a value
-that runs in the module declaring it, negating anything other than a literal, an attempted
+that runs in the module declaring it, an attempted
 construction, which takes an arm by the clause that did not hold instead of ending the run, and a
 behavior that declares what its answer owes, which is refused rather than answered without the
 rule being run. A collection and

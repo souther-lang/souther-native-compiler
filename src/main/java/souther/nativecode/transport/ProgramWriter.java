@@ -244,10 +244,9 @@ public final class ProgramWriter {
      * named the document carries the key that reaches this — so the two halves are joined in one
      * place and split in none.
      *
-     * <p>What is not written is whether the module publishes the type. That is the same question
-     * the object already asks of a behavior, and {@link CheckedModule#publicationOf} answers it for
-     * a behavior and for nothing else, so there is nothing here to project. Until there is, an
-     * object exports the token of every type it declares, including one the module keeps.
+     * <p>What is not written here is whether the module publishes the type. That is the module's
+     * answer about its surface and not a fact about the declaration, so it crosses with the module
+     * ({@link #module}).
      */
     private String declaration(TypeSymbol.AtModule name, Declared declared) {
         String identity = "{\"module\":" + quoted(name.module())
@@ -543,7 +542,16 @@ public final class ProgramWriter {
                 }
             }
         }
+        // What the module publishes of the data it declares, which is its surface and not a fact
+        // about any one declaration: what another build can name, and so build a value of.
+        StringJoiner publishes = new StringJoiner(",", "[", "]");
+        for (CheckedData data : module.data()) {
+            if (module.publicationOf(data.name()) == Publication.PUBLISHED) {
+                publishes.add(quoted(named(data.name())));
+            }
+        }
         return "{\"name\":" + quoted(module.name())
+                + ",\"publishes\":" + publishes
                 + ",\"helpers\":" + helpers
                 + ",\"values\":" + values
                 + ",\"entries\":" + entries

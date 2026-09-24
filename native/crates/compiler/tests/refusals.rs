@@ -46,7 +46,7 @@ fn over_answering(op: &str, left: &str, right: &str, answers: &str) -> String {
         r#"{{"declared":"calculation.f","parameters":[{{"name":"a","type":{left}}},{{"name":"b","type":{right}}}],"body":{body}}}"#
     );
     format!(
-        r#"{{"transport":12,"declarations":[{{"module":"counting","name":"Amount","by":"amodule","is":"newtype","field":{{"name":"value","binding":0,"codec":{{"is":"scalar","scalar":"INT"}}}},"invariants":[]}}],"behaviors":[],"modules":[{{"name":"calculation","helpers":[{held}],"values":[],"entries":[],"definitions":[],"examples":[]}}]}}"#
+        r#"{{"transport":12,"declarations":[{{"module":"counting","name":"Amount","by":"amodule","is":"newtype","field":{{"name":"value","binding":0,"codec":{{"is":"scalar","scalar":"INT"}}}},"invariants":[]}}],"behaviors":[],"modules":[{{"name":"calculation","publishes":[],"helpers":[{held}],"values":[],"entries":[],"definitions":[],"examples":[]}}]}}"#
     )
 }
 
@@ -190,7 +190,7 @@ fn a_function_at_a_behaviors_boundary_is_not_a_document_this_driver_reads() {
         r#""behaviors":[{"module":"m","name":"choose","is":"injected","inputs":["#,
         r#"{"fn":{"takes":[{"prim":"INT"}],"answers":{"prim":"INT"}}}],"#,
         r#""output":{"is":"scalar","scalar":"INT"}}],"#,
-        r#""modules":[{"name":"m","helpers":[],"values":[],"entries":[],"definitions":[],"examples":[]}]}"#,
+        r#""modules":[{"name":"m","publishes":[],"helpers":[],"values":[],"entries":[],"definitions":[],"examples":[]}]}"#,
     );
 
     let refused = object_for(document).expect_err("a function at a behavior's boundary");
@@ -210,7 +210,7 @@ fn an_answer_that_is_a_list_is_read_and_not_lowered() {
         r#"{"transport":12,"declarations":[],"#,
         r#""behaviors":[{"module":"m","name":"many","is":"injected","inputs":[],"#,
         r#""output":{"is":"listof","element":{"is":"scalar","scalar":"INT"}}}],"#,
-        r#""modules":[{"name":"m","helpers":[],"values":[],"entries":[],"definitions":[],"examples":[]}]}"#,
+        r#""modules":[{"name":"m","publishes":[],"helpers":[],"values":[],"entries":[],"definitions":[],"examples":[]}]}"#,
     );
 
     let refused = object_for(document).expect_err("no layout for a list");
@@ -235,7 +235,7 @@ fn an_answer_with_a_primitive_among_its_cases_is_read_and_not_lowered() {
         r#"{"is":"declared","declared":"m.NotFound"}]},"#,
         r#""cases":[{"is":"primitive","prim":"INT"},{"is":"declared","declared":"m.NotFound"}],"#,
         r#""form":{"is":"discriminated","tag":"type","contents":"value"}}}],"#,
-        r#""modules":[{"name":"m","helpers":[],"values":[],"entries":[],"definitions":[],"examples":[]}]}"#,
+        r#""modules":[{"name":"m","publishes":[],"helpers":[],"values":[],"entries":[],"definitions":[],"examples":[]}]}"#,
     );
 
     let refused = object_for(document).expect_err("no token for an Int to say which case it is");
@@ -258,7 +258,7 @@ fn a_published_value_reached_at_two_different_types_is_the_halves_disagreeing() 
         r#"{"transport":12,"declarations":[],"#,
         r#""behaviors":[{"module":"m","name":"f","is":"body","inputs":[],"output":{"is":"scalar","scalar":"INT"}},"#,
         r#"{"module":"m","name":"g","is":"body","inputs":[],"output":{"is":"scalar","scalar":"BOOL"}}],"#,
-        r#""modules":[{"name":"m","helpers":[],"values":[],"entries":[],"definitions":["#,
+        r#""modules":[{"name":"m","publishes":[],"helpers":[],"values":[],"entries":[],"definitions":["#,
         r#"{"is":"body","declared":"m.f","parameters":[],"publication":"kept","#,
         r#""body":{"core":"call","reaches":{"is":"publishedvalue","module":"other","name":"x"},"#,
         r#""arguments":[],"type":{"prim":"INT"},"aborts":[]}},"#,
@@ -285,7 +285,7 @@ fn composed_document() -> String {
         r#"{"transport":12,"declarations":[],"#,
         r#""behaviors":[{"module":"m","name":"inner","is":"body","inputs":[{"is":"scalar","scalar":"INT"}],"output":{"is":"scalar","scalar":"INT"}},"#,
         r#"{"module":"m","name":"outer","is":"composed","inputs":[{"is":"scalar","scalar":"INT"}],"output":{"is":"scalar","scalar":"INT"}}],"#,
-        r#""modules":[{"name":"m","helpers":[],"values":[],"entries":[],"definitions":["#,
+        r#""modules":[{"name":"m","publishes":[],"helpers":[],"values":[],"entries":[],"definitions":["#,
         r#"{"is":"body","declared":"m.inner","parameters":["a"],"publication":"kept","body":{"core":"read","binding":0,"type":{"prim":"INT"},"aborts":[]}},"#,
         r#"{"is":"composed","declared":"m.outer","publication":"published","stages":["#,
         r#"{"behavior":"m.inner","routing":{"is":"always"}}]}"#,
@@ -412,7 +412,7 @@ fn an_applys_answer_disagreeing_with_its_functions_own_type_is_the_halves_disagr
         r#"{"module":"m","name":"A","by":"amodule","is":"unit"},"#,
         r#"{"module":"m","name":"B","by":"amodule","is":"unit"}],"#,
         r#""behaviors":[],"#,
-        r#""modules":[{"name":"m","#,
+        r#""modules":[{"name":"m","publishes":[],"#,
         r#""helpers":[{"declared":"m.f","#,
         r#""parameters":[{"name":"f","type":{"fn":{"takes":[],"answers":{"declared":"m.A"}}}}],"#,
         r#""body":{"core":"apply","function":{"core":"read","binding":0,"#,
@@ -446,7 +446,7 @@ fn a_published_answer_with_a_decimal_field_is_not_lowered_where_it_is_written() 
         r#""behaviors":[{"module":"m","name":"same","is":"body","#,
         r#""inputs":[{"is":"nominal","declared":"m.Priced"}],"#,
         r#""output":{"is":"nominal","declared":"m.Priced"}}],"#,
-        r#""modules":[{"name":"m","helpers":[],"values":[],"entries":[],"definitions":["#,
+        r#""modules":[{"name":"m","publishes":[],"helpers":[],"values":[],"entries":[],"definitions":["#,
         r#"{"is":"body","declared":"m.same","parameters":["p"],"publication":"published","#,
         r#""body":{"core":"read","binding":0,"type":{"declared":"m.Priced"},"aborts":[]}}"#,
         r#"],"examples":[]}]}"#,
@@ -476,7 +476,7 @@ fn answering_a_sum(case_fields: &str, form: &str) -> String {
             r#""behaviors":[{{"module":"m","name":"same","is":"body","#,
             r#""inputs":[{{"is":"nominal","declared":"m.S"}}],"#,
             r#""output":{{"is":"nominal","declared":"m.S"}}}}],"#,
-            r#""modules":[{{"name":"m","helpers":[],"values":[],"entries":[],"definitions":["#,
+            r#""modules":[{{"name":"m","publishes":[],"helpers":[],"values":[],"entries":[],"definitions":["#,
             r#"{{"is":"body","declared":"m.same","parameters":["s"],"publication":"published","#,
             r#""body":{{"core":"read","binding":0,"type":{{"declared":"m.S"}},"aborts":[]}}}}"#,
             r#"],"examples":[]}}]}}"#
@@ -534,7 +534,7 @@ fn a_construction_disagreeing_with_what_its_field_carries_is_the_halves_disagree
         r#""fields":[{"name":"n","binding":0,"codec":{"is":"scalar","scalar":"STRING"}}],"invariants":[]}],"#,
         r#""behaviors":[{"module":"m","name":"make","is":"body","inputs":[],"#,
         r#""output":{"is":"nominal","declared":"m.P"}}],"#,
-        r#""modules":[{"name":"m","helpers":[],"values":[],"entries":[],"definitions":["#,
+        r#""modules":[{"name":"m","publishes":[],"helpers":[],"values":[],"entries":[],"definitions":["#,
         r#"{"is":"body","declared":"m.make","parameters":[],"publication":"kept","#,
         r#""body":{"core":"construct","declared":"m.P","#,
         r#""values":[{"core":"int","value":42,"type":{"prim":"INT"},"aborts":[]}],"#,
@@ -567,7 +567,7 @@ fn building(codec: &str, value: &str) -> String {
             r#""fields":[{{"name":"f","binding":0,"codec":{}}}],"invariants":[]}}],"#,
             r#""behaviors":[{{"module":"m","name":"make","is":"body","inputs":[],"#,
             r#""output":{{"is":"nominal","declared":"m.P"}}}}],"#,
-            r#""modules":[{{"name":"m","helpers":[],"values":[],"entries":[],"definitions":["#,
+            r#""modules":[{{"name":"m","publishes":[],"helpers":[],"values":[],"entries":[],"definitions":["#,
             r#"{{"is":"body","declared":"m.make","parameters":[],"publication":"kept","#,
             r#""body":{{"core":"construct","declared":"m.P","values":[{}],"#,
             r#""type":{{"declared":"m.P"}},"aborts":[]}}}}"#,
@@ -691,7 +691,7 @@ fn an_answer_whose_cases_are_not_what_its_type_descends_to_is_the_halves_disagre
         r#""output":{"is":"cases","type":{"union":[{"is":"declared","declared":"m.A"},"#,
         r#"{"is":"declared","declared":"m.B"}]},"#,
         r#""cases":[{"is":"declared","declared":"m.A"}],"form":{"is":"enumeration"}}}],"#,
-        r#""modules":[{"name":"m","helpers":[],"values":[],"entries":[],"definitions":[],"examples":[]}]}"#,
+        r#""modules":[{"name":"m","publishes":[],"helpers":[],"values":[],"entries":[],"definitions":[],"examples":[]}]}"#,
     );
     is_the_halves_disagreeing(document, "m.either");
 }

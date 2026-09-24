@@ -34,14 +34,16 @@ pub struct Program {
 impl Program {
     /// Every body of `Core` the document holds, with the module it stands in and what owns it.
     ///
-    /// The one enumeration of them. Every pass that has to see every body — to find its closure
-    /// sites, the published values it calls, whether its types hold together — walks this, so a
-    /// body one of them skips is a body all of them skip. `Module` is taken apart whole, so a field
-    /// it starts carrying tomorrow does not compile here until it is said whether it holds a body.
+    /// What the document says, read whole: whether the two halves agree about a body is asked of
+    /// every one of them. It is not what the object runs. A clause of a declaration no value of
+    /// which is built here is a body here and is run nowhere here, so a pass asking what the object
+    /// emits (the closure sites it lifts, the published values it imports, what it constructs) walks
+    /// the object's own `Runs`, which narrows this, and never this. `Module` is taken apart whole,
+    /// so a field it starts carrying tomorrow does not compile here until it is said whether it
+    /// holds a body.
     ///
-    /// A clause a declaration holds its values to is a body as much as a behavior's is: it runs
-    /// wherever a value of the declaration is built. It stands in the declaration's own module,
-    /// whose copy of a helper a call from it reaches.
+    /// A clause a declaration holds its values to is a body as much as a behavior's is. It stands
+    /// in the declaration's own module, whose copy of a helper a call from it reaches.
     pub fn bodies(&self) -> impl Iterator<Item = Body<'_>> {
         let clauses = self.declarations.iter().flat_map(|declaration| {
             declaration
@@ -58,6 +60,8 @@ impl Program {
         let modules = self.modules.iter().flat_map(|written| {
             let Module {
                 name,
+                // What the module publishes of its data names declarations and holds no body.
+                publishes: _,
                 helpers,
                 values,
                 entries,
@@ -275,6 +279,10 @@ impl Declaration {
 #[serde(deny_unknown_fields)]
 pub struct Module {
     pub name: String,
+    /// The data this module publishes, by the key a reference to each says: what another build can
+    /// name, and so build a value of. The module's answer about its surface and not a fact about
+    /// any one declaration, so it is carried here and not beside the declarations.
+    pub publishes: Vec<String>,
     pub helpers: Vec<Held>,
     /// The values this module declares: the one place each of them runs.
     pub values: Vec<Value>,

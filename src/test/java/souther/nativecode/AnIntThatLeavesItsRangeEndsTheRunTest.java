@@ -24,17 +24,11 @@ import static org.assertj.core.api.Assertions.assertThat;
  * beside the nearest pair that answers, through the same executable: the pair that answers is what
  * says the ending was this computation's and not the arrangement around it.
  *
- * <p>Since issue #9, which abort it was is asked, and it is always {@code
- * REQUIRED_FORM_HAS_NO_PLACE} — the one law the specification states for an {@code Int} leaving
- * the range it holds, whichever of these four operations reaches it.
- *
- * <p>{@code flip} joined the other three once souther-lang/souther#1878 landed: {@code
- * CheckedProgram#abortsAt} used to answer {@code AbortSet.NONE} for {@code Core.Neg}, a
- * known-wrong answer since negation overflows for the same representational reason
- * {@code +}/{@code -}/{@code *} do, and this backend refused the program rather than trust a
- * machine condition it could see firing over a checker answer of no reason at all. #1878 now
- * classifies {@code Core.Neg} as an abort site, so it is exampled here the same as the other
- * three.
+ * <p>Which abort it was is asked, and it is always {@code REQUIRED_FORM_HAS_NO_PLACE} — the one law
+ * the specification states for an {@code Int} leaving the range it holds, whichever of these four
+ * operations reaches it. Negation is one of them: the smallest {@code Int} has no positive
+ * counterpart, for the same representational reason {@code +}, {@code -} and {@code *} leave the
+ * range.
  */
 class AnIntThatLeavesItsRangeEndsTheRunTest {
 

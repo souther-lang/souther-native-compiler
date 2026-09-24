@@ -40,7 +40,7 @@ class AnAdditionCrossesAsWhatTheCheckerSettledTest {
                 "behaviors":[{"module":"calculation","name":"add","is":"body",\
                 "inputs":[{"is":"scalar","scalar":"INT"},{"is":"scalar","scalar":"INT"}],\
                 "output":{"is":"scalar","scalar":"INT"}}],\
-                "modules":[{"name":"calculation","helpers":[],"values":[],"entries":[],\
+                "modules":[{"name":"calculation","publishes":[],"helpers":[],"values":[],"entries":[],\
                 "definitions":[{"is":"body","declared":"calculation.add","parameters":["a","b"],\
                 "publication":"published",\
                 "body":{"core":"binary","op":"ADD",\

@@ -44,7 +44,7 @@ class AValueThatHandsOverAnotherValueCrossesTest {
         assertThat(written).isEqualTo("""
                 {"transport":12,"declarations":[{"module":"m","name":"P","by":"amodule","is":"product",\
                 "fields":[{"name":"n","binding":0,"codec":{"is":"scalar","scalar":"INT"}}],"invariants":[]}],"behaviors":[],\
-                "modules":[{"name":"m","helpers":[],\
+                "modules":[{"name":"m","publishes":["m.P"],"helpers":[],\
                 "values":[{"module":"m","name":"ks","handovers":[],\
                 "body":{"core":"construct","declared":"m.P",\
                 "values":[{"core":"int","value":42,"type":{"prim":"INT"},"aborts":[]}],\

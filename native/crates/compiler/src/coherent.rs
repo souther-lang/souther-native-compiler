@@ -88,6 +88,26 @@ impl<'a> Coherent<'a> {
         ClosureSites::of(program.bodies())?;
 
         let reached = Reached::of(program)?;
+        for written in &program.modules {
+            let mut published = HashMap::new();
+            for key in &written.publishes {
+                let declaration = declared.shape(key)?;
+                // A module publishes what it declares and nothing another module does.
+                if declaration.module() != written.name
+                    || declaration.by() != crate::transport::DeclaredBy::AModule
+                {
+                    bail!(
+                        "{} publishes {key}, which {} declares: a module publishes the data it \
+                         declares",
+                        written.name,
+                        declaration.module()
+                    );
+                }
+                index::once(&mut published, key.as_str(), (), || {
+                    format!("{} publishes {key} twice", written.name)
+                })?;
+            }
+        }
 
         let mut locals: HashMap<&str, &Definition> = HashMap::new();
         for written in &program.modules {
@@ -983,19 +1003,21 @@ impl<'a> Walk<'_, 'a> {
             } => {
                 self.node(operand)?;
                 self.number("a negation", ty)?;
-                // A literal's sign is folded, and nothing else about one can leave the range.
+                // A literal's sign is folded, and nothing else about one can leave the range. Of
+                // anything else, negating the smallest `Int` leaves it, and a `Decimal` or a
+                // `Rational` only changes sign: the checker names one reason for the first and none
+                // for the others.
                 if !matches!(operand.as_ref(), Node::Int { .. }) {
-                    if aborts.is_empty() {
-                        // souther-lang/souther#1878: the checker answers no reason for a negation,
-                        // and this backend does not answer one on its behalf.
-                        self.not_lowered(
-                            "a negation of something other than a literal, whose overflow this \
-                             backend does not yet trust program.abortsAt for — see \
-                             souther-lang/souther#1878"
-                                .to_string(),
+                    if matches!(ty, Ty::Prim { prim: Prim::Int }) {
+                        self.overflows("a negation of an Int", aborts)?;
+                    } else if !aborts.is_empty() {
+                        bail!(
+                            "{}: a negation of {} names {:?} as what it can end without a value \
+                             for, where it only changes sign: the two halves disagree",
+                            self.owner,
+                            ty.spelt(),
+                            aborts
                         );
-                    } else {
-                        self.overflows("a negation", aborts)?;
                     }
                 }
                 Ok(())

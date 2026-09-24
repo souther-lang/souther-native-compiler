@@ -30,7 +30,7 @@ fn document(behaviors: &[String], helpers: &[String], definitions: &[String]) ->
             r#"{{"module":"m","name":"P","by":"amodule","is":"product","#,
             r#""fields":[{{"name":"f","binding":0,"codec":{{"is":"named","declared":"m.S"}}}}],"invariants":[]}}],"#,
             r#""behaviors":[{}],"#,
-            r#""modules":[{{"name":"m","helpers":[{}],"values":[],"entries":[],"definitions":[{}],"#,
+            r#""modules":[{{"name":"m","publishes":[],"helpers":[{}],"values":[],"entries":[],"definitions":[{}],"#,
             r#""examples":[]}}]}}"#
         ),
         behaviors.join(","),
@@ -653,7 +653,7 @@ fn a_value_an_entry_or_a_module_written_twice_is_the_halves_disagreeing() {
     );
     let module = |helpers: &str| {
         format!(
-            r#"{{"name":"m","helpers":[{helpers}],"values":[],"entries":[],"definitions":[],"examples":[]}}"#
+            r#"{{"name":"m","publishes":[],"helpers":[{helpers}],"values":[],"entries":[],"definitions":[],"examples":[]}}"#
         )
     };
     let document = helpers(&[]).replace(
@@ -960,8 +960,10 @@ fn a_name_no_symbol_can_carry_is_refused_where_it_is_read() {
         r#"{"module":"m","name":"A.x","by":"amodule","is":"unit"}"#,
     );
     is_the_halves_disagreeing(&dotted_type, "m.A.x");
-    let dollar_module =
-        helpers(&[behind()]).replace(r#""name":"m","helpers""#, r#""name":"m$","helpers""#);
+    let dollar_module = helpers(&[behind()]).replace(
+        r#""name":"m","publishes":[],"helpers""#,
+        r#""name":"m$","publishes":[],"helpers""#,
+    );
     is_the_halves_disagreeing(&dollar_module, "m$");
     let dotted_behavior = r#"{"module":"other","name":"b.c","is":"elsewhere","inputs":[],"output":{"is":"scalar","scalar":"INT"}}"#;
     is_the_halves_disagreeing(
@@ -1109,7 +1111,7 @@ fn with_clauses(fields: &str, invariants: &str, helpers: &[String]) -> String {
             r#"{{"module":"m","name":"R","by":"amodule","is":"product","#,
             r#""fields":[{}],"invariants":[{}]}}],"#,
             r#""behaviors":[],"#,
-            r#""modules":[{{"name":"m","helpers":[{}],"values":[],"entries":[],"definitions":[],"#,
+            r#""modules":[{{"name":"m","publishes":[],"helpers":[{}],"values":[],"entries":[],"definitions":[],"#,
             r#""examples":[]}}]}}"#
         ),
         fields,
@@ -1228,9 +1230,12 @@ fn a_clause_builds_no_value() {
 }
 
 /// A clause this object does not run is read, and held to what the checker holds it to, and is not
-/// refused for what this backend cannot lower: no value of its declaration is built here, since what
-/// the declaration holds has no representation here. The same clause on a declaration whose values
-/// are built here is run, and refused as not lowered.
+/// refused for what this backend cannot lower. This object runs the clauses of a declaration it
+/// builds: one whose fields have a representation here, and which a body here constructs or the
+/// module publishes, so another build may construct one through this object. A declaration the
+/// module keeps and nothing here constructs is built nowhere, whatever its fields are; one whose
+/// fields have no representation is built nowhere here either. The same clause on a declaration
+/// the module publishes is run, and refused as not lowered.
 ///
 /// The clause makes a function taking a `Decimal`, which no lifted function here can take.
 #[test]
@@ -1244,11 +1249,16 @@ fn a_clause_of_a_declaration_nothing_here_builds_is_not_run() {
         None,
         &let_(2, &decimal_to_truth, &block, &truth(true), BOOL),
     );
+    let published =
+        |document: String| document.replace(r#""publishes":[]"#, r#""publishes":["m.R"]"#);
     let listed = r#"{"name":"items","binding":0,"codec":{"is":"listof","element":{"is":"scalar","scalar":"INT"}}}"#;
-    reads_whole(&with_clauses(listed, &holds, &[]));
+    let counted = field("count", 0, "INT");
 
-    let refused = object_for(&with_clauses(&field("count", 0, "INT"), &holds, &[]))
-        .expect_err("a value of it is built here, so its clause is run");
+    reads_whole(&published(with_clauses(listed, &holds, &[])));
+    reads_whole(&with_clauses(&counted, &holds, &[]));
+
+    let refused = object_for(&published(with_clauses(&counted, &holds, &[])))
+        .expect_err("the module publishes it, so it is built here and its clause is run");
     assert!(refused.downcast_ref::<NotLowered>().is_some(), "{refused}");
 
     let disagreeing = clause(
