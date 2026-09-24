@@ -489,9 +489,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "cranelift",
+ "object",
  "serde",
  "serde_json",
  "souther-native-abi",
+ "target-lexicon",
  "tempfile",
 ]
 

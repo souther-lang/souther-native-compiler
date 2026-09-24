@@ -4,6 +4,21 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 
+/// What the linker on this platform calls a symbol an object names: Mach-O writes an underscore
+/// before every one and ELF writes none. The object carries whichever its format takes, so what
+/// needs saying is only what a C declaration has to be written with to reach it.
+///
+/// Said for the two hosts these tests have been run on, and refused at compile time on any other,
+/// rather than one of the two standing for every host that is not the other.
+#[allow(dead_code)]
+pub const PREFIX: &str = if cfg!(target_os = "macos") {
+    "_"
+} else if cfg!(target_os = "linux") {
+    ""
+} else {
+    panic!("these tests link on macOS and Linux, and have not been run anywhere else")
+};
+
 /// The runtime's static archive, built for these tests by these tests.
 ///
 /// Not a path into whatever `target/` last held. The archive is the output of a different build

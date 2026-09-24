@@ -40,15 +40,17 @@ abstraction over the two is written to make it look as though something is.
     mvn test
 
 Cargo is what builds the Rust half; Maven runs it. The toolchain is pinned in
-`rust-toolchain.toml`, so a clone needs rustup and nothing else installed by hand. A C compiler is
-needed too, by the test that links what came out and runs it.
+`rust-toolchain.toml`, so a clone needs rustup and nothing else installed by hand. A C and a C++
+compiler are needed too, by the tests that link what came out and run it, and PHP with FFI, by the
+test that reads what a host is handed the way an FFI with no preprocessor does.
 
 ## Where it runs
 
 Unix hosts: what the object is written as is decided by the host's format, and Mach-O and ELF are
-the two anything here has been run on. Windows is not refused anywhere — it is untried, and the
-test that links and runs would have to say what a COFF object and its linker want before it meant
-anything there.
+the two anything here has been run on. Writing an object is not refused anywhere else — it is
+untried, and the test that links and runs would have to say what a COFF object and its linker want
+before it meant anything there. Linking a shared library for a host is refused on anything but
+macOS and Linux, since what it asks of the linker is said only for those two.
 
 ## What compiles today
 
@@ -110,12 +112,12 @@ A host builds and reads a value of a type the module publishes through functions
 defines for it, and never through where the value keeps anything. A host holds a value as an
 address it does not look behind, good until the mark taken before it was made is reset, and hands
 it back to these and to the behaviors. For each published type with fields or none there is a
-constructor, `souther2.<module>$type$<Name>$construct`, taking the fields and answering `status +
+constructor, `souther2_m_<module>_t_<Name>_construct`, taking the fields and answering `status +
 out` the way the type's own constructor does, since it is that constructor it runs: a value whose
 clauses do not hold is answered `InvariantNotHeld` and nothing is written through `out`, and a type
 with no clause answers a status too, so a clause added later does not change how a host calls it.
-For each field there is a reader, `...$field$<field>`, answering the field itself. For a published
-sum whose every case is a declared type there is `...$case`, answering which of the cases the sum
+For each field there is a reader, `..._f_<field>`, answering the field itself. For a published
+sum whose every case is a declared type there is `..._case`, answering which of the cases the sum
 descends to the value is, as its place among them counted from nought; the address the value is
 tagged with never leaves the object. A sum with a primitive among its cases has no reader, since its
 values do not say which case they are. The case answered is the concrete one the value is, and
@@ -148,7 +150,7 @@ only holds the tree it is handed and writes it out. Which case a value is comes 
 linker resolved, and is never what the case is written as.
 
 A value read from that form, and any value written to it. For each published type whose values
-have a form here there is `...$type$<Name>$decode`, taking JSON as bytes, and `...$encode`, taking a
+have a form here there is `..._t_<Name>_decode`, taking JSON as bytes, and `..._encode`, taking a
 value and answering its JSON. The decoder is the encoder walked backwards over the same shapes, one
 reader per declaration: a field left out is absent where it may be and missing where it may not,
 `null` is absence where there is no key, a case is told apart by the key and the name the program
@@ -174,6 +176,86 @@ a `Decimal` are read off the program whole and refused where one would be laid o
 every carrier orders a set's members, spells a map's keys and writes a decimal is for the language
 to state before a backend writes one.
 
+
+## What a host is handed
+
+A build for a host writes five things into a directory: the object, `souther.o`; the declarations
+of every function a host calls, `souther.ffi.h`; a header a C or C++ compiler includes,
+`souther.h`; a manifest, `souther.json`; and a shared library of the object and the runtime,
+`libsouther.dylib` or `libsouther.so`. The driver writes them when run with `--library <directory>`,
+and `NativeCompiler.library` is that from Java. Nothing on the Java side reads the program to say
+what a host can call. Every function a host calls is put on one surface where its code is emitted,
+and the declarations, the manifest and what the library exports are each written from that
+surface, so none of them names a function the others do not. A test holds the three, and what the
+object defines, to one set, reading each of them as it is.
+
+A host calls a function by a C identifier. The symbols one object built here calls in another carry
+`.` and `$`, and no C compiler or FFI that reads C declarations can name those. So what a host
+calls is spelt apart: `souther2`, the ABI generation, then the module as `_m_<segment>` per segment
+of its dotted name, then `_b_<behavior>`, `_v_<value>`, or `_t_<type>` and what is done with it. A
+name is written as it is where it is ASCII letters and digits, with `_` doubled and any other
+character as `_u<hex>_`, its code point. So `shop.quote` is `souther2_m_shop_b_quote` and a
+behavior named `数量` is `..._b__u6570__u91cf_`, and inside a name `_` is only ever followed by `_`
+or `u`, which is what keeps every spelling readable back to the one set of names it was made from.
+
+A published behavior and a published value have an entry of their own for a host, which converts
+what a host hands over and calls the symbol another object calls. The two are called by different
+parties, and the day one of them takes a value in a form a host does not hand one over in, the
+host's entry still takes what a host hands over. An operation on a published type is called by a
+host and by nothing else, so it has the one symbol.
+
+The declarations are every function a host calls, the runtime's among them, and the numbers a
+status and a reading's outcome are compared with, as enumerations rather than macros. They are C
+and nothing else — no directive, no guard — because a reader of C declarations with no
+preprocessor, PHP's `FFI::cdef` among them, takes them as they are, and a test hands them to it.
+What a C or C++ compiler wants around them is `souther.h`, the same text for every library: a
+guard, `<stdint.h>`, C linkage for C++, and the declarations included. So the surface is written
+into C once, and the two readers are given what each can read.
+
+The manifest says the same functions in the model's terms, for a binding to be written from
+without reading the program: each module's behaviors with what they take and answer, its published
+values, and its published types with their fields and cases, each beside the function that reaches
+it, or `null` where a host has no way in yet. A type is said by its module and its name, never by
+the key the Java half hands this one. What a manifest may say is Rust types, and version 1 is
+`native/crates/compiler/tests/interface-v1.json`: a test holds a program's manifest to it, and
+another reads it with those types and writes it back unchanged. The manifest carries its own
+`version`, moved when what it says is read differently, and the `abi` its functions answer to,
+which is the generation in every symbol.
+
+What the library exports is what the header declares, and nothing else. A row's entry and a
+boundary stay in the object, since running the program's own rows is what they are for, and so does
+every symbol one object built here calls in another; the library keeps them and does not offer them.
+The runtime is a static archive, which gives a link only what something asks it for, and nothing in
+the object asks for a function only a host calls. So the link names each function a host calls as
+wanted, and the rest of the archive comes in only where the object reaches it. By hand, what the
+driver runs is:
+
+    # macOS
+    cc -dynamiclib -o libsouther.dylib -Wl,-install_name,@rpath/libsouther.dylib \
+        -Wl,-exported_symbols_list,<list> -Wl,-u,_<symbol> ... souther.o libsouther_native_runtime.a
+
+    # Linux
+    cc -shared -o libsouther.so -Wl,--version-script=<script> -Wl,--no-undefined \
+        -Wl,-u,<symbol> ... souther.o libsouther_native_runtime.a
+
+where the list and the script name every function the header declares.
+
+A library is one program, so it holds every build the program reaches: a build's object defines
+what reads and builds a value of a type it declares, and another build calls that. Those objects are
+handed to the driver with `--with <object>`, or to `NativeCompiler.library` beside the program, the
+same objects an executable of it is linked with. It also holds whatever supplies a behavior the
+program names and no build defines — an injected behavior, which the language expects to be written
+outside it. That is handed over with `--link-with <object or library>`, is linked in, and adds
+nothing to what the library offers a host. What the library then offers a host is what each
+of its objects offers, and each says that itself: an object carries its own surface, in a section
+of its own, so an object another build wrote is described by the build that wrote it and not by a
+second reading of a program this one does not have. The declarations, the manifest and the export
+list are written from what the objects carry. A module two of them carry is refused, and so is an
+object that carries none, and a program missing a build it reaches is refused when it is linked
+rather than when a host loads it.
+
+What a behavior takes is said by type and in order. The names its parameters were written under do
+not cross from the checker yet, so a binding has no name to give one but its place.
 
 ## Where a value lives
 

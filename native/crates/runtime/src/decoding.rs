@@ -21,7 +21,7 @@
 //! it when it ends.
 
 use crate::document::{Node, parsed};
-use crate::{room_for_a_string, souther_alloc, text};
+use crate::{Count, Text, Value, room_for_a_string, souther_alloc, text};
 use souther_native_abi::{DECODED_ISSUES, DECODED_MALFORMED, DECODED_VALUE, TEXT_BYTES};
 use std::ptr;
 use unicode_normalization::{UnicodeNormalization, is_nfc};
@@ -71,7 +71,7 @@ pub struct Issue {
 
 /// Room in the arena for one `T`, written with `value`.
 fn held<T>(value: T) -> *mut T {
-    let at = souther_alloc(size_of::<T>() as i64).cast::<T>();
+    let at = souther_alloc(Count(size_of::<T>() as i64)).cast::<T>();
     // The arena answers room aligned to a slot, which is as aligned as anything here asks.
     const { assert!(align_of::<T>() <= souther_native_abi::SLOT as usize) };
     unsafe { at.write(value) };
@@ -175,8 +175,9 @@ fn canonical(written: &[u8]) -> std::borrow::Cow<'_, [u8]> {
 /// # Panics
 /// Where the length is below nought.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_decode_begin(bytes: *const u8, length: i64) -> *mut Decoding {
-    let length = usize::try_from(length).expect("a document is handed over as bytes, never fewer");
+pub unsafe extern "C" fn souther_decode_begin(bytes: *const u8, length: Count) -> *mut Decoding {
+    let length =
+        usize::try_from(length.0).expect("a document is handed over as bytes, never fewer");
     let bytes = if length == 0 {
         &[]
     } else {
@@ -222,7 +223,7 @@ fn dropped(decoding: &mut Decoding) {
 /// Where a document with nothing wrong in it was read as no value, which is the generated reader
 /// having lost one.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_decode_end(decoding: *mut Decoding, value: *const u8) {
+pub unsafe extern "C" fn souther_decode_end(decoding: *mut Decoding, value: *const Value) {
     let decoding = unsafe { &mut *decoding };
     dropped(decoding);
     if decoding.malformed_at < 0 && decoding.count == 0 {
@@ -230,10 +231,11 @@ pub unsafe extern "C" fn souther_decode_end(decoding: *mut Decoding, value: *con
             !value.is_null(),
             "a document with nothing wrong in it reads as a value"
         );
-        decoding.value = value;
+        decoding.value = value.cast();
     }
     let count = decoding.count as usize;
-    let issues = souther_alloc((count * size_of::<*const Issue>()) as i64).cast::<*const Issue>();
+    let issues =
+        souther_alloc(Count((count * size_of::<*const Issue>()) as i64)).cast::<*const Issue>();
     let mut at = decoding.first;
     for n in 0..count {
         unsafe { issues.add(n).write(at) };
@@ -258,8 +260,11 @@ pub unsafe extern "C" fn souther_decode_abandon(decoding: *mut Decoding) {
 /// `path` is null or one this answered, and `step` is a string of the runtime's layout that lasts
 /// as long as the path does.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_path_below(path: *const Path, step: *const u8) -> *const Path {
-    held(Path { above: path, step })
+pub unsafe extern "C" fn souther_path_below(path: *const Path, step: *const Text) -> *const Path {
+    held(Path {
+        above: path,
+        step: step.cast(),
+    })
 }
 
 /// Whether `node` is an object, having recorded that it is not where it is not.
@@ -285,8 +290,8 @@ pub unsafe extern "C" fn souther_read_object(
 /// # Safety
 /// `node` is a place in a document being read; `key` is a string of the runtime's layout.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_read_member(node: *const Node, key: *const u8) -> *const Node {
-    match unsafe { (*node).member(text(key)) } {
+pub unsafe extern "C" fn souther_read_member(node: *const Node, key: *const Text) -> *const Node {
+    match unsafe { (*node).member(text(key.cast())) } {
         Some(member) => member,
         None => ptr::null(),
     }
@@ -417,10 +422,10 @@ pub unsafe extern "C" fn souther_read_string(
     node: *const Node,
     path: *const Path,
     decoding: *mut Decoding,
-    out: *mut *mut u8,
+    out: *mut *mut Text,
 ) -> i8 {
     let read = match unsafe { &*node } {
-        Node::String(written) => Some(string(&canonical(written))),
+        Node::String(written) => Some(string(&canonical(written)).cast::<Text>()),
         other => {
             unsafe { mismatched(decoding, path, other, "String") };
             None
@@ -457,11 +462,11 @@ pub unsafe extern "C" fn souther_read_case(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_read_tag(
     node: *const Node,
-    key: *const u8,
+    key: *const Text,
     path: *const Path,
     decoding: *mut Decoding,
 ) -> *const Node {
-    let Some(tag) = (unsafe { (*node).member(text(key)) }) else {
+    let Some(tag) = (unsafe { (*node).member(text(key.cast())) }) else {
         unsafe {
             found(
                 decoding,
@@ -484,9 +489,9 @@ pub unsafe extern "C" fn souther_read_tag(
 /// `node` is a place in a document being read that holds text; `name` is a string of the
 /// runtime's layout.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_read_is(node: *const Node, name: *const u8) -> i8 {
+pub unsafe extern "C" fn souther_read_is(node: *const Node, name: *const Text) -> i8 {
     match unsafe { &*node } {
-        Node::String(written) => i8::from(*canonical(written) == *unsafe { text(name) }),
+        Node::String(written) => i8::from(*canonical(written) == *unsafe { text(name.cast()) }),
         _ => 0,
     }
 }
@@ -526,14 +531,14 @@ pub unsafe extern "C" fn souther_read_not_a_case(
 pub unsafe extern "C" fn souther_read_invariant(
     path: *const Path,
     decoding: *mut Decoding,
-    module: *const u8,
-    name: *const u8,
-    clause: *const u8,
+    module: *const Text,
+    name: *const Text,
+    clause: *const Text,
 ) {
-    let (module, name) = unsafe { (text(module), text(name)) };
+    let (module, name) = unsafe { (text(module.cast()), text(name.cast())) };
     let mut meta: Vec<(&str, &[u8])> = vec![("module", module), ("type", name)];
     if !clause.is_null() {
-        meta.push(("clause", unsafe { text(clause) }));
+        meta.push(("clause", unsafe { text(clause.cast()) }));
     }
     unsafe { found(decoding, "invariant_violation", path, &meta) };
 }
@@ -559,8 +564,8 @@ pub unsafe extern "C" fn souther_decoded_outcome(decoded: *const Decoding) -> i3
 /// # Safety
 /// As [`souther_decoded_outcome`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_decoded_value(decoded: *const Decoding) -> *const u8 {
-    unsafe { (*decoded).value }
+pub unsafe extern "C" fn souther_decoded_value(decoded: *const Decoding) -> *const Value {
+    unsafe { (*decoded).value.cast() }
 }
 
 /// The offset of the byte the document stopped being one at, where it was not one; below nought
@@ -569,8 +574,8 @@ pub unsafe extern "C" fn souther_decoded_value(decoded: *const Decoding) -> *con
 /// # Safety
 /// As [`souther_decoded_outcome`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_decoded_malformed_at(decoded: *const Decoding) -> i64 {
-    unsafe { (*decoded).malformed_at }
+pub unsafe extern "C" fn souther_decoded_malformed_at(decoded: *const Decoding) -> Count {
+    Count(unsafe { (*decoded).malformed_at })
 }
 
 /// How many issues the reading found.
@@ -578,8 +583,8 @@ pub unsafe extern "C" fn souther_decoded_malformed_at(decoded: *const Decoding) 
 /// # Safety
 /// As [`souther_decoded_outcome`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_decoded_issue_count(decoded: *const Decoding) -> i64 {
-    unsafe { (*decoded).count }
+pub unsafe extern "C" fn souther_decoded_issue_count(decoded: *const Decoding) -> Count {
+    Count(unsafe { (*decoded).count })
 }
 
 /// The issue at `at`, counting from nought in the order they were found.
@@ -589,7 +594,11 @@ pub unsafe extern "C" fn souther_decoded_issue_count(decoded: *const Decoding) -
 /// # Panics
 /// Where there is no issue at `at`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_decoded_issue(decoded: *const Decoding, at: i64) -> *const Issue {
+pub unsafe extern "C" fn souther_decoded_issue(
+    decoded: *const Decoding,
+    at: Count,
+) -> *const Issue {
+    let Count(at) = at;
     let decoded = unsafe { &*decoded };
     assert!(
         (0..decoded.count).contains(&at),
@@ -604,8 +613,8 @@ pub unsafe extern "C" fn souther_decoded_issue(decoded: *const Decoding, at: i64
 /// # Safety
 /// `issue` is one [`souther_decoded_issue`] answered, and the mark below it still stands.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_issue_code(issue: *const Issue) -> *const u8 {
-    unsafe { (*issue).code }
+pub unsafe extern "C" fn souther_issue_code(issue: *const Issue) -> *const Text {
+    unsafe { (*issue).code.cast() }
 }
 
 /// Where the issue was found, as a JSON Pointer in a string of the runtime's layout: empty for the
@@ -614,8 +623,8 @@ pub unsafe extern "C" fn souther_issue_code(issue: *const Issue) -> *const u8 {
 /// # Safety
 /// As [`souther_issue_code`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_issue_path(issue: *const Issue) -> *const u8 {
-    unsafe { (*issue).path }
+pub unsafe extern "C" fn souther_issue_path(issue: *const Issue) -> *const Text {
+    unsafe { (*issue).path.cast() }
 }
 
 /// How many named entries the issue carries besides its code and its path.
@@ -623,8 +632,8 @@ pub unsafe extern "C" fn souther_issue_path(issue: *const Issue) -> *const u8 {
 /// # Safety
 /// As [`souther_issue_code`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_issue_meta_count(issue: *const Issue) -> i64 {
-    unsafe { (*issue).meta_count }
+pub unsafe extern "C" fn souther_issue_meta_count(issue: *const Issue) -> Count {
+    Count(unsafe { (*issue).meta_count })
 }
 
 fn entry(issue: &Issue, at: i64) -> (*const u8, *const u8) {
@@ -643,8 +652,8 @@ fn entry(issue: &Issue, at: i64) -> (*const u8, *const u8) {
 /// # Panics
 /// Where there is no entry at `at`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_issue_meta_key(issue: *const Issue, at: i64) -> *const u8 {
-    entry(unsafe { &*issue }, at).0
+pub unsafe extern "C" fn souther_issue_meta_key(issue: *const Issue, at: Count) -> *const Text {
+    entry(unsafe { &*issue }, at.0).0.cast()
 }
 
 /// What the issue's entry at `at` says.
@@ -654,8 +663,8 @@ pub unsafe extern "C" fn souther_issue_meta_key(issue: *const Issue, at: i64) ->
 /// # Panics
 /// Where there is no entry at `at`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_issue_meta_value(issue: *const Issue, at: i64) -> *const u8 {
-    entry(unsafe { &*issue }, at).1
+pub unsafe extern "C" fn souther_issue_meta_value(issue: *const Issue, at: Count) -> *const Text {
+    entry(unsafe { &*issue }, at.0).1.cast()
 }
 
 #[cfg(test)]
@@ -663,35 +672,35 @@ mod tests {
     use super::*;
     use crate::{souther_mark, souther_reset, souther_string_of_utf8};
 
-    fn said(at: *const u8) -> String {
-        String::from_utf8(unsafe { text(at) }.to_vec()).unwrap()
+    fn said(at: *const Text) -> String {
+        String::from_utf8(unsafe { text(at.cast()) }.to_vec()).unwrap()
     }
 
-    fn literal(value: &str) -> *mut u8 {
-        unsafe { souther_string_of_utf8(value.as_ptr(), value.len() as i64) }
+    fn literal(value: &str) -> *mut Text {
+        unsafe { souther_string_of_utf8(value.as_ptr(), Count(value.len() as i64)) }
     }
 
     fn begun(document: &str) -> *mut Decoding {
-        unsafe { souther_decode_begin(document.as_ptr(), document.len() as i64) }
+        unsafe { souther_decode_begin(document.as_ptr(), Count(document.len() as i64)) }
     }
 
     /// Every issue a reading found, as `path code key=value…`.
     fn issues(decoding: *mut Decoding) -> Vec<String> {
         unsafe {
             souther_decode_end(decoding, ptr::null());
-            (0..souther_decoded_issue_count(decoding))
+            (0..souther_decoded_issue_count(decoding).0)
                 .map(|at| {
-                    let issue = souther_decoded_issue(decoding, at);
+                    let issue = souther_decoded_issue(decoding, Count(at));
                     let mut line = format!(
                         "{} {}",
                         said(souther_issue_path(issue)),
                         said(souther_issue_code(issue))
                     );
-                    for entry in 0..souther_issue_meta_count(issue) {
+                    for entry in 0..souther_issue_meta_count(issue).0 {
                         line.push_str(&format!(
                             " {}={}",
-                            said(souther_issue_meta_key(issue, entry)),
-                            said(souther_issue_meta_value(issue, entry))
+                            said(souther_issue_meta_key(issue, Count(entry))),
+                            said(souther_issue_meta_value(issue, Count(entry)))
                         ));
                     }
                     line
@@ -861,7 +870,7 @@ mod tests {
             assert!(souther_decode_root(decoding).is_null());
             souther_decode_end(decoding, ptr::null());
             assert_eq!(souther_decoded_outcome(decoding), DECODED_MALFORMED);
-            assert_eq!(souther_decoded_malformed_at(decoding), 5);
+            assert_eq!(souther_decoded_malformed_at(decoding), Count(5));
         }
         souther_reset(mark);
     }

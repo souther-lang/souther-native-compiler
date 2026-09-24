@@ -1,41 +1,50 @@
-//! What a host reaches a value of a model's own type through — building one, reading its fields or
-//! which case it is, and reading it from and writing it to the language's external form — each a
-//! function the object defines, so that nothing about where a value keeps what it holds leaves the
-//! object.
+//! What a host reaches in the object: a behavior a module publishes, a value it publishes, and a
+//! value of a type it publishes — building one, reading its fields or which case it is, and reading
+//! it from and writing it to the language's external form. Each is a function the object defines,
+//! so that nothing about where a value keeps what it holds, or how one object built by this
+//! compiler calls another, leaves the object.
 //!
-//! A host holds a value as an address it never looks behind, and hands it back to these and to the
-//! behaviors. The layout is this backend's to change, and a host that read an offset would be a
-//! third party to that and have to change with it; the same reason a host makes a string through
-//! the runtime rather than laying one out.
+//! A host holds a value as an address it never looks behind, and hands it back to these. The
+//! layout is this backend's to change, and a host that read an offset would be a third party to
+//! that and have to change with it; the same reason a host makes a string through the runtime
+//! rather than laying one out.
 //!
 //! A host's value is not a second representation. Each of these runs on the one the generated code
 //! keeps: a constructor here converts what it was handed and calls the declaration's own
-//! constructor, which runs the clauses, and a reader reads the slot the lowering writes. What is
-//! decided here is only how a value of each type is handed across ([`Host`]), and that is decided
-//! apart from whether another object built by this compiler reads it the same way: the two
-//! questions agree on most types today and are not one question — an optional is already where
-//! they part.
+//! constructor, which runs the clauses, a reader reads the slot the lowering writes, and a
+//! behavior's entry converts what it was handed and calls the behavior. What is decided here is
+//! only how a value of each type is handed across ([`Host`]), and that is decided apart from
+//! whether another object built by this compiler reads it the same way: the two questions agree on
+//! most types today and are not one question — an optional is already where they part.
 //!
 //! What is reached is what the declaring module publishes, and only in the object of the build
 //! that declared it. A type a module keeps is reached by nothing here, whatever sum it is a case
 //! of: what another party may do with a type is the module's answer about its surface, and working
-//! out a second one from which sums reach it would be this side deciding visibility.
+//! out a second one from which sums reach it would be this side deciding visibility. A row's entry
+//! and a boundary are not here either: they are how this project's own tests run the object, and
+//! a host is told nothing of them.
+//!
+//! Every function is emitted from the [`HostFunction`] a host is told about, and put on the
+//! [`Surface`] where it is emitted, so what the object defines for a host and what the header and
+//! the manifest say it defines are one decision.
 
 use super::{
-    Declared, Emitting, Lowered, NO_ARM, POINTER, Runs, TRUSTED, accepted, into_slot, out_of_slot,
-    out_slot,
+    Declared, Emitting, Lowered, NO_ARM, POINTER, Runs, TRUSTED, accepted, into_slot, machine_type,
+    out_of_slot, out_slot,
 };
 use crate::codec::write::Writing;
 use crate::codec::{Codecs, Runtime};
+use crate::interface::{DeclarationSurface, HostFunction, Surface, machine};
 use crate::transport::{Case, Declaration, DeclaredBy, Prim, Program, Ty};
 use cranelift::codegen::ir::condcodes::IntCC;
-use cranelift::codegen::ir::{self, AbiParam, InstBuilder, TrapCode, types};
+use cranelift::codegen::ir::{self, InstBuilder, TrapCode, types};
 use cranelift::frontend::FunctionBuilder;
 use cranelift::module::{FuncId, Linkage, Module};
 use cranelift::object::ObjectModule;
 use souther_native_abi::{
-    ANSWERED, HELD, NOTHING, WHICH, field_at, host_case_symbol, host_constructor_symbol,
-    host_decode_symbol, host_encode_symbol, host_field_symbol, room_for_held,
+    ANSWERED, HELD, HostParameter, HostWord, NOTHING, WHICH, field_at, host_behavior_symbol,
+    host_case_symbol, host_constructor_symbol, host_decode_symbol, host_encode_symbol,
+    host_field_symbol, host_value_symbol, room_for_held,
 };
 
 /// How a value of a type is handed to a host and taken from one.
@@ -49,11 +58,11 @@ use souther_native_abi::{
 pub(crate) enum Host {
     /// The value itself: a number, a truth, or the address of text or of a value of a declared
     /// type, which a host holds and never reads behind.
-    Whole(types::Type),
+    Whole(HostWord),
     /// An optional: whether there is a value, as a byte that is nought or one, and the value where
     /// there is. Never the address the generated code holds one at, and never that address being
     /// nothing — a host told absence by a null would be told how this backend keeps an optional.
-    Present(types::Type),
+    Present(HostWord),
 }
 
 impl Host {
@@ -66,10 +75,24 @@ impl Host {
     }
 
     /// What a host hands over for a value of this.
-    fn given(self) -> Vec<types::Type> {
+    fn given(self) -> Vec<HostParameter> {
         match self {
-            Host::Whole(ty) => vec![ty],
-            Host::Present(ty) => vec![types::I8, ty],
+            Host::Whole(word) => vec![HostParameter::Given(word)],
+            Host::Present(word) => vec![
+                HostParameter::Given(HostWord::Bool),
+                HostParameter::Given(word),
+            ],
+        }
+    }
+
+    /// The room a host hands over for a value of this to be written through.
+    fn room(self) -> Vec<HostParameter> {
+        match self {
+            Host::Whole(word) => vec![HostParameter::Room(word)],
+            Host::Present(word) => vec![
+                HostParameter::Room(HostWord::Bool),
+                HostParameter::Room(word),
+            ],
         }
     }
 }
@@ -79,14 +102,14 @@ impl Host {
 /// Every primitive named, for the reason `machine_type` names them: one added to the language has
 /// to be answered for here, not admitted by an arm standing for the rest. Not `machine_type` itself,
 /// which answers how the generated code holds a value, and this answers how a host is handed one.
-fn whole(ty: &Ty) -> Option<types::Type> {
+fn whole(ty: &Ty) -> Option<HostWord> {
     match ty {
         Ty::Prim { prim } => match prim {
-            Prim::Int => Some(types::I64),
-            Prim::Bool => Some(types::I8),
+            Prim::Int => Some(HostWord::Int),
+            Prim::Bool => Some(HostWord::Bool),
             // Made and read through the runtime's own functions, which is where a host already
             // makes one to hand a behavior.
-            Prim::String => Some(POINTER),
+            Prim::String => Some(HostWord::String),
             Prim::Decimal
             | Prim::Rational
             | Prim::Date
@@ -95,13 +118,13 @@ fn whole(ty: &Ty) -> Option<types::Type> {
             | Prim::Instant
             | Prim::Raw => None,
         },
-        Ty::Declared { .. } => Some(POINTER),
+        Ty::Declared { .. } => Some(HostWord::Value),
         // What holds a union holds one of its members, each of which says which it is — where
         // every member is a declared type. A host asks which through the sum's own reader.
         Ty::Union { union } => union
             .iter()
             .all(|case| matches!(case, Case::Declared { .. }))
-            .then_some(POINTER),
+            .then_some(HostWord::Value),
         // An optional inside an optional would need a presence for each, and nothing asks for one.
         Ty::Option { .. } => None,
         // No layout yet, and when there is one a host reaches it through operations of its own.
@@ -117,14 +140,32 @@ fn whole(ty: &Ty) -> Option<types::Type> {
 type Body<'b> =
     dyn FnMut(&mut FunctionBuilder, &mut ObjectModule, &[ir::Value]) -> Lowered<()> + 'b;
 
-/// Defines what a host reaches every type a module of this build declares and publishes through.
+/// Defines `function`, exported under its symbol, as what `body` emits, and answers it back for
+/// whoever puts it on the surface: the function a host is told about is the one that was emitted.
+fn expose(
+    emitting: &mut Emitting,
+    function: HostFunction,
+    body: &mut Body,
+) -> Lowered<HostFunction> {
+    let signature = function.signature(emitting.call_conv);
+    let id = accepted(emitting.module.declare_function(
+        &function.symbol,
+        Linkage::Export,
+        &signature,
+    ));
+    emitting.function(id, signature, body)?;
+    Ok(function)
+}
+
+/// Defines what a host reaches every type a module of this build declares and publishes through,
+/// and puts each type and what reaches it on `surface`.
 pub(crate) fn define(
     emitting: &mut Emitting,
     codecs: &mut Codecs,
+    surface: &mut Surface,
     program: &Program,
     runs: &Runs,
 ) -> Lowered<()> {
-    let call_conv = emitting.call_conv;
     let declared = emitting.declared;
     let allocate = emitting.allocate;
     for declaration in &program.declarations {
@@ -132,41 +173,36 @@ pub(crate) fn define(
         if declaration.by() != DeclaredBy::AModule || !runs.publishes(&key) {
             continue;
         }
-        let emit = |emitting: &mut Emitting,
-                    symbol: String,
-                    signature: ir::Signature,
-                    body: &mut Body|
-         -> Lowered<()> {
-            let id = accepted(emitting.module.declare_function(
-                &symbol,
-                Linkage::Export,
-                &signature,
-            ));
-            emitting.function(id, signature, body)
-        };
+        let module_name = declaration.module();
+        let name = declaration.name();
+        let mut described = DeclarationSurface::of(declaration, declared);
         if runs.carries(&key) {
-            let mut signature = ir::Signature::new(call_conv);
-            signature.params.push(AbiParam::new(POINTER));
-            signature.params.push(AbiParam::new(types::I64));
-            signature.params.push(AbiParam::new(POINTER));
-            signature.returns.push(AbiParam::new(types::I32));
-            emit(
+            let decoding = HostFunction {
+                symbol: host_decode_symbol(module_name, name),
+                takes: vec![
+                    HostParameter::Given(HostWord::Bytes),
+                    HostParameter::Given(HostWord::Count),
+                    HostParameter::Room(HostWord::Decoded),
+                ],
+                answers: Some(HostWord::Status),
+            };
+            described.decoded_by(&expose(
                 emitting,
-                host_decode_symbol(declaration.module(), declaration.name()),
-                signature,
+                decoding,
                 &mut |builder, module, given| {
                     decode(builder, module, codecs, declared, &key, given);
                     Ok(())
                 },
-            )?;
-            let mut signature = ir::Signature::new(call_conv);
-            signature.params.push(AbiParam::new(POINTER));
-            signature.returns.push(AbiParam::new(POINTER));
+            )?);
+            let encoding = HostFunction {
+                symbol: host_encode_symbol(module_name, name),
+                takes: vec![HostParameter::Given(HostWord::Value)],
+                answers: Some(HostWord::String),
+            };
             let literals = emitting.literals;
-            emit(
+            described.encoded_by(&expose(
                 emitting,
-                host_encode_symbol(declaration.module(), declaration.name()),
-                signature,
+                encoding,
                 &mut |builder, module, given| {
                     let json = {
                         let mut writing = Writing {
@@ -182,74 +218,232 @@ pub(crate) fn define(
                     builder.ins().return_(&[json]);
                     Ok(())
                 },
-            )?;
+            )?);
         }
         if let Declaration::Sum { cases, .. } = declaration {
             if cases
                 .iter()
                 .all(|case| matches!(case, Case::Declared { .. }))
             {
-                let mut signature = ir::Signature::new(call_conv);
-                signature.params.push(AbiParam::new(POINTER));
-                signature.returns.push(AbiParam::new(types::I32));
-                emit(
-                    emitting,
-                    host_case_symbol(declaration.module(), declaration.name()),
-                    signature,
-                    &mut |builder, module, given| {
-                        which_case(builder, module, declared, cases, given)
-                    },
-                )?;
+                let casing = HostFunction {
+                    symbol: host_case_symbol(module_name, name),
+                    takes: vec![HostParameter::Given(HostWord::Value)],
+                    answers: Some(HostWord::Case),
+                };
+                described.cased_by(&expose(emitting, casing, &mut |builder, module, given| {
+                    which_case(builder, module, declared, cases, given)
+                })?);
             }
+            surface.declaration(module_name, described);
             continue;
         }
         let fields = declaration.fields();
         let handed: Option<Vec<Host>> = fields.iter().map(|it| Host::of(&it.codec.ty())).collect();
         if let Some(handed) = handed {
             let constructor = emitting.constructors.of(&key)?;
-            let mut signature = ir::Signature::new(call_conv);
-            for host in &handed {
-                for ty in host.given() {
-                    signature.params.push(AbiParam::new(ty));
-                }
-            }
-            signature.params.push(AbiParam::new(POINTER));
-            signature.returns.push(AbiParam::new(types::I32));
-            emit(
+            let mut takes: Vec<HostParameter> =
+                handed.iter().flat_map(|host| host.given()).collect();
+            takes.push(HostParameter::Room(HostWord::Value));
+            let constructing = HostFunction {
+                symbol: host_constructor_symbol(module_name, name),
+                takes,
+                answers: Some(HostWord::Status),
+            };
+            described.constructed_by(&expose(
                 emitting,
-                host_constructor_symbol(declaration.module(), declaration.name()),
-                signature,
+                constructing,
                 &mut |builder, module, given| {
                     build(builder, module, allocate, constructor, &handed, given);
                     Ok(())
                 },
-            )?;
+            )?);
         }
         for (at, field) in fields.iter().enumerate() {
             let Some(host) = Host::of(&field.codec.ty()) else {
                 continue;
             };
-            let mut signature = ir::Signature::new(call_conv);
-            signature.params.push(AbiParam::new(POINTER));
-            match host {
-                Host::Whole(ty) => signature.returns.push(AbiParam::new(ty)),
-                Host::Present(_) => {
-                    signature.params.push(AbiParam::new(POINTER));
-                    signature.returns.push(AbiParam::new(types::I8));
-                }
-            }
-            emit(
-                emitting,
-                host_field_symbol(declaration.module(), declaration.name(), &field.name),
-                signature,
-                &mut |builder, _, given| {
+            let reading = HostFunction {
+                symbol: host_field_symbol(module_name, name, &field.name),
+                takes: match host {
+                    Host::Whole(_) => vec![HostParameter::Given(HostWord::Value)],
+                    Host::Present(word) => vec![
+                        HostParameter::Given(HostWord::Value),
+                        HostParameter::Room(word),
+                    ],
+                },
+                answers: Some(match host {
+                    Host::Whole(word) => word,
+                    Host::Present(_) => HostWord::Bool,
+                }),
+            };
+            described.field_read_by(
+                at,
+                &expose(emitting, reading, &mut |builder, _, given| {
                     read(builder, at, host, given);
                     Ok(())
-                },
-            )?;
+                })?,
+            );
         }
+        surface.declaration(module_name, described);
     }
     Ok(())
+}
+
+/// A behavior or a published value's entry, as a host would call it: what it runs, what that takes,
+/// and what it answers.
+pub(crate) struct Entry<'a> {
+    pub module: &'a str,
+    pub name: &'a str,
+    pub runs: FuncId,
+    pub takes: Vec<Ty>,
+    pub answers: Ty,
+}
+
+/// Defines what a host calls each published behavior this object defines through, and puts every
+/// one of them on `surface`, with the function where a host can hand over what it takes and be
+/// handed what it answers.
+pub(crate) fn define_behaviors(
+    emitting: &mut Emitting,
+    surface: &mut Surface,
+    behaviors: &[Entry],
+) -> Lowered<()> {
+    for behavior in behaviors {
+        let symbol = host_behavior_symbol(behavior.module, behavior.name);
+        let call = forward(emitting, symbol, behavior)?;
+        surface.behavior(
+            behavior.module,
+            behavior.name,
+            &behavior.takes,
+            &behavior.answers,
+            emitting.declared,
+            call.as_ref(),
+        );
+    }
+    Ok(())
+}
+
+/// Defines what a host reads each value a module of this object publishes through, and puts every
+/// one of them on `surface` the same way.
+pub(crate) fn define_values(
+    emitting: &mut Emitting,
+    surface: &mut Surface,
+    values: &[Entry],
+) -> Lowered<()> {
+    for value in values {
+        let symbol = host_value_symbol(value.module, value.name);
+        let read = forward(emitting, symbol, value)?;
+        surface.value(
+            value.module,
+            value.name,
+            &value.answers,
+            emitting.declared,
+            read.as_ref(),
+        );
+    }
+    Ok(())
+}
+
+/// An entry a host calls in place of `entry`: what a host hands over, turned into what the entry
+/// takes, the entry called, and what it answered written as a host takes it. The status is the
+/// entry's own, and nothing is written through the host's room unless it is `ANSWERED`.
+///
+/// None where a host cannot hand over something the entry takes or be handed what it answers: the
+/// entry is still what another object built by this compiler calls, and a host is told it is there
+/// and that it has no way in.
+fn forward(
+    emitting: &mut Emitting,
+    symbol: String,
+    entry: &Entry,
+) -> Lowered<Option<HostFunction>> {
+    let Some(handed) = entry.takes.iter().map(Host::of).collect::<Option<Vec<_>>>() else {
+        return Ok(None);
+    };
+    let Some(answered) = Host::of(&entry.answers) else {
+        return Ok(None);
+    };
+    let mut takes: Vec<HostParameter> = handed.iter().flat_map(|host| host.given()).collect();
+    takes.extend(answered.room());
+    let function = HostFunction {
+        symbol,
+        takes,
+        answers: Some(HostWord::Status),
+    };
+    let allocate = emitting.allocate;
+    let runs = entry.runs;
+    let answers = machine_type(&entry.answers)?;
+    let exposed = expose(emitting, function, &mut |builder, module, params| {
+        let mut given = params.iter().copied();
+        let mut arguments = Vec::with_capacity(handed.len() + 1);
+        for (host, taken) in handed.iter().zip(&entry.takes) {
+            arguments.push(match host {
+                Host::Whole(word) => {
+                    // What a host hands over whole is what the entry takes, word for word; an
+                    // optional is where the two part, and only there.
+                    assert_eq!(machine(*word), machine_type(taken)?);
+                    given.next().expect("a parameter for every one handed over")
+                }
+                Host::Present(_) => {
+                    let present = given.next().expect("a presence for every optional");
+                    let value = given.next().expect("a value beside every presence");
+                    held(builder, module, allocate, present, value)
+                }
+            });
+        }
+        let reaching = module.declare_func_in_func(runs, builder.func);
+        match answered {
+            Host::Whole(word) => {
+                assert_eq!(machine(word), answers);
+                // The entry writes its answer through the host's own room, and only once it has
+                // one, which is what a host is told of the room.
+                arguments.push(given.next().expect("room for the answer"));
+                let called = builder.ins().call(reaching, &arguments);
+                let status = builder.inst_results(called)[0];
+                builder.ins().return_(&[status]);
+            }
+            Host::Present(word) => {
+                let present = given.next().expect("room for the presence");
+                let room = given.next().expect("room for the value");
+                let out = out_slot(builder);
+                arguments.push(out);
+                let called = builder.ins().call(reaching, &arguments);
+                let status = builder.inst_results(called)[0];
+                let answered = builder.create_block();
+                let ended = builder.create_block();
+                let is_answered =
+                    builder
+                        .ins()
+                        .icmp_imm_s(IntCC::Equal, status, i64::from(ANSWERED));
+                builder.ins().brif(is_answered, answered, &[], ended, &[]);
+
+                builder.switch_to_block(ended);
+                builder.ins().return_(&[status]);
+
+                builder.switch_to_block(answered);
+                let holding = builder.ins().load(POINTER, TRUSTED, out, 0);
+                let there = builder.create_block();
+                let absent = builder.create_block();
+                let is_there = builder.ins().icmp_imm_s(IntCC::NotEqual, holding, NOTHING);
+                builder.ins().brif(is_there, there, &[], absent, &[]);
+
+                builder.switch_to_block(there);
+                let slot = builder
+                    .ins()
+                    .load(types::I64, TRUSTED, holding, HELD as i32);
+                let value = out_of_slot(builder, slot, machine(word));
+                builder.ins().store(TRUSTED, value, room, 0);
+                let yes = builder.ins().iconst(types::I8, 1);
+                builder.ins().store(TRUSTED, yes, present, 0);
+                builder.ins().return_(&[status]);
+
+                builder.switch_to_block(absent);
+                let no = builder.ins().iconst(types::I8, 0);
+                builder.ins().store(TRUSTED, no, present, 0);
+                builder.ins().return_(&[status]);
+            }
+        }
+        Ok(())
+    })?;
+    Ok(Some(exposed))
 }
 
 /// A host's decoder: the bytes read as a document, the document read as a value of `key` by the
@@ -397,11 +591,11 @@ fn read(builder: &mut FunctionBuilder, at: usize, host: Host, given: &[ir::Value
         .ins()
         .load(types::I64, TRUSTED, owner, field_at(at) as i32);
     match host {
-        Host::Whole(ty) => {
-            let value = out_of_slot(builder, slot, ty);
+        Host::Whole(word) => {
+            let value = out_of_slot(builder, slot, machine(word));
             builder.ins().return_(&[value]);
         }
-        Host::Present(ty) => {
+        Host::Present(word) => {
             let room = given[1];
             let there = builder.create_block();
             let absent = builder.create_block();
@@ -410,7 +604,7 @@ fn read(builder: &mut FunctionBuilder, at: usize, host: Host, given: &[ir::Value
 
             builder.switch_to_block(there);
             let held = builder.ins().load(types::I64, TRUSTED, slot, HELD as i32);
-            let value = out_of_slot(builder, held, ty);
+            let value = out_of_slot(builder, held, machine(word));
             builder.ins().store(TRUSTED, value, room, 0);
             let yes = builder.ins().iconst(types::I8, 1);
             builder.ins().return_(&[yes]);

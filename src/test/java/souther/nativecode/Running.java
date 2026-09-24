@@ -601,14 +601,70 @@ final class Running {
     }
 
     /**
+     * The symbol a host reaches an operation on a declared type through, as the linker on this
+     * platform spells it: {@code operation} is {@code construct}, {@code case}, {@code decode},
+     * {@code encode} or {@code field$<name>}.
+     *
+     * <p>Written a second time for the reason every spelling here is, and only for names that are
+     * ASCII letters and digits, which the C name writes as they are: {@code
+     * souther_native_abi::host_module} escapes everything else, and a copy of the escaping here
+     * would be a second one to keep in step. A name outside that is refused rather than spelt
+     * wrongly.
+     */
+    static String hostSymbol(String module, String type, String operation) {
+        StringBuilder symbol = new StringBuilder(PREFIX).append("souther").append(ABI);
+        for (String segment : module.split("\\.", -1)) {
+            symbol.append("_m_").append(plain(segment));
+        }
+        symbol.append("_t_").append(plain(type));
+        if (operation.startsWith("field$")) {
+            symbol.append("_f_").append(plain(operation.substring("field$".length())));
+        } else {
+            symbol.append('_').append(plain(operation));
+        }
+        return symbol.toString();
+    }
+
+    private static String plain(String name) {
+        if (!name.matches("[A-Za-z0-9]+")) {
+            throw new IllegalArgumentException(name + " is escaped in a C name, and not spelt here");
+        }
+        return name;
+    }
+
+    /**
+     * The hosts these tests link and run on. Any other is refused when this class is loaded,
+     * rather than read as whichever of the two it is not.
+     */
+    enum Host {
+        DARWIN, LINUX;
+
+        static Host ofThisMachine() {
+            String name = System.getProperty("os.name", "").toLowerCase();
+            if (name.contains("mac")) {
+                return DARWIN;
+            }
+            if (name.contains("linux")) {
+                return LINUX;
+            }
+            throw new IllegalStateException("these tests link on macOS and Linux, and not on "
+                    + name);
+        }
+    }
+
+    static final Host HOST = Host.ofThisMachine();
+
+    /**
      * What the linker on this platform calls a symbol the object names.
      *
      * <p>Mach-O writes an underscore before every one and ELF writes none. The object carries
      * whichever its format takes, so what needs saying here is only what a C declaration has to be
      * written with to reach it.
      */
-    static final String PREFIX =
-            System.getProperty("os.name", "").toLowerCase().contains("mac") ? "_" : "";
+    static final String PREFIX = switch (HOST) {
+        case DARWIN -> "_";
+        case LINUX -> "";
+    };
 
     /** Whether this harness has a string to make. */
     private static boolean textCrossesHere(List<Type> takes) {

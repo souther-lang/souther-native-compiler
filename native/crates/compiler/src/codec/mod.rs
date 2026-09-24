@@ -190,33 +190,6 @@ impl Runtime {
             Runtime::ReadInvariant => READ_INVARIANT,
         }
     }
-
-    /// What it takes and what it answers, if anything.
-    fn signature(self) -> (&'static [types::Type], Option<types::Type>) {
-        const P: types::Type = POINTER;
-        match self {
-            Runtime::ExternalNull | Runtime::ExternalObject => (&[], Some(P)),
-            Runtime::ExternalBool => (&[types::I8], Some(P)),
-            Runtime::ExternalInt => (&[types::I64], Some(P)),
-            Runtime::ExternalString | Runtime::ExternalJson | Runtime::DecodeRoot => {
-                (&[P], Some(P))
-            }
-            Runtime::ExternalPut => (&[P, P, P], None),
-            Runtime::DecodeBegin => (&[P, types::I64], Some(P)),
-            Runtime::DecodeEnd | Runtime::ReadMissing => (&[P, P], None),
-            Runtime::DecodeAbandon => (&[P], None),
-            Runtime::PathBelow | Runtime::ReadMember => (&[P, P], Some(P)),
-            Runtime::ReadObject | Runtime::ReadCase => (&[P, P, P], Some(types::I8)),
-            Runtime::ReadNull => (&[P], Some(types::I8)),
-            Runtime::ReadInt | Runtime::ReadBool | Runtime::ReadString => {
-                (&[P, P, P, P], Some(types::I8))
-            }
-            Runtime::ReadTag => (&[P, P, P, P], Some(P)),
-            Runtime::ReadIs => (&[P, P], Some(types::I8)),
-            Runtime::ReadNotACase => (&[P, P, P], None),
-            Runtime::ReadInvariant => (&[P, P, P, P, P], None),
-        }
-    }
 }
 
 /// The functions one declaration of one kind is reached through, each declared the first time it
@@ -251,15 +224,7 @@ impl Codecs {
         if let Some(&id) = self.imported.get(&called) {
             return id;
         }
-        let (takes, answers) = called.signature();
-        let mut signature = ir::Signature::new(self.call_conv);
-        for &taken in takes {
-            signature.params.push(AbiParam::new(taken));
-        }
-        if let Some(answered) = answers {
-            signature.returns.push(AbiParam::new(answered));
-        }
-        let id = accepted(module.declare_function(called.symbol(), Linkage::Import, &signature));
+        let id = crate::import_runtime(module, called.symbol(), self.call_conv);
         crate::index::unique(&mut self.imported, called, id);
         id
     }

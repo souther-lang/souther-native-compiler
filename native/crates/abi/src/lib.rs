@@ -37,7 +37,11 @@
 ///
 /// Not part of [`type_symbol`]: a declared type's token is data, not a call, and nothing about how
 /// a call is made or what its status means changes what a value of one looks like.
-const ABI: &str = "2";
+///
+/// Public, because a host is a party to it too: what a binding reads off the manifest a build
+/// writes beside the object says which generation the functions it names answer to, and that is
+/// this number and not a copy of it.
+pub const ABI_GENERATION: u32 = 2;
 
 /// Whether a module's name can stand in a symbol: it carries no `$`, which is what every symbol
 /// below is split on. A module's name carries dots.
@@ -79,7 +83,7 @@ pub fn behavior_symbol(module: &str, behavior: &str) -> String {
         "a behavior's name carries neither dot nor dollar, and it is the symbol's last \
          segment: {behavior}"
     );
-    format!("souther{ABI}.{module}.{behavior}")
+    format!("souther{ABI_GENERATION}.{module}.{behavior}")
 }
 
 /// The symbol a definition a module holds is reached by.
@@ -101,7 +105,7 @@ pub fn held_symbol(carrier: &str, declared: &str) -> String {
         spells_a_module(carrier),
         "a module's name carries no dollar, and the symbol is split on one: {carrier}"
     );
-    format!("souther{ABI}.{carrier}${declared}")
+    format!("souther{ABI_GENERATION}.{carrier}${declared}")
 }
 
 /// The symbol a value's home is reached by, inside the object of the module that declares it.
@@ -123,7 +127,7 @@ pub fn home_symbol(module: &str, value: &str) -> String {
         spells_a_name(value),
         "a value's name carries neither dollar nor dot, and the symbol is split on both: {value}"
     );
-    format!("souther{ABI}.{module}$home${value}")
+    format!("souther{ABI_GENERATION}.{module}$home${value}")
 }
 
 /// The symbol the entry a module publishes for one of its values is reached by.
@@ -152,7 +156,7 @@ pub fn value_symbol(module: &str, value: &str) -> String {
         spells_a_name(value),
         "a value's name carries neither dollar nor dot, and the symbol is split on both: {value}"
     );
-    format!("souther{ABI}.{module}$value${value}")
+    format!("souther{ABI_GENERATION}.{module}$value${value}")
 }
 
 /// The symbol a value of a declared type is built through: the constructor that takes its fields,
@@ -182,35 +186,75 @@ pub fn constructor_symbol(module: &str, name: &str) -> String {
         "a declared type's name carries neither dollar nor dot, and the symbol is split on \
          both: {name}"
     );
-    format!("souther{ABI}.{module}$construct${name}")
+    format!("souther{ABI_GENERATION}.{module}$construct${name}")
 }
 
-/// What every operation a host reaches a value of one declared type through is spelt under:
-/// `souther<abi>.<module>$type$<name>`, which a symbol then names the operation after.
+/// Everything a host calls is named by a C identifier, and this is what one is made of.
 ///
-/// A family of its own, and not [`constructor_symbol`]'s, because a host is a third party to how
-/// this backend lays a value out and a call between two objects it built is not: what a host hands
-/// over and reads back is a presence and a payload where the generated code holds an optional as
-/// an address or nothing, and the day the two differ in any other way the host's spelling does not
-/// move. Carrying the ABI generation all the same, because a host's call crosses an object boundary
-/// the way any other does, and what its status means is the one mapping every generated function
-/// answers with.
+/// A host is a third party to this backend, and the one thing every host can write is a C
+/// declaration: a C compiler reads one, and so does an FFI that declares functions from C source.
+/// Neither can name a symbol carrying a `.` or a `$`, so what a host reaches is spelt apart from
+/// what one object built by this compiler reaches in another, and in nothing but letters, digits
+/// and `_`.
 ///
-/// Every operation a host reaches a declared type through is spelt under `$type$`, each under a
-/// suffix of its own — building a value, reading a field or a case, decoding and encoding, and
-/// whatever a collection is reached through once one is laid out — and nothing a host does not
-/// call is spelt there. Which suffixes there are is the functions below, not a list kept here.
-fn host_type_prefix(module: &str, name: &str) -> String {
-    assert!(
-        spells_a_module(module),
-        "a module's name carries no dollar, and the symbol is split on one: {module}"
-    );
-    assert!(
-        spells_a_name(name),
-        "a declared type's name carries neither dollar nor dot, and the symbol is split on \
-         both: {name}"
-    );
-    format!("souther{ABI}.{module}$type${name}")
+/// `souther<abi>`, then the module, one `_m_<segment>` per segment of its dotted name, then what is
+/// reached under it: `_b_<behavior>`, `_v_<value>`, or `_t_<type>` and the operation — `_construct`,
+/// `_f_<field>`, `_case`, `_decode`, `_encode`. The ABI generation is in it for the reason it is in
+/// every other function symbol here.
+///
+/// A name is written as it is where it is ASCII letters and digits, with `_` doubled and any other
+/// character as `_u<hex>_`, its code point in lower-case hexadecimal. So a name reads as itself in
+/// the common case, and the spelling holds whatever the language admits in a name, which is
+/// Unicode's identifier characters and not a list kept here. What keeps it unambiguous is that
+/// inside a name `_` is only ever followed by `_` or `u`, and every mark between names is `_` and
+/// a letter that is neither: read from the left, each `_` says which it is. No name is refused, so
+/// none of this asserts what [`spells_a_name`] does.
+fn host_module(module: &str) -> String {
+    let mut spelt = format!("souther{ABI_GENERATION}");
+    for segment in module.split('.') {
+        spelt.push_str("_m_");
+        host_name(&mut spelt, segment);
+    }
+    spelt
+}
+
+/// One name, as [`host_module`] says a name is written.
+fn host_name(spelt: &mut String, name: &str) {
+    for character in name.chars() {
+        if character.is_ascii_alphanumeric() {
+            spelt.push(character);
+        } else if character == '_' {
+            spelt.push_str("__");
+        } else {
+            spelt.push_str(&format!("_u{:x}_", u32::from(character)));
+        }
+    }
+}
+
+/// `<module>_<mark>_<name>`, the name written as [`host_module`] says.
+fn host_under(module: &str, mark: char, name: &str) -> String {
+    let mut spelt = host_module(module);
+    spelt.push('_');
+    spelt.push(mark);
+    spelt.push('_');
+    host_name(&mut spelt, name);
+    spelt
+}
+
+/// Where a host calls a behavior: what it takes, as a host hands each over, and `status + out`.
+///
+/// A function of its own beside [`behavior_symbol`], which runs it, and not that symbol under a
+/// second name: that one is what another object built by this compiler calls, and how it is called
+/// is between the two of them. The day it takes a value in a form a host does not hand one over in,
+/// this still takes what a host hands over.
+pub fn host_behavior_symbol(module: &str, behavior: &str) -> String {
+    host_under(module, 'b', behavior)
+}
+
+/// Where a host reads a value a module publishes: nothing taken, and `status + out`, running the
+/// entry [`value_symbol`] names for the same reason [`host_behavior_symbol`] runs a behavior.
+pub fn host_value_symbol(module: &str, value: &str) -> String {
+    host_under(module, 'v', value)
 }
 
 /// Where a host builds a value of a declared type: the fields as a host hands them over, and
@@ -218,12 +262,8 @@ fn host_type_prefix(module: &str, name: &str) -> String {
 ///
 /// A type with no clause answers a status too, so a clause added to it later is not a change to
 /// how a host calls it.
-///
-/// # Panics
-///
-/// Where either name does not stand in a symbol, for the reason [`type_symbol`] gives.
 pub fn host_constructor_symbol(module: &str, name: &str) -> String {
-    format!("{}$construct", host_type_prefix(module, name))
+    format!("{}_construct", host_under(module, 't', name))
 }
 
 /// Where a host reads one field of a value of a declared type, by the name the field is declared
@@ -231,29 +271,18 @@ pub fn host_constructor_symbol(module: &str, name: &str) -> String {
 ///
 /// The name and not the position: a field moved within its declaration is still the field a host
 /// asked for, and a position would make every reordering a break the linker cannot see.
-///
-/// # Panics
-///
-/// Where a name does not stand in a symbol. A field's name is the symbol's last segment, so it is
-/// held to what a behavior's is ([`spells_a_name`]).
 pub fn host_field_symbol(module: &str, name: &str, field: &str) -> String {
-    assert!(
-        spells_a_name(field),
-        "a field's name carries neither dot nor dollar, and it is the symbol's last segment: \
-         {field}"
-    );
-    format!("{}$field${field}", host_type_prefix(module, name))
+    let mut spelt = host_under(module, 't', name);
+    spelt.push_str("_f_");
+    host_name(&mut spelt, field);
+    spelt
 }
 
 /// Where a host asks which of a sum's cases a value is, and is answered with the case's place
 /// among them, counted from nought — never with what the value is tagged by, whose address stays
 /// inside the objects that compare against it.
-///
-/// # Panics
-///
-/// Where either name does not stand in a symbol.
 pub fn host_case_symbol(module: &str, name: &str) -> String {
-    format!("{}$case", host_type_prefix(module, name))
+    format!("{}_case", host_under(module, 't', name))
 }
 
 /// Where a host reads a value of a declared type out of the language's external form: JSON as
@@ -265,23 +294,15 @@ pub fn host_case_symbol(module: &str, name: &str) -> String {
 /// `DECODED_*` symbols below: a value, the issues found, or where the bytes stopped being JSON. A
 /// clause that does not hold is one of the issues and not a status: at the boundary it is what was
 /// written, not a computation that could not answer.
-///
-/// # Panics
-///
-/// Where either name does not stand in a symbol.
 pub fn host_decode_symbol(module: &str, name: &str) -> String {
-    format!("{}$decode", host_type_prefix(module, name))
+    format!("{}_decode", host_under(module, 't', name))
 }
 
 /// Where a host writes a value of a declared type in the language's external form: `(value) ->
 /// string`, JSON in a string of the runtime's layout, in the arena. Writing a value ends with its
 /// form whatever the value is, so this answers no status.
-///
-/// # Panics
-///
-/// Where either name does not stand in a symbol.
 pub fn host_encode_symbol(module: &str, name: &str) -> String {
-    format!("{}$encode", host_type_prefix(module, name))
+    format!("{}_encode", host_under(module, 't', name))
 }
 
 /// The symbol a value of a declared type is read out of a document through, by another object this
@@ -311,7 +332,7 @@ pub fn reader_symbol(module: &str, name: &str) -> String {
         "a declared type's name carries neither dollar nor dot, and the symbol is split on \
          both: {name}"
     );
-    format!("souther{ABI}.{module}$read${name}")
+    format!("souther{ABI_GENERATION}.{module}$read${name}")
 }
 
 /// The symbol the object carries for one of a behavior's `example` rows.
@@ -624,6 +645,13 @@ pub const DECODED_VALUE: i32 = 0;
 pub const DECODED_ISSUES: i32 = 1;
 /// The bytes are not JSON, and `DECODED_MALFORMED_AT` says where they stopped being it.
 pub const DECODED_MALFORMED: i32 = 2;
+/// That a reading's outcomes are three numbers and not fewer: a host tells them apart by the
+/// number, so two outcomes answered alike would be one it could not read.
+const _: () = assert!(
+    DECODED_VALUE != DECODED_ISSUES
+        && DECODED_ISSUES != DECODED_MALFORMED
+        && DECODED_VALUE != DECODED_MALFORMED
+);
 /// `(reading) -> value`.
 pub const DECODED_VALUE_OF: &str = "souther_decoded_value";
 /// `(reading) -> i64`: the offset of the first byte that could not be read.
@@ -642,6 +670,400 @@ pub const ISSUE_META_COUNT: &str = "souther_issue_meta_count";
 pub const ISSUE_META_KEY: &str = "souther_issue_meta_key";
 /// `(issue, i64) -> string`: what an entry says.
 pub const ISSUE_META_VALUE: &str = "souther_issue_meta_value";
+
+/// What a host hands over and is handed, one word at a time, as a C declaration says it.
+///
+/// A vocabulary and not a C type: what each word is called in a header, and what it is on the
+/// machine, are read off this by whoever writes the header and whoever emits the call, so the two
+/// are one fact. Each is a kind of thing a host holds, and two kinds one word wide are two words
+/// here all the same — a value and a string are both an address, and a host handed the one where
+/// the other was meant has been handed something else.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum HostWord {
+    /// What a generated function answers in place of its value ([`Status`]).
+    Status,
+    /// An `Int`: sixty-four bits, signed.
+    Int,
+    /// A `Bool`, or whether an optional holds a value: one byte, nought or one.
+    Bool,
+    /// Which of a sum's cases a value is, as its place among them.
+    Case,
+    /// What a reading came to: one of the `DECODED_*` numbers.
+    Outcome,
+    /// How many of something there are, or where one stands among them: sixty-four bits.
+    Count,
+    /// Where the arena stood, to be given back to [`RESET`].
+    Mark,
+    /// Bytes the host holds, read and never kept.
+    Bytes,
+    /// The address of a value of a declared type, which a host never reads behind.
+    Value,
+    /// The address of text of the runtime's layout, read through [`STRING_LENGTH`] and
+    /// [`STRING_BYTES`].
+    String,
+    /// A reading a decoder answered, asked through the `DECODED_*` functions.
+    Decoded,
+    /// One issue a reading found, asked through the `ISSUE_*` functions.
+    Issue,
+}
+
+/// One parameter of a function a host calls: a word handed over, or room the function writes one
+/// through.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum HostParameter {
+    /// The word itself.
+    Given(HostWord),
+    /// The address of room for one, written only where the function says it writes it.
+    Room(HostWord),
+}
+
+/// A function of the runtime's that a host calls, with what it takes and answers.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct RuntimeFunction {
+    /// Its symbol, which is also its name in C.
+    pub name: &'static str,
+    /// What it takes, in order.
+    pub takes: &'static [HostParameter],
+    /// What it answers, where it answers anything.
+    pub answers: Option<HostWord>,
+}
+
+/// Every function of the runtime's a host calls, and nothing else of the runtime's.
+///
+/// What generated code calls — taking room, comparing and joining text, building external form,
+/// reading a document — is between generated code and the runtime, and a host that called it would
+/// be a third party to that. So a header declares what is here and a shared library exports it,
+/// and neither says anything of the rest. The runtime's own tests hold each of these to the
+/// function it names.
+pub const HOST_RUNTIME: &[RuntimeFunction] = {
+    use HostParameter::Given;
+    use HostWord::{Bytes, Count, Decoded, Issue, Mark, Outcome, String, Value};
+    &[
+        RuntimeFunction {
+            name: MARK,
+            takes: &[],
+            answers: Some(Mark),
+        },
+        RuntimeFunction {
+            name: RESET,
+            takes: &[Given(Mark)],
+            answers: None,
+        },
+        RuntimeFunction {
+            name: STRING_OF_UTF8,
+            takes: &[Given(Bytes), Given(Count)],
+            answers: Some(String),
+        },
+        RuntimeFunction {
+            name: STRING_LENGTH,
+            takes: &[Given(String)],
+            answers: Some(Count),
+        },
+        RuntimeFunction {
+            name: STRING_BYTES,
+            takes: &[Given(String)],
+            answers: Some(Bytes),
+        },
+        RuntimeFunction {
+            name: DECODED_OUTCOME,
+            takes: &[Given(Decoded)],
+            answers: Some(Outcome),
+        },
+        RuntimeFunction {
+            name: DECODED_VALUE_OF,
+            takes: &[Given(Decoded)],
+            answers: Some(Value),
+        },
+        RuntimeFunction {
+            name: DECODED_MALFORMED_AT,
+            takes: &[Given(Decoded)],
+            answers: Some(Count),
+        },
+        RuntimeFunction {
+            name: DECODED_ISSUE_COUNT,
+            takes: &[Given(Decoded)],
+            answers: Some(Count),
+        },
+        RuntimeFunction {
+            name: DECODED_ISSUE,
+            takes: &[Given(Decoded), Given(Count)],
+            answers: Some(Issue),
+        },
+        RuntimeFunction {
+            name: ISSUE_CODE,
+            takes: &[Given(Issue)],
+            answers: Some(String),
+        },
+        RuntimeFunction {
+            name: ISSUE_PATH,
+            takes: &[Given(Issue)],
+            answers: Some(String),
+        },
+        RuntimeFunction {
+            name: ISSUE_META_COUNT,
+            takes: &[Given(Issue)],
+            answers: Some(Count),
+        },
+        RuntimeFunction {
+            name: ISSUE_META_KEY,
+            takes: &[Given(Issue), Given(Count)],
+            answers: Some(String),
+        },
+        RuntimeFunction {
+            name: ISSUE_META_VALUE,
+            takes: &[Given(Issue), Given(Count)],
+            answers: Some(String),
+        },
+    ]
+};
+
+/// What generated code hands the runtime and is handed back: every word a host is ([`HostWord`]),
+/// and the ones that stay between generated code and the runtime.
+///
+/// Each is a kind of thing and not a width, for the reason [`HostWord`] is: two kinds one word wide
+/// are two words here, so a function said to take one and written to take the other is caught.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Word {
+    /// One a host is handed or hands over too.
+    Host(HostWord),
+    /// Room taken from the arena for generated code to write into.
+    Memory,
+    /// Which of two strings comes first: below, at or above nought.
+    Comparison,
+    /// A piece of the external form being built, owned by whoever [`EXTERNAL_NULL`] and the rest
+    /// say.
+    Form,
+    /// A place in a document being read.
+    Node,
+    /// Where a place in a document is, as the reading records it.
+    Path,
+}
+
+/// One parameter of a function of the runtime's that generated code calls.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Parameter {
+    /// The word itself.
+    Given(Word),
+    /// The address of room for one, which the function writes.
+    Room(Word),
+}
+
+impl From<HostParameter> for Parameter {
+    fn from(parameter: HostParameter) -> Parameter {
+        match parameter {
+            HostParameter::Given(word) => Parameter::Given(Word::Host(word)),
+            HostParameter::Room(word) => Parameter::Room(Word::Host(word)),
+        }
+    }
+}
+
+/// A function of the runtime's that generated code calls, with what it takes and answers.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct GeneratedCall {
+    /// Its symbol.
+    pub name: &'static str,
+    /// What it takes, in order.
+    pub takes: &'static [Parameter],
+    /// What it answers, where it answers anything.
+    pub answers: Option<Word>,
+}
+
+/// Every function of the runtime's that generated code calls, and nothing a host calls.
+///
+/// What the driver declares each of these as is lowered from here, and the runtime's own tests
+/// hold each of these to the function it names, as they hold [`HOST_RUNTIME`]. Between the two
+/// tables is every function the runtime defines, which those tests hold too.
+pub const GENERATED_RUNTIME: &[GeneratedCall] = {
+    use HostWord::{Bool, Bytes, Count, Decoded, Int, String, Value};
+    use Parameter::{Given, Room};
+    use Word::{Comparison, Form, Host, Memory, Node, Path};
+    &[
+        GeneratedCall {
+            name: ALLOCATE,
+            takes: &[Given(Host(Count))],
+            answers: Some(Memory),
+        },
+        GeneratedCall {
+            name: STRING_COMPARE,
+            takes: &[Given(Host(String)), Given(Host(String))],
+            answers: Some(Comparison),
+        },
+        GeneratedCall {
+            name: STRING_CONCAT,
+            takes: &[Given(Host(String)), Given(Host(String))],
+            answers: Some(Host(String)),
+        },
+        GeneratedCall {
+            name: EXTERNAL_NULL,
+            takes: &[],
+            answers: Some(Form),
+        },
+        GeneratedCall {
+            name: EXTERNAL_BOOL,
+            takes: &[Given(Host(Bool))],
+            answers: Some(Form),
+        },
+        GeneratedCall {
+            name: EXTERNAL_INT,
+            takes: &[Given(Host(Int))],
+            answers: Some(Form),
+        },
+        GeneratedCall {
+            name: EXTERNAL_STRING,
+            takes: &[Given(Host(String))],
+            answers: Some(Form),
+        },
+        GeneratedCall {
+            name: EXTERNAL_ARRAY,
+            takes: &[],
+            answers: Some(Form),
+        },
+        GeneratedCall {
+            name: EXTERNAL_APPEND,
+            takes: &[Given(Form), Given(Form)],
+            answers: None,
+        },
+        GeneratedCall {
+            name: EXTERNAL_OBJECT,
+            takes: &[],
+            answers: Some(Form),
+        },
+        GeneratedCall {
+            name: EXTERNAL_PUT,
+            takes: &[Given(Form), Given(Host(String)), Given(Form)],
+            answers: None,
+        },
+        GeneratedCall {
+            name: EXTERNAL_JSON,
+            takes: &[Given(Form)],
+            answers: Some(Host(String)),
+        },
+        GeneratedCall {
+            name: DECODE_BEGIN,
+            takes: &[Given(Host(Bytes)), Given(Host(Count))],
+            answers: Some(Host(Decoded)),
+        },
+        GeneratedCall {
+            name: DECODE_ROOT,
+            takes: &[Given(Host(Decoded))],
+            answers: Some(Node),
+        },
+        GeneratedCall {
+            name: DECODE_END,
+            takes: &[Given(Host(Decoded)), Given(Host(Value))],
+            answers: None,
+        },
+        GeneratedCall {
+            name: DECODE_ABANDON,
+            takes: &[Given(Host(Decoded))],
+            answers: None,
+        },
+        GeneratedCall {
+            name: PATH_BELOW,
+            takes: &[Given(Path), Given(Host(String))],
+            answers: Some(Path),
+        },
+        GeneratedCall {
+            name: READ_OBJECT,
+            takes: &[Given(Node), Given(Path), Given(Host(Decoded))],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: READ_MEMBER,
+            takes: &[Given(Node), Given(Host(String))],
+            answers: Some(Node),
+        },
+        GeneratedCall {
+            name: READ_MISSING,
+            takes: &[Given(Path), Given(Host(Decoded))],
+            answers: None,
+        },
+        GeneratedCall {
+            name: READ_NULL,
+            takes: &[Given(Node)],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: READ_INT,
+            takes: &[
+                Given(Node),
+                Given(Path),
+                Given(Host(Decoded)),
+                Room(Host(Int)),
+            ],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: READ_BOOL,
+            takes: &[
+                Given(Node),
+                Given(Path),
+                Given(Host(Decoded)),
+                Room(Host(Bool)),
+            ],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: READ_STRING,
+            takes: &[
+                Given(Node),
+                Given(Path),
+                Given(Host(Decoded)),
+                Room(Host(String)),
+            ],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: READ_CASE,
+            takes: &[Given(Node), Given(Path), Given(Host(Decoded))],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: READ_TAG,
+            takes: &[
+                Given(Node),
+                Given(Host(String)),
+                Given(Path),
+                Given(Host(Decoded)),
+            ],
+            answers: Some(Node),
+        },
+        GeneratedCall {
+            name: READ_IS,
+            takes: &[Given(Node), Given(Host(String))],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: READ_NOT_A_CASE,
+            takes: &[Given(Node), Given(Path), Given(Host(Decoded))],
+            answers: None,
+        },
+        GeneratedCall {
+            name: READ_INVARIANT,
+            takes: &[
+                Given(Path),
+                Given(Host(Decoded)),
+                Given(Host(String)),
+                Given(Host(String)),
+                Given(Host(String)),
+            ],
+            answers: None,
+        },
+    ]
+};
+
+/// What generated code declares `name` as: the one entry of [`GENERATED_RUNTIME`] naming it.
+///
+/// # Panics
+///
+/// Where no entry names it, which is generated code calling a function of the runtime's this crate
+/// does not say.
+pub fn generated_call(name: &str) -> &'static GeneratedCall {
+    GENERATED_RUNTIME
+        .iter()
+        .find(|call| call.name == name)
+        .unwrap_or_else(|| panic!("{name} is not a function of the runtime's generated code calls"))
+}
 
 /// What a generated function answers with instead of its value directly.
 ///
@@ -667,10 +1089,11 @@ pub const ANSWERED: Status = 0;
 #[cfg(test)]
 mod tests {
     use super::{
-        FIRST_FIELD, SLOT, TOKEN, WHICH, behavior_symbol, boundary_symbol, constructor_symbol,
-        example_symbol, field_at, held_symbol, home_symbol, host_case_symbol,
-        host_constructor_symbol, host_decode_symbol, host_encode_symbol, host_field_symbol,
-        member_at, reader_symbol, type_symbol, value_symbol,
+        ABI_GENERATION, FIRST_FIELD, SLOT, TOKEN, WHICH, behavior_symbol, boundary_symbol,
+        constructor_symbol, example_symbol, field_at, held_symbol, home_symbol,
+        host_behavior_symbol, host_case_symbol, host_constructor_symbol, host_decode_symbol,
+        host_encode_symbol, host_field_symbol, host_value_symbol, member_at, reader_symbol,
+        type_symbol, value_symbol,
     };
 
     #[test]
@@ -871,23 +1294,47 @@ mod tests {
     fn a_host_reaches_a_type_under_its_module_and_its_name() {
         assert_eq!(
             host_constructor_symbol("pricing", "Amount"),
-            "souther2.pricing$type$Amount$construct"
+            "souther2_m_pricing_t_Amount_construct"
         );
         assert_eq!(
             host_field_symbol("pricing", "Amount", "value"),
-            "souther2.pricing$type$Amount$field$value"
+            "souther2_m_pricing_t_Amount_f_value"
         );
         assert_eq!(
             host_case_symbol("pricing", "Result"),
-            "souther2.pricing$type$Result$case"
+            "souther2_m_pricing_t_Result_case"
         );
         assert_eq!(
             host_decode_symbol("pricing", "Amount"),
-            "souther2.pricing$type$Amount$decode"
+            "souther2_m_pricing_t_Amount_decode"
         );
         assert_eq!(
             host_encode_symbol("pricing", "Amount"),
-            "souther2.pricing$type$Amount$encode"
+            "souther2_m_pricing_t_Amount_encode"
+        );
+    }
+
+    #[test]
+    fn a_host_reaches_a_behavior_and_a_value_under_their_module() {
+        assert_eq!(
+            host_behavior_symbol("lib.shop", "quote"),
+            "souther2_m_lib_m_shop_b_quote"
+        );
+        assert_eq!(
+            host_value_symbol("lib.shop", "standard"),
+            "souther2_m_lib_m_shop_v_standard"
+        );
+    }
+
+    #[test]
+    fn a_name_that_is_not_ascii_letters_and_digits_is_escaped() {
+        assert_eq!(
+            host_behavior_symbol("shop", "foo_bar"),
+            "souther2_m_shop_b_foo__bar"
+        );
+        assert_eq!(
+            host_behavior_symbol("shop", "数量"),
+            "souther2_m_shop_b__u6570__u91cf_"
         );
     }
 
@@ -901,37 +1348,164 @@ mod tests {
         );
     }
 
-    /// What a host builds a value through is not what another object built by this compiler
-    /// does, nor any other symbol a module's name reaches.
-    #[test]
-    fn what_a_host_reaches_is_not_any_other_symbol_of_one_name() {
-        let hosts = [
-            host_constructor_symbol("pricing", "Amount"),
-            host_field_symbol("pricing", "Amount", "construct"),
-            host_field_symbol("pricing", "Amount", "case"),
-            host_field_symbol("pricing", "Amount", "decode"),
-            host_case_symbol("pricing", "Amount"),
-            host_decode_symbol("pricing", "Amount"),
-            host_encode_symbol("pricing", "Amount"),
-        ];
-        let others = [
-            constructor_symbol("pricing", "Amount"),
-            type_symbol("pricing", "Amount"),
-            behavior_symbol("pricing", "Amount"),
-            value_symbol("pricing", "Amount"),
-            home_symbol("pricing", "Amount"),
-            held_symbol("pricing", "pricing.Amount"),
-            reader_symbol("pricing", "Amount"),
-        ];
-        for (at, host) in hosts.iter().enumerate() {
-            assert!(!others.contains(host), "{host}");
-            assert!(!hosts[at + 1..].contains(host), "{host}");
+    /// One mark or one operation a host's symbol is read back into.
+    #[derive(Debug, PartialEq, Eq)]
+    enum Read {
+        Under(char, String),
+        Operation(String),
+    }
+
+    /// A host's symbol read back from the left, the way [`super::host_module`] says it can be:
+    /// what it was made of, or nothing where it is not one.
+    fn read_back(symbol: &str) -> Option<Vec<Read>> {
+        let mut rest = symbol.strip_prefix(&format!("souther{ABI_GENERATION}"))?;
+        let mut read = Vec::new();
+        while !rest.is_empty() {
+            rest = rest.strip_prefix('_')?;
+            let mut chars = rest.chars();
+            let mark = chars.next()?;
+            if "mbvtf".contains(mark) && chars.next() == Some('_') {
+                let (name, after) = name_back(&rest[2..])?;
+                read.push(Read::Under(mark, name));
+                rest = after;
+            } else {
+                let end = rest.find('_').unwrap_or(rest.len());
+                read.push(Read::Operation(rest[..end].to_string()));
+                rest = &rest[end..];
+            }
+        }
+        Some(read)
+    }
+
+    /// One name, up to the `_` that ends it.
+    fn name_back(mut rest: &str) -> Option<(String, &str)> {
+        let mut name = String::new();
+        loop {
+            match rest.chars().next() {
+                None => return Some((name, rest)),
+                Some('_') => match rest[1..].chars().next() {
+                    Some('_') => {
+                        name.push('_');
+                        rest = &rest[2..];
+                    }
+                    Some('u') => {
+                        let end = rest[2..].find('_')? + 2;
+                        let code = u32::from_str_radix(&rest[2..end], 16).ok()?;
+                        name.push(char::from_u32(code)?);
+                        rest = &rest[end + 1..];
+                    }
+                    _ => return Some((name, rest)),
+                },
+                Some(character) => {
+                    name.push(character);
+                    rest = &rest[character.len_utf8()..];
+                }
+            }
         }
     }
 
+    /// What a host's symbol for a name under this module should read back as.
+    fn under(module: &str, then: Vec<Read>) -> Vec<Read> {
+        let mut read: Vec<Read> = module
+            .split('.')
+            .map(|segment| Read::Under('m', segment.to_string()))
+            .collect();
+        read.extend(then);
+        read
+    }
+
+    /// Every host symbol reads back as the names it was made of, so no two different sets of names
+    /// are one symbol — whatever the names hold, and including names that look like a mark or an
+    /// escape.
     #[test]
-    #[should_panic(expected = "it is the symbol's last segment")]
-    fn a_field_whose_name_carries_a_dollar_is_refused() {
-        let _ = host_field_symbol("a", "B", "c$case");
+    fn a_hosts_symbol_reads_back_as_what_it_was_made_of() {
+        let modules = ["a", "a.b", "a_b", "a__b", "a._b", "é.b", "a_m_b", "a.m"];
+        let names = [
+            "a",
+            "b",
+            "u",
+            "_",
+            "_u",
+            "a_b",
+            "a__b",
+            "_u41_",
+            "a_m_b",
+            "a_t_b",
+            "construct",
+            "case",
+            "_case",
+            "é",
+            "数量",
+            "𠮷",
+            "a.b",
+            "a$b",
+            "A",
+            "x_f_y",
+        ];
+        let mut seen = std::collections::HashMap::new();
+        let mut hold = |symbol: String, expected: Vec<Read>| {
+            assert!(
+                symbol.starts_with(|it: char| it.is_ascii_alphabetic())
+                    && symbol
+                        .chars()
+                        .all(|it| it.is_ascii_alphanumeric() || it == '_'),
+                "{symbol} is not a C identifier"
+            );
+            assert_eq!(read_back(&symbol).as_ref(), Some(&expected), "{symbol}");
+            let said = format!("{expected:?}");
+            let before = seen.entry(symbol.clone()).or_insert_with(|| said.clone());
+            assert_eq!(*before, said, "{symbol} is two things");
+        };
+        let named = |mark: char, name: &str| Read::Under(mark, name.to_string());
+        let operation = |it: &str| Read::Operation(it.to_string());
+        for module in modules {
+            for name in names {
+                hold(
+                    host_behavior_symbol(module, name),
+                    under(module, vec![named('b', name)]),
+                );
+                hold(
+                    host_value_symbol(module, name),
+                    under(module, vec![named('v', name)]),
+                );
+                for (symbol, done) in [
+                    (host_constructor_symbol(module, name), "construct"),
+                    (host_case_symbol(module, name), "case"),
+                    (host_decode_symbol(module, name), "decode"),
+                    (host_encode_symbol(module, name), "encode"),
+                ] {
+                    hold(
+                        symbol,
+                        under(module, vec![named('t', name), operation(done)]),
+                    );
+                }
+                for field in names {
+                    hold(
+                        host_field_symbol(module, name, field),
+                        under(module, vec![named('t', name), named('f', field)]),
+                    );
+                }
+            }
+        }
+    }
+
+    /// What a host calls is never what one object built by this compiler calls in another, so the
+    /// two are free to differ in how they are called.
+    #[test]
+    fn a_hosts_symbol_is_never_one_objects_call_into_another() {
+        let others = [
+            behavior_symbol("shop", "quote"),
+            value_symbol("shop", "quote"),
+            constructor_symbol("shop", "Quote"),
+            reader_symbol("shop", "Quote"),
+        ];
+        for symbol in [
+            host_behavior_symbol("shop", "quote"),
+            host_value_symbol("shop", "quote"),
+            host_constructor_symbol("shop", "Quote"),
+            host_decode_symbol("shop", "Quote"),
+        ] {
+            assert!(!others.contains(&symbol), "{symbol}");
+        }
     }
 }

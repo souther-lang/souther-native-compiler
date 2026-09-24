@@ -9,6 +9,8 @@ import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * A checked program as an object file for the machine this runs on.
@@ -45,21 +47,104 @@ public final class NativeCompiler {
     }
 
     /**
+     * What a build for a host writes: the object; a header a C or C++ compiler includes; the
+     * declarations it includes, which are C and nothing a preprocessor has to run over, for an FFI
+     * that reads C declarations; a manifest describing the same functions in the model's terms;
+     * and a shared library of the object and the runtime exporting those functions and nothing
+     * else.
+     */
+    public record Library(Path object, Path header, Path declarations, Path manifest,
+                          Path library) {}
+
+    /** The program built for a host, into {@code into}, reaching no other build's object. */
+    public static Library library(CheckedProgram program, Path into)
+            throws IOException, InterruptedException {
+        return library(program, List.of(), into);
+    }
+
+    /** The program built for a host, into {@code into}, with other builds' objects beside it. */
+    public static Library library(CheckedProgram program, List<byte[]> alongside, Path into)
+            throws IOException, InterruptedException {
+        return library(program, alongside, List.of(), into);
+    }
+
+    /**
+     * The program built for a host, into {@code into}.
+     *
+     * <p>{@code alongside} is every object another build wrote that the program reaches: the same
+     * objects an executable of it would be linked with. Each carries what it offers a host, and
+     * what the library offers is what all of them carry beside this program's object.
+     *
+     * <p>{@code supplying} is every object or library that defines what the program leaves for
+     * whoever links it and no build defines — an injected behavior's implementation, written
+     * outside this compiler as the language expects. It is linked in and offers a host nothing.
+     *
+     * <p>All of it is written by the driver, from what the objects' emission decided. Nothing here
+     * reads the program to say what a host can call: that would be a second answer to a question
+     * the driver already answered while writing each object.
+     */
+    public static Library library(CheckedProgram program, List<byte[]> alongside,
+                                  List<Path> supplying, Path into)
+            throws IOException, InterruptedException {
+        Path handed = Files.createTempDirectory("souther-native-alongside");
+        try {
+            List<String> arguments = new ArrayList<>(
+                    List.of("--library", into.toAbsolutePath().toString()));
+            for (int at = 0; at < alongside.size(); at++) {
+                Path object = handed.resolve(at + ".o");
+                Files.write(object, alongside.get(at));
+                arguments.add("--with");
+                arguments.add(object.toString());
+            }
+            for (Path supplied : supplying) {
+                arguments.add("--link-with");
+                arguments.add(supplied.toAbsolutePath().toString());
+            }
+            byte[] said = run(ProgramWriter.written(program), arguments);
+            // Where the driver wrote each, one to a line, which is how what a shared library is
+            // called on this host is said by the side that named it.
+            List<Path> written =
+                    new String(said, StandardCharsets.UTF_8).lines().map(Path::of).toList();
+            if (written.size() != 5) {
+                throw new IOException("the driver said it wrote " + written);
+            }
+            return new Library(written.get(0), written.get(1), written.get(2), written.get(3),
+                    written.get(4));
+        } finally {
+            try (var files = Files.list(handed)) {
+                for (Path file : files.toList()) {
+                    Files.delete(file);
+                }
+            }
+            Files.delete(handed);
+        }
+    }
+
+    /**
      * The object a transport document is compiled to. Package-visible for a test that asks what the
      * driver does with a document no checked program of today's language writes.
      */
     static byte[] driven(String document) throws IOException, InterruptedException {
+        return run(document, List.of());
+    }
+
+    /** What the driver writes on stdout when handed the document with these arguments. */
+    private static byte[] run(String document, List<String> arguments)
+            throws IOException, InterruptedException {
         Path driver = driver();
         if (!Files.isExecutable(driver)) {
             throw new IOException("no driver at " + driver.toAbsolutePath()
                     + ", which `cargo build` in native/ writes");
         }
+        List<String> command = new ArrayList<>();
+        command.add(driver.toString());
+        command.addAll(arguments);
 
         // What the driver says goes to a file rather than to a pipe this side reads second: two
         // pipes read one after the other deadlock where the one not being read fills up first.
         Path said = Files.createTempFile("souther-native-", ".problems");
         try {
-            Process process = new ProcessBuilder(driver.toString())
+            Process process = new ProcessBuilder(command)
                     .redirectError(said.toFile())
                     .start();
 

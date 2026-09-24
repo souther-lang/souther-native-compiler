@@ -10,7 +10,10 @@ mod codec;
 mod coherent;
 mod host;
 mod index;
+mod interface;
 mod kernels;
+mod link;
+mod manifest;
 pub mod transport;
 
 use anyhow::{Result, anyhow, bail};
@@ -26,16 +29,20 @@ use cranelift::codegen::{Context, ir};
 use cranelift::frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use cranelift::module::{DataDescription, DataId, FuncId, Linkage, Module, default_libcall_names};
 use cranelift::object::{ObjectBuilder, ObjectModule};
+use interface::Surface;
 use kernels::LoweredKernel;
 use souther_native_abi::{
-    ALLOCATE, ANSWERED, HELD, NOTHING, SLOT, STRING_COMPARE, STRING_CONCAT, Status, TEXT_BYTES,
-    TEXT_LENGTH, TOKEN, WHICH, behavior_symbol, boundary_symbol, constructor_symbol,
-    example_symbol, field_at, held_symbol, home_symbol, member_at, room_for_fields, room_for_held,
-    room_for_members, room_for_text, spells_a_module, spells_a_name, type_symbol, value_symbol,
+    ALLOCATE, ANSWERED, HELD, NOTHING, Parameter, SLOT, STRING_COMPARE, STRING_CONCAT, Status,
+    TEXT_BYTES, TEXT_LENGTH, TOKEN, WHICH, Word, behavior_symbol, boundary_symbol,
+    constructor_symbol, example_symbol, field_at, generated_call, held_symbol, home_symbol,
+    member_at, room_for_fields, room_for_held, room_for_members, room_for_text, spells_a_module,
+    spells_a_name, type_symbol, value_symbol,
 };
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
+use std::fs;
+use std::path::{Path, PathBuf};
 use transport::{
     AbortKind, AlternativesForm, Answers, Arm, Carrier, Case, Declaration, DeclaredBy, Definition,
     Ensures, Guard, Node, Op, Owner, Prim, Program, Publication, Reaches, Reading, Routing,
@@ -118,7 +125,7 @@ impl std::error::Error for NotLowered {}
 /// with a party the compiler cannot check. What holds the two together is a test that runs the
 /// whole way through rather than each side's reading of this comment.
 pub mod ended {
-    /// The object is on stdout.
+    /// The object is on stdout, or what was asked for is in the directory it was asked into.
     pub const WITH_AN_OBJECT: u8 = 0;
 
     /// Something went wrong here: a document this driver could not read, or a machine it could not
@@ -152,6 +159,128 @@ pub fn object_for(document: &str) -> Result<Vec<u8>> {
     let coherent = Coherent::of(&program)?;
     let module = for_this_host()?;
     Ok(emit(&program, coherent, module)?)
+}
+
+/// What a build for a host writes into a directory of its own.
+pub struct Library {
+    /// The object, which is what another Souther build's object is linked with.
+    pub object: PathBuf,
+    /// The header a C or C++ compiler includes: the declarations below, with what a compiler wants
+    /// around them and a reader of declarations cannot read.
+    pub header: PathBuf,
+    /// Every function a host calls, declared in C and in nothing a preprocessor has to run over,
+    /// for an FFI that reads C declarations.
+    pub declarations: PathBuf,
+    /// The same functions described in the model's terms, for a binding to be written from.
+    pub manifest: PathBuf,
+    /// The object and the runtime linked into one shared library, exporting what the header
+    /// declares and nothing else.
+    pub library: PathBuf,
+}
+
+/// What the declarations are called beside the header, which includes them by this name.
+const DECLARATIONS: &str = "souther.ffi.h";
+
+/// The header a C or C++ compiler includes. The same text for every library: what is declared is
+/// in [`DECLARATIONS`], written from the surface once, and this is only what a compiler needs
+/// around it — a guard, the header `int64_t` and the rest come from, and C linkage for C++ — none
+/// of which a reader with no preprocessor could read.
+fn header() -> String {
+    format!(
+        "/* What a host calls in a Souther program built by souther-native-compiler: the\n \
+         * declarations in {DECLARATIONS}, for a C or C++ compiler. */\n\
+         #ifndef SOUTHER_H\n\
+         #define SOUTHER_H\n\
+         \n\
+         #include <stdint.h>\n\
+         \n\
+         #ifdef __cplusplus\n\
+         extern \"C\" {{\n\
+         #endif\n\
+         \n\
+         #include \"{DECLARATIONS}\"\n\
+         \n\
+         #ifdef __cplusplus\n\
+         }}\n\
+         #endif\n\
+         \n\
+         #endif\n"
+    )
+}
+
+/// What a library is linked from besides the program's own object.
+///
+/// Three kinds of thing, as an executable of the program is linked from three: what other Souther
+/// builds wrote, what supplies a behavior the program names and no build defines, and the runtime.
+/// They are kept apart because they are not one kind of thing. An object another build wrote
+/// carries what it offers a host, and that is part of the library's surface; what supplies an
+/// injected behavior is written outside this compiler, as the language expects it to be, and
+/// offers a host nothing through the library.
+pub struct Linking {
+    /// Every object another Souther build wrote that the program reaches: whose behaviors it calls,
+    /// or whose types it builds and reads. Each carries its own surface, and one that does not is
+    /// refused.
+    pub builds: Vec<PathBuf>,
+    /// Objects and libraries that define what the program leaves for whoever links it and no build
+    /// defines — an injected behavior's implementation. Linked in, and nothing is read off them.
+    pub supplying: Vec<PathBuf>,
+    /// The runtime's static archive.
+    pub runtime: PathBuf,
+}
+
+/// The object for a document, and beside it what a host needs to call it: a header and the
+/// declarations it includes, a manifest, and a shared library of the object and what `linking`
+/// names.
+///
+/// A library is one program, so it holds every build the program reaches and whatever supplies
+/// what the program leaves undefined. What it offers a host is everything each Souther object in
+/// it carries. Everything a host reads is written from what those objects carry, which is what
+/// their emission put there, so none of it can name a function the rest does not.
+pub fn library_for(document: &str, linking: &Linking, into: &Path) -> Result<Library> {
+    let linker = link::Linker::of_this_host()?;
+    let object = object_for(document)?;
+    fs::create_dir_all(into)?;
+    let written = Library {
+        object: into.join("souther.o"),
+        header: into.join("souther.h"),
+        declarations: into.join(DECLARATIONS),
+        manifest: into.join("souther.json"),
+        library: into.join(linker.library()),
+    };
+    fs::write(&written.object, &object)?;
+
+    // Every module once: a module is declared by one build, so one in two objects is two builds
+    // of it, or one object handed over twice, and either would be a link of two definitions.
+    let mut modules: BTreeMap<String, manifest::Module> = BTreeMap::new();
+    let mut objects = vec![written.object.as_path()];
+    let mut carried = vec![(written.object.display().to_string(), object)];
+    for path in &linking.builds {
+        carried.push((path.display().to_string(), fs::read(path)?));
+        objects.push(path);
+    }
+    for (named, bytes) in &carried {
+        for module in interface::carried_by(bytes, named)? {
+            let name = module.name.clone();
+            index::once(&mut modules, name.clone(), module, || {
+                format!(
+                    "the module {name} is carried by two of the objects linked, the second {named}"
+                )
+            })?;
+        }
+    }
+    let manifest = interface::manifest_of(modules.into_values().collect());
+    objects.extend(linking.supplying.iter().map(PathBuf::as_path));
+
+    fs::write(&written.header, header())?;
+    fs::write(&written.declarations, interface::declarations(&manifest))?;
+    fs::write(&written.manifest, interface::written(&manifest))?;
+    linker.shared_library(
+        &objects,
+        &linking.runtime,
+        &interface::exported(&manifest),
+        &written.library,
+    )?;
+    Ok(written)
 }
 
 /// What is left once a document has been read whole: a program this backend does not write yet,
@@ -194,24 +323,13 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
     let frontend = module.isa().frontend_config();
     let call_conv = module.isa().default_call_conv();
 
-    let mut taking_room = ir::Signature::new(call_conv);
-    taking_room.params.push(AbiParam::new(types::I64));
-    taking_room.returns.push(AbiParam::new(POINTER));
-    let allocate = accepted(module.declare_function(ALLOCATE, Linkage::Import, &taking_room));
+    let allocate = import_runtime(&mut module, ALLOCATE, call_conv);
 
     // What two strings are compared and joined through. Neither is emitted here: a comparison of
     // text is a walk over two runs of bytes, and one written into every site that says `==` would
     // be the same walk written as many times as the program says it.
-    let mut over_two_strings = ir::Signature::new(call_conv);
-    over_two_strings.params.push(AbiParam::new(POINTER));
-    over_two_strings.params.push(AbiParam::new(POINTER));
-    let mut comparing = over_two_strings.clone();
-    comparing.returns.push(AbiParam::new(types::I64));
-    let compare_text =
-        accepted(module.declare_function(STRING_COMPARE, Linkage::Import, &comparing));
-    let mut joining = over_two_strings;
-    joining.returns.push(AbiParam::new(POINTER));
-    let join_text = accepted(module.declare_function(STRING_CONCAT, Linkage::Import, &joining));
+    let compare_text = import_runtime(&mut module, STRING_COMPARE, call_conv);
+    let join_text = import_runtime(&mut module, STRING_CONCAT, call_conv);
 
     let literals = Literals::default();
 
@@ -713,10 +831,12 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
         accepted(module.define_function(checked, &mut context));
     }
 
-    // What a host reaches for an answer as the language writes it: every behavior this object
-    // defines and publishes, and every row. A behavior another build implements is that build's
-    // to give a boundary to, so one object never answers for a second entry under the same name.
+    // Every behavior this object defines and publishes, which a host calls and whose answer a
+    // boundary writes as the language writes it, and every row, which has a boundary too. A
+    // behavior another build implements is that build's to give either to, so one object never
+    // answers for a second entry under the same name.
     let mut boundaries = Vec::new();
+    let mut published = Vec::new();
     for target in &program.behaviors {
         if !matches!(target.is, Answers::Body | Answers::Composed) {
             continue;
@@ -735,7 +855,28 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
             takes: target.takes(),
             output: &target.output,
         });
+        published.push(host::Entry {
+            module: &target.module,
+            name: &target.name,
+            runs: reachable.of_behavior_named(&declared),
+            takes: target.takes(),
+            answers: target.answers(),
+        });
     }
+    // Every value a module of this object publishes, through the entry another object reaches it
+    // by.
+    let values: Vec<host::Entry> = program
+        .modules
+        .iter()
+        .flat_map(|written| &written.entries)
+        .map(|entry| host::Entry {
+            module: &entry.value.module,
+            name: &entry.value.name,
+            runs: reachable.of_published_value(&entry.value.module, &entry.value.name),
+            takes: Vec::new(),
+            answers: entry.body.ty().clone(),
+        })
+        .collect();
     for written in &program.modules {
         for example in &written.examples {
             let target = targets.reached(&format!("{}.{}", written.name, example.behavior));
@@ -765,10 +906,17 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
     let mut codecs = codec::Codecs::new(call_conv);
     // What a host builds, reads, decodes and encodes a value of a published type through, each
     // running on the constructors just defined and the layout they write.
-    host::define(&mut emitting, &mut codecs, program, &runs)?;
+    let mut surface = Surface::default();
+    host::define(&mut emitting, &mut codecs, &mut surface, program, &runs)?;
+    // What a host calls a behavior and reads a value through, beside what another object built by
+    // this compiler calls: the two are different parties and are told different things.
+    host::define_behaviors(&mut emitting, &mut surface, &published)?;
+    host::define_values(&mut emitting, &mut surface, &values)?;
     boundary::define(&mut emitting, &mut codecs, &boundaries)?;
     // Every writer and reader the entries above reached.
     codecs.define(&mut emitting)?;
+
+    surface.carry(&mut module);
 
     Ok(accepted(module.finish().emit()))
 }
@@ -1534,6 +1682,35 @@ fn lifted_signature(takes: &[Ty], answers: &Ty, call_conv: CallConv) -> Lowered<
     signature.params.push(AbiParam::new(POINTER));
     signature.returns.push(AbiParam::new(types::I32));
     Ok(signature)
+}
+
+/// A function of the runtime's, named in the object as `souther_native_abi` says generated code
+/// calls it. The signature is lowered from what that crate says it takes and answers, which the
+/// runtime's own tests hold to the function, so nothing here writes a width down a second time.
+fn import_runtime(module: &mut ObjectModule, name: &str, call_conv: CallConv) -> FuncId {
+    let call = generated_call(name);
+    let mut signature = ir::Signature::new(call_conv);
+    for taken in call.takes {
+        signature.params.push(AbiParam::new(match taken {
+            Parameter::Given(word) => word_on_the_machine(*word),
+            Parameter::Room(_) => POINTER,
+        }));
+    }
+    if let Some(word) = call.answers {
+        signature
+            .returns
+            .push(AbiParam::new(word_on_the_machine(word)));
+    }
+    accepted(module.declare_function(name, Linkage::Import, &signature))
+}
+
+/// What a word generated code hands the runtime is on the machine.
+fn word_on_the_machine(word: Word) -> types::Type {
+    match word {
+        Word::Host(word) => interface::machine(word),
+        Word::Comparison => types::I64,
+        Word::Memory | Word::Form | Word::Node | Word::Path => POINTER,
+    }
 }
 
 /// What a value of this type is on the machine.

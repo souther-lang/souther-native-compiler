@@ -1,5 +1,11 @@
-//! What an answer is written as where it leaves the object: an entry beside each behavior a host
-//! reaches, which runs it and writes what it answered in the language's external form.
+//! What an answer is written as where it leaves the object: an entry beside each behavior the
+//! object publishes and each row, which runs it and writes what it answered in the language's
+//! external form.
+//!
+//! What runs the program's own rows and asks what a behavior answers in the language's form, and
+//! not what a host is offered: none of these is on the surface the header, the manifest and a
+//! shared library's exports are written from. A host that wants a value's form asks a type's own
+//! encoder for it.
 //!
 //! Nothing here decides a representation. What the answer leaves as — a scalar, a declared type, a
 //! set of alternatives and the form it travels in — arrives on the transport, and writing it is

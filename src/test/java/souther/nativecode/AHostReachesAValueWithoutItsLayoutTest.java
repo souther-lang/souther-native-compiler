@@ -122,7 +122,8 @@ class AHostReachesAValueWithoutItsLayoutTest {
     }
 
     private static String host(String operation) {
-        return Running.PREFIX + "souther" + Running.ABI + ".shop$type$" + operation;
+        int at = operation.indexOf('$');
+        return Running.hostSymbol("shop", operation.substring(0, at), operation.substring(at + 1));
     }
 
     private static String behavior(String name) {

@@ -12,48 +12,35 @@
 use souther_native_driver::native_status;
 use souther_native_driver::transport::AbortKind;
 
-/// How a member is spelt on the wire, for the same reason `ProgramWriter.abort` (Java) and
-/// `transport::AbortKind`'s own `#[serde(rename = ...)]` are: exhaustive, so a member added
-/// upstream stops this compiling before it can be left out of the fixture below.
-fn spelt(kind: AbortKind) -> &'static str {
-    match kind {
-        AbortKind::InvariantNotHeld => "INVARIANT_NOT_HELD",
-        AbortKind::EnsuresNotHeld => "ENSURES_NOT_HELD",
-        AbortKind::UnreachableReached => "UNREACHABLE_REACHED",
-        AbortKind::DivisionByZero => "DIVISION_BY_ZERO",
-        AbortKind::RequiredFormHasNoPlace => "REQUIRED_FORM_HAS_NO_PLACE",
-        AbortKind::InvalidBounds => "INVALID_BOUNDS",
-    }
-}
-
-/// Every member, in the order the fixture lists them. Kept beside `spelt` rather than derived
-/// from it — Rust has no reflection over an enum's own members, the same reason `vocabularies.rs`
-/// lists `Op`'s and `Prim`'s members by hand rather than asking the type for them. Not itself
-/// exhaustiveness-checked: a member `AbortKind` gains stops both `spelt` above and `native_status`
-/// from compiling until it is answered for, and whoever is already in this file fixing that is
-/// the one place this list is asked to keep up — the same margin `vocabularies.rs` accepts for
-/// the lists it writes by hand.
-const ALL: [AbortKind; 6] = [
-    AbortKind::InvariantNotHeld,
-    AbortKind::EnsuresNotHeld,
-    AbortKind::UnreachableReached,
-    AbortKind::DivisionByZero,
-    AbortKind::RequiredFormHasNoPlace,
-    AbortKind::InvalidBounds,
-];
-
 /// The fixture both this test and the Java harness read.
 const FIXTURE: &str = include_str!("abort-status-abi2.json");
 
 #[test]
 fn the_fixture_the_java_harness_is_held_to_is_what_native_status_answers_today() {
     let mut written = String::from("{");
-    for (at, kind) in ALL.iter().enumerate() {
+    for (at, kind) in AbortKind::ALL.iter().enumerate() {
         if at > 0 {
             written.push(',');
         }
-        written.push_str(&format!("\"{}\":{}", spelt(*kind), native_status(*kind)));
+        written.push_str(&format!("\"{}\":{}", kind.spelt(), native_status(*kind)));
     }
     written.push('}');
     assert_eq!(FIXTURE.trim(), written);
+}
+
+/// Every reason a computation ends is its own number, and none is `ANSWERED`: a caller tells them
+/// apart by the number alone, and the Java harness, the header and the manifest all read it back
+/// that way. The fixture above would carry two names for one number without complaint.
+#[test]
+fn every_abort_answers_a_number_of_its_own() {
+    let mut seen = vec![souther_native_abi::ANSWERED];
+    for kind in AbortKind::ALL {
+        let number = native_status(kind);
+        assert!(
+            !seen.contains(&number),
+            "{} answers {number}, which is already answered",
+            kind.spelt()
+        );
+        seen.push(number);
+    }
 }
