@@ -106,12 +106,16 @@ impl Writing<'_, '_> {
             BoundaryOutput::Cases { ty, cases, form } => {
                 self.alternatives(cases, form, Tagged::of(answer, ty))
             }
-            BoundaryOutput::ListOf { .. }
-            | BoundaryOutput::SetOf { .. }
-            | BoundaryOutput::MapOf { .. } => Err(not_lowered(format!(
-                "an answer written as {}",
-                output.ty().spelt()
-            ))),
+            // Each element as an answer of the element's shape is written, which is how a value of
+            // the element's type is written anywhere else.
+            BoundaryOutput::ListOf { element } => {
+                self.array(&element.ty(), answer, |writing, value| {
+                    writing.output(element, value)
+                })
+            }
+            BoundaryOutput::SetOf { .. } | BoundaryOutput::MapOf { .. } => Err(not_lowered(
+                format!("an answer written as {}", output.ty().spelt()),
+            )),
         }
     }
 
@@ -168,6 +172,18 @@ impl Writing<'_, '_> {
 
     /// A list, as an array of its elements in the order it holds them.
     fn list(&mut self, element: &CodecShape, list: ir::Value) -> Lowered<ir::Value> {
+        self.array(&element.ty(), list, |writing, value| {
+            writing.value(element, value)
+        })
+    }
+
+    /// A list of `element`s, as an array of what `write` writes each as, in the order it holds them.
+    fn array(
+        &mut self,
+        element: &Ty,
+        list: ir::Value,
+        mut write: impl FnMut(&mut Self, ir::Value) -> Lowered<ir::Value>,
+    ) -> Lowered<ir::Value> {
         let array = self.call(Runtime::ExternalArray, &[]);
         let length = self
             .builder
@@ -195,8 +211,8 @@ impl Writing<'_, '_> {
             .builder
             .ins()
             .load(types::I64, TRUSTED, at, LIST_ELEMENTS as i32);
-        let value = out_of_slot(self.builder, slot, machine_type(&element.ty())?);
-        let form = self.value(element, value)?;
+        let value = out_of_slot(self.builder, slot, machine_type(element)?);
+        let form = write(self, value)?;
         self.call_for_effect(Runtime::ExternalAppend, &[array, form]);
         let next = self.builder.ins().iadd_imm_s(index, 1);
         self.builder.ins().jump(head, &[next.into()]);

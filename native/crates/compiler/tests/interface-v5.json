@@ -1,6 +1,6 @@
 {
   "format": "souther-native-interface",
-  "version": 4,
+  "version": 5,
   "abi": 3,
   "statuses": {
     "ANSWERED": 0,
@@ -356,6 +356,81 @@
               },
               {
                 "room": "value"
+              }
+            ],
+            "answers": "status"
+          }
+        },
+        {
+          "name": "counted",
+          "parameters": {
+            "named": [
+              {
+                "name": "lines",
+                "type": {
+                  "kind": "list",
+                  "of": {
+                    "kind": "declared",
+                    "module": "shop",
+                    "name": "Line"
+                  }
+                }
+              }
+            ]
+          },
+          "answers": {
+            "type": {
+              "kind": "primitive",
+              "name": "Int"
+            },
+            "union": null
+          },
+          "call": {
+            "name": "souther3_m_shop_b_counted",
+            "takes": [
+              {
+                "given": "list"
+              },
+              {
+                "room": "int"
+              }
+            ],
+            "answers": "status"
+          }
+        },
+        {
+          "name": "doubled",
+          "parameters": {
+            "named": [
+              {
+                "name": "line",
+                "type": {
+                  "kind": "declared",
+                  "module": "shop",
+                  "name": "Line"
+                }
+              }
+            ]
+          },
+          "answers": {
+            "type": {
+              "kind": "list",
+              "of": {
+                "kind": "declared",
+                "module": "shop",
+                "name": "Line"
+              }
+            },
+            "union": null
+          },
+          "call": {
+            "name": "souther3_m_shop_b_doubled",
+            "takes": [
+              {
+                "given": "value"
+              },
+              {
+                "room": "list"
               }
             ],
             "answers": "status"
@@ -843,6 +918,290 @@
               }
             ],
             "answers": "string"
+          }
+        },
+        {
+          "kind": "product",
+          "name": "Basket",
+          "fields": [
+            {
+              "name": "lines",
+              "type": {
+                "kind": "list",
+                "of": {
+                  "kind": "declared",
+                  "module": "shop",
+                  "name": "Line"
+                }
+              },
+              "read": {
+                "name": "souther3_m_shop_t_Basket_f_lines",
+                "takes": [
+                  {
+                    "given": "value"
+                  }
+                ],
+                "answers": "list"
+              }
+            },
+            {
+              "name": "notes",
+              "type": {
+                "kind": "list",
+                "of": {
+                  "kind": "option",
+                  "of": {
+                    "kind": "primitive",
+                    "name": "String"
+                  }
+                }
+              },
+              "read": {
+                "name": "souther3_m_shop_t_Basket_f_notes",
+                "takes": [
+                  {
+                    "given": "value"
+                  }
+                ],
+                "answers": "list"
+              }
+            },
+            {
+              "name": "groups",
+              "type": {
+                "kind": "list",
+                "of": {
+                  "kind": "list",
+                  "of": {
+                    "kind": "primitive",
+                    "name": "Int"
+                  }
+                }
+              },
+              "read": {
+                "name": "souther3_m_shop_t_Basket_f_groups",
+                "takes": [
+                  {
+                    "given": "value"
+                  }
+                ],
+                "answers": "list"
+              }
+            }
+          ],
+          "construct": {
+            "name": "souther3_m_shop_t_Basket_construct",
+            "takes": [
+              {
+                "given": "list"
+              },
+              {
+                "given": "list"
+              },
+              {
+                "given": "list"
+              },
+              {
+                "room": "value"
+              }
+            ],
+            "answers": "status"
+          },
+          "decode": {
+            "name": "souther3_m_shop_t_Basket_decode",
+            "takes": [
+              {
+                "given": "bytes"
+              },
+              {
+                "given": "count"
+              },
+              {
+                "room": "decoded"
+              }
+            ],
+            "answers": "status"
+          },
+          "encode": {
+            "name": "souther3_m_shop_t_Basket_encode",
+            "takes": [
+              {
+                "given": "value"
+              }
+            ],
+            "answers": "string"
+          }
+        }
+      ],
+      "lists": [
+        {
+          "element": {
+            "whole": "value"
+          },
+          "construct": {
+            "name": "souther3_m_shop_l_value_construct",
+            "takes": [
+              {
+                "given": "count"
+              },
+              {
+                "slice": "value"
+              }
+            ],
+            "answers": "list"
+          },
+          "length": {
+            "name": "souther3_m_shop_l_value_length",
+            "takes": [
+              {
+                "given": "list"
+              }
+            ],
+            "answers": "count"
+          },
+          "at": {
+            "name": "souther3_m_shop_l_value_at",
+            "takes": [
+              {
+                "given": "list"
+              },
+              {
+                "given": "count"
+              },
+              {
+                "room": "value"
+              }
+            ],
+            "answers": "bool"
+          }
+        },
+        {
+          "element": {
+            "present": "string"
+          },
+          "construct": {
+            "name": "souther3_m_shop_l_present_string_construct",
+            "takes": [
+              {
+                "given": "count"
+              },
+              {
+                "slice": "bool"
+              },
+              {
+                "slice": "string"
+              }
+            ],
+            "answers": "list"
+          },
+          "length": {
+            "name": "souther3_m_shop_l_present_string_length",
+            "takes": [
+              {
+                "given": "list"
+              }
+            ],
+            "answers": "count"
+          },
+          "at": {
+            "name": "souther3_m_shop_l_present_string_at",
+            "takes": [
+              {
+                "given": "list"
+              },
+              {
+                "given": "count"
+              },
+              {
+                "room": "bool"
+              },
+              {
+                "room": "string"
+              }
+            ],
+            "answers": "bool"
+          }
+        },
+        {
+          "element": {
+            "whole": "list"
+          },
+          "construct": {
+            "name": "souther3_m_shop_l_list_construct",
+            "takes": [
+              {
+                "given": "count"
+              },
+              {
+                "slice": "list"
+              }
+            ],
+            "answers": "list"
+          },
+          "length": {
+            "name": "souther3_m_shop_l_list_length",
+            "takes": [
+              {
+                "given": "list"
+              }
+            ],
+            "answers": "count"
+          },
+          "at": {
+            "name": "souther3_m_shop_l_list_at",
+            "takes": [
+              {
+                "given": "list"
+              },
+              {
+                "given": "count"
+              },
+              {
+                "room": "list"
+              }
+            ],
+            "answers": "bool"
+          }
+        },
+        {
+          "element": {
+            "whole": "int"
+          },
+          "construct": {
+            "name": "souther3_m_shop_l_int_construct",
+            "takes": [
+              {
+                "given": "count"
+              },
+              {
+                "slice": "int"
+              }
+            ],
+            "answers": "list"
+          },
+          "length": {
+            "name": "souther3_m_shop_l_int_length",
+            "takes": [
+              {
+                "given": "list"
+              }
+            ],
+            "answers": "count"
+          },
+          "at": {
+            "name": "souther3_m_shop_l_int_at",
+            "takes": [
+              {
+                "given": "list"
+              },
+              {
+                "given": "count"
+              },
+              {
+                "room": "int"
+              }
+            ],
+            "answers": "bool"
           }
         }
       ]

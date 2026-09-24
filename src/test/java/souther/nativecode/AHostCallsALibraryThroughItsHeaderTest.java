@@ -32,7 +32,7 @@ class AHostCallsALibraryThroughItsHeaderTest {
 
     private static final String SHOP = """
             module shop exposing ( Money, Line, Free, Paid, Owed, Settled, Outcome, settle, owing, stillOwing : Int,
-                                   charge )
+                                   charge, Basket, counted, doubled )
 
             data Money = Int
                 invariant notNegative = value >= 0
@@ -67,6 +67,14 @@ class AHostCallsALibraryThroughItsHeaderTest {
 
             behavior twice : (n: Int) -> Int
             let twice (n) = n * 2
+
+            data Basket = { lines: List<Line>, notes: List<Option<String>>, groups: List<List<Int>> }
+
+            behavior counted : (lines: List<Line>) -> Int
+            let counted (lines) = List.length(lines)
+
+            behavior doubled : (line: Line) -> List<Line>
+            let doubled (line) = [line, line]
 
             behavior discountFor : (line: Line) -> Int
 
@@ -155,6 +163,52 @@ class AHostCallsALibraryThroughItsHeaderTest {
                        souther3_m_shop_b_charge_answer_case(owes), freed,
                        souther3_m_shop_b_charge_answer_case(free));
 
+                const souther_value both[2] = {line, line};
+                souther_list lines = souther3_m_shop_l_value_construct(2, both);
+                souther_value second = NULL;
+                uint8_t inside = souther3_m_shop_l_value_at(lines, 1, &second);
+                souther_value past = NULL;
+                uint8_t outside = souther3_m_shop_l_value_at(lines, 2, &past);
+                uint8_t before = souther3_m_shop_l_value_at(lines, -1, &past);
+                int64_t counted = -1;
+                status = souther3_m_shop_b_counted(lines, &counted);
+                souther_list doubled = NULL;
+                souther_status twice = souther3_m_shop_b_doubled(line, &doubled);
+                printf("lines: length %" PRId64 ", at 1 %u quantity %" PRId64 ", at 2 %u, at -1 %u,"
+                       " untouched %d, counted %u %" PRId64 ", doubled %u %" PRId64 "\\n",
+                       souther3_m_shop_l_value_length(lines), inside,
+                       souther3_m_shop_t_Line_f_quantity(second), outside, before, past == NULL,
+                       status, counted, twice, souther3_m_shop_l_value_length(doubled));
+
+                const uint8_t there[2] = {0, 1};
+                const souther_string said[2] = {NULL, note};
+                souther_list notes = souther3_m_shop_l_present_string_construct(2, there, said);
+                const int64_t ones[1] = {1};
+                const souther_list rows[2] = {souther3_m_shop_l_int_construct(1, ones),
+                                              souther3_m_shop_l_int_construct(0, NULL)};
+                souther_list groups = souther3_m_shop_l_list_construct(2, rows);
+                souther_value basket = NULL;
+                status = souther3_m_shop_t_Basket_construct(lines, notes, groups, &basket);
+                uint8_t first_there = 9;
+                souther_string first = NULL;
+                souther3_m_shop_l_present_string_at(souther3_m_shop_t_Basket_f_notes(basket), 0,
+                                                    &first_there, &first);
+                uint8_t second_there = 9;
+                souther_string noted_second = NULL;
+                souther3_m_shop_l_present_string_at(souther3_m_shop_t_Basket_f_notes(basket), 1,
+                                                    &second_there, &noted_second);
+                souther_list group = NULL;
+                souther3_m_shop_l_list_at(souther3_m_shop_t_Basket_f_groups(basket), 0, &group);
+                int64_t one = 0;
+                souther3_m_shop_l_int_at(group, 0, &one);
+                printf("basket: status %u, notes %u %d %u ", status, first_there, first == NULL,
+                       second_there);
+                text(noted_second);
+                printf(", group %" PRId64 " %" PRId64 ", written ", souther3_m_shop_l_int_length(group),
+                       one);
+                text(souther3_m_shop_t_Basket_encode(basket));
+                printf("\\n");
+
                 printf("written: ");
                 text(souther3_m_shop_t_Line_encode(line));
                 printf("\\n");
@@ -241,6 +295,57 @@ class AHostCallsALibraryThroughItsHeaderTest {
             echo "charged: status $status, case ", $ffi->souther3_m_shop_b_charge_answer_case($owes),
                     ", status $freed, case ", $ffi->souther3_m_shop_b_charge_answer_case($free), "\n";
 
+            $both = $ffi->new("souther_value[2]");
+            $both[0] = $line;
+            $both[1] = $line;
+            $lines = $ffi->souther3_m_shop_l_value_construct(2, $both);
+            $second = $ffi->new("souther_value");
+            $inside = $ffi->souther3_m_shop_l_value_at($lines, 1, FFI::addr($second));
+            $past = $ffi->new("souther_value");
+            $outside = $ffi->souther3_m_shop_l_value_at($lines, 2, FFI::addr($past));
+            $before = $ffi->souther3_m_shop_l_value_at($lines, -1, FFI::addr($past));
+            $counted = $ffi->new("int64_t");
+            $status = $ffi->souther3_m_shop_b_counted($lines, FFI::addr($counted));
+            $doubled = $ffi->new("souther_list");
+            $twice = $ffi->souther3_m_shop_b_doubled($line, FFI::addr($doubled));
+            echo "lines: length ", $ffi->souther3_m_shop_l_value_length($lines), ", at 1 $inside quantity ",
+                    $ffi->souther3_m_shop_t_Line_f_quantity($second), ", at 2 $outside, at -1 $before,",
+                    " untouched ", (int) FFI::isNull($past), ", counted $status ", $counted->cdata,
+                    ", doubled $twice ", $ffi->souther3_m_shop_l_value_length($doubled), "\n";
+
+            $there = $ffi->new("uint8_t[2]");
+            $there[0] = 0;
+            $there[1] = 1;
+            $said = $ffi->new("souther_string[2]");
+            $said[0] = null;
+            $said[1] = $note;
+            $notes = $ffi->souther3_m_shop_l_present_string_construct(2, $there, $said);
+            $ones = $ffi->new("int64_t[1]");
+            $ones[0] = 1;
+            $rows = $ffi->new("souther_list[2]");
+            $rows[0] = $ffi->souther3_m_shop_l_int_construct(1, $ones);
+            $rows[1] = $ffi->souther3_m_shop_l_int_construct(0, null);
+            $groups = $ffi->souther3_m_shop_l_list_construct(2, $rows);
+            $basket = $ffi->new("souther_value");
+            $status = $ffi->souther3_m_shop_t_Basket_construct($lines, $notes, $groups, FFI::addr($basket));
+            $firstThere = $ffi->new("uint8_t");
+            $first = $ffi->new("souther_string");
+            $ffi->souther3_m_shop_l_present_string_at($ffi->souther3_m_shop_t_Basket_f_notes($basket), 0,
+                    FFI::addr($firstThere), FFI::addr($first));
+            $secondThere = $ffi->new("uint8_t");
+            $notedSecond = $ffi->new("souther_string");
+            $ffi->souther3_m_shop_l_present_string_at($ffi->souther3_m_shop_t_Basket_f_notes($basket), 1,
+                    FFI::addr($secondThere), FFI::addr($notedSecond));
+            $group = $ffi->new("souther_list");
+            $ffi->souther3_m_shop_l_list_at($ffi->souther3_m_shop_t_Basket_f_groups($basket), 0,
+                    FFI::addr($group));
+            $one = $ffi->new("int64_t");
+            $ffi->souther3_m_shop_l_int_at($group, 0, FFI::addr($one));
+            echo "basket: status $status, notes ", $firstThere->cdata, " ", (int) FFI::isNull($first), " ",
+                    $secondThere->cdata, " ", text($ffi, $notedSecond), ", group ",
+                    $ffi->souther3_m_shop_l_int_length($group), " ", $one->cdata, ", written ",
+                    text($ffi, $ffi->souther3_m_shop_t_Basket_encode($basket)), "\n";
+
             echo "written: ", text($ffi, $ffi->souther3_m_shop_t_Line_encode($line)), "\n";
             decoded($ffi, "read", '{"price": 4, "quantity": 5}');
             decoded($ffi, "read wrong", '{"price": -1, "quantity": 5}');
@@ -256,15 +361,17 @@ class AHostCallsALibraryThroughItsHeaderTest {
             line: status 0, note 1 gift wrap
             settled: status 0, case 3, amount 4, owing 0 4
             charged: status 0, case 0, status 0, case 1
+            lines: length 2, at 1 1 quantity 2, at 2 0, at -1 0, untouched 1, counted 0 2, doubled 0 2
+            basket: status 0, notes 0 1 1 gift wrap, group 1 1, written {"lines":[{"price":3,"quantity":2,"note":"gift wrap"},{"price":3,"quantity":2,"note":"gift wrap"}],"notes":[null,"gift wrap"],"groups":[[1],[]]}
             written: {"price":3,"quantity":2,"note":"gift wrap"}
             read: status 0, quantity 5
             read wrong: status 0, [/price invariant_violation]
             not json: status 0, malformed at 8
             """;
 
-    /** What version 4 of the manifest is, for the program above. */
-    private static final Path INTERFACE_V4 =
-            Path.of("native", "crates", "compiler", "tests", "interface-v4.json");
+    /** What version 5 of the manifest is, for the program above. */
+    private static final Path INTERFACE_V5 =
+            Path.of("native", "crates", "compiler", "tests", "interface-v5.json");
 
     private static final JsonMapper JSON = JsonMapper.builder().build();
 
@@ -298,21 +405,21 @@ class AHostCallsALibraryThroughItsHeaderTest {
     }
 
     /**
-     * The manifest a binding is written against, as version 4 says it for this program. A change
+     * The manifest a binding is written against, as version 5 says it for this program. A change
      * to what the manifest says is a change here, and whether it moves the version is decided
      * looking at it.
      */
     @Test
-    void theManifestIsWhatVersionFourSays(@TempDir Path into) throws Exception {
+    void theManifestIsWhatVersionFiveSays(@TempDir Path into) throws Exception {
         NativeCompiler.Library library =
                 NativeCompiler.library(CheckedProgram.of(List.of(SHOP)), into);
 
         String written = Files.readString(library.manifest(), StandardCharsets.UTF_8);
-        String fixed = Files.exists(INTERFACE_V4)
-                ? Files.readString(INTERFACE_V4, StandardCharsets.UTF_8) : "";
+        String fixed = Files.exists(INTERFACE_V5)
+                ? Files.readString(INTERFACE_V5, StandardCharsets.UTF_8) : "";
         if (!written.equals(fixed)) {
             // Kept where it can be compared with the fixture, and copied over it once it is read.
-            Files.writeString(Path.of("target", "interface-v4.written.json"), written,
+            Files.writeString(Path.of("target", "interface-v5.written.json"), written,
                     StandardCharsets.UTF_8);
         }
         assertThat(written).isEqualTo(fixed);

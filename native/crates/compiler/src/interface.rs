@@ -96,7 +96,7 @@ fn signature_of(
     for taken in takes {
         signature.params.push(AbiParam::new(match taken {
             HostParameter::Given(word) => machine(*word),
-            HostParameter::Room(_) => POINTER,
+            HostParameter::Room(_) | HostParameter::Slice(_) => POINTER,
         }));
     }
     if let Some(word) = answers {
@@ -115,7 +115,8 @@ pub(crate) fn machine(word: HostWord) -> types::Type {
         | HostWord::Value
         | HostWord::String
         | HostWord::Decoded
-        | HostWord::Issue => POINTER,
+        | HostWord::Issue
+        | HostWord::List => POINTER,
     }
 }
 
@@ -135,6 +136,7 @@ fn c_word(word: Word) -> &'static str {
         Word::String => "souther_string",
         Word::Decoded => "souther_decoded",
         Word::Issue => "souther_issue",
+        Word::List => "souther_list",
     }
 }
 
@@ -144,6 +146,15 @@ fn pointer_to(word: &str) -> String {
         format!("{word}*")
     } else {
         format!("{word} *")
+    }
+}
+
+/// A pointer to as many of what C calls a word as are read through it, none of them written.
+fn slice_of(word: &str) -> String {
+    if word.ends_with('*') {
+        format!("{word} const *")
+    } else {
+        format!("const {word} *")
     }
 }
 
@@ -165,6 +176,7 @@ fn parameters(takes: &[Parameter]) -> String {
         .map(|taken| match taken {
             Parameter::Given(word) => c_word(*word).to_string(),
             Parameter::Room(word) => pointer_to(c_word(*word)),
+            Parameter::Slice(word) => slice_of(c_word(*word)),
         })
         .collect();
     if taken.is_empty() {
@@ -436,6 +448,24 @@ impl Surface {
         self.module(module).values.push(value);
     }
 
+    /// What a host builds and reads a list of `module`'s through, where its elements cross as
+    /// `element`.
+    pub(crate) fn list(
+        &mut self,
+        module: &str,
+        element: manifest::Element,
+        construct: &HostFunction,
+        length: &HostFunction,
+        at: &HostFunction,
+    ) {
+        self.module(module).lists.push(manifest::ListCrossing {
+            element,
+            construct: construct.described(),
+            length: length.described(),
+            at: at.described(),
+        });
+    }
+
     fn module(&mut self, name: &str) -> &mut manifest::Module {
         self.modules
             .entry(name.to_string())
@@ -445,6 +475,7 @@ impl Surface {
                 injections: Vec::new(),
                 values: Vec::new(),
                 declarations: Vec::new(),
+                lists: Vec::new(),
             })
     }
 
@@ -551,7 +582,8 @@ fn functions(manifest: &Manifest) -> impl Iterator<Item = &manifest::Function> {
         let behaviors = module.behaviors.iter().flat_map(behavior_functions);
         let values = module.values.iter().filter_map(|it| it.read.as_ref());
         let declarations = module.declarations.iter().flat_map(declaration_functions);
-        behaviors.chain(values).chain(declarations)
+        let lists = module.lists.iter().flat_map(list_functions);
+        behaviors.chain(values).chain(declarations).chain(lists)
     });
     manifest.runtime.iter().chain(modules)
 }
@@ -565,6 +597,11 @@ fn behavior_functions(behavior: &manifest::Behavior) -> impl Iterator<Item = &ma
         .as_ref()
         .and_then(|union| union.case.as_ref());
     behavior.call.iter().chain(case)
+}
+
+/// Every function a list is reached through, in the order the header declares them.
+fn list_functions(list: &manifest::ListCrossing) -> [&manifest::Function; 3] {
+    [&list.construct, &list.length, &list.at]
 }
 
 /// Every function a declaration is reached through, in the order the header declares them.
@@ -643,6 +680,7 @@ pub(crate) fn declarations(manifest: &Manifest) -> String {
          typedef const struct souther_string_ *souther_string;\n\
          typedef const struct souther_decoded_ *souther_decoded;\n\
          typedef const struct souther_issue_ *souther_issue;\n\
+         typedef const struct souther_list_ *souther_list;\n\
          \n",
         manifest.abi
     );
@@ -701,6 +739,17 @@ pub(crate) fn declarations(manifest: &Manifest) -> String {
             };
             written.push_str(&format!("/* {kind} {name}.{declared_name} */\n"));
             for function in functions {
+                written.push_str(&declared(function));
+                written.push('\n');
+            }
+        }
+        for list in &module.lists {
+            let element = match list.element {
+                manifest::Element::Whole(word) => c_word(word).to_string(),
+                manifest::Element::Present(word) => format!("{} and its presence", c_word(word)),
+            };
+            written.push_str(&format!("/* a list of {element} */\n"));
+            for function in list_functions(list) {
                 written.push_str(&declared(function));
                 written.push('\n');
             }

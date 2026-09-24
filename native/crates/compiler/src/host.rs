@@ -30,17 +30,24 @@
 //! a published behavior's the other way round, and made of the same words: a behavior's boundary
 //! has no optional, so either way it is a word for each parameter and room for one answer.
 //!
+//! A list is handed across as one word too, an address a host never reads behind, and a host
+//! builds one and reads one through functions the object defines ([`define_lists`]). Those put an
+//! element in its slot and take one out as a field of the element's type is handed across, so a
+//! list crosses wherever its element does and in no other way: a list of optionals, a list of
+//! lists and an optional list are the same few functions over the same words.
+//!
 //! Every function is emitted from the [`HostFunction`] a host is told about, and put on the
 //! [`Surface`] where it is emitted, so what the object defines for a host and what the header and
 //! the manifest say it defines are one decision.
 
 use super::{
-    Declared, Emitting, Lowered, NO_ARM, POINTER, Runs, TRUSTED, Tagged, accepted, into_slot,
-    machine_type, not_lowered, out_of_slot, out_slot,
+    COUNT_NO_LIST_HOLDS, Declared, Emitting, Lowered, NO_ARM, POINTER, Runs, TRUSTED, Tagged,
+    accepted, into_slot, machine_type, not_lowered, out_of_slot, out_slot,
 };
 use crate::codec::write::Writing;
 use crate::codec::{Codecs, Runtime};
 use crate::interface::{DeclarationSurface, HostFunction, HostImplementation, Surface, machine};
+use crate::manifest;
 use crate::transport::{
     BoundaryInput, BoundaryOutput, Case, Declaration, DeclaredBy, Prim, Program, Ty,
 };
@@ -50,21 +57,27 @@ use cranelift::frontend::FunctionBuilder;
 use cranelift::module::{DataDescription, FuncId, Linkage, Module};
 use cranelift::object::ObjectModule;
 use souther_native_abi::{
-    ANSWERED, HELD, HostParameter, HostWord, IMPLEMENTATION_ANSWERS, INJECTION_PROTOCOL_VIOLATION,
-    INJECTION_UNBOUND, NOTHING, TOKEN, field_at, host_behavior_answer_case_symbol,
-    host_behavior_symbol, host_case_symbol, host_constructor_symbol, host_decode_symbol,
-    host_encode_symbol, host_field_symbol, host_implementation_type, host_register_symbol,
-    host_value_symbol, room_for_held,
+    ANSWERED, HELD, HostListOperation, HostParameter, HostWord, IMPLEMENTATION_ANSWERS,
+    INJECTION_PROTOCOL_VIOLATION, INJECTION_UNBOUND, LIST_ELEMENTS, LIST_LENGTH, NOTHING, SLOT,
+    TOKEN, field_at, host_behavior_answer_case_symbol, host_behavior_symbol, host_case_symbol,
+    host_constructor_symbol, host_decode_symbol, host_encode_symbol, host_field_symbol,
+    host_implementation_type, host_list_symbol, host_register_symbol, host_value_symbol,
+    room_for_held, room_for_list,
 };
+use std::collections::BTreeMap;
 
 /// How a value of a type is handed to a host and taken from one.
 ///
-/// A whole value in one machine word, or a presence beside one, and nothing else yet: a host is
-/// handed what it can hold without asking where anything is kept. A type this does not answer for
-/// is not handed across, and what is refused for it is only the operation that would hand it: a
+/// A whole value in one machine word, or a presence beside one, and nothing else: a host is handed
+/// what it can hold without asking where anything is kept. A type this does not answer for is not
+/// handed across, and what is refused for it is only the operation that would hand it: a
 /// constructor needs every field handed over, a reader only its own field, so a field with no way
 /// across keeps its type from being built by a host and keeps none of its siblings from being read.
-#[derive(Clone, Copy)]
+///
+/// A list is one word here, whatever its elements are. How an element crosses is a `Host` of its
+/// own, which decides which functions a host builds and reads the list through ([`Lists`]), and
+/// not how the list itself is handed.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Host {
     /// The value itself: a number, a truth, or the address of text or of a value of a declared
     /// type, which a host holds and never reads behind.
@@ -97,12 +110,110 @@ impl Host {
 
     /// The room a host hands over for a value of this to be written through.
     fn room(self) -> Vec<HostParameter> {
+        self.words().into_iter().map(HostParameter::Room).collect()
+    }
+
+    /// The words a value of this is handed over as, in order.
+    fn words(self) -> Vec<HostWord> {
         match self {
-            Host::Whole(word) => vec![HostParameter::Room(word)],
-            Host::Present(word) => vec![
-                HostParameter::Room(HostWord::Bool),
-                HostParameter::Room(word),
-            ],
+            Host::Whole(word) => vec![word],
+            Host::Present(word) => vec![HostWord::Bool, word],
+        }
+    }
+
+    /// A value of this as the generated code holds one, out of the words a host handed over for it,
+    /// taken from `given` in order: the word itself, or room holding the value where the presence
+    /// beside it is not nought, and nothing where it is.
+    fn taken(
+        self,
+        builder: &mut FunctionBuilder,
+        module: &mut ObjectModule,
+        allocate: FuncId,
+        given: &mut impl Iterator<Item = ir::Value>,
+    ) -> ir::Value {
+        match self {
+            Host::Whole(_) => given.next().expect("a word for every value handed over"),
+            Host::Present(_) => {
+                let present = given.next().expect("a presence for every optional");
+                let value = given.next().expect("a value beside every presence");
+                held(builder, module, allocate, present, value)
+            }
+        }
+    }
+
+    /// A value of this, out of the slot the generated code holds it in, as a host is handed one:
+    /// the value itself, or whether there is one, with the value written through `room` only where
+    /// there is. `room` is for an optional, and none for anything else.
+    fn handed(
+        self,
+        builder: &mut FunctionBuilder,
+        slot: ir::Value,
+        room: Option<ir::Value>,
+    ) -> ir::Value {
+        match self {
+            Host::Whole(word) => out_of_slot(builder, slot, machine(word)),
+            Host::Present(word) => {
+                let room = room.expect("room for the value of an optional");
+                let there = builder.create_block();
+                let absent = builder.create_block();
+                let joined = builder.create_block();
+                builder.append_block_param(joined, types::I8);
+                let present = builder.ins().icmp_imm_s(IntCC::NotEqual, slot, NOTHING);
+                builder.ins().brif(present, there, &[], absent, &[]);
+
+                builder.switch_to_block(there);
+                let held = builder.ins().load(types::I64, TRUSTED, slot, HELD as i32);
+                let value = out_of_slot(builder, held, machine(word));
+                builder.ins().store(TRUSTED, value, room, 0);
+                let yes = builder.ins().iconst(types::I8, 1);
+                builder.ins().jump(joined, &[yes.into()]);
+
+                builder.switch_to_block(absent);
+                let no = builder.ins().iconst(types::I8, 0);
+                builder.ins().jump(joined, &[no.into()]);
+
+                builder.switch_to_block(joined);
+                builder.block_params(joined)[0]
+            }
+        }
+    }
+
+    /// How a manifest says an element crosses as this.
+    fn element(self) -> manifest::Element {
+        match self {
+            Host::Whole(word) => manifest::Element::Whole(word.into()),
+            Host::Present(word) => manifest::Element::Present(word.into()),
+        }
+    }
+}
+
+/// Each way an element of a list crosses where a list crosses to a host, by the module whose
+/// functions the list crosses in, in the order they were first needed.
+///
+/// Worked out from the positions that cross and nothing else, so a list no host is handed or hands
+/// over has no functions defined for it. What an element crosses as is all a function here needs:
+/// the functions for a list of one declared type are the ones for a list of any other.
+#[derive(Default)]
+pub(crate) struct Lists {
+    needed: BTreeMap<String, Vec<Host>>,
+}
+
+impl Lists {
+    /// Every list `ty` is or holds, where a value of `ty` crosses in a function of `module`'s: a
+    /// list of lists needs the functions for the outer one and for the inner one, and an optional
+    /// list those for the list.
+    fn need(&mut self, module: &str, ty: &Ty) {
+        match ty {
+            Ty::List { list } => {
+                let element = Host::of(list).expect("a list crosses only where its element does");
+                let needed = self.needed.entry(module.to_string()).or_default();
+                if !needed.contains(&element) {
+                    needed.push(element);
+                }
+                self.need(module, list);
+            }
+            Ty::Option { option } => self.need(module, option),
+            _ => {}
         }
     }
 }
@@ -129,6 +240,10 @@ fn whole(ty: &Ty) -> Option<HostWord> {
             | Prim::Raw => None,
         },
         Ty::Declared { .. } => Some(HostWord::Value),
+        // The address of the list, where its element crosses: a host builds and reads one through
+        // the functions for what the element crosses as, so a list whose element does not cross
+        // is one a host could hold and do nothing with.
+        Ty::List { list } => Host::of(list).map(|_| HostWord::List),
         // What holds a union holds one of its members, each of which says which it is. A host is
         // handed one where every member is a declared type, and asks which through a sum's own
         // reader, or, for a union a behavior answers, through the behavior's. What carries a
@@ -140,7 +255,7 @@ fn whole(ty: &Ty) -> Option<HostWord> {
         // An optional inside an optional would need a presence for each, and nothing asks for one.
         Ty::Option { .. } => None,
         // No layout yet, and when there is one a host reaches it through operations of its own.
-        Ty::List { .. } | Ty::Set { .. } | Ty::Map { .. } => None,
+        Ty::Set { .. } | Ty::Map { .. } => None,
         // What a tuple or a function value holds is a contract between this compiler's own
         // functions, the way `means_the_same_elsewhere` says of a function value, and nothing
         // offers it to a host.
@@ -170,11 +285,13 @@ fn expose(
 }
 
 /// Defines what a host reaches every type a module of this build declares and publishes through,
-/// and puts each type and what reaches it on `surface`.
+/// and puts each type and what reaches it on `surface`, and every list a field crosses as on
+/// `lists`.
 pub(crate) fn define(
     emitting: &mut Emitting,
     codecs: &mut Codecs,
     surface: &mut Surface,
+    lists: &mut Lists,
     program: &Program,
     runs: &Runs,
 ) -> Lowered<()> {
@@ -246,6 +363,9 @@ pub(crate) fn define(
         let fields = declaration.fields();
         let handed: Option<Vec<Host>> = fields.iter().map(|it| Host::of(&it.codec.ty())).collect();
         if let Some(handed) = handed {
+            for field in fields {
+                lists.need(module_name, &field.codec.ty());
+            }
             let constructor = emitting.constructors.of(&key)?;
             let mut takes: Vec<HostParameter> =
                 handed.iter().flat_map(|host| host.given()).collect();
@@ -268,6 +388,7 @@ pub(crate) fn define(
             let Some(host) = Host::of(&field.codec.ty()) else {
                 continue;
             };
+            lists.need(module_name, &field.codec.ty());
             let reading = HostFunction {
                 symbol: host_field_symbol(module_name, name, &field.name),
                 takes: match host {
@@ -362,11 +483,12 @@ fn answered_word(output: &BoundaryOutput) -> Option<HostWord> {
 pub(crate) fn define_behaviors(
     emitting: &mut Emitting,
     surface: &mut Surface,
+    lists: &mut Lists,
     behaviors: &[Entry],
 ) -> Lowered<()> {
     for behavior in behaviors {
         let symbol = host_behavior_symbol(behavior.module, behavior.name);
-        let call = forward(emitting, symbol, behavior)?;
+        let call = forward(emitting, lists, symbol, behavior)?;
         // Which case an answer is, asked of what a host was handed by the call, so only where
         // there is a call to be handed one by.
         let union = match behavior.cases {
@@ -404,11 +526,12 @@ pub(crate) fn define_behaviors(
 pub(crate) fn define_values(
     emitting: &mut Emitting,
     surface: &mut Surface,
+    lists: &mut Lists,
     values: &[Entry],
 ) -> Lowered<()> {
     for value in values {
         let symbol = host_value_symbol(value.module, value.name);
-        let read = forward(emitting, symbol, value)?;
+        let read = forward(emitting, lists, symbol, value)?;
         surface.value(
             value.module,
             value.name,
@@ -429,6 +552,7 @@ pub(crate) fn define_values(
 /// and that it has no way in.
 fn forward(
     emitting: &mut Emitting,
+    lists: &mut Lists,
     symbol: String,
     entry: &Entry,
 ) -> Lowered<Option<HostFunction>> {
@@ -444,6 +568,10 @@ fn forward(
     let Some(answered) = Host::of(&entry.answers) else {
         return Ok(None);
     };
+    for input in entry.inputs {
+        lists.need(entry.module, &input.ty());
+    }
+    lists.need(entry.module, &entry.answers);
     let mut takes: Vec<HostParameter> = handed.iter().copied().map(HostParameter::Given).collect();
     takes.extend(answered.room());
     let function = HostFunction {
@@ -491,25 +619,10 @@ fn forward(
                 builder.ins().return_(&[status]);
 
                 builder.switch_to_block(answered);
-                let holding = builder.ins().load(POINTER, TRUSTED, out, 0);
-                let there = builder.create_block();
-                let absent = builder.create_block();
-                let is_there = builder.ins().icmp_imm_s(IntCC::NotEqual, holding, NOTHING);
-                builder.ins().brif(is_there, there, &[], absent, &[]);
-
-                builder.switch_to_block(there);
-                let slot = builder
-                    .ins()
-                    .load(types::I64, TRUSTED, holding, HELD as i32);
-                let value = out_of_slot(builder, slot, machine(word));
-                builder.ins().store(TRUSTED, value, room, 0);
-                let yes = builder.ins().iconst(types::I8, 1);
-                builder.ins().store(TRUSTED, yes, present, 0);
-                builder.ins().return_(&[status]);
-
-                builder.switch_to_block(absent);
-                let no = builder.ins().iconst(types::I8, 0);
-                builder.ins().store(TRUSTED, no, present, 0);
+                // What the entry answered is an optional as a slot holds one.
+                let holding = builder.ins().load(types::I64, TRUSTED, out, 0);
+                let is = Host::Present(word).handed(builder, holding, Some(room));
+                builder.ins().store(TRUSTED, is, present, 0);
                 builder.ins().return_(&[status]);
             }
         }
@@ -549,6 +662,7 @@ pub(crate) struct Registrations {
 pub(crate) fn define_injections(
     emitting: &mut Emitting,
     surface: &mut Surface,
+    lists: &mut Lists,
     injected: &[Injected],
     registrations: &Registrations,
 ) -> Lowered<()> {
@@ -571,6 +685,10 @@ pub(crate) fn define_injections(
                 "the injected behavior {spelt}, which answers what a host cannot be handed"
             )));
         };
+        for taken in &takes {
+            lists.need(behavior.module, taken);
+        }
+        lists.need(behavior.module, &answers);
         let mut given: Vec<HostParameter> =
             handed.iter().copied().map(HostParameter::Given).collect();
         given.push(HostParameter::Room(answered));
@@ -694,6 +812,167 @@ pub(crate) fn define_injections(
     Ok(())
 }
 
+/// Defines what a host builds and reads each list in `lists` through, and puts them on `surface`.
+///
+/// Each takes and answers the words a field of the element's type is handed across in, so an
+/// element is put in its slot and taken out of it by what a constructor and a reader of such a
+/// field do ([`Host::taken`], [`Host::handed`]). Nothing here asks what the element's type is.
+pub(crate) fn define_lists(
+    emitting: &mut Emitting,
+    surface: &mut Surface,
+    lists: &Lists,
+) -> Lowered<()> {
+    let allocate = emitting.allocate;
+    for (module_name, elements) in &lists.needed {
+        for &element in elements {
+            let (present, word) = match element {
+                Host::Whole(word) => (false, word),
+                Host::Present(word) => (true, word),
+            };
+            let symbol = |operation| host_list_symbol(module_name, present, word, operation);
+            let mut takes = vec![HostParameter::Given(HostWord::Count)];
+            takes.extend(element.words().into_iter().map(HostParameter::Slice));
+            let constructing = HostFunction {
+                symbol: symbol(HostListOperation::Construct),
+                takes,
+                answers: Some(HostWord::List),
+            };
+            let construct = expose(emitting, constructing, &mut |builder, module, given| {
+                construct(builder, module, allocate, element, given);
+                Ok(())
+            })?;
+            let measuring = HostFunction {
+                symbol: symbol(HostListOperation::Length),
+                takes: vec![HostParameter::Given(HostWord::List)],
+                answers: Some(HostWord::Count),
+            };
+            let length = expose(emitting, measuring, &mut |builder, _, given| {
+                let length = builder
+                    .ins()
+                    .load(types::I64, TRUSTED, given[0], LIST_LENGTH as i32);
+                builder.ins().return_(&[length]);
+                Ok(())
+            })?;
+            let mut takes = vec![
+                HostParameter::Given(HostWord::List),
+                HostParameter::Given(HostWord::Count),
+            ];
+            takes.extend(element.room());
+            let indexing = HostFunction {
+                symbol: symbol(HostListOperation::At),
+                takes,
+                answers: Some(HostWord::Bool),
+            };
+            let at = expose(emitting, indexing, &mut |builder, _, given| {
+                element_at(builder, element, given);
+                Ok(())
+            })?;
+            surface.list(module_name, element.element(), &construct, &length, &at);
+        }
+    }
+    Ok(())
+}
+
+/// The most elements a list can be built with: the most whose room a count of bytes can say.
+const MOST_ELEMENTS: i64 = (i64::MAX - room_for_list(0)) / SLOT;
+
+/// A host's constructor of a list: room for the count it was handed, and each element, made of
+/// what each column holds at its index, put in its slot.
+///
+/// A column holds one word for each element, as many bytes apart as the word is wide. A count below
+/// nought, or past what room can be taken for, is a host handing over something no list is; it
+/// traps rather than being read as some count a list could have, which would write past the room.
+fn construct(
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    allocate: FuncId,
+    element: Host,
+    given: &[ir::Value],
+) {
+    let (count, columns) = given.split_first().expect("a count before the columns");
+    let count = *count;
+    let beyond = builder
+        .ins()
+        .icmp_imm_s(IntCC::UnsignedGreaterThan, count, MOST_ELEMENTS);
+    builder.ins().trapnz(
+        beyond,
+        TrapCode::user(COUNT_NO_LIST_HOLDS).expect("a trap code of its own"),
+    );
+    let along = builder.ins().imul_imm_s(count, SLOT);
+    let size = builder.ins().iadd_imm_s(along, room_for_list(0));
+    let taking = module.declare_func_in_func(allocate, builder.func);
+    let taken = builder.ins().call(taking, &[size]);
+    let list = builder.inst_results(taken)[0];
+    builder
+        .ins()
+        .store(TRUSTED, count, list, LIST_LENGTH as i32);
+
+    let head = builder.create_block();
+    builder.append_block_param(head, types::I64);
+    let step = builder.create_block();
+    let built = builder.create_block();
+    let start = builder.ins().iconst(types::I64, 0);
+    builder.ins().jump(head, &[start.into()]);
+
+    builder.switch_to_block(head);
+    let index = builder.block_params(head)[0];
+    let inside = builder.ins().icmp(IntCC::SignedLessThan, index, count);
+    builder.ins().brif(inside, step, &[], built, &[]);
+
+    builder.switch_to_block(step);
+    let mut words = Vec::with_capacity(columns.len());
+    for (column, word) in columns.iter().zip(element.words()) {
+        let wide = machine(word);
+        let along = builder.ins().imul_imm_s(index, i64::from(wide.bytes()));
+        let at = builder.ins().iadd(*column, along);
+        words.push(builder.ins().load(wide, TRUSTED, at, 0));
+    }
+    let value = element.taken(builder, module, allocate, &mut words.into_iter());
+    let slot = into_slot(builder, value);
+    let along = builder.ins().imul_imm_s(index, SLOT);
+    let at = builder.ins().iadd(list, along);
+    builder.ins().store(TRUSTED, slot, at, LIST_ELEMENTS as i32);
+    let next = builder.ins().iadd_imm_s(index, 1);
+    builder.ins().jump(head, &[next.into()]);
+
+    builder.switch_to_block(built);
+    builder.ins().return_(&[list]);
+}
+
+/// A host's reader of a list's element: one, with the element written through the host's room,
+/// where the index is inside the list, and nought, with nothing written, where it is not.
+///
+/// An index is inside where it is below the length read without a sign, the way `List.get` reads
+/// one, so a negative one is outside as well.
+fn element_at(builder: &mut FunctionBuilder, element: Host, given: &[ir::Value]) {
+    let [list, index, rooms @ ..] = given else {
+        unreachable!("an element is read from a list, at an index, into room")
+    };
+    let length = builder
+        .ins()
+        .load(types::I64, TRUSTED, *list, LIST_LENGTH as i32);
+    let inside = builder.ins().icmp(IntCC::UnsignedLessThan, *index, length);
+    let there = builder.create_block();
+    let outside = builder.create_block();
+    builder.ins().brif(inside, there, &[], outside, &[]);
+
+    builder.switch_to_block(outside);
+    let no = builder.ins().iconst(types::I8, 0);
+    builder.ins().return_(&[no]);
+
+    builder.switch_to_block(there);
+    let along = builder.ins().imul_imm_s(*index, SLOT);
+    let at = builder.ins().iadd(*list, along);
+    let slot = builder
+        .ins()
+        .load(types::I64, TRUSTED, at, LIST_ELEMENTS as i32);
+    // The first room is for the element itself, or, for an optional, for whether there is one.
+    let first = element.handed(builder, slot, rooms.get(1).copied());
+    builder.ins().store(TRUSTED, first, rooms[0], 0);
+    let yes = builder.ins().iconst(types::I8, 1);
+    builder.ins().return_(&[yes]);
+}
+
 /// A host's decoder: the bytes read as a document, the document read as a value of `key` by the
 /// type's reader, and the reading handed to the host, which asks it what it came to.
 ///
@@ -779,17 +1058,7 @@ fn build(
     let mut given = params.iter().copied();
     let mut fields = Vec::with_capacity(handed.len());
     for host in handed {
-        let field = match host {
-            Host::Whole(_) => given
-                .next()
-                .expect("a parameter for every field handed over"),
-            Host::Present(_) => {
-                let present = given.next().expect("a presence for every optional");
-                let value = given.next().expect("a value beside every presence");
-                held(builder, module, allocate, present, value)
-            }
-        };
-        fields.push(field);
+        fields.push(host.taken(builder, module, allocate, &mut given));
     }
     let out = given.next().expect("room for the answer after the fields");
     fields.push(out);
@@ -838,30 +1107,8 @@ fn read(builder: &mut FunctionBuilder, at: usize, host: Host, given: &[ir::Value
     let slot = builder
         .ins()
         .load(types::I64, TRUSTED, owner, field_at(at) as i32);
-    match host {
-        Host::Whole(word) => {
-            let value = out_of_slot(builder, slot, machine(word));
-            builder.ins().return_(&[value]);
-        }
-        Host::Present(word) => {
-            let room = given[1];
-            let there = builder.create_block();
-            let absent = builder.create_block();
-            let present = builder.ins().icmp_imm_s(IntCC::NotEqual, slot, NOTHING);
-            builder.ins().brif(present, there, &[], absent, &[]);
-
-            builder.switch_to_block(there);
-            let held = builder.ins().load(types::I64, TRUSTED, slot, HELD as i32);
-            let value = out_of_slot(builder, held, machine(word));
-            builder.ins().store(TRUSTED, value, room, 0);
-            let yes = builder.ins().iconst(types::I8, 1);
-            builder.ins().return_(&[yes]);
-
-            builder.switch_to_block(absent);
-            let no = builder.ins().iconst(types::I8, 0);
-            builder.ins().return_(&[no]);
-        }
-    }
+    let answer = host.handed(builder, slot, given.get(1).copied());
+    builder.ins().return_(&[answer]);
 }
 
 /// A case reader: which of the cases the checker settled for a sum, or the boundary descended to
