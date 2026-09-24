@@ -42,12 +42,18 @@ jobs:
 
       # PHP with FFI, because what a build hands a host is held to a reader of C declarations
       # that has no preprocessor, and PHP's `FFI::cdef` is the one the tests run. The version is
-      # the one a binding for PHP is written for (#32).
+      # the one a binding for PHP is written for (#32). intl, because the runtime puts text in NFC
+      # before the library takes it.
       - uses: shivammathur/setup-php@v2
         with:
           php-version: '8.4'
-          extensions: ffi
+          extensions: ffi, intl
           ini-values: ffi.enable=1
+          tools: composer
+
+      # What the PHP runtime depends on, raoh-php among it, for the test that runs a generated
+      # binding.
+      - run: composer install --no-interaction --no-progress -d bindings/php/runtime
 
       # The toolchain comes from rust-toolchain.toml, which rustup reads when cargo is first run
       # in the checkout. Nothing here names a version, so there is one place it is written.

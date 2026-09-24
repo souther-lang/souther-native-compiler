@@ -1,0 +1,205 @@
+package souther.nativecode.php;
+
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import souther.compiler.program.CheckedProgram;
+import souther.nativecode.NativeCompiler;
+
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+/**
+ * What the generator writes from a manifest, and what it refuses to, asked of the PHP it writes
+ * rather than of a run.
+ */
+class APhpBindingIsWrittenFromTheManifestTest {
+
+    private static PhpBindings.Generated generated(Path into, String source) throws Exception {
+        NativeCompiler.Library library =
+                NativeCompiler.library(CheckedProgram.of(List.of(source)), into.resolve("native"));
+        return PhpBindings.generate(library, into.resolve("php"), "Acme\\Billing");
+    }
+
+    private static String behaviors(PhpBindings.Generated generated) throws Exception {
+        return Files.readString(generated.root().resolve("M").resolve("Behaviors.php"));
+    }
+
+    @Test
+    void everyFileItWritesIsPhp(@TempDir Path into) throws Exception {
+        PhpBindings.Generated generated = generated(into, """
+                module m exposing ( Found, Missing, Lookup, Box, find, open, amount )
+
+                data Found = { id: Int, label: String? }
+                data Missing
+                data Lookup = Found | Missing
+                data Box = Bool
+
+                behavior find : (id: Int) -> Lookup
+                let find (id) = if id > 0 then Found { id = id, label = None } else Missing
+
+                behavior open : (box: Box, lookup: Lookup) -> Bool
+                let open (box, lookup) = box.value
+
+                behavior priceOf : (id: Int) -> Int
+
+                let amount = Box(true)
+                """);
+
+        for (Path file : generated.files()) {
+            if (file.toString().endsWith(".php")) {
+                assertThat(said(List.of("php", "-l", file.toString())))
+                        .as("%s", file).contains("No syntax errors");
+            }
+        }
+        assertThat(generated.files()).extracting(it -> generated.root().relativize(it).toString())
+                .contains("Binding.php", "autoload.php", "souther.ffi.h", "M/Found.php",
+                        "M/Missing.php", "M/Lookup.php", "M/LookupCodec.php", "M/Box.php",
+                        "M/Behaviors.php", "M/Values.php", "M/Injections.php")
+                // Every case of Lookup has a class, and the library says which a value is.
+                .doesNotContain("M/LookupValue.php");
+    }
+
+    /** Where the manifest gives a behavior no way in, nothing is written that a caller could call. */
+    @Test
+    void aBehaviorTheManifestGivesNoCallIsNotWritten(@TempDir Path into) throws Exception {
+        NativeCompiler.Library library = NativeCompiler.library(CheckedProgram.of(List.of("""
+                module m exposing ( half, twice )
+
+                behavior half : (n: Int) -> Int
+                let half (n) = n
+
+                behavior twice : (n: Int) -> Int
+                let twice (n) = n * 2
+                """)), into.resolve("native"));
+        Path manifest = into.resolve("unreachable.json");
+        String written = Files.readString(library.manifest());
+        int half = written.indexOf("\"name\": \"half\"");
+        int call = written.indexOf("\"call\": {", half);
+        int closed = written.indexOf("\n          }", call);
+        Files.writeString(manifest, written.substring(0, call) + "\"call\": null"
+                + written.substring(closed + "\n          }".length()), StandardCharsets.UTF_8);
+
+        PhpBindings.generate(manifest, library.declarations(), into.resolve("php"), "Acme\\Billing");
+
+        assertThat(Files.readString(into.resolve("php").resolve("M").resolve("Behaviors.php")))
+                .contains("function twice(").doesNotContain("half");
+    }
+
+    /**
+     * A behavior answering a union no declaration names is not written: the library says of no such
+     * value which of its cases it is, and an answer a host cannot tell apart is not one it can use.
+     */
+    @Test
+    void aBehaviorAnsweringAnUnnamedUnionIsNotWritten(@TempDir Path into) throws Exception {
+        String written = behaviors(generated(into, """
+                module m exposing ( Found, Missing, find, twice )
+
+                data Found = { id: Int }
+                data Missing
+
+                behavior find : (id: Int) -> Found | Missing
+                let find (id) = if id > 0 then Found { id = id } else Missing
+
+                behavior twice : (n: Int) -> Int
+                let twice (n) = n * 2
+                """));
+
+        assertThat(written).contains("function twice(").doesNotContain("find");
+    }
+
+    @Test
+    void aTypeNamedAsAClassTheBindingWritesIsRefused(@TempDir Path into) {
+        assertThatThrownBy(() -> generated(into, """
+                module m exposing ( Behaviors )
+
+                data Behaviors = Int
+                """))
+                .isInstanceOf(PhpBindings.NotBindable.class)
+                .hasMessageContaining("type `m.Behaviors`");
+    }
+
+    /** The session a call takes is named so that no parameter of the model's is renamed for it. */
+    @Test
+    void theSessionGivesWayToAParameterOfTheSameName(@TempDir Path into) throws Exception {
+        String written = behaviors(generated(into, """
+                module m exposing ( renew )
+
+                behavior renew : (session: Int, ffi: Int) -> Int
+                let renew (session, ffi) = session + ffi
+                """));
+
+        assertThat(written).contains(
+                "renew(\\Souther\\Runtime\\Session $session_, int $session, int $ffi): int",
+                "$ffi_ = $session_->ffi();");
+    }
+
+    @Test
+    void aTypePhpReservesTheNameOfIsRefused(@TempDir Path into) {
+        assertThatThrownBy(() -> generated(into, """
+                module m exposing ( Match )
+
+                data Match = Int
+                """))
+                .isInstanceOf(PhpBindings.NotBindable.class)
+                .hasMessageContaining("`Match` is a word PHP reserves");
+    }
+
+    @Test
+    void aFieldNamedAsAMethodTheBindingWritesIsRefused(@TempDir Path into) {
+        assertThatThrownBy(() -> generated(into, """
+                module m exposing ( Tag )
+
+                data Tag = { encode: Bool }
+                """))
+                .isInstanceOf(PhpBindings.NotBindable.class)
+                .hasMessageContaining("field `encode`")
+                .hasMessageContaining("one name to PHP");
+    }
+
+    @Test
+    void aNamespaceIsTheBindingsOwnAndMustBeOne(@TempDir Path into) throws Exception {
+        NativeCompiler.Library library = NativeCompiler.library(CheckedProgram.of(List.of("""
+                module m exposing ( Box )
+
+                data Box = Bool
+                """)), into.resolve("native"));
+
+        assertThatThrownBy(() -> PhpBindings.generate(library, into.resolve("php"), ""))
+                .isInstanceOf(PhpBindings.NotBindable.class);
+        assertThatThrownBy(() -> PhpBindings.generate(library, into.resolve("php"), "Acme\\Class"))
+                .isInstanceOf(PhpBindings.NotBindable.class)
+                .hasMessageContaining("`Class` is a word PHP reserves");
+    }
+
+    /** A manifest of a version this was not written for is refused, not read as far as it parses. */
+    @Test
+    void aManifestOfAnotherVersionIsRefused(@TempDir Path into) throws Exception {
+        NativeCompiler.Library library = NativeCompiler.library(CheckedProgram.of(List.of("""
+                module m exposing ( Box )
+
+                data Box = Bool
+                """)), into.resolve("native"));
+        Path older = into.resolve("older.json");
+        Files.writeString(older, Files.readString(library.manifest())
+                .replace("\"version\": 3", "\"version\": 2"), StandardCharsets.UTF_8);
+
+        assertThatThrownBy(() -> PhpBindings.generate(older, library.declarations(),
+                into.resolve("php"), "Acme\\Billing"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("version 3");
+    }
+
+    private static String said(List<String> command) throws Exception {
+        Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
+        String said = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        if (process.waitFor() != 0) {
+            throw new AssertionError(command.get(0) + " failed: " + said);
+        }
+        return said;
+    }
+}

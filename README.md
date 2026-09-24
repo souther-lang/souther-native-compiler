@@ -287,8 +287,55 @@ list are written from what the objects carry. A module two of them carry is refu
 object that carries none, and a program missing a build it reaches is refused when it is linked
 rather than when a host loads it.
 
-What a behavior takes is said by type and in order. The names its parameters were written under do
-not cross from the checker yet, so a binding has no name to give one but its place.
+What a behavior takes is said with the names its signature declares, which a binding writes its
+function's parameters under. A `>->` composition declares no parameters, so what it takes is said by
+type and in order, and a binding names each by its place.
+
+## A PHP binding
+
+`PhpBindings.generate(library, into, namespace)` writes the PHP a host calls a library through, from
+the manifest and nothing else, under a namespace the caller names: two libraries publishing a module
+of the same name can then stand in one application. A module is a namespace under it (`shop` is
+`Acme\Billing\Shop`). A product, a newtype and a unit are each a `final readonly` class holding the
+value where the library made it, with a reader for each field, a static `of` building one and
+answering a raoh-php `Result`, a static `decode` reading one out of its external form, and `encode`.
+A sum is an interface, which a sum whose cases are all its cases extends, and each case's class
+implements it. `<Sum>Codec` finds which class a value is through the sum's `case` function, and
+reads and writes the sum's own external form, which says which case it is. A case the model keeps,
+or a sum whose cases the library cannot tell apart, is `<Sum>Value`, which is still the sum and can
+still be written. A module's behaviors are static functions on `Behaviors`, its values on `Values`.
+The FFI declarations are the build's own, copied beside the binding as `souther.ffi.h`, and
+`autoload.php` loads the binding's classes for a host that does not map the namespace itself.
+
+What a host has no way to reach is not written: a behavior with no `call`, a field with no `read`, a
+behavior taking or answering a type with no representation for a host, and a behavior answering a
+union no declaration names, since the library says of such a value nothing about which case it is.
+A name PHP will not take (a reserved word, `this` for a parameter, two names differing only in case
+where PHP compares them without it, a field named as a method the binding writes) is refused with
+the name, rather than spelt some other way.
+
+Everything else is in `bindings/php/runtime`, one Composer package every generated binding runs on.
+A host calls `$binding->run(fn (Session $session) => ...)`: the run marks the arena, and when it ends
+it expires its session and resets the arena to the mark. Every value holds a handle to the session it
+was made in, and every read of one goes through the handle, which refuses a value whose run has ended
+(`Expired`) or that another library made (`ForeignHandle`) before anything reads the memory. A value
+that has to outlive its run leaves it as its external form. Runs nest, and a value from an outer run
+may be handed to a call in an inner one. Text is checked to be UTF-8 and put in NFC before the
+library takes it, which the library itself does not do.
+
+A status crosses as one of three things. A construction that does not hold its type's invariants is
+an `Err` with `invariant_violation`, and a reading answers the issues the library found, their codes
+being Raoh's already, or `invalid_format` where the text is not JSON. A Souther computation that
+ends without a value throws `SoutherAbort`, naming the status. A behavior the host implements is
+handed to a run as `Injections::of(name: fn (Session $session, ...) => ...)`. Each is made into a C
+function pointer once per binding and registered around each run that is handed it, so a worker does
+not grow with every request; a call with nothing registered throws `UnboundInjection`, and an
+exception an implementation throws is the one that comes back out of the call that reached it.
+
+The runtime loads a library once per process, with `FFI::cdef` or, under `ffi.enable=preload`, from
+the scope a preload script declared with `Binding::preloadHeader`. The arena and what is registered
+are per thread, and a handle is PHP's, which a ZTS runtime such as FrankenPHP does not hand from one
+thread to another; nothing here checks for one that was.
 
 ## Where a value lives
 

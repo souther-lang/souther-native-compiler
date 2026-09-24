@@ -1,0 +1,25 @@
+{
+    "name": "souther-lang/php-runtime",
+    "description": "What every PHP binding of a Souther library built by souther-native-compiler runs on: loading the library, a run's arena, handles, and failures",
+    "type": "library",
+    "license": "Apache-2.0",
+    "require": {
+        "php": "^8.2",
+        "ext-ffi": "*",
+        "ext-intl": "*",
+        "raoh/raoh": "dev-main"
+    },
+    "repositories": [
+        {
+            "type": "vcs",
+            "url": "https://github.com/kawasima/raoh-php"
+        }
+    ],
+    "autoload": {
+        "psr-4": {
+            "Souther\\Runtime\\": "src/"
+        }
+    },
+    "minimum-stability": "dev",
+    "prefer-stable": true
+}
