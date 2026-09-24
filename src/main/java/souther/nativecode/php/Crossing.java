@@ -103,7 +103,7 @@ sealed interface Crossing {
                 case INT -> word;
                 case BOOL -> "(" + word + " !== 0)";
                 case STRING -> session + "->text(" + word + ")";
-                case PRODUCT -> "new " + declared + "(" + session + "->handle(" + word + "))";
+                case PRODUCT -> "new " + declared + "(" + session + "->held(" + word + "))";
                 case SUM -> declared + "::wrap(" + session + ", " + word + ")";
             };
         }

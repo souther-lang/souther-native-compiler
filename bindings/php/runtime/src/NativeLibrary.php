@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Souther\Runtime;
 
 use FFI;
+use FFI\CData;
 
 /**
  * A shared library a binding was generated for, loaded once per process, with the numbers its
@@ -59,10 +60,7 @@ final class NativeLibrary
     public static function load(string $declarations, string $library, array $statuses,
                                 array $outcomes): self
     {
-        $key = realpath($library);
-        if ($key === false) {
-            throw new \InvalidArgumentException("no library at {$library}");
-        }
+        $key = self::identity($library);
         if (isset(self::$loaded[$key])) {
             return self::$loaded[$key];
         }
@@ -70,20 +68,36 @@ final class NativeLibrary
         if ($declared === false) {
             throw new \InvalidArgumentException("no declarations at {$declarations}");
         }
-        return self::$loaded[$key] = new self(FFI::cdef($declared, $key), $statuses, $outcomes);
+        return self::$loaded[$key] = new self(FFI::cdef($declared, $library), $statuses, $outcomes);
     }
 
     /**
-     * The library `opcache.preload` declared under `$scope`, for `ffi.enable=preload`, where a
-     * request cannot declare one itself.
+     * The library at `$library`, as `opcache.preload` declared it under `$scope`, for
+     * `ffi.enable=preload`, where a request cannot declare one itself.
      *
      * @param array<string, int> $statuses
      * @param array<string, int> $outcomes
      */
-    public static function preloaded(string $scope, array $statuses, array $outcomes): self
+    public static function preloaded(string $scope, string $library, array $statuses,
+                                     array $outcomes): self
     {
-        $key = 'scope:' . $scope;
-        return self::$loaded[$key] ??= new self(FFI::scope($scope), $statuses, $outcomes);
+        return self::$loaded[self::identity($library)]
+            ??= new self(FFI::scope($scope), $statuses, $outcomes);
+    }
+
+    /**
+     * Which file `$library` is, as the loader tells files apart: by device and inode, and not by
+     * a path. The arena and what is registered are the library's, one for each file however it is
+     * reached, so two instances over one file would be two stacks of runs over one arena, each
+     * taking the other's inner run for its own.
+     */
+    private static function identity(string $library): string
+    {
+        $stat = @stat($library);
+        if ($stat === false) {
+            throw new \InvalidArgumentException("no library at {$library}");
+        }
+        return $stat['dev'] . ':' . $stat['ino'];
     }
 
     /**
@@ -136,6 +150,18 @@ final class NativeLibrary
         }
         array_pop($this->open);
         $session->expire();
+    }
+
+    /**
+     * @internal A value the library answered, belonging to the innermost run going.
+     *
+     * The only place a handle is made. What the library answers stands where the arena stood when
+     * it was made, which is after the mark the innermost run took, whichever session the call was
+     * asked through; so that run is the one the value belongs to, and it ends first.
+     */
+    public function held(CData $pointer): NativeHandle
+    {
+        return new NativeHandle($this->current(), $pointer);
     }
 
     /** @internal The session of the innermost run going. */

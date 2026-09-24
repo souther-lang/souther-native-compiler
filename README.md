@@ -40,9 +40,12 @@ abstraction over the two is written to make it look as though something is.
     mvn test
 
 Cargo is what builds the Rust half; Maven runs it. The toolchain is pinned in
-`rust-toolchain.toml`, so a clone needs rustup and nothing else installed by hand. A C and a C++
-compiler are needed too, by the tests that link what came out and run it, and PHP with FFI, by the
-test that reads what a host is handed the way an FFI with no preprocessor does.
+`rust-toolchain.toml`, so a clone needs rustup and nothing else installed by hand for it. A C and a
+C++ compiler are needed too, by the tests that link what came out and run it, and PHP 8.2 or later
+with the `ffi` and `intl` extensions, by the tests that read what a host is handed the way an FFI
+with no preprocessor does and run a generated PHP binding. Maven also runs Composer, which has to be
+installed, for what the PHP runtime in `bindings/php/runtime` depends on, as its `composer.lock`
+fixes it.
 
 ## Where it runs
 
@@ -305,7 +308,11 @@ reads and writes the sum's own external form, which says which case it is. A cas
 or a sum whose cases the library cannot tell apart, is `<Sum>Value`, which is still the sum and can
 still be written. A module's behaviors are static functions on `Behaviors`, its values on `Values`.
 The FFI declarations are the build's own, copied beside the binding as `souther.ffi.h`, and
-`autoload.php` loads the binding's classes for a host that does not map the namespace itself.
+`autoload.php` loads the binding's classes for a host that does not map the namespace itself. The
+directory is written beside where it goes and put there whole, so it is the binding of one manifest:
+a class the model no longer declares does not survive a generation, a refused generation leaves the
+last one as it was, and a directory holding anything a generation did not write is refused rather
+than replaced. The driver writes a library's directory the same way.
 
 What a host has no way to reach is not written: a behavior with no `call`, a field with no `read`, a
 behavior taking or answering a type with no representation for a host, and a behavior answering a
@@ -323,7 +330,12 @@ it expires its session and resets the arena to the mark. Every value holds a han
 was made in, and every read of one goes through the handle, which refuses a value whose run has ended
 (`Expired`) or that another library made (`ForeignHandle`) before anything reads the memory. A value
 that has to outlive its run leaves it as its external form. Runs nest, and a value from an outer run
-may be handed to a call in an inner one. Text is checked to be UTF-8 and put in NFC before the
+may be handed to a call in an inner one. What the library answers stands after the mark of the
+innermost run going, whichever session a call was made through, so every value belongs to that run:
+a computation is started only through the innermost run's session (`NotTheInnermostRun` otherwise),
+and a field read out of an outer value during an inner run belongs to the inner run. A library is
+one per file, told apart by device and inode rather than by the path it was loaded through, since
+two instances over one file would be two stacks of runs over one arena. Text is checked to be UTF-8 and put in NFC before the
 library takes it, which the library itself does not do.
 
 A status crosses as one of three things. A construction that does not hold its type's invariants is
@@ -336,8 +348,10 @@ not grow with every request; a call with nothing registered throws `UnboundInjec
 exception an implementation throws is the one that comes back out of the call that reached it.
 
 A binding says which version of the runtime's surface it was generated for, and refuses to load
-over a runtime that says another (`Binding::PROTOCOL`). The runtime loads a library once per process, with `FFI::cdef` or, under `ffi.enable=preload`, from
-the scope a preload script declared with `Binding::preloadHeader`. The arena and what is registered
+over a runtime that says another (`Binding::PROTOCOL`). The runtime loads a library once per
+process, with `FFI::cdef` or, under `ffi.enable=preload`, from the scope a preload script declared
+with `Binding::preloadHeader`, given the library's path again so that it is the same library a load
+of that file would be. The arena and what is registered
 are per thread, and a handle is PHP's, which a ZTS runtime such as FrankenPHP does not hand from one
 thread to another; nothing here checks for one that was.
 

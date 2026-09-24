@@ -88,15 +88,30 @@ public final class PhpBindings {
         return generate(library.manifest(), library.declarations(), into, namespace);
     }
 
+    /**
+     * Writes the binding of what {@code manifest} describes into {@code into}, which is then that
+     * binding and nothing else: it is written beside it and put in place whole ({@link Output}), so
+     * a class the model no longer declares does not survive a generation, and a refused one leaves
+     * what was there as it was.
+     */
     static Generated generate(Path manifest, Path declarations, Path into, String namespace)
             throws IOException {
-        PhpBindings binding = new PhpBindings(Manifest.read(manifest),
-                PhpNames.rootNamespace(namespace), into);
-        binding.write();
-        Files.copy(declarations, into.resolve(DECLARATIONS),
-                java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-        binding.written.add(into.resolve(DECLARATIONS));
-        return new Generated(into, List.copyOf(binding.written));
+        Manifest read = Manifest.read(manifest);
+        String root = PhpNames.rootNamespace(namespace);
+        Output output = Output.replacing(into);
+        PhpBindings binding = new PhpBindings(read, root, output.staging());
+        try {
+            binding.write();
+            Path copied = output.staging().resolve(DECLARATIONS);
+            Files.copy(declarations, copied);
+            binding.written.add(copied);
+            output.commit();
+        } catch (IOException | RuntimeException e) {
+            output.abandon();
+            throw e;
+        }
+        return new Generated(output.placed(output.staging()),
+                binding.written.stream().map(output::placed).toList());
     }
 
     /** A declared type, and what PHP calls what is generated for it. */
@@ -324,7 +339,7 @@ public final class PhpBindings {
             of(php, it, fields, construct);
         }
         decode(php, it, it.declaration().decode(), it.fqcn(), "new " + it.fqcn()
-                + "($session->handle($value))");
+                + "($session->held($value))");
         for (Manifest.Field field : fields) {
             getter(php, it, field);
         }
@@ -405,11 +420,11 @@ public final class PhpBindings {
                      */
                     public static function of(%s): \\Raoh\\Result
                     {
-                        $%s = $%s->ffi();
+                        $%s = $%s->call();
                         $%s = $%s->new('souther_value');
                         $%s = $%s->%s(%s);
                         return $%s->constructed($%s,
-                            static fn (): %s => new %s($%s->handle($%s)));
+                            static fn (): %s => new %s($%s->held($%s)));
                     }
                 """.formatted(it.key(), it.fqcn(), String.join(", ", parameters),
                 ffi, session, made, ffi, status, ffi, construct.name(), String.join(", ", given),
@@ -432,7 +447,7 @@ public final class PhpBindings {
                      */
                     public static function decode(\\Souther\\Runtime\\Session $session, string $json): \\Raoh\\Result
                     {
-                        $ffi = $session->ffi();
+                        $ffi = $session->call();
                         $reading = $ffi->new('souther_decoded');
                         $status = $ffi->%s($session->bytes($json), \\strlen($json), \\FFI::addr($reading));
                         return $session->decoded($status, $reading,
@@ -516,14 +531,14 @@ public final class PhpBindings {
                 """);
         String cases;
         if (sum.which() == null) {
-            cases = "        return new " + it.opaque() + "($session->handle($value));";
+            cases = "        return new " + it.opaque() + "($session->held($value));";
         } else {
             agrees(sum.which(), List.of(Word.VALUE), List.of(), Word.CASE);
             StringBuilder arms = new StringBuilder();
             for (int at = 0; at < sum.cases().size(); at++) {
                 Whole made = caseClass(sum.cases().get(at));
                 String arm = made != null ? made.of(List.of("$value"), "$session")
-                        : "new " + it.opaque() + "($session->handle($value))";
+                        : "new " + it.opaque() + "($session->held($value))";
                 arms.append("            ").append(at).append(" => ").append(arm).append(",\n");
             }
             cases = "        return match ($session->ffi()->" + sum.which().name() + "($value)) {\n"
@@ -660,7 +675,7 @@ public final class PhpBindings {
             given.addAll(takes.get(at).given("$" + names.get(at), "$" + session));
         }
         StringBuilder body = new StringBuilder();
-        body.append("        $").append(ffi).append(" = $").append(session).append("->ffi();\n");
+        body.append("        $").append(ffi).append(" = $").append(session).append("->call();\n");
         for (int at = 0; at < rooms.size(); at++) {
             body.append("        $").append(roomNames.get(at)).append(" = $").append(ffi)
                     .append("->new('").append(Whole.cType(rooms.get(at))).append("');\n");
@@ -821,11 +836,14 @@ public final class PhpBindings {
                             $declarations ?? __DIR__ . '/%s', $library, self::STATUSES, self::OUTCOMES));
                     }
 
-                    /** The library `opcache.preload` declared under `$scope`, for `ffi.enable=preload`. */
-                    public static function preloaded(string $scope): self
+                    /**
+                     * The library at `$library`, as `opcache.preload` declared it under `$scope`, for
+                     * `ffi.enable=preload`.
+                     */
+                    public static function preloaded(string $scope, string $library): self
                     {
                         return self::over(\\Souther\\Runtime\\NativeLibrary::preloaded(
-                            $scope, self::STATUSES, self::OUTCOMES));
+                            $scope, $library, self::STATUSES, self::OUTCOMES));
                     }
 
                     /**

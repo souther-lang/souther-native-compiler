@@ -135,7 +135,7 @@ class APhpBindingIsWrittenFromTheManifestTest {
 
         assertThat(written).contains(
                 "renew(\\Souther\\Runtime\\Session $session_, int $session, int $ffi): int",
-                "$ffi_ = $session_->ffi();");
+                "$ffi_ = $session_->call();");
     }
 
     @Test
@@ -221,6 +221,71 @@ class APhpBindingIsWrittenFromTheManifestTest {
                 .isInstanceOf(PhpBindings.NotBindable.class)
                 .hasMessageContaining("parameter `a`")
                 .hasMessageContaining("PHP takes for one parameter");
+    }
+
+    /** A directory a binding is written to is that binding, and nothing a model had before. */
+    @Test
+    void aTypeTheModelNoLongerDeclaresLeavesTheBinding(@TempDir Path into) throws Exception {
+        Path php = into.resolve("php");
+        PhpBindings.generate(NativeCompiler.library(CheckedProgram.of(List.of("""
+                module m exposing ( Kept, Dropped )
+
+                data Kept = Int
+                data Dropped = Bool
+                """)), into.resolve("before")), php, "Acme\\Billing");
+        assertThat(php.resolve("M").resolve("Dropped.php")).exists();
+
+        PhpBindings.generate(NativeCompiler.library(CheckedProgram.of(List.of("""
+                module m exposing ( Kept )
+
+                data Kept = Int
+                """)), into.resolve("after")), php, "Acme\\Billing");
+
+        assertThat(php.resolve("M").resolve("Kept.php")).exists();
+        assertThat(php.resolve("M").resolve("Dropped.php")).doesNotExist();
+    }
+
+    /** A generation refused part of the way leaves what was there, and nothing beside it. */
+    @Test
+    void aRefusedGenerationLeavesTheBindingThatWasThere(@TempDir Path into) throws Exception {
+        Path php = into.resolve("php");
+        PhpBindings.generate(NativeCompiler.library(CheckedProgram.of(List.of("""
+                module m exposing ( Kept )
+
+                data Kept = Int
+                """)), into.resolve("before")), php, "Acme\\Billing");
+        String before = Files.readString(php.resolve("M").resolve("Kept.php"));
+        NativeCompiler.Library refused = NativeCompiler.library(CheckedProgram.of(List.of("""
+                module m exposing ( Kept, Tag )
+
+                data Kept = Bool
+                data Tag = { encode: Bool }
+                """)), into.resolve("after"));
+
+        assertThatThrownBy(() -> PhpBindings.generate(refused, php, "Acme\\Billing"))
+                .isInstanceOf(PhpBindings.NotBindable.class);
+        assertThat(Files.readString(php.resolve("M").resolve("Kept.php"))).isEqualTo(before);
+        try (var beside = Files.list(into)) {
+            assertThat(beside.map(it -> it.getFileName().toString()))
+                    .containsExactlyInAnyOrder("php", "before", "after");
+        }
+    }
+
+    /** A directory holding what no generation wrote is not replaced, and keeps what it holds. */
+    @Test
+    void aDirectoryABindingDidNotWriteIsNotReplaced(@TempDir Path into) throws Exception {
+        Path php = Files.createDirectories(into.resolve("php"));
+        Files.writeString(php.resolve("mine.php"), "<?php\n", StandardCharsets.UTF_8);
+
+        assertThatThrownBy(() -> PhpBindings.generate(NativeCompiler.library(
+                CheckedProgram.of(List.of("""
+                        module m exposing ( Kept )
+
+                        data Kept = Int
+                        """)), into.resolve("native")), php, "Acme\\Billing"))
+                .isInstanceOf(PhpBindings.NotBindable.class)
+                .hasMessageContaining("holds files a binding did not write");
+        assertThat(php.resolve("mine.php")).exists();
     }
 
     private static String said(List<String> command) throws Exception {

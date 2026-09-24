@@ -45,7 +45,7 @@ final class Session
         $this->active = false;
     }
 
-    /** @internal The library's functions, for a run still going. */
+    /** @internal The library's functions, to read what a value of a run still going holds. */
     public function ffi(): FFI
     {
         if (!$this->active) {
@@ -54,10 +54,31 @@ final class Session
         return $this->library->ffi();
     }
 
-    /** @internal A value the library answered, held for this run. */
-    public function handle(CData $pointer): NativeHandle
+    /**
+     * @internal The library's functions, to start a computation: construct, read, call.
+     *
+     * Only through the innermost run's session. What a computation makes stands after that run's
+     * mark and is dropped when it ends, so one started through an outer session would answer a
+     * value its caller holds for longer than it lives.
+     */
+    public function call(): FFI
     {
-        return new NativeHandle($this, $pointer);
+        $ffi = $this->ffi();
+        if ($this->library->current() !== $this) {
+            throw new NotTheInnermostRun(
+                'a computation was started through the session of a run with another run going'
+                . ' inside it; start it through the session of the innermost run');
+        }
+        return $ffi;
+    }
+
+    /**
+     * @internal A value the library answered. It belongs to the innermost run going, which is the
+     * one its memory is dropped with, and not necessarily this session's ({@see NativeLibrary::held}).
+     */
+    public function held(CData $pointer): NativeHandle
+    {
+        return $this->library->held($pointer);
     }
 
     /**

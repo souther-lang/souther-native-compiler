@@ -185,6 +185,26 @@
                             </arguments>
                         </configuration>
                     </execution>
+                    <!-- The PHP runtime's dependencies, as its composer.lock fixes them, before the
+                         Java tests: one of them runs a generated binding over that runtime, and the
+                         entry point stays this one build, as it is for Cargo. Composer does nothing
+                         where vendor/ already matches the lock. -->
+                    <execution>
+                        <id>composer-install</id>
+                        <phase>process-test-classes</phase>
+                        <goals>
+                            <goal>exec</goal>
+                        </goals>
+                        <configuration>
+                            <executable>composer</executable>
+                            <workingDirectory>${project.basedir}/bindings/php/runtime</workingDirectory>
+                            <arguments>
+                                <argument>install</argument>
+                                <argument>--no-interaction</argument>
+                                <argument>--no-progress</argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
                 </executions>
             </plugin>
         </plugins>

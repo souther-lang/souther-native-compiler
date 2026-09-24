@@ -91,6 +91,7 @@ class APhpHostCallsALibraryThroughItsBindingTest {
             use Raoh\\Result;
             use Souther\\Runtime\\Expired;
             use Souther\\Runtime\\ForeignHandle;
+            use Souther\\Runtime\\NotTheInnermostRun;
             use Souther\\Runtime\\Session;
             use Souther\\Runtime\\SoutherAbort;
             use Souther\\Runtime\\UnboundInjection;
@@ -193,6 +194,27 @@ class APhpHostCallsALibraryThroughItsBindingTest {
                 echo "foreign: ", $foreign->getMessage(), "\\n";
             }
             echo "one binding: ", var_export(Binding::load($argv[3]) === $binding, true), "\\n";
+            $linked = dirname($argv[4]) . '/linked-' . basename($argv[3]);
+            link($argv[3], $linked);
+            echo "one file: ", var_export(Binding::load($linked) === $binding, true), "\\n";
+
+            // A computation started through an outer session while an inner run is going would
+            // make a value in the inner run's part of the arena, which that run drops.
+            $binding->run(function (Session $outer) use ($binding): void {
+                try {
+                    $binding->run(fn (Session $inner) => Money::of($outer, 5));
+                } catch (NotTheInnermostRun $refused) {
+                    echo "outer in inner: ", $refused::class, "\\n";
+                }
+                // A value read out of an outer value during an inner run is the inner run's.
+                $line = Line::of($outer, Money::of($outer, 3)->getOrThrow(), 1)->getOrThrow();
+                $price = $binding->run(fn (Session $inner): Money => $line->price());
+                try {
+                    $price->value();
+                } catch (Expired $expired) {
+                    echo "read in inner: expired, and the line still reads ", $line->price()->value(), "\\n";
+                }
+            });
 
             $keptSession = $binding->run(fn (Session $session): Session => $session);
             try {
@@ -228,6 +250,9 @@ class APhpHostCallsALibraryThroughItsBindingTest {
             expired: a value was used after the run it was made in ended
             foreign: a value one library made was handed to another
             one binding: true
+            one file: true
+            outer in inner: Souther\\Runtime\\NotTheInnermostRun
+            read in inner: expired, and the line still reads 3
             session expired: a session was used after its run ended
             """;
 
@@ -237,7 +262,8 @@ class APhpHostCallsALibraryThroughItsBindingTest {
     @Test
     void aPhpApplicationUsesTheModelThroughItsGeneratedBinding(@TempDir Path into) throws Exception {
         assertThat(RUNTIME.resolve("vendor").resolve("autoload.php"))
-                .as("the runtime's dependencies, which `composer install -d %s` installs", RUNTIME)
+                .as("the dependencies of %s, which the build installs with Composer before the"
+                        + " tests", RUNTIME)
                 .exists();
         NativeCompiler.Library library =
                 NativeCompiler.library(CheckedProgram.of(List.of(SHOP)), into.resolve("native"));
