@@ -18,7 +18,7 @@ use serde::Deserialize;
 
 /// What this side reads. A document written to say anything else is refused rather than read as
 /// much of as happens to parse.
-pub const TRANSPORT_VERSION: u32 = 12;
+pub const TRANSPORT_VERSION: u32 = 13;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1123,6 +1123,9 @@ pub enum Node {
     },
     Binary {
         op: Op,
+        /// What the operator reads its operands as, which the checker settled and the operands'
+        /// types do not say.
+        reading: Reading,
         left: Box<Node>,
         right: Box<Node>,
         #[serde(rename = "type")]
@@ -1311,8 +1314,48 @@ pub enum Reaches {
     PublishedValue { module: String, name: String },
     /// A behavior, whether this program answers it or whoever links the object does.
     Behavior { declared: String },
-    /// An operation the language itself implements.
-    Kernel { kernel: String },
+    /// An operation the language itself implements, with what this application of it takes each
+    /// argument as and what else the checker settled about it. The kernel's own signature has type
+    /// variables, and what they came to for this call is the checker's answer.
+    Kernel {
+        kernel: String,
+        takes: Vec<Ty>,
+        fact: KernelFact,
+    },
+}
+
+/// A fact the checker settled about one application of a kernel, beside what it takes.
+#[derive(Debug, Deserialize, PartialEq, Eq, Clone)]
+#[serde(tag = "is", rename_all = "lowercase", deny_unknown_fields)]
+pub enum KernelFact {
+    None,
+    /// The pattern `String.matches`'s first argument folds to.
+    StringMatches {
+        pattern: String,
+    },
+    /// The type an ordering was checked against.
+    OrderingSubject {
+        #[serde(rename = "type")]
+        ty: Ty,
+    },
+}
+
+/// What an operator reads its two operands as, as the checker settled it. Not a place either
+/// operand stands: a literal beside a newtype is read as the newtype by this operator and by
+/// nothing else.
+#[derive(Debug, Deserialize, PartialEq, Eq, Clone)]
+#[serde(tag = "is", rename_all = "lowercase", deny_unknown_fields)]
+pub enum Reading {
+    /// Each operand as the type it has, which is one type for both.
+    AsTheyStand,
+    /// The pair as values of this type, for this operator only.
+    In {
+        #[serde(rename = "type")]
+        ty: Ty,
+    },
+    /// Each operand at its exact mathematical value, which one of them already being a `Rational`
+    /// makes of the pair. No type of the language stands for it.
+    ExactNumbers,
 }
 
 /// One arm of a fork on what a value is.
@@ -1345,7 +1388,261 @@ pub enum Selects {
     Nothing,
 }
 
+impl Reaches {
+    /// Every type this reach writes.
+    ///
+    /// Every field named, so a type-bearing field added to a reach is one this stops compiling
+    /// over until it is listed.
+    pub fn types(&self) -> Vec<&Ty> {
+        match self {
+            Reaches::Helper { declared: _ }
+            | Reaches::Value { module: _, name: _ }
+            | Reaches::PublishedValue { module: _, name: _ }
+            | Reaches::Behavior { declared: _ } => Vec::new(),
+            Reaches::Kernel {
+                kernel: _,
+                takes,
+                fact,
+            } => takes.iter().chain(fact.types()).collect(),
+        }
+    }
+}
+
+impl KernelFact {
+    /// Every type this fact writes.
+    pub fn types(&self) -> Vec<&Ty> {
+        match self {
+            KernelFact::None | KernelFact::StringMatches { pattern: _ } => Vec::new(),
+            KernelFact::OrderingSubject { ty } => vec![ty],
+        }
+    }
+}
+
+impl Reading {
+    /// Every type this reading writes.
+    pub fn types(&self) -> Vec<&Ty> {
+        match self {
+            Reading::AsTheyStand | Reading::ExactNumbers => Vec::new(),
+            Reading::In { ty } => vec![ty],
+        }
+    }
+
+    /// What a refusal says this reading is.
+    pub fn spelt(&self) -> String {
+        match self {
+            Reading::AsTheyStand => "as they stand".to_string(),
+            Reading::ExactNumbers => "at their exact values".to_string(),
+            Reading::In { ty } => format!("in {}", ty.spelt()),
+        }
+    }
+}
+
 impl Node {
+    /// Every type this node itself writes: its own, and each one it carries beside it (what a let
+    /// binds, what an arm reads a value as, what an operator reads its operands in, what a kernel's
+    /// application takes and what it was settled against).
+    ///
+    /// The one enumeration of them, so that "every type the document writes is one it declares" is
+    /// held of all of them at one place. Every field of every node is named, and none is left to
+    /// `..`, so a type-bearing field added to a node is one this stops compiling over until it is
+    /// listed here.
+    pub fn types(&self) -> Vec<&Ty> {
+        match self {
+            Node::Int {
+                value: _,
+                ty,
+                aborts: _,
+            }
+            | Node::Read {
+                binding: _,
+                ty,
+                aborts: _,
+            }
+            | Node::Bool {
+                value: _,
+                ty,
+                aborts: _,
+            }
+            | Node::Str {
+                value: _,
+                ty,
+                aborts: _,
+            }
+            | Node::Neg {
+                operand: _,
+                ty,
+                aborts: _,
+            }
+            | Node::If {
+                cond: _,
+                then: _,
+                els: _,
+                ty,
+                aborts: _,
+            }
+            | Node::Unit {
+                declared: _,
+                ty,
+                aborts: _,
+            }
+            | Node::Construct {
+                declared: _,
+                values: _,
+                ty,
+                aborts: _,
+            }
+            | Node::Field {
+                target: _,
+                field: _,
+                ty,
+                aborts: _,
+            }
+            | Node::Some {
+                value: _,
+                ty,
+                aborts: _,
+            }
+            | Node::None { ty, aborts: _ }
+            | Node::Tuple {
+                members: _,
+                ty,
+                aborts: _,
+            }
+            | Node::Member {
+                tuple: _,
+                at: _,
+                ty,
+                aborts: _,
+            }
+            | Node::Block {
+                site: _,
+                parameters: _,
+                body: _,
+                ty,
+                aborts: _,
+            }
+            | Node::Widen {
+                value: _,
+                ty,
+                aborts: _,
+            }
+            | Node::Apply {
+                function: _,
+                arguments: _,
+                ty,
+                aborts: _,
+            } => vec![ty],
+            Node::Binary {
+                op: _,
+                reading,
+                left: _,
+                right: _,
+                ty,
+                aborts: _,
+            } => std::iter::once(ty).chain(reading.types()).collect(),
+            Node::Let {
+                binding: _,
+                binds,
+                value: _,
+                body: _,
+                ty,
+                aborts: _,
+            } => vec![ty, binds],
+            Node::Match {
+                subject: _,
+                arms,
+                ty,
+                aborts: _,
+            } => std::iter::once(ty)
+                .chain(arms.iter().filter_map(|arm| {
+                    let Arm {
+                        selects: _,
+                        binding: _,
+                        binds,
+                        body: _,
+                    } = arm;
+                    binds.as_ref()
+                }))
+                .collect(),
+            Node::Call {
+                reaches,
+                arguments: _,
+                ty,
+                aborts: _,
+            } => std::iter::once(ty).chain(reaches.types()).collect(),
+        }
+    }
+
+    /// What the checker says this node can end a run without a value for.
+    pub fn aborts(&self) -> &[AbortKind] {
+        match self {
+            Node::Int { aborts, .. }
+            | Node::Read { aborts, .. }
+            | Node::Bool { aborts, .. }
+            | Node::Str { aborts, .. }
+            | Node::Binary { aborts, .. }
+            | Node::Neg { aborts, .. }
+            | Node::Let { aborts, .. }
+            | Node::If { aborts, .. }
+            | Node::Unit { aborts, .. }
+            | Node::Construct { aborts, .. }
+            | Node::Field { aborts, .. }
+            | Node::Match { aborts, .. }
+            | Node::Some { aborts, .. }
+            | Node::None { aborts, .. }
+            | Node::Tuple { aborts, .. }
+            | Node::Member { aborts, .. }
+            | Node::Call { aborts, .. }
+            | Node::Block { aborts, .. }
+            | Node::Widen { aborts, .. }
+            | Node::Apply { aborts, .. } => aborts,
+        }
+    }
+
+    /// Whether a node of this kind is one the checker ever gives a reason to end a run without a
+    /// value: arithmetic and negation over a number, a construction of a type that states a
+    /// clause, and a call to a kernel. Every other kind is total in itself, and what a call to a
+    /// behavior, a helper or a value ends with is the callee's own.
+    ///
+    /// Asked of what decides it and not of the kind alone: a binary operator by which operator it
+    /// is, since a comparison, a truth operator and a join end no run and arithmetic may, and a call
+    /// by what it reaches. Named for every kind and every operator, with no arm standing for the
+    /// rest, so one added to the document has to be said to be one or the other.
+    pub fn can_end_without_a_value(&self) -> bool {
+        match self {
+            Node::Binary { op, .. } => match op {
+                Op::Add | Op::Sub | Op::Mul | Op::Div => true,
+                Op::Eq
+                | Op::Ne
+                | Op::Lt
+                | Op::Le
+                | Op::Gt
+                | Op::Ge
+                | Op::And
+                | Op::Or
+                | Op::Concat => false,
+            },
+            Node::Neg { .. } | Node::Construct { .. } => true,
+            Node::Call { reaches, .. } => matches!(reaches, Reaches::Kernel { .. }),
+            Node::Int { .. }
+            | Node::Read { .. }
+            | Node::Bool { .. }
+            | Node::Str { .. }
+            | Node::Let { .. }
+            | Node::If { .. }
+            | Node::Unit { .. }
+            | Node::Field { .. }
+            | Node::Match { .. }
+            | Node::Some { .. }
+            | Node::None { .. }
+            | Node::Tuple { .. }
+            | Node::Member { .. }
+            | Node::Block { .. }
+            | Node::Widen { .. }
+            | Node::Apply { .. } => false,
+        }
+    }
+
     /// The nodes directly under this one, in the order they are written.
     ///
     /// No arm standing for the rest: a node added to the document is one whose children every walk

@@ -37,24 +37,26 @@
 //! What is held is what the checker's own objects hold and the document still states both sides
 //! of: what a module owns (`CheckedModule`: its helpers, its values, entries for those values, the
 //! behaviors it declares), that every name a type or a reach writes is one the document carries,
-//! that a name can stand in a symbol, what every operator node answers whatever it is written
-//! over, and every relation between a node's type and what its value is made from. What is not
-//! held, because the document does not carry the checker's side of it:
+//! that a name can stand in a symbol, what every operator node answers and what its reading says
+//! of its operands, what a kernel's application takes, and every relation between a node's type and
+//! what its value is made from. What is not held, because the document does not carry the checker's
+//! side of it:
 //!
-//! - which pairs an operator may be written over, and what it makes of two different ones
-//!   (souther-lang/souther#1919). A pair the checker would refuse and one this backend has no
-//!   lowering for are both refused as not lowered;
+//! - which types an operator admits. A reading says what the operands were taken as and not
+//!   whether the operator orders them, so an ordering over two truths read as they stand is
+//!   refused as not lowered, as a pair this backend has no lowering for is;
 //! - why a value may stand as a wider type. The document says where it does, and that is asked
 //!   of [`Declared::fits`], which copies the part of the checker's rule for the types laid out
 //!   here;
 //! - what the writer drops: which values a module publishes beyond the entries it has, what a row
-//!   expects, what a kernel call settled.
+//!   expects.
 
 use crate::closures::ClosureSites;
 use crate::index;
+use crate::kernels::LoweredKernel;
 use crate::transport::{
     AbortKind, Answers, Case, Declaration, Definition, Held, Node, Op, Owner, Prim, Program,
-    Reaches, Routing, Selects, Target, Ty, Value,
+    Reaches, Reading, Routing, Selects, Target, Ty, Value,
 };
 use crate::{Declared, Runs, Targets, not_lowered, spelt};
 use anyhow::{Result, anyhow, bail};
@@ -215,7 +217,7 @@ impl<'a> Coherent<'a> {
                              halves disagree"
                         );
                     }
-                    (owner, fields_bound(declaration)?)
+                    (owner, fields_bound(declaration))
                 }
                 Owner::Example(example) => {
                     let behavior = format!("{}.{}", body.module, example.behavior);
@@ -390,6 +392,23 @@ impl<'a> Reached<'a> {
                     || format!("{module} builds two values both written {declared}"),
                 )?;
             }
+            // What a value's handover carries is another value this module builds, which the
+            // method it is handed to takes already built. The lowering reads the handover's type
+            // and never what it carries, so a handover naming a value nothing builds would be a
+            // statement nothing held.
+            for value in &written.values {
+                for handover in &value.handovers {
+                    let carried = handover.carries.declared();
+                    if !reached.values.contains_key(&(module, carried.clone())) {
+                        bail!(
+                            "{}: {} is handed {carried}, which {module} builds no value of: the \
+                             two halves disagree",
+                            value.declared(),
+                            handover.parameter
+                        );
+                    }
+                }
+            }
             for entry in &written.entries {
                 let declared = entry.value.declared();
                 if !reached.values.contains_key(&(module, declared.clone())) {
@@ -461,13 +480,11 @@ enum Untyped {
     /// A `Widen`'s value, which stands as another type by what the `Widen` says, and is asked of
     /// `fits` there.
     Widened,
-    /// An operand of a comparison or an arithmetic operator: a case is compared with its sum as it
-    /// is, and which reading of the operator the checker applied is not in the tree
-    /// (souther-lang/souther#1919).
+    /// An operand of a comparison or an arithmetic operator, which the operator reads as its
+    /// reading says: not a place the operand stands, since a literal beside a newtype is read as
+    /// the newtype by this operator and by nothing else. What the reading holds of the pair is
+    /// held with the operator.
     Operand,
-    /// An argument of a kernel call, whose parameters as settled for the call the tree does not
-    /// keep (souther-lang/souther#1930).
-    KernelArgument,
 }
 
 /// One body read with what is bound where it stands.
@@ -523,34 +540,43 @@ impl<'a> Walk<'_, 'a> {
         Ok(())
     }
 
-    /// `node` read with each of `bindings` in force at its type, and whatever they shadowed put
-    /// back afterwards.
+    /// `node` read with each of `bindings` in force at its type, and gone again afterwards.
+    ///
+    /// A number names one binder in a body: a binder whose number is already in force is refused,
+    /// as the two halves disagreeing. The writer counts a binder where it writes it, so no document
+    /// it writes shadows one, and a document that does is one whose meaning is a lexical scope this
+    /// reader, the closure planning and the lowering would each have to keep in step. Refused, they
+    /// agree because there is nothing for them to agree about.
     fn under(&mut self, bindings: Vec<(usize, Ty)>, node: &'a Node) -> Result<()> {
-        for (binding, ty) in &bindings {
-            self.declared
-                .resolves(&format!("{}: binding {binding}", self.owner), ty)?;
+        let mut entered: Vec<usize> = Vec::new();
+        for (binding, ty) in bindings {
+            let bound = self
+                .declared
+                .resolves(&format!("{}: binding {binding}", self.owner), &ty)
+                .and_then(|()| {
+                    index::once(&mut self.bound, binding, ty, || {
+                        format!(
+                            "{}: binding {binding} is bound where it is already in force: a \
+                             number names one binder in a body, and the two halves disagree",
+                            self.owner
+                        )
+                    })
+                });
+            if let Err(refused) = bound {
+                self.leave(&entered);
+                return Err(refused);
+            }
+            entered.push(binding);
         }
-        let shadowed: Vec<(usize, Option<Ty>)> = bindings
-            .into_iter()
-            .map(|(binding, ty)| (binding, self.scope(binding, Some(ty))))
-            .collect();
         let read = self.node(node);
-        for (binding, before) in shadowed.into_iter().rev() {
-            self.scope(binding, before);
-        }
+        self.leave(&entered);
         read
     }
 
-    /// `binding` in force at `ty`, or at nothing, answering what it was in force at before.
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "a binder shadows whatever an enclosing one bound under its number, on purpose, \
-                  and `under` puts it back when the scope closes"
-    )]
-    fn scope(&mut self, binding: usize, ty: Option<Ty>) -> Option<Ty> {
-        match ty {
-            Some(ty) => self.bound.insert(binding, ty),
-            None => self.bound.remove(&binding),
+    /// Each of `bound` out of force again, the last entered first.
+    fn leave(&mut self, bound: &[usize]) {
+        for binding in bound.iter().rev() {
+            self.bound.remove(binding);
         }
     }
 
@@ -724,8 +750,9 @@ impl<'a> Walk<'_, 'a> {
             Node::Member { tuple, .. } => vec![Slot::Untyped(tuple, Untyped::ReadFrom)],
             Node::Call {
                 reaches, arguments, ..
-            } => match self.parameters(reaches)? {
-                Some((callee, takes)) => arguments
+            } => {
+                let (callee, takes) = self.parameters(reaches)?;
+                arguments
                     .iter()
                     .zip(takes)
                     .enumerate()
@@ -736,12 +763,8 @@ impl<'a> Walk<'_, 'a> {
                             format!("argument {at} handed to {callee}"),
                         )
                     })
-                    .collect(),
-                None => arguments
-                    .iter()
-                    .map(|argument| Slot::Untyped(argument, Untyped::KernelArgument))
-                    .collect(),
-            },
+                    .collect()
+            }
             Node::Block { body, ty, site, .. } => {
                 let Ty::Fn { fn_ } = ty else {
                     bail!(
@@ -781,11 +804,11 @@ impl<'a> Walk<'_, 'a> {
     }
 
     /// What a call hands each argument over as: the parameters of what it reaches, by the name of
-    /// that; `None` for a kernel whose parameters as settled for the call the tree does not keep.
-    fn parameters(&self, reaches: &Reaches) -> Result<Option<(String, Vec<Ty>)>> {
+    /// that. A kernel's are what the checker settled its signature to for this application.
+    fn parameters(&self, reaches: &Reaches) -> Result<(String, Vec<Ty>)> {
         Ok(match reaches {
             Reaches::Behavior { declared } => {
-                Some((declared.clone(), self.targets.named(declared)?.takes()))
+                (declared.clone(), self.targets.named(declared)?.takes())
             }
             Reaches::Helper { declared } => {
                 let held = self
@@ -799,7 +822,7 @@ impl<'a> Walk<'_, 'a> {
                             self.carrier
                         )
                     })?;
-                Some((declared.clone(), held.takes()))
+                (declared.clone(), held.takes())
             }
             Reaches::Value { module, name } => {
                 let joined = format!("{module}.{name}");
@@ -815,22 +838,12 @@ impl<'a> Walk<'_, 'a> {
                         )
                     })?;
                 let handed = value.handovers.iter().map(|it| it.ty.clone()).collect();
-                Some((format!("the value {joined}"), handed))
+                (format!("the value {joined}"), handed)
             }
             Reaches::PublishedValue { module, name } => {
-                Some((format!("`{module}`'s published value {name}"), Vec::new()))
+                (format!("`{module}`'s published value {name}"), Vec::new())
             }
-            Reaches::Kernel { kernel } => match kernel.as_str() {
-                "int.add" => Some((
-                    kernel.clone(),
-                    vec![Ty::Prim { prim: Prim::Int }, Ty::Prim { prim: Prim::Int }],
-                )),
-                // What the call takes each argument as is the kernel's signature with its
-                // variables settled for this call, and the tree does not keep the settlement
-                // (souther-lang/souther#1930), so an argument missing its `Widen` here is not told
-                // apart from a kernel this backend does not lower.
-                _ => None,
-            },
+            Reaches::Kernel { kernel, takes, .. } => (kernel.clone(), takes.clone()),
         })
     }
 
@@ -841,7 +854,22 @@ impl<'a> Walk<'_, 'a> {
     /// No arm standing for the rest: a node added upstream is a node whose value this has not
     /// yet said the source of, and the lowering would read its type on trust.
     fn relations(&mut self, node: &'a Node) -> Result<()> {
-        self.declared.resolves(&self.owner, node.ty())?;
+        // Every type the node writes, not only its own: one carried beside it is as much a name the
+        // document says it declares.
+        for ty in node.types() {
+            self.declared.resolves(&self.owner, ty)?;
+        }
+        // What a node can end without a value for is its kind's, and only some kinds can. A node
+        // of any other kind naming a reason is one the checker does not write, and the lowering,
+        // which reads a reason only where a kind has one to give, would not notice it.
+        if !node.can_end_without_a_value() && !node.aborts().is_empty() {
+            bail!(
+                "{}: a node that ends no run without a value names {:?} as what it can end without \
+                 one for: the two halves disagree",
+                self.owner,
+                node.aborts()
+            );
+        }
         match node {
             Node::Int { ty, .. } => self.same(
                 "an integer literal",
@@ -920,24 +948,20 @@ impl<'a> Walk<'_, 'a> {
                     );
                 }
                 // A construction ends without a value where a clause does not hold, and the checker
-                // says so of exactly the constructions of a type that states one. Of a type another
-                // build builds, the clauses are that build's and not carried, so there is nothing
-                // here to hold what the construction says to.
-                let owed: Option<&[AbortKind]> = shape.clauses().map(|clauses| {
-                    if clauses.is_empty() {
-                        &[][..]
-                    } else {
-                        &[AbortKind::InvariantNotHeld][..]
-                    }
-                });
-                if let Some(owed) = owed
-                    && aborts.as_slice() != owed
-                {
-                    let states = if owed.is_empty() {
-                        "states no clause"
-                    } else {
-                        "states what its values owe"
-                    };
+                // says so of exactly the constructions of a type that states one. Of a type
+                // another build builds the clauses are that build's and not carried, so whether
+                // this construction names the one reason is not held, and that it names no other
+                // is.
+                let owes = [AbortKind::InvariantNotHeld];
+                let (holds, states) = match shape.clauses() {
+                    Some([]) => (aborts.is_empty(), "states no clause"),
+                    Some(_) => (aborts.as_slice() == owes, "states what its values owe"),
+                    None => (
+                        aborts.is_empty() || aborts.as_slice() == owes,
+                        "is built by another build, which states what its values owe or nothing",
+                    ),
+                };
+                if !holds {
                     bail!(
                         "{}: a construction of {declared}, whose type {states}, names {:?} as what \
                          it can end without a value for: the two halves disagree",
@@ -987,6 +1011,7 @@ impl<'a> Walk<'_, 'a> {
             }
             Node::Binary {
                 op,
+                reading,
                 left,
                 right,
                 ty,
@@ -994,7 +1019,8 @@ impl<'a> Walk<'_, 'a> {
             } => {
                 self.node(left)?;
                 self.node(right)?;
-                self.operator(*op, left.ty(), right.ty(), ty, aborts)
+                self.reading(*op, reading, left.ty(), right.ty())?;
+                self.operator(*op, reading, (left.ty(), right.ty()), ty, aborts)
             }
             Node::Neg {
                 operand,
@@ -1003,22 +1029,27 @@ impl<'a> Walk<'_, 'a> {
             } => {
                 self.node(operand)?;
                 self.number("a negation", ty)?;
-                // A literal's sign is folded, and nothing else about one can leave the range. Of
-                // anything else, negating the smallest `Int` leaves it, and a `Decimal` or a
-                // `Rational` only changes sign: the checker names one reason for the first and none
-                // for the others.
-                if !matches!(operand.as_ref(), Node::Int { .. }) {
-                    if matches!(ty, Ty::Prim { prim: Prim::Int }) {
-                        self.overflows("a negation of an Int", aborts)?;
-                    } else if !aborts.is_empty() {
-                        bail!(
-                            "{}: a negation of {} names {:?} as what it can end without a value \
-                             for, where it only changes sign: the two halves disagree",
-                            self.owner,
-                            ty.spelt(),
-                            aborts
-                        );
-                    }
+                // What a negation can end without a value for is decided by the type it answers,
+                // and not by what it negates: the smallest `Int` has no counterpart, so a
+                // negation of an `Int` names one reason, a literal's included, and a `Decimal` or
+                // a `Rational` only changes sign and names none. That the lowering folds a
+                // literal's sign is its own, and says nothing of what the checker states.
+                let owed: &[AbortKind] = if matches!(ty, Ty::Prim { prim: Prim::Int }) {
+                    &[AbortKind::RequiredFormHasNoPlace]
+                } else {
+                    &[]
+                };
+                self.ends_for(&format!("a negation of {}", ty.spelt()), aborts, owed)?;
+                // A literal is a magnitude the checker writes in `[0, Int.MAX]`: `-Int.MIN` is not
+                // one a source can name, and the lowering negates it as it stands.
+                if let Node::Int { value, .. } = operand.as_ref()
+                    && *value == i64::MIN
+                {
+                    bail!(
+                        "{}: a negation of the literal {value}, which is no magnitude the checker \
+                         writes: the two halves disagree",
+                        self.owner
+                    );
                 }
                 Ok(())
             }
@@ -1046,13 +1077,50 @@ impl<'a> Walk<'_, 'a> {
                     if arm.selects.is_empty() {
                         bail!("{}: an arm tests for nothing", self.owner);
                     }
+                    // What an arm tests is held against what it forks on, whether the arm binds a value
+                    // or not: the lowering turns each test into one comparison of the value, and
+                    // a test of absence is a comparison with no case in it, so it means something
+                    // only of an optional, and a test of a case only of a value that is not one.
+                    let optional = matches!(subject.ty(), Ty::Option { .. });
                     for selects in &arm.selects {
-                        if let Selects::Which { atoms } = selects {
-                            self.leaves("an arm", atoms)?;
+                        match selects {
+                            Selects::Which { atoms } => {
+                                self.leaves("an arm", atoms)?;
+                                if optional {
+                                    bail!(
+                                        "{}: an arm tests which case {} is, which an optional \
+                                         answers by holding or not: the two halves disagree",
+                                        self.owner,
+                                        subject.ty().spelt()
+                                    );
+                                }
+                                self.fits(
+                                    "a case an arm tests is one of what it forks on",
+                                    &Ty::Union {
+                                        union: atoms.clone(),
+                                    },
+                                    subject.ty(),
+                                );
+                            }
+                            Selects::Held | Selects::Nothing if !optional => bail!(
+                                "{}: an arm tests whether {} holds a value, which only an \
+                                 optional does: the two halves disagree",
+                                self.owner,
+                                subject.ty().spelt()
+                            ),
+                            Selects::Held | Selects::Nothing => {}
                         }
                     }
                     match (arm.binding, &arm.binds) {
-                        (None, _) => self.node(&arm.body)?,
+                        (None, None) => self.node(&arm.body)?,
+                        // The writer says both or neither, so an arm saying one is a statement
+                        // the lowering would drop: it reads what an arm binds only from an arm
+                        // that binds.
+                        (None, Some(_)) => bail!(
+                            "{}: an arm binds nothing and says what it reads it as: the two \
+                             halves disagree",
+                            self.owner
+                        ),
                         (Some(_), None) => bail!(
                             "{}: an arm binds a value and does not say what it reads it as",
                             self.owner
@@ -1193,52 +1261,121 @@ impl<'a> Walk<'_, 'a> {
         leaves(self.declared, &format!("{}: {what}", self.owner), cases)
     }
 
-    /// An operator against what it says it answers. Where its operands stand is [`Walk::slots`]'s.
+    /// What an operator's reading says of its operands.
     ///
-    /// What holds of every operator node the checker builds, whatever it was written over: a
-    /// comparison and a truth operator answer a truth, `/` a `Rational`, and `+`, `-` and `*` over
-    /// two operands of one type that type.
-    /// Which pairs an operator may be written over, and what it makes of two different ones, is
-    /// `ArithmeticCheck`'s and `BinaryElaborator`'s to say, and the checked tree does not record
-    /// what they said (souther-lang/souther#1919). Answering it again here would be a copy of the
-    /// checker's rule, wrong at its edges, so a pair the checker would refuse is not told apart
-    /// here from one this backend has no lowering for: both are refused as not lowered where the
-    /// lowering meets them.
+    /// Read as they stand, they are one type. Read at their exact values, each is a number. Read
+    /// in a type, that type is one the document carries. Which pairs an operator is written over,
+    /// and which reading the checker gives each, is the checker's rule and is not answered again
+    /// here: this holds only what a reading, once given, says.
+    fn reading(&self, op: Op, reading: &Reading, left: &Ty, right: &Ty) -> Result<()> {
+        // Which readings an operator can have. The checker reads a truth operator and a join as
+        // their operands stand, always, and arithmetic as they stand or at their exact values:
+        // only a comparison is read in a type. A document saying otherwise is one the lowering,
+        // which asks the reading before the operator, would lower under a reading the operator
+        // never has.
+        let refused = matches!(
+            (op, reading),
+            (
+                Op::And | Op::Or | Op::Concat,
+                Reading::In { .. } | Reading::ExactNumbers
+            ) | (Op::Add | Op::Sub | Op::Mul | Op::Div, Reading::In { .. })
+        );
+        if refused {
+            bail!(
+                "{}: {} is read {}, which the checker never reads it as: the two halves disagree",
+                self.owner,
+                op.spelt(),
+                reading.spelt()
+            );
+        }
+        match reading {
+            Reading::AsTheyStand => self.same(
+                &format!("the left side of {} read as it stands", op.spelt()),
+                left,
+                right,
+                "the right side",
+            ),
+            Reading::ExactNumbers => {
+                self.number(
+                    &format!("a side of {} read at its exact value", op.spelt()),
+                    left,
+                )?;
+                self.number(
+                    &format!("a side of {} read at its exact value", op.spelt()),
+                    right,
+                )
+            }
+            // The type it is read in is one the document declares, which `Node::types` holds of
+            // every type a node writes.
+            Reading::In { .. } => Ok(()),
+        }
+    }
+
+    /// An operator against what it says it answers. Where its operands stand is [`Walk::slots`]'s,
+    /// and what its reading says of them is [`Walk::reading`]'s.
+    ///
+    /// A comparison and a truth operator answer a truth, and `/` a `Rational`. A sum, a difference
+    /// or a product answers the type its operands are read as where they are read as they stand,
+    /// and a `Rational` where they are read at their exact values.
     fn operator(
         &mut self,
         op: Op,
-        left: &Ty,
-        right: &Ty,
+        reading: &Reading,
+        (left, right): (&Ty, &Ty),
         ty: &Ty,
         aborts: &[AbortKind],
     ) -> Result<()> {
         let truth = Ty::Prim { prim: Prim::Bool };
+        let rational = Ty::Prim {
+            prim: Prim::Rational,
+        };
         let what = format!("what {} answers", op.spelt());
         match op {
             Op::And | Op::Or => self.same(&what, ty, &truth, "what the operator answers"),
             Op::Eq | Op::Ne | Op::Lt | Op::Le | Op::Gt | Op::Ge => {
                 self.same(&what, ty, &truth, "what the operator answers")
             }
-            Op::Div => self.same(
-                &what,
-                ty,
-                &Ty::Prim {
-                    prim: Prim::Rational,
-                },
-                "what a quotient is",
-            ),
+            Op::Div => {
+                self.same(&what, ty, &rational, "what a quotient is")?;
+                // A quotient ends a run for a zero divisor, and for an answer with no place where
+                // an operand is already exact.
+                let exact = |it: &Ty| {
+                    matches!(
+                        it,
+                        Ty::Prim {
+                            prim: Prim::Rational
+                        }
+                    )
+                };
+                let owed: &[AbortKind] = if exact(left) || exact(right) {
+                    &[AbortKind::DivisionByZero, AbortKind::RequiredFormHasNoPlace]
+                } else {
+                    &[AbortKind::DivisionByZero]
+                };
+                self.ends_for(&format!("a quotient of {}", left.spelt()), aborts, owed)
+            }
             // Both sides stand at what it answers, which its slots hold; that is all a join says
             // of itself.
             Op::Concat => Ok(()),
-            Op::Add | Op::Sub | Op::Mul if left == right => {
-                self.number(&what, ty)?;
-                self.same(&what, ty, left, "what its operands are")?;
-                if matches!(left, Ty::Prim { prim: Prim::Int }) {
-                    self.overflows(&format!("{} over two Ints", op.spelt()), aborts)?;
+            Op::Add | Op::Sub | Op::Mul => {
+                match reading {
+                    Reading::AsTheyStand => {
+                        self.number(&what, ty)?;
+                        self.same(&what, ty, left, "what its operands are read as")?;
+                    }
+                    Reading::ExactNumbers => {
+                        self.same(&what, ty, &rational, "what exact values come to")?;
+                    }
+                    Reading::In { .. } => self.number(&what, ty)?,
                 }
-                Ok(())
+                // A sum, a difference or a product of numbers leaves the range its answer holds,
+                // whichever reading its operands have, and names the one reason for it.
+                self.ends_for(
+                    &format!("{} over {}", op.spelt(), left.spelt()),
+                    aborts,
+                    &[AbortKind::RequiredFormHasNoPlace],
+                )
             }
-            Op::Add | Op::Sub | Op::Mul => self.number(&what, ty),
         }
     }
 
@@ -1262,16 +1399,17 @@ impl<'a> Walk<'_, 'a> {
         Ok(())
     }
 
-    /// Refuses a site that can leave its type's range and does not name exactly one reason for
-    /// ending without a value: the checker and this backend would disagree about what kind of site
-    /// it is, and answering a wrong value because the checker said none would be worse.
-    fn overflows(&self, what: &str, aborts: &[AbortKind]) -> Result<()> {
-        if aborts.len() != 1 {
+    /// Refuses a site that names other than the reasons it owes for ending without a value.
+    ///
+    /// The reasons themselves and not how many there are: the lowering turns the one it is given
+    /// into the status the run ends with, so a document naming another reason for a site would be
+    /// lowered to a run that ends for a reason the checker never gave it.
+    fn ends_for(&self, what: &str, aborts: &[AbortKind], owed: &[AbortKind]) -> Result<()> {
+        if aborts != owed {
             bail!(
-                "{}: {what} may leave its type's range and names {} reasons for ending without a \
-                 value, where it has exactly one",
-                self.owner,
-                aborts.len()
+                "{}: {what} names {aborts:?} as what it can end without a value for, where the \
+                 checker names {owed:?}: the two halves disagree",
+                self.owner
             );
         }
         Ok(())
@@ -1339,9 +1477,8 @@ impl<'a> Walk<'_, 'a> {
         ty: &Ty,
         aborts: &[AbortKind],
     ) -> Result<()> {
-        if let Some((callee, takes)) = self.parameters(reaches)? {
-            self.arity(&format!("a call of {callee}"), arguments.len(), takes.len())?;
-        }
+        let (callee, takes) = self.parameters(reaches)?;
+        self.arity(&format!("a call of {callee}"), arguments.len(), takes.len())?;
         match reaches {
             Reaches::Behavior { declared } => self.same(
                 &format!("a call of {declared}"),
@@ -1401,18 +1538,53 @@ impl<'a> Walk<'_, 'a> {
                     }
                 }
             }
-            Reaches::Kernel { kernel } => match kernel.as_str() {
-                "int.add" => {
-                    self.overflows("a call of int.add", aborts)?;
+            Reaches::Kernel {
+                kernel,
+                takes,
+                fact,
+            } => match LoweredKernel::of(kernel) {
+                // A kernel this backend lowers is held to what this backend knows of it, and the
+                // settlement is held to that: what the application says it takes is the checker's
+                // statement about this call, and not a contract this backend has for the kernel.
+                Some(known) => {
+                    let contract = known.contract();
+                    if takes.len() != contract.takes.len() {
+                        bail!(
+                            "{}: {kernel} takes {} arguments and this application says it takes \
+                             {}: the two halves disagree",
+                            self.owner,
+                            contract.takes.len(),
+                            takes.len()
+                        );
+                    }
+                    // What was settled beside what it takes is held to the same contract: a fact
+                    // the checker attaches to another kernel is not one it attaches to this.
+                    if !contract.fact.accepts(fact) {
+                        bail!(
+                            "{}: an application of {kernel} settles {fact:?} where the kernel \
+                             settles {:?}: the two halves disagree",
+                            self.owner,
+                            contract.fact
+                        );
+                    }
+                    for (settled, known_to_take) in takes.iter().zip(&contract.takes) {
+                        self.same(
+                            &format!("what an application of {kernel} takes"),
+                            settled,
+                            known_to_take,
+                            "what it takes",
+                        )?;
+                    }
+                    self.ends_for(&format!("a call of {kernel}"), aborts, &contract.aborts)?;
                     self.same(
-                        "a call of int.add",
+                        &format!("a call of {kernel}"),
                         ty,
-                        &Ty::Prim { prim: Prim::Int },
+                        &contract.answers,
                         "what it answers",
                     )
                 }
                 // Refused where it is lowered; nothing here knows what it answers.
-                _ => Ok(()),
+                None => Ok(()),
             },
         }
     }
@@ -1582,19 +1754,12 @@ fn composes(
 /// Each field of `declaration` under the binding its clauses read it through, at the type it holds.
 ///
 /// Two fields under one binding would be a clause reading one name for two values.
-fn fields_bound(declaration: &Declaration) -> Result<Vec<(usize, Ty)>> {
-    let mut bound: Vec<(usize, Ty)> = Vec::new();
-    for field in declaration.fields() {
-        if bound.iter().any(|(binding, _)| *binding == field.binding) {
-            bail!(
-                "{} binds two fields under {}, which a clause reads as one value",
-                declaration.key(),
-                field.binding
-            );
-        }
-        bound.push((field.binding, field.codec.ty()));
-    }
-    Ok(bound)
+fn fields_bound(declaration: &Declaration) -> Vec<(usize, Ty)> {
+    declaration
+        .fields()
+        .iter()
+        .map(|field| (field.binding, field.codec.ty()))
+        .collect()
 }
 
 /// Refuses a test naming no case, or naming a sum where the checker answers the leaves it descends

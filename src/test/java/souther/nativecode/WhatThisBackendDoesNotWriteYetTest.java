@@ -221,27 +221,30 @@ class WhatThisBackendDoesNotWriteYetTest {
     /**
      * A value of a newtype compared with a bare literal, which is a comparison of what it wraps.
      *
-     * <p>Both orders, and the order is the point. The language lets a bare literal take the
-     * newtype of the operand it is compared with, so `0 == amount` crosses with an `Int` on the
-     * left and a declared type on the right — and a lowering that read the left operand alone
-     * would compare two `Int`s, one of which is an address. It would then refuse `amount == 0`,
-     * which means the same thing, and which of the two a program got would be the order its author
-     * wrote them in.
+     * <p>Both orders, and the order is the point. The checker reads the pair as values of the
+     * newtype, for this operator only, and says so on the node whichever side the literal is on:
+     * an `Int` on one side and an address on the other is what the operands are, and what they are
+     * read as is the newtype. Nothing here takes a literal as a newtype yet, so both orders are
+     * refused, and for that reason.
      */
     @Test
     void aNewtypeComparedWithABareLiteralIsNotComparedByWhereItIs() {
         for (String body : List.of("0 == a", "a == 0", "100 <= a", "a >= 100")) {
-            assertThatThrownBy(() -> NativeCompiler.compile(CheckedProgram.of(List.of("""
+            CheckedProgram program = CheckedProgram.of(List.of("""
                     module comparing
 
                     data Amount = Int
 
                     behavior asked : (a: Amount) -> Bool
                     let asked (a) = %s
-                    """.formatted(body)))))
+                    """.formatted(body)));
+            assertThat(ProgramWriter.written(program))
+                    .as("`%s`", body)
+                    .contains("\"reading\":{\"is\":\"in\",\"type\":{\"declared\":\"comparing.Amount\"}}");
+            assertThatThrownBy(() -> NativeCompiler.compile(program))
                     .as("`%s`", body)
                     .isInstanceOf(NotLowered.class)
-                    .hasMessageContaining("comparing.Amount");
+                    .hasMessageContaining("read as comparing.Amount");
         }
     }
 

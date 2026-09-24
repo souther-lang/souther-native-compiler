@@ -42,7 +42,7 @@ class AClauseCrossesAsTheConditionTheCheckerElaboratedTest {
                 "\"is\":\"newtype\",\"field\":{\"name\":\"value\",\"binding\":0,"
                         + "\"codec\":{\"is\":\"scalar\",\"scalar\":\"INT\"}},"
                         + "\"invariants\":[{\"name\":\"positive\",\"condition\":"
-                        + "{\"core\":\"binary\",\"op\":\"GT\","
+                        + "{\"core\":\"binary\",\"op\":\"GT\",\"reading\":{\"is\":\"astheystand\"},"
                         + "\"left\":{\"core\":\"read\",\"binding\":0,");
     }
 
@@ -53,8 +53,8 @@ class AClauseCrossesAsTheConditionTheCheckerElaboratedTest {
     @Test
     void anUnnamedClauseCrossesWithNoNameAndWithWhatItsSitesCanEndFor() {
         assertThat(written()).contains(
-                "\"invariants\":[{\"name\":null,\"condition\":{\"core\":\"binary\",\"op\":\"LE\","
-                        + "\"left\":{\"core\":\"binary\",\"op\":\"ADD\",");
+                "\"invariants\":[{\"name\":null,\"condition\":{\"core\":\"binary\",\"op\":\"LE\",\"reading\":{\"is\":\"astheystand\"},"
+                        + "\"left\":{\"core\":\"binary\",\"op\":\"ADD\",\"reading\":{\"is\":\"astheystand\"},");
         assertThat(written()).contains("\"aborts\":[\"REQUIRED_FORM_HAS_NO_PLACE\"]");
     }
 

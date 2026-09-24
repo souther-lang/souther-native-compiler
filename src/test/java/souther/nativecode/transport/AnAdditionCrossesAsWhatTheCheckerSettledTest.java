@@ -36,14 +36,14 @@ class AnAdditionCrossesAsWhatTheCheckerSettledTest {
         String written = ProgramWriter.written(CheckedProgram.of(List.of(ADDING)));
 
         assertThat(written).isEqualTo("""
-                {"transport":12,"declarations":[],\
+                {"transport":13,"declarations":[],\
                 "behaviors":[{"module":"calculation","name":"add","is":"body",\
                 "inputs":[{"is":"scalar","scalar":"INT"},{"is":"scalar","scalar":"INT"}],\
                 "output":{"is":"scalar","scalar":"INT"}}],\
                 "modules":[{"name":"calculation","publishes":[],"helpers":[],"values":[],"entries":[],\
                 "definitions":[{"is":"body","declared":"calculation.add","parameters":["a","b"],\
                 "publication":"published",\
-                "body":{"core":"binary","op":"ADD",\
+                "body":{"core":"binary","op":"ADD","reading":{"is":"astheystand"},\
                 "left":{"core":"read","binding":0,"type":{"prim":"INT"},"aborts":[]},\
                 "right":{"core":"read","binding":1,"type":{"prim":"INT"},"aborts":[]},\
                 "type":{"prim":"INT"},"aborts":["REQUIRED_FORM_HAS_NO_PLACE"]}}],"examples":[]}]}""");

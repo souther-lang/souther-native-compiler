@@ -5,8 +5,8 @@
 //! things one way and kept whichever was read last. That is how a helper written twice, or a value,
 //! or an entry, was once read: the second copy was checked and the first was compiled. So `insert`
 //! is refused by the lint configuration (`clippy.toml`), and a name goes into an index here or not
-//! at all. A place that means to replace what a key held — a scope a binder shadows — says so where
-//! it does it.
+//! at all. A number names one binder in force at a time, so a scope is an index like any other and
+//! there is no place that means to replace what a key held.
 
 use anyhow::{Result, bail};
 use std::collections::{BTreeMap, HashMap};

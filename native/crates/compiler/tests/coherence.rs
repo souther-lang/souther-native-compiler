@@ -21,7 +21,7 @@ const P: &str = r#"{"declared":"m.P"}"#;
 fn document(behaviors: &[String], helpers: &[String], definitions: &[String]) -> String {
     format!(
         concat!(
-            r#"{{"transport":12,"declarations":["#,
+            r#"{{"transport":13,"declarations":["#,
             r#"{{"module":"m","name":"A","by":"amodule","is":"unit"}},"#,
             r#"{{"module":"m","name":"B","by":"amodule","is":"unit"}},"#,
             r#"{{"module":"m","name":"S","by":"amodule","is":"sum","#,
@@ -68,6 +68,21 @@ fn node(core: &str, fields: &str, ty: &str) -> String {
 /// own.
 fn widen(value: &str, ty: &str) -> String {
     node("widen", &format!(r#""value":{value}"#), ty)
+}
+
+/// `node` naming these reasons for ending without a value, on the node itself: the `aborts` at the
+/// end of the document, and not the ones on the literals and reads under it, which name none.
+fn with_outer_aborts(node: &str, reasons: &str) -> String {
+    let empty = r#""aborts":[]}"#;
+    let at = node
+        .rfind(empty)
+        .expect("a node names what it can end without a value for");
+    format!(
+        "{}{}{}",
+        &node[..at],
+        format_args!(r#""aborts":[{reasons}]}}"#),
+        &node[at + empty.len()..]
+    )
 }
 
 fn read(binding: usize, ty: &str) -> String {
@@ -390,7 +405,11 @@ fn a_comparison_answers_a_truth() {
     let compare = |ty: &str| {
         node(
             "binary",
-            &format!(r#""op":"EQ","left":{},"right":{}"#, int(1), int(2)),
+            &format!(
+                r#""op":"EQ","reading":{{"is":"astheystand"}},"left":{},"right":{}"#,
+                int(1),
+                int(2)
+            ),
             ty,
         )
     };
@@ -408,18 +427,15 @@ fn a_negation_is_typed_as_what_it_negates() {
 /// `int.add` takes two numbers and answers one.
 #[test]
 fn int_add_answers_a_number() {
-    let reaches = r#"{"is":"kernel","kernel":"int.add"}"#;
+    let reaches = r#"{"is":"kernel","kernel":"int.add","takes":[{"prim":"INT"},{"prim":"INT"}],"fact":{"is":"none"}}"#;
     let added = |ty: &str| {
-        {
-            node(
+        with_outer_aborts(
+            &node(
                 "call",
                 &format!(r#""reaches":{reaches},"arguments":[{},{}]"#, int(1), int(2)),
                 ty,
-            )
-        }
-        .replace(
-            r#""aborts":[]}"#,
-            r#""aborts":["REQUIRED_FORM_HAS_NO_PLACE"]}"#,
+            ),
+            r#""REQUIRED_FORM_HAS_NO_PLACE""#,
         )
     };
     reads_whole(&helpers(&[h(&[], &added(INT))]));
@@ -702,7 +718,11 @@ fn a_quotient_is_a_rational() {
     let divided = |ty: &str| {
         node(
             "binary",
-            &format!(r#""op":"DIV","left":{},"right":{}"#, int(1), int(2)),
+            &format!(
+                r#""op":"DIV","reading":{{"is":"astheystand"}},"left":{},"right":{}"#,
+                int(1),
+                int(2)
+            ),
             ty,
         )
     };
@@ -710,26 +730,38 @@ fn a_quotient_is_a_rational() {
     is_the_halves_disagreeing(&helpers(&[behind(), h(&[], &divided(BOOL))]), "m.h");
 }
 
-/// Two numbers of two types: `Int + Rational` is one the checker writes and `Int + Decimal` is one
-/// it refuses. Neither has a lowering here, and which of the two a pair is would take the checker's
-/// decision, which the checked tree does not record (souther-lang/souther#1919); so both are not
-/// lowered, and neither is refused as something the checker could not have written.
+/// Two numbers of two types, told apart by what the operator reads them as. `Int + Rational` is
+/// read at the exact values of both and answers a `Rational`: the checker writes it, and this
+/// backend has no lowering for it. `Int + Decimal` read as they stand is two types where the
+/// reading says one: the checker never writes it, and it is the two halves disagreeing.
 #[test]
-fn numbers_of_two_types_are_not_told_apart_until_the_checker_says() {
+fn numbers_of_two_types_are_told_apart_by_how_the_operator_reads_them() {
     let rational = r#"{"prim":"RATIONAL"}"#;
-    for other in [DECIMAL, rational] {
-        let added = node(
-            "binary",
-            &format!(
-                r#""op":"ADD","left":{},"right":{}"#,
-                read(0, INT),
-                read(1, other)
+    let added = |other: &str, reading: &str| {
+        with_outer_aborts(
+            &node(
+                "binary",
+                &format!(
+                    r#""op":"ADD","reading":{{"is":"{reading}"}},"left":{},"right":{}"#,
+                    read(0, INT),
+                    read(1, other)
+                ),
+                rational,
             ),
-            rational,
-        );
-        let refused = object_for(&helpers(&[h(&[INT, other], &added)])).expect_err("no lowering");
-        assert!(refused.downcast_ref::<NotLowered>().is_some(), "{refused}");
-    }
+            r#""REQUIRED_FORM_HAS_NO_PLACE""#,
+        )
+    };
+    let refused = object_for(&helpers(&[h(
+        &[INT, rational],
+        &added(rational, "exactnumbers"),
+    )]))
+    .expect_err("no lowering for exact values");
+    assert!(refused.downcast_ref::<NotLowered>().is_some(), "{refused}");
+
+    is_the_halves_disagreeing(
+        &helpers(&[h(&[INT, DECIMAL], &added(DECIMAL, "astheystand"))]),
+        "read as it stands",
+    );
 }
 
 /// Arithmetic over two `Int`s can leave their range, and names the one reason it ends without a
@@ -737,18 +769,103 @@ fn numbers_of_two_types_are_not_told_apart_until_the_checker_says() {
 #[test]
 fn arithmetic_that_can_overflow_names_one_reason() {
     let added = |aborts: &str| {
-        node(
-            "binary",
-            &format!(r#""op":"ADD","left":{},"right":{}"#, int(1), int(2)),
-            INT,
+        with_outer_aborts(
+            &node(
+                "binary",
+                &format!(
+                    r#""op":"ADD","reading":{{"is":"astheystand"}},"left":{},"right":{}"#,
+                    int(1),
+                    int(2)
+                ),
+                INT,
+            ),
+            aborts,
         )
-        .replace(r#""aborts":[]}"#, &format!(r#""aborts":[{aborts}]}}"#))
     };
     reads_whole(&helpers(&[h(
         &[],
         &added(r#""REQUIRED_FORM_HAS_NO_PLACE""#),
     )]));
-    is_the_halves_disagreeing(&helpers(&[behind(), h(&[], &added(""))]), "reasons");
+    // None, and another reason. The lowering turns the reason into the status a run that leaves the
+    // range ends with, so a reason the checker never gave a sum would end the run for it.
+    for wrong in ["", r#""DIVISION_BY_ZERO""#, r#""INVARIANT_NOT_HELD""#] {
+        is_the_halves_disagreeing(
+            &helpers(&[behind(), h(&[], &added(wrong))]),
+            "where the checker names",
+        );
+    }
+}
+
+/// What every arithmetic site owes, by what decides it: a sum, a difference and a product name the
+/// one reason whatever type they are over, and a quotient names a zero divisor, and an answer with no
+/// place where an operand is already exact.
+#[test]
+fn every_arithmetic_site_names_exactly_the_reasons_it_owes() {
+    let rational = r#"{"prim":"RATIONAL"}"#;
+    let over = |op: &str, ty: &str, answers: &str, reading: &str, reasons: &str| {
+        with_outer_aborts(
+            &node(
+                "binary",
+                &format!(
+                    r#""op":"{op}","reading":{{"is":"{reading}"}},"left":{},"right":{}"#,
+                    read(0, ty),
+                    read(1, ty)
+                ),
+                answers,
+            ),
+            reasons,
+        )
+    };
+    let no_place = r#""REQUIRED_FORM_HAS_NO_PLACE""#;
+    let zero = r#""DIVISION_BY_ZERO""#;
+    let both = format!("{zero},{no_place}");
+
+    for (op, reasons, wrong) in [
+        ("ADD", no_place, zero),
+        ("SUB", no_place, zero),
+        ("MUL", no_place, ""),
+    ] {
+        reads_whole(&helpers(&[h(
+            &[INT, INT],
+            &over(op, INT, INT, "astheystand", reasons),
+        )]));
+        is_the_halves_disagreeing(
+            &helpers(&[h(&[INT, INT], &over(op, INT, INT, "astheystand", wrong))]),
+            "where the checker names",
+        );
+    }
+    // A quotient of two Ints names a zero divisor, and of two Rationals a place too.
+    let _ = reads_whole_or_not_lowered(&helpers(&[h(
+        &[INT, INT],
+        &over("DIV", INT, rational, "astheystand", zero),
+    )]));
+    for (ty, right, wrong) in [
+        (INT, zero, no_place),
+        (INT, zero, ""),
+        (rational, both.as_str(), zero),
+    ] {
+        let refused = object_for(&helpers(&[h(
+            &[ty, ty],
+            &over("DIV", ty, rational, "astheystand", wrong),
+        )]))
+        .expect_err("a quotient names the reasons it owes");
+        assert!(
+            refused.to_string().contains("where the checker names"),
+            "{right}: {refused}"
+        );
+    }
+}
+
+/// A document Coherent reads whole and the lowering then refuses as not lowered is one this backend
+/// is behind on; either answer is not the two halves disagreeing.
+fn reads_whole_or_not_lowered(document: &str) -> bool {
+    match object_for(document) {
+        Ok(_) => true,
+        Err(refused) => {
+            assert!(refused.downcast_ref::<NotLowered>().is_some(), "{refused}");
+            false
+        }
+    }
 }
 
 /// A row is a body like any other: a published value it calls is declared, and a closure it
@@ -1058,7 +1175,9 @@ fn a_concat_operand_narrower_than_its_slot_without_a_widen_is_the_halves_disagre
     let joined = |left: &str, right: &str| {
         node(
             "binary",
-            &format!(r#""op":"CONCAT","left":{left},"right":{right}"#),
+            &format!(
+                r#""op":"CONCAT","reading":{{"is":"astheystand"}},"left":{left},"right":{right}"#
+            ),
             &listed(S),
         )
     };
@@ -1084,7 +1203,7 @@ fn a_concat_of_two_strings_reads_whole() {
     let joined = node(
         "binary",
         &format!(
-            r#""op":"CONCAT","left":{},"right":{}"#,
+            r#""op":"CONCAT","reading":{{"is":"astheystand"}},"left":{},"right":{}"#,
             read(0, STRING),
             read(1, STRING)
         ),
@@ -1094,7 +1213,7 @@ fn a_concat_of_two_strings_reads_whole() {
     let answered_wrong = node(
         "binary",
         &format!(
-            r#""op":"CONCAT","left":{},"right":{}"#,
+            r#""op":"CONCAT","reading":{{"is":"astheystand"}},"left":{},"right":{}"#,
             read(0, STRING),
             read(1, STRING)
         ),
@@ -1107,7 +1226,7 @@ fn a_concat_of_two_strings_reads_whole() {
 fn with_clauses(fields: &str, invariants: &str, helpers: &[String]) -> String {
     format!(
         concat!(
-            r#"{{"transport":12,"declarations":["#,
+            r#"{{"transport":13,"declarations":["#,
             r#"{{"module":"m","name":"R","by":"amodule","is":"product","#,
             r#""fields":[{}],"invariants":[{}]}}],"#,
             r#""behaviors":[],"#,
@@ -1134,7 +1253,7 @@ fn clause(name: Option<&str>, condition: &str) -> String {
 fn at_least(left: &str, right: &str) -> String {
     node(
         "binary",
-        &format!(r#""op":"GE","left":{left},"right":{right}"#),
+        &format!(r#""op":"GE","reading":{{"is":"astheystand"}},"left":{left},"right":{right}"#),
         BOOL,
     )
 }
@@ -1266,4 +1385,535 @@ fn a_clause_of_a_declaration_nothing_here_builds_is_not_run() {
         &let_(2, &decimal_to_truth, &block, &read(0, BOOL), BOOL),
     );
     is_the_halves_disagreeing(&with_clauses(listed, &disagreeing, &[]), "m.R's clause 0");
+}
+
+/// A kernel's application states what it takes each argument as, which is the kernel's signature
+/// settled for this call, and every argument stands at exactly that: where it is narrower, the
+/// argument is a `Widen` saying so. One left narrower without it is a document the checker does not
+/// write, and is refused as that rather than as a kernel this backend does not lower.
+#[test]
+fn a_kernel_argument_stands_at_what_the_application_takes() {
+    let listed = |of: &str| format!(r#"{{"list":{of}}}"#);
+    let length = |argument: &str| {
+        let reaches = format!(
+            r#"{{"is":"kernel","kernel":"list.length","takes":[{}],"fact":{{"is":"none"}}}}"#,
+            listed(S)
+        );
+        node(
+            "call",
+            &format!(r#""reaches":{reaches},"arguments":[{argument}]"#),
+            INT,
+        )
+    };
+    let refused = object_for(&helpers(&[h(
+        &[&listed(A)],
+        &length(&widen(&read(0, &listed(A)), &listed(S))),
+    )]))
+    .expect_err("nothing lays a list out");
+    assert!(refused.downcast_ref::<NotLowered>().is_some(), "{refused}");
+
+    is_the_halves_disagreeing(
+        &helpers(&[h(&[&listed(A)], &length(&read(0, &listed(A))))]),
+        "argument 0 handed to list.length",
+    );
+}
+
+/// `int.add` is lowered as the sum of two `Int`s. What an application says it takes is the
+/// checker's statement about that call, and this backend holds it to what it knows of the kernel:
+/// both how many it takes and what each is. One that says otherwise is the two halves disagreeing,
+/// and is not lowered as though it were the kernel.
+#[test]
+fn int_add_takes_two_ints_whatever_the_application_says() {
+    let added = |takes: &str, arguments: &[String]| {
+        let reaches = format!(
+            r#"{{"is":"kernel","kernel":"int.add","takes":[{takes}],"fact":{{"is":"none"}}}}"#
+        );
+        with_outer_aborts(
+            &node(
+                "call",
+                &format!(
+                    r#""reaches":{reaches},"arguments":[{}]"#,
+                    arguments.join(",")
+                ),
+                INT,
+            ),
+            r#""REQUIRED_FORM_HAS_NO_PLACE""#,
+        )
+    };
+    let document = |call: String| helpers(&[h(&[], &call)]);
+
+    reads_whole(&document(added(&format!("{INT},{INT}"), &[int(1), int(2)])));
+    // A second `Bool` among what it takes: two arguments, one of them the wrong type.
+    is_the_halves_disagreeing(
+        &document(added(&format!("{INT},{BOOL}"), &[int(1), truth(true)])),
+        "what an application of int.add takes",
+    );
+    // None at all, and three: as many arguments as the application says, and not what the
+    // kernel takes. Each would otherwise be lowered as the sum of the first two or panic on a
+    // missing one.
+    is_the_halves_disagreeing(&document(added("", &[])), "takes 2 arguments");
+    is_the_halves_disagreeing(
+        &document(added(
+            &format!("{INT},{INT},{INT}"),
+            &[int(1), int(2), int(3)],
+        )),
+        "takes 2 arguments",
+    );
+}
+
+/// A truth operator and a join are read as their operands stand, and arithmetic as they stand or at
+/// their exact values: only a comparison is read in a type. The lowering asks the reading before the
+/// operator, so a truth operator claiming to be read in a type is refused here and not lowered as a
+/// short circuit over what it does not say it is.
+#[test]
+fn an_operator_is_read_only_as_the_checker_reads_it() {
+    let over = |op: &str, reading: &str, ty: &str| {
+        node(
+            "binary",
+            &format!(
+                r#""op":"{op}","reading":{reading},"left":{},"right":{}"#,
+                read(0, ty),
+                read(1, ty)
+            ),
+            if matches!(op, "AND" | "OR") { BOOL } else { ty },
+        )
+    };
+    let in_amount = r#"{"is":"in","type":{"declared":"m.A"}}"#;
+    let exact = r#"{"is":"exactnumbers"}"#;
+    let stands = r#"{"is":"astheystand"}"#;
+    let documents = |body: String, ty: &str| helpers(&[h(&[ty, ty], &body)]);
+
+    reads_whole(&documents(over("AND", stands, BOOL), BOOL));
+    for reading in [in_amount, exact] {
+        is_the_halves_disagreeing(
+            &documents(over("AND", reading, BOOL), BOOL),
+            "never reads it as",
+        );
+        is_the_halves_disagreeing(
+            &documents(over("CONCAT", reading, STRING), STRING),
+            "never reads it as",
+        );
+    }
+    is_the_halves_disagreeing(
+        &documents(over("ADD", in_amount, INT), INT),
+        "never reads it as",
+    );
+}
+
+/// Every type a node writes is one the document declares, the ones it carries beside its own
+/// included: what a let binds, what an arm reads a value as, what an operator reads its operands in,
+/// and what a kernel's application takes and was settled against.
+#[test]
+fn every_type_a_node_writes_is_one_the_document_declares() {
+    let missing = r#"{"declared":"m.Missing"}"#;
+    let refuses = |body: String, takes: &[&str]| {
+        let refused =
+            object_for(&helpers(&[h(takes, &body)])).expect_err("a type nothing declares");
+        assert!(refused.downcast_ref::<NotLowered>().is_none(), "{refused}");
+        assert!(refused.to_string().contains("m.Missing"), "{refused}");
+    };
+
+    // What a kernel's application was settled against.
+    let ordering = format!(
+        r#"{{"is":"kernel","kernel":"list.sort","takes":[],"fact":{{"is":"orderingsubject","type":{missing}}}}}"#
+    );
+    refuses(call(&ordering, &[], INT), &[]);
+
+    // What an application takes, with no argument of that type to stand beside it.
+    let taking = format!(
+        r#"{{"is":"kernel","kernel":"list.length","takes":[{missing}],"fact":{{"is":"none"}}}}"#
+    );
+    refuses(call(&taking, &[int(1)], INT), &[]);
+
+    // What an operator reads its operands in.
+    refuses(
+        node(
+            "binary",
+            &format!(
+                r#""op":"EQ","reading":{{"is":"in","type":{missing}}},"left":{},"right":{}"#,
+                int(1),
+                int(2)
+            ),
+            BOOL,
+        ),
+        &[],
+    );
+
+    // What a let binds.
+    refuses(let_(0, missing, &int(1), &int(2), INT), &[]);
+
+    // What an arm reads a value as.
+    let optional = option_of(INT);
+    refuses(
+        node(
+            "match",
+            &format!(
+                r#""subject":{},"arms":[{},{}]"#,
+                read(0, &optional),
+                arm(r#"{"tests":"held"}"#, Some((1, missing)), &int(1)),
+                arm(r#"{"tests":"nothing"}"#, None, &int(2))
+            ),
+            INT,
+        ),
+        &[&optional],
+    );
+}
+
+/// What the checker settles beside what a kernel takes is that kernel's: a pattern belongs to
+/// `String.matches` and an ordering subject to the kernels that order. An application of `int.add`
+/// carrying either is not one the checker writes, and is refused as that and not lowered as the
+/// sum it says it is. What another kernel carries is that kernel's own, and is read but not held
+/// where this backend does not lower the kernel.
+#[test]
+fn a_kernel_settles_what_this_backend_knows_it_settles() {
+    let added = |fact: &str| {
+        let reaches =
+            format!(r#"{{"is":"kernel","kernel":"int.add","takes":[{INT},{INT}],"fact":{fact}}}"#);
+        with_outer_aborts(
+            &node(
+                "call",
+                &format!(r#""reaches":{reaches},"arguments":[{},{}]"#, int(1), int(2)),
+                INT,
+            ),
+            r#""REQUIRED_FORM_HAS_NO_PLACE""#,
+        )
+    };
+    let document = |fact: &str| helpers(&[h(&[], &added(fact))]);
+
+    reads_whole(&document(r#"{"is":"none"}"#));
+    is_the_halves_disagreeing(
+        &document(r#"{"is":"stringmatches","pattern":"foo"}"#),
+        "settles",
+    );
+    is_the_halves_disagreeing(
+        &document(&format!(r#"{{"is":"orderingsubject","type":{INT}}}"#)),
+        "settles",
+    );
+
+    // A kernel this backend does not lower is refused as not lowered, whatever it settles.
+    let matching = node(
+        "call",
+        &format!(
+            r#""reaches":{{"is":"kernel","kernel":"string.matches","takes":[{STRING},{STRING}],"fact":{{"is":"stringmatches","pattern":"a"}}}},"arguments":[{},{}]"#,
+            read(0, STRING),
+            read(1, STRING)
+        ),
+        BOOL,
+    );
+    let refused = object_for(&helpers(&[h(&[STRING, STRING], &matching)]))
+        .expect_err("a kernel nothing here lowers");
+    assert!(refused.downcast_ref::<NotLowered>().is_some(), "{refused}");
+}
+
+/// A node names a reason to end a run without a value only where its kind has one. A literal, a
+/// read, a fork, a call to a helper and every other kind that ends no run of its own naming one is a
+/// document the checker does not write, and the lowering would not notice it.
+#[test]
+fn only_the_kinds_that_can_end_a_run_name_a_reason_to() {
+    let with_reason = |body: String| with_outer_aborts(&body, r#""DIVISION_BY_ZERO""#);
+
+    reads_whole(&helpers(&[h(&[INT], &read(0, INT))]));
+    for body in [
+        int(1),
+        read(0, INT),
+        node(
+            "if",
+            &format!(
+                r#""cond":{},"then":{},"else":{}"#,
+                truth(true),
+                int(1),
+                int(2)
+            ),
+            INT,
+        ),
+        widen(&unit("m.A"), S),
+    ] {
+        is_the_halves_disagreeing(
+            &helpers(&[h(&[INT], &with_reason(body))]),
+            "ends no run without a value",
+        );
+    }
+    // A call to a helper ends with what the helper ends with, and names none of its own.
+    let g = helper("m.g", &[INT], &read(0, INT));
+    let reaches = r#"{"is":"helper","declared":"m.g"}"#;
+    let called = with_reason(call(reaches, &[int(1)], INT));
+    is_the_halves_disagreeing(
+        &helpers(&[g, h(&[], &called)]),
+        "ends no run without a value",
+    );
+}
+
+/// What a binary operator can end a run for is decided by which operator it is: arithmetic may, and
+/// a comparison, a truth operator and a join never do. One of those naming a reason is a document
+/// the checker does not write, and is refused as that: the lowering of a comparison does not read
+/// a reason at all, so a document that got past here would be made into an object.
+#[test]
+fn only_arithmetic_names_a_reason_to_end_a_run() {
+    let over = |op: &str, ty: &str, answers: &str| {
+        node(
+            "binary",
+            &format!(
+                r#""op":"{op}","reading":{{"is":"astheystand"}},"left":{},"right":{}"#,
+                read(0, ty),
+                read(1, ty)
+            ),
+            answers,
+        )
+    };
+    let with_reason = |body: String| with_outer_aborts(&body, r#""DIVISION_BY_ZERO""#);
+
+    for (op, ty, answers) in [
+        ("EQ", INT, BOOL),
+        ("NE", INT, BOOL),
+        ("LT", INT, BOOL),
+        ("GE", INT, BOOL),
+        ("AND", BOOL, BOOL),
+        ("OR", BOOL, BOOL),
+        ("CONCAT", STRING, STRING),
+    ] {
+        reads_whole(&helpers(&[h(&[ty, ty], &over(op, ty, answers))]));
+        is_the_halves_disagreeing(
+            &helpers(&[h(&[ty, ty], &with_reason(over(op, ty, answers)))]),
+            "ends no run without a value",
+        );
+    }
+}
+
+/// What a negation can end a run for is decided by the type it answers and not by what it negates:
+/// the smallest `Int` has no counterpart, a literal's included, so a negation of an `Int` names one
+/// reason whatever its operand is. That the lowering folds a literal's sign says nothing of what the
+/// checker states.
+#[test]
+fn a_negation_of_an_int_names_its_reason_whatever_it_negates() {
+    let negated = |operand: String, reasons: &str| {
+        with_outer_aborts(
+            &node("neg", &format!(r#""operand":{operand}"#), INT),
+            reasons,
+        )
+    };
+    let one = r#""REQUIRED_FORM_HAS_NO_PLACE""#;
+
+    reads_whole(&helpers(&[h(&[INT], &negated(int(5), one))]));
+    reads_whole(&helpers(&[h(&[INT], &negated(read(0, INT), one))]));
+    // None, and another reason: what is named is the reason itself and not how many there are, and
+    // the lowering turns the one it is given into the status the run ends with.
+    for wrong in ["", r#""DIVISION_BY_ZERO""#] {
+        is_the_halves_disagreeing(
+            &helpers(&[h(&[INT], &negated(int(5), wrong))]),
+            "a negation of Int",
+        );
+        is_the_halves_disagreeing(
+            &helpers(&[h(&[INT], &negated(read(0, INT), wrong))]),
+            "a negation of Int",
+        );
+    }
+    // A magnitude the checker never writes, which the lowering would negate as it stands.
+    is_the_halves_disagreeing(
+        &helpers(&[h(&[INT], &negated(int(i64::MIN), one))]),
+        "no magnitude the checker writes",
+    );
+}
+
+/// A type another build builds carries no clauses here, so whether a construction of one names the
+/// one reason a clause can end it for is not held. That it names no other is: a construction ends a
+/// run for nothing but a clause that does not hold.
+#[test]
+fn a_construction_of_another_builds_type_names_no_reason_but_a_clause() {
+    let document = |aborts: &str| {
+        let built = with_outer_aborts(
+            &node(
+                "construct",
+                &format!(r#""declared":"m.R","values":[{}]"#, int(1)),
+                r#"{"declared":"m.R"}"#,
+            ),
+            aborts,
+        );
+        format!(
+            concat!(
+                r#"{{"transport":13,"declarations":["#,
+                r#"{{"module":"m","name":"R","by":"onthepath","is":"product","#,
+                r#""fields":[{}]}}],"behaviors":[],"#,
+                r#""modules":[{{"name":"m","publishes":[],"helpers":[{}],"values":[],"#,
+                r#""entries":[],"definitions":[],"examples":[]}}]}}"#
+            ),
+            field("count", 0, "INT"),
+            h(&[], &built)
+        )
+    };
+
+    reads_whole(&document(""));
+    reads_whole(&document(r#""INVARIANT_NOT_HELD""#));
+    is_the_halves_disagreeing(&document(r#""DIVISION_BY_ZERO""#), "another build");
+}
+
+/// A binding's number is its identity and not its position, so a document numbering its binders with
+/// the largest numbers there are is a document like any other. A table sized by the number would take
+/// as much room as the largest one, and the writer only keeps them small by counting.
+#[test]
+fn a_binding_is_an_identity_and_not_a_position() {
+    let huge = usize::MAX;
+    let bound = let_(huge, INT, &int(1), &read(huge, INT), INT);
+    reads_whole(&helpers(&[h(&[], &bound)]));
+
+    // A field a clause reads, and the construction that runs the clause over it.
+    let counted = field("count", huge, "INT");
+    let holds = clause(Some("counted"), &at_least(&read(huge, INT), &int(0)));
+    let built = with_outer_aborts(
+        &node(
+            "construct",
+            &format!(r#""declared":"m.R","values":[{}]"#, int(1)),
+            r#"{"declared":"m.R"}"#,
+        ),
+        r#""INVARIANT_NOT_HELD""#,
+    );
+    reads_whole(&with_clauses(&counted, &holds, &[h(&[], &built)]));
+}
+
+/// A number names one binder in a body. The lowering has one place for a binding to stand in, and
+/// a binder that took the number of one in force would leave its value there for what is read after
+/// its scope has closed, so `(let 0 = 1 in 0) + 0` would lower as `1 + 1` and not as `1` and the
+/// parameter. A document doing it is refused as the two halves disagreeing, for a `let`, for a
+/// match arm, and for a function value's parameter alike, and a number in force again once its
+/// binder's scope has closed is a number free for another binder to take.
+#[test]
+fn a_number_names_one_binder_in_force() {
+    let adding = |left: String| {
+        with_outer_aborts(
+            &node(
+                "binary",
+                &format!(
+                    r#""op":"ADD","reading":{{"is":"astheystand"}},"left":{left},"right":{}"#,
+                    read(0, INT)
+                ),
+                INT,
+            ),
+            r#""REQUIRED_FORM_HAS_NO_PLACE""#,
+        )
+    };
+
+    // A `let` taking the number of the parameter in force.
+    is_the_halves_disagreeing(
+        &helpers(&[h(
+            &[INT],
+            &adding(let_(0, INT, &int(1), &read(0, INT), INT)),
+        )]),
+        "already in force",
+    );
+    // The same `let` under a number nothing has, and one taking a number free again after the
+    // scope of an earlier `let` closed.
+    reads_whole(&helpers(&[h(
+        &[INT],
+        &adding(let_(1, INT, &int(1), &read(1, INT), INT)),
+    )]));
+    let twice = with_outer_aborts(
+        &node(
+            "binary",
+            &format!(
+                r#""op":"ADD","reading":{{"is":"astheystand"}},"left":{},"right":{}"#,
+                let_(1, INT, &int(1), &read(1, INT), INT),
+                let_(1, INT, &int(2), &read(1, INT), INT)
+            ),
+            INT,
+        ),
+        r#""REQUIRED_FORM_HAS_NO_PLACE""#,
+    );
+    reads_whole(&helpers(&[h(&[INT], &twice)]));
+    // A `let` inside another that took its number.
+    is_the_halves_disagreeing(
+        &helpers(&[h(
+            &[INT],
+            &let_(
+                1,
+                INT,
+                &int(1),
+                &let_(1, INT, &int(2), &read(1, INT), INT),
+                INT,
+            ),
+        )]),
+        "already in force",
+    );
+
+    // A match arm taking the number of the parameter.
+    let optional = option_of(INT);
+    let forking = |binding: usize| {
+        node(
+            "match",
+            &format!(
+                r#""subject":{},"arms":[{},{}]"#,
+                read(1, &optional),
+                arm(
+                    r#"{"tests":"held"}"#,
+                    Some((binding, INT)),
+                    &read(binding, INT)
+                ),
+                arm(r#"{"tests":"nothing"}"#, None, &read(0, INT))
+            ),
+            INT,
+        )
+    };
+    is_the_halves_disagreeing(
+        &helpers(&[h(&[INT, &optional], &forking(0))]),
+        "already in force",
+    );
+    reads_whole(&helpers(&[h(&[INT, &optional], &forking(2))]));
+
+    // Two parameters of one function value under one number.
+    let block = |first: usize, second: usize| {
+        let function = fn_of(&[INT, INT], INT);
+        node(
+            "block",
+            &format!(
+                r#""site":0,"parameters":[{{"binding":{first},"name":"a"}},{{"binding":{second},"name":"b"}}],"body":{}"#,
+                read(first, INT)
+            ),
+            &function,
+        )
+    };
+    is_the_halves_disagreeing(&helpers(&[h(&[], &block(3, 3))]), "already in force");
+}
+
+/// An arm says what it reads its value as exactly where it binds one. The writer says both or
+/// neither, and an arm saying only `binds` is a statement the lowering would drop.
+#[test]
+fn an_arm_binds_and_says_what_it_reads_it_as_together() {
+    let optional = option_of(INT);
+    let forking = |arm_of: String| {
+        node(
+            "match",
+            &format!(
+                r#""subject":{},"arms":[{arm_of},{}]"#,
+                read(0, &optional),
+                arm(r#"{"tests":"nothing"}"#, None, &int(2))
+            ),
+            INT,
+        )
+    };
+    let document = |arm_of: String| helpers(&[h(&[&optional], &forking(arm_of))]);
+    let held = |binding: &str, binds: &str| {
+        format!(
+            r#"{{"selects":[{{"tests":"held"}}],"binding":{binding},"binds":{binds},"body":{}}}"#,
+            int(1)
+        )
+    };
+
+    reads_whole(&document(held("1", INT)));
+    reads_whole(&document(held("null", "null")));
+    is_the_halves_disagreeing(&document(held("null", INT)), "binds nothing");
+    is_the_halves_disagreeing(&document(held("1", "null")), "does not say");
+}
+
+/// What a value is handed is another value this module builds. The lowering reads the type of the
+/// handover and never what it carries, so a handover carrying nothing built would be a statement no
+/// reader held.
+#[test]
+fn a_handover_carries_a_value_the_module_builds() {
+    let value = |carries: &str| {
+        format!(
+            r#"{{"transport":13,"declarations":[],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[],"values":[{{"module":"m","name":"ks","handovers":[],"body":{}}},{{"module":"m","name":"ys","handovers":[{{"parameter":"dep","type":{INT},"carries":{{"module":"m","name":"{carries}"}}}}],"body":{}}}],"entries":[],"definitions":[],"examples":[]}}]}}"#,
+            int(1),
+            read(0, INT)
+        )
+    };
+    reads_whole(&value("ks"));
+    is_the_halves_disagreeing(&value("nothing"), "builds no value of");
 }

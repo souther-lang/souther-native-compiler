@@ -20,8 +20,22 @@ if [ -z "$pin" ]; then
     exit 2
 fi
 
-issues="$(grep -rhoE 'souther-lang/souther#[0-9]+' src native README.md --exclude-dir=target \
-    | sed 's/.*#//' | sort -un)"
+# What is searched, and the one way of searching it. grep answers 1 for finding nothing, which is a
+# repository resting on no premise and not a failure, and 2 for a search that did not happen: a
+# path that is not there, a file it could not read. Only the first is accepted, so a search that
+# did not happen cannot be read as one that found nothing and let every premise pass.
+places=(src native README.md)
+
+references() {
+    local status=0
+    grep -rE "$@" "${places[@]}" --exclude-dir=target || status=$?
+    if [ "$status" -gt 1 ]; then
+        echo "the search for references failed with status $status" >&2
+        exit "$status"
+    fi
+}
+
+issues="$(references -ho 'souther-lang/souther#[0-9]+' | sed 's/.*#//' | sort -un)"
 
 stale=0
 for number in $issues; do
@@ -89,8 +103,7 @@ for number in $issues; do
     # The pin contains the fix exactly when the fix is behind or at the pin.
     if [ "$status" = "ahead" ] || [ "$status" = "identical" ]; then
         echo "#$number is fixed in the pinned souther ($fix), and this still rests on it:"
-        grep -rnE "souther-lang/souther#$number([^0-9]|$)" src native README.md \
-            --exclude-dir=target | sed 's/^/    /'
+        references -n "souther-lang/souther#$number([^0-9]|$)" | sed 's/^/    /'
         stale=1
     else
         echo "#$number is fixed by $fix, which the pin does not contain yet"

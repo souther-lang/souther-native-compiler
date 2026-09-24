@@ -8,6 +8,7 @@ mod boundary;
 mod closures;
 mod coherent;
 mod index;
+mod kernels;
 pub mod transport;
 
 use anyhow::{Result, anyhow, bail};
@@ -23,6 +24,7 @@ use cranelift::codegen::{Context, ir};
 use cranelift::frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use cranelift::module::{DataDescription, DataId, FuncId, Linkage, Module, default_libcall_names};
 use cranelift::object::{ObjectBuilder, ObjectModule};
+use kernels::LoweredKernel;
 use souther_native_abi::{
     ALLOCATE, ANSWERED, HELD, NOTHING, SLOT, STRING_COMPARE, STRING_CONCAT, Status, TEXT_BYTES,
     TEXT_LENGTH, TOKEN, WHICH, behavior_symbol, boundary_symbol, constructor_symbol,
@@ -34,7 +36,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use transport::{
     AbortKind, AlternativesForm, Answers, Arm, Case, Declaration, DeclaredBy, Definition, Node, Op,
-    Prim, Program, Publication, Reaches, Routing, Selects, Stage, TRANSPORT_VERSION, Target, Ty,
+    Prim, Program, Publication, Reaches, Reading, Routing, Selects, Stage, TRANSPORT_VERSION,
+    Target, Ty,
 };
 
 /// A fork that ran out of arms, which is this compiler having emitted the wrong test rather than
@@ -980,8 +983,18 @@ impl<'a> Declared<'a> {
             {
                 bail!("{key} is declared by the language and has fields, which none of its has");
             }
+            // A field's binding is the number a clause reads it under and the constructor holds it
+            // under, so two fields under one is one name for two values, whether the declaration
+            // states a clause or not.
+            let mut bound = HashMap::new();
             for field in declaration.fields() {
                 declared.resolves(&format!("{key}'s field {}", field.name), &field.codec.ty())?;
+                index::once(&mut bound, field.binding, (), || {
+                    format!(
+                        "{key} binds two fields under {}, which a clause reads as one value",
+                        field.binding
+                    )
+                })?;
             }
             // A declaration's clauses cross exactly where this build is the one that runs them.
             if let Declaration::Product { invariants, .. } | Declaration::Newtype { invariants, .. } =
@@ -2168,24 +2181,38 @@ fn status_or_answer(
 /// Held by the number rather than pushed in the order they are met: the writer numbers a binder
 /// where it writes it and this lowers a binding's value before the binder exists, so an order
 /// either side happened to have would only agree until a binding's value held a binding of its own.
+///
+/// A number is an identity and not a position, so it is a key and never an index: a table sized
+/// by the number would take as much room as the largest one a document happens to write, which the
+/// writer keeps small by counting and nothing in what is read does.
+///
+/// A number names one binder in force at a time, which [`Coherent`] held. So binding one that is
+/// already in force is this compiler's own mistake and stops it, and is never a scope quietly
+/// replaced: a lowering that kept the inner binder after its scope closed would read it for what the
+/// outer one meant.
 #[derive(Default)]
 struct Bindings {
-    held: Vec<Option<Variable>>,
+    held: HashMap<usize, Variable>,
 }
 
 impl Bindings {
     fn at(&mut self, number: usize, variable: Variable) {
-        if self.held.len() <= number {
-            self.held.resize(number + 1, None);
-        }
-        self.held[number] = Some(variable);
+        let before = index::Index::put(&mut self.held, number, variable);
+        assert!(
+            before.is_none(),
+            "`Coherent` held every binder's number to name one binder in force"
+        );
+    }
+
+    /// `number` out of force, at the end of the scope that bound it.
+    fn leave(&mut self, number: usize) {
+        self.held.remove(&number);
     }
 
     fn of(&self, number: usize) -> Variable {
-        self.held
-            .get(number)
-            .copied()
-            .flatten()
+        *self
+            .held
+            .get(&number)
             .expect("`Coherent` held every read to be of a binding in scope")
     }
 }
@@ -2246,12 +2273,15 @@ fn lower(
             let variable = builder.declare_var(machine_type(binds)?);
             builder.def_var(variable, held);
             bindings.at(*binding, variable);
-            lower(builder, lowering, module, bindings, abort, body)?
+            let answered = lower(builder, lowering, module, bindings, abort, body);
+            bindings.leave(*binding);
+            answered?
         }
         Node::Bool { value, ty, .. } => builder.ins().iconst(machine_type(ty)?, i64::from(*value)),
         Node::Str { value, .. } => text_in_the_object(builder, module, lowering.literals, value)?,
         Node::Binary {
             op,
+            reading,
             left,
             right,
             aborts,
@@ -2264,6 +2294,7 @@ fn lower(
             abort,
             *op,
             Operands {
+                reading,
                 left,
                 right,
                 aborts,
@@ -2411,29 +2442,26 @@ fn lower(
                 }
                 call_reached(builder, module, abort, reached, machine_type(ty)?, &given)?
             }
-            // Which kernels this backend already answers instructions for is this match's own
-            // list and nowhere else's — kept short on purpose, so a kernel this has not met yet
-            // falls straight through to NotLowered rather than a table here claiming to know.
-            //
-            // A kernel this arm does recognise but that arrived with the wrong number of
-            // arguments is not that: the language does not admit `int.add` at any arity but two,
-            // so a document naming one anyway is not the language ahead of this backend — it is
-            // this driver's own reading of the transport disagreeing with what `KernelContract`
-            // declared, the same halves-disagreeing failure every other shape mismatch here bails
-            // on rather than reports as this backend not having gotten round to a program yet.
-            Reaches::Kernel { kernel } => match kernel.as_str() {
-                "int.add" => {
+            // The kernels this backend lowers are `kernels::Lowered`'s and nowhere else's, so one it
+            // has not met falls to NotLowered rather than a list here claiming to know. What one
+            // takes is that table's contract and not the document's word: `Coherent` held the
+            // settlement to it, so the arguments are exactly as many as the kernel takes.
+            Reaches::Kernel { kernel, .. } => match LoweredKernel::of(kernel) {
+                Some(LoweredKernel::IntAdd) => {
+                    let [left, right] = arguments.as_slice() else {
+                        unreachable!("`Coherent` held int.add to the two arguments it takes");
+                    };
                     let a = Held::of(
-                        &arguments[0],
-                        lower(builder, lowering, module, bindings, abort, &arguments[0])?,
+                        left,
+                        lower(builder, lowering, module, bindings, abort, left)?,
                     );
                     let b = Held::of(
-                        &arguments[1],
-                        lower(builder, lowering, module, bindings, abort, &arguments[1])?,
+                        right,
+                        lower(builder, lowering, module, bindings, abort, right)?,
                     );
                     arithmetic(builder, abort, Op::Add, a, b, aborts)?
                 }
-                _ => return Err(not_lowered(format!("a call to the kernel {kernel}"))),
+                None => return Err(not_lowered(format!("a call to the kernel {kernel}"))),
             },
         },
         // Standing as a wider type is no operation in the language, and here it costs nothing
@@ -2558,8 +2586,11 @@ fn fork_on_what_it_is(
             builder.def_var(variable, held);
             bindings.at(number, variable);
         }
-        let answered = lower(builder, lowering, module, bindings, abort, &arm.body)?;
-        builder.ins().jump(after, &[answered.into()]);
+        let answered = lower(builder, lowering, module, bindings, abort, &arm.body);
+        if let Some(number) = arm.binding {
+            bindings.leave(number);
+        }
+        builder.ins().jump(after, &[answered?.into()]);
 
         builder.switch_to_block(next);
     }
@@ -2705,11 +2736,11 @@ where
 ///
 /// The operands are lowered here and not before, because two of these decide whether the right one
 /// runs at all.
-/// The two operands of a binary operator, plus the one fact `arithmetic` needs and no other arm
-/// of `op` does: which reason (if any) this exact site may end without a value for. Bundled with
-/// the operands rather than threaded as a fourth thing beside them, since a caller already has all
-/// three off one `Node::Binary`.
+/// The two operands of a binary operator, what it reads them as, and which reason (if any) this
+/// exact site may end without a value for. Bundled rather than threaded beside each other, since a
+/// caller already has all of them off one `Node::Binary`.
 struct Operands<'a> {
+    reading: &'a Reading,
     left: &'a Node,
     right: &'a Node,
     aborts: &'a [AbortKind],
@@ -2724,10 +2755,46 @@ fn binary(
     op: Op,
     operands: Operands,
 ) -> Lowered<ir::Value> {
+    // What the operator reads its operands as decides what it does with them, so it is asked
+    // before the operator is: an operator with a case of its own would otherwise be lowered as
+    // the operands stand whatever the document says they are read as. Only operands read as they
+    // stand are lowered, from their one type; a pair read in a type for this operator only, or at
+    // their exact values, would first have to be taken as that, and nothing here does so yet.
+    match operands.reading {
+        Reading::AsTheyStand => {
+            binary_as_they_stand(builder, lowering, module, bindings, abort, op, operands)
+        }
+        Reading::In { ty } => Err(not_lowered(format!(
+            "{} over {} and {}, read as {}",
+            op.spelt(),
+            operands.left.ty().spelt(),
+            operands.right.ty().spelt(),
+            ty.spelt()
+        ))),
+        Reading::ExactNumbers => Err(not_lowered(format!(
+            "{} over {} and {}, read at their exact values",
+            op.spelt(),
+            operands.left.ty().spelt(),
+            operands.right.ty().spelt()
+        ))),
+    }
+}
+
+/// A binary operator over operands read as they stand.
+fn binary_as_they_stand(
+    builder: &mut FunctionBuilder,
+    lowering: &Lowering,
+    module: &mut ObjectModule,
+    bindings: &mut Bindings,
+    abort: ir::Block,
+    op: Op,
+    operands: Operands,
+) -> Lowered<ir::Value> {
     let Operands {
         left,
         right,
         aborts,
+        ..
     } = operands;
     match op {
         // `&&` and `||` stop as soon as the answer is settled, and which operands run is part of
@@ -2750,12 +2817,6 @@ fn binary(
             })
         }
         _ => {
-            // Both of the operands' types, because one of them does not say what the other is.
-            // A bare literal takes the newtype of the value it is compared with, so `0 == amount`
-            // is an `Int` against a declared type and is as much a comparison of two amounts as
-            // `amount == 0` is; a case value compared with its sum is two declared types that are
-            // not the same one. Read off the left alone, both of those are whatever the left one
-            // happened to be.
             let a = Held::of(
                 left,
                 lower(builder, lowering, module, bindings, abort, left)?,
@@ -2931,12 +2992,8 @@ fn arithmetic(
     }
 }
 
-/// An operator over a pair this backend has no lowering for.
-///
-/// Not told apart from a pair the checker would never have written: which pairs an operator is
-/// written over, and what it makes of them, is the checker's rule, and the checked tree does not
-/// record what it decided (souther-lang/souther#1919). Telling the two apart here would take a
-/// copy of that rule.
+/// An operator over a pair, read as it stands, that this backend has no lowering for. A pair the
+/// checker never writes as it stands was refused by [`Coherent`] as the two halves disagreeing.
 fn unlowered_operator(op: Op, left: &Held, right: &Held) -> NotLowered {
     not_lowered(format!(
         "{} over {} and {}, which this backend has no lowering for",
