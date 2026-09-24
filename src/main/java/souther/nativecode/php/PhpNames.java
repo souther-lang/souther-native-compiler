@@ -26,15 +26,48 @@ final class PhpNames {
             "__halt_compiler", "abstract", "and", "array", "as", "break", "callable", "case",
             "catch", "class", "clone", "const", "continue", "declare", "default", "die", "do",
             "echo", "else", "elseif", "empty", "enddeclare", "endfor", "endforeach", "endif",
-            "endswitch", "endwhile", "enum", "eval", "exit", "extends", "final", "finally", "fn",
+            "endswitch", "endwhile", "eval", "exit", "extends", "final", "finally", "fn",
             "for", "foreach", "function", "global", "goto", "if", "implements", "include",
             "include_once", "instanceof", "insteadof", "interface", "isset", "list", "match",
             "namespace", "new", "or", "print", "private", "protected", "public", "readonly",
             "require", "require_once", "return", "static", "switch", "throw", "trait", "try",
             "unset", "use", "var", "while", "xor", "yield",
             // Reserved as the names of classes and nothing else.
-            "bool", "false", "float", "int", "iterable", "mixed", "never", "null", "numeric",
-            "object", "parent", "resource", "self", "string", "true", "void");
+            "bool", "false", "float", "int", "iterable", "mixed", "never", "null", "object",
+            "parent", "self", "string", "true", "void",
+            // Soft-reserved ones, below.
+            "enum", "numeric", "resource");
+
+    /**
+     * Words PHP's manual reserves for later and PHP accepts as a class's name today. Refused all the
+     * same, so that a binding keeps loading on the PHP that starts refusing them.
+     */
+    private static final Set<String> SOFT_RESERVED = Set.of("enum", "numeric", "resource");
+
+    /**
+     * Names PHP takes for no parameter: `$this`, and every superglobal, which a function cannot
+     * name a parameter after. As spelt: PHP reads a variable's name with its case.
+     */
+    private static final Set<String> UNNAMEABLE_PARAMETERS = Set.of("this", "GLOBALS", "_SERVER",
+            "_GET", "_POST", "_FILES", "_COOKIE", "_SESSION", "_REQUEST", "_ENV");
+
+    /** The one word PHP reserves that no method may be called either. */
+    private static final String HALT = "__halt_compiler";
+
+    /** The words refused as a class's name, for a test holding them to what PHP refuses. */
+    static Set<String> reserved() {
+        return RESERVED;
+    }
+
+    /** The words refused as a class's name that PHP takes today, for the same test. */
+    static Set<String> softReserved() {
+        return SOFT_RESERVED;
+    }
+
+    /** The names refused as a parameter's, for the same test. */
+    static Set<String> unnameableParameters() {
+        return UNNAMEABLE_PARAMETERS;
+    }
 
     /** Refused where {@code name} is not a name PHP takes for a class, interface or namespace. */
     static String typeName(String name, String what) {
@@ -49,15 +82,19 @@ final class PhpNames {
     /** Refused where {@code name} is not a name PHP takes for a method or a parameter. */
     static String memberName(String name, String what) {
         identifier(name, what);
+        if (name.equalsIgnoreCase(HALT)) {
+            throw new PhpBindings.NotBindable(what + " `" + name + "` is a word PHP reserves even"
+                    + " for a method");
+        }
         return name;
     }
 
     /** The name of a parameter. PHP takes every identifier but one. */
     static String parameterName(String name, String what) {
         identifier(name, what);
-        if (name.equals("this")) {
+        if (UNNAMEABLE_PARAMETERS.contains(name)) {
             throw new PhpBindings.NotBindable(
-                    what + " is called `this`, which PHP takes for no parameter");
+                    what + " is called `" + name + "`, which PHP takes for no parameter");
         }
         return name;
     }

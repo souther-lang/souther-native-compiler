@@ -317,7 +317,7 @@ than replaced. The driver writes a library's directory the same way.
 What a host has no way to reach is not written: a behavior with no `call`, a field with no `read`, a
 behavior taking or answering a type with no representation for a host, and a behavior answering a
 union no declaration names, since the library says of such a value nothing about which case it is.
-A name PHP will not take (a reserved word, `this` for a parameter, two names differing only in case
+A name PHP will not take (a reserved word, `this` or a superglobal for a parameter, two names differing only in case
 where PHP compares them without it, a field named as a method the binding writes, two parameters of
 one function under one name) is refused with the name, rather than spelt some other way. A manifest
 is read as a version only once it has said it is that one, so one of another version is refused as
@@ -330,10 +330,13 @@ it expires its session and resets the arena to the mark. Every value holds a han
 was made in, and every read of one goes through the handle, which refuses a value whose run has ended
 (`Expired`) or that another library made (`ForeignHandle`) before anything reads the memory. A value
 that has to outlive its run leaves it as its external form. Runs nest, and a value from an outer run
-may be handed to a call in an inner one. What the library answers stands after the mark of the
-innermost run going, whichever session a call was made through, so every value belongs to that run:
-a computation is started only through the innermost run's session (`NotTheInnermostRun` otherwise),
-and a field read out of an outer value during an inner run belongs to the inner run. A library is
+may be handed to a call in an inner one. A value belongs to the run its memory is dropped with,
+which a binding knows by where the value came from. What a computation (a construction, a reading, a
+behavior, a published value) answers is made after the mark of the innermost run going, so a
+computation is started only through that run's session (`NotTheInnermostRun` otherwise) and its
+answer belongs to it. What a field reader answers is a value the one read already held, made no
+later, so it belongs to that value's run, whichever run it is read in. What an implementation is
+handed belongs to the innermost run, which is no longer than it lives. A library is
 one per file, told apart by device and inode rather than by the path it was loaded through, since
 two instances over one file would be two stacks of runs over one arena. Text is checked to be UTF-8 and put in NFC before the
 library takes it, which the library itself does not do.

@@ -209,6 +209,19 @@ class APhpBindingIsWrittenFromTheManifestTest {
                 .isEqualTo(String.valueOf(PhpBindings.RUNTIME_PROTOCOL));
     }
 
+    /** A parameter the model names as PHP names a superglobal is one no PHP function can have. */
+    @Test
+    void aParameterNamedAsASuperglobalIsRefused(@TempDir Path into) {
+        assertThatThrownBy(() -> generated(into, """
+                module m exposing ( f )
+
+                behavior f : (GLOBALS: Int) -> Int
+                let f (x) = x
+                """))
+                .isInstanceOf(PhpBindings.NotBindable.class)
+                .hasMessageContaining("`GLOBALS`, which PHP takes for no parameter");
+    }
+
     /** Two parameters of one function under one name would be PHP no binding can load. */
     @Test
     void twoParametersUnderOneNameAreRefused(@TempDir Path into) {

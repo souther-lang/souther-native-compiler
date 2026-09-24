@@ -206,14 +206,11 @@ class APhpHostCallsALibraryThroughItsBindingTest {
                 } catch (NotTheInnermostRun $refused) {
                     echo "outer in inner: ", $refused::class, "\\n";
                 }
-                // A value read out of an outer value during an inner run is the inner run's.
+                // A field read out of an outer value is a value the outer one holds, which lives as
+                // long, whichever run it was read in.
                 $line = Line::of($outer, Money::of($outer, 3)->getOrThrow(), 1)->getOrThrow();
                 $price = $binding->run(fn (Session $inner): Money => $line->price());
-                try {
-                    $price->value();
-                } catch (Expired $expired) {
-                    echo "read in inner: expired, and the line still reads ", $line->price()->value(), "\\n";
-                }
+                echo "read in inner: still ", $price->value(), "\\n";
             });
 
             $keptSession = $binding->run(fn (Session $session): Session => $session);
@@ -252,7 +249,7 @@ class APhpHostCallsALibraryThroughItsBindingTest {
             one binding: true
             one file: true
             outer in inner: Souther\\Runtime\\NotTheInnermostRun
-            read in inner: expired, and the line still reads 3
+            read in inner: still 3
             session expired: a session was used after its run ended
             """;
 
@@ -280,6 +277,45 @@ class APhpHostCallsALibraryThroughItsBindingTest {
                 library.library().toString(), again.library().toString()));
 
         assertThat(said).isEqualTo(ANSWERED);
+    }
+
+    /**
+     * Under {@code ffi.enable=preload} a request cannot declare a library, so a preload script
+     * declares it from what {@code Binding::preloadHeader} writes, and a request asks for it by the
+     * scope and the library's path: the same library a load of that file would be.
+     */
+    @Test
+    void aPreloadedLibraryIsCalledAsALoadedOneIs(@TempDir Path into) throws Exception {
+        NativeCompiler.Library library =
+                NativeCompiler.library(CheckedProgram.of(List.of(SHOP)), into.resolve("native"));
+        PhpBindings.Generated binding =
+                PhpBindings.generate(library, into.resolve("php"), "Acme\\Billing");
+        String requires = "require '" + RUNTIME.toAbsolutePath().resolve("vendor")
+                .resolve("autoload.php") + "';\nrequire '" + binding.root().resolve("autoload.php")
+                + "';\n";
+        Path header = into.resolve("preloaded.h");
+        Path preload = into.resolve("preload.php");
+        Files.writeString(preload, "<?php\n" + requires
+                + "file_put_contents('" + header + "', \\Acme\\Billing\\Binding::preloadHeader("
+                + "'souther_shop', '" + library.library() + "'));\n"
+                + "FFI::load('" + header + "');\n", StandardCharsets.UTF_8);
+        Path host = into.resolve("host.php");
+        Files.writeString(host, "<?php\n" + requires + """
+                use Acme\\Billing\\Binding;
+                use Acme\\Billing\\Shop\\Behaviors;
+                use Acme\\Billing\\Shop\\Line;
+                use Acme\\Billing\\Shop\\Money;
+                use Souther\\Runtime\\Session;
+
+                $binding = Binding::preloaded('souther_shop', $argv[1]);
+                echo $binding->run(fn (Session $session): int => Behaviors::owing($session,
+                    Behaviors::settle($session, Line::of($session,
+                        Money::of($session, 3)->getOrThrow(), 2)->getOrThrow(), 2))), "\\n";
+                """, StandardCharsets.UTF_8);
+
+        assertThat(said(List.of("php", "-d", "opcache.enable_cli=1",
+                "-d", "opcache.preload=" + preload, "-d", "ffi.enable=preload",
+                host.toString(), library.library().toString()))).isEqualTo("4\n");
     }
 
     private static String said(List<String> command) throws Exception {

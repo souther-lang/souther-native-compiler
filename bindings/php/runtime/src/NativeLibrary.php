@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Souther\Runtime;
 
 use FFI;
-use FFI\CData;
 
 /**
  * A shared library a binding was generated for, loaded once per process, with the numbers its
@@ -150,18 +149,6 @@ final class NativeLibrary
         }
         array_pop($this->open);
         $session->expire();
-    }
-
-    /**
-     * @internal A value the library answered, belonging to the innermost run going.
-     *
-     * The only place a handle is made. What the library answers stands where the arena stood when
-     * it was made, which is after the mark the innermost run took, whichever session the call was
-     * asked through; so that run is the one the value belongs to, and it ends first.
-     */
-    public function held(CData $pointer): NativeHandle
-    {
-        return new NativeHandle($this->current(), $pointer);
     }
 
     /** @internal The session of the innermost run going. */

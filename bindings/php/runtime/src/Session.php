@@ -73,12 +73,18 @@ final class Session
     }
 
     /**
-     * @internal A value the library answered. It belongs to the innermost run going, which is the
-     * one its memory is dropped with, and not necessarily this session's ({@see NativeLibrary::held}).
+     * @internal A value the library answered, held for this session's run.
+     *
+     * Asked through the session the value's memory is dropped with, which a binding knows by where
+     * the pointer came from. What a computation answers was made after the mark of the innermost
+     * run, and a computation is started only through that run's session ({@see call()}). What a
+     * reader answers is a value the one it was read out of already held, made no later than it, so
+     * it is asked through that value's session. What an implementation is handed is asked through
+     * the innermost run's, which is no longer than the value lives.
      */
     public function held(CData $pointer): NativeHandle
     {
-        return $this->library->held($pointer);
+        return new NativeHandle($this, $pointer);
     }
 
     /**
