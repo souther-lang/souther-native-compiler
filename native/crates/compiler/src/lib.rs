@@ -14,6 +14,7 @@ mod interface;
 mod kernels;
 mod link;
 mod manifest;
+mod replaced;
 pub mod transport;
 mod versioned;
 
@@ -252,21 +253,60 @@ pub struct Linking {
 pub fn library_for(document: &str, linking: &Linking, into: &Path) -> Result<Library> {
     let linker = link::Linker::of_this_host()?;
     let object = object_for(document)?;
-    fs::create_dir_all(into)?;
+    let library = linker.library();
+    let replacing = replaced::Replacing::beside(
+        into,
+        &[
+            "souther.o",
+            "souther.h",
+            DECLARATIONS,
+            "souther.json",
+            library,
+        ],
+    )?;
+    let staged = replacing.staging();
     let written = Library {
-        object: into.join("souther.o"),
-        header: into.join("souther.h"),
-        declarations: into.join(DECLARATIONS),
-        manifest: into.join("souther.json"),
-        library: into.join(linker.library()),
+        object: staged.join("souther.o"),
+        header: staged.join("souther.h"),
+        declarations: staged.join(DECLARATIONS),
+        manifest: staged.join("souther.json"),
+        library: staged.join(library),
     };
-    fs::write(&written.object, &object)?;
+    match build(&written, &object, linking, &linker) {
+        Ok(()) => {
+            let placed = replacing.commit(&[
+                &written.object,
+                &written.header,
+                &written.declarations,
+                &written.manifest,
+                &written.library,
+            ])?;
+            let [object, header, declarations, manifest, library] =
+                <[PathBuf; 5]>::try_from(placed).expect("five were handed over");
+            Ok(Library {
+                object,
+                header,
+                declarations,
+                manifest,
+                library,
+            })
+        }
+        Err(problem) => {
+            replacing.abandon();
+            Err(problem)
+        }
+    }
+}
+
+/// Writes a build into where `written` names, all of it or an error.
+fn build(written: &Library, object: &[u8], linking: &Linking, linker: &link::Linker) -> Result<()> {
+    fs::write(&written.object, object)?;
 
     // Every module once: a module is declared by one build, so one in two objects is two builds
     // of it, or one object handed over twice, and either would be a link of two definitions.
     let mut modules: BTreeMap<String, manifest::Module> = BTreeMap::new();
     let mut objects = vec![written.object.as_path()];
-    let mut carried = vec![(written.object.display().to_string(), object)];
+    let mut carried = vec![(written.object.display().to_string(), object.to_vec())];
     for path in &linking.builds {
         carried.push((path.display().to_string(), fs::read(path)?));
         objects.push(path);
@@ -291,8 +331,7 @@ pub fn library_for(document: &str, linking: &Linking, into: &Path) -> Result<Lib
         &linking.runtime,
         &interface::exported(&manifest),
         &written.library,
-    )?;
-    Ok(written)
+    )
 }
 
 /// What is left once a document has been read whole: a program this backend does not write yet,

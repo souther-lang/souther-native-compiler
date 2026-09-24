@@ -409,6 +409,54 @@ fn a_module_two_objects_carry_is_refused() {
     );
 }
 
+/// A build that fails part of the way leaves the last build as it was, and nothing beside it: its
+/// object, header and manifest are not put next to the last one's library.
+#[test]
+fn a_build_that_fails_leaves_the_last_one_whole() {
+    let into = tempdir().unwrap();
+    let built = into.path().join("built");
+    library_for(ADDING, &linking(vec![]), &built).unwrap();
+    let before: Vec<Vec<u8>> = ["souther.o", "souther.json"]
+        .iter()
+        .map(|it| fs::read(built.join(it)).unwrap())
+        .collect();
+    let again = into.path().join("again.o");
+    fs::write(&again, object_for(VALUES).unwrap()).unwrap();
+
+    library_for(VALUES, &linking(vec![again]), &built)
+        .err()
+        .expect("a module in two objects is refused");
+
+    let after: Vec<Vec<u8>> = ["souther.o", "souther.json"]
+        .iter()
+        .map(|it| fs::read(built.join(it)).unwrap())
+        .collect();
+    assert!(before == after, "the last build was written over");
+    let beside: BTreeSet<String> = fs::read_dir(into.path())
+        .unwrap()
+        .map(|it| it.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(
+        beside,
+        BTreeSet::from(["built".to_string(), "again.o".to_string()])
+    );
+}
+
+/// A directory holding what no build writes is not replaced by one, and keeps what it holds.
+#[test]
+fn a_directory_a_build_did_not_write_is_not_replaced() {
+    let into = tempdir().unwrap();
+    let mine = into.path().join("notes.txt");
+    fs::write(&mine, "kept").unwrap();
+
+    let refused = library_for(ADDING, &linking(vec![]), into.path())
+        .err()
+        .expect("a directory holding another file");
+
+    assert!(refused.to_string().contains("notes.txt"), "{refused}");
+    assert_eq!(fs::read_to_string(&mine).unwrap(), "kept");
+}
+
 /// An object that says nothing of what it offers a host is not linked into a library as though it
 /// offered nothing.
 #[test]

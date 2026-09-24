@@ -1,0 +1,84 @@
+{
+    "_readme": [
+        "This file locks the dependencies of your project to a known state",
+        "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
+        "This file is @generated automatically"
+    ],
+    "content-hash": "84c12ae5a71ead1ca438b6e0b074d1ea",
+    "packages": [
+        {
+            "name": "raoh/raoh",
+            "version": "v0.5.0",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/kawasima/raoh-php.git",
+                "reference": "c40a368bf832bb0f6e9a62c27c710faddc73209e"
+            },
+            "dist": {
+                "type": "zip",
+                "url": "https://api.github.com/repos/kawasima/raoh-php/zipball/c40a368bf832bb0f6e9a62c27c710faddc73209e",
+                "reference": "c40a368bf832bb0f6e9a62c27c710faddc73209e",
+                "shasum": ""
+            },
+            "require": {
+                "php": "^8.2"
+            },
+            "require-dev": {
+                "phpstan/phpstan": "^2",
+                "phpunit/phpunit": "^11.0"
+            },
+            "type": "library",
+            "autoload": {
+                "files": [
+                    "src/Boundary/Array_/functions.php",
+                    "src/Boundary/Array_/Encode/functions.php",
+                    "src/Boundary/Json/functions.php",
+                    "src/Boundary/Json/Encode/functions.php"
+                ],
+                "psr-4": {
+                    "Raoh\\": "src/"
+                }
+            },
+            "notification-url": "https://packagist.org/downloads/",
+            "license": [
+                "Apache-2.0"
+            ],
+            "authors": [
+                {
+                    "name": "kawasima",
+                    "email": "kawasima1016@gmail.com",
+                    "role": "Developer"
+                }
+            ],
+            "description": "Parse Don't Validate — composable decoder library for PHP 8.2+",
+            "homepage": "https://github.com/kawasima/raoh-php",
+            "keywords": [
+                "Result-Type",
+                "combinator",
+                "decoder",
+                "error-accumulation",
+                "functional",
+                "parse-dont-validate",
+                "validation"
+            ],
+            "support": {
+                "issues": "https://github.com/kawasima/raoh-php/issues",
+                "source": "https://github.com/kawasima/raoh-php/tree/v0.5.0"
+            },
+            "time": "2026-05-28T14:55:34+00:00"
+        }
+    ],
+    "packages-dev": [],
+    "aliases": [],
+    "minimum-stability": "stable",
+    "stability-flags": {},
+    "prefer-stable": false,
+    "prefer-lowest": false,
+    "platform": {
+        "php": "^8.2",
+        "ext-ffi": "*",
+        "ext-intl": "*"
+    },
+    "platform-dev": {},
+    "plugin-api-version": "2.9.0"
+}

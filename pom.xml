@@ -82,14 +82,14 @@
             <version>${assertj.version}</version>
             <scope>test</scope>
         </dependency>
-        <!-- What a native run writes at a boundary is JSON, and a test reads it as a JSON value to
-             compare it. Only as an observer: nothing here takes a rule about the external form
-             from it, and the compiler never sees it. -->
+        <!-- The manifest a binding is generated from is read as JSON, through raoh-json, which the
+             compiler already brings and which leaves Jackson for whoever uses it to supply. A test
+             also reads what a native run writes at a boundary as a JSON value to compare it: only as
+             an observer, taking no rule about the external form from it. -->
         <dependency>
             <groupId>tools.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
             <version>${jackson.version}</version>
-            <scope>test</scope>
         </dependency>
     </dependencies>
 
@@ -182,6 +182,26 @@
                             <executable>cargo</executable>
                             <arguments>
                                 <argument>test</argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
+                    <!-- The PHP runtime's dependencies, as its composer.lock fixes them, before the
+                         Java tests: one of them runs a generated binding over that runtime, and the
+                         entry point stays this one build, as it is for Cargo. Composer does nothing
+                         where vendor/ already matches the lock. -->
+                    <execution>
+                        <id>composer-install</id>
+                        <phase>process-test-classes</phase>
+                        <goals>
+                            <goal>exec</goal>
+                        </goals>
+                        <configuration>
+                            <executable>composer</executable>
+                            <workingDirectory>${project.basedir}/bindings/php/runtime</workingDirectory>
+                            <arguments>
+                                <argument>install</argument>
+                                <argument>--no-interaction</argument>
+                                <argument>--no-progress</argument>
                             </arguments>
                         </configuration>
                     </execution>

@@ -40,9 +40,12 @@ abstraction over the two is written to make it look as though something is.
     mvn test
 
 Cargo is what builds the Rust half; Maven runs it. The toolchain is pinned in
-`rust-toolchain.toml`, so a clone needs rustup and nothing else installed by hand. A C and a C++
-compiler are needed too, by the tests that link what came out and run it, and PHP with FFI, by the
-test that reads what a host is handed the way an FFI with no preprocessor does.
+`rust-toolchain.toml`, so a clone needs rustup and nothing else installed by hand for it. A C and a
+C++ compiler are needed too, by the tests that link what came out and run it, and PHP 8.2 or later
+with the `ffi` and `intl` extensions, by the tests that read what a host is handed the way an FFI
+with no preprocessor does and run a generated PHP binding. Maven also runs Composer, which has to be
+installed, for what the PHP runtime in `bindings/php/runtime` depends on, as its `composer.lock`
+fixes it.
 
 ## Where it runs
 
@@ -287,8 +290,80 @@ list are written from what the objects carry. A module two of them carry is refu
 object that carries none, and a program missing a build it reaches is refused when it is linked
 rather than when a host loads it.
 
-What a behavior takes is said by type and in order. The names its parameters were written under do
-not cross from the checker yet, so a binding has no name to give one but its place.
+What a behavior takes is said with the names its signature declares, which a binding writes its
+function's parameters under. A `>->` composition declares no parameters, so what it takes is said by
+type and in order, and a binding names each by its place.
+
+## A PHP binding
+
+`PhpBindings.generate(library, into, namespace)` writes the PHP a host calls a library through, from
+the manifest and nothing else, under a namespace the caller names: two libraries publishing a module
+of the same name can then stand in one application. A module is a namespace under it (`shop` is
+`Acme\Billing\Shop`). A product, a newtype and a unit are each a `final readonly` class holding the
+value where the library made it, with a reader for each field, a static `of` building one and
+answering a raoh-php `Result`, a static `decode` reading one out of its external form, and `encode`.
+A sum is an interface, which a sum whose cases are all its cases extends, and each case's class
+implements it. `<Sum>Codec` finds which class a value is through the sum's `case` function, and
+reads and writes the sum's own external form, which says which case it is. A case the model keeps,
+or a sum whose cases the library cannot tell apart, is `<Sum>Value`, which is still the sum and can
+still be written. A module's behaviors are static functions on `Behaviors`, its values on `Values`.
+The FFI declarations are the build's own, copied beside the binding as `souther.ffi.h`, and
+`autoload.php` loads the binding's classes for a host that does not map the namespace itself. The
+directory is written beside where it goes and put there whole, so it is the binding of one manifest:
+a class the model no longer declares does not survive a generation, a refused generation leaves the
+last one as it was, and a directory holding anything a generation did not write is refused rather
+than replaced. The driver writes a library's directory the same way.
+
+What a host has no way to reach is not written: a behavior with no `call`, a field with no `read`, a
+behavior taking or answering a type with no representation for a host, and a behavior answering a
+union no declaration names, since the library says of such a value nothing about which case it is.
+A name PHP will not take is refused with the name, rather than spelt some other way: a reserved
+word, `this` or a superglobal for a parameter, two parameters of one function under one name, a
+field named as a method the binding writes, and two names that are one where they are looked up. Two
+methods are one where they differ in the case of ASCII letters, as PHP compares them. Two classes or
+namespaces are one where they differ in the case of any letter, since each is also a file or a
+directory, and the file systems macOS and Windows use by default do not tell those apart. What PHP
+refuses is held to PHP itself by a test that asks it. A manifest
+is read as a version only once it has said it is that one, so one of another version is refused as
+that and not as whichever member moved since, as the driver reads a transport and what an object
+carries.
+
+Everything else is in `bindings/php/runtime`, one Composer package every generated binding runs on.
+A host calls `$binding->run(fn (Session $session) => ...)`: the run marks the arena, and when it ends
+it expires its session and resets the arena to the mark. Every value holds a handle to the session it
+was made in, and every read of one goes through the handle, which refuses a value whose run has ended
+(`Expired`) or that another library made (`ForeignHandle`) before anything reads the memory. A value
+that has to outlive its run leaves it as its external form. Runs nest, and a value from an outer run
+may be handed to a call in an inner one. A value belongs to the run its memory is dropped with,
+which a binding knows by where the value came from. What a computation (a construction, a reading, a
+behavior, a published value) answers is made after the mark of the innermost run going, so a
+computation is started only through that run's session (`NotTheInnermostRun` otherwise) and its
+answer belongs to it. What a field reader answers is a value the one read already held, made no
+later, so it belongs to that value's run, whichever run it is read in. What an implementation is
+handed belongs to the innermost run, which is no longer than it lives. A library is
+one per file, told apart by device and inode rather than by the path it was loaded through, since
+two instances over one file would be two stacks of runs over one arena. Text is checked to be UTF-8 and put in NFC before the
+library takes it, which the library itself does not do.
+
+A status crosses as one of three things. A construction that does not hold its type's invariants is
+an `Err` with `invariant_violation`, and a reading answers the issues the library found, their codes
+being Raoh's already, or `invalid_format` where the text is not JSON. A Souther computation that
+ends without a value throws `SoutherAbort`, naming the status. A behavior the host implements is
+handed to a run as `Injections::of(name: fn (Session $session, ...) => ...)`. Each is made into a C
+function pointer once per binding and registered around each run that is handed it, so a worker does
+not grow with every request; a call with nothing registered throws `UnboundInjection`, and an
+exception an implementation throws is the one that comes back out of the call that reached it.
+
+A binding says which version of the runtime's surface it was generated for, and refuses to load
+over a runtime that says another (`Binding::PROTOCOL`). The runtime loads a library once per
+process, with `FFI::cdef` or, under `ffi.enable=preload`, from the scope a preload script declared
+with `Binding::preloadHeader`, given the library's path again so that it is the same library a load
+of that file would be. The arena and what is registered
+are per thread, and a handle is PHP's, which a ZTS runtime such as FrankenPHP does not hand from one
+thread to another; nothing here checks for one that was. A fiber is checked for: runs are one stack,
+ended in the order they nest, so while a run is going on one fiber, another fiber can neither start
+one nor use a session or a value of it (`RunOnAnotherFiber`), and one suspended in a run holds the
+library until it ends that run.
 
 ## Where a value lives
 
