@@ -3,6 +3,7 @@ package souther.nativecode.transport;
 import souther.compiler.abort.AbortKind;
 import souther.compiler.abort.AbortSet;
 import souther.compiler.core.Composition;
+import souther.compiler.core.Contract;
 import souther.compiler.core.Core;
 import souther.compiler.core.EnsuresEnforcement;
 import souther.compiler.core.Kernel;
@@ -83,9 +84,19 @@ public final class ProgramWriter {
      * written moves, so that a driver and a writer that disagree say so rather than producing an
      * object that is wrong quietly.
      */
-    public static final int TRANSPORT_VERSION = 13;
+    public static final int TRANSPORT_VERSION = 14;
 
     private final CheckedProgram program;
+
+    /**
+     * What is done about each behavior's {@code ensures}, as the checker answered it for every
+     * behavior of a module this compile checked.
+     *
+     * <p>Gathered off the modules and not asked of {@link BehaviorTarget}, which does not carry it:
+     * a target is answered for a behavior of a module this compile never checked too, and what is
+     * done about that one's clause is not this compile's to say ({@link #enforcement}).
+     */
+    private final Map<ValueName.Behavior, EnsuresEnforcement> enforcements = new HashMap<>();
 
     /**
      * Where a {@link Core.Block} written into the document stands, counted document-wide rather
@@ -173,6 +184,7 @@ public final class ProgramWriter {
         for (CheckedModule module : program.modules()) {
             for (CheckedBehavior behavior : module.behaviors()) {
                 behaviorsMet.add(behavior.name());
+                enforcements.put(behavior.name(), behavior.ensures());
             }
             // Every declaration a module of this compile declares, whether a body here meets it
             // or not: its token and its constructor are this build's to define, and another build
@@ -508,7 +520,6 @@ public final class ProgramWriter {
     private String module(CheckedModule module) {
         StringJoiner definitions = new StringJoiner(",", "[", "]");
         for (CheckedBehavior behavior : module.behaviors()) {
-            ensured(module, behavior);
             switch (behavior.implementation()) {
                 case CheckedImplementation.Body written -> definitions.add(body(module, behavior, written));
                 case CheckedImplementation.Composed written -> definitions.add(composed(module, behavior, written));
@@ -557,29 +568,6 @@ public final class ProgramWriter {
                 + ",\"entries\":" + entries
                 + ",\"definitions\":" + definitions
                 + ",\"examples\":" + examples + "}";
-    }
-
-    /**
-     * Refuses a behavior whose answer is held to a rule here, which nothing on the wire carries yet.
-     *
-     * <p>The rule is {@code Core} the program hands out as much as a body is, and a run that
-     * answered without it would make what the behavior declares true of this object by leaving it
-     * out. Where the check goes is the checker's answer: at the callee for a body, at every crossing
-     * for an answer from outside. Either one is a check this object would have to run.
-     */
-    private static void ensured(CheckedModule module, CheckedBehavior behavior) {
-        String name = module.name() + "." + behavior.name().name();
-        switch (behavior.ensures()) {
-            case EnsuresEnforcement.AtTheCallee it ->
-                    throw notYet("`" + name + "`, whose answer is held to what it declares");
-            case EnsuresEnforcement.AtEachCrossing it ->
-                    throw notYet("`" + name + "`, whose answer is held to what it declares where it"
-                            + " crosses in");
-            case EnsuresEnforcement.NoContract it -> { }
-            // Another module's behavior, whose own build decided where its check goes. No
-            // behavior of a module this compile checked is one.
-            case EnsuresEnforcement.NotDecidedHere it -> { }
-        }
     }
 
     /**
@@ -632,9 +620,11 @@ public final class ProgramWriter {
         for (int at = 0; at < takes.size(); at++) {
             arguments.add(given(inputs.get(at), takes.get(at)));
         }
-        // No Core.Call stands behind this one for program.abortsAt to ask of — a row is a value the
-        // checker already observed the behavior answering with, never one it aborted for, so NONE
-        // is this call's own fact and not a default filled in for want of a site to ask.
+        // No Core.Call stands behind this one for program.abortsAt to ask of, and none is needed:
+        // what AbortSites answers for a call reaching a behavior is NONE, whatever the behavior is.
+        // What the behavior ends with is its own, and what its clause ends with is what the
+        // target's ensures says (EnsuresEnforcement#aborts), not a fact of this site — the same
+        // answer a call written in a body gets.
         return "{\"core\":\"call\",\"reaches\":{\"is\":\"behavior\",\"declared\":"
                 + quoted(module.name() + "." + behavior.name().name()) + "}"
                 + ",\"arguments\":" + arguments
@@ -861,6 +851,101 @@ public final class ProgramWriter {
                 + ",\"is\":" + quoted(how)
                 + ",\"inputs\":" + inputs
                 + ",\"output\":" + output(behavior.signature().output())
+                + ",\"ensures\":" + ensures(enforcement(name))
+                + "}";
+    }
+
+    /**
+     * What is done about a behavior's {@code ensures}, as the checker answered it for a behavior of
+     * a module this compile checked, and {@link EnsuresEnforcement.NotDecidedHere} for one of a
+     * module it did not — which is the reading {@link EnsuresEnforcement#in} gives a miss.
+     *
+     * <p>A miss for a behavior of a module this compile checked is not an answer: every behavior of
+     * such a module was walked above, so it is this writer having missed one, and it stops.
+     */
+    private EnsuresEnforcement enforcement(ValueName.Behavior name) {
+        EnsuresEnforcement decided = enforcements.get(name);
+        if (decided != null) {
+            return decided;
+        }
+        for (CheckedModule module : program.modules()) {
+            if (module.name().equals(name.module())) {
+                throw new IllegalStateException("no enforcement decision for `" + name.name()
+                        + "`, which `" + module.name() + "` declares");
+            }
+        }
+        return EnsuresEnforcement.NotDecidedHere.INSTANCE;
+    }
+
+    /**
+     * Where a behavior's answer is held to what it declares, with the rules that say what that is.
+     *
+     * <p>The four answers the checker has, each as itself. Two of them carry the rules and say where
+     * they run; the other two carry none, and they are not one answer: {@code none} is a behavior
+     * that was read and declares nothing, {@code undecided} one whose clause this compile does not
+     * run because nobody here decided where it would be run.
+     */
+    private String ensures(EnsuresEnforcement enforcement) {
+        return switch (enforcement) {
+            case EnsuresEnforcement.AtTheCallee it ->
+                    "{\"at\":\"callee\",\"contract\":" + contract(it.contract()) + "}";
+            case EnsuresEnforcement.AtEachCrossing it ->
+                    "{\"at\":\"crossing\",\"contract\":" + contract(it.contract()) + "}";
+            case EnsuresEnforcement.NoContract it -> "{\"at\":\"none\"}";
+            case EnsuresEnforcement.NotDecidedHere it -> "{\"at\":\"undecided\"}";
+        };
+    }
+
+    /**
+     * The rules a behavior's answer is held to, over the parameters' bindings and the answer's.
+     *
+     * <p>The parameters are numbered first and in the order the signature takes them, the way a
+     * body's are, so a rule reads a parameter under the number of where it stands. What each one
+     * holds is the target's inputs and is not written a second time; its name is written, as a
+     * body's parameters are, so the two halves can agree on how many there are.
+     *
+     * <p>What the contract answers and who declared it are the target's too, and the rules are
+     * written in the order the checker keeps them, which is the order a failure is decided in.
+     */
+    private String contract(Contract contract) {
+        Bindings bindings = new Bindings();
+        StringJoiner parameters = new StringJoiner(",", "[", "]");
+        for (Contract.Param parameter : contract.params()) {
+            bindings.number(parameter.binding());
+            parameters.add(quoted(parameter.name()));
+        }
+        StringJoiner rules = new StringJoiner(",", "[", "]");
+        for (Contract.Rule rule : contract.rules()) {
+            rules.add(rule(rule, bindings));
+        }
+        return "{\"parameters\":" + parameters + ",\"rules\":" + rules + "}";
+    }
+
+    /**
+     * One rule: which answers it applies to, the binding the answer is read through there, what has
+     * to hold, and what the checker said of it beside that.
+     *
+     * <p>A rule over a case says what the answer is read as where it is that case, because what is
+     * tested does not say it: a case that is a sum is tested as the leaves it descends to, and read
+     * as the sum. A rule over every answer reads it as what the behavior answers, which the target
+     * says already.
+     *
+     * <p>Whether the rule reads the answer, and the clause it is reported under, are carried though
+     * nothing here runs either: both are what the checker decided about the declaration, and a
+     * reader that later needs one would otherwise need the document to say more than it did.
+     */
+    private String rule(Contract.Rule rule, Bindings bindings) {
+        String guard = switch (rule.guard()) {
+            case Contract.Guard.Always it -> "{\"is\":\"always\"}";
+            case Contract.Guard.Case it -> "{\"is\":\"case\",\"selects\":" + selects(it.selected())
+                    + ",\"binds\":" + type(it.selected().bound()) + "}";
+        };
+        int value = bindings.number(rule.value());
+        return "{\"guard\":" + guard
+                + ",\"value\":" + value
+                + ",\"condition\":" + core(rule.condition(), bindings)
+                + ",\"readsanswer\":" + rule.readsAnswer()
+                + ",\"clause\":" + rule.clause().map(ProgramWriter::quoted).orElse("null")
                 + "}";
     }
 

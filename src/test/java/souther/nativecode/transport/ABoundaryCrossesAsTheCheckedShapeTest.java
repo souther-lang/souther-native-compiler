@@ -57,7 +57,8 @@ class ABoundaryCrossesAsTheCheckedShapeTest {
     void anAnswerOfADeclaredTypeCrossesAsTheNominalShapeTheCheckerSettled() {
         assertThat(written()).contains(
                 "\"name\":\"openDoor\",\"is\":\"body\",\"inputs\":[{\"is\":\"scalar\",\"scalar\":\"INT\"}],"
-                        + "\"output\":{\"is\":\"nominal\",\"declared\":\"shop.Door\"}}");
+                        + "\"output\":{\"is\":\"nominal\",\"declared\":\"shop.Door\"},"
+                        + "\"ensures\":{\"at\":\"none\"}}");
     }
 
     @Test

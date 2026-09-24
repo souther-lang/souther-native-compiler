@@ -650,6 +650,12 @@ final class Running {
             """;
 
     private static String cType(Type type) {
+        // A value of a declared type is the address of what it is made of. What the harness does
+        // with one is take it and hand it on, which needs no layout; a stand-in comparing one
+        // against a value its table states would need one, and asC refuses that.
+        if (type instanceof Type.Ref) {
+            return "const void *";
+        }
         return switch (prim(type)) {
             case INT -> "int64_t";
             case BOOL -> "int8_t";
