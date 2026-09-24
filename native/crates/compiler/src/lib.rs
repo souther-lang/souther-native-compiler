@@ -926,6 +926,10 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
             inputs: &target.inputs,
             names: target.names(),
             answers: target.answers(),
+            cases: match &target.output {
+                transport::BoundaryOutput::Cases { cases, .. } => Some(cases),
+                _ => None,
+            },
         });
     }
     // Every value a module of this object publishes, through the entry another object reaches it
@@ -941,6 +945,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
             inputs: &[],
             names: Some(&[]),
             answers: entry.body.ty().clone(),
+            cases: None,
         })
         .collect();
     for written in &program.modules {

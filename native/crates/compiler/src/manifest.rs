@@ -2,7 +2,7 @@
 //!
 //! Written as types and not built as JSON, so that what a manifest of one version says is a thing
 //! the compiler holds this code to. A field renamed here is a change to these types, and the
-//! fixture `tests/interface-v3.json` is what version 3 is: every manifest this writes is read back
+//! fixture `tests/interface-v4.json` is what version 4 is: every manifest this writes is read back
 //! by these same types, which refuse a member they do not name.
 //!
 //! [`VERSION`] moves when what a manifest says is read differently. What the functions it names
@@ -10,6 +10,8 @@
 //! Version 2 is `souther-native-compiler#46`: a module says what it asks a host to implement
 //! ([`Module::injections`]) beside what it offers one. Version 3 names what a behavior takes as
 //! its declaration does ([`Parameters`]), which a binding writes its functions' parameters under.
+//! Version 4 is `souther-native-compiler#50`: what a behavior answers is an [`Answer`], which says
+//! beside the type how a host tells apart the cases of a union no declaration names.
 //!
 //! Where a function is `null`, the model has the thing and a host has no way to reach it yet: a
 //! behavior taking a type with no way across, a field of a type with no representation for a host,
@@ -24,7 +26,7 @@ use std::collections::BTreeMap;
 pub(crate) const FORMAT: &str = "souther-native-interface";
 
 /// Which version of what a manifest says this is.
-pub(crate) const VERSION: u32 = 3;
+pub(crate) const VERSION: u32 = 4;
 
 /// Everything a host can call in one shared library, and the model it reaches.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -130,9 +132,36 @@ pub(crate) struct Behavior {
     pub name: String,
     /// What it takes, in order.
     pub parameters: Parameters,
-    pub answers: Type,
+    pub answers: Answer,
     /// What a host calls it through.
     pub call: Option<Function>,
+}
+
+/// What a published behavior answers: the type, as the model says it, and where that is a union no
+/// declaration names, what a host tells its cases apart by.
+///
+/// Beside the type and not in it. [`Type`] is what the model says, the same wherever the type is
+/// written, and a union has no function of its own: what tells the cases apart is the behavior's,
+/// under the behavior's name, since a union has none.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Answer {
+    #[serde(rename = "type")]
+    pub ty: Type,
+    /// Where `ty` is a union no declaration names, and null where it is anything else.
+    pub union: Option<UnionAnswer>,
+}
+
+/// The cases of a union a behavior answers, as a value of it is one of them.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct UnionAnswer {
+    /// The cases the union descends to, in the order `case` counts them: a member that is a sum is
+    /// its cases here, the way a sum's own `cases` are ([`Declaration::Sum`]), since a value of the
+    /// sum is one of them and says which. Not the union's members, which are the type's.
+    pub cases: Vec<Case>,
+    /// Which of `cases` a value is, where every case is a declared type.
+    pub case: Option<Function>,
 }
 
 /// A behavior a host implements, and what it registers an implementation through.
@@ -420,35 +449,36 @@ impl From<HostParameter> for Parameter {
 mod tests {
     use super::{Carried, FORMAT, Manifest, VERSION};
 
-    /// What version 3 is. Read by these types, which refuse a member they do not name, and
+    /// What version 4 is. Read by these types, which refuse a member they do not name, and
     /// written back the same: a field renamed or a kind reshaped here stops matching the fixture
     /// the Java half's test also holds a written manifest to.
-    const V3: &str = include_str!("../tests/interface-v3.json");
+    const V4: &str = include_str!("../tests/interface-v4.json");
 
     #[test]
-    fn version_three_is_read_and_written_back_as_it_is() {
-        let read: Manifest = serde_json::from_str(V3).expect("version 3 reads");
+    fn version_four_is_read_and_written_back_as_it_is() {
+        let read: Manifest = serde_json::from_str(V4).expect("version 4 reads");
         assert_eq!(read.format, FORMAT);
         assert_eq!(read.version, VERSION);
         let mut written = serde_json::to_string_pretty(&read).unwrap();
         written.push('\n');
-        assert_eq!(written, V3);
+        assert_eq!(written, V4);
     }
 
     /// A surface an object of an earlier release carries is refused as that, and not as whichever
-    /// member moved since: version 2 wrote what a behavior takes as `takes`, which 3 does not read.
+    /// member moved since: version 3 wrote what a behavior answers as a type, which 4 reads as an
+    /// answer.
     #[test]
     fn a_surface_of_an_earlier_version_is_refused_by_its_version() {
-        let earlier = br#"{"version":2,"abi":3,"modules":[{"name":"m","behaviors":[
-            {"name":"f","takes":[],"answers":{"kind":"primitive","name":"Int"},"call":null}],
-            "injections":[],"values":[],"declarations":[]}]}"#;
+        let earlier = br#"{"version":3,"abi":3,"modules":[{"name":"m","behaviors":[
+            {"name":"f","parameters":{"named":[]},"answers":{"kind":"primitive","name":"Int"},
+            "call":null}],"injections":[],"values":[],"declarations":[]}]}"#;
 
         let refused = Carried::read(earlier).expect_err("a surface of another version");
 
         assert!(
             refused
                 .to_string()
-                .contains("manifest version 2 and ABI generation 3"),
+                .contains("manifest version 3 and ABI generation 3"),
             "{refused}"
         );
     }

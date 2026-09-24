@@ -4,10 +4,16 @@ import org.jspecify.annotations.Nullable;
 import souther.nativecode.php.Manifest.Word;
 
 import java.util.List;
+import java.util.stream.Collectors;
 
 /**
  * How a value of one model type crosses between PHP and the library: what PHP calls its type, the
- * words it is handed over as, and how PHP makes a value of the word it is handed back.
+ * words it is handed over as, and, for each way it crosses, what PHP does with those words.
+ *
+ * <p>The two ways are apart ({@link Given}, {@link Received}) because a type may cross one way and
+ * not the other. PHP handing over a value of a union no declaration names knows which class it
+ * holds and hands over the value; PHP handed one has to be told which case it is before it can
+ * make an object of it, and only a behavior's answer says.
  *
  * <p>An optional crosses as whether it is there and then the value, which is how the library hands
  * one over both ways; everything else crosses as one word.
@@ -20,21 +26,33 @@ sealed interface Crossing {
     /** The words it is handed over as, in order. */
     List<Word> words();
 
-    /** The PHP expressions handing {@code value} over, one for each of {@link #words()}. */
-    List<String> given(String value, String session);
+    /** A value PHP hands the library. */
+    sealed interface Given extends Crossing {
 
-    /** A PHP expression true where {@code value} is a value of this. */
-    String holds(String value);
+        /** The PHP expressions handing {@code value} over, one for each of {@link #words()}. */
+        List<String> given(String value, String session);
 
-    /**
-     * The PHP expression making a value of this out of what the library answered, one expression
-     * for each of {@link #words()}: a word returned or handed to an implementation as itself, or
-     * read out of room with {@link Whole#fromRoom}.
-     */
-    String of(List<String> words, String session);
+        /** A PHP expression true where {@code value} is a value of this. */
+        String holds(String value);
+    }
+
+    /** A value the library hands PHP. */
+    sealed interface Received extends Crossing {
+
+        /**
+         * The PHP expression making a value of this out of what the library answered, one
+         * expression for each of {@link #words()}: a word returned or handed to an implementation
+         * as itself, or read out of room with {@link #fromRooms}.
+         */
+        String of(List<String> words, String session);
+
+        /** The words held in room {@code rooms} names, one room for each of {@link #words()}. */
+        List<String> fromRooms(List<String> rooms);
+    }
 
     /** One word of the library's. */
-    record Whole(Word word, String phpType, Kind kind, @Nullable String declared) implements Crossing {
+    record Whole(Word word, String phpType, Kind kind, @Nullable String declared)
+            implements Given, Received {
 
         enum Kind { INT, BOOL, STRING, PRODUCT, SUM }
 
@@ -108,6 +126,11 @@ sealed interface Crossing {
             };
         }
 
+        @Override
+        public List<String> fromRooms(List<String> rooms) {
+            return List.of(fromRoom(rooms.getFirst()));
+        }
+
         /** What C calls room for this word. */
         String cType() {
             return cType(word);
@@ -138,7 +161,7 @@ sealed interface Crossing {
     }
 
     /** An optional: whether it holds a value, then the value, or nothing where it holds none. */
-    record Present(Whole of) implements Crossing {
+    record Present(Whole of) implements Given, Received {
 
         @Override
         public String phpType() {
@@ -166,6 +189,76 @@ sealed interface Crossing {
         public String of(List<String> words, String session) {
             return "(" + words.getFirst() + " !== 0 ? " + of.of(List.of(words.get(1)), session)
                     + " : null)";
+        }
+
+        @Override
+        public List<String> fromRooms(List<String> rooms) {
+            return List.of(rooms.getFirst() + "->cdata", of.fromRoom(rooms.get(1)));
+        }
+    }
+
+    /**
+     * A value of a union no declaration names, handed over by PHP: an object of the class of one
+     * of its members, which already is the case it is, so the value is handed over as it is.
+     */
+    record OneOf(List<Whole> members) implements Given {
+
+        @Override
+        public String phpType() {
+            return members.stream().map(Whole::phpType).collect(Collectors.joining("|"));
+        }
+
+        @Override
+        public List<Word> words() {
+            return List.of(Word.VALUE);
+        }
+
+        @Override
+        public List<String> given(String value, String session) {
+            return List.of(value + "->nativeHandle()->borrow(" + session + ")");
+        }
+
+        @Override
+        public String holds(String value) {
+            return members.stream().map(it -> it.holds(value))
+                    .collect(Collectors.joining(" || ", "(", ")"));
+        }
+    }
+
+    /**
+     * A value of a union no declaration names, handed to PHP as a behavior's answer: made as the
+     * class of the case {@code which} says it is, each of {@code cases} at the place the library
+     * counts it.
+     *
+     * @param phpType the union of what PHP calls each of its members
+     * @param which   the function the library answers which case a value is through
+     * @param cases   how a value of each case is made, in the order {@code which} counts them
+     * @param what    what the answer is of, for the exception a case past them throws
+     */
+    record Told(String phpType, String which, List<Whole> cases, String what) implements Received {
+
+        @Override
+        public List<Word> words() {
+            return List.of(Word.VALUE);
+        }
+
+        @Override
+        public String of(List<String> words, String session) {
+            String word = words.getFirst();
+            StringBuilder match = new StringBuilder("match (" + session + "->ffi()->" + which
+                    + "(" + word + ")) {\n");
+            for (int at = 0; at < cases.size(); at++) {
+                match.append("            ").append(at).append(" => ")
+                        .append(cases.get(at).of(List.of(word), session)).append(",\n");
+            }
+            return match.append("            default => throw new \\LogicException('the library")
+                    .append(" answered a case ").append(what).append(" does not answer'),\n")
+                    .append("        }").toString();
+        }
+
+        @Override
+        public List<String> fromRooms(List<String> rooms) {
+            return List.of(rooms.getFirst());
         }
     }
 }

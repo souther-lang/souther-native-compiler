@@ -23,8 +23,8 @@ class APhpHostCallsALibraryThroughItsBindingTest {
 
     private static final String SHOP = """
             module shop exposing ( Money, Line, Order, Free, Paid, Owed, Settled, Outcome,
-                                   settle, owing, stillOwing : Int, discounted, squared,
-                                   standardPrice )
+                                   settle, owing, stillOwing : Int, charge, chargedFree, discounted,
+                                   squared, standardPrice )
 
             data Money = Int
                 invariant notNegative = value >= 0
@@ -55,6 +55,22 @@ class APhpHostCallsALibraryThroughItsBindingTest {
                 | Settled -> 0
 
             behavior stillOwing = settle >-> owing
+
+            behavior charge : (paid: Int) -> Owed | Settled
+            let charge (paid) =
+                if paid > 1 then Waived { reason = "goodwill" }
+                else if paid > 0 then Free
+                else Owed { amount = Money(1), overdue = true }
+
+            behavior chooseCharge : (paid: Int) -> Owed | Settled
+
+            behavior chargedFree : (paid: Int) -> Bool
+                depends on chooseCharge
+            let chargedFree (paid, chooseCharge) = match chooseCharge(paid) with
+                | Free -> true
+                | Paid -> false
+                | Waived -> false
+                | Owed -> false
 
             behavior discountFor : (line: Line) -> Int
 
@@ -130,6 +146,12 @@ class APhpHostCallsALibraryThroughItsBindingTest {
                 echo "owing: ", Behaviors::owing($session, $owed), " and ", Behaviors::owing($session, $paid), "\\n";
                 echo "still owing: ", Behaviors::stillOwing($session, input1: 2, input0: $line), "\\n";
 
+                $owes = Behaviors::charge($session, 0);
+                $free = Behaviors::charge($session, 1);
+                $waived = Behaviors::charge($session, 2);
+                echo "charged: ", $owes::class, " ", $owes->amount()->value(), ", ", $free::class,
+                    ", ", $waived::class, " settled ", var_export($waived instanceof Settled, true), "\\n";
+
                 $said = OutcomeCodec::encode($owed);
                 echo "outcome: ", $said, "\\n";
                 $read = OutcomeCodec::decode($session, $said)->getOrThrow();
@@ -162,6 +184,14 @@ class APhpHostCallsALibraryThroughItsBindingTest {
                 fn (Session $session): int => Behaviors::discounted($session,
                     Line::of($session, Money::of($session, 3)->getOrThrow(), 2)->getOrThrow()),
                 $discounts), "\\n";
+
+            $charging = Injections::of(chooseCharge: fn (Session $session, int $paid): Owed|Settled =>
+                $paid > 0 ? Free::of($session)->getOrThrow()
+                    : Owed::of($session, Money::of($session, 1)->getOrThrow(), true)->getOrThrow());
+            echo "charged free: ", var_export($binding->run(
+                fn (Session $session): bool => Behaviors::chargedFree($session, 1), $charging), true),
+                " and ", var_export($binding->run(
+                fn (Session $session): bool => Behaviors::chargedFree($session, 0), $charging), true), "\\n";
 
             $down = new LogicException('the price list is down');
             try {
@@ -258,6 +288,7 @@ class APhpHostCallsALibraryThroughItsBindingTest {
             paid: Acme\\Billing\\Shop\\Paid, settled true, an outcome true
             owing: 4 and 0
             still owing: 4
+            charged: Acme\\Billing\\Shop\\Owed 1, Acme\\Billing\\Shop\\Free, Acme\\Billing\\Shop\\SettledValue settled true
             outcome: {"type":"Owed","amount":4,"overdue":false}
             read back: Acme\\Billing\\Shop\\Owed, amount 4
             free: {}
@@ -268,6 +299,7 @@ class APhpHostCallsALibraryThroughItsBindingTest {
             aborted: REQUIRED_FORM_HAS_NO_PLACE
             unbound: Souther\\Runtime\\UnboundInjection
             discounted: 4
+            charged free: true and false
             thrown: the same one
             nested runs: 4
             second fiber: Souther\\Runtime\\RunOnAnotherFiber

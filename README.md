@@ -126,7 +126,11 @@ sum whose every case is a declared type there is `..._case`, answering which of 
 descends to the value is, as its place among them counted from nought; the address the value is
 tagged with never leaves the object. A sum with a primitive among its cases has no reader, since its
 values do not say which case they are. The case answered is the concrete one the value is, and
-whether a host can read that case further is its own publication's answer and not the sum's.
+whether a host can read that case further is its own publication's answer and not the sum's. A
+behavior answering a union no declaration names has the same reader beside its call,
+`souther3_m_<module>_b_<behavior>_answer_case`, counting the cases the union descends to: a member
+that is a sum counts as its own cases, since a value of it is one of them. It is the behavior's and
+not the union's, which has no name to be spelt under.
 
 An `Int` crosses as 64 bits, a `Bool` as a byte, and text and a value of a declared type as an
 address. An optional crosses as a presence beside the value: a constructor takes a byte and the
@@ -226,9 +230,12 @@ function type a host implements it as, and what it registers one through. The fu
 a function: every `name` of a function in the manifest is a symbol the library defines, and the
 type's is under `type`. What a behavior takes is `named`, under the names its signature gives them,
 or `positional` for a `>->` composition, which declares no parameters; the names are the
-signature's and never those a `let` binds. A type is said by its
+signature's and never those a `let` binds. What a behavior answers is its `type` beside `union`,
+which is `null` unless the type is a union no declaration names, and then lists the `cases` the
+union descends to and the `case` function answering which of them a value is. The type stays what
+the model says, members and all, the same as wherever else it is written. A type is said by its
 module and its name, never by the key the Java half hands this one. What a manifest may say is Rust
-types, and version 3 is `native/crates/compiler/tests/interface-v3.json`: a test holds a program's
+types, and version 4 is `native/crates/compiler/tests/interface-v4.json`: a test holds a program's
 manifest to it, and
 another reads it with those types and writes it back unchanged. The manifest carries its own
 `version`, moved when what it says is read differently, and the `abi` its functions answer to,
@@ -307,6 +314,11 @@ implements it. `<Sum>Codec` finds which class a value is through the sum's `case
 reads and writes the sum's own external form, which says which case it is. A case the model keeps,
 or a sum whose cases the library cannot tell apart, is `<Sum>Value`, which is still the sum and can
 still be written. A module's behaviors are static functions on `Behaviors`, its values on `Values`.
+A behavior answering a union no declaration names answers the PHP union of its members' classes
+(`Found|Missing`), each value made as the class of the case the behavior's `case` function says it
+is, or, for a case with no class of its own, through the codec of the member sum it is a case of.
+Nothing is generated for the union itself, which has no name in the model. A host implementing a
+behavior that answers one hands back an object of one of those classes as it is.
 The FFI declarations are the build's own, copied beside the binding as `souther.ffi.h`, and
 `autoload.php` loads the binding's classes for a host that does not map the namespace itself. The
 directory is written beside where it goes and put there whole, so it is the binding of one manifest:
@@ -315,8 +327,9 @@ last one as it was, and a directory holding anything a generation did not write 
 than replaced. The driver writes a library's directory the same way.
 
 What a host has no way to reach is not written: a behavior with no `call`, a field with no `read`, a
-behavior taking or answering a type with no representation for a host, and a behavior answering a
-union no declaration names, since the library says of such a value nothing about which case it is.
+behavior taking or answering a type with no representation for a host, and a union no declaration
+names that PHP would be handed other than as a behavior's answer, since nothing else says which case
+a value of it is.
 A name PHP will not take is refused with the name, rather than spelt some other way: a reserved
 word, `this` or a superglobal for a parameter, two parameters of one function under one name, a
 field named as a method the binding writes, and two names that are one where they are looked up. Two

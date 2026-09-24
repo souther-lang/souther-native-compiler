@@ -91,25 +91,58 @@ class APhpBindingIsWrittenFromTheManifestTest {
     }
 
     /**
-     * A behavior answering a union no declaration names is not written: the library says of no such
-     * value which of its cases it is, and an answer a host cannot tell apart is not one it can use.
+     * A behavior answering a union no declaration names answers it as the union of its members'
+     * classes, each value made as the class of the case the library says it is. Nothing is written
+     * for the union itself: it has no name, and a class for it would be one the model does not have.
      */
     @Test
-    void aBehaviorAnsweringAnUnnamedUnionIsNotWritten(@TempDir Path into) throws Exception {
-        String written = behaviors(generated(into, """
-                module m exposing ( Found, Missing, find, twice )
+    void aBehaviorAnsweringAnUnnamedUnionAnswersTheClassOfItsCase(@TempDir Path into)
+            throws Exception {
+        PhpBindings.Generated generated = generated(into, """
+                module m exposing ( Found, Missing, find )
 
                 data Found = { id: Int }
                 data Missing
 
                 behavior find : (id: Int) -> Found | Missing
                 let find (id) = if id > 0 then Found { id = id } else Missing
+                """);
+        String written = behaviors(generated);
 
-                behavior twice : (n: Int) -> Int
-                let twice (n) = n * 2
-                """));
+        assertThat(written).contains(
+                "find(\\Souther\\Runtime\\Session $session, int $id):"
+                        + " \\Acme\\Billing\\M\\Found|\\Acme\\Billing\\M\\Missing",
+                "$session->ffi()->souther3_m_m_b_find_answer_case($answer)",
+                "0 => new \\Acme\\Billing\\M\\Found($session->held($answer))",
+                "1 => new \\Acme\\Billing\\M\\Missing($session->held($answer))");
+        assertThat(generated.files()).extracting(it -> generated.root().relativize(it).toString())
+                .containsExactlyInAnyOrder("Binding.php", "autoload.php", "souther.ffi.h",
+                        "M/Found.php", "M/Missing.php", "M/Behaviors.php");
+    }
 
-        assertThat(written).contains("function twice(").doesNotContain("find");
+    /**
+     * A union no declaration names that a host answers is handed over as the object PHP holds,
+     * which already is the case it is: the implementation is typed as answering one of the
+     * members' classes, and held to it.
+     */
+    @Test
+    void anUnnamedUnionAHostAnswersIsHandedOverAsItIs(@TempDir Path into) throws Exception {
+        PhpBindings.Generated generated = generated(into, """
+                module m exposing ( Found, Missing )
+
+                data Found = { id: Int }
+                data Missing
+
+                behavior lookUp : (id: Int) -> Found | Missing
+                """);
+
+        assertThat(Files.readString(generated.root().resolve("M").resolve("Injections.php")))
+                .contains("@param (callable(\\Souther\\Runtime\\Session, int):"
+                        + " \\Acme\\Billing\\M\\Found|\\Acme\\Billing\\M\\Missing)|null $lookUp");
+        assertThat(Files.readString(generated.root().resolve("Binding.php"))).contains(
+                "($answer instanceof \\Acme\\Billing\\M\\Found"
+                        + " || $answer instanceof \\Acme\\Billing\\M\\Missing)",
+                "$answer->nativeHandle()->borrow($session)");
     }
 
     @Test
@@ -178,22 +211,22 @@ class APhpBindingIsWrittenFromTheManifestTest {
 
     /**
      * A manifest of a version this was not written for is refused as that, and not as whichever
-     * member moved since: version 2, as the driver wrote it, said what a behavior takes as
-     * {@code takes}.
+     * member moved since: version 3, as the driver wrote it, said what a behavior answers as a
+     * type.
      */
     @Test
     void aManifestOfAnotherVersionIsRefusedByItsVersion(@TempDir Path into) throws Exception {
         Path earlier = Path.of("src", "test", "resources", "souther", "nativecode", "php",
-                "interface-v2.json");
+                "interface-v3.json");
         Path declarations = into.resolve("souther.declarations");
         Files.writeString(declarations, "", StandardCharsets.UTF_8);
 
         assertThatThrownBy(() -> PhpBindings.generate(earlier, declarations, into.resolve("php"),
                 "Acme\\Billing"))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("is version 2 of souther-native-interface for ABI generation"
-                        + " 3, and this generator reads version 3")
-                .hasMessageNotContaining("takes");
+                .hasMessageContaining("is version 3 of souther-native-interface for ABI generation"
+                        + " 3, and this generator reads version 4")
+                .hasMessageNotContaining("answers");
     }
 
     /**

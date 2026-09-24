@@ -2,7 +2,11 @@ package souther.nativecode.php;
 
 import org.jspecify.annotations.Nullable;
 import souther.nativecode.NativeCompiler;
+import souther.nativecode.php.Crossing.Given;
+import souther.nativecode.php.Crossing.OneOf;
 import souther.nativecode.php.Crossing.Present;
+import souther.nativecode.php.Crossing.Received;
+import souther.nativecode.php.Crossing.Told;
 import souther.nativecode.php.Crossing.Whole;
 import souther.nativecode.php.Manifest.Case;
 import souther.nativecode.php.Manifest.Declaration;
@@ -156,8 +160,11 @@ public final class PhpBindings {
     // ---------------------------------------------------------------------------------------------
     // What a model type crosses as.
 
-    /** How a value of {@code type} crosses, or null where a host has no way to hand one over. */
-    private @Nullable Crossing crossing(Type type) {
+    /**
+     * How a value of {@code type} crosses as one word or an optional of one, or null where it does
+     * not: the same both ways.
+     */
+    private @Nullable Whole whole(Type type) {
         return switch (type) {
             case Type.Primitive it -> switch (it.name()) {
                 case "Int" -> Whole.integer();
@@ -166,10 +173,99 @@ public final class PhpBindings {
                 default -> null;
             };
             case Type.Declared it -> whole(it.module(), it.name());
-            case Type.Option it -> crossing(it.of()) instanceof Whole whole ? new Present(whole) : null;
+            case Type.Option it -> null;
             case Type.Union it -> null;
             case Type.Unrepresented it -> null;
         };
+    }
+
+    /** An optional of what crosses as one word, where {@code type} is one. */
+    private @Nullable Present present(Type type) {
+        return type instanceof Type.Option option && whole(option.of()) instanceof Whole of
+                ? new Present(of) : null;
+    }
+
+    /** How PHP hands the library a value of {@code type}, or null where it has no way to. */
+    private @Nullable Given given(Type type) {
+        if (type instanceof Type.Union union) {
+            List<Whole> members = members(union);
+            return members == null ? null : new OneOf(members);
+        }
+        Whole whole = whole(type);
+        return whole != null ? whole : present(type);
+    }
+
+    /**
+     * How the library hands PHP a value of {@code type}, or null where it has no way to. A union
+     * no declaration names is never handed this way: nothing says which case a value of one is
+     * where it is not a behavior's answer ({@link #received(Manifest.Answer, String)}).
+     */
+    private @Nullable Received received(Type type) {
+        Whole whole = whole(type);
+        return whole != null ? whole : present(type);
+    }
+
+    /**
+     * How the library hands PHP what a behavior answers, or null where it has no way to: a union
+     * no declaration names as the class of the case the library says a value is, and anything else
+     * as a value of its type is handed.
+     *
+     * <p>Each case is made as its own class where it has one, and otherwise as a value of the
+     * member it is a case of, whose codec decides again: a case the model keeps has no class, and
+     * is still a value of the sum the union names. A case neither way is a union PHP cannot be
+     * handed.
+     */
+    private @Nullable Received received(Manifest.Answer answer, String what) {
+        if (!(answer.type() instanceof Type.Union union)) {
+            return received(answer.type());
+        }
+        Manifest.UnionAnswer cases = answer.union();
+        List<Whole> members = members(union);
+        if (cases == null || cases.which() == null || members == null) {
+            return null;
+        }
+        agrees(cases.which(), List.of(Word.VALUE), List.of(), Word.CASE);
+        List<Whole> made = new ArrayList<>();
+        for (Case of : cases.cases()) {
+            Whole it = caseClass(of);
+            if (it == null) {
+                it = memberHolding(union, of);
+            }
+            if (it == null) {
+                return null;
+            }
+            made.add(it);
+        }
+        return new Told(new OneOf(members).phpType(), cases.which().name(), made,
+                quotedInSingle("`" + what + "`"));
+    }
+
+    /** What each member of {@code union} crosses as, or null where any has no class. */
+    private @Nullable List<Whole> members(Type.Union union) {
+        List<Whole> members = new ArrayList<>();
+        for (Case member : union.cases()) {
+            if (!(member instanceof Case.Declared d) || !(whole(d.module(), d.name()) instanceof Whole w)) {
+                return null;
+            }
+            members.add(w);
+        }
+        return members;
+    }
+
+    /** The first member of {@code union} that is a sum {@code of} is a case of. */
+    private @Nullable Whole memberHolding(Type.Union union, Case of) {
+        if (!(of instanceof Case.Declared leaf)) {
+            return null;
+        }
+        for (Case member : union.cases()) {
+            if (member instanceof Case.Declared d
+                    && declared.get(d.module() + "." + d.name()) instanceof Declared it
+                    && it.declaration() instanceof Declaration.Sum sum
+                    && cases(sum).contains(leaf.module() + "." + leaf.name())) {
+                return Whole.sum(it.fqcn(), it.codec());
+            }
+        }
+        return null;
     }
 
     private @Nullable Whole whole(String module, String name) {
@@ -181,11 +277,24 @@ public final class PhpBindings {
                 ? Whole.sum(it.fqcn(), it.codec()) : Whole.product(it.fqcn());
     }
 
-    /** The crossing of each of {@code types}, or null where any of them has none. */
-    private @Nullable List<Crossing> crossings(List<Type> types) {
-        List<Crossing> crossings = new ArrayList<>();
+    /** How PHP hands over each of {@code types}, or null where any of them has no way. */
+    private @Nullable List<Given> givens(List<Type> types) {
+        List<Given> crossings = new ArrayList<>();
         for (Type type : types) {
-            Crossing crossing = crossing(type);
+            Given crossing = given(type);
+            if (crossing == null) {
+                return null;
+            }
+            crossings.add(crossing);
+        }
+        return crossings;
+    }
+
+    /** How PHP is handed each of {@code types}, or null where any of them has no way. */
+    private @Nullable List<Received> receiveds(List<Type> types) {
+        List<Received> crossings = new ArrayList<>();
+        for (Type type : types) {
+            Received crossing = received(type);
             if (crossing == null) {
                 return null;
             }
@@ -211,7 +320,7 @@ public final class PhpBindings {
         }
     }
 
-    private static List<Word> words(List<Crossing> crossings) {
+    private static List<Word> words(List<? extends Crossing> crossings) {
         return crossings.stream().flatMap(it -> it.words().stream()).toList();
     }
 
@@ -378,7 +487,7 @@ public final class PhpBindings {
 
     /** The static constructor: the value, or the invariant it does not hold as an issue. */
     private void of(StringBuilder php, Declared it, List<Manifest.Field> fields, Function construct) {
-        List<Crossing> crossings = crossings(fields.stream().map(Manifest.Field::type).toList());
+        List<Given> crossings = givens(fields.stream().map(Manifest.Field::type).toList());
         if (crossings == null) {
             return;
         }
@@ -404,7 +513,7 @@ public final class PhpBindings {
         }
         List<String> given = new ArrayList<>();
         for (int at = 0; at < crossings.size(); at++) {
-            Crossing crossing = crossings.get(at);
+            Given crossing = crossings.get(at);
             parameters.add(crossing.phpType() + " $" + names.get(at)
                     + (at >= defaulted ? " = null" : ""));
             given.addAll(crossing.given("$" + names.get(at), "$" + session));
@@ -458,7 +567,7 @@ public final class PhpBindings {
 
     private void getter(StringBuilder php, Declared it, Manifest.Field field) {
         Function read = field.read();
-        Crossing crossing = crossing(field.type());
+        Received crossing = received(field.type());
         if (read == null || crossing == null) {
             return;
         }
@@ -476,6 +585,7 @@ public final class PhpBindings {
                         + "        return " + present.of(List.of("$present",
                         present.of().fromRoom("$room")), "$session") + ";";
             }
+            case Told told -> throw new IllegalStateException("a field is not told its case");
         };
         php.append("""
 
@@ -583,8 +693,8 @@ public final class PhpBindings {
         members.claim("__construct", "the generated `__construct`");
         for (Manifest.Behavior behavior : module.behaviors()) {
             Function call = behavior.call();
-            List<Crossing> takes = crossings(behavior.parameters().types());
-            Crossing answers = crossing(behavior.answers());
+            List<Given> takes = givens(behavior.parameters().types());
+            Received answers = received(behavior.answers(), module.name() + "." + behavior.name());
             if (call == null || takes == null || answers == null) {
                 continue;
             }
@@ -624,7 +734,7 @@ public final class PhpBindings {
         members.claim("__construct", "the generated `__construct`");
         for (Manifest.PublishedValue value : module.values()) {
             Function read = value.read();
-            Crossing answers = crossing(value.type());
+            Received answers = received(value.type());
             if (read == null || answers == null) {
                 continue;
             }
@@ -648,8 +758,8 @@ public final class PhpBindings {
     }
 
     /** A static function calling {@code function} and answering what it wrote. */
-    private static String call(String what, String name, List<String> names, List<Crossing> takes,
-                               Crossing answers, Function function) {
+    private static String call(String what, String name, List<String> names, List<Given> takes,
+                               Received answers, Function function) {
         List<Word> rooms = answers.words();
         agrees(function, words(takes), rooms, Word.STATUS);
         String session = PhpNames.freeOf("session", names);
@@ -684,14 +794,7 @@ public final class PhpBindings {
         body.append("        $").append(status).append(" = $").append(ffi).append("->")
                 .append(function.name()).append("(").append(String.join(", ", given)).append(");\n");
         body.append("        $").append(session).append("->answered($").append(status).append(");\n");
-        List<String> read = new ArrayList<>();
-        switch (answers) {
-            case Whole whole -> read.add(whole.fromRoom("$" + roomNames.getFirst()));
-            case Present present -> {
-                read.add("$" + roomNames.get(0) + "->cdata");
-                read.add(present.of().fromRoom("$" + roomNames.get(1)));
-            }
-        }
+        List<String> read = answers.fromRooms(roomNames.stream().map(it -> "$" + it).toList());
         body.append("        return ").append(answers.of(read, "$" + session)).append(";\n");
         return """
 
@@ -722,10 +825,10 @@ public final class PhpBindings {
             List<String> types = new ArrayList<>();
             types.add(RUNTIME + "Session");
             for (Manifest.NamedParameter parameter : injection.parameters()) {
-                types.add(crossing(parameter.type()).phpType());
+                types.add(received(parameter.type()).phpType());
             }
             described.add("     * @param (callable(" + String.join(", ", types) + "): "
-                    + crossing(injection.answers()).phpType() + ")|null $" + name);
+                    + given(injection.answers()).phpType() + ")|null $" + name);
         }
         if (parameters.isEmpty()) {
             return;
@@ -758,9 +861,9 @@ public final class PhpBindings {
      * what it answers.
      */
     private @Nullable String adapter(Manifest.Module module, Manifest.Injection injection) {
-        List<Crossing> takes = crossings(injection.parameters().stream()
+        List<Received> takes = receiveds(injection.parameters().stream()
                 .map(Manifest.NamedParameter::type).toList());
-        Crossing answers = crossing(injection.answers());
+        Given answers = given(injection.answers());
         if (takes == null || answers == null) {
             return null;
         }
@@ -776,7 +879,7 @@ public final class PhpBindings {
         List<String> arguments = new ArrayList<>();
         arguments.add("$session");
         int at = 0;
-        for (Crossing crossing : takes) {
+        for (Received crossing : takes) {
             List<String> handed = new ArrayList<>();
             for (int word = 0; word < crossing.words().size(); word++) {
                 handed.add("$handed[" + at++ + "]");
