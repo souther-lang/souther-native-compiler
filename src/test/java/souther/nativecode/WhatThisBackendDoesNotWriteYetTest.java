@@ -53,29 +53,29 @@ class WhatThisBackendDoesNotWriteYetTest {
     }
 
     /**
-     * A list crosses whole: the program is read, and what is refused is laying one out, which
-     * nothing here does yet. Its external form waits on the language saying how every carrier
-     * orders and spells what a collection holds.
+     * A set crosses whole: the program is read, and what is refused is laying one out, which
+     * nothing here does yet. How a set holds its members waits on the language saying how every
+     * carrier orders and spells them.
      */
     @Test
-    void anAnswerThatIsAListIsReadAndNotLaidOut() {
+    void anAnswerThatIsASetIsReadAndNotLaidOut() {
         assertThatThrownBy(() -> NativeCompiler.compile(CheckedProgram.of(List.of("""
                 module listed exposing ( many )
 
-                behavior many : (n: Int) -> List<Int>
+                behavior many : (n: Int) -> Set<Int>
                 """))))
                 .isInstanceOf(NotLowered.class)
-                .hasMessageContaining("List");
+                .hasMessageContaining("Set");
     }
 
     /**
-     * The checker lets a list of a case stand where a list of its sum is answered, and this
-     * backend lays out no list. So the program is not lowered — and it is not the two halves
-     * disagreeing, which is what it would be read as if this side answered the checker's question
-     * about a collection without the checker's rules.
+     * The checker lets a set of a case stand where a set of its sum is answered, and this backend
+     * lays out no set. So the program is not lowered — and it is not the two halves disagreeing,
+     * which is what it would be read as if this side answered the checker's question about a
+     * collection without the checker's rules.
      */
     @Test
-    void aListAnsweredCovariantlyIsNotLoweredRatherThanADisagreement() {
+    void aSetAnsweredCovariantlyIsNotLoweredRatherThanADisagreement() {
         assertThatThrownBy(() -> NativeCompiler.compile(CheckedProgram.of(List.of("""
                 module demo exposing ( f, Box, A, B, S )
 
@@ -83,13 +83,13 @@ class WhatThisBackendDoesNotWriteYetTest {
                 data B = { v: Int }
                 data S = A | B
 
-                data Box = { xs: List<A> }
+                data Box = { xs: Set<A> }
 
-                behavior f : (b: Box) -> List<S>
+                behavior f : (b: Box) -> Set<S>
                 let f (b) = b.xs
                 """))))
                 .isInstanceOf(NotLowered.class)
-                .hasMessageContaining("List");
+                .hasMessageContaining("Set");
     }
 
     /**

@@ -86,7 +86,7 @@ public final class ProgramWriter {
      * written moves, so that a driver and a writer that disagree say so rather than producing an
      * object that is wrong quietly.
      */
-    public static final int TRANSPORT_VERSION = 15;
+    public static final int TRANSPORT_VERSION = 16;
 
     private final CheckedProgram program;
 
@@ -1140,6 +1140,14 @@ public final class ProgramWriter {
                 yield "{\"core\":\"tuple\",\"members\":" + members
                         + ",\"type\":" + type(it.type()) + ",\"aborts\":" + aborts(it) + "}";
             }
+            case Core.ListLit it -> {
+                StringJoiner elements = new StringJoiner(",", "[", "]");
+                for (Core element : it.elements()) {
+                    elements.add(core(element, bindings));
+                }
+                yield "{\"core\":\"list\",\"elements\":" + elements
+                        + ",\"type\":" + type(it.type()) + ",\"aborts\":" + aborts(it) + "}";
+            }
             case Core.TupleGet it -> "{\"core\":\"member\",\"tuple\":" + core(it.tuple(), bindings)
                     + ",\"at\":" + it.index() + ",\"type\":" + type(it.type())
                     + ",\"aborts\":" + aborts(it) + "}";
@@ -1163,7 +1171,6 @@ public final class ProgramWriter {
             case Core.Apply it -> apply(it, bindings);
             case Core.IfConstructed it -> throw notYet("an attempted construction", it);
             case Core.Block it -> block(it, bindings);
-            case Core.ListLit it -> throw notYet("a list", it);
             case Core.Unreachable it -> throw notYet("an unreachable", it);
         };
     }

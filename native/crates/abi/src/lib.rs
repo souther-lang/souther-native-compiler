@@ -497,6 +497,31 @@ pub const fn room_for_members(members: usize) -> i64 {
     member_at(members)
 }
 
+/// Where a list says how many elements it holds.
+///
+/// A list is its length and then its elements, one slot each and in order, through the same slot
+/// every value is held in. Nothing else stands in it. No capacity, since a list is never grown in
+/// place; no element type, since that is the static type's; no element width, since every element
+/// is one slot. A `Set` and a `Map` are not laid out as this: how they hold their members is a
+/// question the language has not settled, and a header shared with them would be answering it.
+///
+/// The empty list is a length of nought and no elements, never a null pointer, which is what an
+/// `Option` holding nothing already is.
+pub const LIST_LENGTH: i64 = 0;
+
+/// Where a list's first element is.
+pub const LIST_ELEMENTS: i64 = SLOT;
+
+/// The offset of a list's element, by its index.
+pub const fn list_at(index: i64) -> i64 {
+    LIST_ELEMENTS + SLOT * index
+}
+
+/// How much room a list of this many elements takes.
+pub const fn room_for_list(elements: i64) -> i64 {
+    list_at(elements)
+}
+
 /// How much room an `Option` holding a value takes.
 pub const fn room_for_held() -> i64 {
     HELD + SLOT
@@ -518,10 +543,12 @@ const _: () = {
     while fields < 16 {
         assert!(field_at(fields) + SLOT <= room_for_fields(fields + 1));
         assert!(member_at(fields) + SLOT <= room_for_members(fields + 1));
+        assert!(list_at(fields as i64) + SLOT <= room_for_list(fields as i64 + 1));
         fields += 1;
     }
     assert!(WHICH + SLOT <= room_for_fields(0));
     assert!(HELD + SLOT <= room_for_held());
+    assert!(LIST_LENGTH + SLOT <= room_for_list(0));
     assert!(TEXT_LENGTH + SLOT <= room_for_text(0));
 };
 
@@ -535,9 +562,15 @@ const _: () = assert!(SLOT as usize == size_of::<i64>());
 /// What an `Option` holding nothing is.
 ///
 /// A null pointer, which no allocation answers, so the two are told apart by what the pointer is
-/// rather than by a slot beside it. An `Option` holding a value is a pointer to one slot holding
-/// it, boxed even where the value would fit in a pointer, because whether it fits is a fact about
+/// rather than by a slot beside it. An `Option` holding a value is a pointer to a slot holding it,
+/// and a slot even where the value would fit in a pointer, because whether it fits is a fact about
 /// one type and an `Option` is one representation over every type.
+///
+/// A slot that stays as it is for as long as the run does, and not one taken for the `Option`
+/// alone. Nothing a run holds is changed once it is written, so any slot holding a `T` is one an
+/// `Option<T>` may point at: an element of a list is, and `list.get` answers the element's own
+/// slot rather than a copy of it. A reader of an `Option` reads [`HELD`] through the pointer and
+/// asks nothing about where the slot stands.
 pub const NOTHING: i64 = 0;
 
 /// Where an `Option`'s value is, once it is known to be holding one.

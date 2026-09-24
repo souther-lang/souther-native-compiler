@@ -18,7 +18,7 @@ use serde::Deserialize;
 
 /// What this side reads. A document written to say anything else is refused rather than read as
 /// much of as happens to parse.
-pub const TRANSPORT_VERSION: u32 = 15;
+pub const TRANSPORT_VERSION: u32 = 16;
 
 /// A document of [`TRANSPORT_VERSION`], and no other, read through [`Program::read`] and nothing
 /// else ([`crate::versioned`]).
@@ -1504,6 +1504,14 @@ pub enum Node {
         ty: Ty,
         aborts: Vec<AbortKind>,
     },
+    /// A list written out element by element, in the order it holds them. Its type is the list's,
+    /// and says what every element is.
+    List {
+        elements: Vec<Node>,
+        #[serde(rename = "type")]
+        ty: Ty,
+        aborts: Vec<AbortKind>,
+    },
     /// A call, and what the checker settled it reaches.
     Call {
         reaches: Reaches,
@@ -1803,6 +1811,11 @@ impl Node {
                 ty,
                 aborts: _,
             }
+            | Node::List {
+                elements: _,
+                ty,
+                aborts: _,
+            }
             | Node::Block {
                 site: _,
                 parameters: _,
@@ -1881,6 +1894,7 @@ impl Node {
             | Node::None { aborts, .. }
             | Node::Tuple { aborts, .. }
             | Node::Member { aborts, .. }
+            | Node::List { aborts, .. }
             | Node::Call { aborts, .. }
             | Node::Block { aborts, .. }
             | Node::Widen { aborts, .. }
@@ -1926,6 +1940,7 @@ impl Node {
             | Node::None { .. }
             | Node::Tuple { .. }
             | Node::Member { .. }
+            | Node::List { .. }
             | Node::Block { .. }
             | Node::Widen { .. }
             | Node::Apply { .. } => false,
@@ -1952,6 +1967,7 @@ impl Node {
             Node::Some { value, .. } | Node::Widen { value, .. } => vec![value],
             Node::Tuple { members, .. } => members.iter().collect(),
             Node::Member { tuple, .. } => vec![tuple],
+            Node::List { elements, .. } => elements.iter().collect(),
             Node::Call { arguments, .. } => arguments.iter().collect(),
             Node::Block { body, .. } => vec![body],
             Node::Apply {
@@ -1993,6 +2009,7 @@ impl Node {
             | Node::None { .. }
             | Node::Tuple { .. }
             | Node::Member { .. }
+            | Node::List { .. }
             | Node::Call { .. }
             | Node::Block { .. }
             | Node::Apply { .. }
@@ -2031,6 +2048,7 @@ impl Node {
             | Node::None { ty, .. }
             | Node::Tuple { ty, .. }
             | Node::Member { ty, .. }
+            | Node::List { ty, .. }
             | Node::Call { ty, .. }
             | Node::Block { ty, .. }
             | Node::Apply { ty, .. }

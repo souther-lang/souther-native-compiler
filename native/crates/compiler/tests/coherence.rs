@@ -21,7 +21,7 @@ const P: &str = r#"{"declared":"m.P"}"#;
 fn document(behaviors: &[String], helpers: &[String], definitions: &[String]) -> String {
     format!(
         concat!(
-            r#"{{"transport":15,"declarations":["#,
+            r#"{{"transport":16,"declarations":["#,
             r#"{{"module":"m","name":"A","by":"amodule","is":"unit"}},"#,
             r#"{{"module":"m","name":"B","by":"amodule","is":"unit"}},"#,
             r#"{{"module":"m","name":"S","by":"amodule","is":"sum","#,
@@ -549,23 +549,23 @@ fn what_a_compositions_last_stage_answers_is_what_it_answers() {
 
 /// A document whose halves disagree in one body, and which this backend is behind on in another,
 /// is refused as disagreeing, whichever of the two bodies is read first. `m.g` answers whether one
-/// list is a list of a wider type, which nothing here has a rule for.
+/// set is a set of a wider type, which nothing here has a rule for.
 #[test]
 fn a_disagreement_anywhere_is_refused_before_anything_is_not_lowered() {
-    let listed = |of: &str| format!(r#"{{"list":{of}}}"#);
+    let set = |of: &str| format!(r#"{{"set":{of}}}"#);
     let g = helper(
         "m.g",
-        &[&listed(A)],
+        &[&set(A)],
         &let_(
             1,
-            &listed(S),
-            &widen(&read(0, &listed(A)), &listed(S)),
-            &read(1, &listed(S)),
-            &listed(S),
+            &set(S),
+            &widen(&read(0, &set(A)), &set(S)),
+            &read(1, &set(S)),
+            &set(S),
         ),
     );
     let refused =
-        object_for(&helpers(std::slice::from_ref(&g))).expect_err("nothing lays a list out");
+        object_for(&helpers(std::slice::from_ref(&g))).expect_err("nothing lays a set out");
     assert!(refused.downcast_ref::<NotLowered>().is_some(), "{refused}");
     is_the_halves_disagreeing(&helpers(&[g, h(&[INT], &read(0, BOOL))]), "m.h");
 }
@@ -1229,7 +1229,7 @@ fn a_concat_of_two_strings_reads_whole() {
 fn with_clauses(fields: &str, invariants: &str, helpers: &[String]) -> String {
     format!(
         concat!(
-            r#"{{"transport":15,"declarations":["#,
+            r#"{{"transport":16,"declarations":["#,
             r#"{{"module":"m","name":"R","by":"amodule","is":"product","#,
             r#""fields":[{}],"invariants":[{}]}}],"#,
             r#""behaviors":[],"#,
@@ -1373,10 +1373,10 @@ fn a_clause_of_a_declaration_nothing_here_builds_is_not_run() {
     );
     let published =
         |document: String| document.replace(r#""publishes":[]"#, r#""publishes":["m.R"]"#);
-    let listed = r#"{"name":"items","binding":0,"codec":{"is":"listof","element":{"is":"scalar","scalar":"INT"}}}"#;
+    let unlaid = r#"{"name":"items","binding":0,"codec":{"is":"setof","element":{"is":"scalar","scalar":"INT"}}}"#;
     let counted = field("count", 0, "INT");
 
-    reads_whole(&published(with_clauses(listed, &holds, &[])));
+    reads_whole(&published(with_clauses(unlaid, &holds, &[])));
     reads_whole(&with_clauses(&counted, &holds, &[]));
 
     let refused = object_for(&published(with_clauses(&counted, &holds, &[])))
@@ -1387,13 +1387,14 @@ fn a_clause_of_a_declaration_nothing_here_builds_is_not_run() {
         None,
         &let_(2, &decimal_to_truth, &block, &read(0, BOOL), BOOL),
     );
-    is_the_halves_disagreeing(&with_clauses(listed, &disagreeing, &[]), "m.R's clause 0");
+    is_the_halves_disagreeing(&with_clauses(unlaid, &disagreeing, &[]), "m.R's clause 0");
 }
 
 /// A kernel's application states what it takes each argument as, which is the kernel's signature
 /// settled for this call, and every argument stands at exactly that: where it is narrower, the
 /// argument is a `Widen` saying so. One left narrower without it is a document the checker does not
-/// write, and is refused as that rather than as a kernel this backend does not lower.
+/// write, and is refused as that. `list.length` takes a list of any element, so a list of a case
+/// widened to a list of its sum is one it takes, at the sum.
 #[test]
 fn a_kernel_argument_stands_at_what_the_application_takes() {
     let listed = |of: &str| format!(r#"{{"list":{of}}}"#);
@@ -1408,17 +1409,69 @@ fn a_kernel_argument_stands_at_what_the_application_takes() {
             INT,
         )
     };
-    let refused = object_for(&helpers(&[h(
+    reads_whole(&helpers(&[h(
         &[&listed(A)],
         &length(&widen(&read(0, &listed(A)), &listed(S))),
-    )]))
-    .expect_err("nothing lays a list out");
-    assert!(refused.downcast_ref::<NotLowered>().is_some(), "{refused}");
+    )]));
 
     is_the_halves_disagreeing(
         &helpers(&[h(&[&listed(A)], &length(&read(0, &listed(A))))]),
         "argument 0 handed to list.length",
     );
+}
+
+/// A list literal's type is a list, and every element stands at the element type it says. The
+/// empty list is read like any other.
+#[test]
+fn a_list_holds_what_its_type_says_it_holds() {
+    let list = |elements: &[String], ty: &str| {
+        node(
+            "list",
+            &format!(r#""elements":[{}]"#, elements.join(",")),
+            ty,
+        )
+    };
+    let of_int = format!(r#"{{"list":{INT}}}"#);
+
+    reads_whole(&helpers(&[h(&[INT], &list(&[read(0, INT), int(1)], &of_int))]));
+    reads_whole(&helpers(&[h(&[INT], &list(&[], &of_int))]));
+    is_the_halves_disagreeing(
+        &helpers(&[h(&[INT], &list(&[read(0, INT), truth(true)], &of_int))]),
+        "element 1 of a list",
+    );
+    is_the_halves_disagreeing(
+        &helpers(&[h(&[INT], &list(&[read(0, INT)], INT))]),
+        "which is not a list",
+    );
+}
+
+/// `list.get` answers an optional of the element of the list it takes, whatever that element is:
+/// what the application takes binds the element, and what it answers is held to it.
+#[test]
+fn list_get_answers_the_element_of_the_list_it_takes() {
+    let get = |element: &str, answers: &str| {
+        let listed = format!(r#"{{"list":{element}}}"#);
+        let reaches = format!(
+            r#"{{"is":"kernel","kernel":"list.get","takes":[{INT},{listed}],"fact":{{"is":"none"}}}}"#
+        );
+        let found = format!(r#"{{"option":{answers}}}"#);
+        h(
+            &[&listed],
+            &node(
+                "call",
+                &format!(
+                    r#""reaches":{reaches},"arguments":[{},{}]"#,
+                    int(0),
+                    read(0, &listed)
+                ),
+                &found,
+            ),
+        )
+    };
+
+    reads_whole(&helpers(&[get(INT, INT)]));
+    reads_whole(&helpers(&[get(BOOL, BOOL)]));
+    is_the_halves_disagreeing(&helpers(&[get(INT, BOOL)]), "a call of list.get");
 }
 
 /// `int.add` is lowered as the sum of two `Int`s. What an application says it takes is the
@@ -1733,7 +1786,7 @@ fn a_construction_of_another_builds_type_names_no_reason_but_a_clause() {
         );
         format!(
             concat!(
-                r#"{{"transport":15,"declarations":["#,
+                r#"{{"transport":16,"declarations":["#,
                 r#"{{"module":"m","name":"R","by":"onthepath","is":"product","#,
                 r#""fields":[{}]}}],"behaviors":[],"#,
                 r#""modules":[{{"name":"m","publishes":[],"helpers":[{}],"values":[],"#,
@@ -1912,7 +1965,7 @@ fn an_arm_binds_and_says_what_it_reads_it_as_together() {
 fn a_handover_carries_a_value_the_module_builds() {
     let value = |carries: &str| {
         format!(
-            r#"{{"transport":15,"declarations":[],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[],"values":[{{"module":"m","name":"ks","handovers":[],"body":{}}},{{"module":"m","name":"ys","handovers":[{{"parameter":"dep","type":{INT},"carries":{{"module":"m","name":"{carries}"}}}}],"body":{}}}],"entries":[],"definitions":[],"examples":[]}}]}}"#,
+            r#"{{"transport":16,"declarations":[],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[],"values":[{{"module":"m","name":"ks","handovers":[],"body":{}}},{{"module":"m","name":"ys","handovers":[{{"parameter":"dep","type":{INT},"carries":{{"module":"m","name":"{carries}"}}}}],"body":{}}}],"entries":[],"definitions":[],"examples":[]}}]}}"#,
             int(1),
             read(0, INT)
         )
