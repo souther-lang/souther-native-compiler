@@ -9,12 +9,12 @@ fn a_literal_spelt_twice_is_held_once() {
     let text = r#"{"core":"string","value":"zebra-crossing","type":{"prim":"STRING"},"aborts":[]}"#;
     let document = format!(
         concat!(
-            r#"{{"transport":12,"declarations":[],"#,
+            r#"{{"transport":13,"declarations":[],"#,
             r#""behaviors":[{{"module":"m","name":"twice","is":"body","inputs":[],"#,
             r#""output":{{"is":"scalar","scalar":"STRING"}}}}],"#,
             r#""modules":[{{"name":"m","publishes":[],"helpers":[],"values":[],"entries":[],"definitions":["#,
             r#"{{"is":"body","declared":"m.twice","parameters":[],"publication":"published","#,
-            r#""body":{{"core":"binary","op":"CONCAT","left":{text},"right":{text},"#,
+            r#""body":{{"core":"binary","op":"CONCAT","reading":{{"is":"astheystand"}},"left":{text},"right":{text},"#,
             r#""type":{{"prim":"STRING"}},"aborts":[]}}}}"#,
             r#"],"examples":[]}}]}}"#
         ),

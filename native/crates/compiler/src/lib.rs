@@ -34,7 +34,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use transport::{
     AbortKind, AlternativesForm, Answers, Arm, Case, Declaration, DeclaredBy, Definition, Node, Op,
-    Prim, Program, Publication, Reaches, Routing, Selects, Stage, TRANSPORT_VERSION, Target, Ty,
+    Prim, Program, Publication, Reaches, Reading, Routing, Selects, Stage, TRANSPORT_VERSION,
+    Target, Ty,
 };
 
 /// A fork that ran out of arms, which is this compiler having emitted the wrong test rather than
@@ -2252,6 +2253,7 @@ fn lower(
         Node::Str { value, .. } => text_in_the_object(builder, module, lowering.literals, value)?,
         Node::Binary {
             op,
+            reading,
             left,
             right,
             aborts,
@@ -2264,6 +2266,7 @@ fn lower(
             abort,
             *op,
             Operands {
+                reading,
                 left,
                 right,
                 aborts,
@@ -2421,7 +2424,7 @@ fn lower(
             // this driver's own reading of the transport disagreeing with what `KernelContract`
             // declared, the same halves-disagreeing failure every other shape mismatch here bails
             // on rather than reports as this backend not having gotten round to a program yet.
-            Reaches::Kernel { kernel } => match kernel.as_str() {
+            Reaches::Kernel { kernel, .. } => match kernel.as_str() {
                 "int.add" => {
                     let a = Held::of(
                         &arguments[0],
@@ -2705,11 +2708,11 @@ where
 ///
 /// The operands are lowered here and not before, because two of these decide whether the right one
 /// runs at all.
-/// The two operands of a binary operator, plus the one fact `arithmetic` needs and no other arm
-/// of `op` does: which reason (if any) this exact site may end without a value for. Bundled with
-/// the operands rather than threaded as a fourth thing beside them, since a caller already has all
-/// three off one `Node::Binary`.
+/// The two operands of a binary operator, what it reads them as, and which reason (if any) this
+/// exact site may end without a value for. Bundled rather than threaded beside each other, since a
+/// caller already has all of them off one `Node::Binary`.
 struct Operands<'a> {
+    reading: &'a Reading,
     left: &'a Node,
     right: &'a Node,
     aborts: &'a [AbortKind],
@@ -2725,6 +2728,7 @@ fn binary(
     operands: Operands,
 ) -> Lowered<ir::Value> {
     let Operands {
+        reading,
         left,
         right,
         aborts,
@@ -2750,12 +2754,31 @@ fn binary(
             })
         }
         _ => {
-            // Both of the operands' types, because one of them does not say what the other is.
-            // A bare literal takes the newtype of the value it is compared with, so `0 == amount`
-            // is an `Int` against a declared type and is as much a comparison of two amounts as
-            // `amount == 0` is; a case value compared with its sum is two declared types that are
-            // not the same one. Read off the left alone, both of those are whatever the left one
-            // happened to be.
+            // What the operator reads its operands as decides what it does with them. Read as
+            // they stand, the two are one type and the instruction is chosen from it. Read in a
+            // type for this operator only (a literal beside the newtype it is compared with, a
+            // case beside the enumeration that orders it), or at their exact values, the operands
+            // would first have to be taken as that, and nothing here does so yet.
+            match reading {
+                Reading::AsTheyStand => {}
+                Reading::In { ty } => {
+                    return Err(not_lowered(format!(
+                        "{} over {} and {}, read as {}",
+                        op.spelt(),
+                        left.ty().spelt(),
+                        right.ty().spelt(),
+                        ty.spelt()
+                    )));
+                }
+                Reading::ExactNumbers => {
+                    return Err(not_lowered(format!(
+                        "{} over {} and {}, read at their exact values",
+                        op.spelt(),
+                        left.ty().spelt(),
+                        right.ty().spelt()
+                    )));
+                }
+            }
             let a = Held::of(
                 left,
                 lower(builder, lowering, module, bindings, abort, left)?,
@@ -2931,12 +2954,8 @@ fn arithmetic(
     }
 }
 
-/// An operator over a pair this backend has no lowering for.
-///
-/// Not told apart from a pair the checker would never have written: which pairs an operator is
-/// written over, and what it makes of them, is the checker's rule, and the checked tree does not
-/// record what it decided (souther-lang/souther#1919). Telling the two apart here would take a
-/// copy of that rule.
+/// An operator over a pair, read as it stands, that this backend has no lowering for. A pair the
+/// checker never writes as it stands was refused by [`Coherent`] as the two halves disagreeing.
 fn unlowered_operator(op: Op, left: &Held, right: &Held) -> NotLowered {
     not_lowered(format!(
         "{} over {} and {}, which this backend has no lowering for",

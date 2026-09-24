@@ -18,7 +18,7 @@ use serde::Deserialize;
 
 /// What this side reads. A document written to say anything else is refused rather than read as
 /// much of as happens to parse.
-pub const TRANSPORT_VERSION: u32 = 12;
+pub const TRANSPORT_VERSION: u32 = 13;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1123,6 +1123,9 @@ pub enum Node {
     },
     Binary {
         op: Op,
+        /// What the operator reads its operands as, which the checker settled and the operands'
+        /// types do not say.
+        reading: Reading,
         left: Box<Node>,
         right: Box<Node>,
         #[serde(rename = "type")]
@@ -1311,8 +1314,48 @@ pub enum Reaches {
     PublishedValue { module: String, name: String },
     /// A behavior, whether this program answers it or whoever links the object does.
     Behavior { declared: String },
-    /// An operation the language itself implements.
-    Kernel { kernel: String },
+    /// An operation the language itself implements, with what this application of it takes each
+    /// argument as and what else the checker settled about it. The kernel's own signature has type
+    /// variables, and what they came to for this call is the checker's answer.
+    Kernel {
+        kernel: String,
+        takes: Vec<Ty>,
+        fact: KernelFact,
+    },
+}
+
+/// A fact the checker settled about one application of a kernel, beside what it takes.
+#[derive(Debug, Deserialize, PartialEq, Eq, Clone)]
+#[serde(tag = "is", rename_all = "lowercase", deny_unknown_fields)]
+pub enum KernelFact {
+    None,
+    /// The pattern `String.matches`'s first argument folds to.
+    StringMatches {
+        pattern: String,
+    },
+    /// The type an ordering was checked against.
+    OrderingSubject {
+        #[serde(rename = "type")]
+        ty: Ty,
+    },
+}
+
+/// What an operator reads its two operands as, as the checker settled it. Not a place either
+/// operand stands: a literal beside a newtype is read as the newtype by this operator and by
+/// nothing else.
+#[derive(Debug, Deserialize, PartialEq, Eq, Clone)]
+#[serde(tag = "is", rename_all = "lowercase", deny_unknown_fields)]
+pub enum Reading {
+    /// Each operand as the type it has, which is one type for both.
+    AsTheyStand,
+    /// The pair as values of this type, for this operator only.
+    In {
+        #[serde(rename = "type")]
+        ty: Ty,
+    },
+    /// Each operand at its exact mathematical value, which one of them already being a `Rational`
+    /// makes of the pair. No type of the language stands for it.
+    ExactNumbers,
 }
 
 /// One arm of a fork on what a value is.

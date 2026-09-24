@@ -37,24 +37,25 @@
 //! What is held is what the checker's own objects hold and the document still states both sides
 //! of: what a module owns (`CheckedModule`: its helpers, its values, entries for those values, the
 //! behaviors it declares), that every name a type or a reach writes is one the document carries,
-//! that a name can stand in a symbol, what every operator node answers whatever it is written
-//! over, and every relation between a node's type and what its value is made from. What is not
-//! held, because the document does not carry the checker's side of it:
+//! that a name can stand in a symbol, what every operator node answers and what its reading says
+//! of its operands, what a kernel's application takes, and every relation between a node's type and
+//! what its value is made from. What is not held, because the document does not carry the checker's
+//! side of it:
 //!
-//! - which pairs an operator may be written over, and what it makes of two different ones
-//!   (souther-lang/souther#1919). A pair the checker would refuse and one this backend has no
-//!   lowering for are both refused as not lowered;
+//! - which types an operator admits. A reading says what the operands were taken as and not
+//!   whether the operator orders them, so an ordering over two truths read as they stand is
+//!   refused as not lowered, as a pair this backend has no lowering for is;
 //! - why a value may stand as a wider type. The document says where it does, and that is asked
 //!   of [`Declared::fits`], which copies the part of the checker's rule for the types laid out
 //!   here;
 //! - what the writer drops: which values a module publishes beyond the entries it has, what a row
-//!   expects, what a kernel call settled.
+//!   expects.
 
 use crate::closures::ClosureSites;
 use crate::index;
 use crate::transport::{
     AbortKind, Answers, Case, Declaration, Definition, Held, Node, Op, Owner, Prim, Program,
-    Reaches, Routing, Selects, Target, Ty, Value,
+    Reaches, Reading, Routing, Selects, Target, Ty, Value,
 };
 use crate::{Declared, Runs, Targets, not_lowered, spelt};
 use anyhow::{Result, anyhow, bail};
@@ -461,13 +462,11 @@ enum Untyped {
     /// A `Widen`'s value, which stands as another type by what the `Widen` says, and is asked of
     /// `fits` there.
     Widened,
-    /// An operand of a comparison or an arithmetic operator: a case is compared with its sum as it
-    /// is, and which reading of the operator the checker applied is not in the tree
-    /// (souther-lang/souther#1919).
+    /// An operand of a comparison or an arithmetic operator, which the operator reads as its
+    /// reading says: not a place the operand stands, since a literal beside a newtype is read as
+    /// the newtype by this operator and by nothing else. What the reading holds of the pair is
+    /// held with the operator.
     Operand,
-    /// An argument of a kernel call, whose parameters as settled for the call the tree does not
-    /// keep (souther-lang/souther#1930).
-    KernelArgument,
 }
 
 /// One body read with what is bound where it stands.
@@ -724,8 +723,9 @@ impl<'a> Walk<'_, 'a> {
             Node::Member { tuple, .. } => vec![Slot::Untyped(tuple, Untyped::ReadFrom)],
             Node::Call {
                 reaches, arguments, ..
-            } => match self.parameters(reaches)? {
-                Some((callee, takes)) => arguments
+            } => {
+                let (callee, takes) = self.parameters(reaches)?;
+                arguments
                     .iter()
                     .zip(takes)
                     .enumerate()
@@ -736,12 +736,8 @@ impl<'a> Walk<'_, 'a> {
                             format!("argument {at} handed to {callee}"),
                         )
                     })
-                    .collect(),
-                None => arguments
-                    .iter()
-                    .map(|argument| Slot::Untyped(argument, Untyped::KernelArgument))
-                    .collect(),
-            },
+                    .collect()
+            }
             Node::Block { body, ty, site, .. } => {
                 let Ty::Fn { fn_ } = ty else {
                     bail!(
@@ -781,11 +777,11 @@ impl<'a> Walk<'_, 'a> {
     }
 
     /// What a call hands each argument over as: the parameters of what it reaches, by the name of
-    /// that; `None` for a kernel whose parameters as settled for the call the tree does not keep.
-    fn parameters(&self, reaches: &Reaches) -> Result<Option<(String, Vec<Ty>)>> {
+    /// that. A kernel's are what the checker settled its signature to for this application.
+    fn parameters(&self, reaches: &Reaches) -> Result<(String, Vec<Ty>)> {
         Ok(match reaches {
             Reaches::Behavior { declared } => {
-                Some((declared.clone(), self.targets.named(declared)?.takes()))
+                (declared.clone(), self.targets.named(declared)?.takes())
             }
             Reaches::Helper { declared } => {
                 let held = self
@@ -799,7 +795,7 @@ impl<'a> Walk<'_, 'a> {
                             self.carrier
                         )
                     })?;
-                Some((declared.clone(), held.takes()))
+                (declared.clone(), held.takes())
             }
             Reaches::Value { module, name } => {
                 let joined = format!("{module}.{name}");
@@ -815,22 +811,12 @@ impl<'a> Walk<'_, 'a> {
                         )
                     })?;
                 let handed = value.handovers.iter().map(|it| it.ty.clone()).collect();
-                Some((format!("the value {joined}"), handed))
+                (format!("the value {joined}"), handed)
             }
             Reaches::PublishedValue { module, name } => {
-                Some((format!("`{module}`'s published value {name}"), Vec::new()))
+                (format!("`{module}`'s published value {name}"), Vec::new())
             }
-            Reaches::Kernel { kernel } => match kernel.as_str() {
-                "int.add" => Some((
-                    kernel.clone(),
-                    vec![Ty::Prim { prim: Prim::Int }, Ty::Prim { prim: Prim::Int }],
-                )),
-                // What the call takes each argument as is the kernel's signature with its
-                // variables settled for this call, and the tree does not keep the settlement
-                // (souther-lang/souther#1930), so an argument missing its `Widen` here is not told
-                // apart from a kernel this backend does not lower.
-                _ => None,
-            },
+            Reaches::Kernel { kernel, takes, .. } => (kernel.clone(), takes.clone()),
         })
     }
 
@@ -987,6 +973,7 @@ impl<'a> Walk<'_, 'a> {
             }
             Node::Binary {
                 op,
+                reading,
                 left,
                 right,
                 ty,
@@ -994,7 +981,8 @@ impl<'a> Walk<'_, 'a> {
             } => {
                 self.node(left)?;
                 self.node(right)?;
-                self.operator(*op, left.ty(), right.ty(), ty, aborts)
+                self.reading(*op, reading, left.ty(), right.ty())?;
+                self.operator(*op, reading, left.ty(), ty, aborts)
             }
             Node::Neg {
                 operand,
@@ -1193,52 +1181,79 @@ impl<'a> Walk<'_, 'a> {
         leaves(self.declared, &format!("{}: {what}", self.owner), cases)
     }
 
-    /// An operator against what it says it answers. Where its operands stand is [`Walk::slots`]'s.
+    /// What an operator's reading says of its operands.
     ///
-    /// What holds of every operator node the checker builds, whatever it was written over: a
-    /// comparison and a truth operator answer a truth, `/` a `Rational`, and `+`, `-` and `*` over
-    /// two operands of one type that type.
-    /// Which pairs an operator may be written over, and what it makes of two different ones, is
-    /// `ArithmeticCheck`'s and `BinaryElaborator`'s to say, and the checked tree does not record
-    /// what they said (souther-lang/souther#1919). Answering it again here would be a copy of the
-    /// checker's rule, wrong at its edges, so a pair the checker would refuse is not told apart
-    /// here from one this backend has no lowering for: both are refused as not lowered where the
-    /// lowering meets them.
+    /// Read as they stand, they are one type. Read at their exact values, each is a number. Read
+    /// in a type, that type is one the document carries. Which pairs an operator is written over,
+    /// and which reading the checker gives each, is the checker's rule and is not answered again
+    /// here: this holds only what a reading, once given, says.
+    fn reading(&self, op: Op, reading: &Reading, left: &Ty, right: &Ty) -> Result<()> {
+        match reading {
+            Reading::AsTheyStand => self.same(
+                &format!("the left side of {} read as it stands", op.spelt()),
+                left,
+                right,
+                "the right side",
+            ),
+            Reading::ExactNumbers => {
+                self.number(
+                    &format!("a side of {} read at its exact value", op.spelt()),
+                    left,
+                )?;
+                self.number(
+                    &format!("a side of {} read at its exact value", op.spelt()),
+                    right,
+                )
+            }
+            Reading::In { ty } => self.declared.resolves(
+                &format!("{}: {} read in {}", self.owner, op.spelt(), ty.spelt()),
+                ty,
+            ),
+        }
+    }
+
+    /// An operator against what it says it answers. Where its operands stand is [`Walk::slots`]'s,
+    /// and what its reading says of them is [`Walk::reading`]'s.
+    ///
+    /// A comparison and a truth operator answer a truth, and `/` a `Rational`. A sum, a difference
+    /// or a product answers the type its operands are read as where they are read as they stand,
+    /// and a `Rational` where they are read at their exact values.
     fn operator(
         &mut self,
         op: Op,
+        reading: &Reading,
         left: &Ty,
-        right: &Ty,
         ty: &Ty,
         aborts: &[AbortKind],
     ) -> Result<()> {
         let truth = Ty::Prim { prim: Prim::Bool };
+        let rational = Ty::Prim {
+            prim: Prim::Rational,
+        };
         let what = format!("what {} answers", op.spelt());
         match op {
             Op::And | Op::Or => self.same(&what, ty, &truth, "what the operator answers"),
             Op::Eq | Op::Ne | Op::Lt | Op::Le | Op::Gt | Op::Ge => {
                 self.same(&what, ty, &truth, "what the operator answers")
             }
-            Op::Div => self.same(
-                &what,
-                ty,
-                &Ty::Prim {
-                    prim: Prim::Rational,
-                },
-                "what a quotient is",
-            ),
+            Op::Div => self.same(&what, ty, &rational, "what a quotient is"),
             // Both sides stand at what it answers, which its slots hold; that is all a join says
             // of itself.
             Op::Concat => Ok(()),
-            Op::Add | Op::Sub | Op::Mul if left == right => {
-                self.number(&what, ty)?;
-                self.same(&what, ty, left, "what its operands are")?;
-                if matches!(left, Ty::Prim { prim: Prim::Int }) {
-                    self.overflows(&format!("{} over two Ints", op.spelt()), aborts)?;
+            Op::Add | Op::Sub | Op::Mul => match reading {
+                Reading::AsTheyStand => {
+                    self.number(&what, ty)?;
+                    self.same(&what, ty, left, "what its operands are read as")?;
+                    if matches!(left, Ty::Prim { prim: Prim::Int }) {
+                        self.overflows(&format!("{} over two Ints", op.spelt()), aborts)?;
+                    }
+                    Ok(())
                 }
-                Ok(())
-            }
-            Op::Add | Op::Sub | Op::Mul => self.number(&what, ty),
+                Reading::ExactNumbers => {
+                    self.same(&what, ty, &rational, "what exact values come to")
+                }
+                Reading::In { .. } => self.number(&what, ty),
+            },
         }
     }
 
@@ -1339,9 +1354,8 @@ impl<'a> Walk<'_, 'a> {
         ty: &Ty,
         aborts: &[AbortKind],
     ) -> Result<()> {
-        if let Some((callee, takes)) = self.parameters(reaches)? {
-            self.arity(&format!("a call of {callee}"), arguments.len(), takes.len())?;
-        }
+        let (callee, takes) = self.parameters(reaches)?;
+        self.arity(&format!("a call of {callee}"), arguments.len(), takes.len())?;
         match reaches {
             Reaches::Behavior { declared } => self.same(
                 &format!("a call of {declared}"),
@@ -1401,8 +1415,12 @@ impl<'a> Walk<'_, 'a> {
                     }
                 }
             }
-            Reaches::Kernel { kernel } => match kernel.as_str() {
+            Reaches::Kernel { kernel, takes, .. } => match kernel.as_str() {
                 "int.add" => {
+                    let int = Ty::Prim { prim: Prim::Int };
+                    for taken in takes {
+                        self.same("what int.add takes", taken, &int, "an Int")?;
+                    }
                     self.overflows("a call of int.add", aborts)?;
                     self.same(
                         "a call of int.add",

@@ -21,7 +21,7 @@ const P: &str = r#"{"declared":"m.P"}"#;
 fn document(behaviors: &[String], helpers: &[String], definitions: &[String]) -> String {
     format!(
         concat!(
-            r#"{{"transport":12,"declarations":["#,
+            r#"{{"transport":13,"declarations":["#,
             r#"{{"module":"m","name":"A","by":"amodule","is":"unit"}},"#,
             r#"{{"module":"m","name":"B","by":"amodule","is":"unit"}},"#,
             r#"{{"module":"m","name":"S","by":"amodule","is":"sum","#,
@@ -390,7 +390,11 @@ fn a_comparison_answers_a_truth() {
     let compare = |ty: &str| {
         node(
             "binary",
-            &format!(r#""op":"EQ","left":{},"right":{}"#, int(1), int(2)),
+            &format!(
+                r#""op":"EQ","reading":{{"is":"astheystand"}},"left":{},"right":{}"#,
+                int(1),
+                int(2)
+            ),
             ty,
         )
     };
@@ -408,7 +412,7 @@ fn a_negation_is_typed_as_what_it_negates() {
 /// `int.add` takes two numbers and answers one.
 #[test]
 fn int_add_answers_a_number() {
-    let reaches = r#"{"is":"kernel","kernel":"int.add"}"#;
+    let reaches = r#"{"is":"kernel","kernel":"int.add","takes":[{"prim":"INT"},{"prim":"INT"}],"fact":{"is":"none"}}"#;
     let added = |ty: &str| {
         {
             node(
@@ -702,7 +706,11 @@ fn a_quotient_is_a_rational() {
     let divided = |ty: &str| {
         node(
             "binary",
-            &format!(r#""op":"DIV","left":{},"right":{}"#, int(1), int(2)),
+            &format!(
+                r#""op":"DIV","reading":{{"is":"astheystand"}},"left":{},"right":{}"#,
+                int(1),
+                int(2)
+            ),
             ty,
         )
     };
@@ -710,26 +718,35 @@ fn a_quotient_is_a_rational() {
     is_the_halves_disagreeing(&helpers(&[behind(), h(&[], &divided(BOOL))]), "m.h");
 }
 
-/// Two numbers of two types: `Int + Rational` is one the checker writes and `Int + Decimal` is one
-/// it refuses. Neither has a lowering here, and which of the two a pair is would take the checker's
-/// decision, which the checked tree does not record (souther-lang/souther#1919); so both are not
-/// lowered, and neither is refused as something the checker could not have written.
+/// Two numbers of two types, told apart by what the operator reads them as. `Int + Rational` is
+/// read at the exact values of both and answers a `Rational`: the checker writes it, and this
+/// backend has no lowering for it. `Int + Decimal` read as they stand is two types where the
+/// reading says one: the checker never writes it, and it is the two halves disagreeing.
 #[test]
-fn numbers_of_two_types_are_not_told_apart_until_the_checker_says() {
+fn numbers_of_two_types_are_told_apart_by_how_the_operator_reads_them() {
     let rational = r#"{"prim":"RATIONAL"}"#;
-    for other in [DECIMAL, rational] {
-        let added = node(
+    let added = |other: &str, reading: &str| {
+        node(
             "binary",
             &format!(
-                r#""op":"ADD","left":{},"right":{}"#,
+                r#""op":"ADD","reading":{{"is":"{reading}"}},"left":{},"right":{}"#,
                 read(0, INT),
                 read(1, other)
             ),
             rational,
-        );
-        let refused = object_for(&helpers(&[h(&[INT, other], &added)])).expect_err("no lowering");
-        assert!(refused.downcast_ref::<NotLowered>().is_some(), "{refused}");
-    }
+        )
+    };
+    let refused = object_for(&helpers(&[h(
+        &[INT, rational],
+        &added(rational, "exactnumbers"),
+    )]))
+    .expect_err("no lowering for exact values");
+    assert!(refused.downcast_ref::<NotLowered>().is_some(), "{refused}");
+
+    is_the_halves_disagreeing(
+        &helpers(&[h(&[INT, DECIMAL], &added(DECIMAL, "astheystand"))]),
+        "read as it stands",
+    );
 }
 
 /// Arithmetic over two `Int`s can leave their range, and names the one reason it ends without a
@@ -739,7 +756,11 @@ fn arithmetic_that_can_overflow_names_one_reason() {
     let added = |aborts: &str| {
         node(
             "binary",
-            &format!(r#""op":"ADD","left":{},"right":{}"#, int(1), int(2)),
+            &format!(
+                r#""op":"ADD","reading":{{"is":"astheystand"}},"left":{},"right":{}"#,
+                int(1),
+                int(2)
+            ),
             INT,
         )
         .replace(r#""aborts":[]}"#, &format!(r#""aborts":[{aborts}]}}"#))
@@ -1058,7 +1079,9 @@ fn a_concat_operand_narrower_than_its_slot_without_a_widen_is_the_halves_disagre
     let joined = |left: &str, right: &str| {
         node(
             "binary",
-            &format!(r#""op":"CONCAT","left":{left},"right":{right}"#),
+            &format!(
+                r#""op":"CONCAT","reading":{{"is":"astheystand"}},"left":{left},"right":{right}"#
+            ),
             &listed(S),
         )
     };
@@ -1084,7 +1107,7 @@ fn a_concat_of_two_strings_reads_whole() {
     let joined = node(
         "binary",
         &format!(
-            r#""op":"CONCAT","left":{},"right":{}"#,
+            r#""op":"CONCAT","reading":{{"is":"astheystand"}},"left":{},"right":{}"#,
             read(0, STRING),
             read(1, STRING)
         ),
@@ -1094,7 +1117,7 @@ fn a_concat_of_two_strings_reads_whole() {
     let answered_wrong = node(
         "binary",
         &format!(
-            r#""op":"CONCAT","left":{},"right":{}"#,
+            r#""op":"CONCAT","reading":{{"is":"astheystand"}},"left":{},"right":{}"#,
             read(0, STRING),
             read(1, STRING)
         ),
@@ -1107,7 +1130,7 @@ fn a_concat_of_two_strings_reads_whole() {
 fn with_clauses(fields: &str, invariants: &str, helpers: &[String]) -> String {
     format!(
         concat!(
-            r#"{{"transport":12,"declarations":["#,
+            r#"{{"transport":13,"declarations":["#,
             r#"{{"module":"m","name":"R","by":"amodule","is":"product","#,
             r#""fields":[{}],"invariants":[{}]}}],"#,
             r#""behaviors":[],"#,
@@ -1134,7 +1157,7 @@ fn clause(name: Option<&str>, condition: &str) -> String {
 fn at_least(left: &str, right: &str) -> String {
     node(
         "binary",
-        &format!(r#""op":"GE","left":{left},"right":{right}"#),
+        &format!(r#""op":"GE","reading":{{"is":"astheystand"}},"left":{left},"right":{right}"#),
         BOOL,
     )
 }
@@ -1266,4 +1289,56 @@ fn a_clause_of_a_declaration_nothing_here_builds_is_not_run() {
         &let_(2, &decimal_to_truth, &block, &read(0, BOOL), BOOL),
     );
     is_the_halves_disagreeing(&with_clauses(listed, &disagreeing, &[]), "m.R's clause 0");
+}
+
+/// A kernel's application states what it takes each argument as, which is the kernel's signature
+/// settled for this call, and every argument stands at exactly that: where it is narrower, the
+/// argument is a `Widen` saying so. One left narrower without it is a document the checker does not
+/// write, and is refused as that rather than as a kernel this backend does not lower.
+#[test]
+fn a_kernel_argument_stands_at_what_the_application_takes() {
+    let listed = |of: &str| format!(r#"{{"list":{of}}}"#);
+    let length = |argument: &str| {
+        let reaches = format!(
+            r#"{{"is":"kernel","kernel":"list.length","takes":[{}],"fact":{{"is":"none"}}}}"#,
+            listed(S)
+        );
+        node(
+            "call",
+            &format!(r#""reaches":{reaches},"arguments":[{argument}]"#),
+            INT,
+        )
+    };
+    let refused = object_for(&helpers(&[h(
+        &[&listed(A)],
+        &length(&widen(&read(0, &listed(A)), &listed(S))),
+    )]))
+    .expect_err("nothing lays a list out");
+    assert!(refused.downcast_ref::<NotLowered>().is_some(), "{refused}");
+
+    is_the_halves_disagreeing(
+        &helpers(&[h(&[&listed(A)], &length(&read(0, &listed(A))))]),
+        "argument 0 handed to list.length",
+    );
+}
+
+/// `int.add` is lowered as the sum of two `Int`s, so an application of it said to take anything
+/// else is the two halves disagreeing about what the kernel is.
+#[test]
+fn int_add_takes_two_ints() {
+    let reaches = r#"{"is":"kernel","kernel":"int.add","takes":[{"prim":"INT"},{"prim":"BOOL"}],"fact":{"is":"none"}}"#;
+    let added = node(
+        "call",
+        &format!(
+            r#""reaches":{reaches},"arguments":[{},{}]"#,
+            int(1),
+            truth(true)
+        ),
+        INT,
+    )
+    .replace(
+        r#""aborts":[]}"#,
+        r#""aborts":["REQUIRED_FORM_HAS_NO_PLACE"]}"#,
+    );
+    is_the_halves_disagreeing(&helpers(&[h(&[], &added)]), "what int.add takes");
 }

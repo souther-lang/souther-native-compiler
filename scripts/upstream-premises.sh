@@ -20,8 +20,9 @@ if [ -z "$pin" ]; then
     exit 2
 fi
 
-issues="$(grep -rhoE 'souther-lang/souther#[0-9]+' src native README.md --exclude-dir=target \
-    | sed 's/.*#//' | sort -un)"
+# No reference at all is a repository resting on no premise, which grep reports as finding nothing.
+issues="$( (grep -rhoE 'souther-lang/souther#[0-9]+' src native README.md --exclude-dir=target \
+    || true) | sed 's/.*#//' | sort -un)"
 
 stale=0
 for number in $issues; do

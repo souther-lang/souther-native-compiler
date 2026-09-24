@@ -83,7 +83,7 @@ public final class ProgramWriter {
      * written moves, so that a driver and a writer that disagree say so rather than producing an
      * object that is wrong quietly.
      */
-    public static final int TRANSPORT_VERSION = 12;
+    public static final int TRANSPORT_VERSION = 13;
 
     private final CheckedProgram program;
 
@@ -1000,6 +1000,7 @@ public final class ProgramWriter {
             case Core.Str it -> "{\"core\":\"string\",\"value\":" + quoted(it.value())
                     + ",\"type\":" + type(it.type()) + ",\"aborts\":" + aborts(it) + "}";
             case Core.Binary it -> "{\"core\":\"binary\",\"op\":" + quoted(op(it.op()))
+                    + ",\"reading\":" + reading(it.reading())
                     + ",\"left\":" + core(it.left(), bindings)
                     + ",\"right\":" + core(it.right(), bindings)
                     + ",\"type\":" + type(it.type()) + ",\"aborts\":" + aborts(it) + "}";
@@ -1178,8 +1179,7 @@ public final class ProgramWriter {
             // value's body or the types it is built from is this module's to write, so a reader
             // must not read it as the same kind of reach a local value is.
             case Core.Reached.OfPublishedValue target -> publishedValue(it, target.denotes());
-            case Core.Reached.OfKernel target ->
-                    "{\"is\":\"kernel\",\"kernel\":" + quoted(target.kernel().key()) + "}";
+            case Core.Reached.OfKernel target -> kernel(it, target);
             // An operation this compiler mints after everything is resolved, which no source can
             // write and which stands for a shape a backend knows how to lower.
             case Core.Emitted target -> throw notYet("the operation " + target, it);
@@ -1187,6 +1187,42 @@ public final class ProgramWriter {
         return "{\"core\":\"call\",\"reaches\":" + reaches
                 + ",\"arguments\":" + arguments
                 + ",\"type\":" + type(it.type()) + ",\"aborts\":" + aborts(it) + "}";
+    }
+
+    /**
+     * What an operator reads its operands as, which the checker settled and the operands' types do
+     * not say: as they stand, in one type for this operator only, or at their exact values.
+     */
+    private String reading(Core.BinaryReading reading) {
+        return switch (reading) {
+            case Core.BinaryReading.AsTheyStand it -> "{\"is\":\"astheystand\"}";
+            case Core.BinaryReading.In it -> "{\"is\":\"in\",\"type\":" + type(it.type()) + "}";
+            case Core.BinaryReading.ExactNumbers it -> "{\"is\":\"exactnumbers\"}";
+        };
+    }
+
+    /**
+     * A kernel the call reaches, with what this application of it takes each argument as and what
+     * else the checker settled about it. The kernel's own signature has type variables, and what
+     * they came to here is the checker's answer, not something to substitute again downstream.
+     */
+    private String kernel(Core.Call call, Core.Reached.OfKernel target) {
+        if (!(call.settlement() instanceof Core.CallSettlement.AtKernel settled)) {
+            throw new IllegalStateException("a kernel's application carries what it takes: " + call);
+        }
+        StringJoiner takes = new StringJoiner(",", "[", "]");
+        for (Type taken : settled.takes()) {
+            takes.add(type(taken));
+        }
+        String fact = switch (settled.fact()) {
+            case Core.KernelFact.None it -> "{\"is\":\"none\"}";
+            case Core.KernelFact.StringMatches it ->
+                    "{\"is\":\"stringmatches\",\"pattern\":" + quoted(it.pattern()) + "}";
+            case Core.KernelFact.OrderingSubject it ->
+                    "{\"is\":\"orderingsubject\",\"type\":" + type(it.type()) + "}";
+        };
+        return "{\"is\":\"kernel\",\"kernel\":" + quoted(target.kernel().key())
+                + ",\"takes\":" + takes + ",\"fact\":" + fact + "}";
     }
 
     /** A call reaching the value {@code denotes}, split into the module that declares it and its
