@@ -3917,6 +3917,18 @@ fn call_behavior(
     let target = lowering.targets.reached(declared);
     let answers = machine_type(&target.answers())?;
     let answer = match through {
+        // A row of a behavior a host implements: nothing in the object answers it, and a row states
+        // no capability of the behavior it is a row of, so the run is handed nothing for it.
+        Through::Symbol(_) if target.is == transport::Answers::Injected => {
+            let status = builder
+                .ins()
+                .iconst(types::I32, i64::from(INJECTION_UNBOUND));
+            builder.ins().jump(abort, &[status.into()]);
+            let unreached = builder.create_block();
+            builder.seal_block(unreached);
+            builder.switch_to_block(unreached);
+            builder.ins().iconst(answers, 0)
+        }
         Through::Symbol(environment) => {
             let reached = lowering.reachable.of_behavior_named(declared);
             let mut given = Vec::with_capacity(arguments.len() + 1);

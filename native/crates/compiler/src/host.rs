@@ -64,9 +64,9 @@ use souther_native_abi::{
     HOSTED_USERDATA, HostListOperation, HostParameter, HostWord, IMPLEMENTATION_ANSWERS,
     INJECTION_PROTOCOL_VIOLATION, INJECTION_UNBOUND, LIST_ELEMENTS, LIST_LENGTH, NOTHING, SLOT,
     field_at, host_behavior_answer_case_symbol, host_behavior_symbol, host_bind_symbol,
-    host_case_symbol, host_constructor_symbol, host_decode_symbol, host_encode_symbol,
-    host_field_symbol, host_implement_symbol, host_implementation_type, host_list_symbol,
-    host_value_symbol, room_for_held, room_for_list,
+    host_case_symbol, host_constructor_symbol, host_decode_host_value_symbol, host_decode_symbol,
+    host_encode_symbol, host_field_symbol, host_implement_symbol, host_implementation_type,
+    host_list_symbol, host_value_symbol, room_for_held, room_for_list,
 };
 use std::collections::BTreeMap;
 
@@ -326,7 +326,40 @@ pub(crate) fn define(
                 emitting,
                 decoding,
                 &mut |builder, module, given| {
-                    decode(builder, module, codecs, declared, &key, given);
+                    decode(
+                        builder,
+                        module,
+                        codecs,
+                        declared,
+                        &key,
+                        given,
+                        Runtime::DecodeBegin,
+                    );
+                    Ok(())
+                },
+            )?);
+            let decoding_a_host_value = HostFunction {
+                symbol: host_decode_host_value_symbol(module_name, name),
+                takes: vec![
+                    HostParameter::Given(HostWord::Bytes),
+                    HostParameter::Given(HostWord::Count),
+                    HostParameter::Room(HostWord::Decoded),
+                ],
+                answers: Some(HostWord::Status),
+            };
+            described.host_value_decoded_by(&expose(
+                emitting,
+                decoding_a_host_value,
+                &mut |builder, module, given| {
+                    decode(
+                        builder,
+                        module,
+                        codecs,
+                        declared,
+                        &key,
+                        given,
+                        Runtime::DecodeHostBegin,
+                    );
                     Ok(())
                 },
             )?);
@@ -1067,6 +1100,10 @@ fn element_at(builder: &mut FunctionBuilder, element: Host, given: &[ir::Value])
 /// A host's decoder: the bytes read as a document, the document read as a value of `key` by the
 /// type's reader, and the reading handed to the host, which asks it what it came to.
 ///
+/// `begin` is what the bytes are read as: text in the external form ([`Runtime::DecodeBegin`]), or
+/// a value a host built of ordered maps ([`Runtime::DecodeHostBegin`]). The type's reader is the
+/// same either way, and so is everything after the reading begins.
+///
 /// Where a clause the reading ran ended without a value, the reading is dropped and the host is
 /// answered that status, as it would be by the type's constructor: the document is not what went
 /// wrong, and a reading would say nothing true about it.
@@ -1077,11 +1114,16 @@ fn decode(
     declared: &Declared,
     key: &str,
     given: &[ir::Value],
+    begin: Runtime,
 ) {
     let [bytes, length, out] = given else {
         unreachable!("a decoder takes bytes, how many, and room for the reading")
     };
-    let begin = codecs.runtime(module, Runtime::DecodeBegin);
+    assert!(
+        matches!(begin, Runtime::DecodeBegin | Runtime::DecodeHostBegin),
+        "a reading begins with one of the two ways a document is read"
+    );
+    let begin = codecs.runtime(module, begin);
     let root = codecs.runtime(module, Runtime::DecodeRoot);
     let end = codecs.runtime(module, Runtime::DecodeEnd);
     let abandon = codecs.runtime(module, Runtime::DecodeAbandon);

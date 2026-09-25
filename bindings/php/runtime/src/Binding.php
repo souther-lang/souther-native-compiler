@@ -16,7 +16,7 @@ abstract class Binding
      * binding generated before would call something this does not have, or call it as something it
      * is not; a binding says which it was generated for and refuses to load over any other.
      */
-    public const PROTOCOL = 4;
+    public const PROTOCOL = 7;
 
     /**
      * What each version of the protocol moved, by its number, oldest first. The versions before the
@@ -32,7 +32,14 @@ abstract class Binding
             . 'into elements (Session::list, Session::elements)',
         3 => 'a class per behavior, bound to what it requires: registering implementations for a '
             . 'call is InjectionRegistry\'s, apart from the run\'s arena (Bound, InjectionRegistry)',
-        4 => 'a behavior is called with the capabilities of what it was bound to, in the order it '
+        4 => 'a type\'s decode as a raoh-php decoder over a PHP value, composed like a JVM type\'s '
+            . 'decoder() (Session::decoder)',
+        5 => 'a binding\'s functions take no session and ask for the innermost run going, and a run\'s '
+            . 'body is called with nothing (Binding::innermostOf, Binding::run)',
+        6 => 'a decoder writes a PHP value with every array as an object and hands it to the library\'s '
+            . 'reading of a host\'s value, which reads an array keyed by its indices as a list '
+            . '(Session::decoder)',
+        7 => 'a behavior is called with the capabilities of what it was bound to, in the order it '
             . 'requires them, and nothing is registered: what a run is handed is what the behaviors '
             . 'it calls are constructed from (Bound, Implemented, InjectionSlot, Session)',
     ];
@@ -63,8 +70,11 @@ abstract class Binding
      * (the class generated for it), and holds two implementations of one behavior where binding
      * said so.
      *
+     * The body is handed nothing. What it calls of the binding finds this run itself, as the
+     * innermost one going ({@see innermostOf()}).
+     *
      * @template T
-     * @param callable(Session): T $body
+     * @param callable(): T $body
      * @return T
      */
     public function run(callable $body, Injections ...$injections): mixed
@@ -74,7 +84,7 @@ abstract class Binding
         $session = $this->library->open(array_merge(...array_map(
             static fn (Injections $set): array => $set->implementations(), $injections)));
         try {
-            return $body($session);
+            return $body();
         } finally {
             $this->library->close($session);
             $ffi->souther_reset($mark);
@@ -85,5 +95,33 @@ abstract class Binding
     public function library(): NativeLibrary
     {
         return $this->library;
+    }
+
+    /**
+     * @internal The session every function of a generated binding is called in: the innermost run
+     * going on this fiber of any library the binding was loaded for.
+     *
+     * A computation is refused through any session but the innermost run's of its library
+     * ({@see Session::call()}), and a library's runs are on one fiber at a time, so there is one
+     * session a function could be called in and nothing for a caller to choose. Where the binding
+     * was loaded for two libraries and both have a run going, the one opened later is inside the
+     * other and is the one meant.
+     *
+     * @param array<int, self> $bindings every binding the generated class was loaded as
+     */
+    protected static function innermostOf(array $bindings): Session
+    {
+        $innermost = null;
+        foreach ($bindings as $binding) {
+            $here = $binding->library->innermostHere();
+            if ($here !== null && ($innermost === null || $here->openedAfter($innermost))) {
+                $innermost = $here;
+            }
+        }
+        if ($innermost === null) {
+            throw new OutsideAnyRun('a function of a Souther binding was called outside any run of'
+                . ' its library; call it inside Binding::run');
+        }
+        return $innermost;
     }
 }

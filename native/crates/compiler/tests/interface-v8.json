@@ -1,6 +1,6 @@
 {
   "format": "souther-native-interface",
-  "version": 7,
+  "version": 8,
   "abi": 4,
   "statuses": {
     "ANSWERED": 0,
@@ -605,6 +605,21 @@
             ],
             "answers": "status"
           },
+          "decodehost": {
+            "name": "souther4_m_shop_t_Money_decode_host",
+            "takes": [
+              {
+                "given": "bytes"
+              },
+              {
+                "given": "count"
+              },
+              {
+                "room": "decoded"
+              }
+            ],
+            "answers": "status"
+          },
           "encode": {
             "name": "souther4_m_shop_t_Money_encode",
             "takes": [
@@ -711,6 +726,21 @@
             ],
             "answers": "status"
           },
+          "decodehost": {
+            "name": "souther4_m_shop_t_Line_decode_host",
+            "takes": [
+              {
+                "given": "bytes"
+              },
+              {
+                "given": "count"
+              },
+              {
+                "room": "decoded"
+              }
+            ],
+            "answers": "status"
+          },
           "encode": {
             "name": "souther4_m_shop_t_Line_encode",
             "takes": [
@@ -735,6 +765,21 @@
           },
           "decode": {
             "name": "souther4_m_shop_t_Free_decode",
+            "takes": [
+              {
+                "given": "bytes"
+              },
+              {
+                "given": "count"
+              },
+              {
+                "room": "decoded"
+              }
+            ],
+            "answers": "status"
+          },
+          "decodehost": {
+            "name": "souther4_m_shop_t_Free_decode_host",
             "takes": [
               {
                 "given": "bytes"
@@ -794,6 +839,21 @@
           },
           "decode": {
             "name": "souther4_m_shop_t_Paid_decode",
+            "takes": [
+              {
+                "given": "bytes"
+              },
+              {
+                "given": "count"
+              },
+              {
+                "room": "decoded"
+              }
+            ],
+            "answers": "status"
+          },
+          "decodehost": {
+            "name": "souther4_m_shop_t_Paid_decode_host",
             "takes": [
               {
                 "given": "bytes"
@@ -885,6 +945,21 @@
             ],
             "answers": "status"
           },
+          "decodehost": {
+            "name": "souther4_m_shop_t_Owed_decode_host",
+            "takes": [
+              {
+                "given": "bytes"
+              },
+              {
+                "given": "count"
+              },
+              {
+                "room": "decoded"
+              }
+            ],
+            "answers": "status"
+          },
           "encode": {
             "name": "souther4_m_shop_t_Owed_encode",
             "takes": [
@@ -926,6 +1001,21 @@
           },
           "decode": {
             "name": "souther4_m_shop_t_Settled_decode",
+            "takes": [
+              {
+                "given": "bytes"
+              },
+              {
+                "given": "count"
+              },
+              {
+                "room": "decoded"
+              }
+            ],
+            "answers": "status"
+          },
+          "decodehost": {
+            "name": "souther4_m_shop_t_Settled_decode_host",
             "takes": [
               {
                 "given": "bytes"
@@ -985,6 +1075,21 @@
           },
           "decode": {
             "name": "souther4_m_shop_t_Outcome_decode",
+            "takes": [
+              {
+                "given": "bytes"
+              },
+              {
+                "given": "count"
+              },
+              {
+                "room": "decoded"
+              }
+            ],
+            "answers": "status"
+          },
+          "decodehost": {
+            "name": "souther4_m_shop_t_Outcome_decode_host",
             "takes": [
               {
                 "given": "bytes"
@@ -1097,6 +1202,21 @@
           },
           "decode": {
             "name": "souther4_m_shop_t_Basket_decode",
+            "takes": [
+              {
+                "given": "bytes"
+              },
+              {
+                "given": "count"
+              },
+              {
+                "room": "decoded"
+              }
+            ],
+            "answers": "status"
+          },
+          "decodehost": {
+            "name": "souther4_m_shop_t_Basket_decode_host",
             "takes": [
               {
                 "given": "bytes"

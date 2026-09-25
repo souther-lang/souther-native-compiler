@@ -115,7 +115,7 @@ class APhpBindingIsWrittenFromTheManifestTest {
         String written = behaviors(generated);
 
         assertThat(written).contains(
-                "find(\\Souther\\Runtime\\Session $session, int $id):"
+                "find(int $id):"
                         + " \\Acme\\Billing\\M\\Found|\\Acme\\Billing\\M\\Missing",
                 "$session->ffi()->souther4_m_m_b_find_answer_case($answer)",
                 "0 => new \\Acme\\Billing\\M\\Found($session->held($answer))",
@@ -142,7 +142,7 @@ class APhpBindingIsWrittenFromTheManifestTest {
                 """);
 
         assertThat(Files.readString(generated.root().resolve("M").resolve("Injections.php")))
-                .contains("@param (callable(\\Souther\\Runtime\\Session, int):"
+                .contains("@param (callable(int):"
                         + " \\Acme\\Billing\\M\\Found|\\Acme\\Billing\\M\\Missing)|null $lookUp");
         assertThat(Files.readString(generated.root().resolve("Binding.php"))).contains(
                 "($answer instanceof \\Acme\\Billing\\M\\Found"
@@ -248,8 +248,7 @@ class APhpBindingIsWrittenFromTheManifestTest {
                 """);
 
         assertThat(Files.readString(generated.root().resolve("M").resolve("LookUp.php"))).contains(
-                "abstract public function apply(\\Souther\\Runtime\\Session $session, int $input0,"
-                        + " int $id): int;");
+                "abstract public function apply(int $input0, int $id): int;");
     }
 
     /**
@@ -319,7 +318,10 @@ class APhpBindingIsWrittenFromTheManifestTest {
                         + " \\Souther\\Runtime\\Implemented::by('b.load', $dependency1->apply(...)))");
     }
 
-    /** The session a call takes is named so that no parameter of the model's is renamed for it. */
+    /**
+     * The session a call finds is held under a name no parameter of the model's has, so that none
+     * of them is renamed for it.
+     */
     @Test
     void theSessionGivesWayToAParameterOfTheSameName(@TempDir Path into) throws Exception {
         String written = behaviors(generated(into, """
@@ -330,7 +332,8 @@ class APhpBindingIsWrittenFromTheManifestTest {
                 """));
 
         assertThat(written).contains(
-                "renew(\\Souther\\Runtime\\Session $session_, int $session, int $ffi): int",
+                "renew(int $session, int $ffi): int",
+                "$session_ = \\Acme\\Billing\\Binding::session();",
                 "$ffi_ = $session_->call();");
     }
 
@@ -388,7 +391,7 @@ class APhpBindingIsWrittenFromTheManifestTest {
                 "Acme\\Billing"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("is version 3 of souther-native-interface for ABI generation"
-                        + " 3, and this generator reads version 7")
+                        + " 3, and this generator reads version 8")
                 .hasMessageNotContaining("answers");
     }
 

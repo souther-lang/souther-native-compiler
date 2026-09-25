@@ -33,8 +33,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * running both and comparing what came back.
  *
  * <p>A row is run through the entry the object carries for it, which is what the object does with
- * the row rather than something arranged out here: the values the row states were written into the
- * object when the program crossed. So what runs is the same whether the module publishes the
+ * the row rather than something arranged out here: the entry applies the behavior to what the
+ * program says computes each of the row's inputs, the operand as the checker elaborated it at its
+ * parameter, which the module holds. So what runs is the same whether the module publishes the
  * behavior or keeps it, and a corpus of kept names is not a corpus this test had to leave out.
  *
  * <p>Whether an answer is the one a row states is asked of the row. A test deciding that for itself
@@ -307,6 +308,60 @@ class ARowHoldsWhereverItIsRunTest {
                 | "none of them" : ([]) -> 0
             """;
 
+    /**
+     * Rows that state one of a sum's cases where the sum is taken: handed to the behavior, as a
+     * field, as an element of a list, and in an optional field.
+     *
+     * <p>What the row observed says what the value is and not what it stands as. The checker says
+     * that, in the definition computing each input, where the case stands as the position's type as
+     * the same value written in a body does. The cart #58 ports states its orderer this way.
+     */
+    private static final String STANDING = """
+            module standing
+
+            data Paid = { value: Int }
+            data Owed = { value: Int }
+            data Settled
+            data Amount = Paid | Owed | Settled
+
+            data Entry = { label: String, amount: Amount }
+            data Slot = { held: Amount? }
+
+            let valueOf (a: Amount): Int = match a with
+                | Paid as p -> p.value
+                | Owed as o -> -o.value
+                | Settled -> 0
+
+            behavior tally : (a: Amount) -> Int
+            let tally (a) = valueOf(a)
+
+            behavior entered : (entry: Entry) -> Int
+            let entered (entry) = valueOf(entry.amount)
+
+            behavior summed : (amounts: List<Amount>) -> Int
+            let summed (amounts) = List.fold((acc, a) -> acc + valueOf(a), 0, amounts)
+
+            behavior slotted : (slot: Slot) -> Int
+            let slotted (slot) = match slot.held with
+                | Some held -> valueOf(held)
+                | None -> 100
+
+            example tally
+                | "paid" : (Paid { value = 7 }) -> 7
+                | "owed" : (Owed { value = 3 }) -> -3
+                | "settled" : (Settled) -> 0
+
+            example entered
+                | "an entry owed" : (Entry { label = "rent", amount = Owed { value = 5 } }) -> -5
+
+            example summed
+                | "each of them" : ([Paid { value = 7 }, Owed { value = 3 }, Settled]) -> 4
+
+            example slotted
+                | "one held" : (Slot { held = Owed { value = 2 } }) -> -2
+                | "none held" : (Slot { held = None }) -> 100
+            """;
+
     /** A definition the module holds and reaches, including one that reaches itself. */
     private static final String REACHING = """
             module reaching
@@ -468,6 +523,7 @@ class ARowHoldsWhereverItIsRunTest {
         assertEveryRowHolds(SHAPES);
         assertEveryRowHolds(HOLDING);
         assertEveryRowHolds(ORDERING);
+        assertEveryRowHolds(STANDING);
         assertEveryRowHolds(REACHING);
         assertEveryRowHolds(DEPENDING);
         assertEveryRowHolds(COUNTING, ONE, TWO);

@@ -2,7 +2,7 @@
 //!
 //! Written as types and not built as JSON, so that what a manifest of one version says is a thing
 //! the compiler holds this code to. A field renamed here is a change to these types, and the
-//! fixture `tests/interface-v7.json` is what version 7 is: every manifest this writes is read back
+//! fixture `tests/interface-v8.json` is what version 8 is: every manifest this writes is read back
 //! by these same types, which refuse a member they do not name.
 //!
 //! [`VERSION`] moves when what a manifest says is read differently. What the functions it names
@@ -54,6 +54,10 @@ pub(crate) const MOVES: &[(u32, &str)] = &[
     ),
     (
         7,
+        "a declaration names what reads a value a host built of ordered maps (`decodehost`)",
+    ),
+    (
+        8,
         "a behavior is called with the capabilities it was constructed with, a host makes one of a \
          behavior (`bind`) and of an implementation of its own (`implement`), and nothing is \
          registered on a thread",
@@ -336,6 +340,9 @@ pub(crate) enum Declaration {
         fields: Vec<Field>,
         construct: Option<Function>,
         decode: Option<Function>,
+        /// Reads a value a host built of ordered maps ([`souther_native_abi::host_decode_host_value_symbol`]).
+        #[serde(rename = "decodehost")]
+        decode_host: Option<Function>,
         encode: Option<Function>,
     },
     Newtype {
@@ -343,12 +350,18 @@ pub(crate) enum Declaration {
         field: Field,
         construct: Option<Function>,
         decode: Option<Function>,
+        /// Reads a value a host built of ordered maps ([`souther_native_abi::host_decode_host_value_symbol`]).
+        #[serde(rename = "decodehost")]
+        decode_host: Option<Function>,
         encode: Option<Function>,
     },
     Unit {
         name: String,
         construct: Option<Function>,
         decode: Option<Function>,
+        /// Reads a value a host built of ordered maps ([`souther_native_abi::host_decode_host_value_symbol`]).
+        #[serde(rename = "decodehost")]
+        decode_host: Option<Function>,
         encode: Option<Function>,
     },
     Sum {
@@ -360,6 +373,9 @@ pub(crate) enum Declaration {
         /// Which of `cases` a value is, where every case is a declared type.
         case: Option<Function>,
         decode: Option<Function>,
+        /// Reads a value a host built of ordered maps ([`souther_native_abi::host_decode_host_value_symbol`]).
+        #[serde(rename = "decodehost")]
+        decode_host: Option<Function>,
         encode: Option<Function>,
     },
 }
@@ -566,36 +582,35 @@ mod tests {
         }
     }
 
-    /// What version 7 is. Read by these types, which refuse a member they do not name, and
+    /// What version 8 is. Read by these types, which refuse a member they do not name, and
     /// written back the same: a field renamed or a kind reshaped here stops matching the fixture
     /// the Java half's test also holds a written manifest to.
-    const V7: &str = include_str!("../tests/interface-v7.json");
+    const V8: &str = include_str!("../tests/interface-v8.json");
 
     #[test]
-    fn version_seven_is_read_and_written_back_as_it_is() {
-        let read: Manifest = serde_json::from_str(V7).expect("version 7 reads");
+    fn version_eight_is_read_and_written_back_as_it_is() {
+        let read: Manifest = serde_json::from_str(V8).expect("version 8 reads");
         assert_eq!(read.format, FORMAT);
         assert_eq!(read.version, VERSION);
         let mut written = serde_json::to_string_pretty(&read).unwrap();
         written.push('\n');
-        assert_eq!(written, V7);
+        assert_eq!(written, V8);
     }
 
     /// A surface an object of an earlier release carries is refused as that, and not as whichever
-    /// member moved since: a behavior of version 5 says nothing of `requires`, which 6 reads.
+    /// member moved since: a declaration of version 6 says nothing of `decodehost`, which 7 reads.
     #[test]
     fn a_surface_of_an_earlier_version_is_refused_by_its_version() {
-        let earlier = br#"{"version":5,"abi":3,"modules":[{"name":"m","behaviors":[{"name":"b",
-            "parameters":{"named":[]},"answers":{"type":{"kind":"primitive","name":"Int"},
-            "union":null},"call":null}],"injections":[],"values":[],"declarations":[],
-            "lists":[]}]}"#;
+        let earlier = br#"{"version":6,"abi":3,"modules":[{"name":"m","behaviors":[],
+            "injections":[],"values":[],"declarations":[{"kind":"unit","name":"U",
+            "construct":null,"decode":null,"encode":null}],"lists":[]}]}"#;
 
         let refused = Carried::read(earlier).expect_err("a surface of another version");
 
         assert!(
             refused
                 .to_string()
-                .contains("manifest version 5 and ABI generation 3"),
+                .contains("manifest version 6 and ABI generation 3"),
             "{refused}"
         );
     }

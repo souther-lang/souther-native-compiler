@@ -87,7 +87,6 @@ class APhpHostHandsOverAndReadsBackAListTest {
             use Raoh\\Result;
             use Souther\\Runtime\\Expired;
             use Souther\\Runtime\\ForeignHandle;
-            use Souther\\Runtime\\Session;
 
             function issues(Result $result): string {
                 return $result->fold(
@@ -105,34 +104,34 @@ class APhpHostHandsOverAndReadsBackAListTest {
 
             $binding = Binding::load($argv[3]);
 
-            $binding->run(function (Session $session): void {
-                $apple = OrderLine::of($session, 'apple', 2, 150)->getOrThrow();
-                $pear = OrderLine::of($session, 'pear', 3, 90)->getOrThrow();
-                $order = Order::of($session, [$apple, $pear])->getOrThrow();
+            $binding->run(function (): void {
+                $apple = OrderLine::of('apple', 2, 150)->getOrThrow();
+                $pear = OrderLine::of('pear', 3, 90)->getOrThrow();
+                $order = Order::of([$apple, $pear])->getOrThrow();
                 $lines = $order->lines();
                 echo "lines: ", said($lines), ", a list ", var_export(array_is_list($lines), true), "\\n";
-                echo "total: ", Behaviors::totalOf($session, $order), "\\n";
-                echo "echoed: ", said(Behaviors::echoed($session, [$pear, $apple, $pear])), "\\n";
+                echo "total: ", Behaviors::totalOf($order), "\\n";
+                echo "echoed: ", said(Behaviors::echoed([$pear, $apple, $pear])), "\\n";
                 echo "written: ", $order->encode(), "\\n";
-                echo "read: ", said(Order::decode($session, $order->encode())->getOrThrow()->lines()), "\\n";
+                echo "read: ", said(Order::decode($order->encode())->getOrThrow()->lines()), "\\n";
 
-                $empty = Order::of($session, [])->getOrThrow();
+                $empty = Order::of([])->getOrThrow();
                 echo "empty: ", var_export($empty->lines(), true), ", total ",
-                    Behaviors::totalOf($session, $empty), ", priced ", issues(PricedCart::of($session, [], 0)),
+                    Behaviors::totalOf($empty), ", priced ", issues(PricedCart::of([], 0)),
                     "\\n";
 
-                $notes = Notes::of($session, [null, 'gift wrap', null])->getOrThrow();
+                $notes = Notes::of([null, 'gift wrap', null])->getOrThrow();
                 echo "notes: ", var_export($notes->said(), true), " ", $notes->encode(), "\\n";
-                $grid = Grid::of($session, [[1, 2], [], [3]])->getOrThrow();
+                $grid = Grid::of([[1, 2], [], [3]])->getOrThrow();
                 echo "grid: ", json_encode($grid->rows()), "\\n";
 
                 try {
-                    Order::of($session, [$apple, 'pear']);
+                    Order::of([$apple, 'pear']);
                 } catch (TypeError $refused) {
                     echo "not a line: ", $refused::class, "\\n";
                 }
                 try {
-                    Order::of($session, [1 => $apple]);
+                    Order::of([1 => $apple]);
                 } catch (InvalidArgumentException $refused) {
                     echo "not a list: ", $refused->getMessage(), "\\n";
                 }
@@ -140,40 +139,40 @@ class APhpHostHandsOverAndReadsBackAListTest {
 
             // The host prices the cart, and the library reads the lines of what it answered.
             $pricing = Injections::of(
-                priceCart: fn (Session $session, Order $order): PricedCart => PricedCart::of($session,
-                    array_map(fn (OrderLine $it): OrderLine => OrderLine::of($session, $it->sku(),
+                priceCart: fn (Order $order): PricedCart => PricedCart::of(
+                    array_map(fn (OrderLine $it): OrderLine => OrderLine::of($it->sku(),
                         $it->quantity() * 2, $it->unitPrice())->getOrThrow(), $order->lines()),
                     7)->getOrThrow(),
-                countNotes: fn (Session $session, array $lines): int => count($lines) * 10 + strlen(said($lines)));
-            echo "checkout: ", $binding->run(fn (Session $session): int => Behaviors::checkout($session,
-                Order::of($session, [OrderLine::of($session, 'apple', 1, 150)->getOrThrow()])->getOrThrow()),
+                countNotes: fn (array $lines): int => count($lines) * 10 + strlen(said($lines)));
+            echo "checkout: ", $binding->run(fn (): int => Behaviors::checkout(
+                Order::of([OrderLine::of('apple', 1, 150)->getOrThrow()])->getOrThrow()),
                 $pricing), "\\n";
-            echo "noted: ", $binding->run(fn (Session $session): int => Behaviors::noted($session,
-                Order::of($session, [OrderLine::of($session, 'fig', 1, 1)->getOrThrow()])->getOrThrow()),
+            echo "noted: ", $binding->run(fn (): int => Behaviors::noted(
+                Order::of([OrderLine::of('fig', 1, 1)->getOrThrow()])->getOrThrow()),
                 $pricing), "\\n";
 
             // An empty cart priced by the host is not a priced cart, and the host is told so.
-            echo "unpriced: ", $binding->run(fn (Session $session): string => issues(
-                PricedCart::of($session, [], 0))), "\\n";
+            echo "unpriced: ", $binding->run(fn (): string => issues(PricedCart::of([], 0))), "\\n";
 
             // A value of an outer run outlives a list of an inner one, and goes in it.
-            echo "outer line: ", $binding->run(function (Session $outer) use ($binding): int {
-                $apple = OrderLine::of($outer, 'apple', 1, 150)->getOrThrow();
-                return $binding->run(fn (Session $inner): int =>
-                    Behaviors::totalOf($inner, Order::of($inner, [$apple, $apple])->getOrThrow()));
+            echo "outer line: ", $binding->run(function () use ($binding): int {
+                $apple = OrderLine::of('apple', 1, 150)->getOrThrow();
+                return $binding->run(fn (): int =>
+                    Behaviors::totalOf(Order::of([$apple, $apple])->getOrThrow()));
             }), "\\n";
 
-            $kept = $binding->run(fn (Session $session): OrderLine =>
-                OrderLine::of($session, 'apple', 1, 150)->getOrThrow());
+            $kept = $binding->run(fn (): OrderLine => OrderLine::of('apple', 1, 150)->getOrThrow());
             try {
-                $binding->run(fn (Session $session) => Order::of($session, [$kept]));
+                $binding->run(fn () => Order::of([$kept]));
             } catch (Expired $expired) {
                 echo "expired line: ", $expired->getMessage(), "\\n";
             }
             $again = Binding::load($argv[4]);
             try {
-                $binding->run(fn (Session $here) => $again->run(fn (Session $there) =>
-                    Order::of($there, [OrderLine::of($here, 'apple', 1, 150)->getOrThrow()])));
+                $binding->run(function () use ($again) {
+                    $line = OrderLine::of('apple', 1, 150)->getOrThrow();
+                    return $again->run(fn () => Order::of([$line]));
+                });
             } catch (ForeignHandle $foreign) {
                 echo "foreign line: ", $foreign->getMessage(), "\\n";
             }
@@ -238,7 +237,7 @@ class APhpHostHandsOverAndReadsBackAListTest {
 
         assertThat(Files.readString(cart.resolve("Order.php")))
                 .contains("@param list<\\Acme\\Billing\\Cart\\OrderLine> $lines")
-                .contains("public static function of(\\Souther\\Runtime\\Session $session, array $lines)")
+                .contains("public static function of(array $lines)")
                 .contains("@return list<\\Acme\\Billing\\Cart\\OrderLine>")
                 .contains("public function lines(): array");
         assertThat(Files.readString(cart.resolve("Notes.php")))
@@ -249,7 +248,7 @@ class APhpHostHandsOverAndReadsBackAListTest {
                 .contains("@param list<\\Acme\\Billing\\Cart\\OrderLine> $lines")
                 .contains("@return list<\\Acme\\Billing\\Cart\\OrderLine>");
         assertThat(Files.readString(cart.resolve("Injections.php")))
-                .contains("callable(\\Souther\\Runtime\\Session, list<\\Acme\\Billing\\Cart\\OrderLine>): int");
+                .contains("callable(list<\\Acme\\Billing\\Cart\\OrderLine>): int");
         for (Path file : binding.files()) {
             if (file.toString().endsWith(".php")) {
                 assertThat(Php.compiles(file)).as("%s", file).isTrue();

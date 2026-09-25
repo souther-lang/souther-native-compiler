@@ -127,3 +127,65 @@ fn a_row_standing_in_for_other_than_what_its_behavior_requires_is_refused() {
         "{refused}"
     );
 }
+
+const UNANSWERED: &str = r#"
+#include <inttypes.h>
+#include <stdint.h>
+#include <stdio.h>
+
+extern uint32_t looked(int64_t *) __asm__("PREFIXsouther4.m.lookUp$example$0");
+
+int main(void) {
+    int64_t answer = -1;
+    uint32_t status = looked(&answer);
+    printf("%u %" PRId64 "\n", status, answer);
+    return 0;
+}
+"#;
+
+/// A row of a behavior a host implements states what the host's implementation answers, and
+/// nothing in the object answers it: the behavior has no symbol, and the row stands in with no
+/// capability of the behavior it is a row of. So its entry answers `INJECTION_UNBOUND`, as a call
+/// handed nothing for it does, rather than calling something no object defines.
+#[test]
+fn a_row_of_what_a_host_implements_answers_unbound() {
+    let mut document: Value = serde_json::from_str(ENSURES).unwrap();
+    document["modules"][0]["examples"] = json!([{
+        "behavior": "lookUp",
+        "at": 0,
+        "body": {
+            "core": "call",
+            "reaches": {"is": "behavior", "declared": "m.lookUp"},
+            "arguments": [int(1)],
+            "type": {"prim": "INT"},
+            "aborts": []
+        },
+        "standsIn": []
+    }]);
+
+    let into = tempdir().unwrap();
+    let object = into.path().join("m.o");
+    fs::write(&object, object_for(&document.to_string()).unwrap()).unwrap();
+    let harness = into.path().join("harness.c");
+    fs::write(&harness, UNANSWERED.replace("PREFIX", PREFIX)).unwrap();
+    let executable = into.path().join("unanswered");
+    let linked = Command::new("cc")
+        .arg("-o")
+        .arg(&executable)
+        .arg(&harness)
+        .arg(&object)
+        .arg(support::runtime())
+        .output()
+        .unwrap();
+    assert!(
+        linked.status.success(),
+        "{}",
+        String::from_utf8_lossy(&linked.stderr)
+    );
+    let run = Command::new(&executable).output().unwrap();
+
+    assert_eq!(
+        String::from_utf8(run.stdout).unwrap(),
+        format!("{} -1\n", souther_native_abi::INJECTION_UNBOUND)
+    );
+}

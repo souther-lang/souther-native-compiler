@@ -69,7 +69,7 @@ public final class PhpBindings {
      * The version of what generated code calls of the runtime package that this writes against:
      * {@code Binding::PROTOCOL} in {@code bindings/php/runtime}, which a test holds to this.
      */
-    static final int RUNTIME_PROTOCOL = 4;
+    static final int RUNTIME_PROTOCOL = 7;
 
     private final Manifest manifest;
     private final String root;
@@ -673,8 +673,8 @@ public final class PhpBindings {
         if (construct != null) {
             of(php, it, fields, construct);
         }
-        decode(php, it, it.declaration().decode(), it.fqcn(), "new " + it.fqcn()
-                + "($session->held($value))");
+        decode(php, it, it.declaration().decode(), it.declaration().decodeHost(), it.fqcn(),
+                "new " + it.fqcn() + "($session->held($value))");
         for (Manifest.Field field : fields) {
             getter(php, it, field);
         }
@@ -711,6 +711,14 @@ public final class PhpBindings {
                 """;
     }
 
+    /**
+     * What a function of the binding finds the session it is called in with: the innermost run
+     * going of its library, which the generated {@code Binding} answers.
+     */
+    private String innermost() {
+        return "\\" + root + "\\Binding::session()";
+    }
+
     /** The static constructor: the value, or the invariant it does not hold as an issue. */
     private void of(StringBuilder php, Declared it, List<Manifest.Field> fields, Function construct) {
         List<Given> crossings =
@@ -731,7 +739,6 @@ public final class PhpBindings {
         String status = PhpNames.freeOf("status", names);
 
         List<String> parameters = new ArrayList<>();
-        parameters.add(RUNTIME + "Session $" + session);
         // An optional takes null where nothing after it has to be named: PHP reads a default
         // before a parameter that has none as a mistake.
         int defaulted = crossings.size();
@@ -760,6 +767,7 @@ public final class PhpBindings {
                      */
                     public static function of(%s): \\Raoh\\Result
                     {
+                        $%s = %s;
                         $%s = $%s->call();
                         $%s = $%s->new('souther_value');
                         $%s = $%s->%s(%s);
@@ -767,17 +775,32 @@ public final class PhpBindings {
                             static fn (): %s => new %s($%s->held($%s)));
                     }
                 """.formatted(it.key(), described, it.fqcn(), String.join(", ", parameters),
-                ffi, session, made, ffi, status, ffi, construct.name(), String.join(", ", given),
-                session, status, it.fqcn(), it.fqcn(), session, made));
+                session, innermost(), ffi, session, made, ffi, status, ffi, construct.name(),
+                String.join(", ", given), session, status, it.fqcn(), it.fqcn(), session, made));
     }
 
-    /** Reading a value of the type out of its external form. */
-    private static void decode(StringBuilder php, Declared it, @Nullable Function decode,
-                               String answers, String made) {
-        if (decode == null) {
+    /**
+     * Reading a value of the type: out of text in its external form ({@code decode}), and out of a
+     * PHP value ({@code decoder}).
+     *
+     * <p>Two functions of the library's and not one. Text says of every container whether it is an
+     * object or an array; a PHP array does not, since a list is the array keyed by its indices and
+     * the empty list is the empty array. So a PHP value is handed over through the library's reading
+     * of a host's value ({@code decodeHost}), which takes a map keyed by its indices as an array
+     * where the declaration holds one, and never through text it would have to be guessed into.
+     */
+    private void decode(StringBuilder php, Declared it, @Nullable Function decode,
+                        @Nullable Function decodeHost, String answers, String made) {
+        if (decode == null && decodeHost == null) {
             return;
         }
+        if (decode == null || decodeHost == null) {
+            throw new IllegalStateException("the manifest says `" + it.key() + "` is read out of"
+                    + (decode == null ? " a host's value and not out of text"
+                    : " text and not out of a host's value") + ", and the two are emitted together");
+        }
         agrees(decode, List.of(Word.BYTES, Word.COUNT), List.of(Word.DECODED), Word.STATUS);
+        agrees(decodeHost, List.of(Word.BYTES, Word.COUNT), List.of(Word.DECODED), Word.STATUS);
         php.append("""
 
                     /**
@@ -785,15 +808,44 @@ public final class PhpBindings {
                      *
                      * @return \\Raoh\\Result<%s>
                      */
-                    public static function decode(\\Souther\\Runtime\\Session $session, string $json): \\Raoh\\Result
+                    public static function decode(string $json): \\Raoh\\Result
                     {
-                        $ffi = $session->call();
-                        $reading = $ffi->new('souther_decoded');
-                        $status = $ffi->%s($session->bytes($json), \\strlen($json), \\FFI::addr($reading));
-                        return $session->decoded($status, $reading,
-                            static fn (\\FFI\\CData $value): %s => %s);
+                %s
                     }
-                """.formatted(it.key(), answers, decode.name(), answers, made));
+
+                    /**
+                     * A raoh-php decoder of `%s`, to compose with a host's own: what it is handed is a
+                     * PHP value, read as a value of the type, and what is wrong in it is an issue at
+                     * the path the decoder is reached at. An array is read as whatever the position
+                     * holds, an object or a list, as PHP makes no difference between the two where
+                     * the array is empty or keyed by its indices.
+                     *
+                     * @return \\Raoh\\Decoder<mixed, %s>
+                     */
+                    public static function decoder(): \\Raoh\\Decoder
+                    {
+                        return %s::decoder(static function (string $json): \\Raoh\\Result {
+                %s
+                        });
+                    }
+                """.formatted(it.key(), answers, reading(decode, "        ", answers, made), it.key(),
+                answers, RUNTIME + "Session", reading(decodeHost, "            ", answers, made)));
+    }
+
+    /**
+     * The body that reads `$json` through {@code function}, one of a type's two readings, and
+     * answers what the reading came to: written once for both, each line indented by {@code indent}.
+     */
+    private String reading(Function function, String indent, String answers, String made) {
+        return """
+                $session = %s;
+                $ffi = $session->call();
+                $reading = $ffi->new('souther_decoded');
+                $status = $ffi->%s($session->bytes($json), \\strlen($json), \\FFI::addr($reading));
+                return $session->decoded($status, $reading,
+                    static fn (\\FFI\\CData $value): %s => %s);""".formatted(innermost(),
+                function.name(), answers, made).lines().map(line -> indent + line)
+                .collect(Collectors.joining("\n"));
     }
 
     private void getter(StringBuilder php, Declared it, Manifest.Field field) {
@@ -900,7 +952,8 @@ public final class PhpBindings {
                 %s
                     }
                 """.formatted(it.fqcn(), cases));
-        decode(codec, it, sum.decode(), it.fqcn(), it.codec() + "::wrap($session, $value)");
+        decode(codec, it, sum.decode(), sum.decodeHost(), it.fqcn(),
+                it.codec() + "::wrap($session, $value)");
         Function encode = sum.encode();
         if (encode != null) {
             agrees(encode, List.of(Word.VALUE), List.of(), Word.STRING);
@@ -965,8 +1018,9 @@ public final class PhpBindings {
             return;
         }
         StringBuilder php = header(namespace);
-        php.append(doc("", "The behaviors `" + module.name() + "` publishes, each called in a session"
-                + " and answering its value, or throwing where the computation ends without one."));
+        php.append(doc("", "The behaviors `" + module.name() + "` publishes, each called in the"
+                + " innermost run going and answering its value, or throwing where the computation"
+                + " ends without one."));
         php.append("final class Behaviors\n{\n");
         php.append("""
                     private function __construct()
@@ -999,7 +1053,8 @@ public final class PhpBindings {
             return;
         }
         StringBuilder php = header(namespace);
-        php.append(doc("", "The values `" + module.name() + "` publishes, each read in a session."));
+        php.append(doc("", "The values `" + module.name() + "` publishes, each read in the innermost"
+                + " run going."));
         php.append("final class Values\n{\n");
         php.append("""
                     private function __construct()
@@ -1011,13 +1066,12 @@ public final class PhpBindings {
     }
 
     /**
-     * A function, declared as {@code declared}, calling {@code function} and answering what it
-     * wrote. {@code requirements} is what a behavior is called with first, as PHP works it out from
-     * the session, and null for a value, which is called with nothing more.
+     * A function, declared as {@code declared}, calling {@code function} in the innermost run going
+     * and answering what it wrote. {@code requirements} is what a behavior is called with first, as
+     * PHP works it out in that run, and null for a value, which is called with nothing more.
      */
-    private static String call(String what, String declared, List<String> names,
-                               List<Given> takes, Received answers, Function function,
-                               @Nullable String requirements) {
+    private String call(String what, String declared, List<String> names, List<Given> takes,
+                        Received answers, Function function, @Nullable String requirements) {
         List<Word> rooms = answers.words();
         List<Word> handed = new ArrayList<>();
         if (requirements != null) {
@@ -1041,7 +1095,6 @@ public final class PhpBindings {
         }
 
         List<String> parameters = new ArrayList<>();
-        parameters.add(RUNTIME + "Session $" + session);
         List<String> given = new ArrayList<>();
         if (requirements != null) {
             given.add(requirements);
@@ -1051,6 +1104,7 @@ public final class PhpBindings {
             given.addAll(takes.get(at).given("$" + names.get(at), "$" + session));
         }
         StringBuilder body = new StringBuilder();
+        body.append("        $").append(session).append(" = ").append(innermost()).append(";\n");
         body.append("        $").append(ffi).append(" = $").append(session).append("->call();\n");
         for (int at = 0; at < rooms.size(); at++) {
             body.append("        $").append(roomNames.get(at)).append(" = $").append(ffi)
@@ -1094,7 +1148,6 @@ public final class PhpBindings {
             parameters.add("?callable $" + name + " = null");
             entries.add("'" + module.name() + "." + injection.name() + "' => $" + name);
             List<String> types = new ArrayList<>();
-            types.add(RUNTIME + "Session");
             Crossings crossings = in(module.name());
             for (Manifest.NamedParameter parameter : injection.parameters()) {
                 types.add(crossings.received(parameter.type()).phpDocType());
@@ -1107,9 +1160,9 @@ public final class PhpBindings {
         }
         StringBuilder php = header(namespace);
         php.append(doc("", "Implementations of the behaviors `" + module.name() + "` asks a host to"
-                + " implement, handed to a run. Each is called with the session of the innermost run"
-                + " going and what the behavior takes; an exception it throws comes back out of the"
-                + " call into the library that reached it."));
+                + " implement, handed to a run. Each is called in the innermost run going with what"
+                + " the behavior takes; an exception it throws comes back out of the call into the"
+                + " library that reached it."));
         php.append("final class Injections extends \\Souther\\Runtime\\Injections\n{\n");
         php.append("""
                     /**
@@ -1153,7 +1206,6 @@ public final class PhpBindings {
                     + ", and this generator would hand it " + expected);
         }
         List<String> arguments = new ArrayList<>();
-        arguments.add("$session");
         int at = 0;
         for (Received crossing : takes) {
             List<String> handed = new ArrayList<>();
@@ -1184,8 +1236,8 @@ public final class PhpBindings {
 
     /**
      * The class an application extends to implement {@code injection}: an abstract {@code apply}
-     * typed as the model says, which the library calls with the session of the innermost run going,
-     * the way it calls a closure handed to {@code Injections}.
+     * typed as the model says, which the library calls in the innermost run going, the way it calls
+     * a closure handed to {@code Injections}.
      */
     private void injectedClass(Manifest.Module module, Manifest.Injection injection,
                                BehaviorClass it) throws IOException {
@@ -1197,9 +1249,7 @@ public final class PhpBindings {
         List<Received> takes = injection.parameters().stream()
                 .map(parameter -> crossings.received(parameter.type())).toList();
         Given answers = crossings.given(injection.answers());
-        String session = PhpNames.freeOf("session", names);
         List<String> parameters = new ArrayList<>();
-        parameters.add(RUNTIME + "Session $" + session);
         List<String> described = new ArrayList<>();
         for (int at = 0; at < takes.size(); at++) {
             parameters.add(takes.get(at).phpType() + " $" + names.get(at));
@@ -1210,9 +1260,9 @@ public final class PhpBindings {
                 + " implement. An instance is handed to what is bound to it, and the library calls"
                 + " its `apply` wherever what was bound to it reaches the behavior."));
         php.append("abstract class ").append(it.className()).append("\n{\n");
-        php.append(docLines(List.of("Answers `" + it.key() + "`, in the session of the innermost"
-                + " run going. An exception thrown here comes back out of the call into the library"
-                + " that reached it."), described, answers));
+        php.append(docLines(List.of("Answers `" + it.key() + "`, in the innermost run going. An"
+                + " exception thrown here comes back out of the call into the library that reached"
+                + " it."), described, answers));
         php.append("    abstract public function apply(").append(String.join(", ", parameters))
                 .append("): ").append(answers.phpType()).append(";\n}\n");
         file(it.namespace(), it.className(), php);
@@ -1223,13 +1273,23 @@ public final class PhpBindings {
      * an implementation of each behavior it requires, or {@code of} where it requires none, and
      * {@code apply}, calling it with the capabilities of what it was bound to.
      *
-     * <p>{@code apply} takes the session, as every function a binding writes does, and does not
-     * open a run of its own: what it answers is a value of the caller's run, and a run it opened
-     * would have ended by the time the caller held it.
+     * <p>{@code apply} is called in the caller's run, as every function a binding writes is, and
+     * does not open a run of its own: what it answers is a value of the caller's run, and a run it
+     * opened would have ended by the time the caller held it. The class is callable too, so an
+     * application holding one calls it as it calls any PHP function.
      */
     private void behaviorClass(BehaviorClass it, Manifest.Behavior behavior, List<String> names,
                                List<Given> takes, Received answers) throws IOException {
         String session = PhpNames.freeOf("session", names);
+        List<String> parameters = new ArrayList<>();
+        List<String> arguments = new ArrayList<>();
+        List<String> described = new ArrayList<>();
+        for (int at = 0; at < takes.size(); at++) {
+            parameters.add(takes.get(at).phpType() + " $" + names.get(at));
+            arguments.add("$" + names.get(at));
+            described.addAll(paramTag(takes.get(at), names.get(at)));
+        }
+
         StringBuilder php = header(it.namespace());
         php.append(doc("", "`" + it.key() + "` as an application holds it: bound to an"
                 + " implementation of each behavior it requires, which each call is made with."));
@@ -1251,7 +1311,16 @@ public final class PhpBindings {
         php.append(call("`" + it.key() + "` with what this was bound to", "public function apply",
                 names, takes, answers, Objects.requireNonNull(behavior.call()),
                 "$this->bound->requirements($" + session + ")"));
-        php.append("}\n");
+        php.append("\n");
+        php.append(docLines(List.of("`apply`, for calling this as a function."), described, answers));
+        php.append("""
+                    public function __invoke(%s): %s
+                    {
+                        return $this->apply(%s);
+                    }
+                }
+                """.formatted(String.join(", ", parameters), answers.phpType(),
+                String.join(", ", arguments)));
         file(it.namespace(), it.className(), php);
     }
 
@@ -1390,6 +1459,15 @@ public final class PhpBindings {
 
                     /** @var array<int, self> */
                     private static array $bindings = [];
+
+                    /**
+                     * @internal The session every function of this binding is called in: the
+                     * innermost run going on this fiber of a library it was loaded for.
+                     */
+                    public static function session(): \\Souther\\Runtime\\Session
+                    {
+                        return self::innermostOf(self::$bindings);
+                    }
 
                     /**
                      * One binding for each library, made the first time it is asked for: what each

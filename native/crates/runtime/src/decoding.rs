@@ -20,7 +20,7 @@
 //! everything else the call made. The document is the one thing on the heap, and the reading drops
 //! it when it ends.
 
-use crate::document::{Node, parsed};
+use crate::document::{Form, Node, parsed};
 use crate::{Count, Text, Value, room_for_a_string, souther_alloc, text};
 use souther_native_abi::{DECODED_ISSUES, DECODED_MALFORMED, DECODED_VALUE, TEXT_BYTES};
 use std::ptr;
@@ -167,7 +167,7 @@ fn canonical(written: &[u8]) -> std::borrow::Cow<'_, [u8]> {
     }
 }
 
-/// Begins reading `length` bytes at `bytes` as a document.
+/// Begins reading `length` bytes at `bytes` as a document in the external form.
 ///
 /// # Safety
 /// `bytes` points at `length` bytes that may be read, for as long as this call runs: nothing
@@ -176,6 +176,32 @@ fn canonical(written: &[u8]) -> std::borrow::Cow<'_, [u8]> {
 /// Where the length is below nought.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_decode_begin(bytes: *const u8, length: Count) -> *mut Decoding {
+    unsafe { begun(bytes, length, Form::Text) }
+}
+
+/// Begins reading `length` bytes at `bytes` as a value a host built of ordered maps, every one of
+/// them written as an object keyed as the host keyed it ([`Form::HostValue`]).
+///
+/// The same reading as [`souther_decode_begin`] in every place but one: where the reader takes an
+/// array, a map whose keys are its indices is one, since that is what a list is to such a host.
+/// So a host whose empty list is its empty object hands over either and is read as whichever the
+/// position holds.
+///
+/// # Safety
+/// As [`souther_decode_begin`].
+/// # Panics
+/// As [`souther_decode_begin`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_decode_host_begin(
+    bytes: *const u8,
+    length: Count,
+) -> *mut Decoding {
+    unsafe { begun(bytes, length, Form::HostValue) }
+}
+
+/// # Safety
+/// As [`souther_decode_begin`].
+unsafe fn begun(bytes: *const u8, length: Count, form: Form) -> *mut Decoding {
     let length =
         usize::try_from(length.0).expect("a document is handed over as bytes, never fewer");
     let bytes = if length == 0 {
@@ -183,7 +209,7 @@ pub unsafe extern "C" fn souther_decode_begin(bytes: *const u8, length: Count) -
     } else {
         unsafe { std::slice::from_raw_parts(bytes, length) }
     };
-    let (document, malformed_at) = match parsed(bytes) {
+    let (document, malformed_at) = match parsed(bytes, form) {
         Ok(root) => (Box::into_raw(Box::new(root)), -1),
         Err(malformed) => (ptr::null_mut(), malformed.at as i64),
     };
@@ -294,7 +320,7 @@ pub unsafe extern "C" fn souther_read_array(
     decoding: *mut Decoding,
 ) -> i8 {
     let node = unsafe { &*node };
-    if let Node::Array(_) = node {
+    if node.length().is_some() {
         return 1;
     }
     unsafe { mismatched(decoding, path, node, "an array") };
@@ -309,10 +335,10 @@ pub unsafe extern "C" fn souther_read_array(
 /// Where it is not an array, which is generated code asking without having asked that first.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_read_array_length(node: *const Node) -> Count {
-    let Node::Array(items) = (unsafe { &*node }) else {
-        panic!("the length of a place that is not an array");
-    };
-    Count(items.len() as i64)
+    let length = unsafe { &*node }
+        .length()
+        .expect("the length of a place that is not an array");
+    Count(length as i64)
 }
 
 /// The element of the array `node` at `index`.
@@ -323,11 +349,10 @@ pub unsafe extern "C" fn souther_read_array_length(node: *const Node) -> Count {
 /// Where it is not an array, or the index is outside it.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_read_element(node: *const Node, index: Count) -> *const Node {
-    let Node::Array(items) = (unsafe { &*node }) else {
-        panic!("an element of a place that is not an array");
-    };
     let at = usize::try_from(index.0).expect("an index is not negative");
-    &items[at]
+    unsafe { &*node }
+        .element(at)
+        .expect("an element of a place that is not an array, or past its end")
 }
 
 /// Whether `node` is an object, having recorded that it is not where it is not.
@@ -341,7 +366,7 @@ pub unsafe extern "C" fn souther_read_object(
     decoding: *mut Decoding,
 ) -> i8 {
     let node = unsafe { &*node };
-    if let Node::Object(_) = node {
+    if node.is_object() {
         return 1;
     }
     unsafe { mismatched(decoding, path, node, "an object") };
