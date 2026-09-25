@@ -1,5 +1,5 @@
 {
-    "name": "souther-lang/raoh-php-cart",
+    "name": "souther-lang/php-cart",
     "description": "The raoh-souther cart over a native library: the model compiled by souther-native-compiler, the boundaries in PHP",
     "type": "project",
     "license": "Apache-2.0",
