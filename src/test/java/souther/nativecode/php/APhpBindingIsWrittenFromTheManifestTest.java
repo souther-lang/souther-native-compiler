@@ -117,7 +117,7 @@ class APhpBindingIsWrittenFromTheManifestTest {
         assertThat(written).contains(
                 "find(\\Souther\\Runtime\\Session $session, int $id):"
                         + " \\Acme\\Billing\\M\\Found|\\Acme\\Billing\\M\\Missing",
-                "$session->ffi()->souther3_m_m_b_find_answer_case($answer)",
+                "$session->ffi()->souther4_m_m_b_find_answer_case($answer)",
                 "0 => new \\Acme\\Billing\\M\\Found($session->held($answer))",
                 "1 => new \\Acme\\Billing\\M\\Missing($session->held($answer))");
         assertThat(generated.files()).extracting(it -> generated.root().relativize(it).toString())
@@ -255,7 +255,7 @@ class APhpBindingIsWrittenFromTheManifestTest {
     /**
      * A behavior requiring one the manifest gives a host no way to implement has no class, since
      * binding it could not be handed what it requires, and neither has what requires it in turn.
-     * Each is still called as a function, with what a run registers.
+     * Each is still called as a function, constructed from what a run is handed.
      */
     @Test
     void aBehaviorRequiringWhatNoHostCanImplementHasNoClass(@TempDir Path into) throws Exception {
@@ -315,7 +315,8 @@ class APhpBindingIsWrittenFromTheManifestTest {
         assertThat(Files.readString(generated.root().resolve("M").resolve("Both.php"))).contains(
                 "bind(\\Acme\\Billing\\A\\Load $dependency0, \\Acme\\Billing\\B\\Load"
                         + " $dependency1): self",
-                "Bound::of(['a.load' => $dependency0, 'b.load' => $dependency1])");
+                "Bound::of(null, \\Souther\\Runtime\\Implemented::by('a.load', $dependency0->apply(...)),"
+                        + " \\Souther\\Runtime\\Implemented::by('b.load', $dependency1->apply(...)))");
     }
 
     /** The session a call takes is named so that no parameter of the model's is renamed for it. */
@@ -387,7 +388,7 @@ class APhpBindingIsWrittenFromTheManifestTest {
                 "Acme\\Billing"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("is version 3 of souther-native-interface for ABI generation"
-                        + " 3, and this generator reads version 6")
+                        + " 3, and this generator reads version 7")
                 .hasMessageNotContaining("answers");
     }
 
@@ -570,11 +571,11 @@ class APhpBindingIsWrittenFromTheManifestTest {
                 PhpBindings.generate(twoModules(into), into.resolve("php"), "Acme\\Billing");
 
         assertThat(Files.readString(generated.root().resolve("Shop").resolve("Cart.php")))
-                .contains("souther3_m_shop_l_value_construct", "souther3_m_shop_l_value_at")
-                .doesNotContain("souther3_m_stock_");
+                .contains("souther4_m_shop_l_value_construct", "souther4_m_shop_l_value_at")
+                .doesNotContain("souther4_m_stock_");
         assertThat(Files.readString(generated.root().resolve("Stock").resolve("Bin.php")))
-                .contains("souther3_m_stock_l_value_construct", "souther3_m_stock_l_value_at")
-                .doesNotContain("souther3_m_shop_");
+                .contains("souther4_m_stock_l_value_construct", "souther4_m_stock_l_value_at")
+                .doesNotContain("souther4_m_shop_");
     }
 
     /**
@@ -590,7 +591,7 @@ class APhpBindingIsWrittenFromTheManifestTest {
             ((ArrayNode) at.get("takes")).remove(2);
         }))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("souther3_m_stock_l_value_at");
+                .hasMessageContaining("souther4_m_stock_l_value_at");
     }
 
     /**

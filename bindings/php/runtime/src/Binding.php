@@ -6,8 +6,8 @@ namespace Souther\Runtime;
 
 /**
  * A library a binding was generated for, and the runs a host makes of it. The generated binding
- * extends this with how to load its library and what each behavior a host implements is adapted
- * through.
+ * extends this with how to load its library, what each behavior a host implements is adapted
+ * through, and what each behavior is constructed from.
  */
 abstract class Binding
 {
@@ -16,9 +16,7 @@ abstract class Binding
      * binding generated before would call something this does not have, or call it as something it
      * is not; a binding says which it was generated for and refuses to load over any other.
      */
-    public const PROTOCOL = 3;
-
-    private readonly InjectionRegistry $registry;
+    public const PROTOCOL = 4;
 
     /**
      * What each version of the protocol moved, by its number, oldest first. The versions before the
@@ -34,24 +32,36 @@ abstract class Binding
             . 'into elements (Session::list, Session::elements)',
         3 => 'a class per behavior, bound to what it requires: registering implementations for a '
             . 'call is InjectionRegistry\'s, apart from the run\'s arena (Bound, InjectionRegistry)',
+        4 => 'a behavior is called with the capabilities of what it was bound to, in the order it '
+            . 'requires them, and nothing is registered: what a run is handed is what the behaviors '
+            . 'it calls are constructed from (Bound, Implemented, InjectionSlot, Session)',
     ];
 
     /**
      * @param array<string, InjectionSlot> $slots by the declared name of the behavior each is for
+     * @param array<string, array{?string, list<string>}> $constructions by the declared name of
+     *        each published behavior: what makes a capability of it, where something may require
+     *        it, and the declared name of each behavior it requires, in order
      */
     protected function __construct(
         private readonly NativeLibrary $library,
         array $slots,
+        array $constructions,
     ) {
-        $this->registry = new InjectionRegistry($slots);
+        $library->adopt($slots, $constructions);
     }
 
     /**
-     * Runs `$body` in a session of its own, with `$injections` registered for its length.
+     * Runs `$body` in a session of its own, handed `$injections`.
      *
      * The arena is marked before and put back after, so every value made in the run is refused once
-     * it ends, and anything that has to outlive it leaves as its external form (`encode()`). What
-     * was registered before is registered again after, so runs nest.
+     * it ends, and anything that has to outlive it leaves as its external form (`encode()`).
+     *
+     * A behavior called through `Behaviors` in the run is constructed from `$injections`: each
+     * behavior a host implements that it requires, at any depth, is the one implementation handed
+     * here for it, and nothing where none is. What a behavior is bound to otherwise is its own
+     * (the class generated for it), and holds two implementations of one behavior where binding
+     * said so.
      *
      * @template T
      * @param callable(Session): T $body
@@ -61,12 +71,10 @@ abstract class Binding
     {
         $ffi = $this->library->ffi();
         $mark = $ffi->souther_mark();
-        $session = $this->library->open($this->registry);
+        $session = $this->library->open(array_merge(...array_map(
+            static fn (Injections $set): array => $set->implementations(), $injections)));
         try {
-            return $this->registry->around(
-                static fn (): mixed => $body($session),
-                ...array_map(static fn (Injections $set): array => $set->implementations(),
-                    $injections));
+            return $body($session);
         } finally {
             $this->library->close($session);
             $ffi->souther_reset($mark);

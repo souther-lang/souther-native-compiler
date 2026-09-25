@@ -4,82 +4,91 @@ declare(strict_types=1);
 
 namespace Souther\Runtime;
 
+use FFI;
+use FFI\CData;
+
 /**
- * What a behavior was bound to, as binding it said: the objects implementing the behaviors a host
- * implements that it requires itself, and what each behavior it requires that is constructed in
- * turn was bound to.
+ * What a behavior was bound to, as binding it said: what stands for each behavior it requires, in
+ * the order the behavior requires them. Each is an implementation a host wrote of a behavior it
+ * implements ({@see Implemented}), or what a behavior constructed in turn was bound to, or nothing,
+ * where the run was handed nothing for it.
  *
- * Kept as that and not as one table. The requirement set is what a behavior is constructed with,
- * and on the JVM each behavior constructed in turn holds its own. The library cannot yet: it
- * registers one implementation of a behavior at a time, whoever calls it (#72). So what is
- * registered around a call is flattened out of this, and where that would take two different
- * implementations of one behavior, binding is refused rather than letting whichever was registered
- * last answer for both. How the library is handed what was bound is decided in the flattening, and
- * nothing a host writes changes with it.
+ * The library is called with the capability of each, laid out as binding said, so two of these
+ * that stand for one behavior with two implementations each call their own: the requirement set is
+ * what a behavior is constructed with, and each constructed behavior holds its own, as on the JVM.
+ * What the library is handed is made here the first time a call asks for it and kept for as long as
+ * this is, since what is called reads it for as long as a value made in the call can.
  *
  * @internal
  */
-final class Bound
+final class Bound implements Requirement
 {
-    /** @var array<string, \Closure> */
-    private readonly array $registered;
+    /**
+     * What was made for the library, by the library: the capabilities of what this requires, laid
+     * out one after another, and the capability of this.
+     *
+     * @var array<int, array{?CData, ?CData}>
+     */
+    private array $made = [];
 
     /**
-     * @param array<string, object> $implementers by the declared name of the behavior each
-     *        implements, each an instance of the class generated for it
-     * @param list<self> $constructed what each behavior this requires that is constructed in turn
-     *        was bound to
+     * @param ?string $bind the library's function making the capability of the behavior, where
+     *        something may require it
+     * @param list<?Requirement> $requires
      */
     private function __construct(
-        private readonly array $implementers,
-        private readonly array $constructed,
+        private readonly ?string $bind,
+        private readonly array $requires,
     ) {
-        $this->registered = array_map(
-            static fn (object $implementer): \Closure => $implementer->apply(...),
-            $this->flattened());
     }
 
     /**
-     * What is bound to `$implementers`, and to what each of `$constructed` was bound to.
-     *
-     * @param array<string, object> $implementers by the declared name of the behavior each implements
+     * What is bound to `$requires`, in the order the behavior requires them, through `$bind`.
      */
-    public static function of(array $implementers, self ...$constructed): self
+    public static function of(?string $bind, ?Requirement ...$requires): self
     {
-        return new self($implementers, array_values($constructed));
+        return new self($bind, array_values($requires));
     }
 
     /**
-     * Runs `$body` with what this is bound to registered, in the run `$session` is for.
-     *
-     * @template T
-     * @param callable(): T $body
-     * @return T
+     * What the behavior is called with: the address of the capabilities of what it requires, in
+     * order, or null where it requires nothing. A place nothing was handed for holds null, which the
+     * library answers `INJECTION_UNBOUND` for where it is reached.
      */
-    public function around(Session $session, callable $body): mixed
+    public function requirements(Session $session): ?CData
     {
-        return $session->withInjections($body, $this->registered);
+        return $this->made($session)[0];
     }
 
-    /**
-     * Every implementer anywhere in what this was bound to, by the behavior it implements: what the
-     * library can be handed while it registers one of each.
-     *
-     * @return array<string, object>
-     */
-    private function flattened(): array
+    public function capability(Session $session): CData
     {
-        $flat = $this->implementers;
-        foreach ($this->constructed as $bound) {
-            foreach ($bound->flattened() as $behavior => $implementer) {
-                $already = $flat[$behavior] ?? null;
-                if ($already !== null && $already !== $implementer) {
-                    throw new \InvalidArgumentException("{$behavior} is bound to two"
-                        . ' implementations, and the library calls one implementation of it at a time');
-                }
-                $flat[$behavior] = $implementer;
+        $capability = $this->made($session)[1]
+            ?? throw new \LogicException('a behavior nothing may require was required');
+        return FFI::addr($capability);
+    }
+
+    /** @return array{?CData, ?CData} */
+    private function made(Session $session): array
+    {
+        return $this->made[spl_object_id($session->library())] ??= $this->make($session);
+    }
+
+    /** @return array{?CData, ?CData} */
+    private function make(Session $session): array
+    {
+        $ffi = $session->ffi();
+        $requirements = null;
+        if ($this->requires !== []) {
+            $requirements = $ffi->new('const souther_capability *[' . count($this->requires) . ']');
+            foreach ($this->requires as $at => $required) {
+                $requirements[$at] = $required?->capability($session);
             }
         }
-        return $flat;
+        $capability = null;
+        if ($this->bind !== null) {
+            $capability = $ffi->new('souther_capability');
+            $ffi->{$this->bind}(FFI::addr($capability), $requirements);
+        }
+        return [$requirements, $capability];
     }
 }

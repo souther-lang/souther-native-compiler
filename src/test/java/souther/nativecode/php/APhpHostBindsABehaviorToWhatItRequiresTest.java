@@ -20,8 +20,10 @@ import static org.assertj.core.api.Assertions.assertThat;
  *
  * <p>What binding one checks is what PHP's types check: a missing implementation is a
  * {@code TypeError} at {@code bind}, and never an {@code UnboundInjection} when the behavior is
- * called. What is bound is registered for the length of one call in the caller's run, so the value
- * {@code apply} answers is the run's, and what the run registered is registered again after it.
+ * called. What is bound is what the behavior is called with, each behavior constructed in turn
+ * holding its own, as on the JVM: two implementations of one behavior bound at two places answer
+ * each at its own place (#72). Nothing is registered, so the value {@code apply} answers is the
+ * caller's run's, and what the run was handed answers what is called through {@code Behaviors}.
  */
 class APhpHostBindsABehaviorToWhatItRequiresTest {
 
@@ -157,8 +159,7 @@ class APhpHostBindsABehaviorToWhatItRequiresTest {
             echo "resold: ", $binding->run(fn (Session $s): int =>
                 Resold::bind(dependency0: $prices, dependency1: new MarkedUp())->apply($s, 'ab')), "\\n";
 
-            // What apply answers is a value of the caller's run: read after apply has put back what
-            // it registered, and refused once the run has ended.
+            // What apply answers is a value of the caller's run, and refused once the run has ended.
             echo "line: ", $binding->run(function (Session $s) use ($prices): string {
                 $line = LineOf::bind($prices)->apply($s, 'abc');
                 return $line->sku() . ' at ' . $line->amount();
@@ -186,7 +187,8 @@ class APhpHostBindsABehaviorToWhatItRequiresTest {
                 return Priced::bind($price)->apply($s, 'ab') + $answered->value();
             }), "\\n";
 
-            // Registered for the call and not after it: the run's own are registered again.
+            // What a behavior was bound to is its own: one called through `Behaviors` is constructed
+            // from what the run was handed, and from nothing where the run was handed nothing.
             echo "after: ", $binding->run(function (Session $s) use ($quote): string {
                 $bound = $quote->apply($s, 'ab', 1);
                 $own = Behaviors::quote($s, 'ab', 1);
@@ -226,11 +228,13 @@ class APhpHostBindsABehaviorToWhatItRequiresTest {
             } catch (TypeError $wrong) {
                 echo "wrong: ", $wrong::class, "\\n";
             }
-            try {
-                Both::bind($quote, new ListedPrice(5));
-            } catch (InvalidArgumentException $two) {
-                echo "two: ", $two->getMessage(), "\\n";
-            }
+            // One behavior bound to two implementations at two places: the quote it requires is
+            // priced by one and it prices by the other itself, each where it was bound (#72).
+            echo "two: ", $binding->run(fn (Session $s): int =>
+                Both::bind($quote, new ListedPrice(5))->apply($s, 'a')), "\\n";
+            echo "two the other way: ", $binding->run(fn (Session $s): int =>
+                Both::bind(Quote::bind(new ListedPrice(5), new Off(2)), $prices)->apply($s, 'a')),
+                "\\n";
             echo "same twice: ", $binding->run(fn (Session $s): int =>
                 Both::bind(Quote::bind($prices, new Off(0)), $prices)->apply($s, 'a')), "\\n";
 
@@ -258,7 +262,8 @@ class APhpHostBindsABehaviorToWhatItRequiresTest {
             nested: 7
             missing: ArgumentCountError
             wrong: TypeError
-            two: catalog.priceOf is bound to two implementations, and the library calls one implementation of it at a time
+            two: 7
+            two the other way: 6
             same twice: 6
             outer in inner: Souther\\Runtime\\NotTheInnermostRun
             """;

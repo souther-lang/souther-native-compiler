@@ -23,11 +23,18 @@ final class Session
 {
     private bool $active = true;
 
-    /** @internal */
+    /** @var array<string, Bound> what each behavior called through `Behaviors` was constructed as */
+    private array $constructed = [];
+
+    /**
+     * @internal
+     * @param array<string, \Closure> $injected what the run was handed, by the declared name of the
+     *        behavior each implements
+     */
     public function __construct(
         private readonly NativeLibrary $library,
         private readonly ?\Fiber $fiber,
-        private readonly InjectionRegistry $registry,
+        private readonly array $injected,
     ) {
     }
 
@@ -80,21 +87,30 @@ final class Session
     }
 
     /**
-     * @internal Runs `$body` with `$implementations` registered for its length, in this run.
-     *
-     * Only through the innermost run's session, as a computation is started ({@see call()}): what
-     * is registered is put back when `$body` ends, and a run inside it would end after.
-     *
-     * @template T
-     * @param callable(): T $body
-     * @param array<string, \Closure> $implementations by the declared name of the behavior each
-     *        implements
-     * @return T
+     * @internal What `$behavior` is called with where it is called through `Behaviors` in this run:
+     * the capabilities of what it requires, constructed from what the run was handed
+     * ({@see Binding::run()}), or null where it requires nothing.
      */
-    public function withInjections(callable $body, array $implementations): mixed
+    public function requirementsOf(string $behavior): ?CData
     {
-        $this->call();
-        return $this->registry->around($body, $implementations);
+        return $this->constructedAs($behavior)->requirements($this);
+    }
+
+    private function constructedAs(string $behavior): Bound
+    {
+        if (isset($this->constructed[$behavior])) {
+            return $this->constructed[$behavior];
+        }
+        [$bind, $requires] = $this->library->construction($behavior);
+        $handed = [];
+        foreach ($requires as $required) {
+            $handed[] = match (true) {
+                $this->library->injects($required) => isset($this->injected[$required])
+                    ? Implemented::by($required, $this->injected[$required]) : null,
+                default => $this->constructedAs($required),
+            };
+        }
+        return $this->constructed[$behavior] = Bound::of($bind, ...$handed);
     }
 
     /**

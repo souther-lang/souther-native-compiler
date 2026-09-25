@@ -10,9 +10,9 @@ use FFI;
  * A shared library a binding was generated for, loaded once per process, with the numbers its
  * functions answer.
  *
- * One instance for each library, however many bindings load it: what the library keeps (its arena,
- * what is registered for each behavior a host implements) is the library's and not a binding's, so
- * a value one binding made is one another binding of the same library may hand over.
+ * One instance for each library, however many bindings load it: what the library keeps (its arena)
+ * is the library's and not a binding's, so a value one binding made is one another binding of the
+ * same library may hand over.
  */
 final class NativeLibrary
 {
@@ -24,12 +24,17 @@ final class NativeLibrary
 
     /**
      * The runs going, innermost last. They nest as calls do, and each ends before the one it was
-     * started in: the arena is reset to each run's mark, and what each registered is put back, in
-     * that order and no other.
+     * started in: the arena is reset to each run's mark in that order and no other.
      *
      * @var list<Session>
      */
     private array $open = [];
+
+    /** @var array<string, InjectionSlot> by the declared name of the behavior each is for */
+    private array $slots = [];
+
+    /** @var array<string, array{?string, list<string>}> by the declared name of the behavior */
+    private array $constructions = [];
 
     /**
      * The fiber the runs going are on, the main one being null; meaningful while any is going.
@@ -102,8 +107,7 @@ final class NativeLibrary
 
     /**
      * Which file `$library` is, as the loader tells files apart: by device and inode, and not by
-     * a path. The arena and what is registered are the library's, one for each file however it is
-     * reached, so two instances over one file would be two stacks of runs over one arena, each
+     * a path. The arena is the library's, one for each file however it is reached, so two instances over one file would be two stacks of runs over one arena, each
      * taking the other's inner run for its own.
      */
     private static function identity(string $library): string
@@ -152,10 +156,50 @@ final class NativeLibrary
     }
 
     /**
-     * @internal A session for a run starting now, inside whichever runs are going, registering
-     * implementations through `$registry`.
+     * @internal What a binding generated for this library adapts each behavior a host implements
+     * through, and what each behavior is constructed from.
+     *
+     * @param array<string, InjectionSlot> $slots
+     * @param array<string, array{?string, list<string>}> $constructions
      */
-    public function open(InjectionRegistry $registry): Session
+    public function adopt(array $slots, array $constructions): void
+    {
+        $this->slots = $slots;
+        $this->constructions = $constructions;
+    }
+
+    /** @internal What `$behavior`, which a host implements, is adapted through. */
+    public function slot(string $behavior): InjectionSlot
+    {
+        return $this->slots[$behavior]
+            ?? throw new \InvalidArgumentException("the library asks no host to implement {$behavior}");
+    }
+
+    /** @internal Whether a host implements `$behavior`. */
+    public function injects(string $behavior): bool
+    {
+        return isset($this->slots[$behavior]);
+    }
+
+    /**
+     * @internal What makes a capability of `$behavior`, where something may require it, and what it
+     * requires, in order.
+     *
+     * @return array{?string, list<string>}
+     */
+    public function construction(string $behavior): array
+    {
+        return $this->constructions[$behavior]
+            ?? throw new \InvalidArgumentException("the library constructs no {$behavior}");
+    }
+
+    /**
+     * @internal A session for a run starting now, inside whichever runs are going, handed
+     * `$injected`.
+     *
+     * @param array<string, \Closure> $injected by the declared name of the behavior each implements
+     */
+    public function open(array $injected): Session
     {
         $fiber = \Fiber::getCurrent();
         if ($this->open !== [] && $fiber !== $this->holder) {
@@ -163,7 +207,7 @@ final class NativeLibrary
                 'a run of this library is going on another fiber, which has to end it first');
         }
         $this->holder = $fiber;
-        return $this->open[] = new Session($this, $fiber, $registry);
+        return $this->open[] = new Session($this, $fiber, $injected);
     }
 
     /** @internal Ends the run `$session` is for, which is the innermost one. */
@@ -197,7 +241,7 @@ final class NativeLibrary
             'HOST_EXCEPTION' => Pending::take()
                 ?? new InjectionProtocolViolation('an implementation answered that it threw, and nothing was kept'),
             'INJECTION_UNBOUND' => new UnboundInjection(
-                'a behavior the host implements was called with nothing registered for it'),
+                'a behavior the host implements was reached with nothing handed for it'),
             'INJECTION_PROTOCOL_VIOLATION' => new InjectionProtocolViolation(
                 'an implementation answered something other than a value or an exception'),
             null => new SoutherAbort("status {$status}", $status),

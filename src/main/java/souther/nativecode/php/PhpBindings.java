@@ -28,6 +28,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -68,7 +69,7 @@ public final class PhpBindings {
      * The version of what generated code calls of the runtime package that this writes against:
      * {@code Binding::PROTOCOL} in {@code bindings/php/runtime}, which a test holds to this.
      */
-    static final int RUNTIME_PROTOCOL = 3;
+    static final int RUNTIME_PROTOCOL = 4;
 
     private final Manifest manifest;
     private final String root;
@@ -950,7 +951,11 @@ public final class PhpBindings {
                 case Manifest.Parameters.Positional positional ->
                         PhpNames.positional(positional.types().size());
             };
-            functions.append(call(what, behavior.name(), names, takes, answers, call));
+            String requirements = behavior.requires().isEmpty() ? "null"
+                    : "$" + PhpNames.freeOf("session", names) + "->requirementsOf('"
+                    + quotedInSingle(module.name() + "." + behavior.name()) + "')";
+            functions.append(call(what, "public static function " + behavior.name(), names, takes,
+                    answers, call, requirements));
             BehaviorClass it = behaviorClasses.get(module.name() + "." + behavior.name());
             if (it != null) {
                 behaviorClass(it, behavior, names, takes, answers);
@@ -987,7 +992,8 @@ public final class PhpBindings {
             }
             String what = "value `" + module.name() + "." + value.name() + "`";
             members.claim(PhpNames.memberName(value.name(), what), what);
-            functions.append(call(what, value.name(), List.of(), List.of(), answers, read));
+            functions.append(call(what, "public static function " + value.name(), List.of(),
+                    List.of(), answers, read, null));
         }
         if (functions.isEmpty()) {
             return;
@@ -1004,11 +1010,21 @@ public final class PhpBindings {
         file(namespace, "Values", php);
     }
 
-    /** A static function calling {@code function} and answering what it wrote. */
-    private static String call(String what, String name, List<String> names, List<Given> takes,
-                               Received answers, Function function) {
+    /**
+     * A function, declared as {@code declared}, calling {@code function} and answering what it
+     * wrote. {@code requirements} is what a behavior is called with first, as PHP works it out from
+     * the session, and null for a value, which is called with nothing more.
+     */
+    private static String call(String what, String declared, List<String> names,
+                               List<Given> takes, Received answers, Function function,
+                               @Nullable String requirements) {
         List<Word> rooms = answers.words();
-        agrees(function, words(takes), rooms, Word.STATUS);
+        List<Word> handed = new ArrayList<>();
+        if (requirements != null) {
+            handed.add(Word.REQUIREMENTS);
+        }
+        handed.addAll(words(takes));
+        agrees(function, handed, rooms, Word.STATUS);
         String session = PhpNames.freeOf("session", names);
         Set<String> taken = new HashSet<>(names);
         taken.add(session);
@@ -1027,6 +1043,9 @@ public final class PhpBindings {
         List<String> parameters = new ArrayList<>();
         parameters.add(RUNTIME + "Session $" + session);
         List<String> given = new ArrayList<>();
+        if (requirements != null) {
+            given.add(requirements);
+        }
         for (int at = 0; at < takes.size(); at++) {
             parameters.add(takes.get(at).phpType() + " $" + names.get(at));
             given.addAll(takes.get(at).given("$" + names.get(at), "$" + session));
@@ -1051,10 +1070,10 @@ public final class PhpBindings {
             }
         }
         return "\n" + docLines(List.of("Calls " + what + "."), described, answers) + """
-                    public static function %s(%s): %s
+                    %s(%s): %s
                     {
                 %s    }
-                """.formatted(name, String.join(", ", parameters), answers.phpType(), body);
+                """.formatted(declared, String.join(", ", parameters), answers.phpType(), body);
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -1122,7 +1141,10 @@ public final class PhpBindings {
             return null;
         }
         Manifest.Implementation implementation = injection.implementation();
+        // What the implementation was handed where its capability was made comes first, and the
+        // runtime takes it off before this is handed the rest.
         List<Parameter> expected = new ArrayList<>();
+        expected.add(Parameter.given(Word.USERDATA));
         words(takes).forEach(word -> expected.add(Parameter.given(word)));
         answers.words().forEach(word -> expected.add(Parameter.room(word)));
         if (!expected.equals(implementation.takes()) || implementation.answers() != Word.STATUS) {
@@ -1186,7 +1208,7 @@ public final class PhpBindings {
         StringBuilder php = header(it.namespace());
         php.append(doc("", "What implements `" + it.key() + "`, which the library asks a host to"
                 + " implement. An instance is handed to what is bound to it, and the library calls"
-                + " `apply` of the one registered wherever the behavior is reached."));
+                + " its `apply` wherever what was bound to it reaches the behavior."));
         php.append("abstract class ").append(it.className()).append("\n{\n");
         php.append(docLines(List.of("Answers `" + it.key() + "`, in the session of the innermost"
                 + " run going. An exception thrown here comes back out of the call into the library"
@@ -1199,7 +1221,7 @@ public final class PhpBindings {
     /**
      * The class an application binds {@code behavior} through and calls it on: {@code bind}, taking
      * an implementation of each behavior it requires, or {@code of} where it requires none, and
-     * {@code apply}, calling it with what it was bound to registered for the call.
+     * {@code apply}, calling it with the capabilities of what it was bound to.
      *
      * <p>{@code apply} takes the session, as every function a binding writes does, and does not
      * open a run of its own: what it answers is a value of the caller's run, and a run it opened
@@ -1208,66 +1230,50 @@ public final class PhpBindings {
     private void behaviorClass(BehaviorClass it, Manifest.Behavior behavior, List<String> names,
                                List<Given> takes, Received answers) throws IOException {
         String session = PhpNames.freeOf("session", names);
-        List<String> parameters = new ArrayList<>();
-        parameters.add(RUNTIME + "Session $" + session);
-        List<String> arguments = new ArrayList<>();
-        arguments.add("$" + session);
-        List<String> described = new ArrayList<>();
-        for (int at = 0; at < takes.size(); at++) {
-            parameters.add(takes.get(at).phpType() + " $" + names.get(at));
-            arguments.add("$" + names.get(at));
-            described.addAll(paramTag(takes.get(at), names.get(at)));
-        }
-
         StringBuilder php = header(it.namespace());
-        php.append(doc("", "`" + it.key() + "` as an application holds it: each call registers what"
-                + " it was bound to for the call's length, in the caller's run."));
+        php.append(doc("", "`" + it.key() + "` as an application holds it: bound to an"
+                + " implementation of each behavior it requires, which each call is made with."));
         php.append("final class ").append(it.className()).append("\n{\n");
         php.append("""
                     private function __construct(private readonly \\Souther\\Runtime\\Bound $bound)
                     {
                     }
                 """);
-        php.append(construction(it, behavior.requires()));
+        php.append(construction(it, behavior));
         php.append("""
 
-                    /** @internal What this was bound to, for what requires it to be bound to the same. */
+                    /** @internal What this was bound to, for what requires it. */
                     public function bound(): \\Souther\\Runtime\\Bound
                     {
                         return $this->bound;
                     }
-
                 """);
-        php.append(docLines(List.of("Calls `" + it.key() + "` with what this was bound to"
-                + " registered."), described, answers));
-        php.append("""
-                    public function apply(%s): %s
-                    {
-                        return $this->bound->around($%s,
-                            static fn (): %s => \\%s\\Behaviors::%s(%s));
-                    }
-                }
-                """.formatted(String.join(", ", parameters), answers.phpType(), session,
-                answers.phpType(), it.namespace(), behavior.name(), String.join(", ", arguments)));
+        php.append(call("`" + it.key() + "` with what this was bound to", "public function apply",
+                names, takes, answers, Objects.requireNonNull(behavior.call()),
+                "$this->bound->requirements($" + session + ")"));
+        php.append("}\n");
         file(it.namespace(), it.className(), php);
     }
 
     /**
-     * How an application makes {@code it}: {@code bind}, taking one implementation of each of
-     * {@code requires} in order, or {@code of}, where it requires nothing. A
-     * behavior a host implements is registered as the instance handed over, and one constructed in
-     * turn brings what it was bound to.
+     * How an application makes {@code it}: {@code bind}, taking one implementation of each behavior
+     * {@code behavior} requires, in order, or {@code of}, where it requires nothing. A behavior a host
+     * implements stands as the instance handed over, and one constructed in turn as what it was
+     * bound to.
      */
-    private String construction(BehaviorClass it, List<Manifest.Required> requires) {
+    private String construction(BehaviorClass it, Manifest.Behavior behavior) {
+        List<Manifest.Required> requires = behavior.requires();
+        String bind = behavior.bind() == null ? "null"
+                : "'" + quotedInSingle(behavior.bind().name()) + "'";
         if (requires.isEmpty()) {
             return """
 
                         /** `%s`, which requires nothing. */
                         public static function of(): self
                         {
-                            return new self(\\Souther\\Runtime\\Bound::of([]));
+                            return new self(\\Souther\\Runtime\\Bound::of(%s));
                         }
-                    """.formatted(it.key());
+                    """.formatted(it.key(), bind);
         }
         // A requirement is its module and its name, and two of one name from two modules are two
         // requirements (a composition over `a.load` and `b.load`), so a parameter is named after
@@ -1275,22 +1281,18 @@ public final class PhpBindings {
         List<String> names = PhpNames.ownParameters(
                 requires.stream().map(Manifest.Required::name).toList(), "dependency");
         List<String> parameters = new ArrayList<>();
-        List<String> implementers = new ArrayList<>();
-        List<String> constructed = new ArrayList<>();
+        List<String> handed = new ArrayList<>();
+        handed.add(bind);
         for (int at = 0; at < requires.size(); at++) {
             Manifest.Required required = requires.get(at);
             BehaviorClass of = behaviorClasses.get(required.key());
             String name = names.get(at);
             parameters.add(of.fqcn() + " $" + name);
-            if (of.injected()) {
-                implementers.add("'" + quotedInSingle(required.key()) + "' => $" + name);
-            } else {
-                constructed.add("$" + name + "->bound()");
-            }
+            handed.add(of.injected()
+                    ? "\\Souther\\Runtime\\Implemented::by('" + quotedInSingle(required.key())
+                            + "', $" + name + "->apply(...))"
+                    : "$" + name + "->bound()");
         }
-        List<String> bound = new ArrayList<>();
-        bound.add("[" + String.join(", ", implementers) + "]");
-        bound.addAll(constructed);
         return """
 
                     /** `%s`, bound to an implementation of each behavior it requires. */
@@ -1298,7 +1300,7 @@ public final class PhpBindings {
                     {
                         return new self(\\Souther\\Runtime\\Bound::of(%s));
                     }
-                """.formatted(it.key(), String.join(", ", parameters), String.join(", ", bound));
+                """.formatted(it.key(), String.join(", ", parameters), String.join(", ", handed));
     }
 
     /**
@@ -1315,6 +1317,7 @@ public final class PhpBindings {
 
     private void binding() throws IOException {
         StringBuilder slots = new StringBuilder();
+        StringBuilder constructions = new StringBuilder();
         for (Manifest.Module module : manifest.modules()) {
             for (Manifest.Injection injection : module.injections()) {
                 String adapter = adapter(module, injection);
@@ -1324,8 +1327,18 @@ public final class PhpBindings {
                 slots.append("            '").append(module.name()).append('.')
                         .append(injection.name()).append("' => new \\Souther\\Runtime\\InjectionSlot(")
                         .append("$library, '").append(injection.implementation().type()).append("', '")
-                        .append(injection.register()).append("',\n                ").append(adapter)
+                        .append(injection.implement()).append("',\n                ").append(adapter)
                         .append("),\n");
+            }
+            for (Manifest.Behavior behavior : module.behaviors()) {
+                String bind = behavior.bind() == null ? "null"
+                        : "'" + quotedInSingle(behavior.bind().name()) + "'";
+                String requires = behavior.requires().stream()
+                        .map(it -> "'" + quotedInSingle(it.key()) + "'")
+                        .collect(Collectors.joining(", ", "[", "]"));
+                constructions.append("        '").append(quotedInSingle(module.name() + "."
+                        + behavior.name())).append("' => [").append(bind).append(", ")
+                        .append(requires).append("],\n");
             }
         }
         StringBuilder php = header(root);
@@ -1334,6 +1347,15 @@ public final class PhpBindings {
         php.append("final class Binding extends \\Souther\\Runtime\\Binding\n{\n");
         php.append("    private const STATUSES = ").append(array(manifest.statuses())).append(";\n\n");
         php.append("    private const OUTCOMES = ").append(array(manifest.outcomes())).append(";\n");
+        php.append("""
+
+                    /**
+                     * What makes a capability of each behavior, where something may require it, and
+                     * the behaviors it requires, in order: what a run constructs what it calls from.
+                     */
+                    private const CONSTRUCTIONS = [
+                %s    ];
+                """.formatted(constructions));
         php.append("""
 
                     /**
@@ -1371,7 +1393,7 @@ public final class PhpBindings {
 
                     /**
                      * One binding for each library, made the first time it is asked for: what each
-                     * implementation is registered through is made into a C entry here, and PHP keeps
+                     * implementation is called through is made into a C entry here, and PHP keeps
                      * every entry it makes until the request ends, which a worker never does.
                      */
                     private static function over(\\Souther\\Runtime\\NativeLibrary $library): self
@@ -1384,7 +1406,7 @@ public final class PhpBindings {
                                 . ' is version ' . $speaks);
                         }
                         return self::$bindings[spl_object_id($library)] ??= new self($library, [
-                %s        ]);
+                %s        ], self::CONSTRUCTIONS);
                     }
                 }
                 """.formatted(DECLARATIONS, DECLARATIONS, RUNTIME_PROTOCOL, RUNTIME_PROTOCOL, slots));
