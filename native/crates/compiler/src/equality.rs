@@ -211,7 +211,7 @@ impl Comparing<'_, '_, '_, '_> {
             | Ty::Map { .. }
             | Ty::Nothing { .. } => {
                 let same = equal(self.builder, self.lowering, self.module, ty, a, b)?;
-                self.unless(same)?;
+                self.unless(same);
             }
             Ty::Var { var } => crate::laid_out_nowhere(*var),
         }
@@ -221,11 +221,10 @@ impl Comparing<'_, '_, '_, '_> {
     }
 
     /// Leaves for the unequal block where `same` is false, and carries on where it is true.
-    fn unless(&mut self, same: ir::Value) -> Lowered<()> {
+    fn unless(&mut self, same: ir::Value) {
         let next = self.builder.create_block();
         self.builder.ins().brif(same, next, &[], self.unequal, &[]);
         self.builder.switch_to_block(next);
-        Ok(())
     }
 
     /// The two values' slots compared one after another, each at the type it holds.
@@ -240,7 +239,7 @@ impl Comparing<'_, '_, '_, '_> {
             let one = self.read(a, at(position) as i32, ty)?;
             let other = self.read(b, at(position) as i32, ty)?;
             let same = equal(self.builder, self.lowering, self.module, ty, one, other)?;
-            self.unless(same)?;
+            self.unless(same);
         }
         Ok(())
     }
@@ -257,7 +256,7 @@ impl Comparing<'_, '_, '_, '_> {
         let one = Tagged::of(a, ty).which(self.builder);
         let other = Tagged::of(b, ty).which(self.builder);
         let same = self.builder.ins().icmp(IntCC::Equal, one, other);
-        self.unless(same)?;
+        self.unless(same);
         let leaves = self
             .lowering
             .declared
@@ -285,7 +284,8 @@ impl Comparing<'_, '_, '_, '_> {
         }
         self.builder.switch_to_block(answered);
         let same = self.builder.block_params(answered)[0];
-        self.unless(same)
+        self.unless(same);
+        Ok(())
     }
 
     /// Whether `a` and `b`, both known to be the case `leaf`, are equal as it.
@@ -335,7 +335,7 @@ impl Comparing<'_, '_, '_, '_> {
             .ins()
             .load(types::I64, TRUSTED, b, LIST_LENGTH as i32);
         let same = self.builder.ins().icmp(IntCC::Equal, length, also);
-        self.unless(same)?;
+        self.unless(same);
 
         let head = self.builder.create_block();
         self.builder.append_block_param(head, types::I64);
@@ -366,7 +366,7 @@ impl Comparing<'_, '_, '_, '_> {
             one,
             other,
         )?;
-        self.unless(same)?;
+        self.unless(same);
         let next = self.builder.ins().iadd_imm_s(index, 1);
         self.builder.ins().jump(head, &[next.into()]);
 

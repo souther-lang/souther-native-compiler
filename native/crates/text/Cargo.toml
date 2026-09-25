@@ -9,3 +9,6 @@ license.workspace = true
 # over bytes, and whatever it reached into here would be one more thing to carry when it moves out
 # to what both runtimes read (#17).
 [dependencies]
+
+[lints]
+workspace = true

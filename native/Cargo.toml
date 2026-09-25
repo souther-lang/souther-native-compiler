@@ -13,6 +13,11 @@ edition = "2024"
 rust-version = "1.95"
 license = "EPL-2.0"
 
+# A function that cannot fail and says it can hands every caller a failure to answer for that never
+# comes, and a `?` at the call hides which calls can actually end the work.
+[workspace.lints.clippy]
+unnecessary_wraps = "deny"
+
 [workspace.dependencies]
 souther-native-abi = { path = "crates/abi" }
 souther-json-syntax = { path = "crates/json-syntax" }
