@@ -243,7 +243,7 @@ class ARowHoldsWhereverItIsRunTest {
     /**
      * Rows that hand a behavior a value of a declared type: a product, a product holding a list of
      * products, an optional field holding nothing and one holding something, and types that hold
-     * their values to an invariant.
+     * their values to an invariant, one of them inside a list.
      *
      * <p>A present optional is written as the value it holds, and only the field's type says it is
      * one. The first order's fields are written in an order other than the one they are declared
@@ -279,6 +279,11 @@ class ARowHoldsWhereverItIsRunTest {
             behavior free : (stock: Stock) -> Int
             let free (stock) = stock.held - stock.reserved
 
+            behavior firstOf : (quantities: List<Quantity>) -> Int
+            let firstOf (quantities) = match List.get(0, quantities) with
+                | Some q -> q.value
+                | None -> 0
+
             example counted
                 | "two lines" : (Order { note = None, lines = [Line { sku = "apple", quantity = 2 }, Line { sku = "pear", quantity = 3 }], number = 7 }) -> 207
                 | "no lines" : (Order { number = 1, lines = [], note = None }) -> 1
@@ -296,6 +301,10 @@ class ARowHoldsWhereverItIsRunTest {
 
             example free
                 | "some reserved" : (Stock { held = 10, reserved = 3 }) -> 7
+
+            example firstOf
+                | "a list of them" : ([Quantity(3), Quantity(5)]) -> 3
+                | "none of them" : ([]) -> 0
             """;
 
     /** A definition the module holds and reaches, including one that reaches itself. */

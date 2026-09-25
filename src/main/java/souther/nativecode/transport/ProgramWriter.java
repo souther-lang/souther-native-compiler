@@ -654,7 +654,7 @@ public final class ProgramWriter {
             throw notYet("a row of `" + behavior.name() + "` stating " + inputs.size()
                     + " values where the behavior takes " + takes.size());
         }
-        StringJoiner arguments = new StringJoiner(",", "[", "]");
+        List<String> arguments = new ArrayList<>();
         for (int at = 0; at < takes.size(); at++) {
             arguments.add(given(inputs.get(at), takes.get(at)));
         }
@@ -663,11 +663,8 @@ public final class ProgramWriter {
         // What the behavior ends with is its own, and what its clause ends with is what the
         // target's ensures says (EnsuresEnforcement#aborts), not a fact of this site — the same
         // answer a call written in a body gets.
-        return "{\"core\":\"call\",\"reaches\":{\"is\":\"behavior\",\"declared\":"
-                + quoted(module.name() + "." + behavior.name().name()) + "}"
-                + ",\"arguments\":" + arguments
-                + ",\"type\":" + type(behavior.signature().answers())
-                + ",\"aborts\":[]}";
+        return callNode(behaviorReach(behavior.name()), arguments,
+                behavior.signature().answers(), AbortSet.NONE);
     }
 
     /**
@@ -1299,10 +1296,10 @@ public final class ProgramWriter {
                 + ",\"type\":" + type(type) + ",\"aborts\":" + spelled(aborts) + "}";
     }
 
-    private static String joined(List<String> written) {
-        StringJoiner joined = new StringJoiner(",", "[", "]");
-        written.forEach(joined::add);
-        return joined.toString();
+    private String callNode(String reaches, List<String> arguments, Type type, AbortSet aborts) {
+        return "{\"core\":\"call\",\"reaches\":" + reaches
+                + ",\"arguments\":" + joined(arguments)
+                + ",\"type\":" + type(type) + ",\"aborts\":" + spelled(aborts) + "}";
     }
 
     private String core(Core node, Bindings bindings) {
@@ -1506,7 +1503,7 @@ public final class ProgramWriter {
      * than one it parses and then has to notice is missing something.
      */
     private String call(Core.Call it, Bindings bindings) {
-        StringJoiner arguments = new StringJoiner(",", "[", "]");
+        List<String> arguments = new ArrayList<>();
         for (Core argument : it.args()) {
             arguments.add(core(argument, bindings));
         }
@@ -1517,11 +1514,7 @@ public final class ProgramWriter {
                 // name made up out of the declaration would not be the one the module holds.
                 case Core.Reaches.AHelper ignored ->
                         "{\"is\":\"helper\",\"reached\":" + reference(target.name()) + "}";
-                case Core.Reaches.ABehavior held -> {
-                    behaviorsMet.add(held.behavior());
-                    yield "{\"is\":\"behavior\",\"declared\":"
-                            + quoted(reached(held.declaration())) + "}";
-                }
+                case Core.Reaches.ABehavior held -> behaviorReach(held.behavior());
                 // A helper or a behavior is the only two `Reaches` `OfDeclaration#reaches` ever
                 // settles to; a value's own reference is `OfValue` or `OfPublishedValue` below,
                 // never one this compilation resolved a plain declaration to.
@@ -1546,9 +1539,13 @@ public final class ProgramWriter {
             // write and which stands for a shape a backend knows how to lower.
             case Core.Emitted target -> throw notYet("the operation " + target, it);
         };
-        return "{\"core\":\"call\",\"reaches\":" + reaches
-                + ",\"arguments\":" + arguments
-                + ",\"type\":" + type(it.type()) + ",\"aborts\":" + aborts(it) + "}";
+        return callNode(reaches, arguments, it.type(), program.abortsAt(it));
+    }
+
+    /** What a call reaching {@code behavior} names it by, for a call a body writes and one a row is. */
+    private String behaviorReach(ValueName.Behavior behavior) {
+        behaviorsMet.add(behavior);
+        return "{\"is\":\"behavior\",\"declared\":" + quoted(reached(behavior)) + "}";
     }
 
     /**
