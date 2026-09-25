@@ -119,29 +119,27 @@ class WhatThisBackendDoesNotWriteYetTest {
      * answer every row it did carry, so what a check of the rows compared would shrink by however
      * many rows had values like this one — and it would go on being green over the ones that were
      * left.
+     *
+     * <p>A date is the value here. What refuses it is the first place it is written, which is the
+     * literal the program holds for the row, before the row's own entry is reached.
      */
     @Test
     void aRowStatingAValueWithNoExpressionToMakeItIsRefusedRatherThanLeftOut() {
         CheckedProgram program = CheckedProgram.of(List.of("""
                 module owing
 
-                data Paid = { value: Int }
-                data Owed = { value: Int }
-                data Amount = Paid | Owed
+                data Due = { on: Date, label: String }
 
-                behavior tally : (a: Amount) -> Int
-                let tally (a) = match a with
-                    | Paid as p -> p.value
-                    | Owed as o -> -o.value
+                behavior labelled : (due: Due) -> String
+                let labelled (due) = due.label
 
-                example tally
-                    | "one of its cases" : (Paid { value = 7 }) -> 7
+                example labelled
+                    | "a date" : (Due { on = Date("2026-07-25"), label = "rent" }) -> "rent"
                 """));
 
         assertThatThrownBy(() -> ProgramWriter.written(program))
                 .isInstanceOf(NotLowered.class)
-                .hasMessageContaining("a row stating")
-                .hasMessageContaining("owing.Paid");
+                .hasMessageContaining("a temporal literal");
     }
 
     /**

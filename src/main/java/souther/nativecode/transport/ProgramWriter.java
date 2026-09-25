@@ -710,11 +710,9 @@ public final class ProgramWriter {
                 yield listNode(elements, at, AbortSet.NONE);
             }
             case Type.Ref it -> declared(value, it);
+            case Type.Union it -> standing(value, at);
 
-            // A value standing as a union of types is a widening, which the checker decides and a
-            // row does not carry. A set, a map and the rest have no expression this writer builds
-            // out of a value yet.
-            case Type.Union it -> throw notStated(value, at);
+            // A set, a map and the rest have no expression this writer builds out of a value yet.
             case Type.SetOf it -> throw notStated(value, at);
             case Type.MapOf it -> throw notStated(value, at);
             case Type.TupleOf it -> throw notStated(value, at);
@@ -730,9 +728,8 @@ public final class ProgramWriter {
     /**
      * A value of a declared type, built as the type is built.
      *
-     * <p>Only a value of that very type. One of a sum's cases is a value of the case, and standing it
-     * where the sum is taken is a widening, which the checker decides where it writes one and which
-     * this does not decide for it.
+     * <p>Only a value of that very type. One of a sum's cases is a value of the case, and where the
+     * sum is taken it stands there as {@link #standing} writes it.
      *
      * <p>The fields are the declaration's, in the declaration's order and at the declaration's
      * types, each looked up in what was observed by its name. What the observation holds is what the
@@ -757,8 +754,43 @@ public final class ProgramWriter {
                 }
                 yield constructNode(named(name), values, at, program.constructionAborts(name));
             }
-            default -> throw notStated(value, at);
+            default -> standing(value, at);
         };
+    }
+
+    /**
+     * A value stated where a type wider than its own is taken: built at its own type, and standing
+     * as the position's.
+     *
+     * <p>That is the rule {@link Core#standingAs} writes for the same value in a body, and not a
+     * second one: a value whose type is not the position's is a widening of it to the position's.
+     * Whether it may stand there at all is not asked again, since the compile admitted the row. What
+     * the widening itself ends with is nothing, which is what the program files every widening
+     * with.
+     *
+     * <p>Its own type is what the value says it is. A list and an absent optional do not say that
+     * on their own, and neither do the values with no expression here, so they are refused rather
+     * than guessed at.
+     */
+    private String standing(ObservedValue value, Type at) {
+        Type own = switch (value) {
+            case ObservedValue.Integer it -> Type.Prim.INT;
+            case ObservedValue.Bool it -> Type.Prim.BOOL;
+            case ObservedValue.Text it -> Type.Prim.STRING;
+            case ObservedValue.Unit it -> Type.ref(it.type());
+            case ObservedValue.Constructed it -> Type.ref(it.type());
+            case ObservedValue.Sequence it -> null;
+            case ObservedValue.Absent it -> null;
+            case ObservedValue.Decimal it -> null;
+            case ObservedValue.Temporal it -> null;
+            case ObservedValue.Mapping it -> null;
+            case ObservedValue.Unknown it -> null;
+            case ObservedValue.Truncated it -> null;
+        };
+        if (own == null || own.equals(at)) {
+            throw notStated(value, at);
+        }
+        return widenNode(given(value, own), at, AbortSet.NONE);
     }
 
     private static NotLowered notStated(ObservedValue value, Type at) {
@@ -1296,6 +1328,11 @@ public final class ProgramWriter {
                 + ",\"type\":" + type(type) + ",\"aborts\":" + spelled(aborts) + "}";
     }
 
+    private String widenNode(String value, Type type, AbortSet aborts) {
+        return "{\"core\":\"widen\",\"value\":" + value
+                + ",\"type\":" + type(type) + ",\"aborts\":" + spelled(aborts) + "}";
+    }
+
     private String callNode(String reaches, List<String> arguments, Type type, AbortSet aborts) {
         return "{\"core\":\"call\",\"reaches\":" + reaches
                 + ",\"arguments\":" + joined(arguments)
@@ -1358,8 +1395,8 @@ public final class ProgramWriter {
             case Core.LetIn it -> letIn(it, bindings);
             // Where the checker let a value stand as a type other than its own, which it decided
             // and this writes: what is evaluated, and the type the position takes it as.
-            case Core.Widen it -> "{\"core\":\"widen\",\"value\":" + core(it.value(), bindings)
-                    + ",\"type\":" + type(it.type()) + ",\"aborts\":" + aborts(it) + "}";
+            case Core.Widen it ->
+                    widenNode(core(it.value(), bindings), it.type(), program.abortsAt(it));
             case Core.If it -> "{\"core\":\"if\",\"cond\":" + core(it.cond(), bindings)
                     + ",\"then\":" + core(it.then(), bindings)
                     + ",\"else\":" + core(it.els(), bindings)
