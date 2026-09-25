@@ -195,7 +195,7 @@ impl<'a> Coherent<'a> {
             let target = targets.named(name)?;
             agrees_with_its_target(name, target, local, &targets, &declared, &mut owed)?;
             requires_what_it_names(name, local, &targets)?;
-            stages_are_handed_what_they_require(name, local, &locals, &targets, &mut owed)?;
+            stages_are_handed_what_they_require(name, local, &targets)?;
         }
 
         for body in program.bodies() {
@@ -299,7 +299,6 @@ impl<'a> Coherent<'a> {
                 unrun: Vec::new(),
                 environment: body.environment(),
                 constructs,
-                locals: &locals,
             };
             // A rule over a case tests the answer the way an arm tests what it forks on, and reads
             // it as an arm reads what it binds.
@@ -608,8 +607,6 @@ struct Walk<'w, 'a> {
     environment: &'a [crate::transport::Requirement],
     /// The behavior a row's body constructs, with what the row states its dependencies answer.
     constructs: Option<String>,
-    /// Every local definition, by the name it defines.
-    locals: &'w HashMap<&'a str, &'a Definition>,
 }
 
 impl<'a> Walk<'_, 'a> {
@@ -618,10 +615,7 @@ impl<'a> Walk<'_, 'a> {
     /// something constructed, reached from a body not constructed with it (spec
     /// §calling-a-behavior). The checker holds a body's calls to its `depends on`, so either is the
     /// two halves disagreeing, and lowered it would be a call through a capability nothing holds.
-    ///
-    /// What another build implements is called by its symbol wherever it is not handed: what it
-    /// requires is that build's to say, and a call of one requiring something is refused by the
-    /// checker before it is written.
+    /// What a behavior requires is what its target says, whichever build implements it.
     fn reached_as_constructed(&self, declared: &str) -> Result<()> {
         if self.constructs.as_deref() == Some(declared)
             || self
@@ -632,23 +626,20 @@ impl<'a> Walk<'_, 'a> {
             return Ok(());
         }
         let target = self.targets.named(declared)?;
-        let requires: &[crate::transport::Requirement] = match target.is {
-            Answers::Injected => bail!(
-                "{}: a call of {declared}, which a host implements, from a body not constructed                  with it: only a capability it was handed reaches it",
-                self.owner
-            ),
-            Answers::Body | Answers::Composed => self
-                .locals
-                .get(declared)
-                .map(|local| local.requirements())
-                .unwrap_or_default(),
-            Answers::Elsewhere | Answers::Unwritten => &[],
-        };
-        if !requires.is_empty() {
+        if target.is == Answers::Injected {
             bail!(
-                "{}: a call of {declared}, which requires {} constructed, from a body not                  constructed with it",
+                "{}: a call of {declared}, which a host implements, from a body not constructed \
+                 with it: only a capability it was handed reaches it",
+                self.owner
+            );
+        }
+        if !target.requirements.is_empty() {
+            bail!(
+                "{}: a call of {declared}, which requires {} constructed, from a body not \
+                 constructed with it",
                 self.owner,
-                requires
+                target
+                    .requirements
                     .iter()
                     .map(|it| it.declared())
                     .collect::<Vec<_>>()
@@ -2162,20 +2153,13 @@ fn requires_what_it_names(name: &str, local: &Definition, targets: &Targets) -> 
 
 /// That each stage of a composition can be handed what it requires out of what the composition was
 /// constructed with (spec §composition-with-requirements): a stage a host implements is one of the
-/// composition's requirements, and one constructed here requires nothing the composition was not
-/// handed. The composition builds the second and holds the first, so either missing is the checker's
-/// union answered differently from how the stages are.
-///
-/// A stage another build implements is handed what it requires in the order that build answered
-/// it, which this document does not carry: where the composition requires nothing, neither does
-/// the stage, and it is handed nothing; otherwise which of the composition's capabilities it takes
-/// cannot be said here, and the composition is not lowered (souther-lang/souther#1964).
+/// composition's requirements, and any other requires nothing the composition was not handed,
+/// whichever build implements it. The composition builds the second and holds the first, so either
+/// missing is the checker's union answered differently from how the stages are.
 fn stages_are_handed_what_they_require(
     name: &str,
     local: &Definition,
-    locals: &HashMap<&str, &Definition>,
     targets: &Targets,
-    owed: &mut Owed,
 ) -> Result<()> {
     let Definition::Composed {
         requirements,
@@ -2188,35 +2172,27 @@ fn stages_are_handed_what_they_require(
     let handed = |behavior: &str| requirements.iter().any(|it| it.declared() == behavior);
     for stage in stages {
         let reached = targets.named(&stage.behavior)?;
-        match reached.is {
-            Answers::Injected if !handed(&stage.behavior) => bail!(
-                "{name}'s stage {} is implemented by a host and is not among what {name}                  requires: a composition holds the stage it is handed",
-                stage.behavior
-            ),
-            Answers::Injected => {}
-            Answers::Body | Answers::Composed => {
-                let own = locals.get(stage.behavior.as_str()).ok_or_else(|| {
-                    anyhow!("{}, which no local definition defines", stage.behavior)
-                })?;
-                if let Some(missing) = own.requirements().iter().find(|it| !handed(&it.declared()))
-                {
-                    bail!(
-                        "{name}'s stage {} requires {}, which is not among what {name} requires: \
-                         a composition requires what its stages do",
-                        stage.behavior,
-                        missing.declared()
-                    );
-                }
-            }
-            Answers::Elsewhere if !requirements.is_empty() => {
-                owed.not_lowered.push(format!(
-                    "{name}'s stage {}, which another build implements, in a composition \
-                     requiring something: which of what {name} is handed the stage takes is not \
-                     carried (souther-lang/souther#1964)",
+        if reached.is == Answers::Injected {
+            if !handed(&stage.behavior) {
+                bail!(
+                    "{name}'s stage {} is implemented by a host and is not among what {name} \
+                     requires: a composition holds the stage it is handed",
                     stage.behavior
-                ));
+                );
             }
-            Answers::Elsewhere | Answers::Unwritten => {}
+            continue;
+        }
+        if let Some(missing) = reached
+            .requirements
+            .iter()
+            .find(|it| !handed(&it.declared()))
+        {
+            bail!(
+                "{name}'s stage {} requires {}, which is not among what {name} requires: a \
+                 composition requires what its stages do",
+                stage.behavior,
+                missing.declared()
+            );
         }
     }
     Ok(())

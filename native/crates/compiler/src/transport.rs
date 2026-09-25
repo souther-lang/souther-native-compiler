@@ -57,6 +57,11 @@ pub const MOVES: &[(u32, &str)] = &[
         "what a row states each dependency of its behavior answers, entry by entry and for the \
          rest (`standsIn`)",
     ),
+    (
+        22,
+        "what constructing a behavior requires injected, on the behavior's target wherever it is \
+         reached (`requirements`), and no longer beside a definition",
+    ),
 ];
 
 /// A document of [`TRANSPORT_VERSION`], and no other, read through [`Program::read`] and nothing
@@ -101,11 +106,32 @@ impl Program {
                 ))
             }
         })?;
+        let mut modules = written.modules;
+        // What a local definition requires is what its target says, read off the one place the
+        // document writes it. A definition no target names keeps nothing, and is refused as that
+        // where the two are held together (`Coherent`).
+        let required: std::collections::HashMap<String, &[Requirement]> = written
+            .behaviors
+            .iter()
+            .map(|target| (target.declared(), target.requirements.as_slice()))
+            .collect();
+        for module in &mut modules {
+            for definition in &mut module.definitions {
+                let copied = required
+                    .get(definition.declared())
+                    .map(|it| it.to_vec())
+                    .unwrap_or_default();
+                match definition {
+                    Definition::Body { requirements, .. }
+                    | Definition::Composed { requirements, .. } => *requirements = copied,
+                }
+            }
+        }
         Ok(Program {
             transport: written.transport,
             declarations: written.declarations,
             behaviors: written.behaviors,
-            modules: written.modules,
+            modules,
         })
     }
 }
@@ -624,7 +650,9 @@ pub enum Definition {
         parameters: Vec<String>,
         /// What the module declaring it says about the name.
         publication: Publication,
-        /// What constructing it requires injected, in order.
+        /// What its target says constructing it requires ([`Target::requirements`]), which
+        /// [`Program::read`] puts here and the document does not write a second time.
+        #[serde(skip)]
         requirements: Vec<Requirement>,
         body: Node,
     },
@@ -637,8 +665,9 @@ pub enum Definition {
         declared: String,
         /// What the module declaring it says about the name.
         publication: Publication,
-        /// What constructing it requires injected, in order: what its stages require, which is
-        /// not what it calls.
+        /// What its target says constructing it requires ([`Target::requirements`]): what its stages
+        /// require, which is not what it calls.
+        #[serde(skip)]
         requirements: Vec<Requirement>,
         stages: Vec<Stage>,
     },
@@ -812,6 +841,11 @@ pub struct Target {
     pub output: BoundaryOutput,
     /// What is done about what the behavior declares of its answer, as the checker answered it.
     pub ensures: Ensures,
+    /// What constructing it requires injected, in the order its constructor takes them: what a
+    /// caller hands it the capabilities of, and a composition hands a stage those of, whichever
+    /// build implements it. Nothing for a behavior a host implements, which Souther does not
+    /// construct; that is not a behavior called with nothing handed, which how it answers says.
+    pub requirements: Vec<Requirement>,
 }
 
 /// A [`Target`] as the document writes it.
@@ -824,6 +858,7 @@ struct WrittenTarget {
     parameters: Parameters,
     output: BoundaryOutput,
     ensures: Ensures,
+    requirements: Vec<Requirement>,
 }
 
 /// What a behavior takes: named where its declaration names them, and in order only where it is a
@@ -882,6 +917,9 @@ impl TryFrom<WrittenTarget> for Target {
             (Answers::Elsewhere, Parameters::Named(it)) => named(it),
             (Answers::Elsewhere, Parameters::Positional(inputs)) => (inputs, None),
         };
+        if written.is == Answers::Injected && !written.requirements.is_empty() {
+            return refused("requires something to construct, and a host's is not constructed");
+        }
         if let Some(contract) = written.ensures.contract() {
             match &names {
                 Some(names) if *names == contract.parameters => {}
@@ -902,6 +940,7 @@ impl TryFrom<WrittenTarget> for Target {
             names,
             output: written.output,
             ensures: written.ensures,
+            requirements: written.requirements,
         })
     }
 }

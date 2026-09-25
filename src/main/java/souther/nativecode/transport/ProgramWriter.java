@@ -88,7 +88,7 @@ public final class ProgramWriter {
      * written moves, so that a driver and a writer that disagree say so rather than producing an
      * object that is wrong quietly.
      */
-    public static final int TRANSPORT_VERSION = 21;
+    public static final int TRANSPORT_VERSION = 22;
 
     private final CheckedProgram program;
 
@@ -1056,6 +1056,11 @@ public final class ProgramWriter {
      * supplied by the caller, implemented by another build, composed out of other behaviors, or
      * not written at all — and which of them it is crosses, because it decides what the object
      * says about the name rather than what it puts under it.
+     *
+     * <p>With what constructing it requires, which is part of reaching it and not of how it is
+     * written: a caller hands a behavior the capabilities of what it requires, and a composition
+     * hands a stage those of the stage's, whichever build implements the stage. Empty for one a host
+     * implements, which Souther does not construct, and read together with how it answers.
      */
     private String target(ValueName.Behavior name, BehaviorTarget behavior) {
         String how = switch (behavior.implementation()) {
@@ -1074,6 +1079,7 @@ public final class ProgramWriter {
                 + ",\"parameters\":" + parameters(behavior.signature())
                 + ",\"output\":" + output(behavior.signature().output())
                 + ",\"ensures\":" + ensures(enforcement(name))
+                + ",\"requirements\":" + requirements(behavior.requirements())
                 + "}";
     }
 
@@ -1215,7 +1221,6 @@ public final class ProgramWriter {
         return "{\"is\":\"body\",\"declared\":" + quoted(module.name() + "." + behavior.name().name())
                 + ",\"parameters\":" + parameters
                 + ",\"publication\":" + quoted(publication(module.publicationOf(behavior.name())))
-                + ",\"requirements\":" + requirements(behavior)
                 + ",\"body\":" + core(written.body(), bindings)
                 + "}";
     }
@@ -1247,13 +1252,12 @@ public final class ProgramWriter {
         return "{\"is\":\"composed\",\"declared\":"
                 + quoted(module.name() + "." + behavior.name().name())
                 + ",\"publication\":" + quoted(publication(module.publicationOf(behavior.name())))
-                + ",\"requirements\":" + requirements(behavior)
                 + ",\"stages\":" + stages
                 + "}";
     }
 
     /**
-     * What constructing {@code behavior} requires injected, in the order the checker answered it.
+     * What constructing a behavior requires injected, in the order the checker answered it.
      *
      * <p>The checker's list as it is and not worked out here from what the body calls: a
      * composition requires what its stages do, which is not what it calls, and a second reading
@@ -1261,9 +1265,9 @@ public final class ProgramWriter {
      * is referred to, since a module's name carries dots. Met like a call, so the table of targets
      * says what each one is.
      */
-    private String requirements(CheckedBehavior behavior) {
+    private String requirements(List<ValueName.Behavior> requirements) {
         StringJoiner required = new StringJoiner(",", "[", "]");
-        for (ValueName.Behavior dependency : behavior.requirements()) {
+        for (ValueName.Behavior dependency : requirements) {
             behaviorsMet.add(dependency);
             required.add("{\"module\":" + quoted(dependency.module())
                     + ",\"name\":" + quoted(dependency.name()) + "}");

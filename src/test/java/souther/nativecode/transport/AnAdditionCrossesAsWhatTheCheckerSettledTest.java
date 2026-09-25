@@ -36,14 +36,14 @@ class AnAdditionCrossesAsWhatTheCheckerSettledTest {
         String written = ProgramWriter.written(CheckedProgram.of(List.of(ADDING)));
 
         assertThat(written).isEqualTo("""
-                {"transport":21,"declarations":[],\
+                {"transport":22,"declarations":[],\
                 "behaviors":[{"module":"calculation","name":"add","is":"body",\
                 "parameters":{"named":[{"name":"a","input":{"is":"scalar","scalar":"INT"}},\
                 {"name":"b","input":{"is":"scalar","scalar":"INT"}}]},\
-                "output":{"is":"scalar","scalar":"INT"},"ensures":{"at":"none"}}],\
+                "output":{"is":"scalar","scalar":"INT"},"ensures":{"at":"none"},"requirements":[]}],\
                 "modules":[{"name":"calculation","publishes":[],"helpers":[],"values":[],"entries":[],\
                 "definitions":[{"is":"body","declared":"calculation.add","parameters":["a","b"],\
-                "publication":"published","requirements":[],\
+                "publication":"published",\
                 "body":{"core":"binary","op":"ADD","reading":{"is":"astheystand"},\
                 "left":{"core":"read","binding":0,"type":{"prim":"INT"},"aborts":[]},\
                 "right":{"core":"read","binding":1,"type":{"prim":"INT"},"aborts":[]},\

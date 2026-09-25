@@ -4,12 +4,17 @@ import org.junit.jupiter.api.Test;
 import souther.compiler.Compiler;
 import souther.compiler.jvm.ClassFileImage;
 import souther.compiler.meta.ModulePath;
+import souther.compiler.observe.ObservedValue;
+import souther.compiler.observe.Verdict;
+import souther.compiler.program.CheckedBehavior;
+import souther.compiler.program.CheckedModule;
 import souther.compiler.program.CheckedProgram;
+import souther.compiler.program.CheckedRow;
 
 import java.util.List;
 import java.util.Map;
 
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * A behavior is called with a capability for each behavior it requires, which it was constructed
@@ -117,21 +122,34 @@ class ABehaviorIsCalledWithWhatItWasConstructedWithTest {
             let doubled (a) = a * 2
 
             behavior piped = looked >-> doubled
+
+            fake lib.port.lookUp
+                | (2) -> 40
+                | _ -> 0
+
+            example piped
+                | "a stage another build implements, handed what it requires" : (2) -> 80
             """;
 
     /**
-     * A stage another build implements is handed what it requires in the order that build answered
-     * it, which the checker's program does not say of a behavior read off the path. Where the
-     * composition requires something, which of its capabilities the stage takes cannot be said, and
-     * the composition is refused as not written yet rather than handed the wrong ones.
+     * A stage another build implements is handed what it requires in the order that build
+     * published it, picked out of what the composition was handed, as a stage of its own module is.
+     * The row stands in for what the stage requires, and the stage, which that other build's object
+     * runs, reaches it.
      */
     @Test
-    void aStageAnotherBuildImplementsInACompositionRequiringSomethingIsNotWrittenYet() {
+    void aStageAnotherBuildImplementsIsHandedWhatItRequires() throws Exception {
         Map<String, ClassFileImage> published = Compiler.compile(PORT);
+        byte[] port = NativeArtifacts.object(CheckedProgram.of(List.of(PORT)));
         CheckedProgram piped = CheckedProgram.of(List.of(PIPED), ModulePath.of(published));
+        CheckedModule module = piped.modules().getFirst();
+        CheckedBehavior behavior = module.behaviors().stream()
+                .filter(it -> it.name().name().equals("piped")).findFirst().orElseThrow();
+        CheckedRow.WithStandIns row = (CheckedRow.WithStandIns) behavior.rows().getFirst().statement();
 
-        assertThatThrownBy(() -> NativeArtifacts.object(piped))
-                .hasMessageContaining("app.piped.piped's stage lib.port.looked")
-                .hasMessageContaining("souther-lang/souther#1964");
+        ObservedValue answered = Running.of(piped, List.of(port))
+                .rowAnswering(module, behavior, 0, List.of());
+
+        assertThat(row.holds(answered)).as("answered %s", answered).isInstanceOf(Verdict.Held.class);
     }
 }

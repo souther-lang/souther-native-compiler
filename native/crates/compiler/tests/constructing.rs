@@ -11,17 +11,22 @@ use souther_native_driver::object_for;
 /// `m.doubled` requiring `m.lookUp`.
 const ENSURES: &str = include_str!("ensures.transport.json");
 
-/// The document with what `declared` requires replaced by nothing.
+/// The document with what `declared` requires replaced by nothing, on its target, which is where the
+/// document says it.
 fn requiring_nothing(declared: &str) -> String {
     let mut document: Value = serde_json::from_str(ENSURES).unwrap();
-    let definitions = document["modules"][0]["definitions"]
-        .as_array_mut()
-        .unwrap();
-    let definition = definitions
+    let targets = document["behaviors"].as_array_mut().unwrap();
+    let target = targets
         .iter_mut()
-        .find(|it| it["declared"] == declared)
+        .find(|it| {
+            format!(
+                "{}.{}",
+                it["module"].as_str().unwrap(),
+                it["name"].as_str().unwrap()
+            ) == declared
+        })
         .unwrap();
-    definition["requirements"] = json!([]);
+    target["requirements"] = json!([]);
     document.to_string()
 }
 

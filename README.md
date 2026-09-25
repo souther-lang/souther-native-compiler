@@ -138,10 +138,9 @@ on` goes through that capability: whatever the capability holds answers it, a bo
 implementation or a row's stand-in, and never what the name would recover. One with no body that
 declares nothing to depend on is reached only that way. The object of the build that declares it
 makes the capability of what a host implements it as, so what answers a dependency is the host's to
-choose when it runs the program and not something linked in. A composition hands each stage the
-capabilities of what the stage requires, picked out of its own; a stage another build implements, in
-a composition that requires something, is not written yet, since what the stage requires is not
-carried (souther-lang/souther#1964).
+choose when it runs the program and not something linked in. What constructing a behavior requires
+is on its target wherever it is reached, one another build implements included, and a composition
+hands each stage the capabilities of what the stage requires, picked out of its own.
 
 What a call may reach is wider than what the object defines — a body may name a behavior, or a
 type, that a module built before this one declares — so the document says the two apart.

@@ -722,7 +722,6 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
         targets: &targets,
         literals: &literals,
         constructors: &constructors,
-        locals: &locals,
     };
 
     // Every body this object runs, each lowered where it stands: what a call from it reaches is
@@ -1888,9 +1887,6 @@ struct Lowerings<'a> {
     /// Every behavior the document names, which is where what a composition's stage answers is
     /// read.
     targets: &'a Targets<'a>,
-    /// Every local definition, by the name it defines: where what a stage constructed here
-    /// requires is read.
-    locals: &'a HashMap<&'a str, &'a Definition>,
 }
 
 impl<'a> Lowerings<'a> {
@@ -3793,13 +3789,12 @@ fn define_composed(
 /// `stage` (spec §composition-with-requirements).
 ///
 /// A stage a host implements is one of what the composition was handed, and is called through that
-/// capability. A stage constructed here is built by the composition: its symbol, handed the
-/// capabilities of what it requires, picked out of the composition's own in the stage's order.
-/// Those are laid out in room taken from the arena and not on this function's stack, since the
-/// stage may make a function value that carries them past this call's end, the way the JVM's
-/// composition holds the stage it built for as long as the stage is held. One requiring nothing
-/// is handed nothing, as is a stage another build implements, which `Coherent` held to stand only
-/// in a composition requiring nothing.
+/// capability. Any other is built by the composition, whichever build implements it: its symbol,
+/// handed the capabilities of what its target says it requires, picked out of the composition's own
+/// in the stage's order. Those are laid out in room taken from the arena and not on this function's
+/// stack, since the stage may make a function value that carries them past this call's end, the
+/// way the JVM's composition holds the stage it built for as long as the stage is held. One
+/// requiring nothing is handed nothing.
 fn stage_through(
     builder: &mut FunctionBuilder,
     lowering: &Lowerings,
@@ -3816,17 +3811,10 @@ fn stage_through(
             .expect("`Coherent` held every stage to be handed what it requires")
     };
     let reached = lowering.targets.reached(stage);
-    let stage_requires = match reached.is {
-        transport::Answers::Injected => {
-            return Through::Capability(capability_at(builder, abort, handed, at(stage)));
-        }
-        transport::Answers::Body | transport::Answers::Composed => lowering
-            .locals
-            .get(stage)
-            .expect("`Coherent` held every target answering with a local definition to have one")
-            .requirements(),
-        transport::Answers::Elsewhere | transport::Answers::Unwritten => &[],
-    };
+    if reached.is == transport::Answers::Injected {
+        return Through::Capability(capability_at(builder, abort, handed, at(stage)));
+    }
+    let stage_requires = &reached.requirements;
     if stage_requires.is_empty() {
         return Through::Symbol(builder.ins().iconst(POINTER, 0));
     }
