@@ -70,6 +70,9 @@ jobs:
       # and its binding, Composer installs the runtime from its path, and PHP calls the library.
       - run: scripts/php-from-the-command-line.sh
 
+      # Every Composer project installs what its lock fixes, and the lock still matches it.
+      - run: scripts/composer-locks.sh
+
       # The cart example, built and tested the way its README says: an application's whole path
       # from HTTP JSON through raoh-php into the model and out to a database over PDO.
       - run: scripts/php-cart-example.sh
