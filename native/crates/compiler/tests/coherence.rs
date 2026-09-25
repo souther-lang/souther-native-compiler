@@ -21,7 +21,7 @@ const P: &str = r#"{"declared":"m.P"}"#;
 fn document(behaviors: &[String], helpers: &[String], definitions: &[String]) -> String {
     format!(
         concat!(
-            r#"{{"transport":18,"declarations":["#,
+            r#"{{"transport":19,"declarations":["#,
             r#"{{"module":"m","name":"A","by":"amodule","is":"unit"}},"#,
             r#"{{"module":"m","name":"B","by":"amodule","is":"unit"}},"#,
             r#"{{"module":"m","name":"S","by":"amodule","is":"sum","#,
@@ -51,9 +51,18 @@ fn helper(declared: &str, takes: &[&str], body: &str) -> String {
         .map(|(at, ty)| format!(r#"{{"name":"p{at}","type":{ty}}}"#))
         .collect();
     format!(
-        r#"{{"declared":"{declared}","parameters":[{}],"body":{body}}}"#,
+        r#"{{"reached":{},"parameters":[{}],"body":{body}}}"#,
+        own(declared),
         parameters.join(",")
     )
+}
+
+/// A declaration of `m`, written `m.name`, as `m` reaches it: as its own.
+fn own(declared: &str) -> String {
+    let (module, name) = declared
+        .rsplit_once('.')
+        .expect("a helper written module.name");
+    format!(r#"{{"is":"own","module":"{module}","name":"{name}"}}"#)
 }
 
 fn helpers(helpers: &[String]) -> String {
@@ -245,7 +254,7 @@ fn a_let_given_what_it_does_not_bind_is_the_halves_disagreeing() {
 #[test]
 fn a_call_of_a_helper_stands_at_what_the_helper_answers() {
     let g = helper("m.g", &[], &truth(true));
-    let reaches = r#"{"is":"helper","declared":"m.g"}"#;
+    let reaches = &format!(r#"{{"is":"helper","reached":{}}}"#, own("m.g"));
     reads_whole(&helpers(&[g.clone(), h(&[], &call(reaches, &[], BOOL))]));
     is_the_halves_disagreeing(&helpers(&[g, h(&[], &call(reaches, &[], INT))]), "m.g");
 }
@@ -274,7 +283,7 @@ fn a_call_of_a_behavior_stands_at_what_its_target_answers() {
 #[test]
 fn an_argument_is_a_value_of_what_the_callee_takes() {
     let g = helper("m.g", &[S], &read(0, S));
-    let reaches = r#"{"is":"helper","declared":"m.g"}"#;
+    let reaches = &format!(r#"{{"is":"helper","reached":{}}}"#, own("m.g"));
     reads_whole(&helpers(&[
         g.clone(),
         h(&[], &call(reaches, &[widen(&unit("m.A"), S)], S)),
@@ -769,6 +778,35 @@ fn a_helper_written_twice_is_refused_before_either_is_lowered() {
     let first = helper("m.g", &[DECIMAL], &read(0, DECIMAL));
     let second = helper("m.g", &[INT], &read(0, INT));
     is_the_halves_disagreeing(&helpers(&[first, second]), "m.g");
+}
+
+/// A reference's route is the checker's from the module holding it (`ReachName.of`): a module
+/// reaches a declaration of its own as its own, and one of another module under that module's
+/// name. A reference taking the other route names one declaration two ways, and what a call finds
+/// and what the module is held to would be read off two spellings of it.
+#[test]
+fn a_reference_routed_otherwise_than_the_checker_routes_it_is_the_halves_disagreeing() {
+    let as_another_modules =
+        helper("m.g", &[INT], &read(0, INT)).replacen(r#""is":"own""#, r#""is":"ofmodule""#, 1);
+    is_the_halves_disagreeing(&helpers(&[as_another_modules]), "not the route");
+    let another_modules_as_own = helper("m.g", &[INT], &read(0, INT)).replacen(
+        r#""module":"m","name":"g""#,
+        r#""module":"elsewhere","name":"g""#,
+        1,
+    );
+    is_the_halves_disagreeing(&helpers(&[another_modules_as_own]), "not the route");
+}
+
+/// A module holds a declaration as a value or carries a method for it as a helper, not both. A
+/// helper is reached under a reference and a value under its declaration, so the two are held
+/// against each other by the declaration the reference reaches.
+#[test]
+fn a_declaration_held_both_as_a_value_and_as_a_helper_is_the_halves_disagreeing() {
+    let values = include_str!("values.transport.json");
+    let copy = r#"{"reached":{"is":"own","module":"m","name":"ks"},"parameters":[],"body":{"core":"int","value":1,"type":{"prim":"INT"},"aborts":[]}}"#;
+    let document = values.replacen(r#""helpers":[]"#, &format!(r#""helpers":[{copy}]"#), 1);
+    assert_ne!(document, values, "the fixture this perturbs moved");
+    is_the_halves_disagreeing(&document, "m.ks both as a helper and as a value");
 }
 
 /// A value, an entry and a module written twice are the same mistake, refused the same way.
@@ -1343,8 +1381,8 @@ fn a_function_stands_as_one_taking_less_and_answering_more() {
 }
 
 /// Both sides of `++` stand as the list it answers, each under a `Widen` where it holds a narrower
-/// element. A document with one side left at its own list is one the checker does not write, and it
-/// is refused as that and not as a list this backend does not lay out.
+/// element, and so written the two are joined. A document with one side left at its own list is one
+/// the checker does not write, and it is refused as that.
 #[test]
 fn a_concat_operand_narrower_than_its_slot_without_a_widen_is_the_halves_disagreeing() {
     let listed = |of: &str| format!(r#"{{"list":{of}}}"#);
@@ -1364,8 +1402,7 @@ fn a_concat_operand_narrower_than_its_slot_without_a_widen_is_the_halves_disagre
         &widen(&read(0, &listed(A)), &listed(S)),
         &widen(&read(1, &listed(b)), &listed(S)),
     );
-    let refused = object_for(&helpers(&[h(&takes, &both)])).expect_err("nothing lays a list out");
-    assert!(refused.downcast_ref::<NotLowered>().is_some(), "{refused}");
+    object_for(&helpers(&[h(&takes, &both)])).expect("two lists standing as one type are joined");
 
     let bare = joined(
         &read(0, &listed(A)),
@@ -1403,7 +1440,7 @@ fn a_concat_of_two_strings_reads_whole() {
 fn with_clauses(fields: &str, invariants: &str, helpers: &[String]) -> String {
     format!(
         concat!(
-            r#"{{"transport":18,"declarations":["#,
+            r#"{{"transport":19,"declarations":["#,
             r#"{{"module":"m","name":"R","by":"amodule","is":"product","#,
             r#""fields":[{}],"invariants":[{}]}}],"#,
             r#""behaviors":[],"#,
@@ -1868,7 +1905,7 @@ fn only_the_kinds_that_can_end_a_run_name_a_reason_to() {
     }
     // A call to a helper ends with what the helper ends with, and names none of its own.
     let g = helper("m.g", &[INT], &read(0, INT));
-    let reaches = r#"{"is":"helper","declared":"m.g"}"#;
+    let reaches = &format!(r#"{{"is":"helper","reached":{}}}"#, own("m.g"));
     let called = with_reason(call(reaches, &[int(1)], INT));
     is_the_halves_disagreeing(
         &helpers(&[g, h(&[], &called)]),
@@ -1964,7 +2001,7 @@ fn a_construction_of_another_builds_type_names_the_reason_its_clauses_give() {
         );
         format!(
             concat!(
-                r#"{{"transport":18,"declarations":["#,
+                r#"{{"transport":19,"declarations":["#,
                 r#"{{"module":"m","name":"R","by":"onthepath","is":"product","#,
                 r#""fields":[{}],"headers":[{}]}}],"behaviors":[],"#,
                 r#""modules":[{{"name":"m","publishes":[],"helpers":[{}],"values":[],"#,
@@ -2150,7 +2187,7 @@ fn an_arm_binds_and_says_what_it_reads_it_as_together() {
 fn a_handover_carries_a_value_the_module_builds() {
     let value = |carries: &str| {
         format!(
-            r#"{{"transport":18,"declarations":[],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[],"values":[{{"module":"m","name":"ks","handovers":[],"body":{}}},{{"module":"m","name":"ys","handovers":[{{"parameter":"dep","type":{INT},"carries":{{"module":"m","name":"{carries}"}}}}],"body":{}}}],"entries":[],"definitions":[],"examples":[]}}]}}"#,
+            r#"{{"transport":19,"declarations":[],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[],"values":[{{"module":"m","name":"ks","handovers":[],"body":{}}},{{"module":"m","name":"ys","handovers":[{{"parameter":"dep","type":{INT},"carries":{{"module":"m","name":"{carries}"}}}}],"body":{}}}],"entries":[],"definitions":[],"examples":[]}}]}}"#,
             int(1),
             read(0, INT)
         )
@@ -2633,7 +2670,7 @@ fn what_clauses_are_answered_under_crosses_where_another_build_runs_them() {
     let declared = |by: &str, clauses: &str| {
         format!(
             concat!(
-                r#"{{"transport":18,"declarations":["#,
+                r#"{{"transport":19,"declarations":["#,
                 r#"{{"module":"m","name":"R","by":"{}","is":"product","#,
                 r#""fields":[{}]{}}}],"behaviors":[],"#,
                 r#""modules":[{{"name":"m","publishes":[],"helpers":[],"values":[],"#,
