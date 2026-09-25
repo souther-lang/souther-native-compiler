@@ -22,7 +22,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class AHelperCallingItselfLastRunsInOneFrameTest {
 
     private static final String SOURCE = """
-            module looping exposing ( counted, swapped, through, fold, notLast )
+            module looping exposing ( counted, swapped, through, fold, notLast, settled, climbed )
 
             partial let count (n: Int, acc: Int): Int = if n == 0 then acc else count(n - 1, acc + 1)
 
@@ -52,6 +52,27 @@ class AHelperCallingItselfLastRunsInOneFrameTest {
             let fold (n) = List.fold((acc, x) -> acc + x, 0, doubled([n], 20))
 
             partial let depth (n: Int): Int = if n == 0 then 0 else 1 + depth(n - 1)
+
+            data Positive = { n: Int }
+                invariant above = n >= 1
+
+            partial let settle (n: Int, acc: Int): Int = {
+                guard Positive { n = n } as p
+                    else | above -> acc
+                settle(p.n - 1, acc + 1)
+            }
+
+            behavior settled : (n: Int) -> Int
+            let settled (n) = settle(n, 0)
+
+            partial let climb (n: Int, acc: Int): Int = {
+                guard Positive { n = n } as p
+                    else | above -> climb(n + 1, acc + 1)
+                acc
+            }
+
+            behavior climbed : (n: Int) -> Int
+            let climbed (n) = climb(1 - n, 0)
 
             behavior notLast : (n: Int) -> Int
             let notLast (n) = depth(n)
@@ -102,6 +123,16 @@ class AHelperCallingItselfLastRunsInOneFrameTest {
     @Test
     void aCallUnderALetAMatchAndAnIfIsStillLast() throws Exception {
         assertThat(run("through", 5_000_000)).isEqualTo(answered(10_000_000));
+    }
+
+    /**
+     * An attempted construction answers what the branch it takes answers, so a call to itself
+     * where the value was built, or in the arm answering a clause that did not hold, is last too.
+     */
+    @Test
+    void aCallInEitherBranchOfAnAttemptedConstructionIsStillLast() throws Exception {
+        assertThat(run("settled", 10_000_000)).isEqualTo(answered(10_000_000));
+        assertThat(run("climbed", 10_000_000)).isEqualTo(answered(10_000_000));
     }
 
     /** A fold over a list of 2^20 elements, each the number handed in. */

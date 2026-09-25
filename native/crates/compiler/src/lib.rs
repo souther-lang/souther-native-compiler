@@ -2577,11 +2577,11 @@ struct Tail {
 /// that answer: written through `out`, or, for a call reaching this same copy, a jump back to the
 /// header. Every block this leaves is ended, by a return or by a jump.
 ///
-/// Where the body answers is the body itself, the body of a `let` that answers there, and each
-/// branch of an `if` or arm of a `match` that does. Anywhere else a node is lowered for its value
-/// ([`lower`]), and a call there stays a call. The arguments of a call that becomes a jump are all
-/// worked out before the jump hands them over, so a call handing the parameters round (`f(b, a)`)
-/// reads each before any is replaced.
+/// Where the body answers is the body itself and every branch of a fork that answers there, which
+/// is [`branched`]'s to say, the same table [`lower`] reads a fork's branches from. Anywhere else a
+/// node is lowered for its value ([`lower`]), and a call there stays a call. The arguments of a
+/// call that becomes a jump are all worked out before the jump hands them over, so a call handing
+/// the parameters round (`f(b, a)`) reads each before any is replaced.
 fn lower_tail(
     builder: &mut FunctionBuilder,
     lowering: &Lowering,
@@ -2591,82 +2591,38 @@ fn lower_tail(
     node: &Node,
     tail: &Tail,
 ) -> Lowered<()> {
-    match node {
-        Node::Let {
-            binding,
-            binds,
-            value,
-            body,
-            ..
-        } => {
-            let held = lower(builder, lowering, module, bindings, abort, value)?;
-            let variable = builder.declare_var(machine_type(binds)?);
-            builder.def_var(variable, held);
-            bindings.at(*binding, variable);
-            let answered = lower_tail(builder, lowering, module, bindings, abort, body, tail);
-            bindings.leave(*binding);
-            answered
+    if let Node::Call {
+        reaches: Reaches::Helper { reached: _ },
+        arguments,
+        ..
+    } = node
+        && lowering.specializations.callee(node) == tail.instance
+    {
+        let mut given: Vec<ir::BlockArg> = Vec::with_capacity(arguments.len());
+        for argument in arguments {
+            given.push(lower(builder, lowering, module, bindings, abort, argument)?.into());
         }
-        Node::If {
-            cond, then, els, ..
-        } => {
-            let asked = lower(builder, lowering, module, bindings, abort, cond)?;
-            let when_taken = builder.create_block();
-            let otherwise = builder.create_block();
-            builder.ins().brif(asked, when_taken, &[], otherwise, &[]);
-            builder.seal_block(when_taken);
-            builder.seal_block(otherwise);
-            for (block, branch) in [(when_taken, then), (otherwise, els)] {
-                builder.switch_to_block(block);
-                lower_tail(builder, lowering, module, bindings, abort, branch, tail)?;
-            }
-            Ok(())
-        }
-        Node::Match { subject, arms, .. } => {
-            let value = lower(builder, lowering, module, bindings, abort, subject)?;
-            for arm in arms {
-                let next = enter_arm(
-                    builder,
-                    lowering,
-                    module,
-                    bindings,
-                    value,
-                    subject.ty(),
-                    arm,
-                )?;
-                let answered =
-                    lower_tail(builder, lowering, module, bindings, abort, &arm.body, tail);
-                if let Some(number) = arm.binding {
-                    bindings.leave(number);
-                }
-                answered?;
-                builder.switch_to_block(next);
-            }
-            builder
-                .ins()
-                .trap(TrapCode::user(NO_ARM).expect("a trap code of its own"));
-            Ok(())
-        }
-        Node::Call {
-            reaches: Reaches::Helper { reached: _ },
-            arguments,
-            ..
-        } if lowering.specializations.callee(node) == tail.instance => {
-            let mut given: Vec<ir::BlockArg> = Vec::with_capacity(arguments.len());
-            for argument in arguments {
-                given.push(lower(builder, lowering, module, bindings, abort, argument)?.into());
-            }
-            builder.ins().jump(tail.header, &given);
-            Ok(())
-        }
-        _ => {
-            let answer = lower(builder, lowering, module, bindings, abort, node)?;
-            builder.ins().store(TRUSTED, answer, tail.out, 0);
-            let ok = builder.ins().iconst(types::I32, i64::from(ANSWERED));
-            builder.ins().return_(&[ok]);
-            Ok(())
-        }
+        builder.ins().jump(tail.header, &given);
+        return Ok(());
     }
+    let forked = branched(
+        builder,
+        lowering,
+        module,
+        bindings,
+        abort,
+        node,
+        &mut |builder, module, bindings, branch| {
+            lower_tail(builder, lowering, module, bindings, abort, branch, tail)
+        },
+    )?;
+    if !forked {
+        let answer = lower(builder, lowering, module, bindings, abort, node)?;
+        builder.ins().store(TRUSTED, answer, tail.out, 0);
+        let ok = builder.ins().iconst(types::I32, i64::from(ANSWERED));
+        builder.ins().return_(&[ok]);
+    }
+    Ok(())
 }
 
 /// A lifted function's own body: the same `status + out` shape [`define`] gives every other body,
@@ -3913,20 +3869,31 @@ fn lower(
             let nought = builder.ins().iconst(width, 0);
             difference(builder, abort, overflow_status(aborts), nought, held)?
         }
-        Node::Let {
-            binding,
-            binds,
-            value,
-            body,
-            ..
-        } => {
-            let held = lower(builder, lowering, module, bindings, abort, value)?;
-            let variable = builder.declare_var(machine_type(binds)?);
-            builder.def_var(variable, held);
-            bindings.at(*binding, variable);
-            let answered = lower(builder, lowering, module, bindings, abort, body);
-            bindings.leave(*binding);
-            answered?
+        // A fork answers what the branch it takes answers, and each branch hands that to the block
+        // after the fork. Which nodes are forks, and how each chooses a branch, is `branched`'s.
+        Node::Let { ty, .. }
+        | Node::If { ty, .. }
+        | Node::Match { ty, .. }
+        | Node::Attempt { ty, .. } => {
+            let after = builder.create_block();
+            builder.append_block_param(after, machine_type(ty)?);
+            let forked = branched(
+                builder,
+                lowering,
+                module,
+                bindings,
+                abort,
+                node,
+                &mut |builder, module, bindings, branch| {
+                    let answered = lower(builder, lowering, module, bindings, abort, branch)?;
+                    builder.ins().jump(after, &[answered.into()]);
+                    Ok(())
+                },
+            )?;
+            assert!(forked, "a let, an if, a match and an attempt are forks");
+            builder.seal_block(after);
+            builder.switch_to_block(after);
+            builder.block_params(after)[0]
         }
         Node::Bool { value, ty, .. } => builder.ins().iconst(machine_type(ty)?, i64::from(*value)),
         Node::Str { value, .. } => text_in_the_object(builder, module, lowering.literals, value)?,
@@ -3951,26 +3918,6 @@ fn lower(
                 aborts,
             },
         )?,
-        Node::If {
-            cond,
-            then,
-            els,
-            ty,
-            ..
-        } => {
-            let asked = lower(builder, lowering, module, bindings, abort, cond)?;
-            let answers = machine_type(ty)?;
-            fork(builder, asked, answers, |builder, taken| {
-                lower(
-                    builder,
-                    lowering,
-                    module,
-                    bindings,
-                    abort,
-                    if taken { then } else { els },
-                )
-            })?
-        }
         Node::Unit { declared, .. } => construct(builder, lowering, module, abort, declared, &[])?,
         // The fields are worked out here, in the order they are written; whether the value is one
         // the type admits, and how one is laid out, is not this site's to say (`construct`).
@@ -3982,75 +3929,6 @@ fn lower(
                 given.push(lower(builder, lowering, module, bindings, abort, value)?);
             }
             construct(builder, lowering, module, abort, declared, &given)?
-        }
-        // The fields as a construction works them out, and then what decides a construction of the
-        // type asked, which is the declaring object's: nothing here runs a clause or knows what one
-        // says. Where every clause held the value is bound for `then`; where one did not, the
-        // departure answering that clause answers, chosen by the clause's place
-        // (`departures_taken`). A clause that did not answer at all ends the run as it ended the
-        // decision.
-        Node::Attempt {
-            declared,
-            values,
-            binding,
-            binds,
-            then,
-            departures,
-            ty,
-            ..
-        } => {
-            let mut given = Vec::with_capacity(values.len());
-            for value in values {
-                given.push(lower(builder, lowering, module, bindings, abort, value)?);
-            }
-            let checked = lowering.constructors.checked(declared)?;
-            let taken =
-                departures_taken(&lowering.declared.laid(declared).clause_names(), departures)
-                    .expect("`Coherent` held every clause of what is attempted to one departure");
-            let answers = machine_type(ty)?;
-            let after = builder.create_block();
-            builder.append_block_param(after, answers);
-            let departing = builder.create_block();
-            builder.append_block_param(departing, types::I64);
-
-            let built = decide(builder, module, checked, &given, abort, departing);
-            let variable = builder.declare_var(machine_type(binds)?);
-            builder.def_var(variable, built);
-            bindings.at(*binding, variable);
-            let answered = lower(builder, lowering, module, bindings, abort, then);
-            bindings.leave(*binding);
-            builder.ins().jump(after, &[answered?.into()]);
-
-            builder.seal_block(departing);
-            builder.switch_to_block(departing);
-            let clause = builder.block_params(departing)[0];
-            let bodies = departures.bodies();
-            let arms: Vec<ir::Block> = bodies.iter().map(|_| builder.create_block()).collect();
-            let astray = builder.create_block();
-            let mut which = Switch::new();
-            for (place, &departure) in taken.iter().enumerate() {
-                which.set_entry(place as u128, arms[departure]);
-            }
-            which.emit(builder, clause, astray);
-
-            // A place no clause of the declaration has, which the object that ran the clauses and
-            // this one's copy of their names disagreeing about how many there are would reach.
-            builder.seal_block(astray);
-            builder.switch_to_block(astray);
-            builder
-                .ins()
-                .trap(TrapCode::user(NO_ARM).expect("a trap code of its own"));
-
-            for (body, arm) in bodies.into_iter().zip(arms) {
-                builder.seal_block(arm);
-                builder.switch_to_block(arm);
-                let answered = lower(builder, lowering, module, bindings, abort, body)?;
-                builder.ins().jump(after, &[answered.into()]);
-            }
-
-            builder.seal_block(after);
-            builder.switch_to_block(after);
-            builder.block_params(after)[0]
         }
         Node::Field {
             target, field, ty, ..
@@ -4069,24 +3947,6 @@ fn lower(
                 .ins()
                 .load(types::I64, flags, value, field_at(at) as i32);
             out_of_slot(builder, held, machine_type(ty)?)
-        }
-        Node::Match {
-            subject, arms, ty, ..
-        } => {
-            let value = lower(builder, lowering, module, bindings, abort, subject)?;
-            fork_on_what_it_is(
-                builder,
-                lowering,
-                module,
-                bindings,
-                abort,
-                value,
-                ForkArms {
-                    subject: subject.ty(),
-                    arms,
-                    answers: machine_type(ty)?,
-                },
-            )?
         }
         Node::Some { value, .. } => {
             let held = lower(builder, lowering, module, bindings, abort, value)?;
@@ -4342,68 +4202,178 @@ fn lower(
     })
 }
 
-/// A fork on what a value is, arm by arm.
+/// Where `node` is a fork, what chooses its branch, with each branch ended by `branch`; and
+/// whether it is one.
 ///
-/// The arms are tried in the order they are written, because that is the order the language reads
-/// them in. What an arm tests is what the checker resolved it to and not the name it was written
-/// under, so a case that is itself a sum arrives here as the several types it stands for.
+/// A fork answers what the branch it takes answers: the body of a `let`, a branch of an `if`, an
+/// arm of a `match`, and what an attempted construction goes on to where its clauses hold or
+/// where one does not. How a branch ends is the caller's: [`lower`] hands its value to the block
+/// after the fork, and [`lower_tail`] lowers it where a copy of a helper answers, so a call to
+/// itself in a branch of a fork in tail position is in tail position too. Every block `branch`
+/// is handed is one it has to end.
 ///
-/// Running out of arms is this compiler having emitted the wrong test: the checker settles that a
-/// fork always answers, so nothing a program can be written as reaches the end of this.
-/// What `fork_on_what_it_is` asks over, beyond the four it already threads through every call a
-/// lowering makes: which arms, and the width the fork as a whole answers at. Bundled so this stays
-/// within the width every function here is held to instead of adding a sixth thing this and
-/// `lower` would otherwise both have to keep passing down separately.
-struct ForkArms<'a> {
-    /// What the value forked on is, which an arm binding it reads it out of.
-    subject: &'a Ty,
-    arms: &'a [Arm],
-    answers: types::Type,
-}
-
-fn fork_on_what_it_is(
+/// The one place a kind of node is said to fork or not. Every kind is named here and no arm
+/// stands for the rest, so a kind added to the document that forks is lowered as a fork by both
+/// callers, and one that does not says so, rather than falling to whichever a default picked.
+///
+/// The arms of a `match` are tried in the order they are written, because that is the order the
+/// language reads them in. Running out of them, or out of the clauses an attempt answers, is this
+/// compiler having emitted the wrong test: the checker settles that a fork always answers.
+fn branched(
     builder: &mut FunctionBuilder,
     lowering: &Lowering,
     module: &mut ObjectModule,
     bindings: &mut Bindings,
     abort: ir::Block,
-    value: ir::Value,
-    over: ForkArms,
-) -> Lowered<ir::Value> {
-    let ForkArms {
-        subject,
-        arms,
-        answers,
-    } = over;
-    let after = builder.create_block();
-    builder.append_block_param(after, answers);
-
-    for arm in arms {
-        let next = enter_arm(builder, lowering, module, bindings, value, subject, arm)?;
-        let answered = lower(builder, lowering, module, bindings, abort, &arm.body);
-        if let Some(number) = arm.binding {
-            bindings.leave(number);
+    node: &Node,
+    branch: &mut dyn FnMut(
+        &mut FunctionBuilder,
+        &mut ObjectModule,
+        &mut Bindings,
+        &Node,
+    ) -> Lowered<()>,
+) -> Lowered<bool> {
+    match node {
+        Node::Let {
+            binding,
+            binds,
+            value,
+            body,
+            ..
+        } => {
+            let held = lower(builder, lowering, module, bindings, abort, value)?;
+            let variable = builder.declare_var(machine_type(binds)?);
+            builder.def_var(variable, held);
+            bindings.at(*binding, variable);
+            let answered = branch(builder, module, bindings, body);
+            bindings.leave(*binding);
+            answered?;
         }
-        builder.ins().jump(after, &[answered?.into()]);
+        Node::If {
+            cond, then, els, ..
+        } => {
+            let asked = lower(builder, lowering, module, bindings, abort, cond)?;
+            let when_taken = builder.create_block();
+            let otherwise = builder.create_block();
+            builder.ins().brif(asked, when_taken, &[], otherwise, &[]);
+            builder.seal_block(when_taken);
+            builder.seal_block(otherwise);
+            for (block, taken) in [(when_taken, then), (otherwise, els)] {
+                builder.switch_to_block(block);
+                branch(builder, module, bindings, taken)?;
+            }
+        }
+        Node::Match { subject, arms, .. } => {
+            let value = lower(builder, lowering, module, bindings, abort, subject)?;
+            for arm in arms {
+                let next = enter_arm(
+                    builder,
+                    lowering,
+                    module,
+                    bindings,
+                    value,
+                    subject.ty(),
+                    arm,
+                )?;
+                let answered = branch(builder, module, bindings, &arm.body);
+                if let Some(number) = arm.binding {
+                    bindings.leave(number);
+                }
+                answered?;
+                builder.switch_to_block(next);
+            }
+            builder
+                .ins()
+                .trap(TrapCode::user(NO_ARM).expect("a trap code of its own"));
+        }
+        // The fields as a construction works them out, and then what decides a construction of the
+        // type asked, which is the declaring object's: nothing here runs a clause or knows what one
+        // says. Where every clause held the value is bound for `then`; where one did not, the
+        // departure answering that clause is taken, chosen by the clause's place
+        // (`departures_taken`). A clause that did not answer at all ends the run as it ended the
+        // decision.
+        Node::Attempt {
+            declared,
+            values,
+            binding,
+            binds,
+            then,
+            departures,
+            ..
+        } => {
+            let mut given = Vec::with_capacity(values.len());
+            for value in values {
+                given.push(lower(builder, lowering, module, bindings, abort, value)?);
+            }
+            let checked = lowering.constructors.checked(declared)?;
+            let taken =
+                departures_taken(&lowering.declared.laid(declared).clause_names(), departures)
+                    .expect("`Coherent` held every clause of what is attempted to one departure");
+            let departing = builder.create_block();
+            builder.append_block_param(departing, types::I64);
 
-        builder.switch_to_block(next);
+            let built = decide(builder, module, checked, &given, abort, departing);
+            let variable = builder.declare_var(machine_type(binds)?);
+            builder.def_var(variable, built);
+            bindings.at(*binding, variable);
+            let answered = branch(builder, module, bindings, then);
+            bindings.leave(*binding);
+            answered?;
+
+            builder.seal_block(departing);
+            builder.switch_to_block(departing);
+            let clause = builder.block_params(departing)[0];
+            let bodies = departures.bodies();
+            let arms: Vec<ir::Block> = bodies.iter().map(|_| builder.create_block()).collect();
+            let astray = builder.create_block();
+            let mut which = Switch::new();
+            for (place, &departure) in taken.iter().enumerate() {
+                which.set_entry(place as u128, arms[departure]);
+            }
+            which.emit(builder, clause, astray);
+
+            // A place no clause of the declaration has, which the object that ran the clauses and
+            // this one's copy of their names disagreeing about how many there are would reach.
+            builder.seal_block(astray);
+            builder.switch_to_block(astray);
+            builder
+                .ins()
+                .trap(TrapCode::user(NO_ARM).expect("a trap code of its own"));
+
+            for (body, arm) in bodies.into_iter().zip(arms) {
+                builder.seal_block(arm);
+                builder.switch_to_block(arm);
+                branch(builder, module, bindings, body)?;
+            }
+        }
+        Node::Int { .. }
+        | Node::Read { .. }
+        | Node::Bool { .. }
+        | Node::Str { .. }
+        | Node::Binary { .. }
+        | Node::Neg { .. }
+        | Node::Unit { .. }
+        | Node::Construct { .. }
+        | Node::Field { .. }
+        | Node::Some { .. }
+        | Node::None { .. }
+        | Node::Tuple { .. }
+        | Node::Member { .. }
+        | Node::List { .. }
+        | Node::Call { .. }
+        | Node::Block { .. }
+        | Node::Apply { .. }
+        | Node::Widen { .. } => return Ok(false),
     }
-
-    builder
-        .ins()
-        .trap(TrapCode::user(NO_ARM).expect("a trap code of its own"));
-
-    builder.seal_block(after);
-    builder.switch_to_block(after);
-    Ok(builder.block_params(after)[0])
+    Ok(true)
 }
 
 /// Into `arm` of a fork on `value` where it tests true: the block its body is lowered in is the one
 /// written to next, with what it binds in force, which the caller puts out of force once the body
 /// is lowered. Handed back is the block the next arm is tested in, where this one tests false.
 ///
-/// Shared by a fork answering a value and one answering what a helper answers ([`lower_tail`]):
-/// which arm a value takes is not a fact about what the arm's body goes on to do.
+/// Apart from [`branched`] because which arm a value takes is not a fact about what the arm's body
+/// goes on to do.
 fn enter_arm(
     builder: &mut FunctionBuilder,
     lowering: &Lowering,
