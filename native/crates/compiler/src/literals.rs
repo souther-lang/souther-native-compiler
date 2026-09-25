@@ -10,7 +10,7 @@
 
 #![deny(clippy::missing_docs_in_private_items)]
 
-use crate::{Lowered, POINTER, accepted, index};
+use crate::{POINTER, accepted, index};
 use cranelift::codegen::ir::{self, InstBuilder};
 use cranelift::frontend::FunctionBuilder;
 use cranelift::module::{DataDescription, DataId, Module};
@@ -26,8 +26,7 @@ use std::collections::HashMap;
 /// bytes written as many times as the program says them.
 #[derive(Default)]
 pub(crate) struct Literals {
-    /// The data object each text already spelt in this object was written to. A text is looked up
-    /// here before any data is declared for it, so no text is written twice.
+    /// The data object each text already spelt in this object was written to.
     held: RefCell<HashMap<String, DataId>>,
 }
 
@@ -35,40 +34,41 @@ impl Literals {
     /// The address of `text` in the object, for code `builder` is emitting.
     ///
     /// One data object per text, shared by every site that spells it, and anonymous because
-    /// nothing outside this object reaches one.
+    /// nothing outside this object reaches one. A text's data is declared here and nowhere else,
+    /// in the same step that puts it in `held`, so no text is written twice.
     pub(crate) fn address(
         &self,
         builder: &mut FunctionBuilder,
         module: &mut ObjectModule,
         text: &str,
-    ) -> Lowered<ir::Value> {
+    ) -> ir::Value {
         let already = self.held.borrow().get(text).copied();
         let id = match already {
             Some(id) => id,
             None => {
-                let id = literal(module, text)?;
+                let id = accepted(module.declare_anonymous_data(false, false));
+                accepted(module.define_data(id, &laid_out(text)));
                 index::unique(&mut *self.held.borrow_mut(), text.to_string(), id);
                 id
             }
         };
         let named = module.declare_data_in_func(id, builder.func);
-        Ok(builder.ins().symbol_value(POINTER, named))
+        builder.ins().symbol_value(POINTER, named)
     }
 }
 
-/// A literal's bytes, laid out as the runtime lays a string out, defined once in the object.
-fn literal(module: &mut ObjectModule, value: &str) -> Lowered<DataId> {
-    let length = i64::try_from(value.len()).expect("a literal is shorter than an Int");
+/// `text`'s bytes, laid out as the runtime lays a string out.
+fn laid_out(text: &str) -> DataDescription {
+    let length = i64::try_from(text.len()).expect("a literal is shorter than an Int");
     let mut written = vec![0u8; room_for_text(length) as usize];
     written[TEXT_LENGTH as usize..][..SLOT as usize].copy_from_slice(&length.to_ne_bytes());
-    written[TEXT_BYTES as usize..].copy_from_slice(value.as_bytes());
+    written[TEXT_BYTES as usize..].copy_from_slice(text.as_bytes());
 
     let mut held = DataDescription::new();
     held.define(written.into_boxed_slice());
     // Aligned as everything the arena answers is. The count before the text is read as a slot, and
-    // every access this emits says the address is aligned rather than checking that it is.
+    // every access generated code makes to a string says its address is aligned rather than
+    // checking that it is.
     held.set_align(SLOT as u64);
-    let id = accepted(module.declare_anonymous_data(false, false));
-    accepted(module.define_data(id, &held));
-    Ok(id)
+    held
 }
