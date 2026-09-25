@@ -655,7 +655,7 @@ public final class ProgramWriter {
             throw notYet("a row of `" + behavior.name() + "` stating " + inputs.size()
                     + " values where the behavior takes " + takes.size());
         }
-        StringJoiner arguments = new StringJoiner(",", "[", "]");
+        List<String> arguments = new ArrayList<>();
         for (int at = 0; at < takes.size(); at++) {
             arguments.add(given(inputs.get(at), takes.get(at)));
         }
@@ -664,51 +664,101 @@ public final class ProgramWriter {
         // What the behavior ends with is its own, and what its clause ends with is what the
         // target's ensures says (EnsuresEnforcement#aborts), not a fact of this site — the same
         // answer a call written in a body gets.
-        return "{\"core\":\"call\",\"reaches\":{\"is\":\"behavior\",\"declared\":"
-                + quoted(module.name() + "." + behavior.name().name()) + "}"
-                + ",\"arguments\":" + arguments
-                + ",\"type\":" + type(behavior.signature().answers())
-                + ",\"aborts\":[]}";
+        return callNode(behaviorReach(behavior.name()), arguments,
+                behavior.signature().answers(), AbortSet.NONE);
     }
 
     /**
      * A value a row states, written as the expression that makes it.
      *
      * <p>At the type it is handed over at as well as by what it is, because the value does not say
-     * on its own: a number handed to a parameter of a type that holds one is a different expression
-     * from the same number handed to an {@code Int}, and a writer reading only the value would
-     * write the second where the first was meant.
+     * on its own. A number handed to a parameter of a type that holds one is a different expression
+     * from the same number handed to an {@code Int}; a present optional is observed as the value it
+     * holds, and only the type says it is to be wrapped; a sequence does not say whether it was a
+     * list. So the type decides which expression is written, and the value what goes into it.
      *
-     * <p>Every kind of value a row can state is answered for, and the ones with no expression here
-     * say so. Caught by an arm standing for the rest, a value a row can state would cross as
-     * whatever it resembled.
+     * <p>What is written is the node the source would have built for the same value, and nothing a
+     * row alone crosses as: a literal, a construction, a list, an optional. What a construction can
+     * end with is asked of the program, which answers it the way it answers the same construction
+     * written in a body. A literal, a list and an optional end with nothing of their own, which is
+     * what the program files each of them with wherever it holds one.
+     *
+     * <p>Every type is answered for, and the ones with no expression here say so. Caught by an arm
+     * standing for the rest, a value a row can state would cross as whatever it resembled.
      */
     private String given(ObservedValue value, Type at) {
-        // A literal, the same as elsewhere: nothing to ask program.abortsAt of, and NONE for the
-        // same reason applied() states it — a literal never aborts, whatever site holds it.
-        return switch (value) {
-            case ObservedValue.Integer it when at == Type.Prim.INT ->
-                    "{\"core\":\"int\",\"value\":" + it.value() + ",\"type\":" + type(at)
-                            + ",\"aborts\":[]}";
-            case ObservedValue.Bool it when at == Type.Prim.BOOL ->
-                    "{\"core\":\"bool\",\"value\":" + it.value() + ",\"type\":" + type(at)
-                            + ",\"aborts\":[]}";
-            case ObservedValue.Text it when at == Type.Prim.STRING ->
-                    "{\"core\":\"string\",\"value\":" + quoted(it.value())
-                            + ",\"type\":" + type(at) + ",\"aborts\":[]}";
+        return switch (at) {
+            case Type.Prim it -> switch (value) {
+                case ObservedValue.Integer v when it == Type.Prim.INT ->
+                        intNode(v.value(), at, AbortSet.NONE);
+                case ObservedValue.Bool v when it == Type.Prim.BOOL ->
+                        boolNode(v.value(), at, AbortSet.NONE);
+                case ObservedValue.Text v when it == Type.Prim.STRING ->
+                        stringNode(v.value(), at, AbortSet.NONE);
+                default -> throw notStated(value, at);
+            };
+            case Type.OptionOf it -> value instanceof ObservedValue.Absent
+                    ? noneNode(at, AbortSet.NONE)
+                    : someNode(given(value, it.element()), at, AbortSet.NONE);
+            case Type.ListOf it -> {
+                if (!(value instanceof ObservedValue.Sequence sequence)) {
+                    throw notStated(value, at);
+                }
+                List<String> elements = new ArrayList<>();
+                for (ObservedValue element : sequence.elements()) {
+                    elements.add(given(element, it.element()));
+                }
+                yield listNode(elements, at, AbortSet.NONE);
+            }
+            case Type.Ref it -> declared(value, it);
 
-            case ObservedValue.Integer it -> throw notStated(it, at);
-            case ObservedValue.Bool it -> throw notStated(it, at);
-            case ObservedValue.Decimal it -> throw notStated(it, at);
-            case ObservedValue.Text it -> throw notStated(it, at);
-            case ObservedValue.Temporal it -> throw notStated(it, at);
-            case ObservedValue.Unit it -> throw notStated(it, at);
-            case ObservedValue.Constructed it -> throw notStated(it, at);
-            case ObservedValue.Sequence it -> throw notStated(it, at);
-            case ObservedValue.Mapping it -> throw notStated(it, at);
-            case ObservedValue.Absent it -> throw notStated(it, at);
-            case ObservedValue.Unknown it -> throw notStated(it, at);
-            case ObservedValue.Truncated it -> throw notStated(it, at);
+            // A value standing as a union of types is a widening, which the checker decides and a
+            // row does not carry. A set, a map and the rest have no expression this writer builds
+            // out of a value yet.
+            case Type.Union it -> throw notStated(value, at);
+            case Type.SetOf it -> throw notStated(value, at);
+            case Type.MapOf it -> throw notStated(value, at);
+            case Type.TupleOf it -> throw notStated(value, at);
+            case Type.FnOf it -> throw notStated(value, at);
+            case Type.Nothing it -> throw notStated(value, at);
+            case Type.Never it -> throw notStated(value, at);
+            case Type.Erroneous it -> throw notStated(value, at);
+            case Type.Var it -> throw notStated(value, at);
+            case Type.MetaVar it -> throw notStated(value, at);
+        };
+    }
+
+    /**
+     * A value of a declared type, built as the type is built.
+     *
+     * <p>Only a value of that very type. One of a sum's cases is a value of the case, and standing it
+     * where the sum is taken is a widening, which the checker decides where it writes one and which
+     * this does not decide for it.
+     *
+     * <p>The fields are the declaration's, in the declaration's order and at the declaration's
+     * types, each looked up in what was observed by its name. What the observation holds is what the
+     * value was; how many fields a value has and in which order they stand is the declaration's to
+     * say, and read off the observation it would be a map's order deciding a layout.
+     */
+    private String declared(ObservedValue value, Type.Ref at) {
+        return switch (value) {
+            case ObservedValue.Unit it when it.type().equals(at.name()) ->
+                    unitNode(declaredName(at.name()), at, AbortSet.NONE);
+            case ObservedValue.Constructed it
+                    when it.type().equals(at.name())
+                    && at.name() instanceof TypeSymbol.AtModule name
+                    && program.declaration(name).data() instanceof CheckedData.WithFields held -> {
+                List<String> values = new ArrayList<>();
+                for (ValueShape.Field field : held.fields()) {
+                    ObservedValue observed = it.field(field.name());
+                    if (observed == null) {
+                        throw notStated(value, at);
+                    }
+                    values.add(given(observed, field.type()));
+                }
+                yield constructNode(named(name), values, at, program.constructionAborts(name));
+            }
+            default -> throw notStated(value, at);
         };
     }
 
@@ -1202,45 +1252,90 @@ public final class ProgramWriter {
         }
     }
 
+    // How each node a value is built from is spelt, written once for a node the checker wrote and
+    // for one a row states, so the two cannot come to be spelt apart.
+
+    private String intNode(long value, Type type, AbortSet aborts) {
+        return "{\"core\":\"int\",\"value\":" + value
+                + ",\"type\":" + type(type) + ",\"aborts\":" + spelled(aborts) + "}";
+    }
+
+    private String boolNode(boolean value, Type type, AbortSet aborts) {
+        return "{\"core\":\"bool\",\"value\":" + value
+                + ",\"type\":" + type(type) + ",\"aborts\":" + spelled(aborts) + "}";
+    }
+
+    private String stringNode(String value, Type type, AbortSet aborts) {
+        return "{\"core\":\"string\",\"value\":" + quoted(value)
+                + ",\"type\":" + type(type) + ",\"aborts\":" + spelled(aborts) + "}";
+    }
+
+    private String unitNode(String declared, Type type, AbortSet aborts) {
+        return "{\"core\":\"unit\",\"declared\":" + quoted(declared)
+                + ",\"type\":" + type(type) + ",\"aborts\":" + spelled(aborts) + "}";
+    }
+
+    private String constructNode(String declared, List<String> values, Type type,
+                                 AbortSet aborts) {
+        return "{\"core\":\"construct\",\"declared\":" + quoted(declared)
+                + ",\"values\":" + joined(values)
+                + ",\"type\":" + type(type) + ",\"aborts\":" + spelled(aborts) + "}";
+    }
+
+    private String someNode(String value, Type type, AbortSet aborts) {
+        return "{\"core\":\"some\",\"value\":" + value
+                + ",\"type\":" + type(type) + ",\"aborts\":" + spelled(aborts) + "}";
+    }
+
+    private String noneNode(Type type, AbortSet aborts) {
+        return "{\"core\":\"none\",\"type\":" + type(type)
+                + ",\"aborts\":" + spelled(aborts) + "}";
+    }
+
+    private String listNode(List<String> elements, Type type, AbortSet aborts) {
+        return "{\"core\":\"list\",\"elements\":" + joined(elements)
+                + ",\"type\":" + type(type) + ",\"aborts\":" + spelled(aborts) + "}";
+    }
+
+    private String callNode(String reaches, List<String> arguments, Type type, AbortSet aborts) {
+        return "{\"core\":\"call\",\"reaches\":" + reaches
+                + ",\"arguments\":" + joined(arguments)
+                + ",\"type\":" + type(type) + ",\"aborts\":" + spelled(aborts) + "}";
+    }
+
     private String core(Core node, Bindings bindings) {
         return switch (node) {
-            case Core.Int it -> "{\"core\":\"int\",\"value\":" + it.value()
-                    + ",\"type\":" + type(it.type()) + ",\"aborts\":" + aborts(it) + "}";
+            case Core.Int it -> intNode(it.value(), it.type(), program.abortsAt(it));
             case Core.Read it -> "{\"core\":\"read\",\"binding\":"
                     + bindings.of(it.binding(), it.name())
                     + ",\"type\":" + type(it.type()) + ",\"aborts\":" + aborts(it) + "}";
-            case Core.Bool it -> "{\"core\":\"bool\",\"value\":" + it.value()
-                    + ",\"type\":" + type(it.type()) + ",\"aborts\":" + aborts(it) + "}";
+            case Core.Bool it -> boolNode(it.value(), it.type(), program.abortsAt(it));
             // The text as the compiler read it, which is the text normalized to NFC. Nothing here
             // folds it a second time: where text arrives from outside is where that is done, and a
             // source file is one of the two places it arrives.
-            case Core.Str it -> "{\"core\":\"string\",\"value\":" + quoted(it.value())
-                    + ",\"type\":" + type(it.type()) + ",\"aborts\":" + aborts(it) + "}";
+            case Core.Str it -> stringNode(it.value(), it.type(), program.abortsAt(it));
             case Core.Binary it -> "{\"core\":\"binary\",\"op\":" + quoted(op(it.op()))
                     + ",\"reading\":" + reading(it.reading())
                     + ",\"left\":" + core(it.left(), bindings)
                     + ",\"right\":" + core(it.right(), bindings)
                     + ",\"type\":" + type(it.type()) + ",\"aborts\":" + aborts(it) + "}";
-            case Core.UnitValue it -> "{\"core\":\"unit\",\"declared\":"
-                    + quoted(declaredName(it.data())) + ",\"type\":" + type(it.type())
-                    + ",\"aborts\":" + aborts(it) + "}";
+            case Core.UnitValue it ->
+                    unitNode(declaredName(it.data()), it.type(), program.abortsAt(it));
             case Core.Construct it -> {
-                StringJoiner values = new StringJoiner(",", "[", "]");
+                List<String> values = new ArrayList<>();
                 for (Core.FieldValue field : it.values()) {
                     values.add(core(field.value(), bindings));
                 }
-                yield "{\"core\":\"construct\",\"declared\":" + quoted(named(it.typeName()))
-                        + ",\"values\":" + values + ",\"type\":" + type(it.type())
-                        + ",\"aborts\":" + aborts(it) + "}";
+                yield constructNode(named(it.typeName()), values, it.type(),
+                        program.abortsAt(it));
             }
             case Core.FieldAccess it -> "{\"core\":\"field\",\"target\":"
                     + core(it.target(), bindings) + ",\"field\":" + quoted(it.field())
                     + ",\"type\":" + type(it.type()) + ",\"aborts\":" + aborts(it) + "}";
             case Core.Match it -> match(it, bindings);
-            case Core.OptionSome it -> "{\"core\":\"some\",\"value\":" + core(it.value(), bindings)
-                    + ",\"type\":" + type(it.type()) + ",\"aborts\":" + aborts(it) + "}";
-            case Core.OptionNone it -> "{\"core\":\"none\",\"type\":" + type(it.type())
-                    + ",\"aborts\":" + aborts(it) + "}";
+            case Core.OptionSome it ->
+                    someNode(core(it.value(), bindings), it.type(), program.abortsAt(it));
+            case Core.OptionNone it -> noneNode(it.type(), program.abortsAt(it));
             case Core.Tuple it -> {
                 StringJoiner members = new StringJoiner(",", "[", "]");
                 for (Core element : it.elements()) {
@@ -1250,12 +1345,11 @@ public final class ProgramWriter {
                         + ",\"type\":" + type(it.type()) + ",\"aborts\":" + aborts(it) + "}";
             }
             case Core.ListLit it -> {
-                StringJoiner elements = new StringJoiner(",", "[", "]");
+                List<String> elements = new ArrayList<>();
                 for (Core element : it.elements()) {
                     elements.add(core(element, bindings));
                 }
-                yield "{\"core\":\"list\",\"elements\":" + elements
-                        + ",\"type\":" + type(it.type()) + ",\"aborts\":" + aborts(it) + "}";
+                yield listNode(elements, it.type(), program.abortsAt(it));
             }
             case Core.TupleGet it -> "{\"core\":\"member\",\"tuple\":" + core(it.tuple(), bindings)
                     + ",\"at\":" + it.index() + ",\"type\":" + type(it.type())
@@ -1410,7 +1504,7 @@ public final class ProgramWriter {
      * than one it parses and then has to notice is missing something.
      */
     private String call(Core.Call it, Bindings bindings) {
-        StringJoiner arguments = new StringJoiner(",", "[", "]");
+        List<String> arguments = new ArrayList<>();
         for (Core argument : it.args()) {
             arguments.add(core(argument, bindings));
         }
@@ -1421,11 +1515,7 @@ public final class ProgramWriter {
                 // name made up out of the declaration would not be the one the module holds.
                 case Core.Reaches.AHelper ignored ->
                         "{\"is\":\"helper\",\"reached\":" + reference(target.name()) + "}";
-                case Core.Reaches.ABehavior held -> {
-                    behaviorsMet.add(held.behavior());
-                    yield "{\"is\":\"behavior\",\"declared\":"
-                            + quoted(reached(held.declaration())) + "}";
-                }
+                case Core.Reaches.ABehavior held -> behaviorReach(held.behavior());
                 // A helper or a behavior is the only two `Reaches` `OfDeclaration#reaches` ever
                 // settles to; a value's own reference is `OfValue` or `OfPublishedValue` below,
                 // never one this compilation resolved a plain declaration to.
@@ -1453,9 +1543,13 @@ public final class ProgramWriter {
             case Core.Emitted target -> "{\"is\":\"emitted\",\"operation\":"
                     + quoted(emitted(target)) + "}";
         };
-        return "{\"core\":\"call\",\"reaches\":" + reaches
-                + ",\"arguments\":" + arguments
-                + ",\"type\":" + type(it.type()) + ",\"aborts\":" + aborts(it) + "}";
+        return callNode(reaches, arguments, it.type(), program.abortsAt(it));
+    }
+
+    /** What a call reaching {@code behavior} names it by, for a call a body writes and one a row is. */
+    private String behaviorReach(ValueName.Behavior behavior) {
+        behaviorsMet.add(behavior);
+        return "{\"is\":\"behavior\",\"declared\":" + quoted(reached(behavior)) + "}";
     }
 
     /**
@@ -1624,10 +1718,11 @@ public final class ProgramWriter {
      * that abort the same way write the same document.
      */
     private String aborts(Core node) {
-        // Asked once and held rather than asked once per member below: abortsAt is a lookup this
-        // writer would otherwise repeat AbortKind.values().length times for one node, and every
-        // node this walk crosses asks it.
-        AbortSet at = program.abortsAt(node);
+        return spelled(program.abortsAt(node));
+    }
+
+    /** What {@link #aborts} writes, for an answer already asked of the program. */
+    private static String spelled(AbortSet at) {
         StringJoiner kinds = new StringJoiner(",", "[", "]");
         for (AbortKind kind : AbortKind.values()) {
             if (at.contains(kind)) {

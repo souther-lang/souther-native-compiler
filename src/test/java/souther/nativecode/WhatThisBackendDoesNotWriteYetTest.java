@@ -161,19 +161,23 @@ class WhatThisBackendDoesNotWriteYetTest {
         CheckedProgram program = CheckedProgram.of(List.of("""
                 module owing
 
-                data Amount = { value: Int }
+                data Paid = { value: Int }
+                data Owed = { value: Int }
+                data Amount = Paid | Owed
 
                 behavior tally : (a: Amount) -> Int
-                let tally (a) = a.value
+                let tally (a) = match a with
+                    | Paid as p -> p.value
+                    | Owed as o -> -o.value
 
                 example tally
-                    | "a value of it" : (Amount { value = 7 }) -> 7
+                    | "one of its cases" : (Paid { value = 7 }) -> 7
                 """));
 
         assertThatThrownBy(() -> ProgramWriter.written(program))
                 .isInstanceOf(NotLowered.class)
                 .hasMessageContaining("a row stating")
-                .hasMessageContaining("owing.Amount");
+                .hasMessageContaining("owing.Paid");
     }
 
     /**
