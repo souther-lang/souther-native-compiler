@@ -51,7 +51,7 @@ fn over_answering(op: &str, left: &str, right: &str, answers: &str) -> String {
         read(1, right)
     );
     let held = format!(
-        r#"{{"reached":"calculation.f","parameters":[{{"name":"a","type":{left}}},{{"name":"b","type":{right}}}],"body":{body}}}"#
+        r#"{{"reached":"calculation.f","declares":{{"is":"module","module":"calculation","name":"f"}},"parameters":[{{"name":"a","type":{left}}},{{"name":"b","type":{right}}}],"body":{body}}}"#
     );
     format!(
         r#"{{"transport":18,"declarations":[{{"module":"counting","name":"Amount","by":"amodule","is":"newtype","field":{{"name":"value","binding":0,"codec":{{"is":"scalar","scalar":"INT"}}}},"invariants":[]}}],"behaviors":[],"modules":[{{"name":"calculation","publishes":[],"helpers":[{held}],"values":[],"entries":[],"definitions":[],"examples":[]}}]}}"#
@@ -533,7 +533,7 @@ fn an_applys_answer_disagreeing_with_its_functions_own_type_is_the_halves_disagr
         r#"{"module":"m","name":"B","by":"amodule","is":"unit"}],"#,
         r#""behaviors":[],"#,
         r#""modules":[{"name":"m","publishes":[],"#,
-        r#""helpers":[{"reached":"f","#,
+        r#""helpers":[{"reached":"f","declares":{"is":"module","module":"m","name":"f"},"#,
         r#""parameters":[{"name":"f","type":{"fn":{"takes":[],"answers":{"declared":"m.A"}}}}],"#,
         r#""body":{"core":"apply","function":{"core":"read","binding":0,"#,
         r#""type":{"fn":{"takes":[],"answers":{"declared":"m.A"}}},"aborts":[]},"#,

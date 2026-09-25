@@ -115,24 +115,27 @@ pub fn behavior_symbol(module: &str, behavior: &str) -> String {
 
 /// The symbol a definition a module holds is reached by.
 ///
-/// Both the module holding it and the module that declared it, because a module carries every
-/// helper it reaches and two modules reaching one helper hold a copy each — which is what the
-/// language says a published helper is. One name for both copies would be one of them silently
-/// standing for the other.
+/// The module holding it and the reference that module reaches it by: `taxed` for a helper of the
+/// module's own, `pricing.taxed` for one another module declares, `List.foldFrom` for an operation
+/// the standard library writes. Not the declaration it is a copy of, which the reference does not
+/// spell and which two modules reach under two references. The carrier is in it because a module
+/// carries every helper it reaches and two modules reaching one helper hold a copy each — which is
+/// what the language says a published helper is. One name for both copies would be one of them
+/// silently standing for the other.
 ///
 /// Nothing outside the object reaches one of these, so what this has to be is unambiguous here and
-/// nowhere else. The `$` is what keeps it so: a module's name carries dots and a declaration's
-/// carries them too, and neither carries this.
+/// nowhere else. The `$` is what keeps it so: a module's name carries dots and a reference carries
+/// them too, and neither carries this.
 ///
 /// # Panics
 ///
 /// Where the carrier's name does not stand in a symbol ([`spells_a_module`]).
-pub fn held_symbol(carrier: &str, declared: &str) -> String {
+pub fn held_symbol(carrier: &str, reached: &str) -> String {
     assert!(
         spells_a_module(carrier),
         "a module's name carries no dollar, and the symbol is split on one: {carrier}"
     );
-    format!("souther{ABI_GENERATION}.{carrier}${declared}")
+    format!("souther{ABI_GENERATION}.{carrier}${reached}")
 }
 
 /// The symbol a value's home is reached by, inside the object of the module that declares it.
@@ -1532,11 +1535,12 @@ mod tests {
         }
     }
 
-    /// Two modules holding one declaration hold a copy each, and the copies are not one symbol.
+    /// Two modules holding one declaration hold a copy each, and the copies are not one symbol:
+    /// the declaring module reaches it as its own, and another under the declaring module's name.
     #[test]
     fn a_definition_held_by_two_modules_is_two_symbols() {
         assert_ne!(
-            held_symbol("pricing", "pricing.taxed"),
+            held_symbol("pricing", "taxed"),
             held_symbol("order", "pricing.taxed")
         );
     }
@@ -1544,7 +1548,7 @@ mod tests {
     /// A row's entry is reached by neither the behavior's name nor another row's.
     #[test]
     fn a_helper_and_a_value_of_one_name_are_two_symbols() {
-        assert_ne!(held_symbol("m", "m.v"), home_symbol("m", "v"));
+        assert_ne!(held_symbol("m", "v"), home_symbol("m", "v"));
     }
 
     #[test]
@@ -1607,7 +1611,7 @@ mod tests {
         assert_ne!(type_symbol("lib", "rates"), behavior_symbol("lib", "rates"));
         assert_ne!(
             type_symbol("pricing", "taxed"),
-            held_symbol("pricing", "pricing.taxed")
+            held_symbol("pricing", "taxed")
         );
     }
 
@@ -1651,7 +1655,7 @@ mod tests {
         );
         assert_ne!(
             value_symbol("pricing", "standard"),
-            held_symbol("pricing", "pricing.standard")
+            held_symbol("pricing", "standard")
         );
     }
 

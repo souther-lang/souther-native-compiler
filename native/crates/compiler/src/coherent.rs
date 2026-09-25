@@ -55,8 +55,8 @@ use crate::closures::ClosureSites;
 use crate::index;
 use crate::kernels::{Bound, LoweredKernel};
 use crate::transport::{
-    AbortKind, Answers, Carrier, Case, Declaration, Definition, Ensures, Guard, Held, Node, Op,
-    Owner, Prim, Program, Reaches, Reading, Routing, Selects, Target, Ty, Value,
+    AbortKind, Answers, Carrier, Case, Declaration, Declares, Definition, Ensures, Guard, Held,
+    Node, Op, Owner, Prim, Program, Reaches, Reading, Routing, Selects, Target, Ty, Value,
 };
 use crate::{Declared, Runs, Targets, departures_taken, not_lowered, says_its_case, spelt};
 use anyhow::{Result, anyhow, bail};
@@ -397,6 +397,11 @@ impl<'a> Reached<'a> {
             index::once(&mut reached.modules, module, (), || {
                 format!("two modules are both written {module}")
             })?;
+            // A helper is looked up by the reference a call reaches it by, and what the module is
+            // held to about it is stated over the declaration it is a copy of: one method for a
+            // declaration, and none for a declaration it holds as a value. Two questions over two
+            // names, each asked of the name it is about.
+            let mut copies = HashMap::new();
             for held in &written.helpers {
                 index::once(
                     &mut reached.helpers,
@@ -404,6 +409,25 @@ impl<'a> Reached<'a> {
                     held,
                     || format!("{module} holds two helpers both written {}", held.reached),
                 )?;
+                // The writer numbers a helper's variables where it first meets each, from nought,
+                // so they are every number below how many there are. What reads a variable
+                // afterwards takes its number as a place in a table that long, and a document
+                // numbering them otherwise is the two halves disagreeing, whatever the numbers are.
+                let numbers = held.numbers();
+                if numbers.iter().enumerate().any(|(at, var)| at != *var) {
+                    bail!(
+                        "{module}'s helper {} numbers its type variables {numbers:?}, where the \
+                         writer numbers them from nought as it meets each: the two halves disagree",
+                        held.reached
+                    );
+                }
+                index::once(&mut copies, &held.declares, (), || {
+                    format!(
+                        "{module} carries {} twice, the second as {}",
+                        held.declares.spelt(),
+                        held.reached
+                    )
+                })?;
             }
             for value in &written.values {
                 let declared = value.declared();
@@ -418,7 +442,11 @@ impl<'a> Reached<'a> {
                 if !spells_a_name(&value.name) {
                     bail!("a value is written {declared}, which no symbol can carry");
                 }
-                if reached.helpers.contains_key(&(module, declared.as_str())) {
+                let as_helper = Declares::Module {
+                    module: value.module.clone(),
+                    name: value.name.clone(),
+                };
+                if copies.contains_key(&as_helper) {
                     bail!("{module} holds {declared} both as a helper and as a value");
                 }
                 index::once(

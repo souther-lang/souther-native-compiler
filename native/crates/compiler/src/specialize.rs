@@ -22,12 +22,17 @@
 //! ([`Recursions`]). Helpers that reach one another in a cycle are one recursion, and within one a
 //! call hands each variable of what it calls the caller's own variable of the same number: the
 //! recursion runs at the types it was entered at. One that does not is refused, whichever calls
-//! reach it and in whatever order they are read. Such a recursion either calls for a copy after
-//! every copy (`f<'a>` calling `f<List<'a>>`) or goes round two copies of one helper (`h<'a, 'b>`
-//! calling `h<'b, 'a>`), where a call to itself is a call to another function, so it is never the
-//! jump that runs a recursion in one frame. The rule is also what bounds the copies: a recursion
-//! entered at some types makes one copy of each of its helpers at those types, and a call out of it
-//! reaches a helper no recursion of it comes back from.
+//! reach it and in whatever order they are read.
+//!
+//! That is a restriction this backend chooses, and stronger than what copies can be made for. Some
+//! of what it refuses would need a copy after every copy (`f<'a>` calling `f<List<'a>>`), and some
+//! would close over a few (`h<'a, 'b>` calling `h<'b, 'a>` goes round two; `f<'a>` calling
+//! `f<Int>` stops at two). What it buys is that a recursion entered at some types is one copy of
+//! each of its helpers at those types, so the copies are bounded without counting them, and a call
+//! a helper makes to itself is always a call to the same function, which is what lets it be a jump.
+//! Admitting the ones that close would mean composing what each call settles round every cycle, and
+//! telling a cycle that permutes or fixes its types from one that nests them. No helper the
+//! standard library writes needs it, and no model can write a type variable.
 
 use crate::index;
 use crate::transport::{Body, Carrier, Held, Node, Owner, Reaches, Ty};
@@ -382,7 +387,7 @@ impl<'p> Specializations<'p> {
 }
 
 /// Which helpers run as a recursion at the types it was entered at, decided of the helpers as
-/// written.
+/// written: the restriction the module's own documentation gives, and no weaker one.
 ///
 /// Helpers reaching one another in a cycle are one recursion: a strongly connected part of the
 /// graph whose edges are the calls in each helper's body, a helper calling itself included. Within
@@ -645,8 +650,11 @@ mod tests {
             .enumerate()
             .map(|(at, ty)| format!(r#"{{"name":"p{at}","type":{ty}}}"#))
             .collect();
+        let (module, name) = reached
+            .rsplit_once('.')
+            .expect("a helper written module.name");
         format!(
-            r#"{{"reached":"{reached}","parameters":[{}],"body":{body}}}"#,
+            r#"{{"reached":"{reached}","declares":{{"is":"module","module":"{module}","name":"{name}"}},"parameters":[{}],"body":{body}}}"#,
             parameters.join(",")
         )
     }
@@ -720,7 +728,7 @@ mod tests {
                 );
                 let mut open = 0;
                 copy.body().each(&mut |node| {
-                    open += node.types().iter().filter(|ty| ty.variables() > 0).count();
+                    open += node.types().iter().filter(|ty| ty.is_open()).count();
                 });
                 assert_eq!(open, 0, "no variable is left in a copy");
             }
@@ -784,7 +792,8 @@ mod tests {
         .expect("a document every relation of which holds");
     }
 
-    /// A helper handing itself a list of what it was handed would need a copy for every depth.
+    /// A helper handing itself a list of what it was handed would need a copy for every depth, and
+    /// is one of the recursions refused.
     #[test]
     fn a_helper_calling_itself_at_other_types_is_not_lowered() {
         let listed = r#"{"list":{"var":0}}"#;
@@ -836,9 +845,10 @@ mod tests {
         assert!(refused.to_string().contains("other types"), "{refused}");
     }
 
-    /// `h<'a, 'b>` calling `h<'b, 'a>` goes round two copies, whichever of them a body asks for
-    /// first and however many it asks for: what is refused is the helper's, and not what the
-    /// copies made before it happen to be.
+    /// `h<'a, 'b>` calling `h<'b, 'a>` would close over two copies, and is refused all the same:
+    /// neither copy's call to itself is a call to itself. It is refused whichever of them a body
+    /// asks for first and however many it asks for, since what is refused is the helper's and not
+    /// what the copies made before it happen to be.
     #[test]
     fn a_recursion_swapping_its_types_is_refused_whatever_reaches_it_first() {
         let swapped = [helper(
@@ -855,6 +865,14 @@ mod tests {
         ] {
             refused_as_other_types(&holding(&swapped, &body));
         }
+    }
+
+    /// `f<'a>` calling `f<Int>` stops at two copies and is refused all the same, which is the
+    /// restriction and not a copy count: the recursion does not run at the types it was entered at.
+    #[test]
+    fn a_recursion_settling_its_type_to_one_type_is_refused_though_it_closes() {
+        let helpers = [helper("m.f", &[VAR], &call("m.f", &[number(1)], INT))];
+        refused_as_other_types(&holding(&helpers, &call("m.f", &[text("a")], INT)));
     }
 
     /// Two helpers calling each other, each handing the other its own variable of each number,
@@ -894,6 +912,27 @@ mod tests {
             helper("m.shut", &[], &call("m.open", &[number(1)], INT)),
         ];
         refused_as_other_types(&holding(&helpers, &call("m.open", &[text("a")], INT)));
+    }
+
+    /// The writer numbers a helper's variables from nought as it meets each, and what reads one
+    /// takes its number as a place in a table: a number past the ones below it is refused before
+    /// anything is made that long.
+    #[test]
+    fn a_helper_numbering_its_variables_with_a_gap_is_the_halves_disagreeing() {
+        let helpers = [helper("m.gap", &[OTHER], &read(0, OTHER))];
+        let refused = specialized(
+            &holding(&helpers, &call("m.gap", &[number(1)], INT)),
+            |_, _| (),
+        )
+        .expect_err("a variable 1 with no variable 0");
+        assert!(
+            refused.downcast_ref::<crate::NotLowered>().is_none(),
+            "{refused}"
+        );
+        assert!(
+            refused.to_string().contains("numbers its type variables"),
+            "{refused}"
+        );
     }
 
     /// A variable nothing a call hands over or answers reaches is one no call settles.

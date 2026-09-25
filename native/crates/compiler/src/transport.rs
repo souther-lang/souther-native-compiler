@@ -38,8 +38,9 @@ pub const MOVES: &[(u32, &str)] = &[
     ),
     (
         18,
-        "a helper, and a call of one, under the reference a call reaches it by (`reached`), and a \
-         type variable a helper's body leaves open (`var`)",
+        "a helper, and a call of one, under the reference a call reaches it by (`reached`), with \
+         the declaration it is a copy of beside that (`declares`), and a type variable a helper's \
+         body leaves open (`var`)",
     ),
 ];
 
@@ -1309,6 +1310,9 @@ pub enum Answers {
 #[serde(deny_unknown_fields)]
 pub struct Held {
     pub reached: String,
+    /// The declaration it is a copy of, which is a different fact from the reference a call
+    /// reaches it by: what a module is held to about its helpers is stated over this.
+    pub declares: Declares,
     pub parameters: Vec<HeldParameter>,
     pub body: Node,
 }
@@ -1325,19 +1329,44 @@ impl Held {
     }
 
     /// How many type variables it leaves open: one more than the largest number any of its types
-    /// writes, and none where no type of it writes one.
+    /// writes, and none where no type of it writes one. Every number below that is one of them,
+    /// which [`Coherent`](crate::coherent::Coherent) holds ([`Held::numbers`]).
     pub fn variables(&self) -> usize {
-        let mut count = 0;
-        let mut counted = |ty: &Ty| count = count.max(ty.variables());
+        self.numbers().last().map_or(0, |largest| largest + 1)
+    }
+
+    /// Every number a type variable is written under in it, in its parameters or its body.
+    pub fn numbers(&self) -> std::collections::BTreeSet<usize> {
+        let mut numbers = std::collections::BTreeSet::new();
         for parameter in &self.parameters {
-            counted(&parameter.ty);
+            parameter.ty.numbers(&mut numbers);
         }
         self.body.each(&mut |node| {
             for ty in node.types() {
-                counted(ty);
+                ty.numbers(&mut numbers);
             }
         });
-        count
+        numbers
+    }
+}
+
+/// The declaration a [`Held`] is a copy of.
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq, Hash)]
+#[serde(tag = "is", rename_all = "lowercase", deny_unknown_fields)]
+pub enum Declares {
+    /// One a module declares, its module and its own name apart, as a value's identity crosses.
+    Module { module: String, name: String },
+    /// An operation the standard library writes, by the alias it publishes it under and its name.
+    Library { alias: String, name: String },
+}
+
+impl Declares {
+    /// What a refusal says this is.
+    pub fn spelt(&self) -> String {
+        match self {
+            Declares::Module { module, name } => format!("{module}.{name}"),
+            Declares::Library { alias, name } => format!("the library's {alias}.{name}"),
+        }
     }
 }
 
@@ -1508,17 +1537,20 @@ impl Ty {
         }
     }
 
-    /// How many type variables this type writes: one more than the largest number it writes, and
-    /// none where it writes none.
-    pub fn variables(&self) -> usize {
-        match self {
-            Ty::Var { var } => var + 1,
-            _ => self
-                .members()
-                .into_iter()
-                .map(Ty::variables)
-                .max()
-                .unwrap_or(0),
+    /// Whether this type writes a type variable anywhere in it.
+    pub fn is_open(&self) -> bool {
+        let mut numbers = std::collections::BTreeSet::new();
+        self.numbers(&mut numbers);
+        !numbers.is_empty()
+    }
+
+    /// Every number a type variable is written under in this type, added to `numbers`.
+    pub fn numbers(&self, numbers: &mut std::collections::BTreeSet<usize>) {
+        if let Ty::Var { var } = self {
+            numbers.insert(*var);
+        }
+        for member in self.members() {
+            member.numbers(numbers);
         }
     }
 }

@@ -50,8 +50,12 @@ fn helper(declared: &str, takes: &[&str], body: &str) -> String {
         .enumerate()
         .map(|(at, ty)| format!(r#"{{"name":"p{at}","type":{ty}}}"#))
         .collect();
+    // Reached under the declaration's own spelling, and a copy of that declaration.
+    let (module, name) = declared
+        .rsplit_once('.')
+        .expect("a helper written module.name");
     format!(
-        r#"{{"reached":"{declared}","parameters":[{}],"body":{body}}}"#,
+        r#"{{"reached":"{declared}","declares":{{"is":"module","module":"{module}","name":"{name}"}},"parameters":[{}],"body":{body}}}"#,
         parameters.join(",")
     )
 }
@@ -769,6 +773,33 @@ fn a_helper_written_twice_is_refused_before_either_is_lowered() {
     let first = helper("m.g", &[DECIMAL], &read(0, DECIMAL));
     let second = helper("m.g", &[INT], &read(0, INT));
     is_the_halves_disagreeing(&helpers(&[first, second]), "m.g");
+}
+
+/// A module carries one method for a declaration. Two helpers reached under two references and
+/// both copies of one declaration are two methods for it, which is asked of what each is a copy
+/// of and not of how a call reaches it.
+#[test]
+fn one_declaration_carried_under_two_references_is_the_halves_disagreeing() {
+    let reached_as_its_own =
+        helper("m.g", &[INT], &read(0, INT)).replacen(r#""reached":"m.g""#, r#""reached":"g""#, 1);
+    let reached_through_its_module = helper("m.g", &[INT], &read(0, INT));
+    is_the_halves_disagreeing(
+        &helpers(&[reached_as_its_own, reached_through_its_module]),
+        "carries m.g twice",
+    );
+}
+
+/// A module holds a declaration as a value or carries a method for it as a helper, not both. A
+/// helper is reached under a reference and a value under its declaration, so the two are held
+/// against each other by the declaration the helper is a copy of: a reference spelt otherwise
+/// does not hide it.
+#[test]
+fn a_declaration_held_both_as_a_value_and_as_a_helper_is_the_halves_disagreeing() {
+    let values = include_str!("values.transport.json");
+    let copy = r#"{"reached":"ks","declares":{"is":"module","module":"m","name":"ks"},"parameters":[],"body":{"core":"int","value":1,"type":{"prim":"INT"},"aborts":[]}}"#;
+    let document = values.replacen(r#""helpers":[]"#, &format!(r#""helpers":[{copy}]"#), 1);
+    assert_ne!(document, values, "the fixture this perturbs moved");
+    is_the_halves_disagreeing(&document, "m.ks both as a helper and as a value");
 }
 
 /// A value, an entry and a module written twice are the same mistake, refused the same way.

@@ -729,6 +729,11 @@ public final class ProgramWriter {
      * there are. What the helper answers is not written at all: it is its body's type, which the body
      * already carries, and a second copy would only be something a reader has to hold to the first.
      *
+     * <p>What it is a copy of crosses beside that, as {@code declares}: which declaration the
+     * module carries a method for. The two are different facts about one helper, a reference and a
+     * declaration, and what the module is held to is stated over the second — it carries one method
+     * for a declaration, and none for a declaration it holds as a value.
+     *
      * <p>A type in it may be a variable the body leaves open ({@link #typeVariables}). What each one
      * comes to is a call's to say, and every call already carries the types its arguments and its
      * answer were settled at.
@@ -744,12 +749,41 @@ public final class ProgramWriter {
                         + ",\"type\":" + type(parameter.type()) + "}");
             }
             return "{\"reached\":" + quoted(helper.reachedAs().rendered())
+                    + ",\"declares\":" + declares(helper.declares())
                     + ",\"parameters\":" + parameters
                     + ",\"body\":" + core(helper.body(), bindings)
                     + "}";
         } finally {
             typeVariables = null;
         }
+    }
+
+    /**
+     * The declaration a helper is a copy of: one a module declares, split into the module and its
+     * own name the way a value's identity crosses, or an operation the standard library writes, by
+     * the alias it publishes and the operation's name.
+     *
+     * <p>Those two and nothing else: {@link Core.Reached.OfDeclaration#reaches} settles a helper
+     * only over one of them, so any other name here is this writer holding something that is not a
+     * helper.
+     */
+    private static String declares(ValueName declares) {
+        return switch (declares) {
+            case ValueName.Helper it -> "{\"is\":\"module\",\"module\":" + quoted(it.module())
+                    + ",\"name\":" + quoted(it.name()) + "}";
+            case ValueName.Stdlib.Operation it -> "{\"is\":\"library\",\"alias\":"
+                    + quoted(it.alias()) + ",\"name\":" + quoted(it.name()) + "}";
+            case ValueName.Behavior it ->
+                    throw new IllegalStateException("a helper declared as the behavior " + it);
+            case ValueName.Stdlib.Namespace it ->
+                    throw new IllegalStateException("a helper declared as the namespace " + it);
+            case ValueName.Local it ->
+                    throw new IllegalStateException("a helper declared as the binding " + it);
+            case ValueName.OfType it ->
+                    throw new IllegalStateException("a helper declared as the type " + it);
+            case ValueName.Builtin it ->
+                    throw new IllegalStateException("a helper declared as the builtin " + it);
+        };
     }
 
     /**

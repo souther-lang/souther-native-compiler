@@ -72,7 +72,13 @@ fn helper(name: &str, takes: &[Value], body: Value) -> Value {
         .enumerate()
         .map(|(at, ty)| json!({ "name": format!("p{at}"), "type": ty }))
         .collect();
-    json!({ "reached": name, "parameters": parameters, "body": body })
+    let (module, own) = name.rsplit_once('.').expect("a helper written module.name");
+    json!({
+        "reached": name,
+        "declares": { "is": "module", "module": module, "name": own },
+        "parameters": parameters,
+        "body": body,
+    })
 }
 
 /// What no fixture the writer produced holds: a type that states a clause and is built, a kernel
