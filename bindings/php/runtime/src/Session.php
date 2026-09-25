@@ -33,11 +33,21 @@ final class Session
     /** Where this run stands among every run opened in the process, later ones higher. */
     private readonly int $order;
 
-    /** @internal */
+    /**
+     * @var array<string, Bound> what each behavior called through `Behaviors` is constructed as, by
+     *      the binding it was called through and its declared name
+     */
+    private array $constructed = [];
+
+    /**
+     * @internal
+     * @param array<string, Implemented> $injected what the run was handed, by the declared name of
+     *        the behavior each implements, each with the binding it was written against
+     */
     public function __construct(
         private readonly NativeLibrary $library,
         private readonly ?\Fiber $fiber,
-        private readonly InjectionRegistry $registry,
+        private readonly array $injected,
     ) {
         $this->order = ++self::$opened;
     }
@@ -97,21 +107,23 @@ final class Session
     }
 
     /**
-     * @internal Runs `$body` with `$implementations` registered for its length, in this run.
-     *
-     * Only through the innermost run's session, as a computation is started ({@see call()}): what
-     * is registered is put back when `$body` ends, and a run inside it would end after.
-     *
-     * @template T
-     * @param callable(): T $body
-     * @param array<string, \Closure> $implementations by the declared name of the behavior each
-     *        implements
-     * @return T
+     * @internal The implementation the run was handed of `$behavior`, which a host implements, with
+     * the binding it was written against; null where it was handed none.
      */
-    public function withInjections(callable $body, array $implementations): mixed
+    public function injected(string $behavior): ?Implemented
     {
-        $this->call();
-        return $this->registry->around($body, $implementations);
+        return $this->injected[$behavior] ?? null;
+    }
+
+    /**
+     * @internal What `$key` is constructed as in this run, made by `$made` the first time it is
+     * asked for and kept for as long as the run is, since what is called with it reads it as long.
+     *
+     * @param \Closure(): Bound $made
+     */
+    public function constructedAs(string $key, \Closure $made): Bound
+    {
+        return $this->constructed[$key] ??= $made();
     }
 
     /**

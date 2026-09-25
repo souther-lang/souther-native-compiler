@@ -13,7 +13,7 @@ use souther_native_driver::native_status;
 use souther_native_driver::transport::AbortKind;
 
 /// The fixture both this test and the Java harness read.
-const FIXTURE: &str = include_str!("abort-status-abi3.json");
+const FIXTURE: &str = include_str!("abort-status-abi4.json");
 
 #[test]
 fn the_fixture_the_java_harness_is_held_to_is_what_native_status_answers_today() {

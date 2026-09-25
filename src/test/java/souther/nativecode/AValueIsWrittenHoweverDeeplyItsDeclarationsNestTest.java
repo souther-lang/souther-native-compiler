@@ -87,8 +87,8 @@ class AValueIsWrittenHoweverDeeplyItsDeclarationsNestTest {
                 extern uint32_t deeper(Value, Value *) __asm__("%4$s");
                 extern uint32_t held(Value, Value *) __asm__("%5$s");
                 extern Value heldEncoded(Value) __asm__("%6$s");
-                extern uint32_t sameChain(Value, Value *) __asm__("%7$s");
-                extern uint32_t sameHeld(Value, Value *) __asm__("%8$s");
+                extern uint32_t sameChain(const void *, Value, Value *) __asm__("%7$s");
+                extern uint32_t sameHeld(const void *, Value, Value *) __asm__("%8$s");
 
                 enum { DEPTH = 1000000 };
 
@@ -136,7 +136,7 @@ class AValueIsWrittenHoweverDeeplyItsDeclarationsNestTest {
                         spell(&chainSpelt, "}");
                     }
                     Value written = 0;
-                    uint32_t status = sameChain(outermost, &written);
+                    uint32_t status = sameChain(NULL, outermost, &written);
                     printf("chain at its boundary: status %%u, as spelt %%d\\n", status,
                            asSpelt(written, &chainSpelt));
                     printf("chain by its encoder: as spelt %%d\\n",
@@ -159,7 +159,7 @@ class AValueIsWrittenHoweverDeeplyItsDeclarationsNestTest {
                         spell(&heldSpelt, "}");
                     }
                     written = 0;
-                    status = sameHeld(wrapped, &written);
+                    status = sameHeld(NULL, wrapped, &written);
                     printf("held at its boundary: status %%u, as spelt %%d\\n", status,
                            asSpelt(written, &heldSpelt));
                     printf("held by its encoder: as spelt %%d\\n",

@@ -99,13 +99,13 @@ class AHostCallsALibraryThroughItsHeaderTest {
 
             static void decoded(const char *label, const char *json) {
                 souther_decoded reading = NULL;
-                souther_status status = souther3_m_shop_t_Line_decode(
+                souther_status status = souther4_m_shop_t_Line_decode(
                         (const uint8_t *) json, (int64_t) strlen(json), &reading);
                 printf("%s: status %u", label, status);
                 switch (souther_decoded_outcome(reading)) {
                 case SOUTHER_DECODED_VALUE:
                     printf(", quantity %" PRId64,
-                           souther3_m_shop_t_Line_f_quantity(souther_decoded_value(reading)));
+                           souther4_m_shop_t_Line_f_quantity(souther_decoded_value(reading)));
                     break;
                 case SOUTHER_DECODED_ISSUES:
                     for (int64_t at = 0; at < souther_decoded_issue_count(reading); at++) {
@@ -128,89 +128,89 @@ class AHostCallsALibraryThroughItsHeaderTest {
                 int64_t mark = souther_mark();
 
                 souther_value three = NULL;
-                souther_status status = souther3_m_shop_t_Money_construct(3, &three);
+                souther_status status = souther4_m_shop_t_Money_construct(3, &three);
                 printf("money: status %u, value %" PRId64 "\\n", status,
-                       souther3_m_shop_t_Money_f_value(three));
+                       souther4_m_shop_t_Money_f_value(three));
                 souther_value below = NULL;
-                status = souther3_m_shop_t_Money_construct(-1, &below);
+                status = souther4_m_shop_t_Money_construct(-1, &below);
                 printf("below: %d\\n", status == SOUTHER_INVARIANT_NOT_HELD && below == NULL);
 
                 const char *wrap = "gift wrap";
                 souther_string note = souther_string_of_utf8((const uint8_t *) wrap,
                                                              (int64_t) strlen(wrap));
                 souther_value line = NULL;
-                status = souther3_m_shop_t_Line_construct(three, 2, 1, note, &line);
+                status = souther4_m_shop_t_Line_construct(three, 2, 1, note, &line);
                 souther_string noted = NULL;
-                uint8_t present = souther3_m_shop_t_Line_f_note(line, &noted);
+                uint8_t present = souther4_m_shop_t_Line_f_note(line, &noted);
                 printf("line: status %u, note %u ", status, present);
                 text(noted);
                 printf("\\n");
 
                 souther_value outcome = NULL;
-                status = souther3_m_shop_b_settle(line, 2, &outcome);
+                status = souther4_m_shop_b_settle(NULL, line, 2, &outcome);
                 int64_t owed = -1;
-                souther_status owing = souther3_m_shop_b_owing(outcome, &owed);
+                souther_status owing = souther4_m_shop_b_owing(NULL, outcome, &owed);
                 printf("settled: status %u, case %u, amount %" PRId64 ", owing %u %" PRId64 "\\n",
-                       status, souther3_m_shop_t_Outcome_case(outcome),
-                       souther3_m_shop_t_Money_f_value(souther3_m_shop_t_Owed_f_amount(outcome)),
+                       status, souther4_m_shop_t_Outcome_case(outcome),
+                       souther4_m_shop_t_Money_f_value(souther4_m_shop_t_Owed_f_amount(outcome)),
                        owing, owed);
 
                 souther_value owes = NULL;
-                status = souther3_m_shop_b_charge(0, &owes);
+                status = souther4_m_shop_b_charge(NULL, 0, &owes);
                 souther_value free = NULL;
-                souther_status freed = souther3_m_shop_b_charge(1, &free);
+                souther_status freed = souther4_m_shop_b_charge(NULL, 1, &free);
                 printf("charged: status %u, case %u, status %u, case %u\\n", status,
-                       souther3_m_shop_b_charge_answer_case(owes), freed,
-                       souther3_m_shop_b_charge_answer_case(free));
+                       souther4_m_shop_b_charge_answer_case(owes), freed,
+                       souther4_m_shop_b_charge_answer_case(free));
 
                 const souther_value both[2] = {line, line};
-                souther_list lines = souther3_m_shop_l_value_construct(2, both);
+                souther_list lines = souther4_m_shop_l_value_construct(2, both);
                 souther_value second = NULL;
-                uint8_t inside = souther3_m_shop_l_value_at(lines, 1, &second);
+                uint8_t inside = souther4_m_shop_l_value_at(lines, 1, &second);
                 souther_value past = NULL;
-                uint8_t outside = souther3_m_shop_l_value_at(lines, 2, &past);
-                uint8_t before = souther3_m_shop_l_value_at(lines, -1, &past);
+                uint8_t outside = souther4_m_shop_l_value_at(lines, 2, &past);
+                uint8_t before = souther4_m_shop_l_value_at(lines, -1, &past);
                 int64_t counted = -1;
-                status = souther3_m_shop_b_counted(lines, &counted);
+                status = souther4_m_shop_b_counted(NULL, lines, &counted);
                 souther_list doubled = NULL;
-                souther_status twice = souther3_m_shop_b_doubled(line, &doubled);
+                souther_status twice = souther4_m_shop_b_doubled(NULL, line, &doubled);
                 printf("lines: length %" PRId64 ", at 1 %u quantity %" PRId64 ", at 2 %u, at -1 %u,"
                        " untouched %d, counted %u %" PRId64 ", doubled %u %" PRId64 "\\n",
-                       souther3_m_shop_l_value_length(lines), inside,
-                       souther3_m_shop_t_Line_f_quantity(second), outside, before, past == NULL,
-                       status, counted, twice, souther3_m_shop_l_value_length(doubled));
+                       souther4_m_shop_l_value_length(lines), inside,
+                       souther4_m_shop_t_Line_f_quantity(second), outside, before, past == NULL,
+                       status, counted, twice, souther4_m_shop_l_value_length(doubled));
 
                 const uint8_t there[2] = {0, 1};
                 const souther_string said[2] = {NULL, note};
-                souther_list notes = souther3_m_shop_l_present_string_construct(2, there, said);
+                souther_list notes = souther4_m_shop_l_present_string_construct(2, there, said);
                 const int64_t ones[1] = {1};
-                const souther_list rows[2] = {souther3_m_shop_l_int_construct(1, ones),
-                                              souther3_m_shop_l_int_construct(0, NULL)};
-                souther_list groups = souther3_m_shop_l_list_construct(2, rows);
+                const souther_list rows[2] = {souther4_m_shop_l_int_construct(1, ones),
+                                              souther4_m_shop_l_int_construct(0, NULL)};
+                souther_list groups = souther4_m_shop_l_list_construct(2, rows);
                 souther_value basket = NULL;
-                status = souther3_m_shop_t_Basket_construct(lines, notes, groups, &basket);
+                status = souther4_m_shop_t_Basket_construct(lines, notes, groups, &basket);
                 uint8_t first_there = 9;
                 souther_string first = NULL;
-                souther3_m_shop_l_present_string_at(souther3_m_shop_t_Basket_f_notes(basket), 0,
+                souther4_m_shop_l_present_string_at(souther4_m_shop_t_Basket_f_notes(basket), 0,
                                                     &first_there, &first);
                 uint8_t second_there = 9;
                 souther_string noted_second = NULL;
-                souther3_m_shop_l_present_string_at(souther3_m_shop_t_Basket_f_notes(basket), 1,
+                souther4_m_shop_l_present_string_at(souther4_m_shop_t_Basket_f_notes(basket), 1,
                                                     &second_there, &noted_second);
                 souther_list group = NULL;
-                souther3_m_shop_l_list_at(souther3_m_shop_t_Basket_f_groups(basket), 0, &group);
+                souther4_m_shop_l_list_at(souther4_m_shop_t_Basket_f_groups(basket), 0, &group);
                 int64_t one = 0;
-                souther3_m_shop_l_int_at(group, 0, &one);
+                souther4_m_shop_l_int_at(group, 0, &one);
                 printf("basket: status %u, notes %u %d %u ", status, first_there, first == NULL,
                        second_there);
                 text(noted_second);
-                printf(", group %" PRId64 " %" PRId64 ", written ", souther3_m_shop_l_int_length(group),
+                printf(", group %" PRId64 " %" PRId64 ", written ", souther4_m_shop_l_int_length(group),
                        one);
-                text(souther3_m_shop_t_Basket_encode(basket));
+                text(souther4_m_shop_t_Basket_encode(basket));
                 printf("\\n");
 
                 printf("written: ");
-                text(souther3_m_shop_t_Line_encode(line));
+                text(souther4_m_shop_t_Line_encode(line));
                 printf("\\n");
                 decoded("read", "{\\"price\\": 4, \\"quantity\\": 5}");
                 decoded("read wrong", "{\\"price\\": -1, \\"quantity\\": 5}");
@@ -242,12 +242,12 @@ class AHostCallsALibraryThroughItsHeaderTest {
 
             function decoded($ffi, string $label, string $json): void {
                 $reading = $ffi->new("souther_decoded");
-                $status = $ffi->souther3_m_shop_t_Line_decode(bytes($ffi, $json), strlen($json),
+                $status = $ffi->souther4_m_shop_t_Line_decode(bytes($ffi, $json), strlen($json),
                         FFI::addr($reading));
                 echo "$label: status $status";
                 $outcome = $ffi->souther_decoded_outcome($reading);
                 if ($outcome === $ffi->SOUTHER_DECODED_VALUE) {
-                    echo ", quantity ", $ffi->souther3_m_shop_t_Line_f_quantity(
+                    echo ", quantity ", $ffi->souther4_m_shop_t_Line_f_quantity(
                             $ffi->souther_decoded_value($reading));
                 } elseif ($outcome === $ffi->SOUTHER_DECODED_ISSUES) {
                     for ($at = 0; $at < $ffi->souther_decoded_issue_count($reading); $at++) {
@@ -264,54 +264,54 @@ class AHostCallsALibraryThroughItsHeaderTest {
             $mark = $ffi->souther_mark();
 
             $three = $ffi->new("souther_value");
-            $status = $ffi->souther3_m_shop_t_Money_construct(3, FFI::addr($three));
-            echo "money: status $status, value ", $ffi->souther3_m_shop_t_Money_f_value($three), "\n";
+            $status = $ffi->souther4_m_shop_t_Money_construct(3, FFI::addr($three));
+            echo "money: status $status, value ", $ffi->souther4_m_shop_t_Money_f_value($three), "\n";
             $below = $ffi->new("souther_value");
-            $status = $ffi->souther3_m_shop_t_Money_construct(-1, FFI::addr($below));
+            $status = $ffi->souther4_m_shop_t_Money_construct(-1, FFI::addr($below));
             echo "below: ", (int) ($status === $ffi->SOUTHER_INVARIANT_NOT_HELD && FFI::isNull($below)),
                     "\n";
 
             $wrap = "gift wrap";
             $note = $ffi->souther_string_of_utf8(bytes($ffi, $wrap), strlen($wrap));
             $line = $ffi->new("souther_value");
-            $status = $ffi->souther3_m_shop_t_Line_construct($three, 2, 1, $note, FFI::addr($line));
+            $status = $ffi->souther4_m_shop_t_Line_construct($three, 2, 1, $note, FFI::addr($line));
             $noted = $ffi->new("souther_string");
-            $present = $ffi->souther3_m_shop_t_Line_f_note($line, FFI::addr($noted));
+            $present = $ffi->souther4_m_shop_t_Line_f_note($line, FFI::addr($noted));
             echo "line: status $status, note $present ", text($ffi, $noted), "\n";
 
             $outcome = $ffi->new("souther_value");
-            $status = $ffi->souther3_m_shop_b_settle($line, 2, FFI::addr($outcome));
+            $status = $ffi->souther4_m_shop_b_settle(null, $line, 2, FFI::addr($outcome));
             $owed = $ffi->new("int64_t");
-            $owing = $ffi->souther3_m_shop_b_owing($outcome, FFI::addr($owed));
-            echo "settled: status $status, case ", $ffi->souther3_m_shop_t_Outcome_case($outcome),
-                    ", amount ", $ffi->souther3_m_shop_t_Money_f_value(
-                            $ffi->souther3_m_shop_t_Owed_f_amount($outcome)),
+            $owing = $ffi->souther4_m_shop_b_owing(null, $outcome, FFI::addr($owed));
+            echo "settled: status $status, case ", $ffi->souther4_m_shop_t_Outcome_case($outcome),
+                    ", amount ", $ffi->souther4_m_shop_t_Money_f_value(
+                            $ffi->souther4_m_shop_t_Owed_f_amount($outcome)),
                     ", owing $owing ", $owed->cdata, "\n";
 
             $owes = $ffi->new("souther_value");
-            $status = $ffi->souther3_m_shop_b_charge(0, FFI::addr($owes));
+            $status = $ffi->souther4_m_shop_b_charge(null, 0, FFI::addr($owes));
             $free = $ffi->new("souther_value");
-            $freed = $ffi->souther3_m_shop_b_charge(1, FFI::addr($free));
-            echo "charged: status $status, case ", $ffi->souther3_m_shop_b_charge_answer_case($owes),
-                    ", status $freed, case ", $ffi->souther3_m_shop_b_charge_answer_case($free), "\n";
+            $freed = $ffi->souther4_m_shop_b_charge(null, 1, FFI::addr($free));
+            echo "charged: status $status, case ", $ffi->souther4_m_shop_b_charge_answer_case($owes),
+                    ", status $freed, case ", $ffi->souther4_m_shop_b_charge_answer_case($free), "\n";
 
             $both = $ffi->new("souther_value[2]");
             $both[0] = $line;
             $both[1] = $line;
-            $lines = $ffi->souther3_m_shop_l_value_construct(2, $both);
+            $lines = $ffi->souther4_m_shop_l_value_construct(2, $both);
             $second = $ffi->new("souther_value");
-            $inside = $ffi->souther3_m_shop_l_value_at($lines, 1, FFI::addr($second));
+            $inside = $ffi->souther4_m_shop_l_value_at($lines, 1, FFI::addr($second));
             $past = $ffi->new("souther_value");
-            $outside = $ffi->souther3_m_shop_l_value_at($lines, 2, FFI::addr($past));
-            $before = $ffi->souther3_m_shop_l_value_at($lines, -1, FFI::addr($past));
+            $outside = $ffi->souther4_m_shop_l_value_at($lines, 2, FFI::addr($past));
+            $before = $ffi->souther4_m_shop_l_value_at($lines, -1, FFI::addr($past));
             $counted = $ffi->new("int64_t");
-            $status = $ffi->souther3_m_shop_b_counted($lines, FFI::addr($counted));
+            $status = $ffi->souther4_m_shop_b_counted(null, $lines, FFI::addr($counted));
             $doubled = $ffi->new("souther_list");
-            $twice = $ffi->souther3_m_shop_b_doubled($line, FFI::addr($doubled));
-            echo "lines: length ", $ffi->souther3_m_shop_l_value_length($lines), ", at 1 $inside quantity ",
-                    $ffi->souther3_m_shop_t_Line_f_quantity($second), ", at 2 $outside, at -1 $before,",
+            $twice = $ffi->souther4_m_shop_b_doubled(null, $line, FFI::addr($doubled));
+            echo "lines: length ", $ffi->souther4_m_shop_l_value_length($lines), ", at 1 $inside quantity ",
+                    $ffi->souther4_m_shop_t_Line_f_quantity($second), ", at 2 $outside, at -1 $before,",
                     " untouched ", (int) FFI::isNull($past), ", counted $status ", $counted->cdata,
-                    ", doubled $twice ", $ffi->souther3_m_shop_l_value_length($doubled), "\n";
+                    ", doubled $twice ", $ffi->souther4_m_shop_l_value_length($doubled), "\n";
 
             $there = $ffi->new("uint8_t[2]");
             $there[0] = 0;
@@ -319,34 +319,34 @@ class AHostCallsALibraryThroughItsHeaderTest {
             $said = $ffi->new("souther_string[2]");
             $said[0] = null;
             $said[1] = $note;
-            $notes = $ffi->souther3_m_shop_l_present_string_construct(2, $there, $said);
+            $notes = $ffi->souther4_m_shop_l_present_string_construct(2, $there, $said);
             $ones = $ffi->new("int64_t[1]");
             $ones[0] = 1;
             $rows = $ffi->new("souther_list[2]");
-            $rows[0] = $ffi->souther3_m_shop_l_int_construct(1, $ones);
-            $rows[1] = $ffi->souther3_m_shop_l_int_construct(0, null);
-            $groups = $ffi->souther3_m_shop_l_list_construct(2, $rows);
+            $rows[0] = $ffi->souther4_m_shop_l_int_construct(1, $ones);
+            $rows[1] = $ffi->souther4_m_shop_l_int_construct(0, null);
+            $groups = $ffi->souther4_m_shop_l_list_construct(2, $rows);
             $basket = $ffi->new("souther_value");
-            $status = $ffi->souther3_m_shop_t_Basket_construct($lines, $notes, $groups, FFI::addr($basket));
+            $status = $ffi->souther4_m_shop_t_Basket_construct($lines, $notes, $groups, FFI::addr($basket));
             $firstThere = $ffi->new("uint8_t");
             $first = $ffi->new("souther_string");
-            $ffi->souther3_m_shop_l_present_string_at($ffi->souther3_m_shop_t_Basket_f_notes($basket), 0,
+            $ffi->souther4_m_shop_l_present_string_at($ffi->souther4_m_shop_t_Basket_f_notes($basket), 0,
                     FFI::addr($firstThere), FFI::addr($first));
             $secondThere = $ffi->new("uint8_t");
             $notedSecond = $ffi->new("souther_string");
-            $ffi->souther3_m_shop_l_present_string_at($ffi->souther3_m_shop_t_Basket_f_notes($basket), 1,
+            $ffi->souther4_m_shop_l_present_string_at($ffi->souther4_m_shop_t_Basket_f_notes($basket), 1,
                     FFI::addr($secondThere), FFI::addr($notedSecond));
             $group = $ffi->new("souther_list");
-            $ffi->souther3_m_shop_l_list_at($ffi->souther3_m_shop_t_Basket_f_groups($basket), 0,
+            $ffi->souther4_m_shop_l_list_at($ffi->souther4_m_shop_t_Basket_f_groups($basket), 0,
                     FFI::addr($group));
             $one = $ffi->new("int64_t");
-            $ffi->souther3_m_shop_l_int_at($group, 0, FFI::addr($one));
+            $ffi->souther4_m_shop_l_int_at($group, 0, FFI::addr($one));
             echo "basket: status $status, notes ", $firstThere->cdata, " ", (int) FFI::isNull($first), " ",
                     $secondThere->cdata, " ", text($ffi, $notedSecond), ", group ",
-                    $ffi->souther3_m_shop_l_int_length($group), " ", $one->cdata, ", written ",
-                    text($ffi, $ffi->souther3_m_shop_t_Basket_encode($basket)), "\n";
+                    $ffi->souther4_m_shop_l_int_length($group), " ", $one->cdata, ", written ",
+                    text($ffi, $ffi->souther4_m_shop_t_Basket_encode($basket)), "\n";
 
-            echo "written: ", text($ffi, $ffi->souther3_m_shop_t_Line_encode($line)), "\n";
+            echo "written: ", text($ffi, $ffi->souther4_m_shop_t_Line_encode($line)), "\n";
             decoded($ffi, "read", '{"price": 4, "quantity": 5}');
             decoded($ffi, "read wrong", '{"price": -1, "quantity": 5}');
             decoded($ffi, "not json", '{"price"');
@@ -369,9 +369,9 @@ class AHostCallsALibraryThroughItsHeaderTest {
             not json: status 0, malformed at 8
             """;
 
-    /** What version 7 of the manifest is, for the program above. */
-    private static final Path INTERFACE_V6 =
-            Path.of("native", "crates", "compiler", "tests", "interface-v7.json");
+    /** What version 8 of the manifest is, for the program above. */
+    private static final Path INTERFACE_V8 =
+            Path.of("native", "crates", "compiler", "tests", "interface-v8.json");
 
     private static final JsonMapper JSON = JsonMapper.builder().build();
 
@@ -405,21 +405,21 @@ class AHostCallsALibraryThroughItsHeaderTest {
     }
 
     /**
-     * The manifest a binding is written against, as version 7 says it for this program. A change
+     * The manifest a binding is written against, as version 8 says it for this program. A change
      * to what the manifest says is a change here, and whether it moves the version is decided
      * looking at it.
      */
     @Test
-    void theManifestIsWhatVersionSixSays(@TempDir Path into) throws Exception {
+    void theManifestIsWhatVersionEightSays(@TempDir Path into) throws Exception {
         NativeCompiler.Library library =
                 NativeCompiler.library(CheckedProgram.of(List.of(SHOP)), into);
 
         String written = Files.readString(library.manifest(), StandardCharsets.UTF_8);
-        String fixed = Files.exists(INTERFACE_V6)
-                ? Files.readString(INTERFACE_V6, StandardCharsets.UTF_8) : "";
+        String fixed = Files.exists(INTERFACE_V8)
+                ? Files.readString(INTERFACE_V8, StandardCharsets.UTF_8) : "";
         if (!written.equals(fixed)) {
             // Kept where it can be compared with the fixture, and copied over it once it is read.
-            Files.writeString(Path.of("target", "interface-v7.written.json"), written,
+            Files.writeString(Path.of("target", "interface-v8.written.json"), written,
                     StandardCharsets.UTF_8);
         }
         assertThat(written).isEqualTo(fixed);
@@ -451,8 +451,11 @@ class AHostCallsALibraryThroughItsHeaderTest {
         Set<String> inTheObject = definedIn(library.object());
         assertThat(inTheObject).anyMatch(it -> it.contains("$example$"));
         assertThat(inTheObject).anyMatch(it -> it.endsWith("$boundary"));
+        // What a host implements has no symbol of its own: it is reached only through the
+        // capability a host makes of an implementation, which the object makes.
         assertThat(inTheObject).contains("souther" + Running.ABI + ".shop.settle",
-                "souther" + Running.ABI + ".shop.discountFor");
+                "souther" + Running.ABI + "_m_shop_b_discountFor_implement");
+        assertThat(inTheObject).doesNotContain("souther" + Running.ABI + ".shop.discountFor");
         assertThat(exported).noneMatch(it -> it.contains("$") || it.contains("."));
         assertThat(exported).doesNotContain("souther_alloc", "souther_decode_begin",
                 "souther_read_int", "souther_external_json");
@@ -473,8 +476,8 @@ class AHostCallsALibraryThroughItsHeaderTest {
 
     /**
      * Every function the manifest names, wherever it names one: every member shaped as a function
-     * is (a name, what it takes and what it answers, and nothing else), and what a host registers
-     * an implementation through, and not what it registers, whose name is a type's. Found by
+     * is (a name, what it takes and what it answers, and nothing else), and what a host makes a
+     * capability of an implementation through, and not what it implements, whose name is a type's. Found by
      * walking the whole manifest rather than by a list of where functions are kept, so a function
      * a later version puts somewhere new is held to the header and the library without this
      * having to be told.
@@ -490,8 +493,8 @@ class AHostCallsALibraryThroughItsHeaderTest {
             if (new TreeSet<>(node.propertyNames()).equals(Set.of("answers", "name", "takes"))) {
                 described.add(node.get("name").stringValue());
             }
-            if (node.has("register")) {
-                described.add(node.get("register").stringValue());
+            if (node.has("implement")) {
+                described.add(node.get("implement").stringValue());
             }
         }
         node.forEach(it -> walk(it, described));

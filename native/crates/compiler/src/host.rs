@@ -24,11 +24,14 @@
 //! and a boundary are not here either: they are how this project's own tests run the object, and
 //! a host is told nothing of them.
 //!
-//! A host is also what answers a behavior with no body that declares nothing to depend on, and the
-//! object of the build that declares one is what calls it: under the behavior's own symbol, with
-//! what a host registered for it on the calling thread ([`define_injections`]). That crossing is
-//! a published behavior's the other way round, and made of the same words: a behavior's boundary
-//! has no optional, so either way it is a word for each parameter and room for one answer.
+//! A host is also what answers a behavior with no body that declares nothing to depend on. The
+//! object of the build that declares one makes a capability of what a host implements it as, and a
+//! behavior requiring it calls through that ([`define_injections`]). That crossing is a published
+//! behavior's the other way round, and made of the same words: a behavior's boundary has no
+//! optional, so either way it is a word for each parameter and room for one answer.
+//!
+//! A behavior is called with the capabilities of what it was constructed with, first, and a host
+//! makes the capability of one to hand where another requires it ([`souther_native_abi::host_bind_symbol`]).
 //!
 //! A list is handed across as one word too, an address a host never reads behind, and a host
 //! builds one and reads one through functions the object defines ([`define_lists`]). Those put an
@@ -54,15 +57,16 @@ use crate::transport::{
 use cranelift::codegen::ir::condcodes::IntCC;
 use cranelift::codegen::ir::{self, InstBuilder, TrapCode, types};
 use cranelift::frontend::FunctionBuilder;
-use cranelift::module::{DataDescription, FuncId, Linkage, Module};
+use cranelift::module::{FuncId, Linkage, Module};
 use cranelift::object::ObjectModule;
 use souther_native_abi::{
-    ANSWERED, HELD, HostListOperation, HostParameter, HostWord, IMPLEMENTATION_ANSWERS,
+    ANSWERED, CAPABILITY_ENVIRONMENT, CAPABILITY_INVOKE, HELD, HOSTED_IMPLEMENTATION,
+    HOSTED_USERDATA, HostListOperation, HostParameter, HostWord, IMPLEMENTATION_ANSWERS,
     INJECTION_PROTOCOL_VIOLATION, INJECTION_UNBOUND, LIST_ELEMENTS, LIST_LENGTH, NOTHING, SLOT,
-    TOKEN, field_at, host_behavior_answer_case_symbol, host_behavior_symbol, host_case_symbol,
-    host_constructor_symbol, host_decode_host_value_symbol, host_decode_symbol, host_encode_symbol,
-    host_field_symbol, host_implementation_type, host_list_symbol, host_register_symbol,
-    host_value_symbol, room_for_held, room_for_list,
+    field_at, host_behavior_answer_case_symbol, host_behavior_symbol, host_bind_symbol,
+    host_case_symbol, host_constructor_symbol, host_decode_host_value_symbol, host_decode_symbol,
+    host_encode_symbol, host_field_symbol, host_implement_symbol, host_implementation_type,
+    host_list_symbol, host_value_symbol, room_for_held, room_for_list,
 };
 use std::collections::BTreeMap;
 
@@ -489,6 +493,9 @@ pub(crate) struct Entry<'a> {
     pub module: &'a str,
     pub name: &'a str,
     pub runs: FuncId,
+    /// Whether `runs` is a behavior's symbol, which takes what the behavior was constructed with
+    /// first ([`super::behavior_signature`]), and not a value's entry, which takes nothing more.
+    pub constructed: bool,
     pub inputs: &'a [BoundaryInput],
     /// The names the declaration gives `inputs`, and none for a composition, which declares no
     /// parameters. A value takes nothing, and names nothing.
@@ -497,9 +504,43 @@ pub(crate) struct Entry<'a> {
     /// The cases `answers` descends to, where it is a union no declaration names and a behavior's
     /// answer. None for a value, which a host is told nothing of the cases of yet.
     pub cases: Option<&'a [Case]>,
-    /// What constructing it requires injected, in order, and nothing for a value, which is not
-    /// constructed.
+}
+
+/// A behavior a host constructs the capabilities of what a call is made with out of, whether or not
+/// a host may call it by name ([`super::constructions`]).
+pub(crate) struct Construction<'a> {
+    pub module: &'a str,
+    pub name: &'a str,
+    /// The behavior's symbol, which a capability of it holds as its code.
+    pub runs: FuncId,
+    /// What constructing it requires injected, in order.
     pub requires: &'a [Requirement],
+    /// Whether a host makes a capability of it, to hand where something requires it
+    /// ([`souther_native_abi::host_bind_symbol`]).
+    pub binds: bool,
+}
+
+/// Defines what a host makes the capability of each of `constructions` through, where something
+/// may require it, and puts each on `surface` with what it requires.
+pub(crate) fn define_constructions(
+    emitting: &mut Emitting,
+    surface: &mut Surface,
+    constructions: &[Construction],
+) -> Lowered<()> {
+    for construction in constructions {
+        let bind = if construction.binds {
+            Some(bind(emitting, construction)?)
+        } else {
+            None
+        };
+        surface.construction(
+            construction.module,
+            construction.name,
+            construction.requires,
+            bind.as_ref(),
+        );
+    }
+    Ok(())
 }
 
 /// The word a behavior's parameter is handed over in, where a host can hand one over.
@@ -553,12 +594,42 @@ pub(crate) fn define_behaviors(
             &takes,
             &behavior.answers,
             union.as_ref().map(|(cases, case)| (*cases, case.as_ref())),
-            behavior.requires,
             emitting.declared,
             call.as_ref(),
         );
     }
     Ok(())
+}
+
+/// What a host makes the capability of `behavior` through, out of capabilities of what it
+/// requires: the behavior's symbol as the code, and the requirements as they were handed as what
+/// the code is handed first. Nothing is copied, so what a host hands over is read where the
+/// behavior runs.
+fn bind(emitting: &mut Emitting, behavior: &Construction) -> Lowered<HostFunction> {
+    let function = HostFunction {
+        symbol: host_bind_symbol(behavior.module, behavior.name),
+        takes: vec![
+            HostParameter::Room(HostWord::Capability),
+            HostParameter::Given(HostWord::Requirements),
+        ],
+        answers: None,
+    };
+    let runs = behavior.runs;
+    expose(emitting, function, &mut |builder, module, given| {
+        let [into, requirements] = given else {
+            unreachable!("a capability is made from room and requirements");
+        };
+        let code = module.declare_func_in_func(runs, builder.func);
+        let code = builder.ins().func_addr(POINTER, code);
+        builder
+            .ins()
+            .store(TRUSTED, code, *into, CAPABILITY_INVOKE as i32);
+        builder
+            .ins()
+            .store(TRUSTED, *requirements, *into, CAPABILITY_ENVIRONMENT as i32);
+        builder.ins().return_(&[]);
+        Ok(())
+    })
 }
 
 /// Defines what a host reads each value a module of this object publishes through, and puts every
@@ -623,7 +694,13 @@ fn forward(
         lists.need(entry.module, &input.ty());
     }
     lists.need(entry.module, &entry.answers);
-    let mut takes: Vec<HostParameter> = handed.iter().copied().map(HostParameter::Given).collect();
+    // What a behavior was constructed with, which a host hands first, as the behavior's symbol takes
+    // it.
+    let mut takes: Vec<HostParameter> = Vec::new();
+    if entry.constructed {
+        takes.push(HostParameter::Given(HostWord::Requirements));
+    }
+    takes.extend(handed.iter().copied().map(HostParameter::Given));
     takes.extend(answered.room());
     let function = HostFunction {
         symbol,
@@ -631,10 +708,18 @@ fn forward(
         answers: Some(HostWord::Status),
     };
     let runs = entry.runs;
+    let constructed = entry.constructed;
     let answers = machine_type(&entry.answers)?;
     let exposed = expose(emitting, function, &mut |builder, module, params| {
         let mut given = params.iter().copied();
-        let mut arguments = Vec::with_capacity(handed.len() + 1);
+        let mut arguments = Vec::with_capacity(handed.len() + 2);
+        if constructed {
+            arguments.push(
+                given
+                    .next()
+                    .expect("what the behavior was constructed with"),
+            );
+        }
         // What a host hands over is what the entry takes, word for word.
         for (word, taken) in handed.iter().zip(entry.inputs) {
             assert_eq!(machine(*word), machine_type(&taken.ty())?);
@@ -682,31 +767,25 @@ fn forward(
     Ok(Some(exposed))
 }
 
-/// A behavior a module of this object declares with no body, which a host implements: the
-/// function its symbol is defined as, and what each parameter arrives as and the answer leaves as.
+/// A behavior a module of this object declares with no body, which a host implements: what each
+/// parameter arrives as and the answer leaves as.
 pub(crate) struct Injected<'a> {
     pub module: &'a str,
     pub name: &'a str,
-    pub answered_by: FuncId,
     pub inputs: &'a [BoundaryInput],
     /// The names the declaration gives `inputs`, which a behavior a host implements always has.
     pub names: &'a [String],
     pub output: &'a BoundaryOutput,
 }
 
-/// The runtime's functions a registration is kept by ([`souther_native_abi::INJECTION_GET`] and
-/// [`souther_native_abi::INJECTION_EXCHANGE`]).
-pub(crate) struct Registrations {
-    pub get: FuncId,
-    pub exchange: FuncId,
-}
-
-/// Defines each behavior in `injected` as a call to what a host registered for it on the calling
-/// thread, and what a host registers one through, and puts both on `surface`.
+/// Defines, for each behavior in `injected`, what a host makes a capability of an implementation
+/// of its own through, and the code that capability holds, and puts them on `surface`.
 ///
-/// Each has a key: a byte of this object's own that nothing reads, whose address is which behavior
-/// a registration is for. Writable, so no link lays two keys at one address because their bytes
-/// are alike.
+/// The code reads the host's function and what it is handed first out of what the host laid out
+/// ([`HOSTED_IMPLEMENTATION`], [`HOSTED_USERDATA`]), calls it, and holds what it answered to what an
+/// implementation may answer ([`IMPLEMENTATION_ANSWERS`]). That is the one place it is held: a
+/// capability made any other way — a body, a row's stand-in — answers what it answers, and a call
+/// through a capability hands on whatever it was answered.
 ///
 /// Refused where a host cannot hand over what the behavior answers or be handed what it takes: a
 /// host is the only thing that answers one, so a behavior no host can answer is one nothing can.
@@ -715,7 +794,6 @@ pub(crate) fn define_injections(
     surface: &mut Surface,
     lists: &mut Lists,
     injected: &[Injected],
-    registrations: &Registrations,
 ) -> Lowered<()> {
     for behavior in injected {
         let spelt = format!("{}.{}", behavior.module, behavior.name);
@@ -740,8 +818,8 @@ pub(crate) fn define_injections(
             lists.need(behavior.module, taken);
         }
         lists.need(behavior.module, &answers);
-        let mut given: Vec<HostParameter> =
-            handed.iter().copied().map(HostParameter::Given).collect();
+        let mut given = vec![HostParameter::Given(HostWord::Userdata)];
+        given.extend(handed.iter().copied().map(HostParameter::Given));
         given.push(HostParameter::Room(answered));
         let implementation = HostImplementation {
             type_name: host_implementation_type(behavior.module, behavior.name),
@@ -749,39 +827,6 @@ pub(crate) fn define_injections(
             answers: HostWord::Status,
         };
 
-        let key = accepted(emitting.module.declare_data(
-            &format!("$injection${spelt}"),
-            Linkage::Local,
-            true,
-            false,
-        ));
-        let mut byte = DataDescription::new();
-        byte.define(TOKEN.into());
-        accepted(emitting.module.define_data(key, &byte));
-
-        let register = host_register_symbol(behavior.module, behavior.name);
-        let mut registering = ir::Signature::new(emitting.call_conv);
-        registering.params.push(ir::AbiParam::new(POINTER));
-        registering.returns.push(ir::AbiParam::new(POINTER));
-        let id = accepted(emitting.module.declare_function(
-            &register,
-            Linkage::Export,
-            &registering,
-        ));
-        let exchange = registrations.exchange;
-        emitting.function(id, registering, |builder, module, given| {
-            let key = module.declare_data_in_func(key, builder.func);
-            let key = builder.ins().symbol_value(POINTER, key);
-            let exchanging = module.declare_func_in_func(exchange, builder.func);
-            let called = builder.ins().call(exchanging, &[key, given[0]]);
-            let before = builder.inst_results(called)[0];
-            builder.ins().return_(&[before]);
-            Ok(())
-        })?;
-
-        let signature = super::signature_over(&takes, &answers, emitting.call_conv)?;
-        let calling = implementation.signature(emitting.call_conv);
-        let get = registrations.get;
         // What the behavior takes and answers is what a host hands over and is handed, word for
         // word, so the arguments go to the implementation as they came and its room is read as
         // the answer.
@@ -789,17 +834,32 @@ pub(crate) fn define_injections(
             assert_eq!(machine(*word), machine_type(taken)?);
         }
         assert_eq!(machine(answered), machine_type(&answers)?);
-        emitting.function(behavior.answered_by, signature, |builder, module, given| {
-            let (arguments, out) = given.split_at(given.len() - 1);
+
+        let signature = super::behavior_signature(&takes, &answers, emitting.call_conv)?;
+        let code = accepted(emitting.module.declare_function(
+            &format!("$hosted${spelt}"),
+            Linkage::Local,
+            &signature,
+        ));
+        let calling = implementation.signature(emitting.call_conv);
+        emitting.function(code, signature, |builder, _, given| {
+            let hosted = given[0];
+            let (arguments, out) = given[1..].split_at(given.len() - 2);
             let out = out[0];
-            let key = module.declare_data_in_func(key, builder.func);
-            let key = builder.ins().symbol_value(POINTER, key);
-            let getting = module.declare_func_in_func(get, builder.func);
-            let got = builder.ins().call(getting, &[key]);
-            let registered = builder.inst_results(got)[0];
-            let bound = builder.create_block();
             let unbound = builder.create_block();
-            builder.ins().brif(registered, bound, &[], unbound, &[]);
+            let laid = builder.create_block();
+            builder.ins().brif(hosted, laid, &[], unbound, &[]);
+
+            builder.switch_to_block(laid);
+            let implemented =
+                builder
+                    .ins()
+                    .load(POINTER, TRUSTED, hosted, HOSTED_IMPLEMENTATION as i32);
+            let userdata = builder
+                .ins()
+                .load(POINTER, TRUSTED, hosted, HOSTED_USERDATA as i32);
+            let bound = builder.create_block();
+            builder.ins().brif(implemented, bound, &[], unbound, &[]);
 
             builder.switch_to_block(unbound);
             let status = builder
@@ -811,10 +871,12 @@ pub(crate) fn define_injections(
             // which is written only once the status says there is an answer.
             builder.switch_to_block(bound);
             let room = out_slot(builder);
-            let mut handing = arguments.to_vec();
+            let mut handing = Vec::with_capacity(arguments.len() + 2);
+            handing.push(userdata);
+            handing.extend_from_slice(arguments);
             handing.push(room);
             let calling = builder.import_signature(calling.clone());
-            let called = builder.ins().call_indirect(calling, registered, &handing);
+            let called = builder.ins().call_indirect(calling, implemented, &handing);
             let status = builder.inst_results(called)[0];
 
             let is_answered = builder
@@ -849,6 +911,41 @@ pub(crate) fn define_injections(
             Ok(())
         })?;
 
+        // `(into, hosted, implementation, userdata)`: the host's function and what it is handed
+        // laid out in `hosted`, and a capability of the code above over `hosted` written into
+        // `into`.
+        let implement = host_implement_symbol(behavior.module, behavior.name);
+        let mut implementing = ir::Signature::new(emitting.call_conv);
+        for _ in 0..4 {
+            implementing.params.push(ir::AbiParam::new(POINTER));
+        }
+        let id = accepted(emitting.module.declare_function(
+            &implement,
+            Linkage::Export,
+            &implementing,
+        ));
+        emitting.function(id, implementing, |builder, module, given| {
+            let [into, hosted, implemented, userdata] = given else {
+                unreachable!("a capability is made of room for it and for what a host wrote");
+            };
+            builder
+                .ins()
+                .store(TRUSTED, *implemented, *hosted, HOSTED_IMPLEMENTATION as i32);
+            builder
+                .ins()
+                .store(TRUSTED, *userdata, *hosted, HOSTED_USERDATA as i32);
+            let code = module.declare_func_in_func(code, builder.func);
+            let code = builder.ins().func_addr(POINTER, code);
+            builder
+                .ins()
+                .store(TRUSTED, code, *into, CAPABILITY_INVOKE as i32);
+            builder
+                .ins()
+                .store(TRUSTED, *hosted, *into, CAPABILITY_ENVIRONMENT as i32);
+            builder.ins().return_(&[]);
+            Ok(())
+        })?;
+
         surface.injection(
             behavior.module,
             behavior.name,
@@ -857,7 +954,7 @@ pub(crate) fn define_injections(
             &answers,
             emitting.declared,
             &implementation,
-            &register,
+            &implement,
         );
     }
     Ok(())

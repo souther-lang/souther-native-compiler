@@ -52,6 +52,16 @@ pub const MOVES: &[(u32, &str)] = &[
         "an operation the checker's compiler emits for a backend to lower whole, as the member it \
          is (`emitted`), and the type of what has no value (`nothing`)",
     ),
+    (
+        21,
+        "what a row states each dependency of its behavior answers, entry by entry and for the \
+         rest (`standsIn`)",
+    ),
+    (
+        22,
+        "what constructing a behavior requires injected, on the behavior's target wherever it is \
+         reached (`requirements`), and no longer beside a definition",
+    ),
 ];
 
 /// A document of [`TRANSPORT_VERSION`], and no other, read through [`Program::read`] and nothing
@@ -96,11 +106,32 @@ impl Program {
                 ))
             }
         })?;
+        let mut modules = written.modules;
+        // What a local definition requires is what its target says, read off the one place the
+        // document writes it. A definition no target names keeps nothing, and is refused as that
+        // where the two are held together (`Coherent`).
+        let required: std::collections::HashMap<String, &[Requirement]> = written
+            .behaviors
+            .iter()
+            .map(|target| (target.declared(), target.requirements.as_slice()))
+            .collect();
+        for module in &mut modules {
+            for definition in &mut module.definitions {
+                let copied = required
+                    .get(definition.declared())
+                    .map(|it| it.to_vec())
+                    .unwrap_or_default();
+                match definition {
+                    Definition::Body { requirements, .. }
+                    | Definition::Composed { requirements, .. } => *requirements = copied,
+                }
+            }
+        }
         Ok(Program {
             transport: written.transport,
             declarations: written.declarations,
             behaviors: written.behaviors,
-            modules: written.modules,
+            modules,
         })
     }
 }
@@ -156,15 +187,30 @@ impl Program {
                 .iter()
                 .map(move |it| Body::at(module, Owner::Entry(it), &it.body));
             let definitions = definitions.iter().filter_map(move |it| match it {
-                Definition::Body { declared, body, .. } => {
-                    Some(Body::at(module, Owner::Definition(declared), body))
-                }
+                Definition::Body {
+                    declared,
+                    body,
+                    requirements,
+                    ..
+                } => Some(Body {
+                    environment: requirements,
+                    ..Body::at(module, Owner::Definition(declared), body)
+                }),
                 // Stages reach other behaviors by name, and there is no `Core` of its own.
                 Definition::Composed { .. } => None,
             });
-            let examples = examples
-                .iter()
-                .map(move |it| Body::at(module, Owner::Example(it), &it.body));
+            let examples = examples.iter().flat_map(move |it| {
+                let stood = it
+                    .stands_in
+                    .iter()
+                    .enumerate()
+                    .flat_map(move |(at, stand_in)| {
+                        stand_in.values().map(move |value| {
+                            Body::at(module, Owner::StoodIn { example: it, at }, value)
+                        })
+                    });
+                std::iter::once(Body::at(module, Owner::Example(it), &it.body)).chain(stood)
+            });
             helpers
                 .chain(values)
                 .chain(entries)
@@ -208,6 +254,8 @@ pub struct Body<'p> {
     module: &'p str,
     pub owner: Owner<'p>,
     pub node: &'p Node,
+    /// What the function it is lowered as is handed a capability for, one each, in order.
+    environment: &'p [Requirement],
 }
 
 impl<'p> Body<'p> {
@@ -216,7 +264,15 @@ impl<'p> Body<'p> {
             module,
             owner,
             node,
+            environment: &[],
         }
+    }
+
+    /// The behaviors a call from this body reaches through a capability it was handed, in the
+    /// order it was handed them: what the behavior whose body it is was constructed with, and
+    /// nothing for any other body. A call reaching any other behavior reaches its symbol.
+    pub fn environment(&self) -> &'p [Requirement] {
+        self.environment
     }
 
     /// Where a call from this body is resolved.
@@ -257,6 +313,11 @@ pub enum Owner<'p> {
     /// A behavior's own body, by the name it defines.
     Definition(&'p str),
     Example(&'p Example),
+    /// A value the row `example` states its stand-in at `at` is asked with or answers.
+    StoodIn {
+        example: &'p Example,
+        at: usize,
+    },
     /// The clause at `at` among what `declaration` holds its values to, in the order they run.
     Invariant {
         declaration: &'p Declaration,
@@ -280,6 +341,7 @@ impl<'p> Owner<'p> {
             | Owner::Entry(_)
             | Owner::Definition(_)
             | Owner::Example(_)
+            | Owner::StoodIn { .. }
             | Owner::Invariant { .. }
             | Owner::Ensures { .. } => None,
         }
@@ -588,7 +650,9 @@ pub enum Definition {
         parameters: Vec<String>,
         /// What the module declaring it says about the name.
         publication: Publication,
-        /// What constructing it requires injected, in order.
+        /// What its target says constructing it requires ([`Target::requirements`]), which
+        /// [`Program::read`] puts here and the document does not write a second time.
+        #[serde(skip)]
         requirements: Vec<Requirement>,
         body: Node,
     },
@@ -601,8 +665,9 @@ pub enum Definition {
         declared: String,
         /// What the module declaring it says about the name.
         publication: Publication,
-        /// What constructing it requires injected, in order: what its stages require, which is
-        /// not what it calls.
+        /// What its target says constructing it requires ([`Target::requirements`]): what its stages
+        /// require, which is not what it calls.
+        #[serde(skip)]
         requirements: Vec<Requirement>,
         stages: Vec<Stage>,
     },
@@ -709,6 +774,50 @@ pub struct Example {
     pub behavior: String,
     pub at: usize,
     pub body: Node,
+    /// What the row states each dependency of the behavior answers, in the order the behavior
+    /// requires them, and none where it states nothing of any (upstream `CheckedRow.WithStandIns`).
+    #[serde(rename = "standsIn")]
+    pub stands_in: Vec<StandIn>,
+}
+
+/// What a row states one dependency answers (upstream `StandsIn`): the first of `entries` stating
+/// the arguments a call arrived with answers, compared as the language compares two values, and
+/// `otherwise` answers the rest, where the row states anything for the rest.
+///
+/// The entries in order and not a table keyed by them: which entry states a call is the
+/// comparison's to say, and the first to say so answers.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StandIn {
+    pub module: String,
+    pub name: String,
+    pub entries: Vec<StoodEntry>,
+    pub otherwise: Option<Node>,
+}
+
+impl StandIn {
+    /// What a reference to the dependency says, which is the two halves joined the one way.
+    pub fn declared(&self) -> String {
+        format!("{}.{}", self.module, self.name)
+    }
+
+    /// Every value it states, each as the expression that makes it: each entry's arguments then its
+    /// answer, entry after entry, then what it answers for the rest.
+    pub fn values(&self) -> impl Iterator<Item = &Node> {
+        self.entries
+            .iter()
+            .flat_map(|entry| entry.arguments.iter().chain([&entry.answer]))
+            .chain(&self.otherwise)
+    }
+}
+
+/// One entry of what a row states a dependency answers: the arguments, in the order the dependency
+/// takes them, and the answer.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StoodEntry {
+    pub arguments: Vec<Node>,
+    pub answer: Node,
 }
 
 /// A behavior as a caller reaches it.
@@ -732,6 +841,11 @@ pub struct Target {
     pub output: BoundaryOutput,
     /// What is done about what the behavior declares of its answer, as the checker answered it.
     pub ensures: Ensures,
+    /// What constructing it requires injected, in the order its constructor takes them: what a
+    /// caller hands it the capabilities of, and a composition hands a stage those of, whichever
+    /// build implements it. Nothing for a behavior a host implements, which Souther does not
+    /// construct; that is not a behavior called with nothing handed, which how it answers says.
+    pub requirements: Vec<Requirement>,
 }
 
 /// A [`Target`] as the document writes it.
@@ -744,6 +858,7 @@ struct WrittenTarget {
     parameters: Parameters,
     output: BoundaryOutput,
     ensures: Ensures,
+    requirements: Vec<Requirement>,
 }
 
 /// What a behavior takes: named where its declaration names them, and in order only where it is a
@@ -802,6 +917,9 @@ impl TryFrom<WrittenTarget> for Target {
             (Answers::Elsewhere, Parameters::Named(it)) => named(it),
             (Answers::Elsewhere, Parameters::Positional(inputs)) => (inputs, None),
         };
+        if written.is == Answers::Injected && !written.requirements.is_empty() {
+            return refused("requires something to construct, and a host's is not constructed");
+        }
         if let Some(contract) = written.ensures.contract() {
             match &names {
                 Some(names) if *names == contract.parameters => {}
@@ -822,6 +940,7 @@ impl TryFrom<WrittenTarget> for Target {
             names,
             output: written.output,
             ensures: written.ensures,
+            requirements: written.requirements,
         })
     }
 }
@@ -1322,9 +1441,9 @@ impl LanguageCase {
 pub enum Answers {
     /// Code this object holds, which is emitted.
     Body,
-    /// Supplied by whoever runs the program, which registers an implementation for it when it
-    /// runs. The object of the build that declares it answers it with that; any other object only
-    /// names it.
+    /// Supplied by whoever runs the program, as a capability handed to what requires it. The object
+    /// of the build that declares it makes a capability of what a host implements it as; no object
+    /// defines it under a symbol, since nothing reaches it but through a capability.
     Injected,
     /// Implemented by another build. The same call to whoever reaches in, and a different thing to
     /// whoever links.

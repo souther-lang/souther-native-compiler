@@ -187,6 +187,9 @@ sealed interface Crossing {
                 case DECODED -> "souther_decoded";
                 case ISSUE -> "souther_issue";
                 case LIST -> "souther_list";
+                case REQUIREMENTS -> "const souther_capability *const *";
+                case CAPABILITY -> "souther_capability";
+                case USERDATA -> "void *";
             };
         }
     }

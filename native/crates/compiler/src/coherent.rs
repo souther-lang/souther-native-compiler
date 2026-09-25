@@ -85,11 +85,12 @@ pub(crate) struct Coherent<'a> {
 pub(crate) enum Defined {
     /// This object, as the local definition a module of it holds: a body or a composition.
     Here,
-    /// This object, as a call to what a host registered for it on the calling thread: a module this
-    /// document builds declares it with no body and nothing to depend on.
+    /// A host, through a capability of an implementation of its own, which this object makes: a
+    /// module this document builds declares it with no body and nothing to depend on.
     ByTheHost,
     /// Another object: the build that implements it, or the build that declares it with no body
-    /// and answers it with what a host registered. A call is the same call either way.
+    /// and makes a capability of what a host implements it as. One with a body is called by its
+    /// symbol, and one a host implements through a capability, as it is anywhere.
     Elsewhere,
     /// Nothing: it was never written.
     Nowhere,
@@ -194,6 +195,7 @@ impl<'a> Coherent<'a> {
             let target = targets.named(name)?;
             agrees_with_its_target(name, target, local, &targets, &declared, &mut owed)?;
             requires_what_it_names(name, local, &targets)?;
+            stages_are_handed_what_they_require(name, local, &targets)?;
         }
 
         for body in program.bodies() {
@@ -261,8 +263,28 @@ impl<'a> Coherent<'a> {
                             answers.spelt()
                         );
                     }
+                    stands_in_for_what_it_requires(&owner, &behavior, example, &locals, &targets)?;
                     (owner, Vec::new())
                 }
+                Owner::StoodIn { example, at } => {
+                    let behavior = format!("{}.{}", body.carrier().module(), example.behavior);
+                    let stood = &example.stands_in[at];
+                    (
+                        format!(
+                            "what row {} of {behavior} states {} answers",
+                            example.at,
+                            stood.declared()
+                        ),
+                        Vec::new(),
+                    )
+                }
+            };
+            // A row is what constructs its behavior, with what it states the dependencies answer.
+            let constructs = match body.owner {
+                Owner::Example(example) => {
+                    Some(format!("{}.{}", body.carrier().module(), example.behavior))
+                }
+                _ => None,
             };
             let mut walk = Walk {
                 owner,
@@ -275,6 +297,8 @@ impl<'a> Coherent<'a> {
                 owed: &mut owed,
                 runs: runs.runs(&body),
                 unrun: Vec::new(),
+                environment: body.environment(),
+                constructs,
             };
             // A rule over a case tests the answer the way an arm tests what it forks on, and reads
             // it as an arm reads what it binds.
@@ -579,9 +603,52 @@ struct Walk<'w, 'a> {
     runs: bool,
     /// The functions the calls read so far never apply, which are read with `runs` false.
     unrun: Vec<&'a Node>,
+    /// What the body is handed a capability for ([`crate::transport::Body::environment`]).
+    environment: &'a [crate::transport::Requirement],
+    /// The behavior a row's body constructs, with what the row states its dependencies answer.
+    constructs: Option<String>,
 }
 
 impl<'a> Walk<'_, 'a> {
+    /// Refuses a call of a behavior that is neither one this body was handed a capability for nor
+    /// one called by its symbol with nothing handed: a behavior a host implements, or one requiring
+    /// something constructed, reached from a body not constructed with it (spec
+    /// §calling-a-behavior). The checker holds a body's calls to its `depends on`, so either is the
+    /// two halves disagreeing, and lowered it would be a call through a capability nothing holds.
+    /// What a behavior requires is what its target says, whichever build implements it.
+    fn reached_as_constructed(&self, declared: &str) -> Result<()> {
+        if self.constructs.as_deref() == Some(declared)
+            || self
+                .environment
+                .iter()
+                .any(|required| required.declared() == declared)
+        {
+            return Ok(());
+        }
+        let target = self.targets.named(declared)?;
+        if target.is == Answers::Injected {
+            bail!(
+                "{}: a call of {declared}, which a host implements, from a body not constructed \
+                 with it: only a capability it was handed reaches it",
+                self.owner
+            );
+        }
+        if !target.requirements.is_empty() {
+            bail!(
+                "{}: a call of {declared}, which requires {} constructed, from a body not \
+                 constructed with it",
+                self.owner,
+                target
+                    .requirements
+                    .iter()
+                    .map(|it| it.declared())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
+        Ok(())
+    }
+
     /// Refuses a node whose own type is not the one its source states.
     fn same(&self, what: &str, stated: &Ty, source: &Ty, source_is: &str) -> Result<()> {
         if stated != source {
@@ -1838,12 +1905,15 @@ impl<'a> Walk<'_, 'a> {
         let (callee, takes) = self.parameters(reaches, arguments, ty)?;
         self.arity(&format!("a call of {callee}"), arguments.len(), takes.len())?;
         match reaches {
-            Reaches::Behavior { declared } => self.same(
-                &format!("a call of {declared}"),
-                ty,
-                &self.targets.named(declared)?.answers(),
-                "what it answers",
-            ),
+            Reaches::Behavior { declared } => {
+                self.reached_as_constructed(declared)?;
+                self.same(
+                    &format!("a call of {declared}"),
+                    ty,
+                    &self.targets.named(declared)?.answers(),
+                    "what it answers",
+                )
+            }
             // What it answers stands where its variables are bound from, so a call answering
             // other than what the helper answers was refused where they were bound.
             Reaches::Helper { reached } => {
@@ -2076,6 +2146,123 @@ fn requires_what_it_names(name: &str, local: &Definition, targets: &Targets) -> 
                 "{name} requires {required} twice: the checker answers each dependency once, and \
                  the two halves disagree about what constructing it takes"
             );
+        }
+    }
+    Ok(())
+}
+
+/// That each stage of a composition can be handed what it requires out of what the composition was
+/// constructed with (spec §composition-with-requirements): a stage a host implements is one of the
+/// composition's requirements, and any other requires nothing the composition was not handed,
+/// whichever build implements it. The composition builds the second and holds the first, so either
+/// missing is the checker's union answered differently from how the stages are.
+fn stages_are_handed_what_they_require(
+    name: &str,
+    local: &Definition,
+    targets: &Targets,
+) -> Result<()> {
+    let Definition::Composed {
+        requirements,
+        stages,
+        ..
+    } = local
+    else {
+        return Ok(());
+    };
+    let handed = |behavior: &str| requirements.iter().any(|it| it.declared() == behavior);
+    for stage in stages {
+        let reached = targets.named(&stage.behavior)?;
+        if reached.is == Answers::Injected {
+            if !handed(&stage.behavior) {
+                bail!(
+                    "{name}'s stage {} is implemented by a host and is not among what {name} \
+                     requires: a composition holds the stage it is handed",
+                    stage.behavior
+                );
+            }
+            continue;
+        }
+        if let Some(missing) = reached
+            .requirements
+            .iter()
+            .find(|it| !handed(&it.declared()))
+        {
+            bail!(
+                "{name}'s stage {} requires {}, which is not among what {name} requires: a \
+                 composition requires what its stages do",
+                stage.behavior,
+                missing.declared()
+            );
+        }
+    }
+    Ok(())
+}
+
+/// That what a row states its behavior's dependencies answer is one stand-in for each of them, in the
+/// order the behavior requires them (upstream `CheckedRow.WithStandIns`), each stating values of what
+/// the dependency takes and answers. The row is run with a capability of each in that order, so one
+/// out of place would answer for another dependency.
+///
+/// A row stating none of them stands in for nothing, and one requiring something is run with
+/// nothing, which the behavior answers `INJECTION_UNBOUND` for where it reaches it.
+fn stands_in_for_what_it_requires(
+    owner: &str,
+    behavior: &str,
+    example: &crate::transport::Example,
+    locals: &HashMap<&str, &Definition>,
+    targets: &Targets,
+) -> Result<()> {
+    if example.stands_in.is_empty() {
+        return Ok(());
+    }
+    let requires: Vec<String> = locals
+        .get(behavior)
+        .map(|local| {
+            local
+                .requirements()
+                .iter()
+                .map(|it| it.declared())
+                .collect()
+        })
+        .unwrap_or_default();
+    let stood: Vec<String> = example.stands_in.iter().map(|it| it.declared()).collect();
+    if stood != requires {
+        bail!(
+            "{owner} stands in for {stood:?} and its behavior requires {requires:?}: a row stands \
+             in for each dependency in the order the behavior requires them"
+        );
+    }
+    for stand_in in &example.stands_in {
+        let dependency = targets.named(&stand_in.declared())?;
+        let takes = dependency.takes();
+        let answers = dependency.answers();
+        let typed = |what: &str, node: &Node, ty: &Ty| -> Result<()> {
+            if node.ty() != ty {
+                bail!(
+                    "{owner} states {} {what} {}, and it is {}: the two halves disagree",
+                    stand_in.declared(),
+                    node.ty().spelt(),
+                    ty.spelt()
+                );
+            }
+            Ok(())
+        };
+        for entry in &stand_in.entries {
+            if entry.arguments.len() != takes.len() {
+                bail!(
+                    "{owner} states {} is asked with {} arguments, and it takes {}",
+                    stand_in.declared(),
+                    entry.arguments.len(),
+                    takes.len()
+                );
+            }
+            for (argument, taken) in entry.arguments.iter().zip(&takes) {
+                typed("is asked with", argument, taken)?;
+            }
+            typed("answers", &entry.answer, &answers)?;
+        }
+        if let Some(otherwise) = &stand_in.otherwise {
+            typed("answers for the rest", otherwise, &answers)?;
         }
     }
     Ok(())

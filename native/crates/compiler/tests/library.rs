@@ -50,8 +50,8 @@ fn declared_in(header: &str) -> BTreeSet<String> {
 }
 
 /// Every function the manifest names, wherever it names one: every member shaped as a function is
-/// (a name, what it takes and what it answers, and nothing else), and what a host registers an
-/// implementation through. Found by walking the whole manifest rather than by a list of where
+/// (a name, what it takes and what it answers, and nothing else), and what a host makes a
+/// capability of an implementation of its own through. Found by walking the whole manifest rather than by a list of where
 /// functions are kept, so a function a later version puts somewhere new is held to the header and
 /// the library without this having to be told, and a type named where a function is expected is
 /// caught for not being defined.
@@ -64,8 +64,8 @@ fn described_in(manifest: &Value) -> BTreeSet<String> {
                 if keys == ["answers", "name", "takes"] {
                     named.insert(members["name"].as_str().unwrap().to_string());
                 }
-                if let Some(register) = members.get("register") {
-                    named.insert(register.as_str().unwrap().to_string());
+                if let Some(implement) = members.get("implement") {
+                    named.insert(implement.as_str().unwrap().to_string());
                 }
                 members.values().for_each(|it| walk(it, named));
             }
@@ -155,10 +155,10 @@ const CALLING: &str = r#"
 int main(void) {
     int64_t mark = souther_mark();
     int64_t answer = -1;
-    souther_status status = souther3_m_calculation_b_add(2, 3, &answer);
+    souther_status status = souther4_m_calculation_b_add(NULL, 2, 3, &answer);
     printf("%u %" PRId64 "\n", status, answer);
     answer = -1;
-    status = souther3_m_calculation_b_add(INT64_MAX, 1, &answer);
+    status = souther4_m_calculation_b_add(NULL, INT64_MAX, 1, &answer);
     printf("%d %" PRId64 "\n", status == SOUTHER_REQUIRED_FORM_HAS_NO_PLACE, answer);
     souther_reset(mark);
     return 0;
@@ -180,26 +180,26 @@ static void said(souther_string text) {
 int main(void) {
     int64_t mark = souther_mark();
     souther_value built = NULL;
-    souther_status status = souther3_m_m_t_P_construct(7, &built);
-    printf("%u %" PRId64 "\n", status, souther3_m_m_t_P_f_n(built));
-    said(souther3_m_m_t_P_encode(built));
+    souther_status status = souther4_m_m_t_P_construct(7, &built);
+    printf("%u %" PRId64 "\n", status, souther4_m_m_t_P_f_n(built));
+    said(souther4_m_m_t_P_encode(built));
 
     const char *json = "{\"n\": 9}";
     souther_decoded reading = NULL;
-    status = souther3_m_m_t_P_decode((const uint8_t *) json, (int64_t) strlen(json), &reading);
+    status = souther4_m_m_t_P_decode((const uint8_t *) json, (int64_t) strlen(json), &reading);
     printf("%u %d %" PRId64 "\n", status, souther_decoded_outcome(reading) == SOUTHER_DECODED_VALUE,
-           souther3_m_m_t_P_f_n(souther_decoded_value(reading)));
+           souther4_m_m_t_P_f_n(souther_decoded_value(reading)));
 
     json = "{}";
-    status = souther3_m_m_t_P_decode((const uint8_t *) json, (int64_t) strlen(json), &reading);
+    status = souther4_m_m_t_P_decode((const uint8_t *) json, (int64_t) strlen(json), &reading);
     souther_issue issue = souther_decoded_issue(reading, 0);
     printf("%u %d %" PRId64 " ", status, souther_decoded_outcome(reading) == SOUTHER_DECODED_ISSUES,
            souther_decoded_issue_count(reading));
     said(souther_issue_code(issue));
 
     souther_value published = NULL;
-    status = souther3_m_m_v_ys(&published);
-    printf("%u %" PRId64 "\n", status, souther3_m_m_t_P_f_n(published));
+    status = souther4_m_m_v_ys(&published);
+    printf("%u %" PRId64 "\n", status, souther4_m_m_t_P_f_n(published));
     souther_reset(mark);
     return 0;
 }
@@ -212,7 +212,7 @@ const CALLING_FROM_CPP: &str = r#"
 
 int main() {
     int64_t answer = -1;
-    souther_status status = souther3_m_calculation_b_add(2, 3, &answer);
+    souther_status status = souther4_m_calculation_b_add(NULL, 2, 3, &answer);
     std::printf("%u %lld\n", status, static_cast<long long>(answer));
     return 0;
 }
@@ -267,122 +267,138 @@ fn a_host_builds_reads_and_writes_a_value_through_the_header_and_the_library() {
     );
 }
 
-/// A behavior with no body answered by what a host registered for it on the calling thread, and
-/// by nothing where it registered nothing.
+/// A behavior with no body answered by what a host implements it as, through a capability the
+/// host makes of that and hands where the behavior is required, and by nothing where it hands none.
+///
+/// Two implementations of the one behavior at once, each told apart by what it is handed first,
+/// which one function pointer serves; one called from another thread; and one calling the program
+/// again from inside itself with another, which neither sees the other's.
 const IMPLEMENTING: &str = r#"
 #include <pthread.h>
 #include <stdio.h>
 #include "souther.h"
 
-static souther_status added(int64_t a, int64_t *out) {
-    *out = a + 20;
+static souther_status added(void *by, int64_t a, int64_t *out) {
+    *out = a + *(const int64_t *) by;
     return SOUTHER_ANSWERED;
 }
 
-static souther_status below(int64_t a, int64_t *out) {
+static souther_status below(void *by, int64_t a, int64_t *out) {
     *out = a - 1;
     return SOUTHER_ANSWERED;
 }
 
-static souther_status thrown(int64_t a, int64_t *out) {
+static souther_status thrown(void *by, int64_t a, int64_t *out) {
     return SOUTHER_HOST_EXCEPTION;
 }
 
-static souther_status aborted(int64_t a, int64_t *out) {
+static souther_status aborted(void *by, int64_t a, int64_t *out) {
     return SOUTHER_INVARIANT_NOT_HELD;
 }
 
-static souther_status unbound(int64_t a, int64_t *out) {
+static souther_status unbound(void *by, int64_t a, int64_t *out) {
     return SOUTHER_INJECTION_UNBOUND;
 }
 
-/* Registers another implementation around a call of its own, and puts back what it replaced. */
-static souther_status nesting(int64_t a, int64_t *out) {
-    souther3_m_m_b_lookUp_implementation before = souther3_m_m_b_lookUp_register(added);
+/* Calls the program again with the requirements it was handed, and answers what it was asked. */
+static souther_status nesting(void *by, int64_t a, int64_t *out) {
     int64_t inner = -1;
-    souther_status status = souther3_m_m_b_twice(a, &inner);
-    souther3_m_m_b_lookUp_implementation replaced = souther3_m_m_b_lookUp_register(before);
-    printf("inner %u %lld %d\n", status, (long long) inner, replaced == added);
+    souther_status status =
+        souther4_m_m_b_twice((const souther_capability *const *) by, a, &inner);
+    printf("inner %u %lld\n", status, (long long) inner);
     *out = a;
     return SOUTHER_ANSWERED;
 }
 
-static void *elsewhere(void *ignored) {
-    int64_t answer = -1;
-    souther_status status = souther3_m_m_b_twice(1, &answer);
-    printf("elsewhere %d %lld\n", status == SOUTHER_INJECTION_UNBOUND, (long long) answer);
-    return NULL;
+typedef struct {
+    souther_capability capability;
+    souther_hosted hosted;
+    const souther_capability *requirements[1];
+} implemented;
+
+static void implement(implemented *into, souther4_m_m_b_lookUp_implementation by, void *userdata) {
+    souther4_m_m_b_lookUp_implement(&into->capability, &into->hosted, by, userdata);
+    into->requirements[0] = &into->capability;
 }
 
-static void twice(const char *what) {
+static void twice(const char *what, implemented *with) {
     int64_t answer = -1;
-    souther_status status = souther3_m_m_b_twice(1, &answer);
+    souther_status status = souther4_m_m_b_twice(with->requirements, 1, &answer);
     printf("%s %u %lld\n", what, status, (long long) answer);
+}
+
+static void *elsewhere(void *with) {
+    twice("elsewhere", (implemented *) with);
+    return NULL;
 }
 
 int main(void) {
     int64_t mark = souther_mark();
     int64_t answer = -1;
-    souther_status status = souther3_m_m_b_twice(1, &answer);
+    souther_status status = souther4_m_m_b_twice(NULL, 1, &answer);
     printf("nothing %d %lld\n", status == SOUTHER_INJECTION_UNBOUND, (long long) answer);
+    const souther_capability *none[1] = {NULL};
+    status = souther4_m_m_b_twice(none, 1, &answer);
+    printf("none %d %lld\n", status == SOUTHER_INJECTION_UNBOUND, (long long) answer);
 
-    printf("first %d\n", souther3_m_m_b_lookUp_register(added) == NULL);
-    twice("added");
+    int64_t twenty = 20, thirty = 30;
+    implemented by_twenty, by_thirty;
+    implement(&by_twenty, added, &twenty);
+    implement(&by_thirty, added, &thirty);
+    twice("added", &by_twenty);
+    twice("other", &by_thirty);
+    twice("again", &by_twenty);
     answer = -1;
-    status = souther3_m_m_b_looked(1, &answer);
+    status = souther4_m_m_b_looked(by_twenty.requirements, 1, &answer);
     printf("looked %u %lld\n", status, (long long) answer);
 
     pthread_t thread;
-    pthread_create(&thread, NULL, elsewhere, NULL);
+    pthread_create(&thread, NULL, elsewhere, &by_thirty);
     pthread_join(thread, NULL);
 
-    printf("replaced %d\n", souther3_m_m_b_lookUp_register(below) == added);
+    implemented by_below, by_thrown, by_aborted, by_unbound, by_nesting;
+    implement(&by_below, below, NULL);
     answer = -1;
-    status = souther3_m_m_b_twice(1, &answer);
+    status = souther4_m_m_b_twice(by_below.requirements, 1, &answer);
     printf("below %d %lld\n", status == SOUTHER_ENSURES_NOT_HELD, (long long) answer);
 
-    souther3_m_m_b_lookUp_register(thrown);
-    answer = -1;
-    status = souther3_m_m_b_twice(1, &answer);
+    implement(&by_thrown, thrown, NULL);
+    status = souther4_m_m_b_twice(by_thrown.requirements, 1, &answer);
     printf("thrown %d %lld\n", status == SOUTHER_HOST_EXCEPTION, (long long) answer);
 
-    souther3_m_m_b_lookUp_register(aborted);
-    status = souther3_m_m_b_twice(1, &answer);
+    implement(&by_aborted, aborted, NULL);
+    status = souther4_m_m_b_twice(by_aborted.requirements, 1, &answer);
     printf("aborted %d\n", status == SOUTHER_INJECTION_PROTOCOL_VIOLATION);
 
-    souther3_m_m_b_lookUp_register(unbound);
-    status = souther3_m_m_b_twice(1, &answer);
+    implement(&by_unbound, unbound, NULL);
+    status = souther4_m_m_b_twice(by_unbound.requirements, 1, &answer);
     printf("claimed %d\n", status == SOUTHER_INJECTION_PROTOCOL_VIOLATION);
 
-    souther3_m_m_b_lookUp_register(nesting);
-    twice("outer");
-    printf("kept %d\n", souther3_m_m_b_lookUp_register(NULL) == nesting);
-    status = souther3_m_m_b_twice(1, &answer);
-    printf("removed %d\n", status == SOUTHER_INJECTION_UNBOUND);
+    implement(&by_nesting, nesting, (void *) by_twenty.requirements);
+    twice("outer", &by_nesting);
     souther_reset(mark);
     return 0;
 }
 "#;
 
 #[test]
-fn a_host_implements_a_behavior_with_no_body_by_registering_it() {
+fn a_host_implements_a_behavior_with_no_body_through_a_capability() {
     assert!(!IMPLEMENTING.contains("__asm__"));
     assert_eq!(
         ran(ENSURES, IMPLEMENTING),
         "nothing 1 -1\n\
-         first 1\n\
+         none 1 -1\n\
          added 0 42\n\
+         other 0 62\n\
+         again 0 42\n\
          looked 0 42\n\
-         elsewhere 1 -1\n\
-         replaced 1\n\
+         elsewhere 0 62\n\
          below 1 -1\n\
          thrown 1 -1\n\
          aborted 1\n\
          claimed 1\n\
-         inner 0 42 1\n\
-         outer 0 2\n\
-         kept 1\n\
-         removed 1\n"
+         inner 0 42\n\
+         outer 0 2\n"
     );
 }
 

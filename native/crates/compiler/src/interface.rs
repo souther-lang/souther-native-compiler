@@ -116,7 +116,10 @@ pub(crate) fn machine(word: HostWord) -> types::Type {
         | HostWord::String
         | HostWord::Decoded
         | HostWord::Issue
-        | HostWord::List => POINTER,
+        | HostWord::List
+        | HostWord::Requirements
+        | HostWord::Capability
+        | HostWord::Userdata => POINTER,
     }
 }
 
@@ -137,6 +140,9 @@ fn c_word(word: Word) -> &'static str {
         Word::Decoded => "souther_decoded",
         Word::Issue => "souther_issue",
         Word::List => "souther_list",
+        Word::Requirements => "const souther_capability *const *",
+        Word::Capability => "souther_capability",
+        Word::Userdata => "void *",
     }
 }
 
@@ -186,18 +192,19 @@ fn parameters(takes: &[Parameter]) -> String {
     }
 }
 
-/// What a host implements a behavior as, and registers one through, as the header declares them:
-/// the pointer's type, named, and the function taking one and answering one, with what a host owes
-/// what it registers.
+/// What a host implements a behavior as, and makes a capability of one through, as the header
+/// declares them: the pointer's type, named, and the function taking one, with what a host owes
+/// what it hands over.
 fn declared_injection(injection: &manifest::Injection) -> String {
     let implementation = &injection.implementation;
     let answers = c_word(implementation.answers);
     let pointer = &implementation.type_name;
     format!(
-        "/* What is registered stays callable while it is registered on any thread. */\n\
-         typedef {answers} (*{pointer})({});\n{pointer} {}({pointer});",
+        "typedef {answers} (*{pointer})({});\n\
+         /* The rooms, the function and what it is handed stay as they are while the capability may be called. */\n\
+         void {}(souther_capability *, souther_hosted *, {pointer}, void *);",
         parameters(&implementation.takes),
-        injection.register
+        injection.implement
     )
 }
 
@@ -385,8 +392,7 @@ impl Surface {
     ///
     /// `names` are what its declaration calls what it takes, and none for a composition. `union` is
     /// where it answers a union no declaration names: the cases that descends to, and what a host
-    /// asks which of them an answer is through, where it can. `requires` is what constructing it
-    /// requires injected, as the checker answered it.
+    /// asks which of them an answer is through, where it can.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn behavior(
         &mut self,
@@ -396,7 +402,6 @@ impl Surface {
         takes: &[Ty],
         answers: &Ty,
         union: Option<(&[transport::Case], Option<&HostFunction>)>,
-        requires: &[transport::Requirement],
         declared: &Declared,
         call: Option<&HostFunction>,
     ) {
@@ -415,6 +420,23 @@ impl Surface {
                     case: case.map(HostFunction::described),
                 }),
             },
+            call: call.map(HostFunction::described),
+        };
+        self.module(module).behaviors.push(behavior);
+    }
+
+    /// A behavior this object defines that a host constructs the capabilities of what a call is
+    /// made with out of, what it requires, and what a host makes a capability of it through, where
+    /// something may require it.
+    pub(crate) fn construction(
+        &mut self,
+        module: &str,
+        name: &str,
+        requires: &[transport::Requirement],
+        bind: Option<&HostFunction>,
+    ) {
+        let construction = manifest::Construction {
+            name: name.to_string(),
             requires: requires
                 .iter()
                 .map(|it| manifest::Required {
@@ -422,13 +444,13 @@ impl Surface {
                     name: it.name.clone(),
                 })
                 .collect(),
-            call: call.map(HostFunction::described),
+            bind: bind.map(HostFunction::described),
         };
-        self.module(module).behaviors.push(behavior);
+        self.module(module).constructions.push(construction);
     }
 
     /// A behavior a module of this object declares with no body, which a host implements as
-    /// `implementation` says and registers through `register`.
+    /// `implementation` says and makes a capability of through `implement`.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn injection(
         &mut self,
@@ -439,14 +461,14 @@ impl Surface {
         answers: &Ty,
         declared: &Declared,
         implementation: &HostImplementation,
-        register: &str,
+        implement: &str,
     ) {
         let injection = manifest::Injection {
             name: name.to_string(),
             parameters: named(names, takes, declared),
             answers: type_of(answers, declared),
             implementation: implementation.described(),
-            register: register.to_string(),
+            implement: implement.to_string(),
         };
         self.module(module).injections.push(injection);
     }
@@ -492,6 +514,7 @@ impl Surface {
             .or_insert_with(|| manifest::Module {
                 name: name.to_string(),
                 behaviors: Vec::new(),
+                constructions: Vec::new(),
                 injections: Vec::new(),
                 values: Vec::new(),
                 declarations: Vec::new(),
@@ -566,8 +589,9 @@ pub(crate) fn carried_by(object: &[u8], named: &str) -> Result<Vec<manifest::Mod
 }
 
 /// The manifest of a library holding these modules.
-pub(crate) fn manifest_of(modules: Vec<manifest::Module>) -> Manifest {
-    Manifest {
+pub(crate) fn manifest_of(modules: Vec<manifest::Module>) -> Result<Manifest> {
+    constructs_whole(&modules)?;
+    Ok(Manifest {
         format: manifest::FORMAT.to_string(),
         version: manifest::VERSION,
         abi: ABI_GENERATION,
@@ -585,7 +609,43 @@ pub(crate) fn manifest_of(modules: Vec<manifest::Module>) -> Manifest {
             })
             .collect(),
         modules,
+    })
+}
+
+/// That a host can construct everything a behavior it constructs requires: each requirement of each
+/// construction is a behavior a host implements or one constructed in turn, of some object the
+/// library holds.
+///
+/// A behavior reached through a capability is not a symbol the program names, so a library linked
+/// without the object that constructs one links all the same, and a host would find out when it
+/// built the capability. Refused here instead, where the objects are put together.
+fn constructs_whole(modules: &[manifest::Module]) -> Result<()> {
+    let mut constructible = std::collections::HashSet::new();
+    for module in modules {
+        for injection in &module.injections {
+            constructible.insert((module.name.as_str(), injection.name.as_str()));
+        }
+        for construction in &module.constructions {
+            constructible.insert((module.name.as_str(), construction.name.as_str()));
+        }
     }
+    for module in modules {
+        for construction in &module.constructions {
+            for required in &construction.requires {
+                if !constructible.contains(&(required.module.as_str(), required.name.as_str())) {
+                    bail!(
+                        "{}.{} requires {}.{}, which no object linked constructs or asks a host \
+                         to implement",
+                        module.name,
+                        construction.name,
+                        required.module,
+                        required.name
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// The manifest as it is written.
@@ -600,10 +660,18 @@ pub(crate) fn written(manifest: &Manifest) -> String {
 fn functions(manifest: &Manifest) -> impl Iterator<Item = &manifest::Function> {
     let modules = manifest.modules.iter().flat_map(|module| {
         let behaviors = module.behaviors.iter().flat_map(behavior_functions);
+        let constructions = module
+            .constructions
+            .iter()
+            .filter_map(|it| it.bind.as_ref());
         let values = module.values.iter().filter_map(|it| it.read.as_ref());
         let declarations = module.declarations.iter().flat_map(declaration_functions);
         let lists = module.lists.iter().flat_map(list_functions);
-        behaviors.chain(values).chain(declarations).chain(lists)
+        behaviors
+            .chain(constructions)
+            .chain(values)
+            .chain(declarations)
+            .chain(lists)
     });
     manifest.runtime.iter().chain(modules)
 }
@@ -677,17 +745,17 @@ fn declaration_functions(
 
 /// Every symbol a shared library with this manifest exports: what a host calls, and nothing else.
 ///
-/// What a host registers an implementation through is one of them. What it implements is not: that
-/// is the host's own function, named in C and defined by nobody here.
+/// What a host makes a capability of an implementation through is one of them. What it implements
+/// is not: that is the host's own function, named in C and defined by nobody here.
 pub(crate) fn exported(manifest: &Manifest) -> Vec<String> {
-    let registers = manifest
+    let implements = manifest
         .modules
         .iter()
         .flat_map(|module| &module.injections)
-        .map(|injection| &injection.register);
+        .map(|injection| &injection.implement);
     functions(manifest)
         .map(|function| &function.name)
-        .chain(registers)
+        .chain(implements)
         .cloned()
         .collect()
 }
@@ -710,6 +778,14 @@ pub(crate) fn declarations(manifest: &Manifest) -> String {
          typedef const struct souther_decoded_ *souther_decoded;\n\
          typedef const struct souther_issue_ *souther_issue;\n\
          typedef const struct souther_list_ *souther_list;\n\
+         /* The address of code, which a host never calls or reads: what makes a capability writes it. */\n\
+         typedef void (*souther_code)(void);\n\
+         /* What is handed where a behavior is required: laid out by a host as room, and written by\n \
+         * what makes one. */\n\
+         typedef struct souther_capability {{ souther_code invoke; const void *environment; }} souther_capability;\n\
+         /* What a capability of a host's own implementation reads it out of: laid out by a host as\n \
+         * room, and written by what makes the capability. */\n\
+         typedef struct souther_hosted {{ souther_code implementation; void *userdata; }} souther_hosted;\n\
          \n",
         manifest.abi
     );
@@ -740,6 +816,13 @@ pub(crate) fn declarations(manifest: &Manifest) -> String {
             written.push_str(&format!("/* behavior {name}.{} */\n", behavior.name));
             for function in functions {
                 written.push_str(&declared(function));
+                written.push('\n');
+            }
+        }
+        for construction in &module.constructions {
+            if let Some(bind) = &construction.bind {
+                written.push_str(&format!("/* constructed {name}.{} */\n", construction.name));
+                written.push_str(&declared(bind));
                 written.push('\n');
             }
         }

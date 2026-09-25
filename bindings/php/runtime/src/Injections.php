@@ -11,19 +11,27 @@ namespace Souther\Runtime;
 abstract class Injections
 {
     /**
+     * @param class-string<Binding> $binding the binding the implementations were written against,
+     *        whose classes they take and answer
      * @param array<string, \Closure> $implementations by the declared name of the behavior each
      *        implements
      */
-    protected function __construct(private readonly array $implementations)
-    {
+    protected function __construct(
+        private readonly string $binding,
+        private readonly array $implementations,
+    ) {
     }
 
     /**
      * @internal
-     * @return array<string, \Closure>
+     * @return array<string, Implemented>
      */
-    public function implementations(): array
+    public function implemented(): array
     {
-        return $this->implementations;
+        $implemented = [];
+        foreach ($this->implementations as $behavior => $implementation) {
+            $implemented[$behavior] = Implemented::by($this->binding, $behavior, $implementation);
+        }
+        return $implemented;
     }
 }

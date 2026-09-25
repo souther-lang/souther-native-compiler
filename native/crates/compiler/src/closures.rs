@@ -36,7 +36,7 @@
 
 use crate::growing::Step;
 use crate::index;
-use crate::transport::{Body, Carrier, FnSignature, Node, Parameter, Ty};
+use crate::transport::{Body, Carrier, FnSignature, Node, Parameter, Reaches, Requirement, Ty};
 use anyhow::{Result, bail};
 use std::collections::{BTreeMap, HashSet};
 
@@ -65,6 +65,11 @@ pub struct Site<'a> {
     /// In first-reached order — the order a closure's slots are laid out in, and the order the
     /// lifted function reads them back in.
     pub captures: Vec<Capture>,
+    /// What the body holding the site was handed a capability for, where the site reaches one of
+    /// them, itself or through a site nested in it: carried in the slot after the captures, the
+    /// way the JVM carries the dependency instance a lambda calls. None where it reaches none, and
+    /// the closure carries nothing more.
+    pub environment: Option<&'a [Requirement]>,
 }
 
 /// Every closure site the document holds, found once over the whole program.
@@ -81,7 +86,8 @@ impl<'a> ClosureSites<'a> {
     pub fn of(bodies: impl IntoIterator<Item = Body<'a>>) -> Result<Self> {
         let mut sites = ClosureSites::default();
         for body in bodies {
-            Planner::new(&mut sites, body.carrier(), true).free(body.node, &mut HashSet::new())?;
+            Planner::new(&mut sites, body.carrier(), body.environment(), true)
+                .free(body.node, &mut HashSet::new())?;
         }
         Ok(sites)
     }
@@ -90,7 +96,7 @@ impl<'a> ClosureSites<'a> {
     /// A block that is a walk's step is not one, and nor is anything in a step that never runs.
     pub fn any_in(carrier: Carrier<'a>, node: &'a Node) -> Result<bool> {
         let mut sites = ClosureSites::default();
-        Planner::new(&mut sites, carrier, true).free(node, &mut HashSet::new())?;
+        Planner::new(&mut sites, carrier, &[], true).free(node, &mut HashSet::new())?;
         Ok(!sites.by_site.is_empty())
     }
 
@@ -106,15 +112,32 @@ impl<'a> ClosureSites<'a> {
 struct Planner<'p, 'a> {
     sites: &'p mut ClosureSites<'a>,
     carrier: Carrier<'a>,
+    /// What the body walked was handed a capability for.
+    environment: &'a [Requirement],
     /// Whether what is walked is lowered, so that a site in it is planned and not only numbered.
     lowered: bool,
 }
 
+/// What a walk found reached from outside what it walked: bindings, in first-reached order, and
+/// whether a capability the body was handed.
+#[derive(Default)]
+struct Reached {
+    bindings: Vec<(usize, Ty)>,
+    seen: HashSet<usize>,
+    environment: bool,
+}
+
 impl<'p, 'a> Planner<'p, 'a> {
-    fn new(sites: &'p mut ClosureSites<'a>, carrier: Carrier<'a>, lowered: bool) -> Self {
+    fn new(
+        sites: &'p mut ClosureSites<'a>,
+        carrier: Carrier<'a>,
+        environment: &'a [Requirement],
+        lowered: bool,
+    ) -> Self {
         Planner {
             sites,
             carrier,
+            environment,
             lowered,
         }
     }
@@ -128,20 +151,30 @@ impl<'p, 'a> Planner<'p, 'a> {
     /// value, which is quadratic in nesting depth for every top-level body this is run over —
     /// including one with no closure in it at all, since `ClosureSites::of` runs unconditionally
     /// over every body it is handed.
-    fn free(&mut self, node: &'a Node, bound: &mut HashSet<usize>) -> Result<Vec<(usize, Ty)>> {
-        let mut acc = Vec::new();
-        let mut seen = HashSet::new();
-        self.walk(node, bound, &mut acc, &mut seen)?;
-        Ok(acc)
+    fn free(&mut self, node: &'a Node, bound: &mut HashSet<usize>) -> Result<Reached> {
+        let mut reached = Reached::default();
+        self.walk(node, bound, &mut reached)?;
+        Ok(reached)
     }
 
     fn walk(
         &mut self,
         node: &'a Node,
         bound: &mut HashSet<usize>,
-        acc: &mut Vec<(usize, Ty)>,
-        seen: &mut HashSet<usize>,
+        acc: &mut Reached,
     ) -> Result<()> {
+        // A call through a capability the body was handed, which a closure making it carries.
+        if let Node::Call {
+            reaches: Reaches::Behavior { declared },
+            ..
+        } = node
+            && self
+                .environment
+                .iter()
+                .any(|required| required.declared() == *declared)
+        {
+            acc.environment = true;
+        }
         // A function a call never applies is not lowered, so nothing in it is planned; its sites
         // are still numbered.
         let unrun = crate::unrun::never_applied(node);
@@ -150,23 +183,19 @@ impl<'p, 'a> Planner<'p, 'a> {
         {
             for (at, argument) in arguments.iter().enumerate() {
                 if unrun.contains(&at) {
-                    Planner::new(self.sites, self.carrier, false)
+                    Planner::new(self.sites, self.carrier, self.environment, false)
                         .free(argument, &mut HashSet::new())?;
                 } else {
-                    self.walk(argument, bound, acc, seen)?;
+                    self.walk(argument, bound, acc)?;
                 }
             }
             return Ok(());
         }
         if let (Some(step), Node::Call { arguments, .. }) = (Step::of_walk(node), node) {
-            return self.step(&step, &arguments[1..], bound, acc, seen);
+            return self.step(&step, &arguments[1..], bound, acc);
         }
         match node {
-            Node::Read { binding, ty, .. } => {
-                if !bound.contains(binding) && seen.insert(*binding) {
-                    acc.push((*binding, ty.clone()));
-                }
-            }
+            Node::Read { binding, ty, .. } => acc.binding(bound, *binding, ty),
             Node::Block {
                 site,
                 parameters,
@@ -182,7 +211,7 @@ impl<'p, 'a> Planner<'p, 'a> {
                 for parameter in parameters.iter() {
                     own.insert(parameter.binding);
                 }
-                let captures = self.free(body, &mut own)?;
+                let reached = self.free(body, &mut own)?;
 
                 let Ty::Fn { fn_ } = ty else {
                     bail!(
@@ -197,13 +226,15 @@ impl<'p, 'a> Planner<'p, 'a> {
                     parameters,
                     body,
                     signature: fn_,
-                    captures: captures
+                    captures: reached
+                        .bindings
                         .iter()
                         .map(|(binding, ty)| Capture {
                             binding: *binding,
                             ty: ty.clone(),
                         })
                         .collect(),
+                    environment: reached.environment.then_some(self.environment),
                 };
                 // `ProgramWriter` promises this number is unique across the whole document, and
                 // this reader does not take that on trust: a duplicate would let the first block's
@@ -215,20 +246,20 @@ impl<'p, 'a> Planner<'p, 'a> {
                     index::unique(&mut self.sites.by_site, *site, planned);
                 }
 
-                for (binding, ty) in captures {
-                    if !bound.contains(&binding) && seen.insert(binding) {
-                        acc.push((binding, ty));
-                    }
+                for (binding, ty) in &reached.bindings {
+                    acc.binding(bound, *binding, ty);
                 }
+                // What a nested site carries of the environment, the site around it carries to it.
+                acc.environment |= reached.environment;
             }
             Node::Apply {
                 function,
                 arguments,
                 ..
             } => {
-                self.walk(function, bound, acc, seen)?;
+                self.walk(function, bound, acc)?;
                 for argument in arguments {
-                    self.walk(argument, bound, acc, seen)?;
+                    self.walk(argument, bound, acc)?;
                 }
             }
             Node::Let {
@@ -237,43 +268,43 @@ impl<'p, 'a> Planner<'p, 'a> {
                 body,
                 ..
             } => {
-                self.walk(value, bound, acc, seen)?;
+                self.walk(value, bound, acc)?;
                 let added = bound.insert(*binding);
-                self.walk(body, bound, acc, seen)?;
+                self.walk(body, bound, acc)?;
                 if added {
                     bound.remove(binding);
                 }
             }
             Node::Match { subject, arms, .. } => {
-                self.walk(subject, bound, acc, seen)?;
+                self.walk(subject, bound, acc)?;
                 for arm in arms {
                     match arm.binding {
                         Some(binding) => {
                             let added = bound.insert(binding);
-                            self.walk(&arm.body, bound, acc, seen)?;
+                            self.walk(&arm.body, bound, acc)?;
                             if added {
                                 bound.remove(&binding);
                             }
                         }
-                        None => self.walk(&arm.body, bound, acc, seen)?,
+                        None => self.walk(&arm.body, bound, acc)?,
                     }
                 }
             }
             Node::Binary { left, right, .. } => {
-                self.walk(left, bound, acc, seen)?;
-                self.walk(right, bound, acc, seen)?;
+                self.walk(left, bound, acc)?;
+                self.walk(right, bound, acc)?;
             }
-            Node::Neg { operand, .. } => self.walk(operand, bound, acc, seen)?,
+            Node::Neg { operand, .. } => self.walk(operand, bound, acc)?,
             Node::If {
                 cond, then, els, ..
             } => {
-                self.walk(cond, bound, acc, seen)?;
-                self.walk(then, bound, acc, seen)?;
-                self.walk(els, bound, acc, seen)?;
+                self.walk(cond, bound, acc)?;
+                self.walk(then, bound, acc)?;
+                self.walk(els, bound, acc)?;
             }
             Node::Construct { values, .. } => {
                 for value in values {
-                    self.walk(value, bound, acc, seen)?;
+                    self.walk(value, bound, acc)?;
                 }
             }
             // What is built is bound where every clause held and nowhere else: the fields are
@@ -286,32 +317,32 @@ impl<'p, 'a> Planner<'p, 'a> {
                 ..
             } => {
                 for value in values {
-                    self.walk(value, bound, acc, seen)?;
+                    self.walk(value, bound, acc)?;
                 }
                 let added = bound.insert(*binding);
-                self.walk(then, bound, acc, seen)?;
+                self.walk(then, bound, acc)?;
                 if added {
                     bound.remove(binding);
                 }
                 for body in departures.bodies() {
-                    self.walk(body, bound, acc, seen)?;
+                    self.walk(body, bound, acc)?;
                 }
             }
-            Node::Field { target, .. } => self.walk(target, bound, acc, seen)?,
-            Node::Some { value, .. } => self.walk(value, bound, acc, seen)?,
+            Node::Field { target, .. } => self.walk(target, bound, acc)?,
+            Node::Some { value, .. } => self.walk(value, bound, acc)?,
             Node::Tuple { members, .. }
             | Node::List {
                 elements: members, ..
             } => {
                 for member in members {
-                    self.walk(member, bound, acc, seen)?;
+                    self.walk(member, bound, acc)?;
                 }
             }
-            Node::Member { tuple, .. } => self.walk(tuple, bound, acc, seen)?,
-            Node::Widen { value, .. } => self.walk(value, bound, acc, seen)?,
+            Node::Member { tuple, .. } => self.walk(tuple, bound, acc)?,
+            Node::Widen { value, .. } => self.walk(value, bound, acc)?,
             Node::Call { arguments, .. } => {
                 for argument in arguments {
-                    self.walk(argument, bound, acc, seen)?;
+                    self.walk(argument, bound, acc)?;
                 }
             }
             Node::Int { .. }
@@ -331,12 +362,11 @@ impl<'p, 'a> Planner<'p, 'a> {
         step: &Step<'a>,
         rest: &'a [Node],
         bound: &mut HashSet<usize>,
-        acc: &mut Vec<(usize, Ty)>,
-        seen: &mut HashSet<usize>,
+        acc: &mut Reached,
     ) -> Result<()> {
         let mut added = Vec::new();
         for around in &step.around {
-            self.walk(around.value, bound, acc, seen)?;
+            self.walk(around.value, bound, acc)?;
             if bound.insert(around.binding) {
                 added.push(around.binding);
             }
@@ -346,14 +376,24 @@ impl<'p, 'a> Planner<'p, 'a> {
                 added.push(parameter.binding);
             }
         }
-        let walked = self.walk(step.body, bound, acc, seen);
+        let walked = self.walk(step.body, bound, acc);
         for binding in added {
             bound.remove(&binding);
         }
         walked?;
         for argument in rest {
-            self.walk(argument, bound, acc, seen)?;
+            self.walk(argument, bound, acc)?;
         }
         Ok(())
+    }
+}
+
+impl Reached {
+    /// `binding`, read at `ty`, where it is not bound inside what is walked and not already
+    /// reached.
+    fn binding(&mut self, bound: &HashSet<usize>, binding: usize, ty: &Ty) {
+        if !bound.contains(&binding) && self.seen.insert(binding) {
+            self.bindings.push((binding, ty.clone()));
+        }
     }
 }

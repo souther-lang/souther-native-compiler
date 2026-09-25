@@ -109,6 +109,7 @@ class WhereAnAnswerIsHeldCrossesAsTheCheckerPlacedItTest {
         assertThat(written()).contains("""
                 "name":"twice","is":"body",\
                 "parameters":{"named":[{"name":"a","input":{"is":"scalar","scalar":"INT"}}]},\
-                "output":{"is":"scalar","scalar":"INT"},"ensures":{"at":"none"}}""");
+                "output":{"is":"scalar","scalar":"INT"},"ensures":{"at":"none"},\
+                "requirements":[{"module":"m","name":"lookUp"}]}""");
     }
 }

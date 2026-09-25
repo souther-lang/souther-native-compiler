@@ -26,6 +26,7 @@ import souther.compiler.program.CheckedValueEntry;
 import souther.compiler.program.Declared;
 import souther.compiler.program.DeclaredBy;
 import souther.compiler.program.Publication;
+import souther.compiler.program.StandsIn;
 import souther.compiler.types.BinOp;
 import souther.compiler.types.BindingId;
 import souther.compiler.types.LanguageCaseId;
@@ -85,7 +86,7 @@ public final class ProgramWriter {
      * written moves, so that a driver and a writer that disagree say so rather than producing an
      * object that is wrong quietly.
      */
-    public static final int TRANSPORT_VERSION = 20;
+    public static final int TRANSPORT_VERSION = 22;
 
     private final CheckedProgram program;
 
@@ -619,6 +620,8 @@ public final class ProgramWriter {
      * row is written.
      */
     private String example(CheckedBehavior behavior, int at, CheckedRow row) {
+        List<StandsIn> standIns = row.statement() instanceof CheckedRow.WithStandIns it
+                ? it.standsIn() : List.of();
         List<CheckedHelper> inputs = switch (row.statement()) {
             case CheckedRow.SelfContained it -> it.inputDefinitions();
             case CheckedRow.WithStandIns it -> it.inputDefinitions();
@@ -630,9 +633,64 @@ public final class ProgramWriter {
         if (inputs == null) {
             return null;
         }
+        StringJoiner standing = new StringJoiner(",", "[", "]");
+        for (StandsIn standsIn : standIns) {
+            standing.add(standsIn(standsIn));
+        }
         return "{\"behavior\":" + quoted(behavior.name().name())
                 + ",\"at\":" + at
-                + ",\"body\":" + applied(behavior, inputs) + "}";
+                + ",\"body\":" + applied(behavior, inputs)
+                + ",\"standsIn\":" + standing + "}";
+    }
+
+    /**
+     * What a row states one dependency answers: each entry, the arguments it states and the answer,
+     * in the order the stand-in reads them, and what it answers for the rest, null where it states
+     * nothing for the rest.
+     *
+     * <p>What answers the dependency is the stand-in's rule ({@link StandsIn#answering}): the first
+     * entry stating the arguments a call arrived with, compared as the language compares two
+     * values, and otherwise the rest. That rule is carried as the entries in order and not as a
+     * table keyed by them, since which entry states a call is the comparison's to say and a key
+     * would be this writer's.
+     *
+     * <p>Each value is a call of the definition the checker names for it, as a row's inputs are
+     * ({@link #applied}): elaborated at the parameter or the answer of the dependency where it
+     * stands, so how it stands there is the checker's and not worked out here from what was
+     * observed.
+     */
+    private String standsIn(StandsIn standsIn) {
+        ValueName.Behavior dependency = standsIn.dependency();
+        behaviorsMet.add(dependency);
+        StringJoiner entries = new StringJoiner(",", "[", "]");
+        for (StandsIn.Entry entry : standsIn.entries()) {
+            StringJoiner arguments = new StringJoiner(",", "[", "]");
+            for (CheckedHelper argument : entry.argumentDefinitions()) {
+                arguments.add(computed(argument));
+            }
+            entries.add("{\"arguments\":" + arguments
+                    + ",\"answer\":" + computed(entry.answerDefinition()) + "}");
+        }
+        String otherwise = switch (standsIn.otherwise()) {
+            case StandsIn.Otherwise.Answers it -> computed(it.definition());
+            case StandsIn.Otherwise.NothingStated it -> "null";
+        };
+        return "{\"module\":" + quoted(dependency.module())
+                + ",\"name\":" + quoted(dependency.name())
+                + ",\"entries\":" + entries
+                + ",\"otherwise\":" + otherwise + "}";
+    }
+
+    /**
+     * A call of a definition the module holds that computes a value a row states, taking nothing.
+     *
+     * <p>No Core.Call stands behind it for program.abortsAt to ask of, and none is needed: what
+     * AbortSites answers for a call reaching a declaration is NONE, whatever it reaches. What the
+     * definition ends with is its own, the same answer a call written in a body gets.
+     */
+    private String computed(CheckedHelper definition) {
+        return callNode(helperReach(definition.reachedAs()), List.of(), definition.body().type(),
+                AbortSet.NONE);
     }
 
     /**
@@ -654,8 +712,7 @@ public final class ProgramWriter {
     private String applied(CheckedBehavior behavior, List<CheckedHelper> inputs) {
         List<String> arguments = new ArrayList<>();
         for (CheckedHelper input : inputs) {
-            arguments.add(callNode(helperReach(input.reachedAs()), List.of(), input.body().type(),
-                    AbortSet.NONE));
+            arguments.add(computed(input));
         }
         return callNode(behaviorReach(behavior.name()), arguments,
                 behavior.signature().answers(), AbortSet.NONE);
@@ -865,6 +922,11 @@ public final class ProgramWriter {
      * supplied by the caller, implemented by another build, composed out of other behaviors, or
      * not written at all — and which of them it is crosses, because it decides what the object
      * says about the name rather than what it puts under it.
+     *
+     * <p>With what constructing it requires, which is part of reaching it and not of how it is
+     * written: a caller hands a behavior the capabilities of what it requires, and a composition
+     * hands a stage those of the stage's, whichever build implements the stage. Empty for one a host
+     * implements, which Souther does not construct, and read together with how it answers.
      */
     private String target(ValueName.Behavior name, BehaviorTarget behavior) {
         String how = switch (behavior.implementation()) {
@@ -883,6 +945,7 @@ public final class ProgramWriter {
                 + ",\"parameters\":" + parameters(behavior.signature())
                 + ",\"output\":" + output(behavior.signature().output())
                 + ",\"ensures\":" + ensures(enforcement(name))
+                + ",\"requirements\":" + requirements(behavior.requirements())
                 + "}";
     }
 
@@ -1024,7 +1087,6 @@ public final class ProgramWriter {
         return "{\"is\":\"body\",\"declared\":" + quoted(module.name() + "." + behavior.name().name())
                 + ",\"parameters\":" + parameters
                 + ",\"publication\":" + quoted(publication(module.publicationOf(behavior.name())))
-                + ",\"requirements\":" + requirements(behavior)
                 + ",\"body\":" + core(written.body(), bindings)
                 + "}";
     }
@@ -1056,13 +1118,12 @@ public final class ProgramWriter {
         return "{\"is\":\"composed\",\"declared\":"
                 + quoted(module.name() + "." + behavior.name().name())
                 + ",\"publication\":" + quoted(publication(module.publicationOf(behavior.name())))
-                + ",\"requirements\":" + requirements(behavior)
                 + ",\"stages\":" + stages
                 + "}";
     }
 
     /**
-     * What constructing {@code behavior} requires injected, in the order the checker answered it.
+     * What constructing a behavior requires injected, in the order the checker answered it.
      *
      * <p>The checker's list as it is and not worked out here from what the body calls: a
      * composition requires what its stages do, which is not what it calls, and a second reading
@@ -1070,9 +1131,9 @@ public final class ProgramWriter {
      * is referred to, since a module's name carries dots. Met like a call, so the table of targets
      * says what each one is.
      */
-    private String requirements(CheckedBehavior behavior) {
+    private String requirements(List<ValueName.Behavior> requirements) {
         StringJoiner required = new StringJoiner(",", "[", "]");
-        for (ValueName.Behavior dependency : behavior.requirements()) {
+        for (ValueName.Behavior dependency : requirements) {
             behaviorsMet.add(dependency);
             required.add("{\"module\":" + quoted(dependency.module())
                     + ",\"name\":" + quoted(dependency.name()) + "}");

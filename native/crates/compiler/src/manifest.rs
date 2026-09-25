@@ -2,7 +2,7 @@
 //!
 //! Written as types and not built as JSON, so that what a manifest of one version says is a thing
 //! the compiler holds this code to. A field renamed here is a change to these types, and the
-//! fixture `tests/interface-v7.json` is what version 7 is: every manifest this writes is read back
+//! fixture `tests/interface-v8.json` is what version 8 is: every manifest this writes is read back
 //! by these same types, which refuse a member they do not name.
 //!
 //! [`VERSION`] moves when what a manifest says is read differently. What the functions it names
@@ -55,6 +55,13 @@ pub(crate) const MOVES: &[(u32, &str)] = &[
     (
         7,
         "a declaration names what reads a value a host built of ordered maps (`decodehost`)",
+    ),
+    (
+        8,
+        "a behavior is called with the capabilities it was constructed with, what a host constructs \
+         them out of is apart from what it calls (`constructions`), a host makes one of a behavior \
+         (`bind`) and of an implementation of its own (`implement`), and nothing is registered on a \
+         thread",
     ),
 ];
 
@@ -143,11 +150,21 @@ pub(crate) struct Module {
     pub name: String,
     /// Every behavior it publishes and the object defines.
     pub behaviors: Vec<Behavior>,
+    /// Every behavior the object defines that a host constructs the capabilities of what a call is
+    /// made with out of: each published one that requires something, and each one a published one
+    /// requires, at any depth, whether or not the module publishes it.
+    ///
+    /// Apart from `behaviors`, which is what a host calls by name. A behavior the module keeps that
+    /// a published one depends on is here and not there: a host has no name for it and builds a
+    /// capability of it all the same. Closed: every behavior one of these requires is one a host
+    /// implements (`injections`), one here, or one another build defines, which that build's
+    /// surface closes.
+    pub constructions: Vec<Construction>,
     /// Every behavior it declares with no body and nothing to depend on, which a host implements.
     ///
     /// Apart from `behaviors`, which a host calls: these are what a host is called for. Whether the
-    /// module publishes one does not decide whether it is here. A published behavior that reaches
-    /// one runs only once a host registered an implementation for it, whoever may name it.
+    /// module publishes one does not decide whether it is here. A published behavior that requires
+    /// one runs only with a capability for it among what it is called with, whoever may name it.
     pub injections: Vec<Injection>,
     /// Every value it publishes.
     pub values: Vec<PublishedValue>,
@@ -194,16 +211,29 @@ pub(crate) struct Behavior {
     /// What it takes, in order.
     pub parameters: Parameters,
     pub answers: Answer,
+    /// What a host calls it through: what it was constructed with first, then what it takes.
+    pub call: Option<Function>,
+}
+
+/// What a host constructs the capabilities a behavior is called with out of
+/// ([`Module::constructions`]).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Construction {
+    pub name: String,
     /// What constructing it requires injected, in the order the checker answered it: each a
     /// behavior a host implements ([`Module::injections`]), or one constructed from what it
     /// requires in turn, of this module or another.
     ///
     /// What a binding is bound to, and not what its body calls: a composition requires what its
-    /// stages require. A host calls the behavior with an implementation of each registered, and
-    /// one of a behavior constructed in turn is an implementation of each of its own.
+    /// stages require. A host calls the behavior with a capability for each, in this order: of an
+    /// implementation of its own for a behavior a host implements, and of the behavior for one
+    /// constructed in turn, made from capabilities of what that one requires.
     pub requires: Vec<Required>,
-    /// What a host calls it through.
-    pub call: Option<Function>,
+    /// What a host makes a capability of it through, out of the capabilities of what it requires,
+    /// to hand where something requires it: `(room for a capability, requirements)`. Only for a
+    /// behavior with a body, which is what something may depend on.
+    pub bind: Option<Function>,
 }
 
 /// A behavior another requires injected, by its module and its name.
@@ -241,7 +271,8 @@ pub(crate) struct UnionAnswer {
     pub case: Option<Function>,
 }
 
-/// A behavior a host implements, and what it registers an implementation through.
+/// A behavior a host implements, and what it makes a capability of an implementation of its own
+/// through.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Injection {
@@ -252,16 +283,18 @@ pub(crate) struct Injection {
     pub answers: Type,
     /// The function a host writes to implement it.
     pub implementation: Implementation,
-    /// The symbol a host calls to register an implementation on the thread it calls from: it
-    /// takes a pointer to a function of `implementation`'s type and answers the one it replaced,
-    /// either null for none.
+    /// The symbol a host makes a capability of an implementation through: `(room for a capability,
+    /// room for what the header calls `souther_hosted`, a function of `implementation`'s type,
+    /// what it is handed first)`, writing both rooms. What the capability is called with is handed
+    /// to the function, and what the function answers is held to what an implementation may answer.
     ///
-    /// What is registered is the host's, and stays callable for as long as it is registered on any
-    /// thread: the object calls it on every call of the behavior and keeps no copy of it. So a
-    /// binding makes the pointer once for what it registers and hands the same one over each time;
-    /// a host language that makes a new C entry for a function every time it is handed to C (PHP's
-    /// FFI keeps each until the request ends) would otherwise grow with every call.
-    pub register: String,
+    /// The function, what it is handed and both rooms are the host's, and stay as they are for as
+    /// long as the capability may be called: nothing is copied out of them. So a binding makes the
+    /// function pointer once for a behavior and hands the same one over each time, telling
+    /// implementations apart by what each is handed first; a host language that makes a new C entry
+    /// for a function every time it is handed to C (PHP's FFI keeps each until the request ends)
+    /// would otherwise grow with every capability it makes.
+    pub implement: String,
 }
 
 /// What a published behavior takes, as the model says it.
@@ -290,9 +323,10 @@ pub(crate) struct NamedParameter {
 }
 
 /// The type of a function a host writes, and not a function: nothing is defined under its name,
-/// which is what C calls a pointer to one. What it takes is what the behavior takes, as a host
-/// hands each over, and room for its answer, as a host is handed one; it answers a status, of which
-/// `ANSWERED` and `HOST_EXCEPTION` are what an implementation may answer.
+/// which is what C calls a pointer to one. What it takes is what it was handed first where its
+/// capability was made, then what the behavior takes, as a host hands each over, and room for its
+/// answer, as a host is handed one; it answers a status, of which `ANSWERED` and `HOST_EXCEPTION`
+/// are what an implementation may answer.
 ///
 /// Its own type and not a [`Function`], so that every [`Function`] a manifest names is a symbol a
 /// library defines.
@@ -488,6 +522,9 @@ pub(crate) enum Word {
     Decoded,
     Issue,
     List,
+    Requirements,
+    Capability,
+    Userdata,
 }
 
 impl From<HostWord> for Word {
@@ -506,6 +543,9 @@ impl From<HostWord> for Word {
             HostWord::Decoded => Word::Decoded,
             HostWord::Issue => Word::Issue,
             HostWord::List => Word::List,
+            HostWord::Requirements => Word::Requirements,
+            HostWord::Capability => Word::Capability,
+            HostWord::Userdata => Word::Userdata,
         }
     }
 }
@@ -526,6 +566,9 @@ impl From<Word> for HostWord {
             Word::Decoded => HostWord::Decoded,
             Word::Issue => HostWord::Issue,
             Word::List => HostWord::List,
+            Word::Requirements => HostWord::Requirements,
+            Word::Capability => HostWord::Capability,
+            Word::Userdata => HostWord::Userdata,
         }
     }
 }
@@ -558,19 +601,19 @@ mod tests {
         }
     }
 
-    /// What version 7 is. Read by these types, which refuse a member they do not name, and
+    /// What version 8 is. Read by these types, which refuse a member they do not name, and
     /// written back the same: a field renamed or a kind reshaped here stops matching the fixture
     /// the Java half's test also holds a written manifest to.
-    const V7: &str = include_str!("../tests/interface-v7.json");
+    const V8: &str = include_str!("../tests/interface-v8.json");
 
     #[test]
-    fn version_seven_is_read_and_written_back_as_it_is() {
-        let read: Manifest = serde_json::from_str(V7).expect("version 7 reads");
+    fn version_eight_is_read_and_written_back_as_it_is() {
+        let read: Manifest = serde_json::from_str(V8).expect("version 8 reads");
         assert_eq!(read.format, FORMAT);
         assert_eq!(read.version, VERSION);
         let mut written = serde_json::to_string_pretty(&read).unwrap();
         written.push('\n');
-        assert_eq!(written, V7);
+        assert_eq!(written, V8);
     }
 
     /// A surface an object of an earlier release carries is refused as that, and not as whichever

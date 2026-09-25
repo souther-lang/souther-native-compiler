@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace Souther\Runtime;
 
 /**
- * A behavior the host implements was reached with no implementation registered for it: the run it
- * was called in was not handed one.
+ * A behavior was reached through a requirement it was handed nothing for: what it was bound to, or
+ * the run it was called in, held no implementation of a behavior the host implements.
  */
 final class UnboundInjection extends \LogicException implements SoutherFailure
 {

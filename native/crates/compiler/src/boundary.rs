@@ -31,7 +31,12 @@ pub(crate) struct Boundary<'a> {
     pub symbol: String,
     /// What the entry runs, whose answer it writes.
     pub runs: FuncId,
-    /// What `runs` takes, in order. The entry takes the same, and then where to put what it wrote.
+    /// Whether what it runs is a behavior's symbol, which takes what the behavior was constructed
+    /// with first ([`crate::behavior_signature`]): the boundary takes it first too, and hands it on.
+    /// A row's entry takes nothing more, since a row states what it stands in with.
+    pub constructed: bool,
+    /// What `runs` takes after that, in order. The entry takes the same, and then where to put
+    /// what it wrote.
     pub takes: Vec<Ty>,
     /// What the checker settled the answer leaves as, which the entry writes without deciding it
     /// again.
@@ -47,6 +52,9 @@ pub(crate) fn define(
 ) -> Lowered<()> {
     for boundary in boundaries {
         let mut signature = ir::Signature::new(emitting.call_conv);
+        if boundary.constructed {
+            signature.params.push(AbiParam::new(POINTER));
+        }
         for taken in &boundary.takes {
             signature.params.push(AbiParam::new(machine_type(taken)?));
         }
@@ -61,7 +69,8 @@ pub(crate) fn define(
         let declared = emitting.declared;
         let literals = emitting.literals;
         emitting.function(id, signature, |builder, module, given| {
-            let (arguments, out) = given.split_at(boundary.takes.len());
+            let (arguments, out) =
+                given.split_at(usize::from(boundary.constructed) + boundary.takes.len());
 
             // A status that is not `ANSWERED` goes back as it came, and nothing is written.
             let abort = builder.create_block();

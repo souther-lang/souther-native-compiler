@@ -19,4 +19,11 @@ sealed interface RunOutcome {
     record Answered(ObservedValue value) implements RunOutcome {}
 
     record Aborted(AbortKind kind) implements RunOutcome {}
+
+    /**
+     * A stand-in the row states was asked for what the row states nothing about, which is neither
+     * an answer nor a reason the language ends a computation for: upstream reports it as the row's
+     * fake resolution failing (`AFakeHadNoOutputForAnInput`), and so does this.
+     */
+    record StoodInForNothing() implements RunOutcome {}
 }

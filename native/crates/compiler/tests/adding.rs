@@ -39,14 +39,14 @@ const HARNESS: &str = r#"
 #include <stdio.h>
 #include <stdlib.h>
 
-extern uint32_t adding(int64_t, int64_t, int64_t *) __asm__("PREFIXsouther3.calculation.add");
+extern uint32_t adding(const void *, int64_t, int64_t, int64_t *) __asm__("PREFIXsouther4.calculation.add");
 
 int main(int argc, char **argv) {
     if (argc != 3) {
         return 2;
     }
     int64_t answer;
-    uint32_t status = adding(strtoll(argv[1], NULL, 10), strtoll(argv[2], NULL, 10), &answer);
+    uint32_t status = adding(NULL, strtoll(argv[1], NULL, 10), strtoll(argv[2], NULL, 10), &answer);
     printf("%u\n", status);
     if (status == 0) {
         printf("%" PRId64 "\n", answer);
@@ -63,7 +63,7 @@ const BOUNDARY_HARNESS: &str = r#"
 #include <stdio.h>
 #include <stdlib.h>
 
-extern uint32_t adding(int64_t, int64_t, const uint8_t **) __asm__("PREFIXsouther3.calculation.add$boundary");
+extern uint32_t adding(const void *, int64_t, int64_t, const uint8_t **) __asm__("PREFIXsouther4.calculation.add$boundary");
 extern int64_t souther_string_length(const uint8_t *);
 extern const uint8_t *souther_string_bytes(const uint8_t *);
 
@@ -72,7 +72,7 @@ int main(int argc, char **argv) {
         return 2;
     }
     const uint8_t *written;
-    uint32_t status = adding(strtoll(argv[1], NULL, 10), strtoll(argv[2], NULL, 10), &written);
+    uint32_t status = adding(NULL, strtoll(argv[1], NULL, 10), strtoll(argv[2], NULL, 10), &written);
     printf("%u\n", status);
     if (status == 0) {
         fwrite(souther_string_bytes(written), 1, (size_t) souther_string_length(written), stdout);

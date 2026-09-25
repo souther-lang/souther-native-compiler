@@ -33,13 +33,13 @@ class AbortStatusNumbersAgreeAcrossTheDriverAndTheHarnessTest {
      * rather than described again, for the reason every other fixture this project checks in is.
      */
     private static final Path FIXTURE =
-            Path.of("native", "crates", "compiler", "tests", "abort-status-abi3.json");
+            Path.of("native", "crates", "compiler", "tests", "abort-status-abi4.json");
 
     @Test
     void everyStatusTheDriverAnswersIsReadBackAsTheAbortKindItNames() throws IOException {
         Map<String, Integer> written = parsed(Files.readString(FIXTURE, StandardCharsets.UTF_8));
 
-        assertThat(written).as("abort-status-abi3.json").hasSize(AbortKind.values().length);
+        assertThat(written).as("abort-status-abi4.json").hasSize(AbortKind.values().length);
         for (Map.Entry<String, Integer> entry : written.entrySet()) {
             AbortKind expected = AbortKind.valueOf(entry.getKey());
             assertThat(Running.abortKindOf(entry.getValue()))

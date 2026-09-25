@@ -415,9 +415,9 @@ class ARowHoldsWhereverItIsRunTest {
     /**
      * A behavior a host implements, and one that reaches it.
      *
-     * <p>What answers it is what a host registered when it runs the program, so the row's stand-in
-     * is registered the way a host registers an implementation, and nothing about the object is
-     * arranged around the run.
+     * <p>What answers it where the program runs is a host's implementation, and where a row runs it
+     * is what the row states: the row's entry calls the behavior with a capability of that, which
+     * the object holds, and nothing about the run is arranged around it.
      */
     private static final String DEPENDING = """
             module depending
@@ -456,9 +456,9 @@ class ARowHoldsWhereverItIsRunTest {
      * Two modules, each declaring a dependency of one name, and one of them takes and answers
      * something the other does not.
      *
-     * <p>Two behaviors, as the language says and as the object says: the symbols are apart. What
-     * has to be apart with them is whatever implements them, because the object is the whole
-     * program and so every behavior a host implements may be reached whichever row is being run.
+     * <p>Two behaviors, as the language says and as the object says. What has to be apart with them
+     * is what each row stands in with, because the object is the whole program and holds every
+     * row's stand-ins at once.
      */
     private static final String PRICING = """
             module pricing
@@ -495,9 +495,9 @@ class ARowHoldsWhereverItIsRunTest {
     /**
      * A module that names neither of them, which is the row that says what the population is.
      *
-     * <p>Its row states no stand-in and reaches no dependency, and the object still answers both of
-     * those behaviors — so what runs this row registers for both of them all the same. A run
-     * arranged around what a row mentions would never meet the pair at all.
+     * <p>Its row states no stand-in and reaches no dependency, and the object it runs in holds the
+     * other two rows' stand-ins all the same. A run arranged around what a row mentions would never
+     * meet the pair at all.
      */
     private static final String PLAINLY = """
             module plainly
@@ -578,11 +578,11 @@ class ARowHoldsWhereverItIsRunTest {
                             asked++;
                         }
                         // A behavior that depends on another is run with what the row says
-                        // that other one answers, which is the object's undefined symbol being
-                        // given a definition rather than the run being arranged around it.
+                        // that other one answers, which its entry stands in with out of the
+                        // object: the run is handed nothing for it.
                         case CheckedRow.WithStandIns states -> {
-                            ObservedValue answered = running.rowAnswering(
-                                    module, behavior, at, states.standsIn());
+                            ObservedValue answered =
+                                    running.rowAnswering(module, behavior, at, List.of());
 
                             assertThat(states.holds(answered))
                                     .as("%s answered %s", where, answered)

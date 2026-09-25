@@ -58,7 +58,7 @@ class ABoundaryCrossesAsTheCheckedShapeTest {
         assertThat(written()).contains(
                 "\"name\":\"openDoor\",\"is\":\"body\",\"parameters\":{\"named\":[{\"name\":\"n\",\"input\":{\"is\":\"scalar\",\"scalar\":\"INT\"}}]},"
                         + "\"output\":{\"is\":\"nominal\",\"declared\":\"shop.Door\"},"
-                        + "\"ensures\":{\"at\":\"none\"}}");
+                        + "\"ensures\":{\"at\":\"none\"},\"requirements\":[]}");
     }
 
     @Test
