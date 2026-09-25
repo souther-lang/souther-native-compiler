@@ -127,9 +127,16 @@ Calls. A helper that does not call itself arrives already written into the body 
 that does is a definition the module holds, and every module that reaches it holds a copy, which is
 what the language says a published helper is. A behavior reaching a behavior is a call whether this
 program answers it or not. One another build implements is a name the object leaves for that build's
-object. One with no body that declares nothing to depend on is answered by the object of the build
-that declares it, with whatever the host running the program registered for it, so what answers a
-dependency is the host's to choose when it runs the program and not something linked in.
+object. A behavior is called with a capability for each behavior it requires, in the order the
+checker answered them, which is what it was constructed with, and a call it makes through `depends
+on` goes through that capability: whatever the capability holds answers it, a body, a host's
+implementation or a row's stand-in, and never what the name would recover. One with no body that
+declares nothing to depend on is reached only that way. The object of the build that declares it
+makes the capability of what a host implements it as, so what answers a dependency is the host's to
+choose when it runs the program and not something linked in. A composition hands each stage the
+capabilities of what the stage requires, picked out of its own; a stage another build implements, in
+a composition that requires something, is not written yet, since what the stage requires is not
+carried (souther-lang/souther#1964).
 
 What a call may reach is wider than what the object defines — a body may name a behavior, or a
 type, that a module built before this one declares — so the document says the two apart.
@@ -182,7 +189,7 @@ A host builds and reads a value of a type the module publishes through functions
 defines for it, and never through where the value keeps anything. A host holds a value as an
 address it does not look behind, good until the mark taken before it was made is reset, and hands
 it back to these and to the behaviors. For each published type with fields or none there is a
-constructor, `souther3_m_<module>_t_<Name>_construct`, taking the fields and answering `status +
+constructor, `souther4_m_<module>_t_<Name>_construct`, taking the fields and answering `status +
 out` the way the type's own constructor does, since it is that constructor it runs: a value whose
 clauses do not hold is answered `InvariantNotHeld` and nothing is written through `out`, and a type
 with no clause answers a status too, so a clause added later does not change how a host calls it.
@@ -193,7 +200,7 @@ tagged with never leaves the object. A union with a primitive among its cases ha
 carries the primitive is not something a host is handed. The case answered is the concrete one the value is, and
 whether a host can read that case further is its own publication's answer and not the sum's. A
 behavior answering a union no declaration names has the same reader beside its call,
-`souther3_m_<module>_b_<behavior>_answer_case`, counting the cases the union descends to: a member
+`souther4_m_<module>_b_<behavior>_answer_case`, counting the cases the union descends to: a member
 that is a sum counts as its own cases, since a value of it is one of them. It is the behavior's and
 not the union's, which has no name to be spelt under.
 
@@ -210,7 +217,7 @@ case of.
 A list crosses as an address too, of type `souther_list`, wherever its element crosses: as a field,
 as what a behavior takes or answers, and as what a behavior a host implements takes or answers. A
 host builds one and reads one through functions the object defines for each way an element crosses,
-under the module: `souther3_m_<module>_l_<element>_construct`, taking a count and a column for each
+under the module: `souther4_m_<module>_l_<element>_construct`, taking a count and a column for each
 word an element crosses as and answering the list, `..._length`, and `..._at`, taking the list, an
 index and room for the element's words and answering one where the index is inside the list and
 nought, with nothing written, where it is not. `<element>` is the word, `value` or `int` and so on,
@@ -249,7 +256,7 @@ being JSON and where they stopped, or every issue found in the document — not 
 one of Raoh's codes, a JSON Pointer and its metadata as named entries. A clause that does not hold is
 `invariant_violation` at the value's path, naming the type's module and name and the clause where
 it has one. A value of a type another build declares is read by that build's object, under
-`souther3.<module>$read$<Name>`, whatever kind of type it is: how a declaration is read is the
+`souther4.<module>$read$<Name>`, whatever kind of type it is: how a declaration is read is the
 declaring build's, and for a type built from fields that build is also the only one that can say
 which clause did not hold. Text read is canonicalized to NFC. What JSON is, is `souther-json-syntax`, a crate that knows
 no Souther type, no arena and no runtime, written to be what both runtimes read once #17 moves it.
@@ -287,11 +294,11 @@ object defines, to one set, reading each of them as it is.
 
 A host calls a function by a C identifier. The symbols one object built here calls in another carry
 `.` and `$`, and no C compiler or FFI that reads C declarations can name those. So what a host
-calls is spelt apart: `souther3`, the ABI generation, then the module as `_m_<segment>` per segment
+calls is spelt apart: `souther4`, the ABI generation, then the module as `_m_<segment>` per segment
 of its dotted name, then `_b_<behavior>`, `_v_<value>`, `_t_<type>`, or `_l_` and how a list's
 element crosses, and what is done with it. A
 name is written as it is where it is ASCII letters and digits, with `_` doubled and any other
-character as `_u<hex>_`, its code point. So `shop.quote` is `souther3_m_shop_b_quote` and a
+character as `_u<hex>_`, its code point. So `shop.quote` is `souther4_m_shop_b_quote` and a
 behavior named `数量` is `..._b__u6570__u91cf_`, and inside a name `_` is only ever followed by `_`
 or `u`, which is what keeps every spelling readable back to the one set of names it was made from.
 
@@ -314,8 +321,8 @@ without reading the program: each module's behaviors with what they take and ans
 values, and its published types with their fields and cases, each beside the function that reaches
 it, or `null` where a host has no way in yet. Apart from its behaviors, each module's `injections`
 are the behaviors a host implements, published or not, each with what it takes and answers, the
-function type a host implements it as, and what it registers one through. The function type is not
-a function: every `name` of a function in the manifest is a symbol the library defines, and the
+function type a host implements it as, and what it makes a capability of one through (`implement`).
+The function type is not a function: every `name` of a function in the manifest is a symbol the library defines, and the
 type's is under `type`. What a behavior takes is `named`, under the names its signature gives them,
 or `positional` for a `>->` composition, which declares no parameters; the names are the
 signature's and never those a `let` binds. What a behavior answers is its `type` beside `union`,
@@ -330,35 +337,49 @@ entry for it. A parameter is `given`, `room`, or a `slice`, as many of a word as
 says. A behavior `requires` what constructing it requires injected, each by its module and its name,
 in the order the checker answered it: a behavior a host implements, or one constructed from what it
 requires in turn. It is the checker's list as it crossed, and not what the body calls, since a
-composition requires what its stages require. What a manifest may say is Rust types, and version 6
-is `native/crates/compiler/tests/interface-v6.json`: a test holds a program's manifest to it, and
+composition requires what its stages require. A behavior's `call` takes the capabilities of those
+first, as `requirements`, and `bind`, where something may require the behavior, is what a host
+makes a capability of it through. What a manifest may say is Rust types, and version 7
+is `native/crates/compiler/tests/interface-v7.json`: a test holds a program's manifest to it, and
 another reads it with those types and writes it back unchanged. The manifest carries its own
 `version`, moved when what it says is read differently, and the `abi` its functions answer to,
 which is the generation in every symbol.
 
-A behavior with no body that declares nothing to depend on is implemented by the host. The object of
-the build that declares it defines the behavior's own symbol, so every object calling it calls it the
-way it calls any behavior, and that definition calls what the host registered for it on the calling
-thread. The host registers through `souther3_m_<module>_b_<behavior>_register`, handing a pointer to
-a function of the type `..._implementation` and handed back the one it replaced, either null for
-none. The function takes what the behavior takes and room for its answer, in the words a host hands
-a published behavior, and answers a status. Registration is per thread, like the arena, and handing
-back what was replaced is how a binding registers an implementation around one call and puts the
-previous one back after it, so a call made from inside an implementation into another still finds
-its own. What is registered stays the host's, and has to stay callable while it is registered, so a
-binding makes the pointer once and hands that same pointer over around each call. PHP's FFI makes a
-new C entry each time a closure is handed to C and keeps it until the request ends, so a binding
-that handed its closure over on every call would grow for as long as the process lives; a test
-holds a PHP binding to the first shape. A call with nothing registered answers `INJECTION_UNBOUND`. An implementation may answer
-`ANSWERED` or `HOST_EXCEPTION`, which says it threw and that the host kept what it threw to throw
-again where the outermost call returns, since a host's exception cannot unwind through generated
-code. Anything else it answers is `INJECTION_PROTOCOL_VIOLATION` by the time a caller sees it: an
-implementation is outside the model, where a clause that does not hold is a failed reading and not
-an abort, so it cannot end a computation with a language abort. None of these three is a reason a
-Souther computation ends, and their numbers are the top of what a C `int` holds, away from the
-aborts'. The answer still crosses the behavior's `ensures` where the checker placed it. What a host
-can hand over is what it can for a published behavior, and a behavior with no body taking or
+A behavior with no body that declares nothing to depend on is implemented by the host, and reached
+through a capability of the host's implementation and nothing else, so nothing defines it under a
+symbol of its own. A capability is two words, laid out as the header's `souther_capability`: the
+code a call through it reaches, which takes what the code is handed first and then what the behavior
+takes, and what it is handed first. The host makes one through
+`souther4_m_<module>_b_<behavior>_implement`, handing room for the capability, room laid out as
+`souther_hosted`, a pointer to a function of the type `..._implementation`, and what that function
+is to be handed first. The function takes that, then what the behavior takes and room for its
+answer, in the words a host hands a published behavior, and answers a status. A behavior with a body
+that something may require is made one through `..._bind`, out of the capabilities of what it
+requires, and a published behavior's call takes those capabilities first, null where it requires
+nothing. Nothing is copied out of what a host hands over, so the rooms, the function and what it is
+handed stay the host's, and as they are, for as long as the capability may be called; nothing is
+registered anywhere, so two implementations of one behavior are two capabilities, each reached by
+what it was handed to, on any thread. PHP's FFI makes a new C entry each time a closure is handed to
+C and keeps it until the request ends, so a binding makes the function pointer once for a behavior
+and tells its implementations apart by what each is handed first; a test holds a PHP binding to that
+shape. A call through a requirement it was handed null for answers `INJECTION_UNBOUND`. An
+implementation may answer `ANSWERED` or `HOST_EXCEPTION`, which says it threw and that the host kept
+what it threw to throw again where the outermost call returns, since a host's exception cannot
+unwind through generated code. Anything else it answers is `INJECTION_PROTOCOL_VIOLATION` by the time
+a caller sees it: an implementation is outside the model, where a clause that does not hold is a
+failed reading and not an abort, so it cannot end a computation with a language abort. That is held
+where the capability of a host's implementation calls it, and nowhere else. None of these three is a
+reason a Souther computation ends, and their numbers are the top of what a C `int` holds, away from
+the aborts'. The answer still crosses the behavior's `ensures` where the checker placed it. What a
+host can hand over is what it can for a published behavior, and a behavior with no body taking or
 answering anything else is not written yet.
+
+A row stands in for what its behavior requires with what it states, and the object holds that: a
+function for each dependency, answering with the first entry stating the arguments it is asked with,
+compared as `==` compares them, and otherwise with what the row states for the rest, and a capability
+of each. So a row's entry takes nothing and runs the behavior with those. Where a stand-in states
+nothing for what it is asked, the row answers `FAKE_NO_OUTPUT`, which is neither an abort nor a
+host's status, and which the header does not name, since a host is told nothing of rows.
 
 What the library exports is what the header declares, and nothing else. A row's entry and a
 boundary stay in the object, since running the program's own rows is what they are for, and so does
@@ -415,13 +436,12 @@ says, and an application extends it. One the library defines is final: `bind` ta
 the class of each behavior it `requires`, in that order, each named after the behavior, or by its
 place (`$dependency0`) where two of one name from two modules are both required. `of` makes one that
 requires nothing.
-`apply` calls it with what it was bound to registered for the length of the call. It takes the
-session and answers a value of the caller's run, as every function does, and opens no run of its
-own, whose values would be gone by the time the caller held them. A missing or mistyped
-implementation is PHP's `TypeError` at `bind`, not an `UnboundInjection` at the call. A behavior
-bound to another brings what that one was bound to, and one bound to two implementations of one
-behavior is refused at `bind`, since the library calls one implementation of a behavior at a time
-(#72). A class is what the binding adds beside the model's surface, under a name the binding makes,
+`apply` calls it with the capabilities of what it was bound to. It takes the session and answers a
+value of the caller's run, as every function does, and opens no run of its own, whose values would
+be gone by the time the caller held them. A missing or mistyped implementation is PHP's `TypeError`
+at `bind`, not an `UnboundInjection` at the call. A behavior bound to another holds that one as it
+was bound, so one behavior bound to two implementations of another at two places calls each at its
+own place, as the JVM's does (#72). A class is what the binding adds beside the model's surface, under a name the binding makes,
 so it is never a reason to refuse one: a behavior whose class PHP will not take (`clone`), or whose
 class is one with another the module's binding writes (`behaviors`, or `lookupCodec` beside
 `LookupCodec`), has no class, and neither has what requires it. Each stays a function on
@@ -484,19 +504,19 @@ A status crosses as one of three things. A construction that does not hold its t
 an `Err` with `invariant_violation`, and a reading answers the issues the library found, their codes
 being Raoh's already, or `invalid_format` where the text is not JSON. A Souther computation that
 ends without a value throws `SoutherAbort`, naming the status. A behavior the host implements is
-handed to a run as `Injections::of(name: fn (Session $session, ...) => ...)`, or bound to a behavior
-class as an instance of its own. Each behavior a host implements is one C function pointer, made
-once per binding, and what is registered through it is registered around each run or bound call
-and put back after, so a worker does not grow with every request. A call with nothing registered
-throws `UnboundInjection`, and an exception an implementation throws is the one that comes back out
-of the call that reached it.
+handed to a run as `Injections::of(name: fn (Session $session, ...) => ...)`, which is what a
+behavior called through `Behaviors` in that run is constructed from, or bound to a behavior class as
+an instance of its own. Each behavior a host implements is one C function pointer, made once per
+binding, and each implementation handed over is a capability of it and a number of its own, so a
+worker does not grow with every request. A call reaching what nothing was handed for throws
+`UnboundInjection`, and an exception an implementation throws is the one that comes back out of the
+call that reached it.
 
 A binding says which version of the runtime's surface it was generated for, and refuses to load
 over a runtime that says another (`Binding::PROTOCOL`). The runtime loads a library once per
 process, with `FFI::cdef` or, under `ffi.enable=preload`, from the scope a preload script declared
 with `Binding::preloadHeader`, given the library's path again so that it is the same library a load
-of that file would be. The arena and what is registered
-are per thread, and a handle is PHP's, which a ZTS runtime such as FrankenPHP does not hand from one
+of that file would be. The arena is per thread, and a handle is PHP's, which a ZTS runtime such as FrankenPHP does not hand from one
 thread to another; nothing here checks for one that was. A fiber is checked for: runs are one stack,
 ended in the order they nest, so while a run is going on one fiber, another fiber can neither start
 one nor use a session or a value of it (`RunOnAnotherFiber`), and one suspended in a run holds the
