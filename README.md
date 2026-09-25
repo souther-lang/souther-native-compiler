@@ -403,6 +403,10 @@ list both ways, typed `array` for PHP and `list<T>` in the docblock for PHPStan:
 over as a value of its type is anywhere else, through the session the list is built in, so an array
 with a key out of order or an element of another type is refused before the library is called. A
 list read is copied into a PHP array when it is read, each element held as a field's value is.
+A module's classes build and read a list through that module's own functions and no other
+module's, every list a module's manifest entry says is held to what a list of its element is built
+and read through, and a module with a function handing a list across and nothing to build one
+through is refused rather than written without the function.
 The FFI declarations are the build's own, copied beside the binding as `souther.ffi.h`, and
 `autoload.php` loads the binding's classes for a host that does not map the namespace itself. The
 directory is written beside where it goes and put there whole, so it is the binding of one manifest:

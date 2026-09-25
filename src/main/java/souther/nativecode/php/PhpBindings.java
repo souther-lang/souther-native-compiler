@@ -77,10 +77,13 @@ public final class PhpBindings {
     private final Map<String, Declared> declared = new LinkedHashMap<>();
 
     /**
-     * What a list is built and read through, by how its element crosses. The first module's that
-     * has one: every module's for one way an element crosses does the same to the same list.
+     * What a list is built and read through, by the module whose functions hand it across and how
+     * its element crosses. A module's own and no other's: the library defines them under the
+     * module, so a class of one module calling another's would reach across what one object
+     * offers, and a module's entry would go unread wherever another module's came first.
      */
-    private final Map<Manifest.Element, Manifest.ListCrossing> lists = new LinkedHashMap<>();
+    private final Map<String, Map<Manifest.Element, Manifest.ListCrossing>> lists =
+            new LinkedHashMap<>();
 
     private PhpBindings(Manifest manifest, String root, Path into) {
         this.manifest = manifest;
@@ -171,9 +174,7 @@ public final class PhpBindings {
                                 "type `" + module.name() + "." + declaration.name() + "`"));
                 declared.put(it.key(), it);
             }
-            for (Manifest.ListCrossing list : module.lists()) {
-                lists.putIfAbsent(list.element(), list);
-            }
+            lists.put(module.name(), listsOf(module));
         }
         for (Manifest.Module module : manifest.modules()) {
             module(module);
@@ -186,54 +187,180 @@ public final class PhpBindings {
     // What a model type crosses as.
 
     /**
-     * How a value of {@code type} crosses as one word, or null where it does not: the same both
-     * ways.
+     * Every list {@code module} says a host builds and reads through, each held to what a list of
+     * its element is built and read through, whether or not anything here goes on to use it: an
+     * entry is what the manifest says, and one this generator never read would be one nothing held
+     * to anything. One element twice is the manifest saying two things of one list.
      */
-    private @Nullable Single single(Type type) {
-        return type instanceof Type.ListOf list ? listed(list) : whole(type);
+    private static Map<Manifest.Element, Manifest.ListCrossing> listsOf(Manifest.Module module) {
+        Map<Manifest.Element, Manifest.ListCrossing> own = new LinkedHashMap<>();
+        for (Manifest.ListCrossing list : module.lists()) {
+            Manifest.Element element = list.element();
+            List<Word> words = element.present()
+                    ? List.of(Word.BOOL, element.word()) : List.of(element.word());
+            List<Parameter> built = new ArrayList<>();
+            built.add(Parameter.given(Word.COUNT));
+            words.forEach(word -> built.add(Parameter.slice(word)));
+            agrees(list.construct(), built, Word.LIST);
+            agrees(list.length(), List.of(Word.LIST), List.of(), Word.COUNT);
+            agrees(list.at(), List.of(Word.LIST, Word.COUNT), words, Word.BOOL);
+            if (own.putIfAbsent(element, list) != null) {
+                throw new IllegalStateException("the manifest gives module `" + module.name()
+                        + "` two lists of " + element);
+            }
+        }
+        return own;
+    }
+
+    /** How a value crosses in a function of {@code module}'s. */
+    private Crossings in(String module) {
+        return new Crossings(module, lists.getOrDefault(module, Map.of()));
     }
 
     /**
-     * How a value of {@code type} crosses as one word or an optional of one, or null where it does
-     * not: the same both ways.
+     * How a value crosses in the functions one module hands it across in: what is the same in every
+     * module, and a list through that module's own functions. Every way this generator asks how a
+     * type crosses goes through one of these, so none of them can be asked without saying whose
+     * function the value crosses in.
      */
-    private @Nullable Both both(Type type) {
-        if (type instanceof Type.Option option) {
-            Single of = single(option.of());
-            return of == null ? null : new Present(of);
-        }
-        return single(type);
-    }
+    private final class Crossings {
 
-    /**
-     * How a list crosses, where its element crosses both ways and the library defines what a list
-     * of such elements is built and read through.
-     *
-     * <p>Both ways even where a list is only handed one way, since an element of either is the same
-     * words: a union no declaration names is refused as an element, having no way to say which
-     * case one read out of a list is.
-     */
-    private @Nullable Listed listed(Type.ListOf list) {
-        Both element = both(list.of());
-        if (element == null) {
-            return null;
+        private final String module;
+        private final Map<Manifest.Element, Manifest.ListCrossing> lists;
+
+        Crossings(String module, Map<Manifest.Element, Manifest.ListCrossing> lists) {
+            this.module = module;
+            this.lists = lists;
         }
-        Manifest.Element shape = switch (element) {
-            case Present present -> new Manifest.Element(true, present.of().word());
-            case Single single -> new Manifest.Element(false, single.word());
-        };
-        Manifest.ListCrossing crossing = lists.get(shape);
-        if (crossing == null) {
-            return null;
+
+        /**
+         * How a value of {@code type} crosses as one word, or null where it does not: the same both
+         * ways.
+         */
+        @Nullable Single single(Type type) {
+            return type instanceof Type.ListOf list ? listed(list) : whole(type);
         }
-        List<Parameter> built = new ArrayList<>();
-        built.add(Parameter.given(Word.COUNT));
-        element.words().forEach(word -> built.add(Parameter.slice(word)));
-        agrees(crossing.construct(), built, Word.LIST);
-        agrees(crossing.length(), List.of(Word.LIST), List.of(), Word.COUNT);
-        agrees(crossing.at(), List.of(Word.LIST, Word.COUNT), element.words(), Word.BOOL);
-        return new Listed(element, crossing.construct().name(), crossing.length().name(),
-                crossing.at().name());
+
+        /**
+         * How a value of {@code type} crosses as one word or an optional of one, or null where it
+         * does not: the same both ways.
+         */
+        @Nullable Both both(Type type) {
+            if (type instanceof Type.Option option) {
+                Single of = single(option.of());
+                return of == null ? null : new Present(of);
+            }
+            return single(type);
+        }
+
+        /**
+         * How a list crosses, where its element crosses both ways: through the functions the module
+         * defines for a list of such elements.
+         *
+         * <p>Both ways even where a list is only handed one way, since an element of either is the
+         * same words: a union no declaration names is refused as an element, having no way to say
+         * which case one read out of a list is. An element that crosses with nothing in the module
+         * to build a list of it through is the manifest and this generator disagreeing, since the
+         * library defines one for every list its module's functions hand across, and is refused
+         * rather than taken for a list no host can reach.
+         */
+        @Nullable Listed listed(Type.ListOf list) {
+            Both element = both(list.of());
+            if (element == null) {
+                return null;
+            }
+            Manifest.Element shape = switch (element) {
+                case Present present -> new Manifest.Element(true, present.of().word());
+                case Single single -> new Manifest.Element(false, single.word());
+            };
+            Manifest.ListCrossing crossing = lists.get(shape);
+            if (crossing == null) {
+                throw new IllegalStateException("the manifest gives module `" + module
+                        + "` nothing to build a list of " + shape + " through, and a function of it"
+                        + " hands one across");
+            }
+            return new Listed(element, crossing.construct().name(), crossing.length().name(),
+                    crossing.at().name());
+        }
+
+        /** How PHP hands the library a value of {@code type}, or null where it has no way to. */
+        @Nullable Given given(Type type) {
+            if (type instanceof Type.Union union) {
+                List<Whole> members = members(union);
+                return members == null ? null : new OneOf(members);
+            }
+            return both(type);
+        }
+
+        /**
+         * How the library hands PHP a value of {@code type}, or null where it has no way to. A
+         * union no declaration names is never handed this way: nothing says which case a value of
+         * one is where it is not a behavior's answer ({@link #received(Manifest.Answer, String)}).
+         */
+        @Nullable Received received(Type type) {
+            return both(type);
+        }
+
+        /**
+         * How the library hands PHP what a behavior answers, or null where it has no way to: a
+         * union no declaration names as the class of the case the library says a value is, and
+         * anything else as a value of its type is handed.
+         *
+         * <p>Each case is made as its own class where it has one, and otherwise as a value of the
+         * member it is a case of, whose codec decides again: a case the model keeps has no class,
+         * and is still a value of the sum the union names. A case neither way is a union PHP cannot
+         * be handed.
+         */
+        @Nullable Received received(Manifest.Answer answer, String what) {
+            if (!(answer.type() instanceof Type.Union union)) {
+                return received(answer.type());
+            }
+            Manifest.UnionAnswer cases = answer.union();
+            List<Whole> members = members(union);
+            if (cases == null || cases.which() == null || members == null) {
+                return null;
+            }
+            agrees(cases.which(), List.of(Word.VALUE), List.of(), Word.CASE);
+            List<Whole> made = new ArrayList<>();
+            for (Case of : cases.cases()) {
+                Whole it = caseClass(of);
+                if (it == null) {
+                    it = memberHolding(union, of);
+                }
+                if (it == null) {
+                    return null;
+                }
+                made.add(it);
+            }
+            return new Told(new OneOf(members).phpType(), cases.which().name(), made,
+                    quotedInSingle("`" + what + "`"));
+        }
+
+        /** How PHP hands over each of {@code types}, or null where any of them has no way. */
+        @Nullable List<Given> givens(List<Type> types) {
+            List<Given> crossings = new ArrayList<>();
+            for (Type type : types) {
+                Given crossing = given(type);
+                if (crossing == null) {
+                    return null;
+                }
+                crossings.add(crossing);
+            }
+            return crossings;
+        }
+
+        /** How PHP is handed each of {@code types}, or null where any of them has no way. */
+        @Nullable List<Received> receiveds(List<Type> types) {
+            List<Received> crossings = new ArrayList<>();
+            for (Type type : types) {
+                Received crossing = received(type);
+                if (crossing == null) {
+                    return null;
+                }
+                crossings.add(crossing);
+            }
+            return crossings;
+        }
     }
 
     /** How a value of {@code type} crosses as one word of the library's, or null where it does not. */
@@ -251,59 +378,6 @@ public final class PhpBindings {
             case Type.ListOf it -> null;
             case Type.Unrepresented it -> null;
         };
-    }
-
-    /** How PHP hands the library a value of {@code type}, or null where it has no way to. */
-    private @Nullable Given given(Type type) {
-        if (type instanceof Type.Union union) {
-            List<Whole> members = members(union);
-            return members == null ? null : new OneOf(members);
-        }
-        return both(type);
-    }
-
-    /**
-     * How the library hands PHP a value of {@code type}, or null where it has no way to. A union
-     * no declaration names is never handed this way: nothing says which case a value of one is
-     * where it is not a behavior's answer ({@link #received(Manifest.Answer, String)}).
-     */
-    private @Nullable Received received(Type type) {
-        return both(type);
-    }
-
-    /**
-     * How the library hands PHP what a behavior answers, or null where it has no way to: a union
-     * no declaration names as the class of the case the library says a value is, and anything else
-     * as a value of its type is handed.
-     *
-     * <p>Each case is made as its own class where it has one, and otherwise as a value of the
-     * member it is a case of, whose codec decides again: a case the model keeps has no class, and
-     * is still a value of the sum the union names. A case neither way is a union PHP cannot be
-     * handed.
-     */
-    private @Nullable Received received(Manifest.Answer answer, String what) {
-        if (!(answer.type() instanceof Type.Union union)) {
-            return received(answer.type());
-        }
-        Manifest.UnionAnswer cases = answer.union();
-        List<Whole> members = members(union);
-        if (cases == null || cases.which() == null || members == null) {
-            return null;
-        }
-        agrees(cases.which(), List.of(Word.VALUE), List.of(), Word.CASE);
-        List<Whole> made = new ArrayList<>();
-        for (Case of : cases.cases()) {
-            Whole it = caseClass(of);
-            if (it == null) {
-                it = memberHolding(union, of);
-            }
-            if (it == null) {
-                return null;
-            }
-            made.add(it);
-        }
-        return new Told(new OneOf(members).phpType(), cases.which().name(), made,
-                quotedInSingle("`" + what + "`"));
     }
 
     /** What each member of {@code union} crosses as, or null where any has no class. */
@@ -341,32 +415,6 @@ public final class PhpBindings {
         }
         return it.declaration() instanceof Declaration.Sum
                 ? Whole.sum(it.fqcn(), it.codec()) : Whole.product(it.fqcn());
-    }
-
-    /** How PHP hands over each of {@code types}, or null where any of them has no way. */
-    private @Nullable List<Given> givens(List<Type> types) {
-        List<Given> crossings = new ArrayList<>();
-        for (Type type : types) {
-            Given crossing = given(type);
-            if (crossing == null) {
-                return null;
-            }
-            crossings.add(crossing);
-        }
-        return crossings;
-    }
-
-    /** How PHP is handed each of {@code types}, or null where any of them has no way. */
-    private @Nullable List<Received> receiveds(List<Type> types) {
-        List<Received> crossings = new ArrayList<>();
-        for (Type type : types) {
-            Received crossing = received(type);
-            if (crossing == null) {
-                return null;
-            }
-            crossings.add(crossing);
-        }
-        return crossings;
     }
 
     /**
@@ -557,7 +605,8 @@ public final class PhpBindings {
 
     /** The static constructor: the value, or the invariant it does not hold as an issue. */
     private void of(StringBuilder php, Declared it, List<Manifest.Field> fields, Function construct) {
-        List<Given> crossings = givens(fields.stream().map(Manifest.Field::type).toList());
+        List<Given> crossings =
+                in(it.module()).givens(fields.stream().map(Manifest.Field::type).toList());
         if (crossings == null) {
             return;
         }
@@ -640,9 +689,14 @@ public final class PhpBindings {
     }
 
     private void getter(StringBuilder php, Declared it, Manifest.Field field) {
+        // Whether there is a reader first: a field with none is one no function hands across, and
+        // nothing is asked of how it would cross.
         Function read = field.read();
-        Received crossing = received(field.type());
-        if (read == null || crossing == null) {
+        if (read == null) {
+            return;
+        }
+        Received crossing = in(it.module()).received(field.type());
+        if (crossing == null) {
             return;
         }
         String body = switch (crossing) {
@@ -767,9 +821,14 @@ public final class PhpBindings {
         members.claim("__construct", "the generated `__construct`");
         for (Manifest.Behavior behavior : module.behaviors()) {
             Function call = behavior.call();
-            List<Given> takes = givens(behavior.parameters().types());
-            Received answers = received(behavior.answers(), module.name() + "." + behavior.name());
-            if (call == null || takes == null || answers == null) {
+            if (call == null) {
+                continue;
+            }
+            Crossings crossings = in(module.name());
+            List<Given> takes = crossings.givens(behavior.parameters().types());
+            Received answers = crossings.received(behavior.answers(),
+                    module.name() + "." + behavior.name());
+            if (takes == null || answers == null) {
                 continue;
             }
             String what = "behavior `" + module.name() + "." + behavior.name() + "`";
@@ -808,8 +867,11 @@ public final class PhpBindings {
         members.claim("__construct", "the generated `__construct`");
         for (Manifest.PublishedValue value : module.values()) {
             Function read = value.read();
-            Received answers = received(value.type());
-            if (read == null || answers == null) {
+            if (read == null) {
+                continue;
+            }
+            Received answers = in(module.name()).received(value.type());
+            if (answers == null) {
                 continue;
             }
             String what = "value `" + module.name() + "." + value.name() + "`";
@@ -903,11 +965,12 @@ public final class PhpBindings {
             entries.add("'" + module.name() + "." + injection.name() + "' => $" + name);
             List<String> types = new ArrayList<>();
             types.add(RUNTIME + "Session");
+            Crossings crossings = in(module.name());
             for (Manifest.NamedParameter parameter : injection.parameters()) {
-                types.add(received(parameter.type()).phpDocType());
+                types.add(crossings.received(parameter.type()).phpDocType());
             }
             described.add("     * @param (callable(" + String.join(", ", types) + "): "
-                    + given(injection.answers()).phpDocType() + ")|null $" + name);
+                    + crossings.given(injection.answers()).phpDocType() + ")|null $" + name);
         }
         if (parameters.isEmpty()) {
             return;
@@ -940,9 +1003,10 @@ public final class PhpBindings {
      * what it answers.
      */
     private @Nullable String adapter(Manifest.Module module, Manifest.Injection injection) {
-        List<Received> takes = receiveds(injection.parameters().stream()
+        Crossings crossings = in(module.name());
+        List<Received> takes = crossings.receiveds(injection.parameters().stream()
                 .map(Manifest.NamedParameter::type).toList());
-        Given answers = given(injection.answers());
+        Given answers = crossings.given(injection.answers());
         if (takes == null || answers == null) {
             return null;
         }
