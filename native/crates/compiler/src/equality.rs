@@ -120,6 +120,12 @@ pub(crate) fn equal(
             ty.spelt()
         ))),
         Ty::Var { var } => crate::laid_out_nowhere(*var),
+        // No value of it is ever made, so there are never two to compare; one asked for is refused
+        // the way a value of it is (`machine_type`), and not answered with a truth nothing earned.
+        Ty::Nothing { .. } => Err(not_lowered(format!(
+            "a comparison of two values of {}",
+            ty.spelt()
+        ))),
         Ty::Declared { .. }
         | Ty::Union { .. }
         | Ty::Option { .. }
@@ -199,7 +205,11 @@ impl Comparing<'_, '_, '_, '_> {
             Ty::Option { option } => self.optional(option, a, b)?,
             Ty::Tuple { tuple } => self.slots(tuple, member_at, a, b)?,
             Ty::List { list } => self.list(list, a, b)?,
-            Ty::Prim { .. } | Ty::Fn { .. } | Ty::Set { .. } | Ty::Map { .. } => {
+            Ty::Prim { .. }
+            | Ty::Fn { .. }
+            | Ty::Set { .. }
+            | Ty::Map { .. }
+            | Ty::Nothing { .. } => {
                 let same = equal(self.builder, self.lowering, self.module, ty, a, b)?;
                 self.unless(same)?;
             }

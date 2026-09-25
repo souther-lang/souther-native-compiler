@@ -19,7 +19,8 @@
 
 use serde::Deserialize;
 use souther_native_driver::transport::{
-    AbortKind, DeclaredBy, LanguageCase, LeafScalar, Op, Prim, Publication, TRANSPORT_VERSION,
+    AbortKind, DeclaredBy, Emitted, LanguageCase, LeafScalar, Op, Prim, Publication,
+    TRANSPORT_VERSION,
 };
 
 /// The document the writer wrote, and the one its own test holds it to.
@@ -38,6 +39,7 @@ struct Vocabularies {
     abort: Vec<AbortKind>,
     leafscalar: Vec<LeafScalar>,
     languagecase: Vec<LanguageCase>,
+    emitted: Vec<Emitted>,
 }
 
 fn read() -> Vocabularies {
@@ -170,6 +172,22 @@ fn every_case_the_language_gives_is_read_as_the_case_it_names() {
             LanguageCase::NotATime,
             LanguageCase::NotWhole,
             LanguageCase::NotAFiniteDecimal,
+        ]
+    );
+}
+
+/// Every operation the checker's compiler emits for a backend to lower whole, including the two
+/// this driver refuses as not lowered. Read by the member and not by what it renders as: a walk
+/// read as the growth inside it would be lowered as the other.
+#[test]
+fn every_emitted_operation_is_read_as_the_operation_it_names() {
+    assert_eq!(
+        read().emitted,
+        vec![
+            Emitted::BuildList,
+            Emitted::GrowList,
+            Emitted::BuildMap,
+            Emitted::PutMap,
         ]
     );
 }

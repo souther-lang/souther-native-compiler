@@ -55,9 +55,9 @@ use crate::closures::ClosureSites;
 use crate::index;
 use crate::kernels::{Bound, LoweredKernel};
 use crate::transport::{
-    AbortKind, Answers, Carrier, Case, Declaration, Definition, Ensures, Guard, Held, Node, Op,
-    Owner, Prim, Program, Reaches, Reaching, Reading, Reference, Routing, Selects, Target, Ty,
-    Value,
+    AbortKind, Answers, Carrier, Case, Declaration, Definition, Emitted, Ensures, Guard, Held,
+    Node, Op, Owner, Prim, Program, Reaches, Reaching, Reading, Reference, Routing, Selects,
+    Target, Ty, Value,
 };
 use crate::{Declared, Runs, Targets, departures_taken, not_lowered, says_its_case, spelt};
 use anyhow::{Result, anyhow, bail};
@@ -274,6 +274,7 @@ impl<'a> Coherent<'a> {
                 bound: HashMap::new(),
                 owed: &mut owed,
                 runs: runs.runs(&body),
+                unrun: Vec::new(),
             };
             // A rule over a case tests the answer the way an arm tests what it forks on, and reads
             // it as an arm reads what it binds.
@@ -283,6 +284,7 @@ impl<'a> Coherent<'a> {
                 walk.arm_binds(&answers, selects, binds)?;
             }
             walk.under(bound, body.node)?;
+            crate::growing::confined(&walk.owner, body.node)?;
         }
 
         owed.settle(&declared)?;
@@ -571,9 +573,12 @@ struct Walk<'w, 'a> {
     /// What each binding in scope is in force at, as the node that made it says.
     bound: HashMap<usize, Ty>,
     owed: &'w mut Owed,
-    /// Whether this object runs the body. What this backend has no lowering for is refused only
+    /// Whether this object runs what is being read: the body, and not a function a call inside it
+    /// never applies ([`crate::unrun`]). What this backend has no lowering for is refused only
     /// where it would be lowered; the two halves disagreeing is refused wherever it stands.
     runs: bool,
+    /// The functions the calls read so far never apply, which are read with `runs` false.
+    unrun: Vec<&'a Node>,
 }
 
 impl<'a> Walk<'_, 'a> {
@@ -664,8 +669,23 @@ impl<'a> Walk<'_, 'a> {
     /// `node` and everything under it: what each node says it is against where its value comes
     /// from, and each child against the slot it stands in.
     fn node(&mut self, node: &'a Node) -> Result<()> {
-        self.relations(node)?;
-        self.hold_slots(node)
+        let runs = self.runs;
+        if self.unrun.iter().any(|it| std::ptr::eq(*it, node)) {
+            self.runs = false;
+        }
+        let entered = match node {
+            Node::Call { arguments, .. } => crate::unrun::never_applied(node)
+                .into_iter()
+                .map(|at| &arguments[at])
+                .collect(),
+            _ => Vec::new(),
+        };
+        let before = self.unrun.len();
+        self.unrun.extend(entered);
+        let read = self.relations(node).and_then(|()| self.hold_slots(node));
+        self.unrun.truncate(before);
+        self.runs = runs;
+        read
     }
 
     /// Every child of `node` against the slot it stands in, from the one table of them.
@@ -948,6 +968,11 @@ impl<'a> Walk<'_, 'a> {
             Reaches::Behavior { declared } => {
                 (declared.clone(), self.targets.named(declared)?.takes())
             }
+            // Held to nothing, and refused as not lowered (`call`).
+            Reaches::Helper { reached } if self.seeded_as_nothing(reached, arguments, answers) => (
+                spelt_declaration(reached.declaration()),
+                arguments.iter().map(|it| it.ty().clone()).collect(),
+            ),
             Reaches::Helper { reached } => {
                 let (held, bound) = self.helper_called(reached, arguments, answers)?;
                 let takes = held
@@ -981,6 +1006,46 @@ impl<'a> Walk<'_, 'a> {
                 (format!("`{module}`'s published value {name}"), Vec::new())
             }
             Reaches::Kernel { kernel, takes, .. } => (kernel.clone(), takes.clone()),
+            Reaches::Emitted { operation } => {
+                let callee = operation.spelt().to_string();
+                let takes = match operation {
+                    // The step as it is written, the list it walks as a list of what the step takes
+                    // for an element, and where the walk starts.
+                    Emitted::BuildList => {
+                        let step = arguments.first().map(Node::ty);
+                        let Some(Ty::Fn { fn_ }) = step else {
+                            bail!(
+                                "{}: {callee} walks with {}, which is not a function: the two \
+                                 halves disagree",
+                                self.owner,
+                                step.map_or_else(|| "nothing".to_string(), Ty::spelt)
+                            );
+                        };
+                        let [_, element] = fn_.takes.as_slice() else {
+                            bail!(
+                                "{}: {callee} walks with a step taking {} values, where a step \
+                                 takes what it has grown and an element: the two halves disagree",
+                                self.owner,
+                                fn_.takes.len()
+                            );
+                        };
+                        vec![
+                            Ty::Fn { fn_: fn_.clone() },
+                            Ty::List {
+                                list: Box::new(element.clone()),
+                            },
+                            Ty::Prim { prim: Prim::Int },
+                        ]
+                    }
+                    // What it grows and what it adds are the list it answers.
+                    Emitted::GrowList => vec![answers.clone(), answers.clone()],
+                    // Refused as not lowered (`call`), and nothing here knows what they take.
+                    Emitted::BuildMap | Emitted::PutMap => {
+                        arguments.iter().map(|it| it.ty().clone()).collect()
+                    }
+                };
+                (callee, takes)
+            }
         })
     }
 
@@ -1341,6 +1406,18 @@ impl<'a> Walk<'_, 'a> {
             } => {
                 for argument in arguments {
                     self.node(argument)?;
+                }
+                // A walk hands its step nothing in its place. Anything else would hand the
+                // function it never applies to a copy taking a function over what has no value,
+                // which nothing here lowers; none of the function is lowered either way.
+                if !matches!(reaches, Reaches::Emitted { .. }) {
+                    for at in crate::unrun::never_applied(node) {
+                        self.not_lowered(format!(
+                            "argument {at} of a call of {}, a function over {} it never applies",
+                            self.parameters(reaches, arguments, ty)?.0,
+                            arguments[at].ty().spelt()
+                        ));
+                    }
                 }
                 self.call(reaches, arguments, ty, aborts)
             }
@@ -1723,6 +1800,32 @@ impl<'a> Walk<'_, 'a> {
         Ok((held, bound))
     }
 
+    /// Whether a call of a helper this module holds, handed as many values as it takes, fits the
+    /// helper only where the type of what has no value stands for what the call settles.
+    ///
+    /// The checker types a fold seeded with a value holding `[]` at that seed: the seed stands as
+    /// the accumulator with no `Widen` saying so, and the step takes it at the seed's type though
+    /// it is handed the accumulator's (souther-lang/souther#1958). Reading `Nothing` here as
+    /// whatever the call settles would be the checker's rule of what may stand where, written a
+    /// second time, so such a call is refused as not lowered until the tree says it.
+    fn seeded_as_nothing(&self, reference: &Reference, arguments: &[Node], answers: &Ty) -> bool {
+        let Some(held) = self
+            .reached
+            .helpers
+            .get(&(self.carrier.module(), reference))
+        else {
+            return false;
+        };
+        let handed: Vec<&Ty> = arguments.iter().map(Node::ty).collect();
+        held.parameters.len() == arguments.len()
+            && handed
+                .iter()
+                .copied()
+                .chain([answers])
+                .any(Ty::writes_nothing)
+            && crate::specialize::called(held, &handed, answers).is_none()
+    }
+
     /// A call's type against what it reaches answers, and how many values it hands over against
     /// how many that takes. What each argument stands as is [`Walk::slots`]'s.
     fn call(
@@ -1743,7 +1846,16 @@ impl<'a> Walk<'_, 'a> {
             ),
             // What it answers stands where its variables are bound from, so a call answering
             // other than what the helper answers was refused where they were bound.
-            Reaches::Helper { reached: _ } => Ok(()),
+            Reaches::Helper { reached } => {
+                if self.seeded_as_nothing(reached, arguments, ty) {
+                    self.not_lowered(format!(
+                        "a call of {} handed a value typed as the `[]` it was seeded with, where \
+                         the call settles it wider (souther-lang/souther#1958)",
+                        spelt_declaration(reached.declaration())
+                    ));
+                }
+                Ok(())
+            }
             Reaches::Value { module, name } => {
                 let joined = format!("{module}.{name}");
                 let value = self.reached.values[&(self.carrier.module(), joined.clone())];
@@ -1844,6 +1956,54 @@ impl<'a> Walk<'_, 'a> {
                 // Refused where it is lowered; nothing here knows what it answers.
                 None => Ok(()),
             },
+            // What the walk answers is what its step answers, which is a list, and the walk ends
+            // no run: an element the step cannot make ends it inside the step.
+            Reaches::Emitted {
+                operation: Emitted::BuildList,
+            } => {
+                let Some(Ty::Fn { fn_ }) = arguments.first().map(Node::ty) else {
+                    unreachable!("`parameters` refused a walk whose step is not a function");
+                };
+                if !matches!(ty, Ty::List { .. }) || !matches!(fn_.takes[0], Ty::List { .. }) {
+                    bail!(
+                        "{}: {} answers {} and its step grows {}, where a walk grows a list: the \
+                         two halves disagree",
+                        self.owner,
+                        Emitted::BuildList.spelt(),
+                        ty.spelt(),
+                        fn_.takes[0].spelt()
+                    );
+                }
+                self.same(
+                    &format!("a call of {}", Emitted::BuildList.spelt()),
+                    ty,
+                    &fn_.answers,
+                    "what its step answers",
+                )?;
+                self.ends_for(Emitted::BuildList.spelt(), aborts, &[])
+            }
+            Reaches::Emitted {
+                operation: Emitted::GrowList,
+            } => {
+                if !matches!(ty, Ty::List { .. }) {
+                    bail!(
+                        "{}: {} answers {}, where it grows a list: the two halves disagree",
+                        self.owner,
+                        Emitted::GrowList.spelt(),
+                        ty.spelt()
+                    );
+                }
+                self.ends_for(Emitted::GrowList.spelt(), aborts, &[])
+            }
+            // No map is laid out here, so neither the walk that builds one nor its write is
+            // lowered: refused as that, and not as the two halves disagreeing about something the
+            // document says in full.
+            Reaches::Emitted {
+                operation: operation @ (Emitted::BuildMap | Emitted::PutMap),
+            } => {
+                self.not_lowered(format!("the operation {}", operation.spelt()));
+                Ok(())
+            }
         }
     }
 }
@@ -2079,7 +2239,7 @@ fn holds_and_builds_nothing(owner: &str, condition: &Node) -> Result<()> {
         );
     }
     let mut built = None;
-    condition.each(&mut |node| {
+    condition.each_written(&mut |node| {
         if let Node::Construct { declared, .. } | Node::Attempt { declared, .. } = node {
             built.get_or_insert(declared);
         }
