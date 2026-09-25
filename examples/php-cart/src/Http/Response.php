@@ -24,10 +24,20 @@ final readonly class Response
         return new self(201, $json);
     }
 
-    /** raoh-php's issues, each with its path, and the messages by path. */
+    /**
+     * raoh-php's issues, each with its path, and the messages by path.
+     *
+     * An issue's `meta` and the messages by path are maps, and a PHP array does not say whether it
+     * is a map or a list: an empty one is written as `[]`. So each is written as the object it is.
+     */
     public static function badRequest(Issues $issues): self
     {
-        return new self(400, self::json(['issues' => $issues->toJsonList(), 'errors' => $issues->flatten()]));
+        return new self(400, self::json([
+            'issues' => array_map(
+                static fn (array $issue): array => ['meta' => (object) $issue['meta']] + $issue,
+                $issues->toJsonList()),
+            'errors' => (object) $issues->flatten(),
+        ]));
     }
 
     public static function notFound(): self

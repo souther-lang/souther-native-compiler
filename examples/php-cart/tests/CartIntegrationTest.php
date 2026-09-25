@@ -86,6 +86,16 @@ final class CartIntegrationTest extends TestCase
     }
 
     #[Test]
+    public function anIssuesMapsAreWrittenAsObjectsEvenWhenEmpty(): void
+    {
+        $response = $this->addItem('not-a-uuid', self::ON_SALE, 1);
+        $read = json_decode((string) $response->body, false, flags: JSON_THROW_ON_ERROR);
+
+        self::assertEquals(new \stdClass(), $read->issues[0]->meta, (string) $response->body);
+        self::assertIsObject($read->errors);
+    }
+
+    #[Test]
     public function aQuantityOfNoneIs400(): void
     {
         $response = $this->addItem(self::USER, self::ON_SALE, 0);
