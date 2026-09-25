@@ -21,11 +21,11 @@
 //! any other call.
 
 use super::{Codecs, Runtime};
+use crate::literals::Literals;
 use crate::transport::{AlternativesForm, Case, CodecShape, Declaration, Field, Prim};
 use crate::{
-    Construction, Constructors, Declared, Emitting, Literals, Lowered, POINTER, TRUSTED,
-    construction, decide, into_slot, lay_out, machine_type, not_lowered, out_slot,
-    text_in_the_object,
+    Construction, Constructors, Declared, Emitting, Lowered, POINTER, TRUSTED, construction,
+    decide, into_slot, lay_out, machine_type, not_lowered, out_slot,
 };
 use cranelift::codegen::ir::condcodes::IntCC;
 use cranelift::codegen::ir::{self, InstBuilder, types};
@@ -122,8 +122,8 @@ impl Reading<'_, '_> {
             .expect("a question of the runtime answers")
     }
 
-    fn literal(&mut self, text: &str) -> Lowered<ir::Value> {
-        text_in_the_object(self.builder, self.module, self.literals, text)
+    fn literal(&mut self, text: &str) -> ir::Value {
+        self.literals.address(self.builder, self.module, text)
     }
 
     /// The place `step` below `path`.
@@ -231,7 +231,7 @@ impl Reading<'_, '_> {
     /// A field of an object, read from its member, or absent where the member is not there and the
     /// field may be.
     fn field(&mut self, node: ir::Value, path: ir::Value, field: &Field) -> Lowered<ir::Value> {
-        let key = self.literal(&field.name)?;
+        let key = self.literal(&field.name);
         let at = self.below(path, key);
         let member = self.asked(Runtime::ReadMember, &[node, key]);
         let ty = machine_type(&field.codec.ty())?;
@@ -456,7 +456,7 @@ impl Reading<'_, '_> {
         self.builder.seal_block(broken);
         self.builder.switch_to_block(broken);
         let clause = self.builder.block_params(broken)[0];
-        self.broken(declaration, clause, path)?;
+        self.broken(declaration, clause, path);
 
         self.builder.seal_block(held);
         self.builder.switch_to_block(held);
@@ -465,14 +465,9 @@ impl Reading<'_, '_> {
 
     /// Records that the clause at `clause` among `declaration`'s did not hold of the value at
     /// `path`, naming the clause where its author did, and answers nothing.
-    fn broken(
-        &mut self,
-        declaration: &Declaration,
-        clause: ir::Value,
-        path: ir::Value,
-    ) -> Lowered<()> {
-        let module = self.literal(declaration.module())?;
-        let name = self.literal(declaration.name())?;
+    fn broken(&mut self, declaration: &Declaration, clause: ir::Value, path: ir::Value) {
+        let module = self.literal(declaration.module());
+        let name = self.literal(declaration.name());
         let clauses = declaration
             .clauses()
             .expect("a value is built by a call here only of a type whose clauses this build runs");
@@ -489,7 +484,7 @@ impl Reading<'_, '_> {
             );
             self.builder.ins().brif(is, this, &[], next, &[]);
             self.builder.switch_to_block(this);
-            let called = self.literal(called)?;
+            let called = self.literal(called);
             self.call(
                 Runtime::ReadInvariant,
                 &[path, self.decoding, module, name, called],
@@ -503,7 +498,6 @@ impl Reading<'_, '_> {
             &[path, self.decoding, module, name, unnamed],
         );
         self.builder.ins().jump(self.nothing, &[]);
-        Ok(())
     }
 
     /// One of a set of alternatives, told apart the way the set's form says it is written.
@@ -543,14 +537,15 @@ impl Reading<'_, '_> {
             AlternativesForm::Discriminated { tag, contents } => {
                 let object = self.asked(Runtime::ReadObject, &[node, path, self.decoding]);
                 self.or_nothing(object);
-                let tag = self.literal(tag)?;
+                let tag = self.literal(tag);
                 let at_tag = self.below(path, tag);
                 let named = self.asked(Runtime::ReadTag, &[node, tag, at_tag, self.decoding]);
                 let there = self.builder.ins().icmp_imm_s(IntCC::NotEqual, named, 0);
                 self.or_nothing(there);
                 for (key, case) in declared {
                     self.when_named(named, case.name(), |reading| {
-                        reading.case(key, case, contents, node, path)
+                        reading.case(key, case, contents, node, path);
+                        Ok(())
                     })?;
                 }
                 self.call(Runtime::ReadNotACase, &[named, at_tag, self.decoding]);
@@ -567,7 +562,7 @@ impl Reading<'_, '_> {
         name: &str,
         then: impl FnOnce(&mut Self) -> Lowered<()>,
     ) -> Lowered<()> {
-        let spelt = self.literal(name)?;
+        let spelt = self.literal(name);
         let is = self.asked(Runtime::ReadIs, &[named, spelt]);
         let this = self.builder.create_block();
         let next = self.builder.create_block();
@@ -587,7 +582,7 @@ impl Reading<'_, '_> {
         contents: &str,
         node: ir::Value,
         path: ir::Value,
-    ) -> Lowered<()> {
+    ) {
         match case {
             Declaration::Sum { .. } => {
                 unreachable!("`Declared::settled` refused a sum standing as the case {key}")
@@ -596,7 +591,7 @@ impl Reading<'_, '_> {
                 self.read_as(key, node, path);
             }
             Declaration::Newtype { .. } => {
-                let contents = self.literal(contents)?;
+                let contents = self.literal(contents);
                 let at = self.below(path, contents);
                 let member = self.asked(Runtime::ReadMember, &[node, contents]);
                 let there = self.builder.create_block();
@@ -609,6 +604,5 @@ impl Reading<'_, '_> {
                 self.read_as(key, member, at);
             }
         }
-        Ok(())
     }
 }
