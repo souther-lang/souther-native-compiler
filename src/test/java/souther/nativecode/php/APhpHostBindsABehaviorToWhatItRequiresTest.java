@@ -34,10 +34,21 @@ class APhpHostBindsABehaviorToWhatItRequiresTest {
             behavior priceOf : (sku: String) -> Price
             """;
 
+    /** A second behavior called `priceOf`, which a composition requires beside the catalog's. */
+    private static final String WHOLESALE = """
+            module wholesale exposing ( priceOf )
+
+            import catalog ( Price )
+
+            behavior priceOf : (price: Price) -> Int
+            """;
+
     private static final String SHOP = """
-            module shop exposing ( quote, total, both, twice, priced : Int )
+            module shop exposing ( Line, quote, total, both, twice, priced : Int, resold : Int,
+                                   lineOf )
 
             import catalog ( Price, priceOf )
+            import wholesale
 
             behavior discountFor : (sku: String) -> Int
 
@@ -61,6 +72,14 @@ class APhpHostBindsABehaviorToWhatItRequiresTest {
             let valued (price) = price.value * 10
 
             behavior priced = priceOf >-> valued
+
+            behavior resold = catalog.priceOf >-> wholesale.priceOf
+
+            data Line = { sku: String, amount: Int }
+
+            behavior lineOf : (sku: String) -> Line
+                depends on priceOf
+            let lineOf (sku, priceOf) = Line { sku = sku, amount = priceOf(sku).value }
             """;
 
     private static final String HOST = """
@@ -82,6 +101,11 @@ class APhpHostBindsABehaviorToWhatItRequiresTest {
             use Acme\\Billing\\Shop\\Quote;
             use Acme\\Billing\\Shop\\Total;
             use Acme\\Billing\\Shop\\Twice;
+            use Acme\\Billing\\Shop\\Line;
+            use Acme\\Billing\\Shop\\LineOf;
+            use Acme\\Billing\\Shop\\Resold;
+            use Acme\\Billing\\Wholesale\\PriceOf as WholesalePriceOf;
+            use Souther\\Runtime\\Expired;
             use Souther\\Runtime\\NotTheInnermostRun;
             use Souther\\Runtime\\Session;
             use Souther\\Runtime\\UnboundInjection;
@@ -111,6 +135,14 @@ class APhpHostBindsABehaviorToWhatItRequiresTest {
                 }
             }
 
+            final class MarkedUp extends WholesalePriceOf
+            {
+                public function apply(Session $session, Price $price): int
+                {
+                    return $price->value() + 1;
+                }
+            }
+
             $binding = Binding::load($argv[3]);
             $prices = new ListedPrice(3);
             $quote = Quote::bind($prices, new Off(1));
@@ -121,7 +153,24 @@ class APhpHostBindsABehaviorToWhatItRequiresTest {
             echo "twice: ", $binding->run(fn (Session $s): int => Twice::of()->apply($s, 4)), "\\n";
             echo "priced: ", $binding->run(fn (Session $s): int => Priced::bind($prices)->apply($s, 'abc')), "\\n";
 
-            // What apply answers is a value of the caller's run, and stands until that run ends.
+            // Two requirements of one name, from two modules, taken by their places.
+            echo "resold: ", $binding->run(fn (Session $s): int =>
+                Resold::bind(dependency0: $prices, dependency1: new MarkedUp())->apply($s, 'ab')), "\\n";
+
+            // What apply answers is a value of the caller's run: read after apply has put back what
+            // it registered, and refused once the run has ended.
+            echo "line: ", $binding->run(function (Session $s) use ($prices): string {
+                $line = LineOf::bind($prices)->apply($s, 'abc');
+                return $line->sku() . ' at ' . $line->amount();
+            }), "\\n";
+            $kept = $binding->run(fn (Session $s): Line => LineOf::bind($prices)->apply($s, 'abc'));
+            try {
+                $kept->amount();
+            } catch (Expired $expired) {
+                echo "line after its run: ", $expired->getMessage(), "\\n";
+            }
+
+            // What an implementation answers is a value of the caller's run too.
             echo "held: ", $binding->run(function (Session $s) use ($prices): int {
                 $price = new class ($prices) extends PriceOf {
                     public function __construct(private readonly PriceOf $listed)
@@ -200,6 +249,9 @@ class APhpHostBindsABehaviorToWhatItRequiresTest {
             both: 11
             twice: 8
             priced: 90
+            resold: 7
+            line: abc at 9
+            line after its run: a value was used after the run it was made in ended
             held: 132
             after: 5 then 100
             unbound after: Souther\\Runtime\\UnboundInjection
@@ -217,7 +269,7 @@ class APhpHostBindsABehaviorToWhatItRequiresTest {
     void aHostBindsABehaviorToClassesImplementingWhatItRequires(@TempDir Path into)
             throws Exception {
         NativeCompiler.Library library = NativeCompiler.library(
-                CheckedProgram.of(List.of(CATALOG, SHOP)), into.resolve("native"));
+                CheckedProgram.of(List.of(CATALOG, WHOLESALE, SHOP)), into.resolve("native"));
         PhpBindings.Generated binding =
                 PhpBindings.generate(library, into.resolve("php"), "Acme\\Billing");
         Path host = into.resolve("host.php");

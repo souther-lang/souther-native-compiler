@@ -412,14 +412,20 @@ still be written. A module's behaviors are static functions on `Behaviors`, its 
 A behavior is also a class named after it (`quote` is `Quote`), which an application holds the
 way the JVM backend's does. One a host implements is abstract, with an `apply` typed as the model
 says, and an application extends it. One the library defines is final: `bind` takes an instance of
-the class of each behavior it `requires`, in that order, and `of` makes one that requires nothing.
+the class of each behavior it `requires`, in that order, each named after the behavior, or by its
+place (`$dependency0`) where two of one name from two modules are both required. `of` makes one that
+requires nothing.
 `apply` calls it with what it was bound to registered for the length of the call. It takes the
 session and answers a value of the caller's run, as every function does, and opens no run of its
 own, whose values would be gone by the time the caller held them. A missing or mistyped
 implementation is PHP's `TypeError` at `bind`, not an `UnboundInjection` at the call. A behavior
 bound to another brings what that one was bound to, and one bound to two implementations of one
-behavior is refused at `bind`, since the library calls one implementation of a behavior at a time.
-A behavior requiring what has no class gets none either, and stays a function on `Behaviors`.
+behavior is refused at `bind`, since the library calls one implementation of a behavior at a time
+(#72). A class is what the binding adds beside the model's surface, under a name the binding makes,
+so it is never a reason to refuse one: a behavior whose class PHP will not take (`clone`), or whose
+class is one with another the module's binding writes (`behaviors`, or `lookupCodec` beside
+`LookupCodec`), has no class, and neither has what requires it. Each stays a function on
+`Behaviors`.
 A behavior answering a union no declaration names answers the PHP union of its members' classes
 (`Found|Missing`), each value made as the class of the case the behavior's `case` function says it
 is, or, for a case with no class of its own, through the codec of the member sum it is a case of.
@@ -444,10 +450,11 @@ What a host has no way to reach is not written: a behavior with no `call`, a fie
 behavior taking or answering a type with no representation for a host, and a union no declaration
 names that PHP would be handed other than as a behavior's answer, since nothing else says which case
 a value of it is.
-A name PHP will not take is refused with the name, rather than spelt some other way: a reserved
-word, `this` or a superglobal for a parameter, two parameters of one function under one name (two
-behaviors of one name from two modules that one behavior requires among them), a field named as a
-method the binding writes, and two names that are one where they are looked up. Two
+A name the model gives that PHP will not take is refused with the name, rather than spelt some
+other way: a reserved word, `this` or a superglobal for a parameter, two parameters of one function
+under one name, a field named as a method the binding writes, and two names that are one where they
+are looked up. A name the binding makes for what it adds, a behavior's class or what `bind` and an
+implementation's `apply` take, is never refused: it is made another way, or the class is left out. Two
 methods are one where they differ in the case of ASCII letters, as PHP compares them. Two classes or
 namespaces are one where they differ in the case of any letter, since each is also a file or a
 directory, and the file systems macOS and Windows use by default do not tell those apart. What PHP

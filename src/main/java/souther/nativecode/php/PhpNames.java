@@ -1,11 +1,14 @@
 package souther.nativecode.php;
 
 import java.text.Normalizer;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -70,6 +73,43 @@ final class PhpNames {
         return UNNAMEABLE_PARAMETERS;
     }
 
+    /** Whether PHP takes {@code name} for a class, interface or namespace. */
+    static boolean takesAsClass(String name) {
+        return isIdentifier(name) && !RESERVED.contains(asciiLower(name));
+    }
+
+    /** Whether PHP takes {@code name} for a parameter. */
+    static boolean takesAsParameter(String name) {
+        return isIdentifier(name) && !UNNAMEABLE_PARAMETERS.contains(name);
+    }
+
+    /**
+     * Names for the parameters of a function the binding adds to what the model publishes, where
+     * the model names none of them itself: each is its {@code wanted} name where PHP takes it and
+     * none of the others is spelt the same, and {@code fallback} with its place otherwise.
+     *
+     * <p>Never refused. What a function the model publishes takes is named by the model, and a name
+     * PHP will not take there is refused ({@link #parameterName}), since the model says it. Here the
+     * name is this generator's choice, and a choice that failed is made again rather than turned
+     * into something the model has to change.
+     */
+    static List<String> ownParameters(List<String> wanted, String fallback) {
+        Map<String, Integer> spelt = new HashMap<>();
+        wanted.forEach(name -> spelt.merge(name, 1, Integer::sum));
+        List<String> kept = wanted.stream()
+                .map(name -> takesAsParameter(name) && spelt.get(name) == 1 ? name : null)
+                .toList();
+        Set<String> taken = new HashSet<>();
+        kept.stream().filter(Objects::nonNull).forEach(taken::add);
+        List<String> named = new ArrayList<>();
+        for (int at = 0; at < kept.size(); at++) {
+            String name = kept.get(at) != null ? kept.get(at) : freeOf(fallback + at, taken);
+            taken.add(name);
+            named.add(name);
+        }
+        return named;
+    }
+
     /** Refused where {@code name} is not a name PHP takes for a class, interface or namespace. */
     static String typeName(String name, String what) {
         identifier(name, what);
@@ -113,18 +153,10 @@ final class PhpNames {
     }
 
     /**
-     * The class generated for a behavior: its name with the first letter made capital, the way a
-     * module's namespace is, and refused where PHP will not take that for a class.
-     */
-    static String behaviorClass(String name, String what) {
-        return typeName(capitalized(name), what);
-    }
-
-    /**
      * {@code name} with its first letter made capital where it is an ASCII one, as PHP would: a
      * letter past ASCII is left as it is, rather than made one Java's rules make it.
      */
-    private static String capitalized(String name) {
+    static String capitalized(String name) {
         return name.isEmpty() || name.charAt(0) < 'a' || name.charAt(0) > 'z' ? name
                 : (char) (name.charAt(0) - ('a' - 'A')) + name.substring(1);
     }
@@ -252,6 +284,15 @@ final class PhpNames {
      * past ASCII too: PHP reads a name as bytes and takes every byte above 0x7f as a letter.
      */
     private static void identifier(String name, String what) {
+        if (name.isEmpty()) {
+            throw new PhpBindings.NotBindable(what + " has an empty name");
+        }
+        if (!isIdentifier(name)) {
+            throw new PhpBindings.NotBindable(what + " `" + name + "` is not a name PHP takes");
+        }
+    }
+
+    private static boolean isIdentifier(String name) {
         boolean first = true;
         for (int at = 0; at < name.length(); at++) {
             char held = name.charAt(at);
@@ -259,12 +300,10 @@ final class PhpNames {
                     || (held >= 'a' && held <= 'z') || (held >= 'A' && held <= 'Z');
             boolean digit = held >= '0' && held <= '9';
             if (!(letter || (!first && digit))) {
-                throw new PhpBindings.NotBindable(what + " `" + name + "` is not a name PHP takes");
+                return false;
             }
             first = false;
         }
-        if (first) {
-            throw new PhpBindings.NotBindable(what + " has an empty name");
-        }
+        return !first;
     }
 }

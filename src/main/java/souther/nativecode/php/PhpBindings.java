@@ -184,14 +184,6 @@ public final class PhpBindings {
         }
     }
 
-    /** A published behavior and the module publishing it. */
-    private record Published(Manifest.Module module, Manifest.Behavior behavior) {
-
-        String key() {
-            return module.name() + "." + behavior.name();
-        }
-    }
-
     private void write() throws IOException {
         PhpNames.Claimed namespaces = PhpNames.Claimed.classes("namespace " + root);
         for (Manifest.Module module : manifest.modules()) {
@@ -215,63 +207,87 @@ public final class PhpBindings {
 
     /**
      * Which behaviors are written as a class, of every module: each a host implements and can be
-     * handed across to, and each published behavior a host can call whose every requirement is one
-     * of them, since binding it hands one of each over.
+     * handed across to, and each published behavior a host can call whose every requirement has a
+     * class too, since binding it hands an instance of each over.
+     *
+     * <p>A class is what this generator adds beside what the model publishes, and its name is this
+     * generator's: the behavior's, made capital. So a name PHP will not take for it, or one that is
+     * one class with another the module's binding writes, leaves the behavior with no class rather
+     * than refusing the binding. The behavior is still a function on {@code Behaviors}, and what
+     * requires it has no class either. What the model itself names is refused where PHP will not
+     * take it, as before; this never is.
      */
     private void classes() {
-        Map<String, Published> published = new LinkedHashMap<>();
+        Map<String, BehaviorClass> candidates = new LinkedHashMap<>();
+        Map<String, List<Manifest.Required>> requires = new LinkedHashMap<>();
         for (Manifest.Module module : manifest.modules()) {
             String namespace = PhpNames.moduleNamespace(root, module.name());
             for (Manifest.Injection injection : module.injections()) {
                 if (adapter(module, injection) != null) {
-                    String key = module.name() + "." + injection.name();
-                    behaviorClasses.put(key, new BehaviorClass(module.name(), injection.name(),
-                            namespace, PhpNames.behaviorClass(injection.name(),
-                                    "behavior `" + key + "`"), true));
+                    BehaviorClass it = new BehaviorClass(module.name(), injection.name(), namespace,
+                            PhpNames.capitalized(injection.name()), true);
+                    candidates.put(it.key(), it);
+                    requires.put(it.key(), List.of());
                 }
             }
+            Crossings crossings = in(module.name());
             for (Manifest.Behavior behavior : module.behaviors()) {
-                Published it = new Published(module, behavior);
-                published.put(it.key(), it);
+                String key = module.name() + "." + behavior.name();
+                if (behavior.call() != null
+                        && crossings.givens(behavior.parameters().types()) != null
+                        && crossings.received(behavior.answers(), key) != null) {
+                    candidates.put(key, new BehaviorClass(module.name(), behavior.name(), namespace,
+                            PhpNames.capitalized(behavior.name()), false));
+                    requires.put(key, behavior.requires());
+                }
             }
         }
-        Set<String> unclassed = new HashSet<>();
-        for (Published it : published.values()) {
-            classed(it, published, unclassed);
+
+        // One class to PHP or to a file system is one file, whichever two claim it.
+        Map<String, Set<String>> written = new LinkedHashMap<>();
+        for (Manifest.Module module : manifest.modules()) {
+            written.put(module.name(), coreClasses(module).stream()
+                    .map(it -> PhpNames.asAFile(it.getKey())).collect(Collectors.toSet()));
         }
+        Map<String, Long> spelt = candidates.values().stream().collect(Collectors.groupingBy(
+                it -> it.module() + "\n" + PhpNames.asAFile(it.className()), Collectors.counting()));
+        candidates.values().removeIf(it -> !PhpNames.takesAsClass(it.className())
+                || written.get(it.module()).contains(PhpNames.asAFile(it.className()))
+                || spelt.get(it.module() + "\n" + PhpNames.asAFile(it.className())) > 1);
+
+        // A behavior requiring one with no class has none either, and so on up what requires it.
+        boolean dropped = true;
+        while (dropped) {
+            dropped = candidates.values().removeIf(it -> requires.get(it.key()).stream()
+                    .anyMatch(required -> !candidates.containsKey(required.key())));
+        }
+        behaviorClasses.putAll(candidates);
     }
 
     /**
-     * Whether {@code it} is written as a class, deciding it for what it requires first. A
-     * requirement the manifest publishes nothing of, or one with no class, leaves it with none: a
-     * class binding could not be handed what it requires.
+     * Every class the binding writes for {@code module} whatever else it writes, each with what it
+     * is: the three it always may, and each type's. Two of them that are one name are refused, since
+     * each is what the model or the binding cannot go without.
      */
-    private boolean classed(Published it, Map<String, Published> published, Set<String> unclassed) {
-        String key = it.key();
-        if (behaviorClasses.containsKey(key)) {
-            return true;
+    private List<Map.Entry<String, String>> coreClasses(Manifest.Module module) {
+        // A list and not a map: two of these under one name is what claiming them refuses, and a
+        // map would keep one of the two.
+        List<Map.Entry<String, String>> classes = new ArrayList<>();
+        classes.add(Map.entry("Behaviors", "the generated `Behaviors`"));
+        classes.add(Map.entry("Values", "the generated `Values`"));
+        classes.add(Map.entry("Injections", "the generated `Injections`"));
+        for (Declaration declaration : module.declarations()) {
+            Declared it = declared.get(module.name() + "." + declaration.name());
+            classes.add(Map.entry(it.name(), "type `" + it.key() + "`"));
+            if (declaration instanceof Declaration.Sum sum) {
+                classes.add(Map.entry(it.name() + "Codec", "the codec of `" + it.key() + "`"));
+                if (opaque(sum)) {
+                    classes.add(Map.entry(it.name() + "Value",
+                            "a value of `" + it.key() + "` no class names"));
+                }
+            }
         }
-        if (unclassed.contains(key)) {
-            return false;
-        }
-        // Held unclassed while its requirements are decided: the checker refuses a behavior
-        // reaching itself, so one met again on the way is a manifest this does not bind.
-        unclassed.add(key);
-        Crossings crossings = in(it.module().name());
-        boolean classed = it.behavior().call() != null
-                && crossings.givens(it.behavior().parameters().types()) != null
-                && crossings.received(it.behavior().answers(), key) != null
-                && it.behavior().requires().stream().allMatch(required ->
-                        behaviorClasses.containsKey(required.key())
-                                || (published.get(required.key()) instanceof Published by
-                                        && classed(by, published, unclassed)));
-        if (classed) {
-            unclassed.remove(key);
-            behaviorClasses.put(key, new BehaviorClass(it.module().name(), it.behavior().name(),
-                    PhpNames.moduleNamespace(root, it.module().name()),
-                    PhpNames.behaviorClass(it.behavior().name(), "behavior `" + key + "`"), false));
-        }
-        return classed;
+        return classes;
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -539,22 +555,11 @@ public final class PhpBindings {
     private void module(Manifest.Module module) throws IOException {
         String namespace = PhpNames.moduleNamespace(root, module.name());
         PhpNames.Claimed classes = PhpNames.Claimed.classes("namespace " + namespace);
-        classes.claim("Behaviors", "the generated `Behaviors`");
-        classes.claim("Values", "the generated `Values`");
-        classes.claim("Injections", "the generated `Injections`");
+        coreClasses(module).forEach(it -> classes.claim(it.getKey(), it.getValue()));
+        // Each left with a name no other class here is ({@link #classes}), so these never refuse.
         for (BehaviorClass it : behaviorClasses.values()) {
             if (it.module().equals(module.name())) {
                 classes.claim(it.className(), "the class of behavior `" + it.key() + "`");
-            }
-        }
-        for (Declaration declaration : module.declarations()) {
-            Declared it = declared.get(module.name() + "." + declaration.name());
-            classes.claim(it.name(), "type `" + it.key() + "`");
-            if (declaration instanceof Declaration.Sum sum) {
-                classes.claim(it.name() + "Codec", "the codec of `" + it.key() + "`");
-                if (opaque(sum)) {
-                    classes.claim(it.name() + "Value", "a value of `" + it.key() + "` no class names");
-                }
             }
         }
 
@@ -1163,16 +1168,12 @@ public final class PhpBindings {
     private void injectedClass(Manifest.Module module, Manifest.Injection injection,
                                BehaviorClass it) throws IOException {
         Crossings crossings = in(module.name());
-        String what = "behavior `" + it.key() + "`";
-        PhpNames.Claimed claimed = PhpNames.Claimed.parameters(it.fqcn() + "::apply");
-        List<String> names = new ArrayList<>();
-        List<Received> takes = new ArrayList<>();
-        for (Manifest.NamedParameter parameter : injection.parameters()) {
-            names.add(claimed.claim(PhpNames.parameterName(parameter.name(),
-                    "parameter `" + parameter.name() + "` of " + what),
-                    "parameter `" + parameter.name() + "`"));
-            takes.add(crossings.received(parameter.type()));
-        }
+        // Named as the model names them where PHP takes that: nothing else publishes these names,
+        // and an override is not held to them.
+        List<String> names = PhpNames.ownParameters(injection.parameters().stream()
+                .map(Manifest.NamedParameter::name).toList(), "input");
+        List<Received> takes = injection.parameters().stream()
+                .map(parameter -> crossings.received(parameter.type())).toList();
         Given answers = crossings.given(injection.answers());
         String session = PhpNames.freeOf("session", names);
         List<String> parameters = new ArrayList<>();
@@ -1253,7 +1254,7 @@ public final class PhpBindings {
 
     /**
      * How an application makes {@code it}: {@code bind}, taking one implementation of each of
-     * {@code requires} under the behavior's name, or {@code of}, where it requires nothing. A
+     * {@code requires} in order, or {@code of}, where it requires nothing. A
      * behavior a host implements is registered as the instance handed over, and one constructed in
      * turn brings what it was bound to.
      */
@@ -1268,14 +1269,18 @@ public final class PhpBindings {
                         }
                     """.formatted(it.key());
         }
-        PhpNames.Claimed claimed = PhpNames.Claimed.parameters(it.fqcn() + "::bind");
+        // A requirement is its module and its name, and two of one name from two modules are two
+        // requirements (a composition over `a.load` and `b.load`), so a parameter is named after
+        // the name only where no other is, and after its place otherwise.
+        List<String> names = PhpNames.ownParameters(
+                requires.stream().map(Manifest.Required::name).toList(), "dependency");
         List<String> parameters = new ArrayList<>();
         List<String> implementers = new ArrayList<>();
         List<String> constructed = new ArrayList<>();
-        for (Manifest.Required required : requires) {
+        for (int at = 0; at < requires.size(); at++) {
+            Manifest.Required required = requires.get(at);
             BehaviorClass of = behaviorClasses.get(required.key());
-            String what = "behavior `" + required.key() + "`, which `" + it.key() + "` requires";
-            String name = claimed.claim(PhpNames.parameterName(required.name(), what), what);
+            String name = names.get(at);
             parameters.add(of.fqcn() + " $" + name);
             if (of.injected()) {
                 implementers.add("'" + quotedInSingle(required.key()) + "' => $" + name);

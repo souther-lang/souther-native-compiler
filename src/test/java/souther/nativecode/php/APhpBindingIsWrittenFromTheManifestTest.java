@@ -162,33 +162,94 @@ class APhpBindingIsWrittenFromTheManifestTest {
     }
 
     /**
-     * A behavior is written as a class named after it, which stands among the classes the binding
-     * writes for its module: one PHP takes for another of them is refused, and not renamed. The
-     * checker already refuses one named as a type.
+     * A behavior's class is what this generator adds beside the model's surface, under a name of
+     * its own making: where PHP will not take that name, or it is one class with another the
+     * module's binding writes (to PHP, or to a file system that does not tell case apart), the
+     * behavior has no class and the binding is written all the same. What requires it has none
+     * either. The model's own surface is what it was.
      */
     @Test
-    void aBehaviorNamedAsAClassTheBindingWritesIsRefused(@TempDir Path into) {
-        assertThatThrownBy(() -> generated(into, """
-                module m exposing ( behaviors )
+    void aBehaviorWhoseClassCannotBeNamedHasNoneAndTheBindingStands(@TempDir Path into)
+            throws Exception {
+        PhpBindings.Generated generated = generated(into, """
+                module m exposing ( Found, Missing, Lookup, clone, behaviors, lookupCodec, charged,
+                                    twice )
 
-                behavior behaviors : (n: Int) -> Int
-                let behaviors (n) = n
-                """))
-                .isInstanceOf(PhpBindings.NotBindable.class)
-                .hasMessageContaining("the generated `Behaviors`")
-                .hasMessageContaining("the class of behavior `m.behaviors`");
-    }
-
-    @Test
-    void aBehaviorWhoseClassPhpReservesTheNameOfIsRefused(@TempDir Path into) {
-        assertThatThrownBy(() -> generated(into, """
-                module m exposing ( clone )
+                data Found = { id: Int }
+                data Missing
+                data Lookup = Found | Missing
 
                 behavior clone : (n: Int) -> Int
                 let clone (n) = n
-                """))
-                .isInstanceOf(PhpBindings.NotBindable.class)
-                .hasMessageContaining("behavior `m.clone` `Clone` is a word PHP reserves");
+
+                behavior behaviors : (n: Int) -> Int
+                let behaviors (n) = n
+
+                behavior lookupCodec : (n: Int) -> Int
+                let lookupCodec (n) = n
+
+                behavior print : (n: Int) -> Int
+
+                behavior charged : (n: Int) -> Int
+                    depends on print
+                let charged (n, print) = print(n)
+
+                behavior twice : (n: Int) -> Int
+                let twice (n) = n * 2
+                """);
+
+        assertThat(generated.files()).extracting(it -> generated.root().relativize(it).toString())
+                .contains("M/Twice.php", "M/LookupCodec.php", "M/Behaviors.php", "M/Injections.php")
+                .doesNotContain("M/Clone.php", "M/Print.php", "M/Charged.php");
+        assertThat(behaviors(generated)).contains("function clone(", "function behaviors(",
+                "function lookupCodec(", "function charged(");
+        assertThat(Files.readString(generated.root().resolve("M").resolve("LookupCodec.php")))
+                .contains("final class LookupCodec");
+        for (Path file : generated.files()) {
+            if (file.toString().endsWith(".php")) {
+                assertThat(Php.compiles(file)).as("%s", file).isTrue();
+            }
+        }
+    }
+
+    /**
+     * Two behaviors whose classes differ only in case are one file where case is not told apart,
+     * and neither has a class, rather than whichever was written first. A host implements one and
+     * calls the other, so nothing else the binding writes names both.
+     */
+    @Test
+    void twoBehaviorsWhoseClassesAreOneFileHaveNone(@TempDir Path into) throws Exception {
+        PhpBindings.Generated generated = generated(into, """
+                module m exposing ( itema )
+
+                behavior itemA : (n: Int) -> Int
+
+                behavior itema : (n: Int) -> Int
+                let itema (n) = n
+                """);
+
+        assertThat(generated.files()).extracting(it -> generated.root().relativize(it).toString())
+                .contains("M/Behaviors.php", "M/Injections.php")
+                .doesNotContain("M/ItemA.php", "M/Itema.php");
+        assertThat(behaviors(generated)).contains("function itema(");
+    }
+
+    /**
+     * What a class a host implements takes is named as the model names it where PHP takes that,
+     * and by its place where it does not: nothing else publishes the names, and an override is not
+     * held to them, so none of them is a reason to refuse the binding.
+     */
+    @Test
+    void anImplementationTakesWhatPhpCannotNameByItsPlace(@TempDir Path into) throws Exception {
+        PhpBindings.Generated generated = generated(into, """
+                module m
+
+                behavior lookUp : (GLOBALS: Int, id: Int) -> Int
+                """);
+
+        assertThat(Files.readString(generated.root().resolve("M").resolve("LookUp.php"))).contains(
+                "abstract public function apply(\\Souther\\Runtime\\Session $session, int $input0,"
+                        + " int $id): int;");
     }
 
     /**
@@ -226,13 +287,14 @@ class APhpBindingIsWrittenFromTheManifestTest {
     }
 
     /**
-     * What binding a behavior takes is named after each behavior it requires, so two requirements
-     * of one name from two modules would be one parameter. Refused rather than named after their
-     * modules too: the names would be this generator's, and the model says none.
+     * A requirement is its module and its name, so a composition over `a.load` and `b.load`
+     * requires two behaviors of one name. What binding it takes is named by place there, as the
+     * JVM backend names the fields (upstream ADR-0068), and by name wherever the name is the only
+     * one.
      */
     @Test
-    void twoRequirementsOfOneNameAreRefused(@TempDir Path into) {
-        assertThatThrownBy(() -> PhpBindings.generate(NativeCompiler.library(
+    void twoRequirementsOfOneNameAreTakenByTheirPlaces(@TempDir Path into) throws Exception {
+        PhpBindings.Generated generated = PhpBindings.generate(NativeCompiler.library(
                 CheckedProgram.of(List.of("""
                         module a exposing ( load )
 
@@ -248,10 +310,12 @@ class APhpBindingIsWrittenFromTheManifestTest {
                         import b
 
                         behavior both = a.load >-> b.load
-                        """)), into.resolve("native")), into.resolve("php"), "Acme\\Billing"))
-                .isInstanceOf(PhpBindings.NotBindable.class)
-                .hasMessageContaining("behavior `a.load`, which `m.both` requires")
-                .hasMessageContaining("behavior `b.load`, which `m.both` requires");
+                        """)), into.resolve("native")), into.resolve("php"), "Acme\\Billing");
+
+        assertThat(Files.readString(generated.root().resolve("M").resolve("Both.php"))).contains(
+                "bind(\\Acme\\Billing\\A\\Load $dependency0, \\Acme\\Billing\\B\\Load"
+                        + " $dependency1): self",
+                "Bound::of(['a.load' => $dependency0, 'b.load' => $dependency1])");
     }
 
     /** The session a call takes is named so that no parameter of the model's is renamed for it. */
