@@ -44,7 +44,7 @@ use souther_native_abi::{
     room_for_list, room_for_members, room_for_text, spells_a_module, spells_a_name, type_symbol,
     value_symbol,
 };
-use specialize::{InstanceId, Specializations};
+use specialize::{Instance, InstanceId, Specializations};
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
@@ -690,11 +690,10 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
         let signature = signature_over(&instance.takes(), instance.answers(), call_conv)?;
         context.clear();
         context.func = Function::with_name_signature(UserFuncName::default(), signature);
-        define(
+        define_helper(
             &mut context.func,
             &mut shapes,
-            &instance.takes(),
-            instance.body(),
+            (id, instance),
             frontend,
             &lowering,
             &mut module,
@@ -2437,6 +2436,187 @@ fn define(
     Ok(())
 }
 
+/// A copy of a helper, in the shape [`define`] gives every body, with each call to itself in tail
+/// position a jump back to the start and not a call.
+///
+/// The entry hands what it was called with to a loop header whose block parameters are the
+/// helper's parameters, and the body is lowered from there. A call reaching this same copy
+/// ([`Specializations::callee`]) where the body answers what it answers ([`lower_tail`]) works out
+/// every argument and then jumps to the header with them, so the recursion runs in the one frame. A
+/// call reaching it anywhere else is a call, since what it answers is still to be used.
+///
+/// The same copy and not the same helper: a helper called at other types from inside itself would
+/// be another copy, and a jump to this one's header would run it at the wrong types. What the
+/// answer is written through is the entry's, which the header never changes, so it is not one of
+/// the header's parameters.
+fn define_helper(
+    function: &mut Function,
+    shapes: &mut FunctionBuilderContext,
+    (id, instance): (InstanceId, &Instance),
+    frontend: TargetFrontendConfig,
+    lowering: &Lowering,
+    module: &mut ObjectModule,
+) -> Lowered<()> {
+    let mut builder = FunctionBuilder::new(function, shapes);
+    let entry = builder.create_block();
+    builder.append_block_params_for_function_params(entry);
+    builder.switch_to_block(entry);
+    builder.seal_block(entry);
+
+    let takes = instance.takes();
+    let header = builder.create_block();
+    for taken in &takes {
+        builder.append_block_param(header, machine_type(taken)?);
+    }
+    let given: Vec<ir::BlockArg> = builder.block_params(entry)[..takes.len()]
+        .iter()
+        .map(|&it| it.into())
+        .collect();
+    let out = builder.block_params(entry)[takes.len()];
+    builder.ins().jump(header, &given);
+
+    builder.switch_to_block(header);
+    let mut bindings = Bindings::default();
+    for (at, taken) in takes.iter().enumerate() {
+        let variable = builder.declare_var(machine_type(taken)?);
+        let given = builder.block_params(header)[at];
+        builder.def_var(variable, given);
+        bindings.at(at, variable);
+    }
+
+    let abort = builder.create_block();
+    builder.append_block_param(abort, types::I32);
+
+    let tail = Tail {
+        header,
+        out,
+        instance: id,
+    };
+    lower_tail(
+        &mut builder,
+        lowering,
+        module,
+        &mut bindings,
+        abort,
+        instance.body(),
+        &tail,
+    )?;
+    // Every jump back to the header is written now.
+    builder.seal_block(header);
+
+    builder.seal_block(abort);
+    builder.switch_to_block(abort);
+    let status = builder.block_params(abort)[0];
+    builder.ins().return_(&[status]);
+
+    builder.finalize(frontend);
+    Ok(())
+}
+
+/// Where a copy of a helper answers from: the header a call to itself jumps back to, what its
+/// answer is written through, and which copy it is.
+struct Tail {
+    header: ir::Block,
+    out: ir::Value,
+    instance: InstanceId,
+}
+
+/// `node`, standing where the copy of a helper being defined answers what it answers, lowered to
+/// that answer: written through `out`, or, for a call reaching this same copy, a jump back to the
+/// header. Every block this leaves is ended, by a return or by a jump.
+///
+/// Where the body answers is the body itself, the body of a `let` that answers there, and each
+/// branch of an `if` or arm of a `match` that does. Anywhere else a node is lowered for its value
+/// ([`lower`]), and a call there stays a call. The arguments of a call that becomes a jump are all
+/// worked out before the jump hands them over, so a call handing the parameters round (`f(b, a)`)
+/// reads each before any is replaced.
+fn lower_tail(
+    builder: &mut FunctionBuilder,
+    lowering: &Lowering,
+    module: &mut ObjectModule,
+    bindings: &mut Bindings,
+    abort: ir::Block,
+    node: &Node,
+    tail: &Tail,
+) -> Lowered<()> {
+    match node {
+        Node::Let {
+            binding,
+            binds,
+            value,
+            body,
+            ..
+        } => {
+            let held = lower(builder, lowering, module, bindings, abort, value)?;
+            let variable = builder.declare_var(machine_type(binds)?);
+            builder.def_var(variable, held);
+            bindings.at(*binding, variable);
+            let answered = lower_tail(builder, lowering, module, bindings, abort, body, tail);
+            bindings.leave(*binding);
+            answered
+        }
+        Node::If {
+            cond, then, els, ..
+        } => {
+            let asked = lower(builder, lowering, module, bindings, abort, cond)?;
+            let when_taken = builder.create_block();
+            let otherwise = builder.create_block();
+            builder.ins().brif(asked, when_taken, &[], otherwise, &[]);
+            builder.seal_block(when_taken);
+            builder.seal_block(otherwise);
+            for (block, branch) in [(when_taken, then), (otherwise, els)] {
+                builder.switch_to_block(block);
+                lower_tail(builder, lowering, module, bindings, abort, branch, tail)?;
+            }
+            Ok(())
+        }
+        Node::Match { subject, arms, .. } => {
+            let value = lower(builder, lowering, module, bindings, abort, subject)?;
+            for arm in arms {
+                let next = enter_arm(
+                    builder,
+                    lowering,
+                    module,
+                    bindings,
+                    value,
+                    subject.ty(),
+                    arm,
+                )?;
+                let answered =
+                    lower_tail(builder, lowering, module, bindings, abort, &arm.body, tail);
+                if let Some(number) = arm.binding {
+                    bindings.leave(number);
+                }
+                answered?;
+                builder.switch_to_block(next);
+            }
+            builder
+                .ins()
+                .trap(TrapCode::user(NO_ARM).expect("a trap code of its own"));
+            Ok(())
+        }
+        Node::Call {
+            reaches: Reaches::Helper { reached: _ },
+            arguments,
+            ..
+        } if lowering.specializations.callee(node) == tail.instance => {
+            let mut given: Vec<ir::BlockArg> = Vec::with_capacity(arguments.len());
+            for argument in arguments {
+                given.push(lower(builder, lowering, module, bindings, abort, argument)?.into());
+            }
+            builder.ins().jump(tail.header, &given);
+            Ok(())
+        }
+        _ => {
+            let answer = lower(builder, lowering, module, bindings, abort, node)?;
+            builder.ins().store(TRUSTED, answer, tail.out, 0);
+            let ok = builder.ins().iconst(types::I32, i64::from(ANSWERED));
+            builder.ins().return_(&[ok]);
+            Ok(())
+        }
+    }
+}
+
 /// A lifted function's own body: the same `status + out` shape [`define`] gives every other body,
 /// with one more thing to do before any of it runs — restore every capture the site's own plan
 /// says it closed over, from the closure this function was called through.
@@ -3980,32 +4160,7 @@ fn fork_on_what_it_is(
     builder.append_block_param(after, answers);
 
     for arm in arms {
-        let taken = builder.create_block();
-        let next = builder.create_block();
-        let asked = tests(builder, lowering, module, value, subject, &arm.selects)?;
-        builder.ins().brif(asked, taken, &[], next, &[]);
-        builder.seal_block(taken);
-        builder.seal_block(next);
-
-        builder.switch_to_block(taken);
-        if let Some(number) = arm.binding {
-            let read_as = arm
-                .binds
-                .as_ref()
-                .expect("`Coherent` held every arm that binds to say what it reads the value as");
-            let held = binds(
-                builder,
-                lowering,
-                module,
-                value,
-                subject,
-                &arm.selects,
-                read_as,
-            )?;
-            let variable = builder.declare_var(machine_type(read_as)?);
-            builder.def_var(variable, held);
-            bindings.at(number, variable);
-        }
+        let next = enter_arm(builder, lowering, module, bindings, value, subject, arm)?;
         let answered = lower(builder, lowering, module, bindings, abort, &arm.body);
         if let Some(number) = arm.binding {
             bindings.leave(number);
@@ -4022,6 +4177,50 @@ fn fork_on_what_it_is(
     builder.seal_block(after);
     builder.switch_to_block(after);
     Ok(builder.block_params(after)[0])
+}
+
+/// Into `arm` of a fork on `value` where it tests true: the block its body is lowered in is the one
+/// written to next, with what it binds in force, which the caller puts out of force once the body
+/// is lowered. Handed back is the block the next arm is tested in, where this one tests false.
+///
+/// Shared by a fork answering a value and one answering what a helper answers ([`lower_tail`]):
+/// which arm a value takes is not a fact about what the arm's body goes on to do.
+fn enter_arm(
+    builder: &mut FunctionBuilder,
+    lowering: &Lowering,
+    module: &mut ObjectModule,
+    bindings: &mut Bindings,
+    value: ir::Value,
+    subject: &Ty,
+    arm: &Arm,
+) -> Lowered<ir::Block> {
+    let taken = builder.create_block();
+    let next = builder.create_block();
+    let asked = tests(builder, lowering, module, value, subject, &arm.selects)?;
+    builder.ins().brif(asked, taken, &[], next, &[]);
+    builder.seal_block(taken);
+    builder.seal_block(next);
+
+    builder.switch_to_block(taken);
+    if let Some(number) = arm.binding {
+        let read_as = arm
+            .binds
+            .as_ref()
+            .expect("`Coherent` held every arm that binds to say what it reads the value as");
+        let held = binds(
+            builder,
+            lowering,
+            module,
+            value,
+            subject,
+            &arm.selects,
+            read_as,
+        )?;
+        let variable = builder.declare_var(machine_type(read_as)?);
+        builder.def_var(variable, held);
+        bindings.at(number, variable);
+    }
+    Ok(next)
 }
 
 /// Whether the value is one of the cases this arm answers for.
