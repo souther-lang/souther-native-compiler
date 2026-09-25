@@ -55,7 +55,6 @@ final class PdoPriceCart extends PriceCart
                 'unitPrice' => (int) $found['price'],
             ];
         }
-        return PricedCart::decode($session, json_encode(['lines' => $lines], JSON_THROW_ON_ERROR))
-            ->getOrThrow();
+        return PricedCart::decoder($session)->decode(['lines' => $lines])->getOrThrow();
     }
 }

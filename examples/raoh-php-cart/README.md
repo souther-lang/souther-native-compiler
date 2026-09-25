@@ -21,6 +21,13 @@ values, applies a behavior, and picks the response with a `match` on the class o
 `src/CartApplication.php` binds the three composed behaviors (`addItemToCart`, `placeOrder`,
 `issueQuote`) to those once, and routes the requests.
 
+A request is decoded in two steps, as in the Java example. raoh-php checks the form of each field
+and normalises it: a UUID, a positive quantity, an email trimmed and lowercased, a corporate number
+of thirteen digits. What it hands on is read by the decoder the binding generates for the type,
+`UserId::decoder($session)` where the Java example calls `UserId.decoder()`, and that decoder is the
+model's: it knows which fields a type has, what the type states, and which case an orderer is.
+None of that is written again in PHP.
+
 There is no entity, no DTO, no repository and no view model. The classes of the model's types are
 the binding's, and what a request is decoded into is a value of one of them. What an order or a
 quotation is written back as is the model's own encoding of it, `encode()`, so there is no second
@@ -115,11 +122,13 @@ base class. A `match` over an answer's class is not checked for the cases it lea
 where it throws `UnhandledMatchError`; the Java `switch` over a sealed type is checked when it is
 compiled.
 
-On the way in, a request is decoded into values with each type's `of`, which takes what raoh-php
-checked and answers a `Raoh\Result`, so the model's `invariant_violation` lands under the field's
-path like any other issue. The database implementations read a row back with the type's `decode`,
-from the row laid out in the type's external form, which is what the Java ones do with a map and the
-generated `decoder()`.
+On the way in, the Java example tells an orderer's case apart with raoh's `discriminate` and a
+decoder for each case. Here raoh-php checks whichever of the orderer's fields are present, and the
+orderer as a whole goes to `OrdererCodec::decoder($session)`, which reads its `type` and the fields
+that case has, as the model's encoding of an orderer says. A type's generated decoder is chained
+with raoh-php's `pipe`, where the Java one is reached with `flatMap`. The database implementations
+read a row back through the same decoder, handed the row as an array keyed by the type's field
+names, as the Java ones hand the generated `decoder()` a map.
 
 The rest is the platform. SQLite in place of H2, with UUIDs as text. PDO in place of jOOQ, and a
 small `Transaction` in place of Spring's `TransactionTemplate`. Each test in

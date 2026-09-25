@@ -12,8 +12,8 @@ use PDO;
 use Souther\Runtime\Session;
 
 /**
- * `loadProduct` over PDO. The row is put back into the external form of `Product` and read by the
- * library, which checks `ProductId`'s invariant again: this is where the database meets the model.
+ * `loadProduct` over PDO. The row is handed to `Product`'s decoder under the type's field names, and
+ * the model checks `ProductId`'s invariant again: this is where the database meets the model.
  * No row is the model's own `ProductNotFound`.
  */
 final class PdoLoadProduct extends LoadProduct
@@ -30,10 +30,10 @@ final class PdoLoadProduct extends LoadProduct
         if ($row === false) {
             return ProductNotFound::of($session)->getOrThrow();
         }
-        return Product::decode($session, json_encode([
+        return Product::decoder($session)->decode([
             'id' => $row['product_id'],
             'onSale' => (bool) $row['on_sale'],
             'price' => (int) $row['price'],
-        ], JSON_THROW_ON_ERROR))->getOrThrow();
+        ])->getOrThrow();
     }
 }

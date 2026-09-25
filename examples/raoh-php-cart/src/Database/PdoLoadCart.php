@@ -34,10 +34,10 @@ final class PdoLoadCart extends LoadCart
         $select->execute([$userId->value()]);
         $row = $select->fetch(PDO::FETCH_ASSOC);
 
-        return Cart::decode($session, json_encode([
+        return Cart::decoder($session)->decode([
             'id' => $row['cart_id'],
             'currentQuantity' => (int) $row['total'],
-        ], JSON_THROW_ON_ERROR))->getOrThrow();
+        ])->getOrThrow();
     }
 
     private function ensureCartExists(string $userId): void

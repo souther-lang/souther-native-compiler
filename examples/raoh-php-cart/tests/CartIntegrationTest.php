@@ -168,6 +168,20 @@ final class CartIntegrationTest extends TestCase
     }
 
     #[Test]
+    public function aFieldTheOrderersCaseHasIsMissingIs400(): void
+    {
+        // Which fields an individual has is the model's to say, and its decoder says it.
+        $individual = self::individual();
+        unset($individual['name']);
+
+        $response = $this->checkout('/carts/checkout', self::USER, $individual);
+
+        self::assertSame(400, $response->status);
+        self::assertSame(['path' => '/orderer/name', 'code' => 'missing_field'],
+            array_intersect_key(self::body($response)['issues'][0], ['path' => 0, 'code' => 0]));
+    }
+
+    #[Test]
     public function anEmptyCartDoesNotCheckOut(): void
     {
         $response = $this->checkout('/carts/checkout', '11111111-1111-1111-1111-111111111113', self::individual());
