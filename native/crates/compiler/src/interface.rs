@@ -843,6 +843,10 @@ fn type_of(ty: &Ty, declared: &Declared) -> manifest::Type {
             value: boxed(&map.value),
         },
         Ty::Var { var } => crate::laid_out_nowhere(*var),
+        Ty::Nothing { .. } => unreachable!(
+            "no source writes the type of what has no value, so a boundary is never read as one, \
+             and a published value of one is refused before it is described (`define_values`)"
+        ),
     }
 }
 

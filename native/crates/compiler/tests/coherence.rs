@@ -21,7 +21,7 @@ const P: &str = r#"{"declared":"m.P"}"#;
 fn document(behaviors: &[String], helpers: &[String], definitions: &[String]) -> String {
     format!(
         concat!(
-            r#"{{"transport":19,"declarations":["#,
+            r#"{{"transport":20,"declarations":["#,
             r#"{{"module":"m","name":"A","by":"amodule","is":"unit"}},"#,
             r#"{{"module":"m","name":"B","by":"amodule","is":"unit"}},"#,
             r#"{{"module":"m","name":"S","by":"amodule","is":"sum","#,
@@ -1440,7 +1440,7 @@ fn a_concat_of_two_strings_reads_whole() {
 fn with_clauses(fields: &str, invariants: &str, helpers: &[String]) -> String {
     format!(
         concat!(
-            r#"{{"transport":19,"declarations":["#,
+            r#"{{"transport":20,"declarations":["#,
             r#"{{"module":"m","name":"R","by":"amodule","is":"product","#,
             r#""fields":[{}],"invariants":[{}]}}],"#,
             r#""behaviors":[],"#,
@@ -2001,7 +2001,7 @@ fn a_construction_of_another_builds_type_names_the_reason_its_clauses_give() {
         );
         format!(
             concat!(
-                r#"{{"transport":19,"declarations":["#,
+                r#"{{"transport":20,"declarations":["#,
                 r#"{{"module":"m","name":"R","by":"onthepath","is":"product","#,
                 r#""fields":[{}],"headers":[{}]}}],"behaviors":[],"#,
                 r#""modules":[{{"name":"m","publishes":[],"helpers":[{}],"values":[],"#,
@@ -2187,7 +2187,7 @@ fn an_arm_binds_and_says_what_it_reads_it_as_together() {
 fn a_handover_carries_a_value_the_module_builds() {
     let value = |carries: &str| {
         format!(
-            r#"{{"transport":19,"declarations":[],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[],"values":[{{"module":"m","name":"ks","handovers":[],"body":{}}},{{"module":"m","name":"ys","handovers":[{{"parameter":"dep","type":{INT},"carries":{{"module":"m","name":"{carries}"}}}}],"body":{}}}],"entries":[],"definitions":[],"examples":[]}}]}}"#,
+            r#"{{"transport":20,"declarations":[],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[],"values":[{{"module":"m","name":"ks","handovers":[],"body":{}}},{{"module":"m","name":"ys","handovers":[{{"parameter":"dep","type":{INT},"carries":{{"module":"m","name":"{carries}"}}}}],"body":{}}}],"entries":[],"definitions":[],"examples":[]}}]}}"#,
             int(1),
             read(0, INT)
         )
@@ -2670,7 +2670,7 @@ fn what_clauses_are_answered_under_crosses_where_another_build_runs_them() {
     let declared = |by: &str, clauses: &str| {
         format!(
             concat!(
-                r#"{{"transport":19,"declarations":["#,
+                r#"{{"transport":20,"declarations":["#,
                 r#"{{"module":"m","name":"R","by":"{}","is":"product","#,
                 r#""fields":[{}]{}}}],"behaviors":[],"#,
                 r#""modules":[{{"name":"m","publishes":[],"helpers":[],"values":[],"#,

@@ -47,6 +47,11 @@ pub const MOVES: &[(u32, &str)] = &[
          route and the declaration it reaches, and a type variable a helper's body leaves open \
          (`var`)",
     ),
+    (
+        20,
+        "an operation the checker's compiler emits for a backend to lower whole, as the member it \
+         is (`emitted`), and the type of what has no value (`nothing`)",
+    ),
 ];
 
 /// A document of [`TRANSPORT_VERSION`], and no other, read through [`Program::read`] and nothing
@@ -1547,7 +1552,19 @@ pub enum Ty {
     Var {
         var: usize,
     },
+    /// The type of what has no value: the element of an empty list literal, and so the accumulator
+    /// a walk seeded with `[]` starts from. A type like any other on the wire; that no value of it
+    /// is ever made is this side's to act on, and a list of it is a list like any other.
+    Nothing {
+        nothing: Bottom,
+    },
 }
+
+/// What [`Ty::Nothing`] is written with, which is nothing: an object with no field, read strictly
+/// so that one naming a field is not read as the bottom.
+#[derive(Debug, Deserialize, PartialEq, Eq, Hash, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct Bottom {}
 
 #[derive(Debug, Deserialize, PartialEq, Eq, Hash, Clone)]
 #[serde(deny_unknown_fields)]
@@ -1592,6 +1609,7 @@ impl Ty {
             Ty::Set { set } => format!("a Set of {}", set.spelt()),
             Ty::Map { map } => format!("a Map from {} to {}", map.key.spelt(), map.value.spelt()),
             Ty::Var { var } => format!("the type variable {var}"),
+            Ty::Nothing { .. } => "Nothing".to_string(),
         }
     }
 
@@ -1601,7 +1619,11 @@ impl Ty {
     /// compiling over until it says what it holds.
     pub fn members(&self) -> Vec<&Ty> {
         match self {
-            Ty::Prim { .. } | Ty::Declared { .. } | Ty::Union { .. } | Ty::Var { .. } => Vec::new(),
+            Ty::Prim { .. }
+            | Ty::Declared { .. }
+            | Ty::Union { .. }
+            | Ty::Var { .. }
+            | Ty::Nothing { .. } => Vec::new(),
             Ty::Option { option: held } | Ty::List { list: held } | Ty::Set { set: held } => {
                 vec![held]
             }
@@ -1609,6 +1631,11 @@ impl Ty {
             Ty::Fn { fn_ } => fn_.takes.iter().chain([fn_.answers.as_ref()]).collect(),
             Ty::Map { map } => vec![&map.key, &map.value],
         }
+    }
+
+    /// Whether this type writes the type of what has no value anywhere in it.
+    pub fn writes_nothing(&self) -> bool {
+        matches!(self, Ty::Nothing { .. }) || self.members().into_iter().any(Ty::writes_nothing)
     }
 
     /// Whether this type writes a type variable anywhere in it.
@@ -1982,6 +2009,14 @@ pub enum Reaches {
     PublishedValue { module: String, name: String },
     /// A behavior, whether this object answers it or another object does.
     Behavior { declared: String },
+    /// An operation the checker's compiler mints after everything is resolved, for a shape a
+    /// backend lowers whole: no source names one and no module declares one. By the member it is,
+    /// and not by what it renders as, which is for a report to quote.
+    ///
+    /// A closed set, unlike a kernel's key: the checker's compiler emits these and nothing else
+    /// does, so a member it adds is one this side has to say something about before a document
+    /// holding it reads — which one it lowers is still [`NotLowered`](crate::NotLowered)'s to say.
+    Emitted { operation: Emitted },
     /// An operation the language itself implements, with what this application of it takes each
     /// argument as and what else the checker settled about it. The kernel's own signature has type
     /// variables, and what they came to for this call is the checker's answer.
@@ -1990,6 +2025,37 @@ pub enum Reaches {
         takes: Vec<Ty>,
         fact: KernelFact,
     },
+}
+
+/// An operation the checker's compiler emits (`Core.Emitted`), each for a fold it rewrote so that
+/// the collection the fold only grows is built rather than rebuilt at every step.
+///
+/// The order is upstream's, which `vocabularies.rs` holds the spelling of each to.
+#[derive(Debug, Deserialize, PartialEq, Eq, Clone, Copy)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum Emitted {
+    /// `$build(step, xs, from)`: the walk of `xs` from `from` that grows a list and hands it over
+    /// once the walk ends.
+    BuildList,
+    /// `$grow(acc, rhs)`, inside the step of a [`BuildList`](Emitted::BuildList): `rhs` added to
+    /// the list the walk grows, and that list answered.
+    GrowList,
+    /// The same walk for a fold accumulating a map.
+    BuildMap,
+    /// The step's write into the map such a walk grows.
+    PutMap,
+}
+
+impl Emitted {
+    /// What a report calls it: what the checker's compiler renders it as.
+    pub fn spelt(self) -> &'static str {
+        match self {
+            Emitted::BuildList => "List.$build",
+            Emitted::GrowList => "List.$grow",
+            Emitted::BuildMap => "Map.$build",
+            Emitted::PutMap => "Map.$put",
+        }
+    }
 }
 
 /// A fact the checker settled about one application of a kernel, beside what it takes.
@@ -2066,7 +2132,8 @@ impl Reaches {
             Reaches::Helper { reached: _ }
             | Reaches::Value { module: _, name: _ }
             | Reaches::PublishedValue { module: _, name: _ }
-            | Reaches::Behavior { declared: _ } => Vec::new(),
+            | Reaches::Behavior { declared: _ }
+            | Reaches::Emitted { operation: _ } => Vec::new(),
             Reaches::Kernel {
                 kernel: _,
                 takes,
@@ -2081,7 +2148,8 @@ impl Reaches {
             Reaches::Helper { reached: _ }
             | Reaches::Value { module: _, name: _ }
             | Reaches::PublishedValue { module: _, name: _ }
-            | Reaches::Behavior { declared: _ } => Vec::new(),
+            | Reaches::Behavior { declared: _ }
+            | Reaches::Emitted { operation: _ } => Vec::new(),
             Reaches::Kernel {
                 kernel: _,
                 takes,

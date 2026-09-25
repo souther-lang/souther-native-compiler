@@ -68,6 +68,7 @@ impl Substitution {
                 }
             }
             (Ty::Prim { prim }, Ty::Prim { prim: also }) => prim == also,
+            (Ty::Nothing { .. }, Ty::Nothing { .. }) => true,
             (Ty::Declared { declared }, Ty::Declared { declared: also }) => declared == also,
             (Ty::Union { union }, Ty::Union { union: also }) => union == also,
             (Ty::Option { option: held }, Ty::Option { option: also })
@@ -97,7 +98,8 @@ impl Substitution {
                 | Ty::Set { .. }
                 | Ty::Tuple { .. }
                 | Ty::Fn { .. }
-                | Ty::Map { .. },
+                | Ty::Map { .. }
+                | Ty::Nothing { .. },
                 _,
             ) => false,
         }
@@ -107,7 +109,9 @@ impl Substitution {
     pub(crate) fn applied(&self, ty: &Ty) -> Option<Ty> {
         Some(match ty {
             Ty::Var { var } => self.0.get(*var)?.clone()?,
-            Ty::Prim { .. } | Ty::Declared { .. } | Ty::Union { .. } => ty.clone(),
+            Ty::Prim { .. } | Ty::Declared { .. } | Ty::Union { .. } | Ty::Nothing { .. } => {
+                ty.clone()
+            }
             Ty::Option { option } => Ty::Option {
                 option: Box::new(self.applied(option)?),
             },
@@ -330,10 +334,10 @@ impl<'p> Specializations<'p> {
         let body = if types.is_empty() {
             Settled::AsHeld(&held.body)
         } else {
-            let mut written = false;
-            held.body.each(&mut |node| {
-                written |= matches!(node, Node::Block { .. });
-            });
+            // A closure's layout is planned once for the block as it is written, and here that is
+            // over variables; a walk's step is no closure, and is settled with the rest of the copy.
+            let written = crate::closures::ClosureSites::any_in(carrier, &held.body)
+                .expect("`Coherent` numbered every site of the document once");
             if written {
                 return Err(not_lowered(format!(
                     "a function value written inside {}, which leaves type variables open",
@@ -636,7 +640,7 @@ mod tests {
     /// A module `m` holding `helpers` and building the one value `v`, whose body is `body`.
     fn holding(helpers: &[String], body: &str) -> String {
         format!(
-            r#"{{"transport":19,"declarations":[],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[{}],"values":[{{"module":"m","name":"v","handovers":[],"body":{body}}}],"entries":[],"definitions":[],"examples":[]}}]}}"#,
+            r#"{{"transport":20,"declarations":[],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[{}],"values":[{{"module":"m","name":"v","handovers":[],"body":{body}}}],"entries":[],"definitions":[],"examples":[]}}]}}"#,
             helpers.join(",")
         )
     }

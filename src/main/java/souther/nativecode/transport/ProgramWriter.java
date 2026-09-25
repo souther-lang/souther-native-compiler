@@ -87,7 +87,7 @@ public final class ProgramWriter {
      * written moves, so that a driver and a writer that disagree say so rather than producing an
      * object that is wrong quietly.
      */
-    public static final int TRANSPORT_VERSION = 19;
+    public static final int TRANSPORT_VERSION = 20;
 
     private final CheckedProgram program;
 
@@ -163,7 +163,7 @@ public final class ProgramWriter {
      * correspondence — the driver's test names the member it expects at each place, so a spelling
      * that moves on either side is red on the other.
      *
-     * <p>Seven vocabularies and not nine. What a behavior does instead of carrying a body, and what
+     * <p>Eight vocabularies and not ten. What a behavior does instead of carrying a body, and what
      * a call reaches, are switches over shapes rather than over an enum, so there is no member to
      * ask for the spelling of without an instance of one to hand. Those cross under a real program
      * or not at all.
@@ -177,6 +177,7 @@ public final class ProgramWriter {
                 + ",\"abort\":" + spellings(AbortKind.values(), ProgramWriter::abort)
                 + ",\"leafscalar\":" + spellings(LeafScalar.values(), ProgramWriter::leaf)
                 + ",\"languagecase\":" + spellings(LanguageCaseId.values(), ProgramWriter::languageCase)
+                + ",\"emitted\":" + spellings(Core.Emitted.values(), ProgramWriter::emitted)
                 + "}";
     }
 
@@ -1446,8 +1447,11 @@ public final class ProgramWriter {
             case Core.Reached.OfPublishedValue target -> publishedValue(it, target.denotes());
             case Core.Reached.OfKernel target -> kernel(it, target);
             // An operation this compiler mints after everything is resolved, which no source can
-            // write and which stands for a shape a backend knows how to lower.
-            case Core.Emitted target -> throw notYet("the operation " + target, it);
+            // write and which stands for a shape a backend lowers whole. It crosses as the member
+            // it is and not as what it renders as, which is for a report to quote; whether this
+            // backend lowers it is the driver's to say, as it is for a kernel.
+            case Core.Emitted target -> "{\"is\":\"emitted\",\"operation\":"
+                    + quoted(emitted(target)) + "}";
         };
         return "{\"core\":\"call\",\"reaches\":" + reaches
                 + ",\"arguments\":" + arguments
@@ -1633,6 +1637,17 @@ public final class ProgramWriter {
         return kinds.toString();
     }
 
+    /** How an operation this compiler emits is spelt on the wire, for the same reason and in the
+     *  same way. */
+    private static String emitted(Core.Emitted operation) {
+        return switch (operation) {
+            case BUILD_LIST -> "BUILD_LIST";
+            case GROW_LIST -> "GROW_LIST";
+            case BUILD_MAP -> "BUILD_MAP";
+            case PUT_MAP -> "PUT_MAP";
+        };
+    }
+
     /** How a primitive is spelt on the wire, for the same reason and in the same way. */
     private static String prim(Type.Prim prim) {
         return switch (prim) {
@@ -1653,7 +1668,10 @@ public final class ProgramWriter {
         return switch (type) {
             case Type.Prim it -> "{\"prim\":" + quoted(prim(it)) + "}";
 
-            case Type.Nothing it -> throw notYet("the type " + it);
+            // The type of what has no value: the element of an empty list literal, and so the
+            // accumulator a walk seeded with `[]` starts from. It crosses as a type like any other;
+            // that nothing of it is ever laid out is the driver's to act on.
+            case Type.Nothing it -> "{\"nothing\":{}}";
             case Type.Never it -> throw notYet("the type " + it);
             case Type.Erroneous it -> throw notYet("the type " + it);
             // A variable crosses only inside the helper that leaves it open, under the number that

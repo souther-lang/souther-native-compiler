@@ -93,6 +93,42 @@ class WhatThisBackendDoesNotWriteYetTest {
     }
 
     /**
+     * A fold accumulating a map is rewritten by the checker's compiler into a walk that builds the
+     * map, which crosses as the operations it is. No map is laid out here, so the walk is not
+     * lowered, and that is what is said: not the two halves disagreeing about an operation one of
+     * them could not read.
+     */
+    @Test
+    void aWalkBuildingAMapIsReadAndNotLowered() {
+        assertThatThrownBy(() -> NativeCompiler.compile(CheckedProgram.of(List.of("""
+                module grouping exposing ( groups )
+
+                behavior groups : (a: Int) -> Int
+                let groups (a) = Map.size(List.groupBy((x) -> x > a, [1, 2, 3]))
+                """))))
+                .isInstanceOf(NotLowered.class)
+                .hasMessageStartingWith("the operation Map.$");
+    }
+
+    /**
+     * A fold seeded with a value holding {@code []} that the checker's compiler does not rewrite
+     * hands its helper a seed and a step typed at that {@code []}, narrower than what the fold
+     * settles and with nothing saying it stands wider (souther-lang/souther#1958). Refused as not
+     * lowered, naming that, until the tree says it.
+     */
+    @Test
+    void aFoldSeededWithAnEmptyListItDoesNotGrowIsNotLoweredYet() {
+        assertThatThrownBy(() -> NativeCompiler.compile(CheckedProgram.of(List.of("""
+                module dropping exposing ( rest )
+
+                behavior rest : (a: Int) -> Int
+                let rest (a) = List.length(List.drop(a, [1, 2, 3]))
+                """))))
+                .isInstanceOf(NotLowered.class)
+                .hasMessageContaining("souther-lang/souther#1958");
+    }
+
+    /**
      * A value only passing through is not written, so a behavior handing one back compiles; what
      * is refused is the boundary that would have to write a {@code Decimal} out, which is where
      * its canonical form would be decided.

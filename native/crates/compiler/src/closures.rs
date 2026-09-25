@@ -26,7 +26,15 @@
 //! `site` ordinal is refused here: `ProgramWriter` promises the number is document-wide unique, but
 //! a promise from the other language is not a check on this side of the wire, and the earlier
 //! site's plan would otherwise answer for both.
+//!
+//! Not every block is a site. The step of a walk that builds a collection runs where the walk
+//! stands, as the body of a loop, and is never a value ([`Step::of_walk`]): its parameters are bound
+//! in the frame the walk stands in, the way a `let`'s are, and what it reads outside itself is read
+//! there. A block inside such a step is a site like any other. A step that never runs
+//! ([`Step::never_runs`]) is not lowered at all, so nothing in it is planned either; its sites are
+//! still numbered, so a number two sites share is refused wherever they stand.
 
+use crate::growing::Step;
 use crate::index;
 use crate::transport::{Body, Carrier, FnSignature, Node, Parameter, Ty};
 use anyhow::{Result, bail};
@@ -63,6 +71,9 @@ pub struct Site<'a> {
 #[derive(Default)]
 pub struct ClosureSites<'a> {
     by_site: BTreeMap<usize, Site<'a>>,
+    /// Every site met, planned or not, so that two sharing a number are refused wherever they
+    /// stand.
+    numbered: BTreeMap<usize, ()>,
 }
 
 impl<'a> ClosureSites<'a> {
@@ -70,9 +81,17 @@ impl<'a> ClosureSites<'a> {
     pub fn of(bodies: impl IntoIterator<Item = Body<'a>>) -> Result<Self> {
         let mut sites = ClosureSites::default();
         for body in bodies {
-            Planner::new(&mut sites, body.carrier()).free(body.node, &mut HashSet::new())?;
+            Planner::new(&mut sites, body.carrier(), true).free(body.node, &mut HashSet::new())?;
         }
         Ok(sites)
+    }
+
+    /// Whether `node`, a body standing where `carrier` says, holds a closure site that is lowered.
+    /// A block that is a walk's step is not one, and nor is anything in a step that never runs.
+    pub fn any_in(carrier: Carrier<'a>, node: &'a Node) -> Result<bool> {
+        let mut sites = ClosureSites::default();
+        Planner::new(&mut sites, carrier, true).free(node, &mut HashSet::new())?;
+        Ok(!sites.by_site.is_empty())
     }
 
     pub fn site(&self, site: usize) -> Option<&Site<'a>> {
@@ -87,11 +106,17 @@ impl<'a> ClosureSites<'a> {
 struct Planner<'p, 'a> {
     sites: &'p mut ClosureSites<'a>,
     carrier: Carrier<'a>,
+    /// Whether what is walked is lowered, so that a site in it is planned and not only numbered.
+    lowered: bool,
 }
 
 impl<'p, 'a> Planner<'p, 'a> {
-    fn new(sites: &'p mut ClosureSites<'a>, carrier: Carrier<'a>) -> Self {
-        Planner { sites, carrier }
+    fn new(sites: &'p mut ClosureSites<'a>, carrier: Carrier<'a>, lowered: bool) -> Self {
+        Planner {
+            sites,
+            carrier,
+            lowered,
+        }
     }
 
     /// What `node` reaches outside `bound`, first-reached order, with every `Node::Block` under it
@@ -117,6 +142,9 @@ impl<'p, 'a> Planner<'p, 'a> {
         acc: &mut Vec<(usize, Ty)>,
         seen: &mut HashSet<usize>,
     ) -> Result<()> {
+        if let (Some(step), Node::Call { arguments, .. }) = (Step::of_walk(node), node) {
+            return self.step(&step, &arguments[1..], bound, acc, seen);
+        }
         match node {
             Node::Read { binding, ty, .. } => {
                 if !bound.contains(binding) && seen.insert(*binding) {
@@ -164,9 +192,12 @@ impl<'p, 'a> Planner<'p, 'a> {
                 // `ProgramWriter` promises this number is unique across the whole document, and
                 // this reader does not take that on trust: a duplicate would let the first block's
                 // lifted function and captures answer for the second's too.
-                index::once(&mut self.sites.by_site, *site, planned, || {
+                index::once(&mut self.sites.numbered, *site, (), || {
                     format!("two `Node::Block`s both claim closure site {site}")
                 })?;
+                if self.lowered {
+                    index::unique(&mut self.sites.by_site, *site, planned);
+                }
 
                 for (binding, ty) in captures {
                     if !bound.contains(&binding) && seen.insert(binding) {
@@ -272,6 +303,46 @@ impl<'p, 'a> Planner<'p, 'a> {
             | Node::Str { .. }
             | Node::Unit { .. }
             | Node::None { .. } => {}
+        }
+        Ok(())
+    }
+
+    /// A walk that builds a collection, whose step runs where the walk stands: what is bound around
+    /// the step and the step's own parameters are bound here, as a `let` binds, for as long as the
+    /// step's body is read, and `rest` is the walk's other arguments.
+    fn step(
+        &mut self,
+        step: &Step<'a>,
+        rest: &'a [Node],
+        bound: &mut HashSet<usize>,
+        acc: &mut Vec<(usize, Ty)>,
+        seen: &mut HashSet<usize>,
+    ) -> Result<()> {
+        let mut added = Vec::new();
+        for around in &step.around {
+            self.walk(around.value, bound, acc, seen)?;
+            if bound.insert(around.binding) {
+                added.push(around.binding);
+            }
+        }
+        for parameter in step.parameters {
+            if bound.insert(parameter.binding) {
+                added.push(parameter.binding);
+            }
+        }
+        let walked = if step.never_runs() {
+            Planner::new(self.sites, self.carrier, false)
+                .free(step.body, &mut HashSet::new())
+                .map(drop)
+        } else {
+            self.walk(step.body, bound, acc, seen)
+        };
+        for binding in added {
+            bound.remove(&binding);
+        }
+        walked?;
+        for argument in rest {
+            self.walk(argument, bound, acc, seen)?;
         }
         Ok(())
     }
