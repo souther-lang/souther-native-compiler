@@ -384,8 +384,8 @@ answering anything else is not written yet.
 A row stands in for what its behavior requires with what it states, and the object holds that: a
 function for each dependency, answering with the first entry stating the arguments it is asked with,
 compared as `==` compares them, and otherwise with what the row states for the rest, and a capability
-of each. What a stand-in states is written out of what the row observed, until the checker names
-definitions for it the way it names a row's inputs (souther-lang/souther#1966). So a row's entry takes nothing and runs the behavior with those. Where a stand-in states
+of each. What a stand-in states is computed by the definitions the checker names for it, as a row's
+inputs are. So a row's entry takes nothing and runs the behavior with those. Where a stand-in states
 nothing for what it is asked, the row answers `FAKE_NO_OUTPUT`, which is neither an abort nor a
 host's status, and which the header does not name, since a host is told nothing of rows.
 

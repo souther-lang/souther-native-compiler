@@ -103,6 +103,39 @@ class ABehaviorIsCalledWithWhatItWasConstructedWithTest {
         ARowHoldsWhereverItIsRunTest.assertEveryRowHolds(CONSTRUCTED);
     }
 
+    private static final String STANDING = """
+            module standing
+
+            data Found = { id: Int }
+
+            data Missing
+
+            behavior find : (id: Int) -> Found | Missing
+
+            behavior named : (id: Int) -> Int
+                depends on find
+            let named (id, find) = match find(id) with
+                | Found as found -> found.id
+                | Missing -> 0
+
+            fake find
+                | (1) -> Found { id = 7 }
+                | _ -> Missing
+
+            example named
+                | "a case of what the dependency answers" : (1) -> 7
+                | "another, for the rest" : (2) -> 0
+            """;
+
+    /**
+     * What a row's stand-in states is computed by the definitions the checker names for it, so a
+     * case stated where the dependency answers a union stands there as the checker says it does.
+     */
+    @Test
+    void aStandInStatingACaseOfWhatItAnswersStandsAsTheCheckerSays() throws Exception {
+        ARowHoldsWhereverItIsRunTest.assertEveryRowHolds(STANDING);
+    }
+
     private static final String PORT = """
             module lib.port exposing ( lookUp, looked )
 

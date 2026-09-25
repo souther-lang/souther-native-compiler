@@ -8,8 +8,6 @@ import souther.compiler.core.Core;
 import souther.compiler.core.EnsuresEnforcement;
 import souther.compiler.core.Kernel;
 import souther.compiler.core.ValueShape;
-import souther.compiler.observe.ObservedValue;
-import souther.compiler.observe.StoodIn;
 import souther.compiler.program.BehaviorTarget;
 import souther.compiler.program.CheckedAlternativesForm;
 import souther.compiler.program.CheckedBoundaryInput;
@@ -656,36 +654,26 @@ public final class ProgramWriter {
      * table keyed by them, since which entry states a call is the comparison's to say and a key
      * would be this writer's.
      *
-     * <p>The values are written as expressions made out of what the row observed, at the types the
-     * dependency takes and answers ({@link #stated}), which is a second deciding of how each stands
-     * there. A row's own inputs are the checker's definitions and not that ({@link #applied}); a
-     * stand-in's have none yet (souther-lang/souther#1966), and a value this cannot write the way
-     * the checker would is refused as not written yet rather than written some other way.
+     * <p>Each value is a call of the definition the checker names for it, as a row's inputs are
+     * ({@link #applied}): elaborated at the parameter or the answer of the dependency where it
+     * stands, so how it stands there is the checker's and not worked out here from what was
+     * observed.
      */
     private String standsIn(StandsIn standsIn) {
         ValueName.Behavior dependency = standsIn.dependency();
         behaviorsMet.add(dependency);
-        CheckedSignature signature = program.behavior(dependency).signature();
-        List<Type> takes = signature.takes();
-        StoodIn stood = standsIn.stated();
         StringJoiner entries = new StringJoiner(",", "[", "]");
-        for (StoodIn.Entry entry : stood.entries()) {
-            List<ObservedValue> arguments = entry.arguments();
-            if (arguments.size() != takes.size()) {
-                throw notYet("a stand-in for `" + dependency + "` stating " + arguments.size()
-                        + " arguments where it takes " + takes.size());
+        for (StandsIn.Entry entry : standsIn.entries()) {
+            StringJoiner arguments = new StringJoiner(",", "[", "]");
+            for (CheckedHelper argument : entry.argumentDefinitions()) {
+                arguments.add(computed(argument));
             }
-            StringJoiner written = new StringJoiner(",", "[", "]");
-            for (int at = 0; at < takes.size(); at++) {
-                written.add(stated(arguments.get(at), takes.get(at)));
-            }
-            entries.add("{\"arguments\":" + written
-                    + ",\"answer\":" + stated(entry.answer(), signature.answers()) + "}");
+            entries.add("{\"arguments\":" + arguments
+                    + ",\"answer\":" + computed(entry.answerDefinition()) + "}");
         }
-        String otherwise = switch (stood.otherwise()) {
-            case StoodIn.Otherwise.Answer(ObservedValue value, var ignored) ->
-                    stated(value, signature.answers());
-            case StoodIn.Otherwise.NothingStated ignored -> "null";
+        String otherwise = switch (standsIn.otherwise()) {
+            case StandsIn.Otherwise.Answers it -> computed(it.definition());
+            case StandsIn.Otherwise.NothingStated it -> "null";
         };
         return "{\"module\":" + quoted(dependency.module())
                 + ",\"name\":" + quoted(dependency.name())
@@ -694,137 +682,16 @@ public final class ProgramWriter {
     }
 
     /**
-     * A value a row's stand-in states, written as the expression that makes it.
+     * A call of a definition the module holds that computes a value a row states, taking nothing.
      *
-     * <p>At the type it is handed over at as well as by what it is, because the value does not say
-     * on its own. A number handed to a parameter of a type that holds one is a different expression
-     * from the same number handed to an {@code Int}; a present optional is observed as the value it
-     * holds, and only the type says it is to be wrapped; a sequence does not say whether it was a
-     * list. So the type decides which expression is written, and the value what goes into it.
-     *
-     * <p>What is written is the node the source would have built for the same value, and nothing a
-     * row alone crosses as: a literal, a construction, a list, an optional. What a construction can
-     * end with is asked of the program, which answers it the way it answers the same construction
-     * written in a body. A literal, a list and an optional end with nothing of their own, which is
-     * what the program files each of them with wherever it holds one.
-     *
-     * <p>Every type is answered for, and the ones with no expression here say so. Caught by an arm
-     * standing for the rest, a value a row can state would cross as whatever it resembled.
+     * <p>No Core.Call stands behind it for program.abortsAt to ask of, and none is needed: what
+     * AbortSites answers for a call reaching a declaration is NONE, whatever it reaches. What the
+     * definition ends with is its own, the same answer a call written in a body gets.
      */
-    private String stated(ObservedValue value, Type at) {
-        return switch (at) {
-            case Type.Prim it -> switch (value) {
-                case ObservedValue.Integer v when it == Type.Prim.INT ->
-                        intNode(v.value(), at, AbortSet.NONE);
-                case ObservedValue.Bool v when it == Type.Prim.BOOL ->
-                        boolNode(v.value(), at, AbortSet.NONE);
-                case ObservedValue.Text v when it == Type.Prim.STRING ->
-                        stringNode(v.value(), at, AbortSet.NONE);
-                default -> throw notStated(value, at);
-            };
-            case Type.OptionOf it -> value instanceof ObservedValue.Absent
-                    ? noneNode(at, AbortSet.NONE)
-                    : someNode(stated(value, it.element()), at, AbortSet.NONE);
-            case Type.ListOf it -> {
-                if (!(value instanceof ObservedValue.Sequence sequence)) {
-                    throw notStated(value, at);
-                }
-                List<String> elements = new ArrayList<>();
-                for (ObservedValue element : sequence.elements()) {
-                    elements.add(stated(element, it.element()));
-                }
-                yield listNode(elements, at, AbortSet.NONE);
-            }
-            case Type.Ref it -> declared(value, it);
-            case Type.Union it -> standing(value, at);
-
-            // A set, a map and the rest have no expression this writer builds out of a value yet.
-            case Type.SetOf it -> throw notStated(value, at);
-            case Type.MapOf it -> throw notStated(value, at);
-            case Type.TupleOf it -> throw notStated(value, at);
-            case Type.FnOf it -> throw notStated(value, at);
-            case Type.Nothing it -> throw notStated(value, at);
-            case Type.Never it -> throw notStated(value, at);
-            case Type.Erroneous it -> throw notStated(value, at);
-            case Type.Var it -> throw notStated(value, at);
-            case Type.MetaVar it -> throw notStated(value, at);
-        };
+    private String computed(CheckedHelper definition) {
+        return callNode(helperReach(definition.reachedAs()), List.of(), definition.body().type(),
+                AbortSet.NONE);
     }
-
-    /**
-     * A value of a declared type, built as the type is built.
-     *
-     * <p>Only a value of that very type. One of a sum's cases is a value of the case, and where the
-     * sum is taken it stands there as {@link #standing} writes it.
-     *
-     * <p>The fields are the declaration's, in the declaration's order and at the declaration's
-     * types, each looked up in what was observed by its name. What the observation holds is what the
-     * value was; how many fields a value has and in which order they stand is the declaration's to
-     * say, and read off the observation it would be a map's order deciding a layout.
-     */
-    private String declared(ObservedValue value, Type.Ref at) {
-        return switch (value) {
-            case ObservedValue.Unit it when it.type().equals(at.name()) ->
-                    unitNode(declaredName(at.name()), at, AbortSet.NONE);
-            case ObservedValue.Constructed it
-                    when it.type().equals(at.name())
-                    && at.name() instanceof TypeSymbol.AtModule name
-                    && program.declaration(name).data() instanceof CheckedData.WithFields held -> {
-                List<String> values = new ArrayList<>();
-                for (ValueShape.Field field : held.fields()) {
-                    ObservedValue observed = it.field(field.name());
-                    if (observed == null) {
-                        throw notStated(value, at);
-                    }
-                    values.add(stated(observed, field.type()));
-                }
-                yield constructNode(named(name), values, at, program.constructionAborts(name));
-            }
-            default -> standing(value, at);
-        };
-    }
-
-    /**
-     * A value stated where a type wider than its own is taken: built at its own type, and standing
-     * as the position's.
-     *
-     * <p>A copy of the rule {@link Core#standingAs} writes for the same value in a body: a value
-     * whose type is not the position's is a widening of it to the position's. A row's own inputs
-     * are no longer written this way, since the checker names definitions for them; a stand-in's
-     * values have none yet, and this copy goes with souther-lang/souther#1966. Whether a value may
-     * stand there at all is not asked again, since the compile admitted the row. What the widening
-     * itself ends with is nothing, which is what the program files every widening with.
-     *
-     * <p>Its own type is what the value says it is. A list and an absent optional do not say that
-     * on their own, and neither do the values with no expression here, so they are refused rather
-     * than guessed at.
-     */
-    private String standing(ObservedValue value, Type at) {
-        Type own = switch (value) {
-            case ObservedValue.Integer it -> Type.Prim.INT;
-            case ObservedValue.Bool it -> Type.Prim.BOOL;
-            case ObservedValue.Text it -> Type.Prim.STRING;
-            case ObservedValue.Unit it -> Type.ref(it.type());
-            case ObservedValue.Constructed it -> Type.ref(it.type());
-            case ObservedValue.Sequence it -> null;
-            case ObservedValue.Absent it -> null;
-            case ObservedValue.Decimal it -> null;
-            case ObservedValue.Temporal it -> null;
-            case ObservedValue.Mapping it -> null;
-            case ObservedValue.Unknown it -> null;
-            case ObservedValue.Truncated it -> null;
-        };
-        if (own == null || own.equals(at)) {
-            throw notStated(value, at);
-        }
-        return widenNode(stated(value, own), at, AbortSet.NONE);
-    }
-
-    private static NotLowered notStated(ObservedValue value, Type at) {
-        return new NotLowered("a stand-in stating " + value + " at " + at
-                + " (souther-lang/souther#1966)");
-    }
-
 
     /**
      * The one call a row is: the behavior, handed what computes each of the row's inputs.
@@ -845,8 +712,7 @@ public final class ProgramWriter {
     private String applied(CheckedBehavior behavior, List<CheckedHelper> inputs) {
         List<String> arguments = new ArrayList<>();
         for (CheckedHelper input : inputs) {
-            arguments.add(callNode(helperReach(input.reachedAs()), List.of(), input.body().type(),
-                    AbortSet.NONE));
+            arguments.add(computed(input));
         }
         return callNode(behaviorReach(behavior.name()), arguments,
                 behavior.signature().answers(), AbortSet.NONE);
