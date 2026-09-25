@@ -528,7 +528,10 @@ handed to a run as `Injections::of(name: fn (...) => ...)`, which is what a beha
 `Behaviors` in that run is constructed from, or bound to a behavior class as an instance of its own.
 Each behavior a host implements is one C function pointer, made once per binding, and each
 implementation handed over is a capability of it and a number of its own, so a worker does not grow
-with every request. A call reaching what nothing was handed for throws `UnboundInjection`, and an
+with every request. What turns what the library hands an implementation into the binding's classes
+is the binding's, and an implementation keeps the binding it was written against: one library loaded
+by bindings generated under two namespaces calls each implementation through its own binding's, and
+the library itself holds nothing of either. A call reaching what nothing was handed for throws `UnboundInjection`, and an
 exception an implementation throws is the one that comes back out of the call that reached it.
 
 A binding says which version of the runtime's surface it was generated for, and refuses to load

@@ -52,10 +52,57 @@ abstract class Binding
      */
     protected function __construct(
         private readonly NativeLibrary $library,
-        array $slots,
-        array $constructions,
+        private readonly array $slots,
+        private readonly array $constructions,
     ) {
-        $library->adopt($slots, $constructions);
+    }
+
+    /**
+     * @internal This binding, as it was loaded for `$library`: what the generated class holds for
+     * each library it was loaded for.
+     *
+     * What adapts an implementation to the classes a binding generated is the binding's, and one
+     * library may be loaded by bindings generated under two namespaces; so an implementation reaches
+     * the adapter of the binding it was written against through this, and never through the
+     * library, which the bindings share.
+     */
+    abstract public static function in(NativeLibrary $library): static;
+
+    /** @internal What `$behavior`, which a host implements, is adapted to this binding through. */
+    public function slot(string $behavior): InjectionSlot
+    {
+        return $this->slots[$behavior]
+            ?? throw new \InvalidArgumentException("this binding implements no {$behavior}");
+    }
+
+    /**
+     * @internal What `$behavior` is called with where it is called through this binding's
+     * `Behaviors` in `$session`'s run: the capabilities of what it requires, constructed from what
+     * the run was handed ({@see run()}), or null where it requires nothing.
+     *
+     * Each implementation the run was handed keeps the binding it was written against, so a
+     * behavior called through one binding in another's run is handed the other's implementations
+     * through the other's adapters.
+     */
+    public function requirementsOf(Session $session, string $behavior): ?\FFI\CData
+    {
+        return $this->constructedAs($session, $behavior)->requirements($session);
+    }
+
+    private function constructedAs(Session $session, string $behavior): Bound
+    {
+        return $session->constructedAs(static::class . "\0" . $behavior,
+            function () use ($session, $behavior): Bound {
+                [$bind, $requires] = $this->constructions[$behavior]
+                    ?? throw new \InvalidArgumentException("this binding constructs no {$behavior}");
+                $handed = [];
+                foreach ($requires as $required) {
+                    $handed[] = isset($this->slots[$required])
+                        ? $session->injected($required)
+                        : $this->constructedAs($session, $required);
+                }
+                return Bound::of($bind, ...$handed);
+            });
     }
 
     /**
@@ -82,7 +129,7 @@ abstract class Binding
         $ffi = $this->library->ffi();
         $mark = $ffi->souther_mark();
         $session = $this->library->open(array_merge(...array_map(
-            static fn (Injections $set): array => $set->implementations(), $injections)));
+            static fn (Injections $set): array => $set->implemented(), $injections)));
         try {
             return $body();
         } finally {

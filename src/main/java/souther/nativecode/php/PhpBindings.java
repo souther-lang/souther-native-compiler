@@ -716,7 +716,12 @@ public final class PhpBindings {
      * going of its library, which the generated {@code Binding} answers.
      */
     private String innermost() {
-        return "\\" + root + "\\Binding::session()";
+        return bindingClass() + "::session()";
+    }
+
+    /** The binding this generator writes, as PHP names the class. */
+    private String bindingClass() {
+        return "\\" + root + "\\Binding";
     }
 
     /** The static constructor: the value, or the invariant it does not hold as an issue. */
@@ -1004,9 +1009,10 @@ public final class PhpBindings {
                 case Manifest.Parameters.Positional positional ->
                         PhpNames.positional(positional.types().size());
             };
+            String session = PhpNames.freeOf("session", names);
             String requirements = behavior.requires().isEmpty() ? "null"
-                    : "$" + PhpNames.freeOf("session", names) + "->requirementsOf('"
-                    + quotedInSingle(module.name() + "." + behavior.name()) + "')";
+                    : bindingClass() + "::in($" + session + "->library())->requirementsOf($" + session
+                    + ", '" + quotedInSingle(module.name() + "." + behavior.name()) + "')";
             functions.append(call(what, "public static function " + behavior.name(), names, takes,
                     answers, call, requirements));
             BehaviorClass it = behaviorClasses.get(module.name() + "." + behavior.name());
@@ -1171,11 +1177,12 @@ public final class PhpBindings {
                     public static function of(%s): self
                     {
                         $given = array_filter([%s], static fn (?callable $it): bool => $it !== null);
-                        return new self(array_map(static fn (callable $it): \\Closure => \\Closure::fromCallable($it), $given));
+                        return new self(%s::class,
+                            array_map(static fn (callable $it): \\Closure => \\Closure::fromCallable($it), $given));
                     }
                 }
                 """.formatted(String.join("\n", described), String.join(", ", parameters),
-                String.join(", ", entries)));
+                String.join(", ", entries), bindingClass()));
         file(namespace, "Injections", php);
     }
 
@@ -1358,8 +1365,8 @@ public final class PhpBindings {
             String name = names.get(at);
             parameters.add(of.fqcn() + " $" + name);
             handed.add(of.injected()
-                    ? "\\Souther\\Runtime\\Implemented::by('" + quotedInSingle(required.key())
-                            + "', $" + name + "->apply(...))"
+                    ? "\\Souther\\Runtime\\Implemented::by(" + bindingClass() + "::class, '"
+                            + quotedInSingle(required.key()) + "', $" + name + "->apply(...))"
                     : "$" + name + "->bound()");
         }
         return """
@@ -1459,6 +1466,13 @@ public final class PhpBindings {
 
                     /** @var array<int, self> */
                     private static array $bindings = [];
+
+                    /** @internal This binding, as it was loaded for `$library`. */
+                    public static function in(\\Souther\\Runtime\\NativeLibrary $library): static
+                    {
+                        return self::$bindings[spl_object_id($library)]
+                            ?? throw new \\LogicException('this binding was not loaded for that library');
+                    }
 
                     /**
                      * @internal The session every function of this binding is called in: the

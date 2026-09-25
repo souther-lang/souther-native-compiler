@@ -314,8 +314,9 @@ class APhpBindingIsWrittenFromTheManifestTest {
         assertThat(Files.readString(generated.root().resolve("M").resolve("Both.php"))).contains(
                 "bind(\\Acme\\Billing\\A\\Load $dependency0, \\Acme\\Billing\\B\\Load"
                         + " $dependency1): self",
-                "Bound::of(null, \\Souther\\Runtime\\Implemented::by('a.load', $dependency0->apply(...)),"
-                        + " \\Souther\\Runtime\\Implemented::by('b.load', $dependency1->apply(...)))");
+                "Bound::of(null, \\Souther\\Runtime\\Implemented::by(\\Acme\\Billing\\Binding::class,"
+                        + " 'a.load', $dependency0->apply(...)), \\Souther\\Runtime\\Implemented::by("
+                        + "\\Acme\\Billing\\Binding::class, 'b.load', $dependency1->apply(...)))");
     }
 
     /**

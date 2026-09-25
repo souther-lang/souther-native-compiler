@@ -30,11 +30,6 @@ final class NativeLibrary
      */
     private array $open = [];
 
-    /** @var array<string, InjectionSlot> by the declared name of the behavior each is for */
-    private array $slots = [];
-
-    /** @var array<string, array{?string, list<string>}> by the declared name of the behavior */
-    private array $constructions = [];
 
     /**
      * The fiber the runs going are on, the main one being null; meaningful while any is going.
@@ -82,7 +77,7 @@ final class NativeLibrary
     {
         $key = self::identity($library);
         if (isset(self::$loaded[$key])) {
-            return self::$loaded[$key];
+            return self::$loaded[$key]->numbering($statuses, $outcomes);
         }
         $declared = file_get_contents($declarations);
         if ($declared === false) {
@@ -101,8 +96,37 @@ final class NativeLibrary
     public static function preloaded(string $scope, string $library, array $statuses,
                                      array $outcomes): self
     {
-        return self::$loaded[self::identity($library)]
-            ??= new self(FFI::scope($scope), $statuses, $outcomes);
+        $key = self::identity($library);
+        if (isset(self::$loaded[$key])) {
+            return self::$loaded[$key]->numbering($statuses, $outcomes);
+        }
+        return self::$loaded[$key] = new self(FFI::scope($scope), $statuses, $outcomes);
+    }
+
+    /**
+     * This library, where a binding loading it again numbers its statuses and a reading's outcomes
+     * as the one that loaded it first did.
+     *
+     * The numbers are the library's, and every binding generated for it says them; the library is
+     * one however many bindings load it, so a second binding is held to them rather than the first
+     * one's answering for both.
+     *
+     * @param array<string, int> $statuses
+     * @param array<string, int> $outcomes
+     */
+    private function numbering(array $statuses, array $outcomes): self
+    {
+        ksort($statuses);
+        ksort($outcomes);
+        $mine = $this->statuses;
+        $theirs = $this->outcomes;
+        ksort($mine);
+        ksort($theirs);
+        if ($statuses !== $mine || $outcomes !== $theirs) {
+            throw new \LogicException('a binding loading this library again numbers its statuses or'
+                . ' outcomes otherwise than the binding that loaded it first');
+        }
+        return $this;
     }
 
     /**
@@ -156,48 +180,11 @@ final class NativeLibrary
     }
 
     /**
-     * @internal What a binding generated for this library adapts each behavior a host implements
-     * through, and what each behavior is constructed from.
-     *
-     * @param array<string, InjectionSlot> $slots
-     * @param array<string, array{?string, list<string>}> $constructions
-     */
-    public function adopt(array $slots, array $constructions): void
-    {
-        $this->slots = $slots;
-        $this->constructions = $constructions;
-    }
-
-    /** @internal What `$behavior`, which a host implements, is adapted through. */
-    public function slot(string $behavior): InjectionSlot
-    {
-        return $this->slots[$behavior]
-            ?? throw new \InvalidArgumentException("the library asks no host to implement {$behavior}");
-    }
-
-    /** @internal Whether a host implements `$behavior`. */
-    public function injects(string $behavior): bool
-    {
-        return isset($this->slots[$behavior]);
-    }
-
-    /**
-     * @internal What makes a capability of `$behavior`, where something may require it, and what it
-     * requires, in order.
-     *
-     * @return array{?string, list<string>}
-     */
-    public function construction(string $behavior): array
-    {
-        return $this->constructions[$behavior]
-            ?? throw new \InvalidArgumentException("the library constructs no {$behavior}");
-    }
-
-    /**
      * @internal A session for a run starting now, inside whichever runs are going, handed
      * `$injected`.
      *
-     * @param array<string, \Closure> $injected by the declared name of the behavior each implements
+     * @param array<string, Implemented> $injected by the declared name of the behavior each
+     *        implements, each with the binding it was written against
      */
     public function open(array $injected): Session
     {

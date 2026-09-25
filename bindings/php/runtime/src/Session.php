@@ -33,13 +33,16 @@ final class Session
     /** Where this run stands among every run opened in the process, later ones higher. */
     private readonly int $order;
 
-    /** @var array<string, Bound> what each behavior called through `Behaviors` was constructed as */
+    /**
+     * @var array<string, Bound> what each behavior called through `Behaviors` is constructed as, by
+     *      the binding it was called through and its declared name
+     */
     private array $constructed = [];
 
     /**
      * @internal
-     * @param array<string, \Closure> $injected what the run was handed, by the declared name of the
-     *        behavior each implements
+     * @param array<string, Implemented> $injected what the run was handed, by the declared name of
+     *        the behavior each implements, each with the binding it was written against
      */
     public function __construct(
         private readonly NativeLibrary $library,
@@ -104,30 +107,23 @@ final class Session
     }
 
     /**
-     * @internal What `$behavior` is called with where it is called through `Behaviors` in this run:
-     * the capabilities of what it requires, constructed from what the run was handed
-     * ({@see Binding::run()}), or null where it requires nothing.
+     * @internal The implementation the run was handed of `$behavior`, which a host implements, with
+     * the binding it was written against; null where it was handed none.
      */
-    public function requirementsOf(string $behavior): ?CData
+    public function injected(string $behavior): ?Implemented
     {
-        return $this->constructedAs($behavior)->requirements($this);
+        return $this->injected[$behavior] ?? null;
     }
 
-    private function constructedAs(string $behavior): Bound
+    /**
+     * @internal What `$key` is constructed as in this run, made by `$made` the first time it is
+     * asked for and kept for as long as the run is, since what is called with it reads it as long.
+     *
+     * @param \Closure(): Bound $made
+     */
+    public function constructedAs(string $key, \Closure $made): Bound
     {
-        if (isset($this->constructed[$behavior])) {
-            return $this->constructed[$behavior];
-        }
-        [$bind, $requires] = $this->library->construction($behavior);
-        $handed = [];
-        foreach ($requires as $required) {
-            $handed[] = match (true) {
-                $this->library->injects($required) => isset($this->injected[$required])
-                    ? Implemented::by($required, $this->injected[$required]) : null,
-                default => $this->constructedAs($required),
-            };
-        }
-        return $this->constructed[$behavior] = Bound::of($bind, ...$handed);
+        return $this->constructed[$key] ??= $made();
     }
 
     /**
