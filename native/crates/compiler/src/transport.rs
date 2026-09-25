@@ -2639,7 +2639,7 @@ impl Node {
     ///
     /// For a question about what the document says. What an object runs, reaches or has to lower is
     /// a narrower question, since the step of a walk that never runs is written and never lowered,
-    /// and it is walked with `growing::each_lowered`. There is no walk called plain `each`, so a
+    /// and it is walked with `unrun::each_lowered`. There is no walk called plain `each`, so a
     /// pass walking a body says which of the two it asks.
     pub fn each_written<'n>(&'n self, visit: &mut impl FnMut(&'n Node)) {
         visit(self);

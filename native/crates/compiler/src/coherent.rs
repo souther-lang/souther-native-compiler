@@ -573,12 +573,11 @@ struct Walk<'w, 'a> {
     /// What each binding in scope is in force at, as the node that made it says.
     bound: HashMap<usize, Ty>,
     owed: &'w mut Owed,
-    /// Whether this object runs what is being read: the body, and not the step of a walk that
-    /// never runs inside it ([`growing::never_lowered`](crate::growing::never_lowered)). What this
-    /// backend has no lowering for is refused only where it would be lowered; the two halves
-    /// disagreeing is refused wherever it stands.
+    /// Whether this object runs what is being read: the body, and not a function a call inside it
+    /// never applies ([`crate::unrun`]). What this backend has no lowering for is refused only
+    /// where it would be lowered; the two halves disagreeing is refused wherever it stands.
     runs: bool,
-    /// The steps of the walks read so far that never run, whose bodies are read with `runs` false.
+    /// The functions the calls read so far never apply, which are read with `runs` false.
     unrun: Vec<&'a Node>,
 }
 
@@ -674,14 +673,17 @@ impl<'a> Walk<'_, 'a> {
         if self.unrun.iter().any(|it| std::ptr::eq(*it, node)) {
             self.runs = false;
         }
-        let entered = crate::growing::never_lowered(node);
-        if let Some(body) = entered {
-            self.unrun.push(body);
-        }
+        let entered = match node {
+            Node::Call { arguments, .. } => crate::unrun::never_applied(node)
+                .into_iter()
+                .map(|at| &arguments[at])
+                .collect(),
+            _ => Vec::new(),
+        };
+        let before = self.unrun.len();
+        self.unrun.extend(entered);
         let read = self.relations(node).and_then(|()| self.hold_slots(node));
-        if entered.is_some() {
-            self.unrun.pop();
-        }
+        self.unrun.truncate(before);
         self.runs = runs;
         read
     }
@@ -1404,6 +1406,18 @@ impl<'a> Walk<'_, 'a> {
             } => {
                 for argument in arguments {
                     self.node(argument)?;
+                }
+                // A walk hands its step nothing in its place. Anything else would hand the
+                // function it never applies to a copy taking a function over what has no value,
+                // which nothing here lowers; none of the function is lowered either way.
+                if !matches!(reaches, Reaches::Emitted { .. }) {
+                    for at in crate::unrun::never_applied(node) {
+                        self.not_lowered(format!(
+                            "argument {at} of a call of {}, a function over {} it never applies",
+                            self.parameters(reaches, arguments, ty)?.0,
+                            arguments[at].ty().spelt()
+                        ));
+                    }
                 }
                 self.call(reaches, arguments, ty, aborts)
             }

@@ -146,13 +146,15 @@ impl Substitution {
         })
     }
 
-    /// What each of the first `count` variables came to, where every one of them is bound.
-    fn settled(&self, count: usize) -> Option<Vec<Ty>> {
-        (0..count).map(|at| self.0.get(at)?.clone()).collect()
+    /// What each of the first `count` variables came to, `None` for one nothing bound.
+    fn by_number(&self, count: usize) -> Vec<Option<Ty>> {
+        (0..count)
+            .map(|at| self.0.get(at).cloned().flatten())
+            .collect()
     }
 
-    fn of(types: &[Ty]) -> Self {
-        Substitution(types.iter().cloned().map(Some).collect())
+    fn of(types: &[Option<Ty>]) -> Self {
+        Substitution(types.to_vec())
     }
 }
 
@@ -183,8 +185,10 @@ pub(crate) struct Instance<'p> {
     /// Where the helper stands, which is where a call from its body is resolved.
     pub carrier: Carrier<'p>,
     pub held: &'p Held,
-    /// What each variable came to, by its number. Empty for a helper that leaves none open.
-    pub types: Vec<Ty>,
+    /// What each variable came to, by its number. Empty for a helper that leaves none open, and
+    /// `None` for a variable written only where nothing of the helper is lowered
+    /// ([`needed`]), which no call has to settle.
+    pub types: Vec<Option<Ty>>,
     /// Which copy of the helper this is, counted from nought among the copies of the one helper,
     /// which is what tells the functions of one helper apart.
     pub ordinal: usize,
@@ -229,7 +233,7 @@ impl<'p> Instance<'p> {
 /// Every copy of a helper this object defines, and which of them each call reaches.
 pub(crate) struct Specializations<'p> {
     instances: Vec<Instance<'p>>,
-    by_key: HashMap<(&'p str, &'p Reference, Vec<Ty>), InstanceId>,
+    by_key: HashMap<(&'p str, &'p Reference, Vec<Option<Ty>>), InstanceId>,
     /// Which copy each call reaching a helper reaches, by where the call stands.
     reached: HashMap<*const Node, InstanceId>,
 }
@@ -305,13 +309,17 @@ impl<'p> Specializations<'p> {
             let bound = called(held, &handed, &call.answers).expect(
                 "`Coherent` held every call of a helper to fit what the helper takes, and \
                      refused one that fits only through `Nothing` wherever it is lowered, which is \
-                     everywhere this reads (`growing::each_lowered`)",
+                     everywhere this reads (`unrun::each_lowered`)",
             );
-            let types = bound.settled(held.variables()).ok_or_else(|| {
-                not_lowered(format!(
+            let types = bound.by_number(held.variables());
+            if needed(held)
+                .into_iter()
+                .any(|var| types.get(var).is_none_or(Option::is_none))
+            {
+                return Err(not_lowered(format!(
                     "{reached}, whose body leaves open a type no call of it settles"
-                ))
-            })?;
+                )));
+            }
             let id = self.copy(recursions, helper.carrier(), held, types)?;
             index::unique(&mut self.reached, call.at, id);
         }
@@ -324,7 +332,7 @@ impl<'p> Specializations<'p> {
         recursions: &Recursions,
         carrier: Carrier<'p>,
         held: &'p Held,
-        types: Vec<Ty>,
+        types: Vec<Option<Ty>>,
     ) -> Lowered<InstanceId> {
         // Asked of the helper and not of the copies made so far, so what is refused does not turn
         // on which call was read first.
@@ -420,7 +428,7 @@ impl Recursions {
             .collect();
         // Each call in a helper's body: whom it reaches, and what it settles each variable of that
         // to, over the caller's variables. `None` where a variable is settled to nothing.
-        let calls: Vec<Vec<(usize, Option<Vec<Ty>>)>> = order
+        let calls: Vec<Vec<(usize, Vec<Option<Ty>>)>> = order
             .iter()
             .map(|key| {
                 let Owner::Helper(caller) = helpers[key].owner else {
@@ -439,7 +447,7 @@ impl Recursions {
                                 "`Coherent` held every call of a helper to fit it wherever it is \
                                  lowered, which is everywhere this reads",
                             )
-                            .settled(held.variables());
+                            .by_number(held.variables());
                         (at[&(key.0, &call.reached)], settled)
                     })
                     .collect()
@@ -453,11 +461,13 @@ impl Recursions {
                     continue;
                 }
                 let (_, reached) = order[*callee];
-                let Owner::Helper(held) = helpers[&order[*callee]].owner else {
-                    unreachable!("gathered from the helpers' bodies alone");
-                };
-                let own: Vec<Ty> = (0..held.variables()).map(|var| Ty::Var { var }).collect();
-                if settled.as_ref() == Some(&own) {
+                // At its own types: each variable bound to itself. One the call binds to nothing is
+                // not bound to other types; where a copy needs it, no copy is made (`resolve`).
+                if settled
+                    .iter()
+                    .enumerate()
+                    .all(|(var, ty)| ty.as_ref().is_none_or(|ty| *ty == Ty::Var { var }))
+                {
                     continue;
                 }
                 let why = format!(
@@ -565,7 +575,7 @@ struct Called {
 /// a call only in the step of a walk that never runs needs no copy, and none is made for it.
 fn calls_in(node: &Node) -> Vec<Called> {
     let mut calls = Vec::new();
-    crate::growing::each_lowered(node, &mut |node| {
+    crate::unrun::each_lowered(node, &mut |node| {
         if let Node::Call {
             reaches: Reaches::Helper { reached },
             arguments,
@@ -584,16 +594,38 @@ fn calls_in(node: &Node) -> Vec<Called> {
     calls
 }
 
-/// Every type `node` writes, and every node under it writes, with its variables replaced.
+/// Every type `node` writes, and every node lowered under it writes, with its variables replaced.
+///
+/// A function a call never applies is left as it is written: nothing reads it again, and a
+/// variable it alone writes is one no call settles ([`needed`]).
 fn settle(node: &mut Node, settled: &Substitution) {
     for ty in node.types_mut() {
         *ty = settled
             .applied(ty)
-            .expect("a copy settles every variable its helper leaves open");
+            .expect("a copy settles every variable its lowered body writes");
     }
-    for child in node.children_mut() {
+    for child in crate::unrun::lowered_children_mut(node) {
         settle(child, settled);
     }
+}
+
+/// The variables a copy of `held` has to have settled: every one its parameters, its answer and
+/// what of its body is lowered write.
+///
+/// Narrower than [`Held::numbers`], which is every variable the helper writes and what `Coherent`
+/// holds the numbering to: a variable written only in a function a call never applies stands where
+/// nothing is lowered, so no call has to say what it is.
+fn needed(held: &Held) -> std::collections::BTreeSet<usize> {
+    let mut numbers = std::collections::BTreeSet::new();
+    for parameter in &held.parameters {
+        parameter.ty.numbers(&mut numbers);
+    }
+    crate::unrun::each_lowered(&held.body, &mut |node| {
+        for ty in node.types() {
+            ty.numbers(&mut numbers);
+        }
+    });
+    numbers
 }
 
 #[cfg(test)]
@@ -726,7 +758,9 @@ mod tests {
             let copies: Vec<_> = specializations.iter().collect();
             let int = Ty::Prim { prim: Prim::Int };
             let text = Ty::Prim { prim: Prim::String };
-            let types: Vec<&[Ty]> = copies.iter().map(|(_, it)| it.types.as_slice()).collect();
+            let types: Vec<&[Option<Ty>]> =
+                copies.iter().map(|(_, it)| it.types.as_slice()).collect();
+            let (int, text) = (Some(int), Some(text));
             assert_eq!(
                 types,
                 [&[int.clone(), int.clone()][..], &[text, int][..]],
@@ -789,15 +823,21 @@ mod tests {
             &[INT, STRING],
         );
         specialized(&holding(&helpers, &body), |specializations, _| {
-            let copies: Vec<(String, Vec<Ty>)> = specializations
+            let copies: Vec<(String, Vec<Option<Ty>>)> = specializations
                 .iter()
                 .map(|(_, it)| (it.held.reached.rendered(), it.types.clone()))
                 .collect();
             assert_eq!(
                 copies,
                 [
-                    ("first".to_string(), vec![Ty::Prim { prim: Prim::Int }]),
-                    ("second".to_string(), vec![Ty::Prim { prim: Prim::String }]),
+                    (
+                        "first".to_string(),
+                        vec![Some(Ty::Prim { prim: Prim::Int })]
+                    ),
+                    (
+                        "second".to_string(),
+                        vec![Some(Ty::Prim { prim: Prim::String })]
+                    ),
                 ]
             );
         })
@@ -898,11 +938,11 @@ mod tests {
         specialized(
             &holding(&helpers, &call("m.even", &[text("a")], INT)),
             |specializations, _| {
-                let copies: Vec<(String, Vec<Ty>)> = specializations
+                let copies: Vec<(String, Vec<Option<Ty>>)> = specializations
                     .iter()
                     .map(|(_, it)| (it.held.reached.rendered(), it.types.clone()))
                     .collect();
-                let text = vec![Ty::Prim { prim: Prim::String }];
+                let text = vec![Some(Ty::Prim { prim: Prim::String })];
                 assert_eq!(
                     copies,
                     [
@@ -969,6 +1009,52 @@ mod tests {
             refused.downcast_ref::<crate::NotLowered>().is_some(),
             "{refused}"
         );
+    }
+
+    /// A variable written only in a function a call never applies stands where nothing is lowered,
+    /// so no call has to settle it: the copy is made, with that variable left as nothing settled.
+    #[test]
+    fn a_variable_only_a_function_never_applied_writes_is_not_asked_for() {
+        let nothing = r#"{"nothing":{}}"#;
+        let empty = format!(r#"{{"list":{nothing}}}"#);
+        let step_ty = format!(r#"{{"fn":{{"takes":[{empty},{nothing}],"answers":{empty}}}}}"#);
+        let block = node(
+            "block",
+            &format!(
+                r#""site":0,"parameters":[{{"binding":2,"name":"acc"}},{{"binding":3,"name":"x"}}],"body":{}"#,
+                read(2, &empty)
+            ),
+            &step_ty,
+        );
+        let absent = node("none", "", r#"{"option":{"var":0}}"#);
+        let step = node(
+            "let",
+            &format!(
+                r#""binding":1,"binds":{{"option":{{"var":0}}}},"value":{absent},"body":{block}"#
+            ),
+            &step_ty,
+        );
+        let walk = node(
+            "call",
+            &format!(
+                r#""reaches":{{"is":"emitted","operation":"BUILD_LIST"}},"arguments":[{step},{},{}]"#,
+                node("list", r#""elements":[]"#, &empty),
+                number(0)
+            ),
+            &empty,
+        );
+        let helpers = [helper("m.h", &[INT], &walk)];
+        let types = specialized(
+            &holding(&helpers, &call("m.h", &[number(1)], &empty)),
+            |specializations, _| {
+                specializations
+                    .iter()
+                    .map(|(_, it)| it.types.clone())
+                    .collect::<Vec<_>>()
+            },
+        )
+        .expect("a copy that settles every variable it lowers");
+        assert_eq!(types, vec![vec![None]]);
     }
 
     /// A variable stands in a helper's body and nowhere else.
@@ -1048,7 +1134,7 @@ mod tests {
         };
         let mut bound = Substitution::default();
         assert!(bound.binds(&template, &settled));
-        assert_eq!(bound.settled(2), Some(vec![int(), text]));
+        assert_eq!(bound.by_number(2), vec![Some(int()), Some(text)]);
         let disagreeing = Ty::Fn {
             fn_: FnSignature {
                 takes: vec![int(), int()],

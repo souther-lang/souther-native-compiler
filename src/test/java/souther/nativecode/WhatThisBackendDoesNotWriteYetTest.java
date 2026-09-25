@@ -129,6 +129,24 @@ class WhatThisBackendDoesNotWriteYetTest {
     }
 
     /**
+     * A fold over an empty list literal that is not rewritten into a walk hands its helper a
+     * function over what has no value, which it never applies. The checker's backend hands
+     * {@code Fn.NEVER} in its place; a copy here would have to take a function over a type nothing
+     * lays out, so it is refused as not lowered, and nothing of the function is.
+     */
+    @Test
+    void aFunctionAHelperNeverAppliesIsNotLoweredYet() {
+        assertThatThrownBy(() -> NativeCompiler.compile(CheckedProgram.of(List.of("""
+                module folding exposing ( kept )
+
+                behavior kept : (a: Int) -> Int
+                let kept (a) = List.fold((acc, x) -> acc, a, [])
+                """))))
+                .isInstanceOf(NotLowered.class)
+                .hasMessageContaining("it never applies");
+    }
+
+    /**
      * A value only passing through is not written, so a behavior handing one back compiles; what
      * is refused is the boundary that would have to write a {@code Decimal} out, which is where
      * its canonical form would be decided.

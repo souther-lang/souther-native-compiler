@@ -19,6 +19,7 @@ mod manifest;
 mod replaced;
 mod specialize;
 pub mod transport;
+mod unrun;
 mod versioned;
 
 use anyhow::{Result, anyhow, bail};
@@ -2814,7 +2815,7 @@ impl<'p> Reach<'p> {
     /// walk that never runs.
     fn of(&mut self, body: &transport::Body<'p>, declared: &Declared) -> Result<()> {
         let mut named = Ok(());
-        growing::each_lowered(body.node, &mut |node| {
+        unrun::each_lowered(body.node, &mut |node| {
             if let Some(key) = node.builds() {
                 match declared.shape(key) {
                     Ok(declaration) => {
@@ -5028,9 +5029,9 @@ fn copy_slots(builder: &mut FunctionBuilder, from: ir::Value, to: ir::Value, cou
 /// is below the length read without a sign, which is where `foldFrom`, the fold it was rewritten
 /// from, finds an element: a negative `from` finds none.
 ///
-/// A step that never runs is not lowered: it takes a value of what has no value, so `xs` is an
-/// empty list literal and the walk answers an empty list. `xs` and `from` are still worked out,
-/// as the fold worked them out.
+/// A step never applied ([`unrun`]) is not lowered, nor anything bound around it: it takes a value
+/// of what has no value, so `xs` is an empty list literal and the walk answers an empty list. `xs`
+/// and `from` are still worked out.
 fn build_list(
     builder: &mut FunctionBuilder,
     lowering: &Lowering,
@@ -5039,11 +5040,26 @@ fn build_list(
     abort: ir::Block,
     walk: &Node,
 ) -> Lowered<ir::Value> {
-    let (Some(step), Node::Call { arguments, .. }) = (growing::Step::of_walk(walk), walk) else {
-        unreachable!("`growing` held every walk building a list to walk with a step");
+    let Node::Call { arguments, .. } = walk else {
+        unreachable!("a walk is a call");
     };
     let [_, walked, from] = arguments.as_slice() else {
         unreachable!("`Coherent` held a walk to the three arguments it takes");
+    };
+    // A step never applied is not lowered, the values bound around it included: the list walked
+    // is an empty list literal, so the walk answers an empty list.
+    if !unrun::never_applied(walk).is_empty() {
+        lower(builder, lowering, module, bindings, abort, walked)?;
+        lower(builder, lowering, module, bindings, abort, from)?;
+        let empty = lowering.room(builder, module, room_for_list(0));
+        let nought = builder.ins().iconst(types::I64, 0);
+        builder
+            .ins()
+            .store(TRUSTED, nought, empty, LIST_LENGTH as i32);
+        return Ok(empty);
+    }
+    let Some(step) = growing::Step::of_walk(walk) else {
+        unreachable!("`growing` held every walk building a list to walk with a step");
     };
     // Every binding entered here is left again whichever way this ends, as a `let`'s is.
     let mut entered = Vec::new();
@@ -5057,14 +5073,6 @@ fn build_list(
         }
         let list = lower(builder, lowering, module, bindings, abort, walked)?;
         let from = lower(builder, lowering, module, bindings, abort, from)?;
-        if step.never_runs() {
-            let empty = lowering.room(builder, module, room_for_list(0));
-            let nought = builder.ins().iconst(types::I64, 0);
-            builder
-                .ins()
-                .store(TRUSTED, nought, empty, LIST_LENGTH as i32);
-            return Ok(empty);
-        }
 
         let [grown, element] = step.parameters else {
             unreachable!("`growing` answers a step only where it takes two parameters");

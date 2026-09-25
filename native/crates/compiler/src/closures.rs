@@ -30,9 +30,9 @@
 //! Not every block is a site. The step of a walk that builds a collection runs where the walk
 //! stands, as the body of a loop, and is never a value ([`Step::of_walk`]): its parameters are bound
 //! in the frame the walk stands in, the way a `let`'s are, and what it reads outside itself is read
-//! there. A block inside such a step is a site like any other. A step that never runs
-//! ([`Step::never_runs`]) is not lowered at all, so nothing in it is planned either; its sites are
-//! still numbered, so a number two sites share is refused wherever they stand.
+//! there. A block inside such a step is a site like any other. A function a call never applies
+//! ([`crate::unrun`]) is not lowered at all, so nothing in it is planned either; its sites are still
+//! numbered, so a number two sites share is refused wherever they stand.
 
 use crate::growing::Step;
 use crate::index;
@@ -142,6 +142,22 @@ impl<'p, 'a> Planner<'p, 'a> {
         acc: &mut Vec<(usize, Ty)>,
         seen: &mut HashSet<usize>,
     ) -> Result<()> {
+        // A function a call never applies is not lowered, so nothing in it is planned; its sites
+        // are still numbered.
+        let unrun = crate::unrun::never_applied(node);
+        if let Node::Call { arguments, .. } = node
+            && !unrun.is_empty()
+        {
+            for (at, argument) in arguments.iter().enumerate() {
+                if unrun.contains(&at) {
+                    Planner::new(self.sites, self.carrier, false)
+                        .free(argument, &mut HashSet::new())?;
+                } else {
+                    self.walk(argument, bound, acc, seen)?;
+                }
+            }
+            return Ok(());
+        }
         if let (Some(step), Node::Call { arguments, .. }) = (Step::of_walk(node), node) {
             return self.step(&step, &arguments[1..], bound, acc, seen);
         }
@@ -330,13 +346,7 @@ impl<'p, 'a> Planner<'p, 'a> {
                 added.push(parameter.binding);
             }
         }
-        let walked = if step.never_runs() {
-            Planner::new(self.sites, self.carrier, false)
-                .free(step.body, &mut HashSet::new())
-                .map(drop)
-        } else {
-            self.walk(step.body, bound, acc, seen)
-        };
+        let walked = self.walk(step.body, bound, acc, seen);
         for binding in added {
             bound.remove(&binding);
         }
