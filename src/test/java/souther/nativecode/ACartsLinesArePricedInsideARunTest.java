@@ -20,7 +20,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <p>The subtotal is a helper of this module's and not {@code List.fold}. The standard library's
  * {@code fold} is written over {@code foldFrom}, a helper polymorphic in what it walks, and a
  * helper like that is #64; a user's own recursive helper at concrete types is what is asked here.
- * Every row states scalars; a row stating an order is #61.
+ * Every row states scalars; rows stating an order are in {@link ARowHoldsWhereverItIsRunTest}.
  */
 class ACartsLinesArePricedInsideARunTest {
 
