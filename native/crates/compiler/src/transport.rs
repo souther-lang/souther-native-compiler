@@ -18,7 +18,36 @@ use serde::Deserialize;
 
 /// What this side reads. A document written to say anything else is refused rather than read as
 /// much of as happens to parse.
-pub const TRANSPORT_VERSION: u32 = 18;
+///
+/// The last of [`MOVES`], and written nowhere else on this side.
+pub const TRANSPORT_VERSION: u32 = MOVES[MOVES.len() - 1].0;
+
+/// What each version moved, since the one before it, oldest first. The versions before the first
+/// here are in the history of this file.
+///
+/// A change to what the document means adds its line at the end, under the next number. That is
+/// what the list is for, beside saying what moved: two branches that each move the document to the
+/// same number each add a different line at one place, which a merge stops at. Two edits of one
+/// constant to the same number merge without a word, which is how two different documents were
+/// both once written as 17. That the numbers follow on from one another is held by a test.
+pub const MOVES: &[(u32, &str)] = &[
+    (
+        17,
+        "an attempted construction (`attempt`), and what another build's clauses are answered \
+         under (`headers`)",
+    ),
+    (
+        18,
+        "what constructing a behavior requires injected, beside its body or its composition \
+         (`requirements`)",
+    ),
+    (
+        19,
+        "a helper, and a call of one, under the reference a call reaches it by (`reached`), as the \
+         route and the declaration it reaches, and a type variable a helper's body leaves open \
+         (`var`)",
+    ),
+];
 
 /// A document of [`TRANSPORT_VERSION`], and no other, read through [`Program::read`] and nothing
 /// else ([`crate::versioned`]).
@@ -189,6 +218,13 @@ impl<'p> Body<'p> {
     pub fn carrier(&self) -> Carrier<'p> {
         Carrier(self.module)
     }
+
+    /// Whether this is the body of a helper that leaves type variables open. Such a body is not
+    /// lowered as it is written, and nothing in it is planned for a function of its own: what is
+    /// lowered is its copies ([`crate::specialize`]).
+    pub fn leaves_types_open(&self) -> bool {
+        self.owner.helper().is_some_and(|held| held.variables() > 0)
+    }
 }
 
 /// The module whose copy of a helper, and whose home of a value, a call reaches: the module a body
@@ -226,6 +262,23 @@ pub enum Owner<'p> {
         target: &'p Target,
         at: usize,
     },
+}
+
+impl<'p> Owner<'p> {
+    /// The helper this is the body of, where it is one: the one kind of body the checker leaves type
+    /// variables open in, and the one lowered as copies. Every kind is named, so a kind added here
+    /// says whether it is one.
+    pub fn helper(self) -> Option<&'p Held> {
+        match self {
+            Owner::Helper(held) => Some(held),
+            Owner::Value(_)
+            | Owner::Entry(_)
+            | Owner::Definition(_)
+            | Owner::Example(_)
+            | Owner::Invariant { .. }
+            | Owner::Ensures { .. } => None,
+        }
+    }
 }
 
 /// Who declared a type, which is what decides who defines the byte its values are tagged with.
@@ -1279,15 +1332,24 @@ pub enum Answers {
 
 /// A definition the module holds as one of its own.
 ///
-/// Named by where it was declared, held by the module that reaches it. Two modules reaching one
-/// definition hold a copy each.
+/// Named by the reference a call in the holding module reaches it by, which is what a call to it
+/// writes ([`Reaches::Helper`]); not by where it was declared, which for an operation of the
+/// standard library is a module the reference does not name. Two modules reaching one definition
+/// hold a copy each.
 ///
 /// What it takes is its parameters, each a name and a type together, and what it answers is its
 /// body's type. Neither is carried a second time, so the two cannot disagree.
+///
+/// A type in it may be a variable its body leaves open ([`Ty::Var`]), numbered within this
+/// definition alone. Such a definition is not a function yet: what each variable comes to is what a
+/// call hands it, and what is lowered is one copy of it for each set of types a call needs
+/// ([`crate::specialize`]).
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Held {
-    pub declared: String,
+    /// The reference a call in the holding module reaches it by, which is also what it is a copy
+    /// of: the declaration is the half of the reference the route reaches.
+    pub reached: Reference,
     pub parameters: Vec<HeldParameter>,
     pub body: Node,
 }
@@ -1301,6 +1363,84 @@ impl Held {
     /// What it answers: its body's type.
     pub fn answers(&self) -> &Ty {
         self.body.ty()
+    }
+
+    /// How many type variables it leaves open: one more than the largest number any of its types
+    /// writes, and none where no type of it writes one. Every number below that is one of them,
+    /// which [`Coherent`](crate::coherent::Coherent) holds ([`Held::numbers`]).
+    pub fn variables(&self) -> usize {
+        self.numbers().last().map_or(0, |largest| largest + 1)
+    }
+
+    /// Every number a type variable is written under in it, in its parameters or its body.
+    pub fn numbers(&self) -> std::collections::BTreeSet<usize> {
+        let mut numbers = std::collections::BTreeSet::new();
+        for parameter in &self.parameters {
+            parameter.ty.numbers(&mut numbers);
+        }
+        self.body.each(&mut |node| {
+            for ty in node.types() {
+                ty.numbers(&mut numbers);
+            }
+        });
+        numbers
+    }
+}
+
+/// A reference to a helper, as the checker settled it: the route the holding module reaches it by,
+/// and the declaration the route reaches, in one value (`ReachName.Declaration`).
+///
+/// Not its spelling. A helper and a call of it carry this same value, so a call finds its helper by
+/// the value and not by a spelling both sides would have to render alike; and what a module is held
+/// to about its helpers is asked of the declaration inside it ([`Reference::declaration`]). The
+/// spelling is worked out from it ([`Reference::rendered`]) the one way the checker renders one, for
+/// a symbol and for a message, and read for nothing else.
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq, Hash)]
+#[serde(tag = "is", rename_all = "lowercase", deny_unknown_fields)]
+pub enum Reference {
+    /// A declaration of the module doing the reading, reached as it stands.
+    Own { module: String, name: String },
+    /// A declaration of another module, reached under that module's name.
+    OfModule { module: String, name: String },
+    /// An operation the standard library writes, reached under the alias it publishes it as.
+    Library { alias: String, name: String },
+}
+
+/// What a [`Reference`] reaches: a declaration a module declares, or an operation the standard
+/// library writes. Two references reaching one of these reach one declaration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Reaching<'r> {
+    Module { module: &'r str, name: &'r str },
+    Library { alias: &'r str, name: &'r str },
+}
+
+impl Reference {
+    /// The declaration this reaches.
+    pub fn declaration(&self) -> Reaching<'_> {
+        match self {
+            Reference::Own { module, name } | Reference::OfModule { module, name } => {
+                Reaching::Module { module, name }
+            }
+            Reference::Library { alias, name } => Reaching::Library { alias, name },
+        }
+    }
+
+    /// The module whose declaration this reaches by a route of a module's, where it does.
+    pub fn declaring_module(&self) -> Option<&str> {
+        match self {
+            Reference::Own { module, .. } | Reference::OfModule { module, .. } => Some(module),
+            Reference::Library { .. } => None,
+        }
+    }
+
+    /// How the checker spells it (`ReachName::rendered`): its own declaration bare, another
+    /// module's under that module's name, and a library operation under its alias.
+    pub fn rendered(&self) -> String {
+        match self {
+            Reference::Own { module: _, name } => name.clone(),
+            Reference::OfModule { module, name } => format!("{module}.{name}"),
+            Reference::Library { alias, name } => format!("{alias}.{name}"),
+        }
     }
 }
 
@@ -1401,6 +1541,12 @@ pub enum Ty {
     Map {
         map: MapTy,
     },
+    /// A type a helper's body leaves open, by the number it has within that helper ([`Held`]). It
+    /// stands nowhere else, and means nothing outside the helper that numbers it: two helpers' `0`
+    /// are two variables.
+    Var {
+        var: usize,
+    },
 }
 
 #[derive(Debug, Deserialize, PartialEq, Eq, Hash, Clone)]
@@ -1445,11 +1591,45 @@ impl Ty {
             Ty::List { list } => format!("a List of {}", list.spelt()),
             Ty::Set { set } => format!("a Set of {}", set.spelt()),
             Ty::Map { map } => format!("a Map from {} to {}", map.key.spelt(), map.value.spelt()),
+            Ty::Var { var } => format!("the type variable {var}"),
+        }
+    }
+
+    /// Every type directly inside this one, in the order it is written.
+    ///
+    /// No arm standing for the rest, so a type added here is one every walk over types stops
+    /// compiling over until it says what it holds.
+    pub fn members(&self) -> Vec<&Ty> {
+        match self {
+            Ty::Prim { .. } | Ty::Declared { .. } | Ty::Union { .. } | Ty::Var { .. } => Vec::new(),
+            Ty::Option { option: held } | Ty::List { list: held } | Ty::Set { set: held } => {
+                vec![held]
+            }
+            Ty::Tuple { tuple } => tuple.iter().collect(),
+            Ty::Fn { fn_ } => fn_.takes.iter().chain([fn_.answers.as_ref()]).collect(),
+            Ty::Map { map } => vec![&map.key, &map.value],
+        }
+    }
+
+    /// Whether this type writes a type variable anywhere in it.
+    pub fn is_open(&self) -> bool {
+        let mut numbers = std::collections::BTreeSet::new();
+        self.numbers(&mut numbers);
+        !numbers.is_empty()
+    }
+
+    /// Every number a type variable is written under in this type, added to `numbers`.
+    pub fn numbers(&self, numbers: &mut std::collections::BTreeSet<usize>) {
+        if let Ty::Var { var } = self {
+            numbers.insert(*var);
+        }
+        for member in self.members() {
+            member.numbers(numbers);
         }
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(tag = "core", rename_all = "lowercase", deny_unknown_fields)]
 pub enum Node {
     Int {
@@ -1668,7 +1848,7 @@ pub enum Node {
 /// The document writes the arms as the checker keeps them, a list, and which form the list is in
 /// is told here, where it is read, the way the checker tells it (`mapsClauses`): one arm naming no
 /// clause is the first form, and anything else the second.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(try_from = "Vec<Departure>")]
 pub enum Departures {
     /// `else e`, or `| _ -> e` on its own: one value for whichever clause did not hold.
@@ -1738,11 +1918,23 @@ impl Departures {
                 .collect(),
         }
     }
+
+    /// The same bodies, in the same order, to be rewritten in place.
+    pub fn bodies_mut(&mut self) -> Vec<&mut Node> {
+        match self {
+            Departures::Any(body) => vec![body],
+            Departures::ByClause { named, unnamed } => named
+                .iter_mut()
+                .map(|(_, body)| body)
+                .chain(unnamed.as_deref_mut())
+                .collect(),
+        }
+    }
 }
 
 /// One parameter of a [`Node::Block`], numbered the way any other binder on the wire is: where it
 /// is written, by `ProgramWriter`'s own counter.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct Parameter {
     pub binding: usize,
@@ -1766,8 +1958,9 @@ pub struct Parameter {
 #[derive(Debug, Deserialize, PartialEq, Eq, Clone)]
 #[serde(tag = "is", rename_all = "lowercase", deny_unknown_fields)]
 pub enum Reaches {
-    /// A definition the calling module holds, which is a copy of its own.
-    Helper { declared: String },
+    /// A definition the calling module holds, which is a copy of its own, by the reference the
+    /// call reaches it by: the same value the definition is written under ([`Held::reached`]).
+    Helper { reached: Reference },
     /// A value that runs where it is declared, and this module is that module: an ordinary call to
     /// the method this object runs the value as, the same call a helper's own reach is (souther's
     /// JVM backend calls it through the identical path a recursive helper's is — `BodyGen`'s
@@ -1834,7 +2027,7 @@ pub enum Reading {
 }
 
 /// One arm of a fork on what a value is.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct Arm {
     pub selects: Vec<Selects>,
@@ -1850,7 +2043,7 @@ pub struct Arm {
 }
 
 /// What one case of an arm tests for.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(tag = "tests", rename_all = "lowercase", deny_unknown_fields)]
 pub enum Selects {
     /// The value's own type is one of these. The atoms are the leaves the checker resolved the
@@ -1870,7 +2063,7 @@ impl Reaches {
     /// over until it is listed.
     pub fn types(&self) -> Vec<&Ty> {
         match self {
-            Reaches::Helper { declared: _ }
+            Reaches::Helper { reached: _ }
             | Reaches::Value { module: _, name: _ }
             | Reaches::PublishedValue { module: _, name: _ }
             | Reaches::Behavior { declared: _ } => Vec::new(),
@@ -1879,6 +2072,21 @@ impl Reaches {
                 takes,
                 fact,
             } => takes.iter().chain(fact.types()).collect(),
+        }
+    }
+
+    /// The same types, to be rewritten in place.
+    pub fn types_mut(&mut self) -> Vec<&mut Ty> {
+        match self {
+            Reaches::Helper { reached: _ }
+            | Reaches::Value { module: _, name: _ }
+            | Reaches::PublishedValue { module: _, name: _ }
+            | Reaches::Behavior { declared: _ } => Vec::new(),
+            Reaches::Kernel {
+                kernel: _,
+                takes,
+                fact,
+            } => takes.iter_mut().chain(fact.types_mut()).collect(),
         }
     }
 }
@@ -1891,11 +2099,27 @@ impl KernelFact {
             KernelFact::OrderingSubject { ty } => vec![ty],
         }
     }
+
+    /// The same types, to be rewritten in place.
+    pub fn types_mut(&mut self) -> Vec<&mut Ty> {
+        match self {
+            KernelFact::None | KernelFact::StringMatches { pattern: _ } => Vec::new(),
+            KernelFact::OrderingSubject { ty } => vec![ty],
+        }
+    }
 }
 
 impl Reading {
     /// Every type this reading writes.
     pub fn types(&self) -> Vec<&Ty> {
+        match self {
+            Reading::AsTheyStand | Reading::ExactNumbers => Vec::new(),
+            Reading::In { ty } => vec![ty],
+        }
+    }
+
+    /// The same types, to be rewritten in place.
+    pub fn types_mut(&mut self) -> Vec<&mut Ty> {
         match self {
             Reading::AsTheyStand | Reading::ExactNumbers => Vec::new(),
             Reading::In { ty } => vec![ty],
@@ -2061,6 +2285,90 @@ impl Node {
                 ty,
                 aborts: _,
             } => std::iter::once(ty).chain(reaches.types()).collect(),
+        }
+    }
+
+    /// Every type this node itself writes, as [`Node::types`] lists them, to be rewritten in place.
+    ///
+    /// The same fields, named the same way, so that a type [`Node::types`] reads is one this
+    /// rewrites: a copy of a body with its variables settled ([`crate::specialize`]) that settled
+    /// fewer types than are read would leave a variable standing where a lowering reads a type.
+    pub fn types_mut(&mut self) -> Vec<&mut Ty> {
+        match self {
+            Node::Int { ty, .. }
+            | Node::Read { ty, .. }
+            | Node::Bool { ty, .. }
+            | Node::Str { ty, .. }
+            | Node::Neg { ty, .. }
+            | Node::If { ty, .. }
+            | Node::Unit { ty, .. }
+            | Node::Construct { ty, .. }
+            | Node::Field { ty, .. }
+            | Node::Some { ty, .. }
+            | Node::None { ty, .. }
+            | Node::Tuple { ty, .. }
+            | Node::Member { ty, .. }
+            | Node::List { ty, .. }
+            | Node::Block { ty, .. }
+            | Node::Widen { ty, .. }
+            | Node::Apply { ty, .. } => vec![ty],
+            Node::Binary { reading, ty, .. } => {
+                std::iter::once(ty).chain(reading.types_mut()).collect()
+            }
+            Node::Let { binds, ty, .. } | Node::Attempt { binds, ty, .. } => vec![ty, binds],
+            Node::Match { arms, ty, .. } => std::iter::once(ty)
+                .chain(arms.iter_mut().filter_map(|arm| arm.binds.as_mut()))
+                .collect(),
+            Node::Call { reaches, ty, .. } => {
+                std::iter::once(ty).chain(reaches.types_mut()).collect()
+            }
+        }
+    }
+
+    /// The nodes directly under this one, as [`Node::children`] lists them, to be rewritten in
+    /// place.
+    pub fn children_mut(&mut self) -> Vec<&mut Node> {
+        match self {
+            Node::Binary { left, right, .. } => vec![left, right],
+            Node::Neg { operand, .. } => vec![operand],
+            Node::Let { value, body, .. } => vec![value, body],
+            Node::If {
+                cond, then, els, ..
+            } => vec![cond, then, els],
+            Node::Construct { values, .. } => values.iter_mut().collect(),
+            Node::Attempt {
+                values,
+                then,
+                departures,
+                ..
+            } => values
+                .iter_mut()
+                .chain(std::iter::once(then.as_mut()))
+                .chain(departures.bodies_mut())
+                .collect(),
+            Node::Field { target, .. } => vec![target],
+            Node::Match { subject, arms, .. } => std::iter::once(subject.as_mut())
+                .chain(arms.iter_mut().map(|arm| &mut arm.body))
+                .collect(),
+            Node::Some { value, .. } | Node::Widen { value, .. } => vec![value],
+            Node::Tuple { members, .. } => members.iter_mut().collect(),
+            Node::Member { tuple, .. } => vec![tuple],
+            Node::List { elements, .. } => elements.iter_mut().collect(),
+            Node::Call { arguments, .. } => arguments.iter_mut().collect(),
+            Node::Block { body, .. } => vec![body],
+            Node::Apply {
+                function,
+                arguments,
+                ..
+            } => std::iter::once(function.as_mut())
+                .chain(arguments.iter_mut())
+                .collect(),
+            Node::Int { .. }
+            | Node::Read { .. }
+            | Node::Bool { .. }
+            | Node::Str { .. }
+            | Node::Unit { .. }
+            | Node::None { .. } => Vec::new(),
         }
     }
 
@@ -2396,6 +2704,26 @@ impl AbortKind {
             AbortKind::DivisionByZero => "DIVISION_BY_ZERO",
             AbortKind::RequiredFormHasNoPlace => "REQUIRED_FORM_HAS_NO_PLACE",
             AbortKind::InvalidBounds => "INVALID_BOUNDS",
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Each move is under the number after the one before it, so a version is never taken twice
+    /// and never skipped.
+    #[test]
+    fn every_move_takes_the_next_version() {
+        for pair in MOVES.windows(2) {
+            assert_eq!(
+                pair[1].0,
+                pair[0].0 + 1,
+                "{:?} after {:?}",
+                pair[1],
+                pair[0]
+            );
         }
     }
 }

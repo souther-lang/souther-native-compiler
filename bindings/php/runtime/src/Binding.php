@@ -21,6 +21,22 @@ abstract class Binding
     private readonly InjectionRegistry $registry;
 
     /**
+     * What each version of the protocol moved, by its number, oldest first. The versions before the
+     * first here are in the history of this file.
+     *
+     * A change that moves the protocol adds its line at the end under the next number, and moves
+     * {@see PROTOCOL} to it, which a test holds to the last key here. Two branches each moving to
+     * the same number add two different lines at one place, which a merge stops at; two edits of
+     * one constant to the same number merge without a word.
+     */
+    public const MOVES = [
+        2 => 'a list is handed over and read back as a PHP list, packed into columns and unpacked '
+            . 'into elements (Session::list, Session::elements)',
+        3 => 'a class per behavior, bound to what it requires: registering implementations for a '
+            . 'call is InjectionRegistry\'s, apart from the run\'s arena (Bound, InjectionRegistry)',
+    ];
+
+    /**
      * @param array<string, InjectionSlot> $slots by the declared name of the behavior each is for
      */
     protected function __construct(

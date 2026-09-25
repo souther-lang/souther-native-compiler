@@ -48,7 +48,27 @@
 /// Public, because a host is a party to it too: what a binding reads off the manifest a build
 /// writes beside the object says which generation the functions it names answer to, and that is
 /// this number and not a copy of it.
-pub const ABI_GENERATION: u32 = 3;
+///
+/// The last of [`GENERATIONS`], and written nowhere else.
+pub const ABI_GENERATION: u32 = GENERATIONS[GENERATIONS.len() - 1].0;
+
+/// What each generation moved, oldest first, as the paragraphs above tell it at length.
+///
+/// A change that moves the generation adds its line at the end under the next number, and the
+/// number is read off the last line. Two branches each moving to the same number add two different
+/// lines at one place, which a merge stops at; two edits of one constant to the same number merge
+/// without a word. That the numbers follow on from one another is held by a test.
+pub const GENERATIONS: &[(u32, &str)] = &[
+    (
+        2,
+        "a status answered and the value written through a pointer (souther-native-compiler#19)",
+    ),
+    (
+        3,
+        "a behavior with no body answered by what a host registered for it, and the statuses a \
+         host's implementation brings about (souther-native-compiler#46)",
+    ),
+];
 
 /// Whether a module's name can stand in a symbol: it carries no `$`, which is what every symbol
 /// below is split on. A module's name carries dots.
@@ -95,24 +115,27 @@ pub fn behavior_symbol(module: &str, behavior: &str) -> String {
 
 /// The symbol a definition a module holds is reached by.
 ///
-/// Both the module holding it and the module that declared it, because a module carries every
-/// helper it reaches and two modules reaching one helper hold a copy each — which is what the
-/// language says a published helper is. One name for both copies would be one of them silently
-/// standing for the other.
+/// The module holding it and the reference that module reaches it by: `taxed` for a helper of the
+/// module's own, `pricing.taxed` for one another module declares, `List.foldFrom` for an operation
+/// the standard library writes. Not the declaration it is a copy of, which the reference does not
+/// spell and which two modules reach under two references. The carrier is in it because a module
+/// carries every helper it reaches and two modules reaching one helper hold a copy each — which is
+/// what the language says a published helper is. One name for both copies would be one of them
+/// silently standing for the other.
 ///
 /// Nothing outside the object reaches one of these, so what this has to be is unambiguous here and
-/// nowhere else. The `$` is what keeps it so: a module's name carries dots and a declaration's
-/// carries them too, and neither carries this.
+/// nowhere else. The `$` is what keeps it so: a module's name carries dots and a reference carries
+/// them too, and neither carries this.
 ///
 /// # Panics
 ///
 /// Where the carrier's name does not stand in a symbol ([`spells_a_module`]).
-pub fn held_symbol(carrier: &str, declared: &str) -> String {
+pub fn held_symbol(carrier: &str, reached: &str) -> String {
     assert!(
         spells_a_module(carrier),
         "a module's name carries no dollar, and the symbol is split on one: {carrier}"
     );
-    format!("souther{ABI_GENERATION}.{carrier}${declared}")
+    format!("souther{ABI_GENERATION}.{carrier}${reached}")
 }
 
 /// The symbol a value's home is reached by, inside the object of the module that declares it.
@@ -1468,6 +1491,20 @@ mod tests {
         value_symbol,
     };
 
+    /// Each generation is under the number after the one before it.
+    #[test]
+    fn every_generation_takes_the_next_number() {
+        for pair in super::GENERATIONS.windows(2) {
+            assert_eq!(
+                pair[1].0,
+                pair[0].0 + 1,
+                "{:?} after {:?}",
+                pair[1],
+                pair[0]
+            );
+        }
+    }
+
     #[test]
     fn a_behavior_is_reached_by_its_module_and_its_name() {
         assert_eq!(
@@ -1498,11 +1535,12 @@ mod tests {
         }
     }
 
-    /// Two modules holding one declaration hold a copy each, and the copies are not one symbol.
+    /// Two modules holding one declaration hold a copy each, and the copies are not one symbol:
+    /// the declaring module reaches it as its own, and another under the declaring module's name.
     #[test]
     fn a_definition_held_by_two_modules_is_two_symbols() {
         assert_ne!(
-            held_symbol("pricing", "pricing.taxed"),
+            held_symbol("pricing", "taxed"),
             held_symbol("order", "pricing.taxed")
         );
     }
@@ -1510,7 +1548,7 @@ mod tests {
     /// A row's entry is reached by neither the behavior's name nor another row's.
     #[test]
     fn a_helper_and_a_value_of_one_name_are_two_symbols() {
-        assert_ne!(held_symbol("m", "m.v"), home_symbol("m", "v"));
+        assert_ne!(held_symbol("m", "v"), home_symbol("m", "v"));
     }
 
     #[test]
@@ -1573,7 +1611,7 @@ mod tests {
         assert_ne!(type_symbol("lib", "rates"), behavior_symbol("lib", "rates"));
         assert_ne!(
             type_symbol("pricing", "taxed"),
-            held_symbol("pricing", "pricing.taxed")
+            held_symbol("pricing", "taxed")
         );
     }
 
@@ -1617,7 +1655,7 @@ mod tests {
         );
         assert_ne!(
             value_symbol("pricing", "standard"),
-            held_symbol("pricing", "pricing.standard")
+            held_symbol("pricing", "standard")
         );
     }
 

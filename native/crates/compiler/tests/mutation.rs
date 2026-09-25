@@ -56,7 +56,7 @@ fn binary(op: &str, left: Value, right: Value, ty: Value, aborts: Value) -> Valu
 
 fn program(declarations: Value, helpers: Value, publishes: Value) -> Value {
     json!({
-        "transport": 18,
+        "transport": 19,
         "declarations": declarations,
         "behaviors": [],
         "modules": [{
@@ -72,7 +72,12 @@ fn helper(name: &str, takes: &[Value], body: Value) -> Value {
         .enumerate()
         .map(|(at, ty)| json!({ "name": format!("p{at}"), "type": ty }))
         .collect();
-    json!({ "declared": name, "parameters": parameters, "body": body })
+    let (module, own) = name.rsplit_once('.').expect("a helper written module.name");
+    json!({
+        "reached": { "is": "own", "module": module, "name": own },
+        "parameters": parameters,
+        "body": body,
+    })
 }
 
 /// What no fixture the writer produced holds: a type that states a clause and is built, a kernel
@@ -319,6 +324,7 @@ fn fixtures() -> Vec<(&'static str, Value)> {
         ),
         ("values", read_json(include_str!("values.transport.json"))),
         ("ensures", read_json(include_str!("ensures.transport.json"))),
+        ("folding", read_json(include_str!("folding.transport.json"))),
     ];
     documents.extend(by_hand());
     documents

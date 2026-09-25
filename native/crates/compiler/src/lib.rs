@@ -16,6 +16,7 @@ mod kernels;
 mod link;
 mod manifest;
 mod replaced;
+mod specialize;
 pub mod transport;
 mod versioned;
 
@@ -43,6 +44,7 @@ use souther_native_abi::{
     room_for_carried, room_for_fields, room_for_held, room_for_list, room_for_members,
     room_for_text, spells_a_module, spells_a_name, type_symbol, value_symbol,
 };
+use specialize::{Instance, InstanceId, Specializations};
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
@@ -378,6 +380,11 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
         closures,
         defined,
     } = coherent;
+    // Every copy of a helper this object defines, and which of them each call reaches, settled
+    // before anything is declared: a helper that leaves type variables open is a function only once
+    // a call has said what each variable is.
+    let specializations = Specializations::of(&runs)?;
+
     let mut context = Context::new();
     let mut shapes = FunctionBuilderContext::new();
     let frontend = module.isa().frontend_config();
@@ -588,19 +595,28 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
             }
         }
     }
-    // A helper's copy and a value's home, each under where its body stands: the same statement a
-    // call from a body is resolved by, so the key a copy is put under and the key a call asks for
-    // are read off one thing.
+    // Every copy of a helper, each under where the helper stands. Held and not exported: a
+    // definition a module holds is that module's copy, and nothing outside the object reaches one.
+    // A helper leaving nothing open is one function under its own name, and one over variables is
+    // a function for each set of types a call needs, told apart by which of its copies each is.
+    for (id, instance) in specializations.iter() {
+        let symbol = held_symbol(instance.carrier.module(), &instance.held.reached.rendered());
+        let symbol = if instance.types.is_empty() {
+            symbol
+        } else {
+            format!("{symbol}.{}", instance.ordinal)
+        };
+        let signature = signature_over(&instance.takes(), instance.answers(), call_conv)?;
+        let defined = accepted(module.declare_function(&symbol, Linkage::Local, &signature));
+        reachable.instance(id, defined);
+    }
+    // A value's home, under where its body stands: the same statement a call from a body is
+    // resolved by, so the key a home is put under and the key a call asks for are read off one
+    // thing.
     for body in runs.bodies() {
         match body.owner {
-            Owner::Helper(held) => {
-                let symbol = held_symbol(body.carrier().module(), &held.declared);
-                let signature = signature_over(&held.takes(), held.answers(), call_conv)?;
-                // Held and not exported: a definition a module holds is that module's copy, and
-                // nothing outside the object reaches one.
-                let id = accepted(module.declare_function(&symbol, Linkage::Local, &signature));
-                reachable.held(body.carrier(), &held.declared, id);
-            }
+            // Declared above, as its copies.
+            Owner::Helper(_) => {}
             Owner::Value(value) => {
                 // As private as a helper's method, and named the same way: a value's home is this
                 // module's own business (ADR-0074) — nothing outside this object reaches it
@@ -682,6 +698,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
         declared: &declared,
         comparators: &comparators,
         reachable: &reachable,
+        specializations: &specializations,
         allocate,
         compare_text,
         join_text,
@@ -695,25 +712,26 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
 
     // Every body this object runs, each lowered where it stands: what a call from it reaches is
     // what `Coherent` held reachable from there, because both read it off the one `Body`.
+    for (id, instance) in specializations.iter() {
+        let lowering = lowerings.at(instance.carrier);
+        let signature = signature_over(&instance.takes(), instance.answers(), call_conv)?;
+        context.clear();
+        context.func = Function::with_name_signature(UserFuncName::default(), signature);
+        define_helper(
+            &mut context.func,
+            &mut shapes,
+            (id, instance),
+            frontend,
+            &lowering,
+            &mut module,
+        )?;
+        accepted(module.define_function(reachable.of_instance(id), &mut context));
+    }
     for body in runs.bodies() {
         let lowering = lowerings.at(body.carrier());
         match body.owner {
-            Owner::Helper(held) => {
-                let signature = signature_over(&held.takes(), held.answers(), call_conv)?;
-                let id = reachable.of_held(body.carrier(), &held.declared);
-                context.clear();
-                context.func = Function::with_name_signature(UserFuncName::default(), signature);
-                define(
-                    &mut context.func,
-                    &mut shapes,
-                    &held.takes(),
-                    body.node,
-                    frontend,
-                    &lowering,
-                    &mut module,
-                )?;
-                accepted(module.define_function(id, &mut context));
-            }
+            // Defined above, as its copies.
+            Owner::Helper(_) => {}
             Owner::Value(value) => {
                 let takes = handover_types(value);
                 let signature = signature_over(&takes, value.answers(), call_conv)?;
@@ -1204,11 +1222,12 @@ fn linkage_of(published: Publication) -> Linkage {
 
 /// Everything a body can reach, by the name the document reaches it under.
 ///
-/// A definition a module holds is keyed by both modules — the one holding it and the one that
-/// declared it — because two modules holding one declaration hold a copy each and a call reaches
-/// the copy its own module holds.
+/// A definition a module holds is keyed by which copy of it a call reaches, which
+/// [`Specializations`] answers: two modules holding one declaration hold a copy each, a call
+/// reaches the copy its own module holds, and a helper leaving type variables open is a function
+/// for each set of types a call needs.
 ///
-/// A value's own home is kept apart from a helper's copy (`values`, not folded into `held`),
+/// A value's own home is kept apart from a helper's copy (`values`, not folded into `instances`),
 /// because the two are different identities even where a document never confuses them: a helper
 /// is carried, a value is declared, and souther's own `CheckedModule` already refuses to hold one
 /// declaration as both. A published entry is kept apart again (`published_values`), keyed by the
@@ -1217,7 +1236,8 @@ fn linkage_of(published: Publication) -> Linkage {
 /// where it happens to be the declaring module's own.
 #[derive(Default)]
 struct Reachable {
-    held: HashMap<(String, String), FuncId>,
+    /// Each copy of a helper, by which copy it is ([`Specializations`]).
+    instances: HashMap<InstanceId, FuncId>,
     values: HashMap<(String, String), FuncId>,
     behaviors: HashMap<String, FuncId>,
     published_values: HashMap<(String, String), FuncId>,
@@ -1233,9 +1253,8 @@ struct Reachable {
 /// Built from names [`Coherent`] already held to be named once each, so a name written twice here
 /// is this compiler's mistake and not the document's.
 impl Reachable {
-    fn held(&mut self, carrier: Carrier, declared: &str, id: FuncId) {
-        let key = (carrier.module().to_string(), declared.to_string());
-        index::unique(&mut self.held, key, id);
+    fn instance(&mut self, instance: InstanceId, id: FuncId) {
+        index::unique(&mut self.instances, instance, id);
     }
 
     fn value(&mut self, carrier: Carrier, declared: &str, id: FuncId) {
@@ -1268,11 +1287,11 @@ impl Reachable {
             .contains_key(&(module.to_string(), name.to_string()))
     }
 
-    fn of_held(&self, carrier: Carrier, declared: &str) -> FuncId {
+    fn of_instance(&self, instance: InstanceId) -> FuncId {
         *self
-            .held
-            .get(&(carrier.module().to_string(), declared.to_string()))
-            .expect("`Coherent` held every helper a call reaches to be one its module holds")
+            .instances
+            .get(&instance)
+            .expect("every copy of a helper was declared before any body was defined")
     }
 
     fn of_value(&self, carrier: Carrier, declared: &str) -> FuncId {
@@ -1432,8 +1451,19 @@ impl<'a> Declared<'a> {
 
     /// Refuses a type naming a declaration no declaration of the document is, at any depth: every
     /// key a type names is one the checker declared, and the document carries every declaration
-    /// anything in it names.
+    /// anything in it names. And a type variable, which is a type nobody settled wherever it stands
+    /// outside a helper's body ([`Declared::resolves_open`]).
     fn resolves(&self, owner: &str, ty: &Ty) -> Result<()> {
+        self.resolving(owner, ty, false)
+    }
+
+    /// The same inside a helper's body, where a type may be a variable the body leaves open: what
+    /// it comes to is what a call of the helper settles, and the variable names nothing here.
+    fn resolves_open(&self, owner: &str, ty: &Ty) -> Result<()> {
+        self.resolving(owner, ty, true)
+    }
+
+    fn resolving(&self, owner: &str, ty: &Ty, open: bool) -> Result<()> {
         let named = |declared: &str| {
             self.shape(declared)
                 .map(|_| ())
@@ -1450,20 +1480,27 @@ impl<'a> Declared<'a> {
                 }
                 Ok(())
             }
-            Ty::Option { option } => self.resolves(owner, option),
-            Ty::List { list } => self.resolves(owner, list),
-            Ty::Set { set } => self.resolves(owner, set),
+            Ty::Option { option } => self.resolving(owner, option, open),
+            Ty::List { list } => self.resolving(owner, list, open),
+            Ty::Set { set } => self.resolving(owner, set, open),
             Ty::Map { map } => {
-                self.resolves(owner, &map.key)?;
-                self.resolves(owner, &map.value)
+                self.resolving(owner, &map.key, open)?;
+                self.resolving(owner, &map.value, open)
             }
-            Ty::Tuple { tuple } => tuple.iter().try_for_each(|it| self.resolves(owner, it)),
+            Ty::Tuple { tuple } => tuple
+                .iter()
+                .try_for_each(|it| self.resolving(owner, it, open)),
             Ty::Fn { fn_ } => {
                 for taken in &fn_.takes {
-                    self.resolves(owner, taken)?;
+                    self.resolving(owner, taken, open)?;
                 }
-                self.resolves(owner, &fn_.answers)
+                self.resolving(owner, &fn_.answers, open)
             }
+            Ty::Var { .. } if open => Ok(()),
+            Ty::Var { var } => bail!(
+                "{owner}: the type variable {var} stands outside a helper's body, which is the one \
+                 place the checker leaves a type open: the two halves disagree"
+            ),
         }
     }
 
@@ -1663,7 +1700,8 @@ impl<'a> Declared<'a> {
             | Ty::Set { .. }
             | Ty::Map { .. }
             | Ty::Tuple { .. }
-            | Ty::Fn { .. } => false,
+            | Ty::Fn { .. }
+            | Ty::Var { .. } => false,
         })
     }
 
@@ -1774,6 +1812,8 @@ struct Lowerings<'a> {
     /// The function comparing two values of each type a comparison here asked about.
     comparators: &'a equality::Comparators,
     reachable: &'a Reachable,
+    /// Which copy of a helper each call reaching one reaches.
+    specializations: &'a Specializations<'a>,
     allocate: FuncId,
     compare_text: FuncId,
     join_text: FuncId,
@@ -1837,9 +1877,20 @@ impl Lowerings<'_> {
         module: &mut ObjectModule,
         bytes: i64,
     ) -> ir::Value {
-        let taking = module.declare_func_in_func(self.allocate, builder.func);
         let size = builder.ins().iconst(types::I64, bytes);
-        let taken = builder.ins().call(taking, &[size]);
+        self.room_of(builder, module, size)
+    }
+
+    /// Room for as many bytes as `bytes` comes to when the run gets there: what a value whose size
+    /// is not known until then, a list two others are joined into, is made in.
+    fn room_of(
+        &self,
+        builder: &mut FunctionBuilder,
+        module: &mut ObjectModule,
+        bytes: ir::Value,
+    ) -> ir::Value {
+        let taking = module.declare_func_in_func(self.allocate, builder.func);
+        let taken = builder.ins().call(taking, &[bytes]);
         builder.inst_results(taken)[0]
     }
 }
@@ -1953,6 +2004,7 @@ fn machine_type(ty: &Ty) -> Lowered<types::Type> {
         // none of that is a second machine type; a function value is a pointer here exactly as a
         // tuple or a declared value is.
         Ty::Fn { .. } => Ok(POINTER),
+        Ty::Var { var } => laid_out_nowhere(*var),
         // Every primitive is named. A set the language closed is one this has to answer for member
         // by member: caught by an arm standing for the rest, a primitive added to the language
         // would arrive here as something with no representation and nothing would have said so.
@@ -2119,6 +2171,7 @@ fn held_alike(one: &Ty, other: &Ty) -> bool {
             | Ty::Map { .. },
             _,
         ) => false,
+        (Ty::Var { var }, _) => laid_out_nowhere(*var),
     }
 }
 
@@ -2311,7 +2364,18 @@ fn means_the_same_elsewhere(ty: &Ty) -> bool {
         // convention in `souther-native-abi`) and not one to grant by recursing into a signature
         // that happens to be built from types that already cross.
         Ty::Fn { .. } => false,
+        Ty::Var { var } => laid_out_nowhere(*var),
     }
+}
+
+/// A type variable met where a value's layout is asked for, which is nowhere: `Coherent` refuses one
+/// outside a helper's body, and a helper that leaves variables open is lowered only as its copies,
+/// each with every variable replaced ([`specialize`]).
+fn laid_out_nowhere(var: usize) -> ! {
+    unreachable!(
+        "the type variable {var} reached a lowering, which is handed only copies of a helper with \
+         every variable replaced"
+    )
 }
 
 /// What holds the address of a value made of fields.
@@ -2423,6 +2487,143 @@ fn define(
     builder.ins().return_(&[status]);
 
     builder.finalize(frontend);
+    Ok(())
+}
+
+/// A copy of a helper, in the shape [`define`] gives every body, with each call to itself in tail
+/// position a jump back to the start and not a call.
+///
+/// The entry hands what it was called with to a loop header whose block parameters are the
+/// helper's parameters, and the body is lowered from there. A call reaching this same copy
+/// ([`Specializations::callee`]) where the body answers what it answers ([`lower_tail`]) works out
+/// every argument and then jumps to the header with them, so the recursion runs in the one frame. A
+/// call reaching it anywhere else is a call, since what it answers is still to be used.
+///
+/// The same copy and not the same helper: a helper called at other types from inside itself would
+/// be another copy, and a jump to this one's header would run it at the wrong types. What the
+/// answer is written through is the entry's, which the header never changes, so it is not one of
+/// the header's parameters.
+fn define_helper(
+    function: &mut Function,
+    shapes: &mut FunctionBuilderContext,
+    (id, instance): (InstanceId, &Instance),
+    frontend: TargetFrontendConfig,
+    lowering: &Lowering,
+    module: &mut ObjectModule,
+) -> Lowered<()> {
+    let mut builder = FunctionBuilder::new(function, shapes);
+    let entry = builder.create_block();
+    builder.append_block_params_for_function_params(entry);
+    builder.switch_to_block(entry);
+    builder.seal_block(entry);
+
+    let takes = instance.takes();
+    let header = builder.create_block();
+    for taken in &takes {
+        builder.append_block_param(header, machine_type(taken)?);
+    }
+    let given: Vec<ir::BlockArg> = builder.block_params(entry)[..takes.len()]
+        .iter()
+        .map(|&it| it.into())
+        .collect();
+    let out = builder.block_params(entry)[takes.len()];
+    builder.ins().jump(header, &given);
+
+    builder.switch_to_block(header);
+    let mut bindings = Bindings::default();
+    for (at, taken) in takes.iter().enumerate() {
+        let variable = builder.declare_var(machine_type(taken)?);
+        let given = builder.block_params(header)[at];
+        builder.def_var(variable, given);
+        bindings.at(at, variable);
+    }
+
+    let abort = builder.create_block();
+    builder.append_block_param(abort, types::I32);
+
+    let tail = Tail {
+        header,
+        out,
+        instance: id,
+    };
+    lower_tail(
+        &mut builder,
+        lowering,
+        module,
+        &mut bindings,
+        abort,
+        instance.body(),
+        &tail,
+    )?;
+    // Every jump back to the header is written now.
+    builder.seal_block(header);
+
+    builder.seal_block(abort);
+    builder.switch_to_block(abort);
+    let status = builder.block_params(abort)[0];
+    builder.ins().return_(&[status]);
+
+    builder.finalize(frontend);
+    Ok(())
+}
+
+/// Where a copy of a helper answers from: the header a call to itself jumps back to, what its
+/// answer is written through, and which copy it is.
+struct Tail {
+    header: ir::Block,
+    out: ir::Value,
+    instance: InstanceId,
+}
+
+/// `node`, standing where the copy of a helper being defined answers what it answers, lowered to
+/// that answer: written through `out`, or, for a call reaching this same copy, a jump back to the
+/// header. Every block this leaves is ended, by a return or by a jump.
+///
+/// Where the body answers is the body itself and every branch of a fork that answers there, which
+/// is [`branched`]'s to say, the same table [`lower`] reads a fork's branches from. Anywhere else a
+/// node is lowered for its value ([`lower`]), and a call there stays a call. The arguments of a
+/// call that becomes a jump are all worked out before the jump hands them over, so a call handing
+/// the parameters round (`f(b, a)`) reads each before any is replaced.
+fn lower_tail(
+    builder: &mut FunctionBuilder,
+    lowering: &Lowering,
+    module: &mut ObjectModule,
+    bindings: &mut Bindings,
+    abort: ir::Block,
+    node: &Node,
+    tail: &Tail,
+) -> Lowered<()> {
+    if let Node::Call {
+        reaches: Reaches::Helper { reached: _ },
+        arguments,
+        ..
+    } = node
+        && lowering.specializations.callee(node) == tail.instance
+    {
+        let mut given: Vec<ir::BlockArg> = Vec::with_capacity(arguments.len());
+        for argument in arguments {
+            given.push(lower(builder, lowering, module, bindings, abort, argument)?.into());
+        }
+        builder.ins().jump(tail.header, &given);
+        return Ok(());
+    }
+    let forked = branched(
+        builder,
+        lowering,
+        module,
+        bindings,
+        abort,
+        node,
+        &mut |builder, module, bindings, branch| {
+            lower_tail(builder, lowering, module, bindings, abort, branch, tail)
+        },
+    )?;
+    if !forked {
+        let answer = lower(builder, lowering, module, bindings, abort, node)?;
+        builder.ins().store(TRUSTED, answer, tail.out, 0);
+        let ok = builder.ins().iconst(types::I32, i64::from(ANSWERED));
+        builder.ins().return_(&[ok]);
+    }
     Ok(())
 }
 
@@ -3670,20 +3871,31 @@ fn lower(
             let nought = builder.ins().iconst(width, 0);
             difference(builder, abort, overflow_status(aborts), nought, held)?
         }
-        Node::Let {
-            binding,
-            binds,
-            value,
-            body,
-            ..
-        } => {
-            let held = lower(builder, lowering, module, bindings, abort, value)?;
-            let variable = builder.declare_var(machine_type(binds)?);
-            builder.def_var(variable, held);
-            bindings.at(*binding, variable);
-            let answered = lower(builder, lowering, module, bindings, abort, body);
-            bindings.leave(*binding);
-            answered?
+        // A fork answers what the branch it takes answers, and each branch hands that to the block
+        // after the fork. Which nodes are forks, and how each chooses a branch, is `branched`'s.
+        Node::Let { ty, .. }
+        | Node::If { ty, .. }
+        | Node::Match { ty, .. }
+        | Node::Attempt { ty, .. } => {
+            let after = builder.create_block();
+            builder.append_block_param(after, machine_type(ty)?);
+            let forked = branched(
+                builder,
+                lowering,
+                module,
+                bindings,
+                abort,
+                node,
+                &mut |builder, module, bindings, branch| {
+                    let answered = lower(builder, lowering, module, bindings, abort, branch)?;
+                    builder.ins().jump(after, &[answered.into()]);
+                    Ok(())
+                },
+            )?;
+            assert!(forked, "a let, an if, a match and an attempt are forks");
+            builder.seal_block(after);
+            builder.switch_to_block(after);
+            builder.block_params(after)[0]
         }
         Node::Bool { value, ty, .. } => builder.ins().iconst(machine_type(ty)?, i64::from(*value)),
         Node::Str { value, .. } => text_in_the_object(builder, module, lowering.literals, value)?,
@@ -3708,26 +3920,6 @@ fn lower(
                 aborts,
             },
         )?,
-        Node::If {
-            cond,
-            then,
-            els,
-            ty,
-            ..
-        } => {
-            let asked = lower(builder, lowering, module, bindings, abort, cond)?;
-            let answers = machine_type(ty)?;
-            fork(builder, asked, answers, |builder, taken| {
-                lower(
-                    builder,
-                    lowering,
-                    module,
-                    bindings,
-                    abort,
-                    if taken { then } else { els },
-                )
-            })?
-        }
         Node::Unit { declared, .. } => construct(builder, lowering, module, abort, declared, &[])?,
         // The fields are worked out here, in the order they are written; whether the value is one
         // the type admits, and how one is laid out, is not this site's to say (`construct`).
@@ -3739,75 +3931,6 @@ fn lower(
                 given.push(lower(builder, lowering, module, bindings, abort, value)?);
             }
             construct(builder, lowering, module, abort, declared, &given)?
-        }
-        // The fields as a construction works them out, and then what decides a construction of the
-        // type asked, which is the declaring object's: nothing here runs a clause or knows what one
-        // says. Where every clause held the value is bound for `then`; where one did not, the
-        // departure answering that clause answers, chosen by the clause's place
-        // (`departures_taken`). A clause that did not answer at all ends the run as it ended the
-        // decision.
-        Node::Attempt {
-            declared,
-            values,
-            binding,
-            binds,
-            then,
-            departures,
-            ty,
-            ..
-        } => {
-            let mut given = Vec::with_capacity(values.len());
-            for value in values {
-                given.push(lower(builder, lowering, module, bindings, abort, value)?);
-            }
-            let checked = lowering.constructors.checked(declared)?;
-            let taken =
-                departures_taken(&lowering.declared.laid(declared).clause_names(), departures)
-                    .expect("`Coherent` held every clause of what is attempted to one departure");
-            let answers = machine_type(ty)?;
-            let after = builder.create_block();
-            builder.append_block_param(after, answers);
-            let departing = builder.create_block();
-            builder.append_block_param(departing, types::I64);
-
-            let built = decide(builder, module, checked, &given, abort, departing);
-            let variable = builder.declare_var(machine_type(binds)?);
-            builder.def_var(variable, built);
-            bindings.at(*binding, variable);
-            let answered = lower(builder, lowering, module, bindings, abort, then);
-            bindings.leave(*binding);
-            builder.ins().jump(after, &[answered?.into()]);
-
-            builder.seal_block(departing);
-            builder.switch_to_block(departing);
-            let clause = builder.block_params(departing)[0];
-            let bodies = departures.bodies();
-            let arms: Vec<ir::Block> = bodies.iter().map(|_| builder.create_block()).collect();
-            let astray = builder.create_block();
-            let mut which = Switch::new();
-            for (place, &departure) in taken.iter().enumerate() {
-                which.set_entry(place as u128, arms[departure]);
-            }
-            which.emit(builder, clause, astray);
-
-            // A place no clause of the declaration has, which the object that ran the clauses and
-            // this one's copy of their names disagreeing about how many there are would reach.
-            builder.seal_block(astray);
-            builder.switch_to_block(astray);
-            builder
-                .ins()
-                .trap(TrapCode::user(NO_ARM).expect("a trap code of its own"));
-
-            for (body, arm) in bodies.into_iter().zip(arms) {
-                builder.seal_block(arm);
-                builder.switch_to_block(arm);
-                let answered = lower(builder, lowering, module, bindings, abort, body)?;
-                builder.ins().jump(after, &[answered.into()]);
-            }
-
-            builder.seal_block(after);
-            builder.switch_to_block(after);
-            builder.block_params(after)[0]
         }
         Node::Field {
             target, field, ty, ..
@@ -3826,24 +3949,6 @@ fn lower(
                 .ins()
                 .load(types::I64, flags, value, field_at(at) as i32);
             out_of_slot(builder, held, machine_type(ty)?)
-        }
-        Node::Match {
-            subject, arms, ty, ..
-        } => {
-            let value = lower(builder, lowering, module, bindings, abort, subject)?;
-            fork_on_what_it_is(
-                builder,
-                lowering,
-                module,
-                bindings,
-                abort,
-                value,
-                ForkArms {
-                    subject: subject.ty(),
-                    arms,
-                    answers: machine_type(ty)?,
-                },
-            )?
         }
         Node::Some { value, .. } => {
             let held = lower(builder, lowering, module, bindings, abort, value)?;
@@ -3919,9 +4024,11 @@ fn lower(
             }
             Reaches::Helper { .. } | Reaches::Value { .. } | Reaches::PublishedValue { .. } => {
                 let reached = match reaches {
-                    Reaches::Helper { declared } => {
-                        lowering.reachable.of_held(lowering.carrier, declared)
-                    }
+                    // The copy `Specializations` resolved this call to, and not one worked out here
+                    // again from the name and the types.
+                    Reaches::Helper { reached: _ } => lowering
+                        .reachable
+                        .of_instance(lowering.specializations.callee(node)),
                     Reaches::Value { module, name } => lowering
                         .reachable
                         .of_value(lowering.carrier, &format!("{module}.{name}")),
@@ -4097,85 +4204,214 @@ fn lower(
     })
 }
 
-/// A fork on what a value is, arm by arm.
+/// Where `node` is a fork, what chooses its branch, with each branch ended by `branch`; and
+/// whether it is one.
 ///
-/// The arms are tried in the order they are written, because that is the order the language reads
-/// them in. What an arm tests is what the checker resolved it to and not the name it was written
-/// under, so a case that is itself a sum arrives here as the several types it stands for.
+/// A fork answers what the branch it takes answers: the body of a `let`, a branch of an `if`, an
+/// arm of a `match`, and what an attempted construction goes on to where its clauses hold or
+/// where one does not. How a branch ends is the caller's: [`lower`] hands its value to the block
+/// after the fork, and [`lower_tail`] lowers it where a copy of a helper answers, so a call to
+/// itself in a branch of a fork in tail position is in tail position too. Every block `branch`
+/// is handed is one it has to end.
 ///
-/// Running out of arms is this compiler having emitted the wrong test: the checker settles that a
-/// fork always answers, so nothing a program can be written as reaches the end of this.
-/// What `fork_on_what_it_is` asks over, beyond the four it already threads through every call a
-/// lowering makes: which arms, and the width the fork as a whole answers at. Bundled so this stays
-/// within the width every function here is held to instead of adding a sixth thing this and
-/// `lower` would otherwise both have to keep passing down separately.
-struct ForkArms<'a> {
-    /// What the value forked on is, which an arm binding it reads it out of.
-    subject: &'a Ty,
-    arms: &'a [Arm],
-    answers: types::Type,
-}
-
-fn fork_on_what_it_is(
+/// The one place a kind of node is said to fork or not. Every kind is named here and no arm
+/// stands for the rest, so a kind added to the document that forks is lowered as a fork by both
+/// callers, and one that does not says so, rather than falling to whichever a default picked.
+///
+/// The arms of a `match` are tried in the order they are written, because that is the order the
+/// language reads them in. Running out of them, or out of the clauses an attempt answers, is this
+/// compiler having emitted the wrong test: the checker settles that a fork always answers.
+fn branched(
     builder: &mut FunctionBuilder,
     lowering: &Lowering,
     module: &mut ObjectModule,
     bindings: &mut Bindings,
     abort: ir::Block,
-    value: ir::Value,
-    over: ForkArms,
-) -> Lowered<ir::Value> {
-    let ForkArms {
-        subject,
-        arms,
-        answers,
-    } = over;
-    let after = builder.create_block();
-    builder.append_block_param(after, answers);
-
-    for arm in arms {
-        let taken = builder.create_block();
-        let next = builder.create_block();
-        let asked = tests(builder, lowering, module, value, subject, &arm.selects)?;
-        builder.ins().brif(asked, taken, &[], next, &[]);
-        builder.seal_block(taken);
-        builder.seal_block(next);
-
-        builder.switch_to_block(taken);
-        if let Some(number) = arm.binding {
-            let read_as = arm
-                .binds
-                .as_ref()
-                .expect("`Coherent` held every arm that binds to say what it reads the value as");
-            let held = binds(
-                builder,
-                lowering,
-                module,
-                value,
-                subject,
-                &arm.selects,
-                read_as,
-            )?;
-            let variable = builder.declare_var(machine_type(read_as)?);
+    node: &Node,
+    branch: &mut dyn FnMut(
+        &mut FunctionBuilder,
+        &mut ObjectModule,
+        &mut Bindings,
+        &Node,
+    ) -> Lowered<()>,
+) -> Lowered<bool> {
+    match node {
+        Node::Let {
+            binding,
+            binds,
+            value,
+            body,
+            ..
+        } => {
+            let held = lower(builder, lowering, module, bindings, abort, value)?;
+            let variable = builder.declare_var(machine_type(binds)?);
             builder.def_var(variable, held);
-            bindings.at(number, variable);
+            bindings.at(*binding, variable);
+            let answered = branch(builder, module, bindings, body);
+            bindings.leave(*binding);
+            answered?;
         }
-        let answered = lower(builder, lowering, module, bindings, abort, &arm.body);
-        if let Some(number) = arm.binding {
-            bindings.leave(number);
+        Node::If {
+            cond, then, els, ..
+        } => {
+            let asked = lower(builder, lowering, module, bindings, abort, cond)?;
+            let when_taken = builder.create_block();
+            let otherwise = builder.create_block();
+            builder.ins().brif(asked, when_taken, &[], otherwise, &[]);
+            builder.seal_block(when_taken);
+            builder.seal_block(otherwise);
+            for (block, taken) in [(when_taken, then), (otherwise, els)] {
+                builder.switch_to_block(block);
+                branch(builder, module, bindings, taken)?;
+            }
         }
-        builder.ins().jump(after, &[answered?.into()]);
+        Node::Match { subject, arms, .. } => {
+            let value = lower(builder, lowering, module, bindings, abort, subject)?;
+            for arm in arms {
+                let next = enter_arm(
+                    builder,
+                    lowering,
+                    module,
+                    bindings,
+                    value,
+                    subject.ty(),
+                    arm,
+                )?;
+                let answered = branch(builder, module, bindings, &arm.body);
+                if let Some(number) = arm.binding {
+                    bindings.leave(number);
+                }
+                answered?;
+                builder.switch_to_block(next);
+            }
+            builder
+                .ins()
+                .trap(TrapCode::user(NO_ARM).expect("a trap code of its own"));
+        }
+        // The fields as a construction works them out, and then what decides a construction of the
+        // type asked, which is the declaring object's: nothing here runs a clause or knows what one
+        // says. Where every clause held the value is bound for `then`; where one did not, the
+        // departure answering that clause is taken, chosen by the clause's place
+        // (`departures_taken`). A clause that did not answer at all ends the run as it ended the
+        // decision.
+        Node::Attempt {
+            declared,
+            values,
+            binding,
+            binds,
+            then,
+            departures,
+            ..
+        } => {
+            let mut given = Vec::with_capacity(values.len());
+            for value in values {
+                given.push(lower(builder, lowering, module, bindings, abort, value)?);
+            }
+            let checked = lowering.constructors.checked(declared)?;
+            let taken =
+                departures_taken(&lowering.declared.laid(declared).clause_names(), departures)
+                    .expect("`Coherent` held every clause of what is attempted to one departure");
+            let departing = builder.create_block();
+            builder.append_block_param(departing, types::I64);
 
-        builder.switch_to_block(next);
+            let built = decide(builder, module, checked, &given, abort, departing);
+            let variable = builder.declare_var(machine_type(binds)?);
+            builder.def_var(variable, built);
+            bindings.at(*binding, variable);
+            let answered = branch(builder, module, bindings, then);
+            bindings.leave(*binding);
+            answered?;
+
+            builder.seal_block(departing);
+            builder.switch_to_block(departing);
+            let clause = builder.block_params(departing)[0];
+            let bodies = departures.bodies();
+            let arms: Vec<ir::Block> = bodies.iter().map(|_| builder.create_block()).collect();
+            let astray = builder.create_block();
+            let mut which = Switch::new();
+            for (place, &departure) in taken.iter().enumerate() {
+                which.set_entry(place as u128, arms[departure]);
+            }
+            which.emit(builder, clause, astray);
+
+            // A place no clause of the declaration has, which the object that ran the clauses and
+            // this one's copy of their names disagreeing about how many there are would reach.
+            builder.seal_block(astray);
+            builder.switch_to_block(astray);
+            builder
+                .ins()
+                .trap(TrapCode::user(NO_ARM).expect("a trap code of its own"));
+
+            for (body, arm) in bodies.into_iter().zip(arms) {
+                builder.seal_block(arm);
+                builder.switch_to_block(arm);
+                branch(builder, module, bindings, body)?;
+            }
+        }
+        Node::Int { .. }
+        | Node::Read { .. }
+        | Node::Bool { .. }
+        | Node::Str { .. }
+        | Node::Binary { .. }
+        | Node::Neg { .. }
+        | Node::Unit { .. }
+        | Node::Construct { .. }
+        | Node::Field { .. }
+        | Node::Some { .. }
+        | Node::None { .. }
+        | Node::Tuple { .. }
+        | Node::Member { .. }
+        | Node::List { .. }
+        | Node::Call { .. }
+        | Node::Block { .. }
+        | Node::Apply { .. }
+        | Node::Widen { .. } => return Ok(false),
     }
+    Ok(true)
+}
 
-    builder
-        .ins()
-        .trap(TrapCode::user(NO_ARM).expect("a trap code of its own"));
+/// Into `arm` of a fork on `value` where it tests true: the block its body is lowered in is the one
+/// written to next, with what it binds in force, which the caller puts out of force once the body
+/// is lowered. Handed back is the block the next arm is tested in, where this one tests false.
+///
+/// Apart from [`branched`] because which arm a value takes is not a fact about what the arm's body
+/// goes on to do.
+fn enter_arm(
+    builder: &mut FunctionBuilder,
+    lowering: &Lowering,
+    module: &mut ObjectModule,
+    bindings: &mut Bindings,
+    value: ir::Value,
+    subject: &Ty,
+    arm: &Arm,
+) -> Lowered<ir::Block> {
+    let taken = builder.create_block();
+    let next = builder.create_block();
+    let asked = tests(builder, lowering, module, value, subject, &arm.selects)?;
+    builder.ins().brif(asked, taken, &[], next, &[]);
+    builder.seal_block(taken);
+    builder.seal_block(next);
 
-    builder.seal_block(after);
-    builder.switch_to_block(after);
-    Ok(builder.block_params(after)[0])
+    builder.switch_to_block(taken);
+    if let Some(number) = arm.binding {
+        let read_as = arm
+            .binds
+            .as_ref()
+            .expect("`Coherent` held every arm that binds to say what it reads the value as");
+        let held = binds(
+            builder,
+            lowering,
+            module,
+            value,
+            subject,
+            &arm.selects,
+            read_as,
+        )?;
+        let variable = builder.declare_var(machine_type(read_as)?);
+        builder.def_var(variable, held);
+        bindings.at(number, variable);
+    }
+    Ok(next)
 }
 
 /// Whether the value is one of the cases this arm answers for.
@@ -4588,7 +4824,8 @@ fn unlowered_operator(op: Op, left: &Held, right: &Held) -> NotLowered {
 
 /// Two values joined, which the language writes over two strings and over two lists.
 ///
-/// Two strings are joined here. Anything else is refused as not lowered.
+/// Two strings are joined by the runtime, and two lists of one type here ([`joined_lists`]).
+/// Anything else is refused as not lowered.
 fn join(
     builder: &mut FunctionBuilder,
     lowering: &Lowering,
@@ -4614,8 +4851,79 @@ fn join(
             | Prim::Instant
             | Prim::Raw => Err(unlowered_operator(Op::Concat, &left, &right)),
         },
+        (Ty::List { .. }, Ty::List { .. }) if left.ty == right.ty => {
+            Ok(joined_lists(builder, lowering, module, a, b))
+        }
         _ => Err(unlowered_operator(Op::Concat, &left, &right)),
     }
+}
+
+/// A list holding the elements of `a` and then those of `b`, as `souther-native-abi` lays a list
+/// out: new room for the two lengths together, and each list's slots copied into it in order.
+///
+/// Neither list is changed, and nothing of either is shared with what is made: a list is a value,
+/// and so is each of the two. What an element is does not come into it, since every element is one
+/// slot whatever it holds, so the slots are copied as they are.
+fn joined_lists(
+    builder: &mut FunctionBuilder,
+    lowering: &Lowering,
+    module: &mut ObjectModule,
+    a: ir::Value,
+    b: ir::Value,
+) -> ir::Value {
+    let first = builder
+        .ins()
+        .load(types::I64, TRUSTED, a, LIST_LENGTH as i32);
+    let second = builder
+        .ins()
+        .load(types::I64, TRUSTED, b, LIST_LENGTH as i32);
+    let length = builder.ins().iadd(first, second);
+    let slots = builder.ins().imul_imm_s(length, SLOT);
+    let bytes = builder.ins().iadd_imm_s(slots, room_for_list(0));
+    let joined = lowering.room_of(builder, module, bytes);
+    builder
+        .ins()
+        .store(TRUSTED, length, joined, LIST_LENGTH as i32);
+
+    let into = builder.ins().iadd_imm_s(joined, list_at(0));
+    let from = builder.ins().iadd_imm_s(a, list_at(0));
+    copy_slots(builder, from, into, first);
+    let past = builder.ins().imul_imm_s(first, SLOT);
+    let into = builder.ins().iadd(into, past);
+    let from = builder.ins().iadd_imm_s(b, list_at(0));
+    copy_slots(builder, from, into, second);
+    joined
+}
+
+/// `count` slots from `from` onwards copied to `to` onwards, one at a time and in order: none where
+/// `count` is nought.
+fn copy_slots(builder: &mut FunctionBuilder, from: ir::Value, to: ir::Value, count: ir::Value) {
+    let head = builder.create_block();
+    builder.append_block_param(head, types::I64);
+    let copying = builder.create_block();
+    let done = builder.create_block();
+
+    let nought = builder.ins().iconst(types::I64, 0);
+    builder.ins().jump(head, &[nought.into()]);
+
+    builder.switch_to_block(head);
+    let at = builder.block_params(head)[0];
+    let more = builder.ins().icmp(IntCC::SignedLessThan, at, count);
+    builder.ins().brif(more, copying, &[], done, &[]);
+    builder.seal_block(copying);
+    builder.seal_block(done);
+
+    builder.switch_to_block(copying);
+    let along = builder.ins().imul_imm_s(at, SLOT);
+    let source = builder.ins().iadd(from, along);
+    let slot = builder.ins().load(types::I64, TRUSTED, source, 0);
+    let target = builder.ins().iadd(to, along);
+    builder.ins().store(TRUSTED, slot, target, 0);
+    let next = builder.ins().iadd_imm_s(at, 1);
+    builder.ins().jump(head, &[next.into()]);
+    builder.seal_block(head);
+
+    builder.switch_to_block(done);
 }
 
 /// Every string literal this object holds, one per text however many places spell it.
