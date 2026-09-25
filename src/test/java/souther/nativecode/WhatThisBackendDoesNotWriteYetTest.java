@@ -112,16 +112,16 @@ class WhatThisBackendDoesNotWriteYetTest {
     }
 
     /**
-     * A row states its values and the object carries an entry that runs them, so a value with no
-     * expression to make it is a row the object cannot run.
+     * A row's entry calls what computes each of its inputs, so an input whose operand has no
+     * expression here is a row the object cannot run.
      *
      * <p>Refused rather than left out. An object missing an entry would still link and still
      * answer every row it did carry, so what a check of the rows compared would shrink by however
      * many rows had values like this one — and it would go on being green over the ones that were
      * left.
      *
-     * <p>A date is the value here. What refuses it is the first place it is written, which is the
-     * literal the program holds for the row, before the row's own entry is reached.
+     * <p>A date is the value here. What refuses it is the definition computing the input, which
+     * the module holds and which is written like any other of its helpers.
      */
     @Test
     void aRowStatingAValueWithNoExpressionToMakeItIsRefusedRatherThanLeftOut() {

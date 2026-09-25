@@ -556,12 +556,16 @@ no second reading of what a row means either.
 A row the compile did not run arrives saying so and carrying why. Those are not skipped: skipping
 them is how a check goes on being green over fewer and fewer rows.
 
-The object carries an entry per row, which is what runs one. The values the row states are written
-into the entry when the program crosses, so running a row is the object doing something with the
+The object carries an entry per row, which is what runs one. The entry calls the behavior with what
+computes each of the row's inputs: the definition the checked program names for it, which the module
+holds as one of its helpers, whose body is the operand as the row writes it, elaborated by the
+checker at the parameter it is handed to. So running a row is the object doing something with the
 row and not the behavior being reached with values from outside — which is what lets a row of a
-name the module keeps be run at all. A row stating a value this backend has no expression for
-refuses the build rather than being left out of the object, for the same reason: an object missing
-an entry would link and answer every row it did carry.
+name the module keeps be run at all — and how a value stands where it is handed over, a case where
+its sum is taken or a value given to an optional field, is the checker's to say and not this
+backend's. A row whose operand this backend has no expression for refuses the build, as any body
+does, rather than being left out of the object: an object missing an entry would link and answer
+every row it did carry.
 
 This is not the two carriers compared against each other. Holding both to one statement is not
 running both and comparing what came back, and running a program on every carrier and comparing the

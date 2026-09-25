@@ -8,8 +8,6 @@ import souther.compiler.core.Core;
 import souther.compiler.core.EnsuresEnforcement;
 import souther.compiler.core.Kernel;
 import souther.compiler.core.ValueShape;
-import souther.compiler.observe.ObservedValue;
-import souther.compiler.observe.RowStatement;
 import souther.compiler.program.BehaviorTarget;
 import souther.compiler.program.CheckedAlternativesForm;
 import souther.compiler.program.CheckedBoundaryInput;
@@ -585,7 +583,7 @@ public final class ProgramWriter {
         for (CheckedBehavior behavior : module.behaviors()) {
             List<CheckedRow> rows = behavior.rows();
             for (int at = 0; at < rows.size(); at++) {
-                String entry = example(module, behavior, at, rows.get(at));
+                String entry = example(behavior, at, rows.get(at));
                 if (entry != null) {
                     examples.add(entry);
                 }
@@ -617,184 +615,49 @@ public final class ProgramWriter {
      *
      * <p>A row the compile could not read is the one case with no entry, and it is the one case
      * where there is nothing to run: the values it would hand over were never read. Every other
-     * row is written, and a value this writer cannot make an expression for refuses the program
-     * the same way a body it cannot write does — the language admits the program and this backend
-     * does not write it yet.
+     * row is written.
      */
-    private String example(CheckedModule module, CheckedBehavior behavior, int at, CheckedRow row) {
-        RowStatement.Stated states = switch (row.statement()) {
-            case CheckedRow.SelfContained it -> it.states();
-            case CheckedRow.WithStandIns it -> it.states();
+    private String example(CheckedBehavior behavior, int at, CheckedRow row) {
+        List<CheckedHelper> inputs = switch (row.statement()) {
+            case CheckedRow.SelfContained it -> it.inputs();
+            case CheckedRow.WithStandIns it -> it.inputs();
             // Its answer is owed, which is a row nothing holds an answer to and still a row whose
             // values were read. The entry runs it; what the run answers is nobody's claim yet.
-            case CheckedRow.AnswerOwed it -> it.states();
+            case CheckedRow.AnswerOwed it -> it.inputs();
             case CheckedRow.NotReproducible it -> null;
         };
-        if (states == null) {
+        if (inputs == null) {
             return null;
         }
         return "{\"behavior\":" + quoted(behavior.name().name())
                 + ",\"at\":" + at
-                + ",\"body\":" + applied(module, behavior, states) + "}";
+                + ",\"body\":" + applied(behavior, inputs) + "}";
     }
 
     /**
-     * The one call a row is: the behavior, handed the values the row states.
+     * The one call a row is: the behavior, handed what computes each of the row's inputs.
      *
      * <p>A call and not a shape of its own, so that what an entry does is lowered by whatever
-     * lowers a call and the two cannot come apart. What the behavior answers is read off its
-     * signature, which is also where the arguments' types come from — a row states values and the
-     * signature is what says at which type each of them is handed over.
+     * lowers a call and the two cannot come apart. Each argument is a call of the definition the
+     * row names for that input ({@link CheckedRow.SelfContained#inputs}), which the module holds as
+     * one of its helpers: its body is the operand the row writes, elaborated by the checker at the
+     * parameter it is handed to, so how a value stands there — a case where its sum is taken, a
+     * value given to an optional field — is the checker's and not worked out here from what the row
+     * observed.
+     *
+     * <p>No Core.Call stands behind these calls for program.abortsAt to ask of, and none is needed:
+     * what AbortSites answers for a call reaching a declaration is NONE, whatever it reaches. What
+     * the definition or the behavior ends with is its own, the same answer a call written in a body
+     * gets.
      */
-    private String applied(CheckedModule module, CheckedBehavior behavior,
-                           RowStatement.Stated states) {
-        List<Type> takes = behavior.signature().takes();
-        List<ObservedValue> inputs = states.inputs();
-        if (inputs.size() != takes.size()) {
-            throw notYet("a row of `" + behavior.name() + "` stating " + inputs.size()
-                    + " values where the behavior takes " + takes.size());
-        }
+    private String applied(CheckedBehavior behavior, List<CheckedHelper> inputs) {
         List<String> arguments = new ArrayList<>();
-        for (int at = 0; at < takes.size(); at++) {
-            arguments.add(given(inputs.get(at), takes.get(at)));
+        for (CheckedHelper input : inputs) {
+            arguments.add(callNode(helperReach(input.reachedAs()), List.of(), input.body().type(),
+                    AbortSet.NONE));
         }
-        // No Core.Call stands behind this one for program.abortsAt to ask of, and none is needed:
-        // what AbortSites answers for a call reaching a behavior is NONE, whatever the behavior is.
-        // What the behavior ends with is its own, and what its clause ends with is what the
-        // target's ensures says (EnsuresEnforcement#aborts), not a fact of this site — the same
-        // answer a call written in a body gets.
         return callNode(behaviorReach(behavior.name()), arguments,
                 behavior.signature().answers(), AbortSet.NONE);
-    }
-
-    /**
-     * A value a row states, written as the expression that makes it.
-     *
-     * <p>At the type it is handed over at as well as by what it is, because the value does not say
-     * on its own. A number handed to a parameter of a type that holds one is a different expression
-     * from the same number handed to an {@code Int}; a present optional is observed as the value it
-     * holds, and only the type says it is to be wrapped; a sequence does not say whether it was a
-     * list. So the type decides which expression is written, and the value what goes into it.
-     *
-     * <p>What is written is the node the source would have built for the same value, and nothing a
-     * row alone crosses as: a literal, a construction, a list, an optional. What a construction can
-     * end with is asked of the program, which answers it the way it answers the same construction
-     * written in a body. A literal, a list and an optional end with nothing of their own, which is
-     * what the program files each of them with wherever it holds one.
-     *
-     * <p>Every type is answered for, and the ones with no expression here say so. Caught by an arm
-     * standing for the rest, a value a row can state would cross as whatever it resembled.
-     */
-    private String given(ObservedValue value, Type at) {
-        return switch (at) {
-            case Type.Prim it -> switch (value) {
-                case ObservedValue.Integer v when it == Type.Prim.INT ->
-                        intNode(v.value(), at, AbortSet.NONE);
-                case ObservedValue.Bool v when it == Type.Prim.BOOL ->
-                        boolNode(v.value(), at, AbortSet.NONE);
-                case ObservedValue.Text v when it == Type.Prim.STRING ->
-                        stringNode(v.value(), at, AbortSet.NONE);
-                default -> throw notStated(value, at);
-            };
-            case Type.OptionOf it -> value instanceof ObservedValue.Absent
-                    ? noneNode(at, AbortSet.NONE)
-                    : someNode(given(value, it.element()), at, AbortSet.NONE);
-            case Type.ListOf it -> {
-                if (!(value instanceof ObservedValue.Sequence sequence)) {
-                    throw notStated(value, at);
-                }
-                List<String> elements = new ArrayList<>();
-                for (ObservedValue element : sequence.elements()) {
-                    elements.add(given(element, it.element()));
-                }
-                yield listNode(elements, at, AbortSet.NONE);
-            }
-            case Type.Ref it -> declared(value, it);
-            case Type.Union it -> standing(value, at);
-
-            // A set, a map and the rest have no expression this writer builds out of a value yet.
-            case Type.SetOf it -> throw notStated(value, at);
-            case Type.MapOf it -> throw notStated(value, at);
-            case Type.TupleOf it -> throw notStated(value, at);
-            case Type.FnOf it -> throw notStated(value, at);
-            case Type.Nothing it -> throw notStated(value, at);
-            case Type.Never it -> throw notStated(value, at);
-            case Type.Erroneous it -> throw notStated(value, at);
-            case Type.Var it -> throw notStated(value, at);
-            case Type.MetaVar it -> throw notStated(value, at);
-        };
-    }
-
-    /**
-     * A value of a declared type, built as the type is built.
-     *
-     * <p>Only a value of that very type. One of a sum's cases is a value of the case, and where the
-     * sum is taken it stands there as {@link #standing} writes it.
-     *
-     * <p>The fields are the declaration's, in the declaration's order and at the declaration's
-     * types, each looked up in what was observed by its name. What the observation holds is what the
-     * value was; how many fields a value has and in which order they stand is the declaration's to
-     * say, and read off the observation it would be a map's order deciding a layout.
-     */
-    private String declared(ObservedValue value, Type.Ref at) {
-        return switch (value) {
-            case ObservedValue.Unit it when it.type().equals(at.name()) ->
-                    unitNode(declaredName(at.name()), at, AbortSet.NONE);
-            case ObservedValue.Constructed it
-                    when it.type().equals(at.name())
-                    && at.name() instanceof TypeSymbol.AtModule name
-                    && program.declaration(name).data() instanceof CheckedData.WithFields held -> {
-                List<String> values = new ArrayList<>();
-                for (ValueShape.Field field : held.fields()) {
-                    ObservedValue observed = it.field(field.name());
-                    if (observed == null) {
-                        throw notStated(value, at);
-                    }
-                    values.add(given(observed, field.type()));
-                }
-                yield constructNode(named(name), values, at, program.constructionAborts(name));
-            }
-            default -> standing(value, at);
-        };
-    }
-
-    /**
-     * A value stated where a type wider than its own is taken: built at its own type, and standing
-     * as the position's.
-     *
-     * <p>That is the rule {@link Core#standingAs} writes for the same value in a body, and not a
-     * second one: a value whose type is not the position's is a widening of it to the position's.
-     * Whether it may stand there at all is not asked again, since the compile admitted the row. What
-     * the widening itself ends with is nothing, which is what the program files every widening
-     * with.
-     *
-     * <p>Its own type is what the value says it is. A list and an absent optional do not say that
-     * on their own, and neither do the values with no expression here, so they are refused rather
-     * than guessed at.
-     */
-    private String standing(ObservedValue value, Type at) {
-        Type own = switch (value) {
-            case ObservedValue.Integer it -> Type.Prim.INT;
-            case ObservedValue.Bool it -> Type.Prim.BOOL;
-            case ObservedValue.Text it -> Type.Prim.STRING;
-            case ObservedValue.Unit it -> Type.ref(it.type());
-            case ObservedValue.Constructed it -> Type.ref(it.type());
-            case ObservedValue.Sequence it -> null;
-            case ObservedValue.Absent it -> null;
-            case ObservedValue.Decimal it -> null;
-            case ObservedValue.Temporal it -> null;
-            case ObservedValue.Mapping it -> null;
-            case ObservedValue.Unknown it -> null;
-            case ObservedValue.Truncated it -> null;
-        };
-        if (own == null || own.equals(at)) {
-            throw notStated(value, at);
-        }
-        return widenNode(given(value, own), at, AbortSet.NONE);
-    }
-
-    private static NotLowered notStated(ObservedValue value, Type at) {
-        return new NotLowered("a row stating " + value + " at " + at);
     }
 
     /**
@@ -1283,8 +1146,8 @@ public final class ProgramWriter {
         }
     }
 
-    // How each node a value is built from is spelt, written once for a node the checker wrote and
-    // for one a row states, so the two cannot come to be spelt apart.
+    // How each node is spelt, written once whether the checker wrote it or a row's entry makes it,
+    // so no node comes to be spelt two ways.
 
     private String intNode(long value, Type type, AbortSet aborts) {
         return "{\"core\":\"int\",\"value\":" + value
@@ -1549,8 +1412,7 @@ public final class ProgramWriter {
                 // Under the reference the call reaches it by, which is what the helper the module
                 // holds is written under too ({@link #helper}): the two are one reference, and a
                 // name made up out of the declaration would not be the one the module holds.
-                case Core.Reaches.AHelper ignored ->
-                        "{\"is\":\"helper\",\"reached\":" + reference(target.name()) + "}";
+                case Core.Reaches.AHelper ignored -> helperReach(target.name());
                 case Core.Reaches.ABehavior held -> behaviorReach(held.behavior());
                 // A helper or a behavior is the only two `Reaches` `OfDeclaration#reaches` ever
                 // settles to; a value's own reference is `OfValue` or `OfPublishedValue` below,
@@ -1577,6 +1439,11 @@ public final class ProgramWriter {
             case Core.Emitted target -> throw notYet("the operation " + target, it);
         };
         return callNode(reaches, arguments, it.type(), program.abortsAt(it));
+    }
+
+    /** What a call reaching a helper names it by, for a call a body writes and one a row makes. */
+    private static String helperReach(ReachName.Declaration reached) {
+        return "{\"is\":\"helper\",\"reached\":" + reference(reached) + "}";
     }
 
     /** What a call reaching {@code behavior} names it by, for a call a body writes and one a row is. */

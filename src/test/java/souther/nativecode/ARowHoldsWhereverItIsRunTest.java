@@ -33,8 +33,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * running both and comparing what came back.
  *
  * <p>A row is run through the entry the object carries for it, which is what the object does with
- * the row rather than something arranged out here: the values the row states were written into the
- * object when the program crossed. So what runs is the same whether the module publishes the
+ * the row rather than something arranged out here: the entry applies the behavior to what the
+ * program says computes each of the row's inputs, the operand as the checker elaborated it at its
+ * parameter, which the module holds. So what runs is the same whether the module publishes the
  * behavior or keeps it, and a corpus of kept names is not a corpus this test had to leave out.
  *
  * <p>Whether an answer is the one a row states is asked of the row. A test deciding that for itself
@@ -311,9 +312,9 @@ class ARowHoldsWhereverItIsRunTest {
      * Rows that state one of a sum's cases where the sum is taken: handed to the behavior, as a
      * field, as an element of a list, and in an optional field.
      *
-     * <p>A row says what the value is and not what it stands as, so each of these is the case built
-     * at its own type and standing as the position's, as the same value written in a body is. The
-     * cart #58 ports states its orderer this way.
+     * <p>What the row observed says what the value is and not what it stands as. The checker says
+     * that, in the definition computing each input, where the case stands as the position's type as
+     * the same value written in a body does. The cart #58 ports states its orderer this way.
      */
     private static final String STANDING = """
             module standing
