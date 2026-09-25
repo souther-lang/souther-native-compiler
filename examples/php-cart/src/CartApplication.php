@@ -10,6 +10,7 @@ use App\Database\PdoPriceCart;
 use App\Database\PdoSaveItem;
 use App\Database\PdoSaveOrder;
 use App\Database\Transaction;
+use App\Http\BadRequest;
 use App\Http\CartController;
 use App\Http\Request;
 use App\Http\Response;
@@ -22,12 +23,16 @@ use PDO;
 
 /**
  * The wiring, which the Java example leaves to Spring: the injected behaviors implemented over PDO,
- * each composed behavior bound to them once, and the routes.
+ * each composed behavior bound to them once, and the routes. Each request is handled in one run of
+ * the library and one transaction, which is where the Java example's `TransactionTemplate` stands.
  */
 final readonly class CartApplication
 {
-    private function __construct(private Router $router)
-    {
+    private function __construct(
+        private Binding $binding,
+        private Transaction $tx,
+        private Router $router,
+    ) {
     }
 
     public static function create(Binding $binding, PDO $pdo): self
@@ -44,15 +49,13 @@ final readonly class CartApplication
         $saveOrder = new PdoSaveOrder($pdo);
 
         $controller = new CartController(
-            $binding,
             AddItemToCart::bind($loadProduct, $loadCart, $saveItem),
             PlaceOrder::bind($priceCart, $saveOrder),
             IssueQuote::bind($priceCart),
-            new Transaction($pdo),
             $pdo,
         );
 
-        return new self((new Router())
+        return new self($binding, new Transaction($pdo), (new Router())
             ->post('/carts/items', $controller->addItem(...))
             ->post('/carts/checkout', $controller->checkout(...))
             ->post('/carts/quote', $controller->quote(...))
@@ -69,8 +72,17 @@ final readonly class CartApplication
         return $found[0];
     }
 
+    /**
+     * The response to `$request`. Every value of the model made while handling it belongs to this
+     * run and is gone when it ends, so what comes back is JSON text.
+     */
     public function handle(Request $request): Response
     {
-        return $this->router->handle($request);
+        try {
+            return $this->binding->run(fn (): Response =>
+                $this->tx->execute(fn (): Response => $this->router->handle($request)));
+        } catch (BadRequest $bad) {
+            return Response::badRequest($bad->issues);
+        }
     }
 }

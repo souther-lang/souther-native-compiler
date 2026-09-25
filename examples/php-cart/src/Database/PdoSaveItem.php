@@ -8,7 +8,6 @@ use Model\Com\Example\Cart\Domain\ItemAdded;
 use Model\Com\Example\Cart\Domain\PendingItem;
 use Model\Com\Example\Cart\Domain\SaveItem;
 use PDO;
-use Souther\Runtime\Session;
 
 /**
  * `saveItem` over PDO. It takes the cart and the item out of the `PendingItem` the model built,
@@ -20,7 +19,7 @@ final class PdoSaveItem extends SaveItem
     {
     }
 
-    public function apply(Session $session, PendingItem $pending): ItemAdded
+    public function apply(PendingItem $pending): ItemAdded
     {
         $cartId = $pending->cart()->id()->value();
         $item = $pending->item();
@@ -36,6 +35,6 @@ final class PdoSaveItem extends SaveItem
             $insert->execute([Uuid::v4(), $cartId, $productId, $quantity]);
         }
 
-        return ItemAdded::of($session, $item->productId(), $item->quantity())->getOrThrow();
+        return ItemAdded::of($item->productId(), $item->quantity())->getOrThrow();
     }
 }

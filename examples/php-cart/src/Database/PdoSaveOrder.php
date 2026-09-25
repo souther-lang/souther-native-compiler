@@ -10,7 +10,6 @@ use Model\Com\Example\Cart\Domain\Order;
 use Model\Com\Example\Cart\Domain\OrderPlaced;
 use Model\Com\Example\Cart\Domain\SaveOrder;
 use PDO;
-use Souther\Runtime\Session;
 
 /**
  * `saveOrder` over PDO: one row for the order and one for each of its lines. The orderer is laid
@@ -22,7 +21,7 @@ final class PdoSaveOrder extends SaveOrder
     {
     }
 
-    public function apply(Session $session, Order $order): OrderPlaced
+    public function apply(Order $order): OrderPlaced
     {
         $orderId = $order->id()->value();
         $orderer = $order->orderer();
@@ -54,6 +53,6 @@ final class PdoSaveOrder extends SaveOrder
             ]);
         }
 
-        return OrderPlaced::of($session, $order)->getOrThrow();
+        return OrderPlaced::of($order)->getOrThrow();
     }
 }

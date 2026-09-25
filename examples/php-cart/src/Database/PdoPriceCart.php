@@ -10,7 +10,6 @@ use Model\Com\Example\Cart\Domain\ProductNotFound;
 use Model\Com\Example\Cart\Domain\SaleEnded;
 use Model\Com\Example\Cart\Domain\UserId;
 use PDO;
-use Souther\Runtime\Session;
 
 /**
  * `priceCart` over PDO. It reads every line of the cart, looks each product up to see that it is
@@ -27,7 +26,7 @@ final class PdoPriceCart extends PriceCart
     {
     }
 
-    public function apply(Session $session, UserId $userId): PricedCart|SaleEnded|ProductNotFound
+    public function apply(UserId $userId): PricedCart|SaleEnded|ProductNotFound
     {
         $select = $this->pdo->prepare(<<<'SQL'
             SELECT ci.product_id, ci.quantity
@@ -44,10 +43,10 @@ final class PdoPriceCart extends PriceCart
             $product->execute([$row['product_id']]);
             $found = $product->fetch(PDO::FETCH_ASSOC);
             if ($found === false) {
-                return ProductNotFound::of($session)->getOrThrow();
+                return ProductNotFound::of()->getOrThrow();
             }
             if (!$found['on_sale']) {
-                return SaleEnded::of($session)->getOrThrow();
+                return SaleEnded::of()->getOrThrow();
             }
             $lines[] = [
                 'productId' => $row['product_id'],
@@ -55,6 +54,6 @@ final class PdoPriceCart extends PriceCart
                 'unitPrice' => (int) $found['price'],
             ];
         }
-        return PricedCart::decoder($session)->decode(['lines' => $lines])->getOrThrow();
+        return PricedCart::decoder()->decode(['lines' => $lines])->getOrThrow();
     }
 }

@@ -8,7 +8,6 @@ use Model\Com\Example\Cart\Domain\Cart;
 use Model\Com\Example\Cart\Domain\LoadCart;
 use Model\Com\Example\Cart\Domain\UserId;
 use PDO;
-use Souther\Runtime\Session;
 
 /**
  * `loadCart` over PDO. It makes sure the user has a cart row, then reads the cart with the total
@@ -21,7 +20,7 @@ final class PdoLoadCart extends LoadCart
     {
     }
 
-    public function apply(Session $session, UserId $userId): Cart
+    public function apply(UserId $userId): Cart
     {
         $this->ensureCartExists($userId->value());
         $select = $this->pdo->prepare(<<<'SQL'
@@ -34,7 +33,7 @@ final class PdoLoadCart extends LoadCart
         $select->execute([$userId->value()]);
         $row = $select->fetch(PDO::FETCH_ASSOC);
 
-        return Cart::decoder($session)->decode([
+        return Cart::decoder()->decode([
             'id' => $row['cart_id'],
             'currentQuantity' => (int) $row['total'],
         ])->getOrThrow();

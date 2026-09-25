@@ -14,17 +14,33 @@ The rules of the cart are in `model/cart.sou` and nowhere else: the capacity of 
 ordered and a quotation is for a corporation. Its `example` rows state what each behavior answers,
 and they run when it is built, so a rule that stopped holding stops the build.
 
-The PHP is two directories, one for each boundary. `src/Http` decodes a request into the model's
-values, applies a behavior, and picks the response with a `match` on the class of what it answered.
+The PHP is two directories, one for each boundary. `src/Http` decodes a request into a behavior's
+arguments, calls the behavior as it would call any PHP function, and picks the response with a
+`match` on the class of what it answered:
+
+    [$userId, $orderer] = Decoders::checkout()
+        ->decode($request->body)
+        ->orElseThrow(BadRequest::of(...));
+
+    $answer = ($this->placeOrder)(OrderId::of(Uuid::v4())->getOrThrow(), $userId, $orderer);
+
+    return match ($answer::class) {
+        OrderPlaced::class => Response::created($answer->order()->encode()),
+        EmptyCart::class => Response::unprocessable('empty_cart'),
+        SaleEnded::class => Response::unprocessable('sale_ended'),
+        ProductNotFound::class => Response::unprocessable('product_not_found'),
+    };
+
 `src/Database` holds the five behaviors the model leaves to a host (`loadProduct`, `loadCart`,
 `saveItem`, `priceCart`, `saveOrder`), each a class extending the one the binding generates for it.
 `src/CartApplication.php` binds the three composed behaviors (`addItemToCart`, `placeOrder`,
-`issueQuote`) to those once, and routes the requests.
+`issueQuote`) to those once, routes the requests, and answers a request that does not decode with a
+400.
 
 A request is decoded in two steps, as in the Java example. raoh-php checks the form of each field
 and normalises it: a UUID, a positive quantity, an email trimmed and lowercased, a corporate number
 of thirteen digits. What it hands on is read by the decoder the binding generates for the type,
-`UserId::decoder($session)` where the Java example calls `UserId.decoder()`, and that decoder is the
+`UserId::decoder()` where the Java example calls `UserId.decoder()`, and that decoder is the
 model's: it knows which fields a type has, what the type states, and which case an orderer is.
 None of that is written again in PHP.
 
@@ -91,11 +107,12 @@ Most of what differs follows from where a value of the model lives. On the JVM i
 any other. Here it is held in the library's arena for the length of one run, `Binding::run`, and a
 value used after its run has ended throws `Expired`. A value leaves a run only as its external form.
 
-So each request is one run. The controller opens it, and everything that makes or reads a value of
-the model happens inside: decoding the body, applying the behavior, and encoding the answer, which is
-JSON text by the time the run ends. The decoders are made for the session they build values in
-(`Decoders::addItem($session)`), where the Java ones are constants. Nothing the application keeps
-across requests, the bound behaviors and the PDO implementations, holds a value of the model.
+So each request is one run, which `CartApplication::handle` opens around the route together with
+the transaction. Everything that makes or reads a value of the model happens inside: decoding the
+body, calling the behavior, and encoding the answer, which is JSON text by the time the run ends.
+Nothing in the handlers says which run: every function of the binding is called in the innermost
+one going. Nothing the application keeps across requests, the bound behaviors and the PDO
+implementations, holds a value of the model.
 
 The Java example writes its responses by hand, from each value's accessors into a map. Here the
 responses are the model's encoding, so an order's amounts are under `charge` and a line carries no
@@ -117,14 +134,14 @@ of 100 never takes.
 
 The answers keep the unnamed unions the model writes, such as `Product | ProductNotFound`. The PHP
 binding types them as a union of case classes, so there is no `LoadProductResult` as there is in Java,
-and an implementation answers `ProductNotFound::of($session)` rather than calling a factory on its
+and an implementation answers `ProductNotFound::of()` rather than calling a factory on its
 base class. A `match` over an answer's class is not checked for the cases it leaves out until it runs,
 where it throws `UnhandledMatchError`; the Java `switch` over a sealed type is checked when it is
 compiled.
 
 On the way in, the Java example tells an orderer's case apart with raoh's `discriminate` and a
 decoder for each case. Here raoh-php checks whichever of the orderer's fields are present, and the
-orderer as a whole goes to `OrdererCodec::decoder($session)`, which reads its `type` and the fields
+orderer as a whole goes to `OrdererCodec::decoder()`, which reads its `type` and the fields
 that case has, as the model's encoding of an orderer says. A type's generated decoder is chained
 with raoh-php's `pipe`, where the Java one is reached with `flatMap`. The database implementations
 read a row back through the same decoder, handed the row as an array keyed by the type's field
