@@ -27,9 +27,9 @@ class AnAnswerCrossesInTheFormItsPositionDeclaresTest {
     private static final String DOORS = """
             module doors exposing ( closedAlone, holding, doorOf, phaseOf, porchOf, customer,
                                     placeOrder, noteOf, flagOf, chainOf, rankOf, bill, lookUp, echoInt, echoBool,
-                                    echoText,
+                                    echoText, doorsOf, linksOf,
                                     Closed, Open, Door, Phase, Pending, Holder, Porch, CustomerId,
-                                    Order, Noted, Flagged, Chain, Manager, Staff, Rank, Issued,
+                                    Order, Noted, Flagged, Chain, Links, Manager, Staff, Rank, Issued,
                                     UnknownSku, Missing )
 
             data Closed
@@ -44,6 +44,7 @@ class AnAnswerCrossesInTheFormItsPositionDeclaresTest {
             data Noted = { note: String?, count: Int }
             data Flagged = { on: Bool? }
             data Chain = { n: Int, next: Chain? }
+            data Links = { chains: List<Chain>, count: Int }
 
             data Manager = Int
             data Staff
@@ -97,6 +98,19 @@ class AnAnswerCrossesInTheFormItsPositionDeclaresTest {
                 constructs Chain
 
             let chainOf (n) = Chain { n = n, next = Chain { n = n + 1, next = None } }
+
+            behavior doorsOf : (n: Int) -> List<Door>
+                constructs Open
+
+            let doorsOf (n) = [Open { since = n }, Closed, Open { since = n + 1 }]
+
+            behavior linksOf : (n: Int) -> Links
+                constructs Links, Chain
+
+            let linksOf (n) = Links {
+                chains = [Chain { n = n, next = Chain { n = n + 1, next = None } }, Chain { n = 0, next = None }],
+                count = 2
+            }
 
             behavior rankOf : (level: Int) -> Rank
                 constructs Manager
@@ -222,6 +236,33 @@ class AnAnswerCrossesInTheFormItsPositionDeclaresTest {
         Running running = Running.of(program);
         assertThat(answer(running, program, "chainOf", integer(1)))
                 .isEqualTo(json("{\"n\":1,\"next\":{\"n\":2}}"));
+    }
+
+    /**
+     * An answer that is a list of a declared type is an array of each element written as that
+     * type, in the order the list holds them, with nothing of one element standing in another's.
+     */
+    @Test
+    void aListOfADeclaredTypeIsWrittenElementByElementInOrder() throws Exception {
+        CheckedProgram program = CheckedProgram.of(List.of(DOORS));
+        Running running = Running.of(program);
+        assertThat(answer(running, program, "doorsOf", integer(4)))
+                .isEqualTo(json("[{\"type\":\"Open\",\"since\":4},{\"type\":\"Closed\"},"
+                        + "{\"type\":\"Open\",\"since\":5}]"));
+    }
+
+    /**
+     * A field holding a list of a declared type is put once every element is in the array, and a
+     * field laid out after it is put after it.
+     */
+    @Test
+    void aFieldAfterAListOfADeclaredTypeIsPutAfterIt() throws Exception {
+        CheckedProgram program = CheckedProgram.of(List.of(DOORS));
+        Running running = Running.of(program);
+        JsonNode written = answer(running, program, "linksOf", integer(1));
+        assertThat(written).isEqualTo(json("{\"chains\":[{\"n\":1,\"next\":{\"n\":2}},{\"n\":0}],"
+                + "\"count\":2}"));
+        assertThat(written.propertyNames()).containsExactly("chains", "count");
     }
 
     /**

@@ -69,6 +69,12 @@ const NO_ARM: u8 = 2;
 /// and a status would say one had.
 const COUNT_NO_LIST_HOLDS: u8 = 3;
 
+/// A walk that writes a value finding its result other than its work expects: a form where work
+/// is about to leave one, or none where work is about to take one. A trap for the reason
+/// [`NO_ARM`] is one: this compiler added the work out of order, and nothing a program does
+/// comes to this.
+const A_WALK_OUT_OF_ORDER: u8 = 4;
+
 /// Every reason a Souther computation ends without a value, mapped to the wire number a generated
 /// function's status answers with. `souther_native_abi` reserves `ANSWERED` and the
 /// `HOST_STATUSES`, so every member here gets one of what is left, which is held below at compile
