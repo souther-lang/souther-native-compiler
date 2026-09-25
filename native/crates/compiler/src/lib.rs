@@ -9,6 +9,7 @@ mod closures;
 mod codec;
 mod coherent;
 mod equality;
+mod growing;
 mod host;
 mod index;
 mod interface;
@@ -18,6 +19,7 @@ mod manifest;
 mod replaced;
 mod specialize;
 pub mod transport;
+mod unrun;
 mod versioned;
 
 use anyhow::{Result, anyhow, bail};
@@ -46,14 +48,14 @@ use souther_native_abi::{
 };
 use specialize::{Instance, InstanceId, Specializations};
 use std::cell::RefCell;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 use transport::{
     AbortKind, AlternativesForm, Arm, Carrier, Case, Declaration, DeclaredBy, Definition,
-    Departures, Ensures, Guard, LanguageCase, Node, Op, Owner, Prim, Program, Publication, Reaches,
-    Reading, Routing, Selects, Stage, Target, Ty,
+    Departures, Emitted, Ensures, Guard, LanguageCase, Node, Op, Owner, Prim, Program, Publication,
+    Reaches, Reading, Routing, Selects, Stage, Target, Ty,
 };
 
 /// A fork that ran out of arms, which is this compiler having emitted the wrong test rather than
@@ -1496,6 +1498,7 @@ impl<'a> Declared<'a> {
                 }
                 self.resolving(owner, &fn_.answers, open)
             }
+            Ty::Nothing { .. } => Ok(()),
             Ty::Var { .. } if open => Ok(()),
             Ty::Var { var } => bail!(
                 "{owner}: the type variable {var} stands outside a helper's body, which is the one \
@@ -1640,6 +1643,8 @@ impl<'a> Declared<'a> {
             return Ok(Some(true));
         }
         Ok(match (actual, expected) {
+            // No value of it is made, so what it stands as is never handed one that does not fit.
+            (Ty::Nothing { .. }, _) => Some(true),
             (Ty::Set { .. } | Ty::Map { .. }, _) | (_, Ty::Set { .. } | Ty::Map { .. }) => None,
             (Ty::Option { option: actual }, Ty::Option { option: expected })
             | (Ty::List { list: actual }, Ty::List { list: expected }) => {
@@ -1701,7 +1706,8 @@ impl<'a> Declared<'a> {
             | Ty::Map { .. }
             | Ty::Tuple { .. }
             | Ty::Fn { .. }
-            | Ty::Var { .. } => false,
+            | Ty::Var { .. }
+            | Ty::Nothing { .. } => false,
         })
     }
 
@@ -2005,6 +2011,11 @@ fn machine_type(ty: &Ty) -> Lowered<types::Type> {
         // tuple or a declared value is.
         Ty::Fn { .. } => Ok(POINTER),
         Ty::Var { var } => laid_out_nowhere(*var),
+        // No value of it is ever made, so there is nothing to hold. Not a width chosen to stand in
+        // for one: a list of it is laid out as any list is (above), and a walk whose step would be
+        // handed one never runs that step (`growing`), so what asks this is code that would hold a
+        // value no run can make, and it is refused rather than given a place to hold it in.
+        Ty::Nothing { .. } => Err(not_lowered(format!("a value of type {}", ty.spelt()))),
         // Every primitive is named. A set the language closed is one this has to answer for member
         // by member: caught by an arm standing for the rest, a primitive added to the language
         // would arrive here as something with no representation and nothing would have said so.
@@ -2126,35 +2137,49 @@ impl Tagged {
     }
 }
 
-/// Whether a value of `one` is held exactly the way a value of `other` is, so that one standing as
-/// the other is no operation.
+/// Whether a value of `from` standing as a value of `to` is the same value on the machine, so
+/// that standing there is no operation.
 ///
-/// Two types that say their case are, whichever cases they have: every value of either is the
-/// address of something with its token at the front. A primitive and a type that says its case are
-/// not. An optional, a tuple, a list and a function are held alike where what they are made of is:
-/// a `List<A>` standing as a `List<S>` is the same list, and a `List<Int>` standing as a
-/// `List<Int | A>` would need every element carried.
+/// A direction and not a likeness: which way a value goes decides what has to be true of it. Two
+/// types that say their case are held alike, whichever cases they have: every value of either is
+/// the address of something with its token at the front. A primitive and a type that says its case
+/// are not. An optional, a tuple and a list are preserved where what they are made of is: a
+/// `List<A>` standing as a `List<S>` is the same list, and a `List<Int>` standing as a
+/// `List<Int | A>` would need every element carried. A function goes the other way in what it
+/// takes, since what the position hands it is a value of what the position takes.
+///
+/// The type of what has no value is preserved as anything: no value of it is ever made, so there
+/// is none to change. That is what lets the `[]` a walk is seeded with, a `List<Nothing>`, stand as
+/// the list the walk grows without being rebuilt. No other type stands as it, since no other type
+/// is without values.
 ///
 /// Every type is named on the left, with no arm standing for the rest, so a type laid out later has
 /// to say here how its values are held before one stands as another.
-fn held_alike(one: &Ty, other: &Ty) -> bool {
-    if one == other || (says_its_case(one) && says_its_case(other)) {
+fn representation_is_preserved(from: &Ty, to: &Ty) -> bool {
+    if from == to || (says_its_case(from) && says_its_case(to)) {
         return true;
     }
-    match (one, other) {
-        (Ty::Option { option: one }, Ty::Option { option: other }) => held_alike(one, other),
-        (Ty::List { list: one }, Ty::List { list: other }) => held_alike(one, other),
-        (Ty::Tuple { tuple: one }, Ty::Tuple { tuple: other }) => {
-            one.len() == other.len() && one.iter().zip(other).all(|(a, b)| held_alike(a, b))
+    match (from, to) {
+        (Ty::Nothing { .. }, _) => true,
+        (Ty::Option { option: from }, Ty::Option { option: to }) => {
+            representation_is_preserved(from, to)
         }
-        (Ty::Fn { fn_: one }, Ty::Fn { fn_: other }) => {
-            one.takes.len() == other.takes.len()
-                && one
+        (Ty::List { list: from }, Ty::List { list: to }) => representation_is_preserved(from, to),
+        (Ty::Tuple { tuple: from }, Ty::Tuple { tuple: to }) => {
+            from.len() == to.len()
+                && from
+                    .iter()
+                    .zip(to)
+                    .all(|(from, to)| representation_is_preserved(from, to))
+        }
+        (Ty::Fn { fn_: from }, Ty::Fn { fn_: to }) => {
+            from.takes.len() == to.takes.len()
+                && to
                     .takes
                     .iter()
-                    .zip(&other.takes)
-                    .all(|(a, b)| held_alike(a, b))
-                && held_alike(&one.answers, &other.answers)
+                    .zip(&from.takes)
+                    .all(|(handed, taken)| representation_is_preserved(handed, taken))
+                && representation_is_preserved(&from.answers, &to.answers)
         }
         // Equal types were answered above, and so were two that say their case; what is left of
         // these is a primitive beside something else, or one of them beside another kind. A set
@@ -2179,9 +2204,9 @@ fn held_alike(one: &Ty, other: &Ty) -> bool {
 ///
 /// The one place a value's representation changes because of where it stands, whatever made it
 /// stand there: a `Widen`, what an arm or a guard binds, what a composition hands a stage or
-/// answers. Where the two are held alike ([`held_alike`]) this is no operation. A primitive
-/// standing as a case of a type that says its case is carried with its token, and one read back
-/// out of such a type is read out of what carries it.
+/// answers. Where standing there changes nothing ([`representation_is_preserved`]) this is no
+/// operation. A primitive standing as a case of a type that says its case is carried with its
+/// token, and one read back out of such a type is read out of what carries it.
 ///
 /// The second is only ever asked once a test has said the value is that primitive's case: the
 /// value is not asked again here. Anything else would need what a value is made of rebuilt — an
@@ -2194,7 +2219,7 @@ fn restate(
     from: &Ty,
     to: &Ty,
 ) -> Lowered<ir::Value> {
-    if held_alike(from, to) {
+    if representation_is_preserved(from, to) {
         return Ok(value);
     }
     match (from, to) {
@@ -2365,6 +2390,8 @@ fn means_the_same_elsewhere(ty: &Ty) -> bool {
         // that happens to be built from types that already cross.
         Ty::Fn { .. } => false,
         Ty::Var { var } => laid_out_nowhere(*var),
+        // No value of it crosses, so none can mean something else once it has.
+        Ty::Nothing { .. } => true,
     }
 }
 
@@ -2784,10 +2811,11 @@ struct Reach<'p> {
 }
 
 impl<'p> Reach<'p> {
-    /// What `body` reaches, added to what is already here.
+    /// What `body` reaches where it runs, added to what is already here: nothing in the step of a
+    /// walk that never runs.
     fn of(&mut self, body: &transport::Body<'p>, declared: &Declared) -> Result<()> {
         let mut named = Ok(());
-        body.node.each(&mut |node| {
+        unrun::each_lowered(body.node, &mut |node| {
             if let Some(key) = node.builds() {
                 match declared.shape(key) {
                     Ok(declaration) => {
@@ -3802,6 +3830,9 @@ fn forward_unless_answered(builder: &mut FunctionBuilder, abort: ir::Block, stat
 #[derive(Default)]
 struct Bindings {
     held: HashMap<usize, Variable>,
+    /// The bindings holding what a walk grows a list in, which is laid out as nothing else is
+    /// ([`Growing`]): the step's accumulator, and every name a `let` gives it.
+    growing: HashSet<usize>,
 }
 
 impl Bindings {
@@ -3816,6 +3847,29 @@ impl Bindings {
     /// `number` out of force, at the end of the scope that bound it.
     fn leave(&mut self, number: usize) {
         self.held.remove(&number);
+        self.growing.remove(&number);
+    }
+
+    /// `number`, already in force, as a name for what a walk grows a list in.
+    fn grows(&mut self, number: usize) {
+        assert!(
+            self.held.contains_key(&number),
+            "a binding is in force before it is said to grow"
+        );
+        self.growing.insert(number);
+    }
+
+    /// What a walk grows a list in, where `node` reads a name for it, standing as whatever it
+    /// stands as.
+    fn grown(&self, node: &Node) -> Option<usize> {
+        let read = match node {
+            Node::Widen { value, .. } => value.as_ref(),
+            other => other,
+        };
+        match read {
+            Node::Read { binding, .. } if self.growing.contains(binding) => Some(*binding),
+            _ => None,
+        }
     }
 
     fn of(&self, number: usize) -> Variable {
@@ -4022,6 +4076,39 @@ fn lower(
                 }
                 call_behavior(builder, lowering, module, abort, declared, &given)?
             }
+            Reaches::Emitted { operation } => match operation {
+                Emitted::BuildList => build_list(builder, lowering, module, bindings, abort, node)?,
+                Emitted::GrowList => {
+                    let [grown, added] = arguments.as_slice() else {
+                        unreachable!(
+                            "`Coherent` held {} to the two arguments it takes",
+                            operation.spelt()
+                        );
+                    };
+                    assert!(
+                        bindings.grown(grown).is_some(),
+                        "`growing` held every growth to add to what its own walk grows"
+                    );
+                    let growing =
+                        Growing(lower(builder, lowering, module, bindings, abort, grown)?);
+                    // A list written out where it is added is added element by element, with no
+                    // list made of them first: `acc ++ [y]` is what `map` and `filter` grow by.
+                    if let Node::List { elements, .. } = added {
+                        for element in elements {
+                            let held = lower(builder, lowering, module, bindings, abort, element)?;
+                            growing.add(builder, lowering, module, held);
+                        }
+                    } else {
+                        let held = lower(builder, lowering, module, bindings, abort, added)?;
+                        growing.add_all(builder, lowering, module, held);
+                    }
+                    growing.0
+                }
+                Emitted::BuildMap | Emitted::PutMap => unreachable!(
+                    "`Coherent` refused {} as not lowered wherever it runs",
+                    operation.spelt()
+                ),
+            },
             Reaches::Helper { .. } | Reaches::Value { .. } | Reaches::PublishedValue { .. } => {
                 let reached = match reaches {
                     // The copy `Specializations` resolved this call to, and not one worked out here
@@ -4035,7 +4122,9 @@ fn lower(
                     Reaches::PublishedValue { module, name } => {
                         lowering.reachable.of_published_value(module, name)
                     }
-                    Reaches::Behavior { .. } | Reaches::Kernel { .. } => unreachable!(),
+                    Reaches::Behavior { .. } | Reaches::Kernel { .. } | Reaches::Emitted { .. } => {
+                        unreachable!()
+                    }
                 };
                 let mut given = Vec::with_capacity(arguments.len());
                 for argument in arguments {
@@ -4247,6 +4336,9 @@ fn branched(
             let variable = builder.declare_var(machine_type(binds)?);
             builder.def_var(variable, held);
             bindings.at(*binding, variable);
+            if bindings.grown(value).is_some() {
+                bindings.grows(*binding);
+            }
             let answered = branch(builder, module, bindings, body);
             bindings.leave(*binding);
             answered?;
@@ -4924,6 +5016,254 @@ fn copy_slots(builder: &mut FunctionBuilder, from: ir::Value, to: ir::Value, cou
     builder.seal_block(head);
 
     builder.switch_to_block(done);
+}
+
+/// A walk that builds a list (`$build(step, xs, from)`): the list the walk grows starts empty,
+/// the step is run where the walk stands on each element of `xs` from `from` onwards, adding to it
+/// ([`Growing`]), and what was grown is handed over once, as a list.
+///
+/// The step is the loop's body, not a function value ([`growing::Step`]): what is bound around it is
+/// worked out once, before the walk, and its two parameters are bound here as a `let` binds, the
+/// accumulator to what the list is grown in and the element to one slot of `xs` at a time. What it
+/// answers is what the next element is handed as the accumulator. The walk goes on while the index
+/// is below the length read without a sign, which is where `foldFrom`, the fold it was rewritten
+/// from, finds an element: a negative `from` finds none.
+///
+/// A step never applied ([`unrun`]) is not lowered, nor anything bound around it: it takes a value
+/// of what has no value, so `xs` is an empty list literal and the walk answers an empty list. `xs`
+/// and `from` are still worked out.
+fn build_list(
+    builder: &mut FunctionBuilder,
+    lowering: &Lowering,
+    module: &mut ObjectModule,
+    bindings: &mut Bindings,
+    abort: ir::Block,
+    walk: &Node,
+) -> Lowered<ir::Value> {
+    let Node::Call { arguments, .. } = walk else {
+        unreachable!("a walk is a call");
+    };
+    let [_, walked, from] = arguments.as_slice() else {
+        unreachable!("`Coherent` held a walk to the three arguments it takes");
+    };
+    // A step never applied is not lowered, the values bound around it included: the list walked
+    // is an empty list literal, so the walk answers an empty list.
+    if !unrun::never_applied(walk).is_empty() {
+        lower(builder, lowering, module, bindings, abort, walked)?;
+        lower(builder, lowering, module, bindings, abort, from)?;
+        let empty = lowering.room(builder, module, room_for_list(0));
+        let nought = builder.ins().iconst(types::I64, 0);
+        builder
+            .ins()
+            .store(TRUSTED, nought, empty, LIST_LENGTH as i32);
+        return Ok(empty);
+    }
+    let Some(step) = growing::Step::of_walk(walk) else {
+        unreachable!("`growing` held every walk building a list to walk with a step");
+    };
+    // Every binding entered here is left again whichever way this ends, as a `let`'s is.
+    let mut entered = Vec::new();
+    let answer = (|| {
+        for around in &step.around {
+            let held = lower(builder, lowering, module, bindings, abort, around.value)?;
+            let variable = builder.declare_var(machine_type(around.binds)?);
+            builder.def_var(variable, held);
+            bindings.at(around.binding, variable);
+            entered.push(around.binding);
+        }
+        let list = lower(builder, lowering, module, bindings, abort, walked)?;
+        let from = lower(builder, lowering, module, bindings, abort, from)?;
+
+        let [grown, element] = step.parameters else {
+            unreachable!("`growing` answers a step only where it takes two parameters");
+        };
+        let accumulator = builder.declare_var(POINTER);
+        let started = Growing::start(builder, lowering, module);
+        builder.def_var(accumulator, started.0);
+        bindings.at(grown.binding, accumulator);
+        bindings.grows(grown.binding);
+        entered.push(grown.binding);
+        let taken = machine_type(&step.signature.takes[1])?;
+        let each = builder.declare_var(taken);
+        bindings.at(element.binding, each);
+        entered.push(element.binding);
+        let at = builder.declare_var(types::I64);
+        builder.def_var(at, from);
+
+        let head = builder.create_block();
+        let stepping = builder.create_block();
+        let done = builder.create_block();
+        builder.ins().jump(head, &[]);
+
+        builder.switch_to_block(head);
+        let index = builder.use_var(at);
+        let length = builder
+            .ins()
+            .load(types::I64, TRUSTED, list, LIST_LENGTH as i32);
+        let inside = builder.ins().icmp(IntCC::UnsignedLessThan, index, length);
+        builder.ins().brif(inside, stepping, &[], done, &[]);
+        builder.seal_block(stepping);
+        builder.seal_block(done);
+
+        builder.switch_to_block(stepping);
+        let along = builder.ins().imul_imm_s(index, SLOT);
+        let slot = builder.ins().iadd(list, along);
+        let held = builder
+            .ins()
+            .load(types::I64, TRUSTED, slot, list_at(0) as i32);
+        let held = out_of_slot(builder, held, taken);
+        builder.def_var(each, held);
+        let answered = lower(builder, lowering, module, bindings, abort, step.body)?;
+        builder.def_var(accumulator, answered);
+        let next = builder.ins().iadd_imm_s(index, 1);
+        builder.def_var(at, next);
+        builder.ins().jump(head, &[]);
+        builder.seal_block(head);
+
+        builder.switch_to_block(done);
+        Ok(Growing(builder.use_var(accumulator)).sealed(builder))
+    })();
+    for binding in entered.into_iter().rev() {
+        bindings.leave(binding);
+    }
+    answer
+}
+
+/// What a walk building a list grows it in, while it grows it: the address of two slots, the list
+/// so far and how many elements that list has room for.
+///
+/// The list so far is laid out as any list is, its length the elements added so far, in room for
+/// more. Where an addition would go past the room, the list is copied into room for twice as many,
+/// or for as many as the addition needs where that is more, so each element is copied a bounded
+/// number of times however long the walk; and handing the list over is reading it out, since it is
+/// already a list. What is past its length is room nothing reads.
+///
+/// Compiler-private and not in the `abi` crate, as a closure's layout is: it is never handed to a
+/// host or to another object, never reaches a call, and is never read as a list until it is handed
+/// over, which `growing` holds of every step before any of this is lowered.
+struct Growing(ir::Value);
+
+/// Where the list so far is.
+const GROWN: i32 = 0;
+
+/// Where how many elements it has room for is.
+const GROWN_ROOM: i32 = SLOT as i32;
+
+/// How many elements the first list has room for: a few, so a short walk makes it once.
+const FIRST_ROOM: i64 = 8;
+
+impl Growing {
+    /// An empty list, with room for [`FIRST_ROOM`] elements.
+    fn start(
+        builder: &mut FunctionBuilder,
+        lowering: &Lowering,
+        module: &mut ObjectModule,
+    ) -> Growing {
+        let growing = lowering.room(builder, module, 2 * SLOT);
+        let list = lowering.room(builder, module, room_for_list(FIRST_ROOM));
+        let nought = builder.ins().iconst(types::I64, 0);
+        builder
+            .ins()
+            .store(TRUSTED, nought, list, LIST_LENGTH as i32);
+        let room = builder.ins().iconst(types::I64, FIRST_ROOM);
+        builder.ins().store(TRUSTED, list, growing, GROWN);
+        builder.ins().store(TRUSTED, room, growing, GROWN_ROOM);
+        Growing(growing)
+    }
+
+    /// `value` added after what is there.
+    fn add(
+        &self,
+        builder: &mut FunctionBuilder,
+        lowering: &Lowering,
+        module: &mut ObjectModule,
+        value: ir::Value,
+    ) {
+        let adding = builder.ins().iconst(types::I64, 1);
+        let (list, length) = self.room_for(builder, lowering, module, adding);
+        let value = into_slot(builder, value);
+        let along = builder.ins().imul_imm_s(length, SLOT);
+        let slot = builder.ins().iadd(list, along);
+        builder.ins().store(TRUSTED, value, slot, list_at(0) as i32);
+        let grown = builder.ins().iadd_imm_s(length, 1);
+        builder
+            .ins()
+            .store(TRUSTED, grown, list, LIST_LENGTH as i32);
+    }
+
+    /// Every element of the list `added` added after what is there, in its order.
+    fn add_all(
+        &self,
+        builder: &mut FunctionBuilder,
+        lowering: &Lowering,
+        module: &mut ObjectModule,
+        added: ir::Value,
+    ) {
+        let adding = builder
+            .ins()
+            .load(types::I64, TRUSTED, added, LIST_LENGTH as i32);
+        let (list, length) = self.room_for(builder, lowering, module, adding);
+        let along = builder.ins().imul_imm_s(length, SLOT);
+        let into = builder.ins().iadd(list, along);
+        let into = builder.ins().iadd_imm_s(into, list_at(0));
+        let from = builder.ins().iadd_imm_s(added, list_at(0));
+        copy_slots(builder, from, into, adding);
+        let grown = builder.ins().iadd(length, adding);
+        builder
+            .ins()
+            .store(TRUSTED, grown, list, LIST_LENGTH as i32);
+    }
+
+    /// The list so far, with room for `adding` more elements after its length, and that length.
+    fn room_for(
+        &self,
+        builder: &mut FunctionBuilder,
+        lowering: &Lowering,
+        module: &mut ObjectModule,
+        adding: ir::Value,
+    ) -> (ir::Value, ir::Value) {
+        let list = builder.ins().load(POINTER, TRUSTED, self.0, GROWN);
+        let room = builder.ins().load(types::I64, TRUSTED, self.0, GROWN_ROOM);
+        let length = builder
+            .ins()
+            .load(types::I64, TRUSTED, list, LIST_LENGTH as i32);
+        let wanted = builder.ins().iadd(length, adding);
+
+        let moving = builder.create_block();
+        let ready = builder.create_block();
+        builder.append_block_param(ready, POINTER);
+        let fits = builder
+            .ins()
+            .icmp(IntCC::UnsignedLessThanOrEqual, wanted, room);
+        builder.ins().brif(fits, ready, &[list.into()], moving, &[]);
+        builder.seal_block(moving);
+
+        builder.switch_to_block(moving);
+        let doubled = builder.ins().iadd(room, room);
+        let enough = builder.ins().icmp(IntCC::UnsignedLessThan, doubled, wanted);
+        let room = builder.ins().select(enough, wanted, doubled);
+        let slots = builder.ins().imul_imm_s(room, SLOT);
+        let bytes = builder.ins().iadd_imm_s(slots, room_for_list(0));
+        let moved = lowering.room_of(builder, module, bytes);
+        let into = builder.ins().iadd_imm_s(moved, list_at(0));
+        let from = builder.ins().iadd_imm_s(list, list_at(0));
+        copy_slots(builder, from, into, length);
+        builder
+            .ins()
+            .store(TRUSTED, length, moved, LIST_LENGTH as i32);
+        builder.ins().store(TRUSTED, moved, self.0, GROWN);
+        builder.ins().store(TRUSTED, room, self.0, GROWN_ROOM);
+        builder.ins().jump(ready, &[moved.into()]);
+        builder.seal_block(ready);
+
+        builder.switch_to_block(ready);
+        (builder.block_params(ready)[0], length)
+    }
+
+    /// The list grown, handed over: it is one already.
+    fn sealed(self, builder: &mut FunctionBuilder) -> ir::Value {
+        builder.ins().load(POINTER, TRUSTED, self.0, GROWN)
+    }
 }
 
 /// Every string literal this object holds, one per text however many places spell it.

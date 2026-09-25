@@ -56,7 +56,7 @@ fn binary(op: &str, left: Value, right: Value, ty: Value, aborts: Value) -> Valu
 
 fn program(declarations: Value, helpers: Value, publishes: Value) -> Value {
     json!({
-        "transport": 19,
+        "transport": 20,
         "declarations": declarations,
         "behaviors": [],
         "modules": [{
@@ -325,6 +325,7 @@ fn fixtures() -> Vec<(&'static str, Value)> {
         ("values", read_json(include_str!("values.transport.json"))),
         ("ensures", read_json(include_str!("ensures.transport.json"))),
         ("folding", read_json(include_str!("folding.transport.json"))),
+        ("growing", read_json(include_str!("growing.transport.json"))),
     ];
     documents.extend(by_hand());
     documents

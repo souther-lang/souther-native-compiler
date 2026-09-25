@@ -261,6 +261,8 @@ fn whole(ty: &Ty) -> Option<HostWord> {
         // offers it to a host.
         Ty::Tuple { .. } | Ty::Fn { .. } => None,
         Ty::Var { var } => crate::laid_out_nowhere(*var),
+        // No value of it is made, so none is handed to a host or taken from one.
+        Ty::Nothing { .. } => None,
     }
 }
 
@@ -535,6 +537,17 @@ pub(crate) fn define_values(
     values: &[Entry],
 ) -> Lowered<()> {
     for value in values {
+        // The manifest names a type by what it is in the model, and the model has no name for the
+        // type of what has no value: the checker gives it to an empty list literal and no source
+        // writes it. Refused rather than described as something it is not.
+        if value.answers.writes_nothing() {
+            return Err(not_lowered(format!(
+                "the published value {}.{} of {}, which a manifest has no name for",
+                value.module,
+                value.name,
+                value.answers.spelt()
+            )));
+        }
         let symbol = host_value_symbol(value.module, value.name);
         let read = forward(emitting, lists, symbol, value)?;
         surface.value(
