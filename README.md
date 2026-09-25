@@ -165,6 +165,19 @@ and calls, a helper among them, is the declaring build's own, and a copy run els
 without it. It is a call between objects this compiler built, under a symbol carrying the ABI
 generation. What a host calls to build a value is a boundary of its own and not this.
 
+The constructor is one reading of a function under it that decides the construction and answers
+which clause did not hold, as its place among the type's, beside the status. The constructor turns
+that place into `InvariantNotHeld`, a reader into an issue at the value's path, and an attempted
+construction into the arm naming the clause: `guard PendingItem { ... } as pending else |
+withinCapacity -> CartFull` builds the value and goes on where every clause holds, and answers
+`CartFull` where `withinCapacity` does not. `else e` on its own answers every clause; beside arms
+naming clauses, `| _ ->` answers the clauses that have no name and no other, as the checker holds
+it. A clause that itself ends without a value still ends the run. The deciding function
+is the declaring build's too, reached from another build under a symbol of its own, so an attempt of
+a type another build declares runs that build's clauses and takes its arm here. What crosses to the
+attempting build is what each clause is answered under, in the order the clauses run, and nothing
+of what they say.
+
 A host builds and reads a value of a type the module publishes through functions the object
 defines for it, and never through where the value keeps anything. A host holds a value as an
 address it does not look behind, good until the mark taken before it was made is reset, and hands
@@ -252,8 +265,7 @@ of, a list element by element, through a comparator the object holds per type.
 Still ahead: a `Decimal`, a `Set` and a `Map`,
 every kernel but `Int.add`, `Int.truncatingDivide`, `Int.truncatingRemainder`,
 `String.length`, `List.length` and `List.get`, a value
-that runs in the module declaring it, an attempted
-construction, which takes an arm by the clause that did not hold instead of ending the run, and a
+that runs in the module declaring it, and a
 behavior that declares what its answer owes, which is refused rather than answered without the
 rule being run. A set, a map and
 a `Decimal` are read off the program whole and refused where one would be laid out or written: how

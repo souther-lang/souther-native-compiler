@@ -196,6 +196,44 @@ pub fn constructor_symbol(module: &str, name: &str) -> String {
     format!("souther{ABI_GENERATION}.{module}$construct${name}")
 }
 
+/// The symbol what decides a construction of a declared type is reached by: the fields, room for
+/// the value and room for which clause did not hold, answering a status.
+///
+/// What [`constructor_symbol`] runs, with the one thing a status cannot say kept apart from it. A
+/// clause that does not hold is not a computation that ended without a value: the status is
+/// `ANSWERED`, and the clause's room holds that clause's place among the type's, counted from
+/// nought in the order a construction runs them. Where every clause held, the room holds
+/// [`NO_FAILED_CLAUSE`] and the value is written through its room. A clause that itself ends
+/// without a value answers that status, and nothing is written. So the constructor is this with a
+/// clause that did not hold answered as a status, and an attempted construction is this with the
+/// clause taking an arm.
+///
+/// Defined by the object of the build that declared the type, beside the constructor, and reached
+/// from every other object by name, so that an attempted construction of another build's type runs
+/// that build's clauses and no copy of them. `souther<abi>.<module>$checked$<name>`, spelt the way
+/// [`constructor_symbol`] is.
+///
+/// # Panics
+///
+/// Where either name carries a dollar, or the type's name carries a dot, for the reason
+/// [`type_symbol`] gives.
+pub fn checked_constructor_symbol(module: &str, name: &str) -> String {
+    assert!(
+        spells_a_module(module),
+        "a module's name carries no dollar, and the symbol is split on one: {module}"
+    );
+    assert!(
+        spells_a_name(name),
+        "a declared type's name carries neither dollar nor dot, and the symbol is split on \
+         both: {name}"
+    );
+    format!("souther{ABI_GENERATION}.{module}$checked${name}")
+}
+
+/// What the clause's room of [`checked_constructor_symbol`] holds where every clause held and the
+/// value was written: below nought, so that it is no clause's place.
+pub const NO_FAILED_CLAUSE: i64 = -1;
+
 /// Everything a host calls is named by a C identifier, and this is what one is made of.
 ///
 /// A host is a third party to this backend, and the one thing every host can write is a C
@@ -1422,11 +1460,12 @@ mod tests {
     use super::{
         ABI_GENERATION, FIRST_FIELD, HOST_STATUSES, HostListOperation, HostWord,
         IMPLEMENTATION_ANSWERS, INJECTION_PROTOCOL_VIOLATION, INJECTION_UNBOUND, SLOT, TOKEN,
-        WHICH, behavior_symbol, boundary_symbol, constructor_symbol, example_symbol, field_at,
-        held_symbol, home_symbol, host_behavior_answer_case_symbol, host_behavior_symbol,
-        host_case_symbol, host_constructor_symbol, host_decode_symbol, host_encode_symbol,
-        host_field_symbol, host_implementation_type, host_list_symbol, host_register_symbol,
-        host_value_symbol, member_at, reader_symbol, type_symbol, value_symbol,
+        WHICH, behavior_symbol, boundary_symbol, checked_constructor_symbol, constructor_symbol,
+        example_symbol, field_at, held_symbol, home_symbol, host_behavior_answer_case_symbol,
+        host_behavior_symbol, host_case_symbol, host_constructor_symbol, host_decode_symbol,
+        host_encode_symbol, host_field_symbol, host_implementation_type, host_list_symbol,
+        host_register_symbol, host_value_symbol, member_at, reader_symbol, type_symbol,
+        value_symbol,
     };
 
     #[test]
@@ -1615,6 +1654,31 @@ mod tests {
         assert_ne!(built, behavior_symbol("pricing", "Amount"));
         assert_ne!(built, value_symbol("pricing", "Amount"));
         assert_ne!(built, home_symbol("pricing", "Amount"));
+        assert_ne!(built, checked_constructor_symbol("pricing", "Amount"));
+    }
+
+    #[test]
+    fn what_decides_a_construction_is_reached_by_the_types_module_and_name() {
+        assert_eq!(
+            checked_constructor_symbol("pricing", "Amount"),
+            "souther3.pricing$checked$Amount"
+        );
+    }
+
+    /// What decides a construction is none of the other things a module's name reaches either.
+    #[test]
+    fn what_decides_a_construction_is_not_any_other_symbol_of_one_name() {
+        let deciding = checked_constructor_symbol("pricing", "Amount");
+        assert_ne!(deciding, type_symbol("pricing", "Amount"));
+        assert_ne!(deciding, behavior_symbol("pricing", "Amount"));
+        assert_ne!(deciding, value_symbol("pricing", "Amount"));
+        assert_ne!(deciding, home_symbol("pricing", "Amount"));
+    }
+
+    #[test]
+    #[should_panic(expected = "neither dollar nor dot")]
+    fn a_checked_types_name_carrying_a_dot_is_refused() {
+        let _ = checked_constructor_symbol("a", "b.C");
     }
 
     #[test]

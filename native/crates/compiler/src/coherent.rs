@@ -58,7 +58,7 @@ use crate::transport::{
     AbortKind, Answers, Carrier, Case, Declaration, Definition, Ensures, Guard, Held, Node, Op,
     Owner, Prim, Program, Reaches, Reading, Routing, Selects, Target, Ty, Value,
 };
-use crate::{Declared, Runs, Targets, not_lowered, says_its_case, spelt};
+use crate::{Declared, Runs, Targets, departures_taken, not_lowered, says_its_case, spelt};
 use anyhow::{Result, anyhow, bail};
 use souther_native_abi::{spells_a_module, spells_a_name};
 use std::collections::HashMap;
@@ -679,6 +679,39 @@ impl<'a> Walk<'_, 'a> {
                     )
                 })
                 .collect(),
+            Node::Attempt {
+                declared,
+                values,
+                then,
+                departures,
+                ty,
+                ..
+            } => self
+                .declared
+                .shape(declared)?
+                .fields()
+                .iter()
+                .zip(values)
+                .map(|(field, value)| {
+                    typed(
+                        value,
+                        &field.codec.ty(),
+                        format!("the value {declared}'s field {} is given", field.name),
+                    )
+                })
+                .chain(std::iter::once(typed(
+                    then,
+                    ty,
+                    "what an attempted construction answers where it builds".to_string(),
+                )))
+                .chain(departures.bodies().into_iter().map(|body| {
+                    typed(
+                        body,
+                        ty,
+                        "what an attempted construction's departure answers".to_string(),
+                    )
+                }))
+                .collect(),
             Node::Field { target, .. } => vec![Slot::Untyped(target, Untyped::ReadFrom)],
             Node::Binary {
                 op,
@@ -996,17 +1029,13 @@ impl<'a> Walk<'_, 'a> {
                 }
                 // A construction ends without a value where a clause does not hold, and the checker
                 // says so of exactly the constructions of a type that states one. Of a type
-                // another build builds the clauses are that build's and not carried, so whether
-                // this construction names the one reason is not held, and that it names no other
-                // is.
+                // another build builds the clauses are that build's, and what each is answered
+                // under is carried all the same, so whether it states one is known here too.
                 let owes = [AbortKind::InvariantNotHeld];
-                let (holds, states) = match shape.clauses() {
-                    Some([]) => (aborts.is_empty(), "states no clause"),
-                    Some(_) => (aborts.as_slice() == owes, "states what its values owe"),
-                    None => (
-                        aborts.is_empty() || aborts.as_slice() == owes,
-                        "is built by another build, which states what its values owe or nothing",
-                    ),
+                let (holds, states) = if shape.clause_names().is_empty() {
+                    (aborts.is_empty(), "states no clause")
+                } else {
+                    (aborts.as_slice() == owes, "states what its values owe")
                 };
                 if !holds {
                     bail!(
@@ -1026,6 +1055,69 @@ impl<'a> Walk<'_, 'a> {
                 }
                 for value in values {
                     self.node(value)?;
+                }
+                Ok(())
+            }
+            Node::Attempt {
+                declared,
+                values,
+                binding,
+                binds,
+                then,
+                departures,
+                ..
+            } => {
+                let shape = self.declared.shape(declared)?;
+                if !matches!(
+                    shape,
+                    crate::transport::Declaration::Product { .. }
+                        | crate::transport::Declaration::Newtype { .. }
+                ) {
+                    bail!(
+                        "{}: {declared} is attempted and is not declared with fields to build",
+                        self.owner
+                    );
+                }
+                if shape.field_count() != values.len() {
+                    bail!(
+                        "{}: {declared} is declared with {} fields and is attempted here from {}",
+                        self.owner,
+                        shape.field_count(),
+                        values.len()
+                    );
+                }
+                // What is bound is what is built, where every clause held.
+                self.same(
+                    &format!("what an attempted construction of {declared} binds"),
+                    binds,
+                    &Ty::Declared {
+                        declared: declared.clone(),
+                    },
+                    "what it builds",
+                )?;
+                // A type that states no clause has no failing side, which the checker refuses to
+                // attempt; and every clause it states is answered by one departure.
+                let clauses = shape.clause_names();
+                if clauses.is_empty() {
+                    bail!(
+                        "{}: {declared} is attempted and states no clause, which the checker \
+                         refuses: the two halves disagree",
+                        self.owner
+                    );
+                }
+                departures_taken(&clauses, departures).map_err(|why| {
+                    anyhow!(
+                        "{}: an attempted construction of {declared}: {why}: the two halves \
+                         disagree",
+                        self.owner
+                    )
+                })?;
+                for value in values {
+                    self.node(value)?;
+                }
+                self.under(vec![(*binding, binds.clone())], then)?;
+                for body in departures.bodies() {
+                    self.node(body)?;
                 }
                 Ok(())
             }
@@ -1871,7 +1963,7 @@ fn holds_and_builds_nothing(owner: &str, condition: &Node) -> Result<()> {
     }
     let mut built = None;
     condition.each(&mut |node| {
-        if let Node::Construct { declared, .. } = node {
+        if let Node::Construct { declared, .. } | Node::Attempt { declared, .. } = node {
             built.get_or_insert(declared);
         }
     });

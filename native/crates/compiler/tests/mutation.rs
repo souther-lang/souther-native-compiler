@@ -56,7 +56,7 @@ fn binary(op: &str, left: Value, right: Value, ty: Value, aborts: Value) -> Valu
 
 fn program(declarations: Value, helpers: Value, publishes: Value) -> Value {
     json!({
-        "transport": 16,
+        "transport": 17,
         "declarations": declarations,
         "behaviors": [],
         "modules": [{
@@ -231,7 +231,65 @@ fn by_hand() -> Vec<(&'static str, Value)> {
         json!([]),
     );
 
+    // An attempt of a type this build runs the clauses of, with an arm naming a clause and one
+    // naming none, and of one another build runs them for, known here by its clauses' headers.
+    let spanned = |by: &str, clauses: (&str, Value)| {
+        let (key, stated) = clauses;
+        let mut declaration = json!({
+            "module": "m", "name": "S", "by": by, "is": "product",
+            "fields": [{ "name": "lo", "binding": 0, "codec": { "is": "scalar", "scalar": INT } },
+                       { "name": "hi", "binding": 1, "codec": { "is": "scalar", "scalar": INT } }]
+        });
+        declaration[key] = stated;
+        let span = json!({ "declared": "m.S" });
+        let width = json!({
+            "core": "field", "target": read(2, span.clone()), "field": "hi",
+            "type": prim(INT), "aborts": []
+        });
+        let attempted = json!({
+            "core": "attempt", "declared": "m.S",
+            "values": [read(0, prim(INT)), read(1, prim(INT))],
+            "binding": 2, "binds": span, "then": width,
+            "departures": [{ "clause": "ordered", "body": int(-1) },
+                           { "clause": null, "body": read(0, prim(INT)) }],
+            "type": prim(INT), "aborts": []
+        });
+        program(
+            json!([declaration]),
+            json!([helper("m.attempt", &[prim(INT), prim(INT)], attempted)]),
+            json!([]),
+        )
+    };
+    let ordered = binary(
+        "LE",
+        read(0, prim(INT)),
+        read(1, prim(INT)),
+        prim("BOOL"),
+        json!([]),
+    );
+    let bounded = binary("LE", read(1, prim(INT)), int(100), prim("BOOL"), json!([]));
+    let attempting_here = spanned(
+        "amodule",
+        (
+            "invariants",
+            json!([{ "name": "ordered", "condition": ordered },
+                   { "name": null, "condition": bounded }]),
+        ),
+    );
+    let attempting_elsewhere = spanned(
+        "onthepath",
+        ("headers", json!([{ "name": "ordered" }, { "name": null }])),
+    );
+
     vec![
+        (
+            "an attempt of a type this build runs the clauses of",
+            attempting_here,
+        ),
+        (
+            "an attempt of a type another build runs the clauses of",
+            attempting_elsewhere,
+        ),
         ("binders whose scopes close before a read", scoping),
         ("an arm that binds beside one that does not", arms),
         ("a construction that owes a clause", constructing),
@@ -719,6 +777,24 @@ fn rename(
                     }
                 }
             }
+            // What is built is bound for the branch taken where every clause held, and for nothing
+            // else: the fields are worked out before it, and a departure is taken where it never was.
+            Some("attempt") => {
+                if let Some(values) = fields.get_mut("values") {
+                    rename(values, names, fresh, mode, handed);
+                }
+                if let Some(departures) = fields.get_mut("departures") {
+                    rename(departures, names, fresh, mode, handed);
+                }
+                let old = fields.get("binding").and_then(Value::as_u64);
+                let new = number(mode, names, handed, fields.get("then"), old, fresh);
+                let before = old.and_then(|old| bind(names, old, new));
+                fields.insert("binding".to_string(), Value::from(new));
+                if let Some(then) = fields.get_mut("then") {
+                    rename(then, names, fresh, mode, handed);
+                }
+                leave(names, old, before);
+            }
             Some("block") => {
                 let mut entered: Vec<(Option<u64>, Option<u64>)> = Vec::new();
                 if let Some(parameters) = fields.get_mut("parameters").and_then(Value::as_array_mut)
@@ -830,6 +906,21 @@ fn free_reads(node: &Value, bound: &mut Vec<u64>, into: &mut BTreeSet<u64>) {
                     if own.is_some() {
                         bound.pop();
                     }
+                }
+            }
+            Some("attempt") => {
+                for key in ["values", "departures"] {
+                    if let Some(inner) = fields.get(key) {
+                        free_reads(inner, bound, into);
+                    }
+                }
+                let own = fields.get("binding").and_then(Value::as_u64);
+                bound.extend(own);
+                if let Some(then) = fields.get("then") {
+                    free_reads(then, bound, into);
+                }
+                if own.is_some() {
+                    bound.pop();
                 }
             }
             Some("block") => {

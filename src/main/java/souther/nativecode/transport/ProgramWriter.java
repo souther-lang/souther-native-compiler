@@ -86,7 +86,7 @@ public final class ProgramWriter {
      * written moves, so that a driver and a writer that disagree say so rather than producing an
      * object that is wrong quietly.
      */
-    public static final int TRANSPORT_VERSION = 16;
+    public static final int TRANSPORT_VERSION = 17;
 
     private final CheckedProgram program;
 
@@ -377,11 +377,14 @@ public final class ProgramWriter {
      * checked it, and a construction here calls that one. So its clauses are that build's and not
      * written here: what they read and call is that build's own, a helper it keeps among it, and a
      * copy of the clauses would be run without the rest of what they were checked against.
+     *
+     * <p>What each of that build's clauses is answered under is written, since an attempted
+     * construction here takes the arm the clause names ({@link #headers}).
      */
     private String clauses(Declared declared, CheckedData.WithFields held, Bindings bindings) {
         return switch (declared.declaredBy()) {
             case A_MODULE -> ",\"invariants\":" + invariants(held, bindings);
-            case A_MODULE_ON_THE_PATH -> "";
+            case A_MODULE_ON_THE_PATH -> ",\"headers\":" + headers(held);
             // What the language declares is a set of alternatives or a single value, and neither
             // is built from fields.
             case THE_LANGUAGE -> throw new IllegalStateException(
@@ -403,6 +406,24 @@ public final class ProgramWriter {
             String name = clause.name().map(ProgramWriter::quoted).orElse("null");
             written.add("{\"name\":" + name
                     + ",\"condition\":" + core(clause.condition(), bindings) + "}");
+        }
+        return written.toString();
+    }
+
+    /**
+     * What each clause a value of this has to hold is answered under, in the order a failure is
+     * decided in, and nothing of what it says: the name where the author gave one.
+     *
+     * <p>The name and its place are the declaration's interface. The object of the build that runs
+     * the clauses answers which one did not hold by its place, and an arm here names it by the
+     * name, so this is what the two are matched through. The condition is that build's own, for
+     * the reason {@link #clauses} gives.
+     */
+    private String headers(CheckedData.WithFields held) {
+        StringJoiner written = new StringJoiner(",", "[", "]");
+        for (ValueShape.Invariant clause : held.invariants()) {
+            String name = clause.name().map(ProgramWriter::quoted).orElse("null");
+            written.add("{\"name\":" + name + "}");
         }
         return written.toString();
     }
@@ -1169,10 +1190,49 @@ public final class ProgramWriter {
             case Core.Call it -> call(it, bindings);
             case Core.PreservedCall it -> throw notYet("a call kept for what it says", it);
             case Core.Apply it -> apply(it, bindings);
-            case Core.IfConstructed it -> throw notYet("an attempted construction", it);
+            case Core.IfConstructed it -> attempt(it, bindings);
             case Core.Block it -> block(it, bindings);
             case Core.Unreachable it -> throw notYet("an unreachable", it);
         };
+    }
+
+    /**
+     * An attempted construction: the fields, what the value built is bound under where every clause
+     * holds and the branch that reads it, and each departure with the clause it answers.
+     *
+     * <p>Not a construction under a fork. What {@link Core.IfConstructed#construct} is on its own is
+     * a construction that ends the run where a clause does not hold, and here it never does, which
+     * is what the checker says of it too ({@code AbortSites} files it as ending nothing). Written as
+     * one node, the far side reads one thing that decides which way the run goes, and meets no
+     * construction whose meaning is changed by what stands over it.
+     *
+     * <p>The fields are written before the binder is numbered and the branch after, as a
+     * {@link #letIn} writes its value and its body: the value is built out of what was in scope,
+     * and exists only in the branch. What the binder is in force at is written beside it, as a
+     * {@code let}'s is. A departure is written after the branch and does not read the binder, since
+     * where it is taken nothing was built.
+     */
+    private String attempt(Core.IfConstructed it, Bindings bindings) {
+        Core.Construct construct = it.construct();
+        StringJoiner values = new StringJoiner(",", "[", "]");
+        for (Core.FieldValue field : construct.values()) {
+            values.add(core(field.value(), bindings));
+        }
+        int binding = bindings.number(it.binder().binding());
+        String then = core(it.then(), bindings);
+        StringJoiner departures = new StringJoiner(",", "[", "]");
+        for (Core.ElseArm departure : it.els()) {
+            String clause = departure.clause().map(ProgramWriter::quoted).orElse("null");
+            departures.add("{\"clause\":" + clause
+                    + ",\"body\":" + core(departure.body(), bindings) + "}");
+        }
+        return "{\"core\":\"attempt\",\"declared\":" + quoted(named(construct.typeName()))
+                + ",\"values\":" + values
+                + ",\"binding\":" + binding
+                + ",\"binds\":" + type(construct.type())
+                + ",\"then\":" + then
+                + ",\"departures\":" + departures
+                + ",\"type\":" + type(it.type()) + ",\"aborts\":" + aborts(it) + "}";
     }
 
     /**

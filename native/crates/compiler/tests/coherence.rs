@@ -21,7 +21,7 @@ const P: &str = r#"{"declared":"m.P"}"#;
 fn document(behaviors: &[String], helpers: &[String], definitions: &[String]) -> String {
     format!(
         concat!(
-            r#"{{"transport":16,"declarations":["#,
+            r#"{{"transport":17,"declarations":["#,
             r#"{{"module":"m","name":"A","by":"amodule","is":"unit"}},"#,
             r#"{{"module":"m","name":"B","by":"amodule","is":"unit"}},"#,
             r#"{{"module":"m","name":"S","by":"amodule","is":"sum","#,
@@ -1403,7 +1403,7 @@ fn a_concat_of_two_strings_reads_whole() {
 fn with_clauses(fields: &str, invariants: &str, helpers: &[String]) -> String {
     format!(
         concat!(
-            r#"{{"transport":16,"declarations":["#,
+            r#"{{"transport":17,"declarations":["#,
             r#"{{"module":"m","name":"R","by":"amodule","is":"product","#,
             r#""fields":[{}],"invariants":[{}]}}],"#,
             r#""behaviors":[],"#,
@@ -1947,12 +1947,13 @@ fn a_negation_of_an_int_names_its_reason_whatever_it_negates() {
     );
 }
 
-/// A type another build builds carries no clauses here, so whether a construction of one names the
-/// one reason a clause can end it for is not held. That it names no other is: a construction ends a
-/// run for nothing but a clause that does not hold.
+/// A type another build builds carries what its clauses are answered under and not the clauses, so
+/// whether a construction of one names the one reason a clause can end it for is held as it is for
+/// a type of this build's: it names that reason exactly where the type states a clause, and never
+/// another.
 #[test]
-fn a_construction_of_another_builds_type_names_no_reason_but_a_clause() {
-    let document = |aborts: &str| {
+fn a_construction_of_another_builds_type_names_the_reason_its_clauses_give() {
+    let document = |headers: &str, aborts: &str| {
         let built = with_outer_aborts(
             &node(
                 "construct",
@@ -1963,20 +1964,27 @@ fn a_construction_of_another_builds_type_names_no_reason_but_a_clause() {
         );
         format!(
             concat!(
-                r#"{{"transport":16,"declarations":["#,
+                r#"{{"transport":17,"declarations":["#,
                 r#"{{"module":"m","name":"R","by":"onthepath","is":"product","#,
-                r#""fields":[{}]}}],"behaviors":[],"#,
+                r#""fields":[{}],"headers":[{}]}}],"behaviors":[],"#,
                 r#""modules":[{{"name":"m","publishes":[],"helpers":[{}],"values":[],"#,
                 r#""entries":[],"definitions":[],"examples":[]}}]}}"#
             ),
             field("count", 0, "INT"),
+            headers,
             h(&[], &built)
         )
     };
+    let stated = r#"{"name":"counted"}"#;
 
-    reads_whole(&document(""));
-    reads_whole(&document(r#""INVARIANT_NOT_HELD""#));
-    is_the_halves_disagreeing(&document(r#""DIVISION_BY_ZERO""#), "another build");
+    reads_whole(&document("", ""));
+    reads_whole(&document(stated, r#""INVARIANT_NOT_HELD""#));
+    is_the_halves_disagreeing(&document("", r#""INVARIANT_NOT_HELD""#), "states no clause");
+    is_the_halves_disagreeing(&document(stated, ""), "states what its values owe");
+    is_the_halves_disagreeing(
+        &document(stated, r#""DIVISION_BY_ZERO""#),
+        "states what its values owe",
+    );
 }
 
 /// A binding's number is its identity and not its position, so a document numbering its binders with
@@ -2142,7 +2150,7 @@ fn an_arm_binds_and_says_what_it_reads_it_as_together() {
 fn a_handover_carries_a_value_the_module_builds() {
     let value = |carries: &str| {
         format!(
-            r#"{{"transport":16,"declarations":[],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[],"values":[{{"module":"m","name":"ks","handovers":[],"body":{}}},{{"module":"m","name":"ys","handovers":[{{"parameter":"dep","type":{INT},"carries":{{"module":"m","name":"{carries}"}}}}],"body":{}}}],"entries":[],"definitions":[],"examples":[]}}]}}"#,
+            r#"{{"transport":17,"declarations":[],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[],"values":[{{"module":"m","name":"ks","handovers":[],"body":{}}},{{"module":"m","name":"ys","handovers":[{{"parameter":"dep","type":{INT},"carries":{{"module":"m","name":"{carries}"}}}}],"body":{}}}],"entries":[],"definitions":[],"examples":[]}}]}}"#,
             int(1),
             read(0, INT)
         )
@@ -2384,5 +2392,266 @@ fn a_rule_over_a_case_reads_the_answer_as_its_guard_says() {
             &[defined(&read(0, INT))],
         ),
         "m.b",
+    );
+}
+
+/// `m.R` attempted from the helper's `Int` parameter, bound under 1 where every clause holds and
+/// read back as its `count`, and each of `departures` answering an `Int`.
+fn attempted(departures: &[(Option<&str>, &str)]) -> String {
+    attempt(&read(0, INT), &field_of_r(1), departures)
+}
+
+fn attempt(count: &str, then: &str, departures: &[(Option<&str>, &str)]) -> String {
+    let departures: Vec<String> = departures
+        .iter()
+        .map(|(clause, body)| {
+            let clause = clause.map_or("null".to_string(), |it| format!(r#""{it}""#));
+            format!(r#"{{"clause":{clause},"body":{body}}}"#)
+        })
+        .collect();
+    node(
+        "attempt",
+        &format!(
+            r#""declared":"m.R","values":[{count}],"binding":1,"binds":{{"declared":"m.R"}},"then":{then},"departures":[{}]"#,
+            departures.join(",")
+        ),
+        INT,
+    )
+}
+
+/// The `count` of the `m.R` bound under `binding`.
+fn field_of_r(binding: usize) -> String {
+    node(
+        "field",
+        &format!(
+            r#""target":{},"field":"count""#,
+            read(binding, r#"{"declared":"m.R"}"#)
+        ),
+        INT,
+    )
+}
+
+/// `m.R` stating a named clause and one with no name, and a helper attempting it.
+fn attempting(body: &str) -> String {
+    attempting_under(&[Some("counted"), None], body)
+}
+
+/// `m.R` stating one clause for each of `names`, under that name or none, and a helper attempting
+/// it.
+fn attempting_under(names: &[Option<&str>], body: &str) -> String {
+    let clauses: Vec<String> = names
+        .iter()
+        .map(|name| clause(*name, &at_least(&read(0, INT), &int(0))))
+        .collect();
+    with_clauses(
+        &field("count", 0, "INT"),
+        &clauses.join(","),
+        &[h(&[INT], body)],
+    )
+}
+
+/// Every clause of what is attempted is answered by one departure, by the checker's rule: each
+/// clause with a name by the arm naming it, and the clauses with no name by the arm naming none. A
+/// departure naming what the type does not state, two answering one clause, and a clause nothing
+/// answers are each a document the checker could not have written.
+#[test]
+fn every_clause_of_what_is_attempted_is_answered_by_one_departure() {
+    let minus = |n: i64| node("int", &format!(r#""value":{}"#, -n), INT);
+    reads_whole(&attempting(&attempted(&[
+        (Some("counted"), &minus(1)),
+        (None, &minus(2)),
+    ])));
+    // The arms in another order are the same arms.
+    reads_whole(&attempting(&attempted(&[
+        (None, &minus(2)),
+        (Some("counted"), &minus(1)),
+    ])));
+
+    is_the_halves_disagreeing(
+        &attempting(&attempted(&[(Some("roomy"), &minus(1)), (None, &minus(2))])),
+        "the clause roomy, which it does not state",
+    );
+    is_the_halves_disagreeing(
+        &attempting(&attempted(&[
+            (Some("counted"), &minus(1)),
+            (Some("counted"), &minus(3)),
+            (None, &minus(2)),
+        ])),
+        "two departures answer the clause counted",
+    );
+    is_the_halves_disagreeing(
+        &attempting(&attempted(&[
+            (Some("counted"), &minus(1)),
+            (None, &minus(2)),
+            (None, &minus(3)),
+        ])),
+        "two departures answer the clauses that have no name",
+    );
+    is_the_halves_disagreeing(
+        &attempting(&attempted(&[(Some("counted"), &minus(1))])),
+        "its clause 1, which has no name, is answered by no departure",
+    );
+}
+
+/// The arm naming no clause answers the clauses with no name and nothing else, where arms name
+/// clauses beside it: a clause with a name that no arm names is not answered by it, and where every
+/// clause has a name it answers nothing. Both are refused by the checker (E2015, E2017), and read
+/// as an arm to fall back on they would be run.
+#[test]
+fn the_arm_naming_no_clause_answers_only_the_clauses_with_no_name() {
+    let minus = |n: i64| node("int", &format!(r#""value":{}"#, -n), INT);
+    let two_named_and_one_not = [Some("a"), Some("b"), None];
+    is_the_halves_disagreeing(
+        &attempting_under(
+            &two_named_and_one_not,
+            &attempted(&[(Some("a"), &minus(1)), (None, &minus(3))]),
+        ),
+        "its clause b is answered by no departure",
+    );
+    reads_whole(&attempting_under(
+        &two_named_and_one_not,
+        &attempted(&[
+            (Some("a"), &minus(1)),
+            (Some("b"), &minus(2)),
+            (None, &minus(3)),
+        ]),
+    ));
+
+    let every_one_named = [Some("a"), Some("b")];
+    is_the_halves_disagreeing(
+        &attempting_under(
+            &every_one_named,
+            &attempted(&[
+                (Some("a"), &minus(1)),
+                (Some("b"), &minus(2)),
+                (None, &minus(3)),
+            ]),
+        ),
+        "every clause has one",
+    );
+    reads_whole(&attempting_under(
+        &every_one_named,
+        &attempted(&[(Some("a"), &minus(1)), (Some("b"), &minus(2))]),
+    ));
+}
+
+/// One departure naming no clause is one value for any failure, which is what `else e` and a lone
+/// `| _ -> e` both are to the checker: it answers every clause, named or not.
+#[test]
+fn one_departure_naming_no_clause_answers_every_clause() {
+    let minus = |n: i64| node("int", &format!(r#""value":{}"#, -n), INT);
+    reads_whole(&attempting(&attempted(&[(None, &minus(2))])));
+    reads_whole(&attempting_under(
+        &[Some("a"), Some("b")],
+        &attempted(&[(None, &minus(2))]),
+    ));
+}
+
+/// Two clauses of one declaration under one name would be one arm for two rules, which the checker
+/// refuses.
+#[test]
+fn a_declaration_states_each_clause_name_once() {
+    is_the_halves_disagreeing(
+        &attempting_under(&[Some("a"), Some("a")], &int(0)),
+        "states two clauses both named a",
+    );
+}
+
+/// What is built is bound where every clause held, and nowhere else: a departure is taken where
+/// nothing was, and the fields are worked out before anything is.
+#[test]
+fn what_an_attempt_builds_is_read_only_where_it_was_built() {
+    let taken = |departure: &str| {
+        attempting(&attempt(
+            &read(0, INT),
+            &field_of_r(1),
+            &[(Some("counted"), departure), (None, &int(0))],
+        ))
+    };
+    reads_whole(&taken(&int(0)));
+    is_the_halves_disagreeing(&taken(&field_of_r(1)), "nothing in scope binds");
+    is_the_halves_disagreeing(
+        &attempting(&attempt(&field_of_r(1), &int(0), &[(None, &int(0))])),
+        "nothing in scope binds",
+    );
+}
+
+/// What is bound is what is built, at the declaration's own type.
+#[test]
+fn an_attempt_binds_what_it_builds() {
+    let rebound = attempted(&[(None, &int(0))])
+        .replace(r#""binds":{"declared":"m.R"}"#, r#""binds":{"prim":"INT"}"#);
+    is_the_halves_disagreeing(&attempting(&rebound), "binds");
+}
+
+/// An attempt ends no run: a clause that does not hold takes a departure, and a clause that does
+/// not answer is that clause's own site. So it names no reason, as the checker files it.
+#[test]
+fn an_attempt_names_no_reason_to_end_a_run() {
+    let ends = with_outer_aborts(&attempted(&[(None, &int(0))]), r#""INVARIANT_NOT_HELD""#);
+    is_the_halves_disagreeing(&attempting(&ends), "ends no run without a value");
+}
+
+/// A type that states no clause has no departure to take, and the checker refuses to attempt one.
+#[test]
+fn a_type_that_states_no_clause_is_not_attempted() {
+    let document = with_clauses(
+        &field("count", 0, "INT"),
+        "",
+        &[h(&[INT], &attempted(&[(None, &int(0))]))],
+    );
+    is_the_halves_disagreeing(&document, "states no clause");
+}
+
+/// A clause builds no value, by attempting one no more than by constructing one.
+#[test]
+fn a_clause_attempts_nothing() {
+    let attempts = clause(
+        Some("counted"),
+        &node(
+            "attempt",
+            &format!(
+                r#""declared":"m.R","values":[{}],"binding":1,"binds":{{"declared":"m.R"}},"then":{},"departures":[{{"clause":null,"body":{}}}]"#,
+                read(0, INT),
+                truth(true),
+                truth(false)
+            ),
+            BOOL,
+        ),
+    );
+    is_the_halves_disagreeing(
+        &with_clauses(&field("count", 0, "INT"), &attempts, &[]),
+        "where a clause builds no value",
+    );
+}
+
+/// What a declaration's clauses are answered under crosses apart from them exactly where another
+/// build runs them: a declaration of this build's carries the clauses and not that, and one on the
+/// path carries that and not the clauses.
+#[test]
+fn what_clauses_are_answered_under_crosses_where_another_build_runs_them() {
+    let declared = |by: &str, clauses: &str| {
+        format!(
+            concat!(
+                r#"{{"transport":17,"declarations":["#,
+                r#"{{"module":"m","name":"R","by":"{}","is":"product","#,
+                r#""fields":[{}]{}}}],"behaviors":[],"#,
+                r#""modules":[{{"name":"m","publishes":[],"helpers":[],"values":[],"#,
+                r#""entries":[],"definitions":[],"examples":[]}}]}}"#
+            ),
+            by,
+            field("count", 0, "INT"),
+            clauses
+        )
+    };
+    let headers = r#","headers":[{"name":"counted"}]"#;
+    let invariants = r#","invariants":[]"#;
+
+    reads_whole(&declared("onthepath", headers));
+    reads_whole(&declared("amodule", invariants));
+    is_the_halves_disagreeing(&declared("onthepath", ""), "are not carried apart");
+    is_the_halves_disagreeing(
+        &declared("amodule", &format!("{invariants}{headers}")),
+        "are carried apart",
     );
 }
