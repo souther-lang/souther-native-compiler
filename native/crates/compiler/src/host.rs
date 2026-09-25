@@ -496,9 +496,6 @@ pub(crate) struct Entry<'a> {
     /// Whether `runs` is a behavior's symbol, which takes what the behavior was constructed with
     /// first ([`super::behavior_signature`]), and not a value's entry, which takes nothing more.
     pub constructed: bool,
-    /// Whether a host makes a capability of it, to hand where something requires it
-    /// ([`souther_native_abi::host_bind_symbol`]).
-    pub binds: bool,
     pub inputs: &'a [BoundaryInput],
     /// The names the declaration gives `inputs`, and none for a composition, which declares no
     /// parameters. A value takes nothing, and names nothing.
@@ -507,9 +504,43 @@ pub(crate) struct Entry<'a> {
     /// The cases `answers` descends to, where it is a union no declaration names and a behavior's
     /// answer. None for a value, which a host is told nothing of the cases of yet.
     pub cases: Option<&'a [Case]>,
-    /// What constructing it requires injected, in order, and nothing for a value, which is not
-    /// constructed.
+}
+
+/// A behavior a host constructs the capabilities of what a call is made with out of, whether or not
+/// a host may call it by name ([`super::constructions`]).
+pub(crate) struct Construction<'a> {
+    pub module: &'a str,
+    pub name: &'a str,
+    /// The behavior's symbol, which a capability of it holds as its code.
+    pub runs: FuncId,
+    /// What constructing it requires injected, in order.
     pub requires: &'a [Requirement],
+    /// Whether a host makes a capability of it, to hand where something requires it
+    /// ([`souther_native_abi::host_bind_symbol`]).
+    pub binds: bool,
+}
+
+/// Defines what a host makes the capability of each of `constructions` through, where something
+/// may require it, and puts each on `surface` with what it requires.
+pub(crate) fn define_constructions(
+    emitting: &mut Emitting,
+    surface: &mut Surface,
+    constructions: &[Construction],
+) -> Lowered<()> {
+    for construction in constructions {
+        let bind = if construction.binds {
+            Some(bind(emitting, construction)?)
+        } else {
+            None
+        };
+        surface.construction(
+            construction.module,
+            construction.name,
+            construction.requires,
+            bind.as_ref(),
+        );
+    }
+    Ok(())
 }
 
 /// The word a behavior's parameter is handed over in, where a host can hand one over.
@@ -538,11 +569,6 @@ pub(crate) fn define_behaviors(
     for behavior in behaviors {
         let symbol = host_behavior_symbol(behavior.module, behavior.name);
         let call = forward(emitting, lists, symbol, behavior)?;
-        let bind = if behavior.binds {
-            Some(bind(emitting, behavior)?)
-        } else {
-            None
-        };
         // Which case an answer is, asked of what a host was handed by the call, so only where
         // there is a call to be handed one by.
         let union = match behavior.cases {
@@ -568,10 +594,8 @@ pub(crate) fn define_behaviors(
             &takes,
             &behavior.answers,
             union.as_ref().map(|(cases, case)| (*cases, case.as_ref())),
-            behavior.requires,
             emitting.declared,
             call.as_ref(),
-            bind.as_ref(),
         );
     }
     Ok(())
@@ -581,7 +605,7 @@ pub(crate) fn define_behaviors(
 /// requires: the behavior's symbol as the code, and the requirements as they were handed as what
 /// the code is handed first. Nothing is copied, so what a host hands over is read where the
 /// behavior runs.
-fn bind(emitting: &mut Emitting, behavior: &Entry) -> Lowered<HostFunction> {
+fn bind(emitting: &mut Emitting, behavior: &Construction) -> Lowered<HostFunction> {
     let function = HostFunction {
         symbol: host_bind_symbol(behavior.module, behavior.name),
         takes: vec![

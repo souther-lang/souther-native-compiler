@@ -47,13 +47,17 @@ abstract class Binding
     /**
      * @param array<string, InjectionSlot> $slots by the declared name of the behavior each is for
      * @param array<string, array{?string, list<string>}> $constructions by the declared name of
-     *        each published behavior: what makes a capability of it, where something may require
-     *        it, and the declared name of each behavior it requires, in order
+     *        each behavior a host constructs, whether or not it calls it by name: what makes a
+     *        capability of it, where something may require it, and the declared name of each
+     *        behavior it requires, in order
+     * @param list<string> $injected the declared name of every behavior a host implements, as the
+     *        library says, whether or not this binding has a way to adapt an implementation of it
      */
     protected function __construct(
         private readonly NativeLibrary $library,
         private readonly array $slots,
         private readonly array $constructions,
+        private readonly array $injected,
     ) {
     }
 
@@ -96,8 +100,11 @@ abstract class Binding
                 [$bind, $requires] = $this->constructions[$behavior]
                     ?? throw new \InvalidArgumentException("this binding constructs no {$behavior}");
                 $handed = [];
+                // Which of the two a requirement is, is what the library says, and not whether this
+                // binding could adapt an implementation of it: one it could not is one the run was
+                // handed nothing for.
                 foreach ($requires as $required) {
-                    $handed[] = isset($this->slots[$required])
+                    $handed[] = in_array($required, $this->injected, true)
                         ? $session->injected($required)
                         : $this->constructedAs($session, $required);
                 }

@@ -91,10 +91,46 @@ public final class PhpBindings {
     /** The class each behavior is written as, by {@code module.name}, where it has one. */
     private final Map<String, BehaviorClass> behaviorClasses = new LinkedHashMap<>();
 
+    /** What a host constructs each behavior out of, by {@code module.name}. */
+    private final Map<String, Manifest.Construction> constructions = new LinkedHashMap<>();
+
     private PhpBindings(Manifest manifest, String root, Path into) {
         this.manifest = manifest;
         this.root = root;
         this.into = into;
+        Set<String> constructible = new HashSet<>();
+        for (Manifest.Module module : manifest.modules()) {
+            for (Manifest.Construction construction : module.constructions()) {
+                constructions.put(module.name() + "." + construction.name(), construction);
+            }
+            for (Manifest.Injection injection : module.injections()) {
+                constructible.add(module.name() + "." + injection.name());
+            }
+        }
+        constructible.addAll(constructions.keySet());
+        // What a binding constructs a call out of is closed, as the driver holds a library's
+        // surface to be: a construction naming what nothing constructs would be found out by a
+        // host, at a call, as something this binding cannot build.
+        constructions.forEach((key, construction) -> construction.requires().forEach(required -> {
+            if (!constructible.contains(required.key())) {
+                throw new IllegalStateException("the manifest says " + key + " requires "
+                        + required.key() + ", which nothing in it constructs or asks a host to"
+                        + " implement");
+            }
+        }));
+    }
+
+    /** What constructing {@code key} requires injected, in order, and nothing where it requires nothing. */
+    private List<Manifest.Required> requiresOf(String key) {
+        Manifest.Construction construction = constructions.get(key);
+        return construction == null ? List.of() : construction.requires();
+    }
+
+    /** What a host makes a capability of {@code key} through, as PHP writes the name, or {@code null}. */
+    private String bindOf(String key) {
+        Manifest.Construction construction = constructions.get(key);
+        return construction == null || construction.bind() == null ? "null"
+                : "'" + quotedInSingle(construction.bind().name()) + "'";
     }
 
     /**
@@ -239,7 +275,7 @@ public final class PhpBindings {
                         && crossings.received(behavior.answers(), key) != null) {
                     candidates.put(key, new BehaviorClass(module.name(), behavior.name(), namespace,
                             PhpNames.capitalized(behavior.name()), false));
-                    requires.put(key, behavior.requires());
+                    requires.put(key, requiresOf(key));
                 }
             }
         }
@@ -1010,7 +1046,7 @@ public final class PhpBindings {
                         PhpNames.positional(positional.types().size());
             };
             String session = PhpNames.freeOf("session", names);
-            String requirements = behavior.requires().isEmpty() ? "null"
+            String requirements = requiresOf(module.name() + "." + behavior.name()).isEmpty() ? "null"
                     : bindingClass() + "::in($" + session + "->library())->requirementsOf($" + session
                     + ", '" + quotedInSingle(module.name() + "." + behavior.name()) + "')";
             functions.append(call(what, "public static function " + behavior.name(), names, takes,
@@ -1338,9 +1374,8 @@ public final class PhpBindings {
      * bound to.
      */
     private String construction(BehaviorClass it, Manifest.Behavior behavior) {
-        List<Manifest.Required> requires = behavior.requires();
-        String bind = behavior.bind() == null ? "null"
-                : "'" + quotedInSingle(behavior.bind().name()) + "'";
+        List<Manifest.Required> requires = requiresOf(it.key());
+        String bind = bindOf(it.key());
         if (requires.isEmpty()) {
             return """
 
@@ -1394,8 +1429,10 @@ public final class PhpBindings {
     private void binding() throws IOException {
         StringBuilder slots = new StringBuilder();
         StringBuilder constructions = new StringBuilder();
+        List<String> injected = new ArrayList<>();
         for (Manifest.Module module : manifest.modules()) {
             for (Manifest.Injection injection : module.injections()) {
+                injected.add("'" + quotedInSingle(module.name() + "." + injection.name()) + "'");
                 String adapter = adapter(module, injection);
                 if (adapter == null) {
                     continue;
@@ -1406,15 +1443,16 @@ public final class PhpBindings {
                         .append(injection.implement()).append("',\n                ").append(adapter)
                         .append("),\n");
             }
-            for (Manifest.Behavior behavior : module.behaviors()) {
-                String bind = behavior.bind() == null ? "null"
-                        : "'" + quotedInSingle(behavior.bind().name()) + "'";
-                String requires = behavior.requires().stream()
+            // Every behavior a host constructs, whether or not it calls it by name: a behavior the
+            // module keeps that a published one depends on has no function and no class here, and
+            // is built all the same where the published one is called.
+            for (Manifest.Construction construction : module.constructions()) {
+                String key = module.name() + "." + construction.name();
+                String requires = construction.requires().stream()
                         .map(it -> "'" + quotedInSingle(it.key()) + "'")
                         .collect(Collectors.joining(", ", "[", "]"));
-                constructions.append("        '").append(quotedInSingle(module.name() + "."
-                        + behavior.name())).append("' => [").append(bind).append(", ")
-                        .append(requires).append("],\n");
+                constructions.append("        '").append(quotedInSingle(key)).append("' => [")
+                        .append(bindOf(key)).append(", ").append(requires).append("],\n");
             }
         }
         StringBuilder php = header(root);
@@ -1431,7 +1469,13 @@ public final class PhpBindings {
                      */
                     private const CONSTRUCTIONS = [
                 %s    ];
-                """.formatted(constructions));
+
+                    /**
+                     * Every behavior a host implements, as the library says, whether or not this binding
+                     * adapts an implementation of it.
+                     */
+                    private const INJECTED = [%s];
+                """.formatted(constructions, String.join(", ", injected)));
         php.append("""
 
                     /**
@@ -1498,7 +1542,7 @@ public final class PhpBindings {
                                 . ' is version ' . $speaks);
                         }
                         return self::$bindings[spl_object_id($library)] ??= new self($library, [
-                %s        ], self::CONSTRUCTIONS);
+                %s        ], self::CONSTRUCTIONS, self::INJECTED);
                     }
                 }
                 """.formatted(DECLARATIONS, DECLARATIONS, RUNTIME_PROTOCOL, RUNTIME_PROTOCOL, slots));

@@ -392,8 +392,7 @@ impl Surface {
     ///
     /// `names` are what its declaration calls what it takes, and none for a composition. `union` is
     /// where it answers a union no declaration names: the cases that descends to, and what a host
-    /// asks which of them an answer is through, where it can. `requires` is what constructing it
-    /// requires injected, as the checker answered it.
+    /// asks which of them an answer is through, where it can.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn behavior(
         &mut self,
@@ -403,10 +402,8 @@ impl Surface {
         takes: &[Ty],
         answers: &Ty,
         union: Option<(&[transport::Case], Option<&HostFunction>)>,
-        requires: &[transport::Requirement],
         declared: &Declared,
         call: Option<&HostFunction>,
-        bind: Option<&HostFunction>,
     ) {
         let behavior = manifest::Behavior {
             name: name.to_string(),
@@ -423,6 +420,23 @@ impl Surface {
                     case: case.map(HostFunction::described),
                 }),
             },
+            call: call.map(HostFunction::described),
+        };
+        self.module(module).behaviors.push(behavior);
+    }
+
+    /// A behavior this object defines that a host constructs the capabilities of what a call is
+    /// made with out of, what it requires, and what a host makes a capability of it through, where
+    /// something may require it.
+    pub(crate) fn construction(
+        &mut self,
+        module: &str,
+        name: &str,
+        requires: &[transport::Requirement],
+        bind: Option<&HostFunction>,
+    ) {
+        let construction = manifest::Construction {
+            name: name.to_string(),
             requires: requires
                 .iter()
                 .map(|it| manifest::Required {
@@ -430,10 +444,9 @@ impl Surface {
                     name: it.name.clone(),
                 })
                 .collect(),
-            call: call.map(HostFunction::described),
             bind: bind.map(HostFunction::described),
         };
-        self.module(module).behaviors.push(behavior);
+        self.module(module).constructions.push(construction);
     }
 
     /// A behavior a module of this object declares with no body, which a host implements as
@@ -501,6 +514,7 @@ impl Surface {
             .or_insert_with(|| manifest::Module {
                 name: name.to_string(),
                 behaviors: Vec::new(),
+                constructions: Vec::new(),
                 injections: Vec::new(),
                 values: Vec::new(),
                 declarations: Vec::new(),
@@ -575,8 +589,9 @@ pub(crate) fn carried_by(object: &[u8], named: &str) -> Result<Vec<manifest::Mod
 }
 
 /// The manifest of a library holding these modules.
-pub(crate) fn manifest_of(modules: Vec<manifest::Module>) -> Manifest {
-    Manifest {
+pub(crate) fn manifest_of(modules: Vec<manifest::Module>) -> Result<Manifest> {
+    constructs_whole(&modules)?;
+    Ok(Manifest {
         format: manifest::FORMAT.to_string(),
         version: manifest::VERSION,
         abi: ABI_GENERATION,
@@ -594,7 +609,43 @@ pub(crate) fn manifest_of(modules: Vec<manifest::Module>) -> Manifest {
             })
             .collect(),
         modules,
+    })
+}
+
+/// That a host can construct everything a behavior it constructs requires: each requirement of each
+/// construction is a behavior a host implements or one constructed in turn, of some object the
+/// library holds.
+///
+/// A behavior reached through a capability is not a symbol the program names, so a library linked
+/// without the object that constructs one links all the same, and a host would find out when it
+/// built the capability. Refused here instead, where the objects are put together.
+fn constructs_whole(modules: &[manifest::Module]) -> Result<()> {
+    let mut constructible = std::collections::HashSet::new();
+    for module in modules {
+        for injection in &module.injections {
+            constructible.insert((module.name.as_str(), injection.name.as_str()));
+        }
+        for construction in &module.constructions {
+            constructible.insert((module.name.as_str(), construction.name.as_str()));
+        }
     }
+    for module in modules {
+        for construction in &module.constructions {
+            for required in &construction.requires {
+                if !constructible.contains(&(required.module.as_str(), required.name.as_str())) {
+                    bail!(
+                        "{}.{} requires {}.{}, which no object linked constructs or asks a host \
+                         to implement",
+                        module.name,
+                        construction.name,
+                        required.module,
+                        required.name
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// The manifest as it is written.
@@ -609,23 +660,31 @@ pub(crate) fn written(manifest: &Manifest) -> String {
 fn functions(manifest: &Manifest) -> impl Iterator<Item = &manifest::Function> {
     let modules = manifest.modules.iter().flat_map(|module| {
         let behaviors = module.behaviors.iter().flat_map(behavior_functions);
+        let constructions = module
+            .constructions
+            .iter()
+            .filter_map(|it| it.bind.as_ref());
         let values = module.values.iter().filter_map(|it| it.read.as_ref());
         let declarations = module.declarations.iter().flat_map(declaration_functions);
         let lists = module.lists.iter().flat_map(list_functions);
-        behaviors.chain(values).chain(declarations).chain(lists)
+        behaviors
+            .chain(constructions)
+            .chain(values)
+            .chain(declarations)
+            .chain(lists)
     });
     manifest.runtime.iter().chain(modules)
 }
 
 /// Every function a behavior is reached through, in the order the header declares them: its call,
-/// what a capability of it is made through, and which case its answer is.
+/// and which case its answer is.
 fn behavior_functions(behavior: &manifest::Behavior) -> impl Iterator<Item = &manifest::Function> {
     let case = behavior
         .answers
         .union
         .as_ref()
         .and_then(|union| union.case.as_ref());
-    behavior.call.iter().chain(&behavior.bind).chain(case)
+    behavior.call.iter().chain(case)
 }
 
 /// Every function a list is reached through, in the order the header declares them.
@@ -757,6 +816,13 @@ pub(crate) fn declarations(manifest: &Manifest) -> String {
             written.push_str(&format!("/* behavior {name}.{} */\n", behavior.name));
             for function in functions {
                 written.push_str(&declared(function));
+                written.push('\n');
+            }
+        }
+        for construction in &module.constructions {
+            if let Some(bind) = &construction.bind {
+                written.push_str(&format!("/* constructed {name}.{} */\n", construction.name));
+                written.push_str(&declared(bind));
                 written.push('\n');
             }
         }

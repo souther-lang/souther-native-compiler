@@ -338,15 +338,20 @@ functions a list is built and read through, one entry for each way an element of
 there (`{"whole": "value"}`, `{"present": "string"}`), apart from the type `{"kind": "list"}`, which
 says only what the model says: a binding works out how a position's element crosses and finds the
 entry for it. A parameter is `given`, `room`, or a `slice`, as many of a word as a count before it
-says. A behavior `requires` what constructing it requires injected, each by its module and its name,
-in the order the checker answered it: a behavior a host implements, or one constructed from what it
-requires in turn. It is the checker's list as it crossed, and not what the body calls, since a
-composition requires what its stages require. A declaration names two readings of a value: `decode`,
-out of text in the external form, and `decodehost`, out of a value a host built of ordered maps and
-wrote with every container as an object, in which a map keyed by its indices is read as an array
-wherever the declaration holds one. A behavior's `call` takes the capabilities of what it requires
-first, as `requirements`, and `bind`, where something may require the behavior, is what a host
-makes a capability of it through. What a manifest may say is Rust types, and version 8
+says. Each module's `constructions` are what a host builds the capabilities a behavior is called
+with out of, apart from `behaviors`, which are what a host calls by name: every published behavior
+that requires something, and every behavior it requires, at any depth, published or kept, since a
+published behavior may depend on one its module keeps. Each `requires` what constructing it requires
+injected, each by its module and its name, in the order the checker answered it: a behavior a host
+implements, or one constructed from what it requires in turn. It is the checker's list as it
+crossed, and not what the body calls, since a composition requires what its stages require. `bind`,
+for one with a body, is what a host makes a capability of it through, and a library whose
+constructions require what no object in it constructs or asks a host to implement is refused. A
+behavior's `call` takes the capabilities of what it requires first, as `requirements`. A declaration
+names two readings of a value: `decode`, out of text in the external form, and `decodehost`, out of
+a value a host built of ordered maps and wrote with every container as an object, in which a map
+keyed by its indices is read as an array wherever the declaration holds one. What a manifest may say
+is Rust types, and version 8
 is `native/crates/compiler/tests/interface-v8.json`: a test holds a program's manifest to it, and
 another reads it with those types and writes it back unchanged. The manifest carries its own
 `version`, moved when what it says is read differently, and the `abi` its functions answer to,

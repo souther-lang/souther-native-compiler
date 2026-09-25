@@ -197,7 +197,6 @@
             },
             "union": null
           },
-          "requires": [],
           "call": {
             "name": "souther4_m_shop_b_settle",
             "takes": [
@@ -215,8 +214,7 @@
               }
             ],
             "answers": "status"
-          },
-          "bind": null
+          }
         },
         {
           "name": "owing",
@@ -239,7 +237,6 @@
             },
             "union": null
           },
-          "requires": [],
           "call": {
             "name": "souther4_m_shop_b_owing",
             "takes": [
@@ -254,8 +251,7 @@
               }
             ],
             "answers": "status"
-          },
-          "bind": null
+          }
         },
         {
           "name": "stillOwing",
@@ -279,7 +275,6 @@
             },
             "union": null
           },
-          "requires": [],
           "call": {
             "name": "souther4_m_shop_b_stillOwing",
             "takes": [
@@ -297,8 +292,7 @@
               }
             ],
             "answers": "status"
-          },
-          "bind": null
+          }
         },
         {
           "name": "charge",
@@ -363,7 +357,6 @@
               }
             }
           },
-          "requires": [],
           "call": {
             "name": "souther4_m_shop_b_charge",
             "takes": [
@@ -378,8 +371,7 @@
               }
             ],
             "answers": "status"
-          },
-          "bind": null
+          }
         },
         {
           "name": "counted",
@@ -405,7 +397,6 @@
             },
             "union": null
           },
-          "requires": [],
           "call": {
             "name": "souther4_m_shop_b_counted",
             "takes": [
@@ -420,8 +411,7 @@
               }
             ],
             "answers": "status"
-          },
-          "bind": null
+          }
         },
         {
           "name": "doubled",
@@ -448,7 +438,6 @@
             },
             "union": null
           },
-          "requires": [],
           "call": {
             "name": "souther4_m_shop_b_doubled",
             "takes": [
@@ -463,8 +452,7 @@
               }
             ],
             "answers": "status"
-          },
-          "bind": null
+          }
         },
         {
           "name": "discounted",
@@ -487,12 +475,6 @@
             },
             "union": null
           },
-          "requires": [
-            {
-              "module": "shop",
-              "name": "discountFor"
-            }
-          ],
           "call": {
             "name": "souther4_m_shop_b_discounted",
             "takes": [
@@ -507,7 +489,18 @@
               }
             ],
             "answers": "status"
-          },
+          }
+        }
+      ],
+      "constructions": [
+        {
+          "name": "discounted",
+          "requires": [
+            {
+              "module": "shop",
+              "name": "discountFor"
+            }
+          ],
           "bind": {
             "name": "souther4_m_shop_b_discounted_bind",
             "takes": [

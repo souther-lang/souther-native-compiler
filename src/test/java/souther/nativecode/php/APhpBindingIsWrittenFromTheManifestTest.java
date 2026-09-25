@@ -252,9 +252,10 @@ class APhpBindingIsWrittenFromTheManifestTest {
     }
 
     /**
-     * A behavior requiring one the manifest gives a host no way to implement has no class, since
-     * binding it could not be handed what it requires, and neither has what requires it in turn.
-     * Each is still called as a function, constructed from what a run is handed.
+     * A behavior requiring one a host has no way to implement has no class, since binding it could
+     * not be handed what it requires, and neither has what requires it in turn. Each is still
+     * called as a function, constructed from what a run is handed, which is nothing for the one no
+     * host can implement: it is still a behavior a host implements, and never one constructed.
      */
     @Test
     void aBehaviorRequiringWhatNoHostCanImplementHasNoClass(@TempDir Path into) throws Exception {
@@ -275,7 +276,10 @@ class APhpBindingIsWrittenFromTheManifestTest {
                 let twice (n) = n * 2
                 """)), into.resolve("native"));
 
-        generatedAfter(into, library, "m", module -> ((ArrayNode) module.get("injections")).removeAll());
+        // What the implementation takes is made something no binding hands a host.
+        generatedAfter(into, library, "m", module -> ((ObjectNode) module.get("injections").get(0)
+                .get("parameters").get(0)).set("type", JsonMapper.builder().build()
+                .readTree("{\"kind\":\"tuple\",\"of\":[]}")));
 
         Path written = into.resolve("php").resolve("M");
         assertThat(written.resolve("Twice.php")).exists();
@@ -283,6 +287,8 @@ class APhpBindingIsWrittenFromTheManifestTest {
         assertThat(written.resolve("Charged.php")).doesNotExist();
         assertThat(Files.readString(written.resolve("Behaviors.php")))
                 .contains("function charge(", "function charged(");
+        assertThat(Files.readString(into.resolve("php").resolve("Binding.php")))
+                .contains("private const INJECTED = ['m.rate'];");
     }
 
     /**

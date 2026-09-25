@@ -77,7 +77,8 @@ record Manifest(int abi, Map<String, Integer> statuses, Map<String, Integer> out
     record Function(String name, List<Parameter> takes, @Nullable Word answers) {
     }
 
-    record Module(String name, List<Behavior> behaviors, List<Injection> injections,
+    record Module(String name, List<Behavior> behaviors, List<Construction> constructions,
+                  List<Injection> injections,
                   List<PublishedValue> values, List<Declaration> declarations,
                   List<ListCrossing> lists) {
     }
@@ -93,12 +94,16 @@ record Manifest(int abi, Map<String, Integer> statuses, Map<String, Integer> out
     record Element(boolean present, Word word) {
     }
 
+    /** A published behavior, and what a host calls it through where it can. */
+    record Behavior(String name, Parameters parameters, Answer answers, @Nullable Function call) {
+    }
+
     /**
-     * A published behavior, what constructing it requires injected, what a host calls it through
-     * where it can, and what a host makes a capability of it through where something may require it.
+     * A behavior a host constructs the capabilities of what a call is made with out of, whether or
+     * not it may call it by name: what constructing it requires injected, and what a host makes a
+     * capability of it through where something may require it.
      */
-    record Behavior(String name, Parameters parameters, Answer answers, List<Required> requires,
-                    @Nullable Function call, @Nullable Function bind) {
+    record Construction(String name, List<Required> requires, @Nullable Function bind) {
     }
 
     /** A behavior another requires injected, by its module and its name. */
@@ -344,9 +349,12 @@ record Manifest(int abi, Map<String, Integer> statuses, Map<String, Integer> out
             field("name", string()),
             field("parameters", PARAMETERS),
             field("answers", ANSWER),
+            nullableField("call", FUNCTION)).strict(Behavior::new);
+
+    private static final Decoder<JsonNode, Construction> CONSTRUCTION = combine(
+            field("name", string()),
             field("requires", list(REQUIRED)),
-            nullableField("call", FUNCTION),
-            nullableField("bind", FUNCTION)).strict(Behavior::new);
+            nullableField("bind", FUNCTION)).strict(Construction::new);
 
     private static final Decoder<JsonNode, Implementation> IMPLEMENTATION = combine(
             field("type", string()),
@@ -413,6 +421,7 @@ record Manifest(int abi, Map<String, Integer> statuses, Map<String, Integer> out
     private static final Decoder<JsonNode, Module> MODULE = combine(
             field("name", string()),
             field("behaviors", list(BEHAVIOR)),
+            field("constructions", list(CONSTRUCTION)),
             field("injections", list(INJECTION)),
             field("values", list(VALUE)),
             field("declarations", list(DECLARATION)),

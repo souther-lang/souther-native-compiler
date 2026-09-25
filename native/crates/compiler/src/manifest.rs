@@ -58,9 +58,10 @@ pub(crate) const MOVES: &[(u32, &str)] = &[
     ),
     (
         8,
-        "a behavior is called with the capabilities it was constructed with, a host makes one of a \
-         behavior (`bind`) and of an implementation of its own (`implement`), and nothing is \
-         registered on a thread",
+        "a behavior is called with the capabilities it was constructed with, what a host constructs \
+         them out of is apart from what it calls (`constructions`), a host makes one of a behavior \
+         (`bind`) and of an implementation of its own (`implement`), and nothing is registered on a \
+         thread",
     ),
 ];
 
@@ -149,6 +150,16 @@ pub(crate) struct Module {
     pub name: String,
     /// Every behavior it publishes and the object defines.
     pub behaviors: Vec<Behavior>,
+    /// Every behavior the object defines that a host constructs the capabilities of what a call is
+    /// made with out of: each published one that requires something, and each one a published one
+    /// requires, at any depth, whether or not the module publishes it.
+    ///
+    /// Apart from `behaviors`, which is what a host calls by name. A behavior the module keeps that
+    /// a published one depends on is here and not there: a host has no name for it and builds a
+    /// capability of it all the same. Closed: every behavior one of these requires is one a host
+    /// implements (`injections`), one here, or one another build defines, which that build's
+    /// surface closes.
+    pub constructions: Vec<Construction>,
     /// Every behavior it declares with no body and nothing to depend on, which a host implements.
     ///
     /// Apart from `behaviors`, which a host calls: these are what a host is called for. Whether the
@@ -200,6 +211,16 @@ pub(crate) struct Behavior {
     /// What it takes, in order.
     pub parameters: Parameters,
     pub answers: Answer,
+    /// What a host calls it through: what it was constructed with first, then what it takes.
+    pub call: Option<Function>,
+}
+
+/// What a host constructs the capabilities a behavior is called with out of
+/// ([`Module::constructions`]).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Construction {
+    pub name: String,
     /// What constructing it requires injected, in the order the checker answered it: each a
     /// behavior a host implements ([`Module::injections`]), or one constructed from what it
     /// requires in turn, of this module or another.
@@ -209,11 +230,9 @@ pub(crate) struct Behavior {
     /// implementation of its own for a behavior a host implements, and of the behavior for one
     /// constructed in turn, made from capabilities of what that one requires.
     pub requires: Vec<Required>,
-    /// What a host calls it through: what it was constructed with first, then what it takes.
-    pub call: Option<Function>,
     /// What a host makes a capability of it through, out of the capabilities of what it requires,
     /// to hand where something requires it: `(room for a capability, requirements)`. Only for a
-    /// behavior with a body that requires something, which is what something may depend on.
+    /// behavior with a body, which is what something may depend on.
     pub bind: Option<Function>,
 }
 

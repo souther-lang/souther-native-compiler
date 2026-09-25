@@ -352,7 +352,7 @@ fn build(written: &Library, object: &[u8], linking: &Linking, linker: &link::Lin
             })?;
         }
     }
-    let manifest = interface::manifest_of(modules.into_values().collect());
+    let manifest = interface::manifest_of(modules.into_values().collect())?;
 
     fs::write(&written.header, header())?;
     fs::write(&written.declarations, interface::declarations(&manifest))?;
@@ -1063,9 +1063,6 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
             name: &target.name,
             runs: reachable.of_behavior_named(&declared),
             constructed: true,
-            // What something may `depend on`: a behavior with a body that requires something
-            // (spec §depends-on), which a host hands where one is required as a capability.
-            binds: matches!(local, Definition::Body { .. }) && !local.requirements().is_empty(),
             inputs: &target.inputs,
             names: target.names(),
             answers: target.answers(),
@@ -1073,9 +1070,9 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
                 transport::BoundaryOutput::Cases { cases, .. } => Some(cases),
                 _ => None,
             },
-            requires: local.requirements(),
         });
     }
+    let constructions = constructions(program, &targets, &locals, &defined, &reachable);
     // Every value a module of this object publishes, through the entry another object reaches it
     // by.
     let values: Vec<host::Entry> = program
@@ -1087,12 +1084,10 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
             name: &entry.value.name,
             runs: reachable.of_published_value(&entry.value.module, &entry.value.name),
             constructed: false,
-            binds: false,
             inputs: &[],
             names: Some(&[]),
             answers: entry.body.ty().clone(),
             cases: None,
-            requires: &[],
         })
         .collect();
     for written in &program.modules {
@@ -1138,6 +1133,9 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
     // What a host calls a behavior and reads a value through, beside what another object built by
     // this compiler calls: the two are different parties and are told different things.
     host::define_behaviors(&mut emitting, &mut surface, &mut lists, &published)?;
+    // What a host builds the capabilities a behavior is called with out of, apart from what it
+    // calls by name.
+    host::define_constructions(&mut emitting, &mut surface, &constructions)?;
     host::define_values(&mut emitting, &mut surface, &mut lists, &values)?;
     // What a host implements, and makes a capability of an implementation of its own through.
     let injections: Vec<host::Injected> = program
@@ -1164,6 +1162,64 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
     surface.carry(&mut module);
 
     Ok(accepted(module.finish().emit()))
+}
+
+/// What a host constructs, apart from what it calls: every behavior this object defines that a
+/// published one requires, at any depth, whether or not its module publishes it, and each
+/// published one that requires something.
+///
+/// Two questions, and not one answered by publication. Whether a host may name a behavior is what
+/// its module publishes; whether a host has to build a capability of one is whether something a
+/// host calls reaches it through `depends on`. A behavior kept by its module that a published one
+/// depends on is the second and not the first (upstream ADR-0068: a callee arrives bound), so it has
+/// no call and no class a host names, and what a host builds a capability of it out of all the
+/// same. One another build defines is on that build's own surface, closed the same way.
+///
+/// In the order a walk from the published behaviors meets them, each once.
+fn constructions<'p>(
+    program: &'p Program,
+    targets: &Targets<'p>,
+    locals: &HashMap<&'p str, &'p Definition>,
+    defined: &HashMap<String, Defined>,
+    reachable: &Reachable,
+) -> Vec<host::Construction<'p>> {
+    let mut met: Vec<&'p Target> = Vec::new();
+    let mut owed: Vec<&'p Target> = program
+        .behaviors
+        .iter()
+        .filter(|target| {
+            defined[&target.declared()] == Defined::Here
+                && locals[target.declared().as_str()].publication() == Publication::Published
+        })
+        .collect();
+    owed.reverse();
+    while let Some(target) = owed.pop() {
+        if met.iter().any(|it| std::ptr::eq(*it, target)) || target.requirements.is_empty() {
+            continue;
+        }
+        met.push(target);
+        for required in target.requirements.iter().rev() {
+            let declared = required.declared();
+            if defined.get(&declared) == Some(&Defined::Here) {
+                owed.push(targets.reached(&declared));
+            }
+        }
+    }
+    met.into_iter()
+        .map(|target| {
+            let declared = target.declared();
+            host::Construction {
+                module: &target.module,
+                name: &target.name,
+                runs: reachable.of_behavior_named(&declared),
+                requires: &target.requirements,
+                // What something may `depend on`: a behavior with a body that requires something
+                // (spec §depends-on). A composition requires what its stages do and nothing depends
+                // on one, so a host is told what it requires and makes no capability of it.
+                binds: matches!(locals[declared.as_str()], Definition::Body { .. }),
+            }
+        })
+        .collect()
 }
 
 /// Where a definition that is not a body is emitted from: a host's entries, a boundary, a writer
