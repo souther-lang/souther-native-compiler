@@ -5,8 +5,8 @@
 //! thing here that is more than room: two strings are compared and joined by what they say and not
 //! by where they are, so the answer has to be computed somewhere, and a loop emitted at every site
 //! that compared two strings would be the same loop written as many times as a program says `==`.
-//! And what a host registered for each behavior it implements, per thread, which the object that
-//! answers the behavior asks for and calls.
+//! Nothing a host implements is kept here: a behavior is called with the capabilities it was
+//! constructed with, which whoever calls it builds and holds.
 //!
 //! Where a computation here turns out to be the one the wasm runtime already does — a calendar, a
 //! regular expression — it is lifted into something both read. That is done when the second copy
@@ -27,7 +27,6 @@ mod contract;
 mod decoding;
 mod document;
 mod external;
-mod injection;
 use souther_text::{code_points, compare_utf8_as_utf16};
 use std::cell::RefCell;
 use std::cmp::Ordering;

@@ -53,12 +53,12 @@ const HARNESS: &str = r#"
 #include <stdlib.h>
 #include <string.h>
 
-extern uint32_t no_capture(int8_t, int64_t, int64_t *) __asm__("PREFIXsouther3.closures.no_capture");
-extern uint32_t with_struct(int8_t, int64_t *, int64_t, int64_t *) __asm__("PREFIXsouther3.closures.with_struct");
-extern uint32_t aborting(int8_t, int64_t, int64_t *) __asm__("PREFIXsouther3.closures.aborting");
-extern uint32_t adder(int64_t, int8_t, int64_t, int64_t *) __asm__("PREFIXsouther3.closures.adder");
-extern uint32_t nested(int64_t, int8_t, int8_t, int64_t *) __asm__("PREFIXsouther3.closures.nested");
-extern uint32_t handed_over(int8_t, int64_t, int64_t *) __asm__("PREFIXsouther3.closures.handed_over");
+extern uint32_t no_capture(const void *, int8_t, int64_t, int64_t *) __asm__("PREFIXsouther4.closures.no_capture");
+extern uint32_t with_struct(const void *, int8_t, int64_t *, int64_t, int64_t *) __asm__("PREFIXsouther4.closures.with_struct");
+extern uint32_t aborting(const void *, int8_t, int64_t, int64_t *) __asm__("PREFIXsouther4.closures.aborting");
+extern uint32_t adder(const void *, int64_t, int8_t, int64_t, int64_t *) __asm__("PREFIXsouther4.closures.adder");
+extern uint32_t nested(const void *, int64_t, int8_t, int8_t, int64_t *) __asm__("PREFIXsouther4.closures.nested");
+extern uint32_t handed_over(const void *, int8_t, int64_t, int64_t *) __asm__("PREFIXsouther4.closures.handed_over");
 
 int main(int argc, char **argv) {
     if (argc != 2) {
@@ -69,33 +69,33 @@ int main(int argc, char **argv) {
     uint32_t status;
 
     if (strcmp(which, "no_capture_true") == 0) {
-        status = no_capture(1, 10, &out);
+        status = no_capture(NULL, 1, 10, &out);
     } else if (strcmp(which, "no_capture_false") == 0) {
-        status = no_capture(0, 10, &out);
+        status = no_capture(NULL, 0, 10, &out);
     } else if (strcmp(which, "with_struct_true") == 0) {
         int64_t box[2] = {0, 7};
-        status = with_struct(1, box, 10, &out);
+        status = with_struct(NULL, 1, box, 10, &out);
     } else if (strcmp(which, "with_struct_false") == 0) {
         int64_t box[2] = {0, 7};
-        status = with_struct(0, box, 10, &out);
+        status = with_struct(NULL, 0, box, 10, &out);
     } else if (strcmp(which, "aborting_true") == 0) {
-        status = aborting(1, 10, &out);
+        status = aborting(NULL, 1, 10, &out);
     } else if (strcmp(which, "aborting_false") == 0) {
-        status = aborting(0, 10, &out);
+        status = aborting(NULL, 0, 10, &out);
     } else if (strcmp(which, "adder_true") == 0) {
-        status = adder(5, 1, 10, &out);
+        status = adder(NULL, 5, 1, 10, &out);
     } else if (strcmp(which, "adder_false") == 0) {
-        status = adder(5, 0, 10, &out);
+        status = adder(NULL, 5, 0, 10, &out);
     } else if (strcmp(which, "nested_true_true") == 0) {
-        status = nested(2, 1, 1, &out);
+        status = nested(NULL, 2, 1, 1, &out);
     } else if (strcmp(which, "nested_true_false") == 0) {
-        status = nested(2, 1, 0, &out);
+        status = nested(NULL, 2, 1, 0, &out);
     } else if (strcmp(which, "nested_false") == 0) {
-        status = nested(2, 0, 1, &out);
+        status = nested(NULL, 2, 0, 1, &out);
     } else if (strcmp(which, "handed_over_true") == 0) {
-        status = handed_over(1, 10, &out);
+        status = handed_over(NULL, 1, 10, &out);
     } else if (strcmp(which, "handed_over_false") == 0) {
-        status = handed_over(0, 10, &out);
+        status = handed_over(NULL, 0, 10, &out);
     } else {
         return 2;
     }

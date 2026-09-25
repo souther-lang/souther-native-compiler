@@ -38,13 +38,15 @@ use cranelift::object::{ObjectBuilder, ObjectModule};
 use interface::Surface;
 use kernels::LoweredKernel;
 use souther_native_abi::{
-    ALLOCATE, ANSWERED, CARRIED, HELD, HOST_STATUSES, INJECTION_EXCHANGE, INJECTION_GET,
-    LIST_LENGTH, NO_FAILED_CLAUSE, NOTHING, Parameter, SLOT, STRING_CODE_POINTS, STRING_COMPARE,
-    STRING_CONCAT, Status, TEXT_BYTES, TEXT_LENGTH, TOKEN, WHICH, Word, behavior_symbol,
-    boundary_symbol, built_in_case_symbol, checked_constructor_symbol, constructor_symbol,
-    example_symbol, field_at, generated_call, held_symbol, home_symbol, list_at, member_at,
+    ALLOCATE, ANSWERED, CAPABILITY_ENVIRONMENT, CAPABILITY_INVOKE, CARRIED, EXAMPLE_STATUSES,
+    FAKE_NO_OUTPUT, HELD, HOST_STATUSES, INJECTION_UNBOUND, LIST_LENGTH, NO_FAILED_CLAUSE, NOTHING,
+    Parameter, SLOT, STRING_CODE_POINTS, STRING_COMPARE, STRING_CONCAT, Status, TEXT_BYTES,
+    TEXT_LENGTH, TOKEN, WHICH, Word, behavior_symbol, boundary_symbol, built_in_case_symbol,
+    checked_constructor_symbol, constructor_symbol, example_symbol, field_at, generated_call,
+    held_symbol, home_symbol, list_at, member_at, requirement_at, room_for_capability,
     room_for_carried, room_for_fields, room_for_held, room_for_list, room_for_members,
-    room_for_text, spells_a_module, spells_a_name, type_symbol, value_symbol,
+    room_for_requirements, room_for_text, spells_a_module, spells_a_name, type_symbol,
+    value_symbol,
 };
 use specialize::{Instance, InstanceId, Specializations};
 use std::cell::RefCell;
@@ -55,7 +57,7 @@ use std::path::{Path, PathBuf};
 use transport::{
     AbortKind, AlternativesForm, Arm, Carrier, Case, Declaration, DeclaredBy, Definition,
     Departures, Emitted, Ensures, Guard, LanguageCase, Node, Op, Owner, Prim, Program, Publication,
-    Reaches, Reading, Routing, Selects, Stage, Target, Ty,
+    Reaches, Reading, Requirement, Routing, Selects, Target, Ty,
 };
 
 /// A fork that ran out of arms, which is this compiler having emitted the wrong test rather than
@@ -70,8 +72,8 @@ const NO_ARM: u8 = 2;
 const COUNT_NO_LIST_HOLDS: u8 = 3;
 
 /// Every reason a Souther computation ends without a value, mapped to the wire number a generated
-/// function's status answers with. `souther_native_abi` reserves `ANSWERED` and the
-/// `HOST_STATUSES`, so every member here gets one of what is left, which is held below at compile
+/// function's status answers with. `souther_native_abi` reserves `ANSWERED`, the `HOST_STATUSES`
+/// and the `EXAMPLE_STATUSES`, so every member here gets one of what is left, which is held below at compile
 /// time rather than by a reading of both tables.
 ///
 /// No default arm, for the reason `KernelContracts::abortsOf` on the Java side has none: a member
@@ -109,6 +111,11 @@ const _: () = {
         let mut reserved = 0;
         while reserved < HOST_STATUSES.len() {
             assert!(number != HOST_STATUSES[reserved].1);
+            reserved += 1;
+        }
+        let mut reserved = 0;
+        while reserved < EXAMPLE_STATUSES.len() {
+            assert!(number != EXAMPLE_STATUSES[reserved].1);
             reserved += 1;
         }
         let mut other = 0;
@@ -243,8 +250,8 @@ fn header() -> String {
 /// wrote, and the runtime.
 ///
 /// Nothing else. What the program names and does not define is defined by the object of the build
-/// that declares it, a behavior with no body included: that object answers one with what a host
-/// registers for it when the program runs, so nothing is left for whoever links the library to
+/// that declares it, a behavior with no body included: that object makes the capability a host's
+/// implementation of one is handed over as, so nothing is left for whoever links the library to
 /// supply.
 pub struct Linking {
     /// Every object another Souther build wrote that the program reaches: whose behaviors it calls,
@@ -403,12 +410,6 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
     // bytes, counting what starts a code point.
     let count_text = import_runtime(&mut module, STRING_CODE_POINTS, call_conv);
 
-    // What a host registered for a behavior this object answers is kept by the runtime, per thread.
-    let registrations = host::Registrations {
-        get: import_runtime(&mut module, INJECTION_GET, call_conv),
-        exchange: import_runtime(&mut module, INJECTION_EXCHANGE, call_conv),
-    };
-
     let literals = Literals::default();
 
     // The token every declaration at home in this object is tagged by, defined whether anything
@@ -536,7 +537,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
     let mut entries: HashMap<String, FuncId> = HashMap::new();
     for target in &program.behaviors {
         let symbol = behavior_symbol(&target.module, &target.name);
-        let signature = signature_over(&target.takes(), &target.answers(), call_conv)?;
+        let signature = behavior_signature(&target.takes(), &target.answers(), call_conv)?;
         let linkage = match defined[&target.declared()] {
             // Defined here, so what the table carries for it is this object's answer about a name
             // the declaring module has already decided. A body or a composition with no such
@@ -548,19 +549,21 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
                 let local = locals.get(declared.as_str()).copied().expect(
                     "`Coherent` held every target answering with a local definition to have one",
                 );
-                linkage_of(local.publication())
+                Some(linkage_of(local.publication()))
             }
-            // Answered by this object, with what a host registered for it: the declaring build's
-            // object is the one place it is defined, however many objects call it.
+            // Reached only through a capability something was constructed with, so it has no
+            // symbol: what answers it is what the capability holds. What a host makes one of is
+            // this object's (`host::define_injections`).
             Defined::ByTheHost => {
                 crosses_objects(target)?;
-                Linkage::Export
+                None
             }
-            // Named and not defined: another build's object defines it, as a body or as what a
-            // host registered. A call is the same call either way.
+            // Named and not defined: another build's object defines it. One a host implements is
+            // reached through a capability, as it is in the build that declares it.
+            Defined::Elsewhere if target.is == transport::Answers::Injected => None,
             Defined::Elsewhere => {
                 crosses_objects(target)?;
-                Linkage::Import
+                Some(Linkage::Import)
             }
             Defined::Nowhere => {
                 return Err(not_lowered(format!(
@@ -569,8 +572,10 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
                 )));
             }
         };
-        let id = accepted(module.declare_function(&symbol, linkage, &signature));
-        reachable.behavior(&target.declared(), id);
+        if let Some(linkage) = linkage {
+            let id = accepted(module.declare_function(&symbol, linkage, &signature));
+            reachable.behavior(&target.declared(), id);
+        }
 
         // What holds the answer to what the behavior declares of it, one for each behavior that
         // declares something here: private to this object, since the rules are this object's
@@ -633,10 +638,16 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
             Owner::Entry(_)
             | Owner::Definition(_)
             | Owner::Example(_)
+            | Owner::StoodIn { .. }
             | Owner::Invariant { .. }
             | Owner::Ensures { .. } => {}
         }
     }
+    // What each row stands in with: a function answering for each dependency as the row states it,
+    // a capability of it, and the capabilities laid out in the order the behavior requires them,
+    // which is what the row's entry calls the behavior with. All of it in the object, so a row is run
+    // by its entry alone, handed nothing.
+    let mut stood = Stood::default();
     for written in &program.modules {
         // Named out in full, and not `..`'d away, so a field `transport::Module` starts carrying
         // tomorrow is a compile error at this one destructure until it is given a home below.
@@ -668,6 +679,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
             // Reached from outside whatever the module says about the behavior's own name: what
             // this runs is a row, and a row of a kept name is as much a row as any other.
             let id = accepted(module.declare_function(&symbol, Linkage::Export, &signature));
+            stood.row(&mut module, &targets, &symbol, example, call_conv)?;
             index::unique(&mut entries, symbol, id);
         }
     }
@@ -710,6 +722,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
         targets: &targets,
         literals: &literals,
         constructors: &constructors,
+        locals: &locals,
     };
 
     // Every body this object runs, each lowered where it stands: what a call from it reaches is
@@ -743,6 +756,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
                 define(
                     &mut context.func,
                     &mut shapes,
+                    Handed::Nothing,
                     &takes,
                     body.node,
                     frontend,
@@ -762,6 +776,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
                 define(
                     &mut context.func,
                     &mut shapes,
+                    Handed::Nothing,
                     &[],
                     body.node,
                     frontend,
@@ -773,7 +788,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
             Owner::Definition(behavior_name) => {
                 let target = targets.reached(behavior_name);
                 let takes = &target.takes();
-                let signature = signature_over(&target.takes(), &target.answers(), call_conv)?;
+                let signature = behavior_signature(&target.takes(), &target.answers(), call_conv)?;
                 let id = reachable.of_body(behavior_name);
                 context.clear();
                 context.func =
@@ -781,6 +796,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
                 define(
                     &mut context.func,
                     &mut shapes,
+                    Handed::Requirements(body.environment()),
                     takes,
                     body.node,
                     frontend,
@@ -819,10 +835,16 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
                 context.clear();
                 context.func = Function::with_name_signature(UserFuncName::default(), signature);
                 // Taking nothing: what the row states is written into the body, so an entry with
-                // parameters would be a row whose values came from whoever ran it.
+                // parameters would be a row whose values came from whoever ran it. What it stands in
+                // with is in the object too.
+                let constructs = format!("{}.{}", body.carrier().module(), example.behavior);
                 define(
                     &mut context.func,
                     &mut shapes,
+                    Handed::Row {
+                        constructs: &constructs,
+                        requirements: stood.requirements(&symbol),
+                    },
                     &[],
                     body.node,
                     frontend,
@@ -834,6 +856,34 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
             // Each is one of several bodies lowered into one function, the declaration's and the
             // behavior's, below.
             Owner::Invariant { .. } | Owner::Ensures { .. } => {}
+            // Lowered into the function answering for the dependency, below.
+            Owner::StoodIn { .. } => {}
+        }
+    }
+
+    // What answers for each dependency a row stands in for, where the row's body stands.
+    for body in runs.bodies() {
+        let Owner::Example(example) = body.owner else {
+            continue;
+        };
+        let row = example_symbol(body.carrier().module(), &example.behavior, example.at);
+        for (at, stand_in) in example.stands_in.iter().enumerate() {
+            let dependency = targets.reached(&stand_in.declared());
+            context.clear();
+            context.func = Function::with_name_signature(
+                UserFuncName::default(),
+                behavior_signature(&dependency.takes(), &dependency.answers(), call_conv)?,
+            );
+            define_stand_in(
+                &mut context.func,
+                &mut shapes,
+                stand_in,
+                dependency,
+                frontend,
+                &lowerings.at(body.carrier()),
+                &mut module,
+            )?;
+            accepted(module.define_function(stood.answering(&row, at), &mut context));
         }
     }
 
@@ -843,14 +893,13 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
         for local in &written.definitions {
             let Definition::Composed {
                 declared: behavior_name,
-                stages,
                 ..
             } = local
             else {
                 continue;
             };
             let target = targets.reached(behavior_name);
-            let signature = signature_over(&target.takes(), &target.answers(), call_conv)?;
+            let signature = behavior_signature(&target.takes(), &target.answers(), call_conv)?;
             let id = reachable.of_behavior_named(behavior_name);
             context.clear();
             context.func = Function::with_name_signature(UserFuncName::default(), signature);
@@ -858,7 +907,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
                 &mut context.func,
                 &mut shapes,
                 target,
-                stages,
+                local,
                 frontend,
                 &lowerings,
                 &mut module,
@@ -994,6 +1043,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
         boundaries.push(boundary::Boundary {
             symbol: boundary_symbol(&behavior_symbol(&target.module, &target.name)),
             runs: reachable.of_behavior_named(&declared),
+            constructed: true,
             takes: target.takes(),
             output: &target.output,
         });
@@ -1001,6 +1051,10 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
             module: &target.module,
             name: &target.name,
             runs: reachable.of_behavior_named(&declared),
+            constructed: true,
+            // What something may `depend on`: a behavior with a body that requires something
+            // (spec §depends-on), which a host hands where one is required as a capability.
+            binds: matches!(local, Definition::Body { .. }) && !local.requirements().is_empty(),
             inputs: &target.inputs,
             names: target.names(),
             answers: target.answers(),
@@ -1021,6 +1075,8 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
             module: &entry.value.module,
             name: &entry.value.name,
             runs: reachable.of_published_value(&entry.value.module, &entry.value.name),
+            constructed: false,
+            binds: false,
             inputs: &[],
             names: Some(&[]),
             answers: entry.body.ty().clone(),
@@ -1038,6 +1094,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
             boundaries.push(boundary::Boundary {
                 symbol: boundary_symbol(&entry),
                 runs,
+                constructed: false,
                 takes: Vec::new(),
                 output: &target.output,
             });
@@ -1071,7 +1128,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
     // this compiler calls: the two are different parties and are told different things.
     host::define_behaviors(&mut emitting, &mut surface, &mut lists, &published)?;
     host::define_values(&mut emitting, &mut surface, &mut lists, &values)?;
-    // What a host implements, and registers an implementation through.
+    // What a host implements, and makes a capability of an implementation of its own through.
     let injections: Vec<host::Injected> = program
         .behaviors
         .iter()
@@ -1079,7 +1136,6 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
         .map(|target| host::Injected {
             module: &target.module,
             name: &target.name,
-            answered_by: reachable.of_behavior_named(&target.declared()),
             inputs: &target.inputs,
             names: target
                 .names()
@@ -1087,13 +1143,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
             output: &target.output,
         })
         .collect();
-    host::define_injections(
-        &mut emitting,
-        &mut surface,
-        &mut lists,
-        &injections,
-        &registrations,
-    )?;
+    host::define_injections(&mut emitting, &mut surface, &mut lists, &injections)?;
     // What a host builds and reads every list above through.
     host::define_lists(&mut emitting, &mut surface, &lists)?;
     boundary::define(&mut emitting, &mut codecs, &boundaries)?;
@@ -1838,6 +1888,9 @@ struct Lowerings<'a> {
     /// Every behavior the document names, which is where what a composition's stage answers is
     /// read.
     targets: &'a Targets<'a>,
+    /// Every local definition, by the name it defines: where what a stage constructed here
+    /// requires is read.
+    locals: &'a HashMap<&'a str, &'a Definition>,
 }
 
 impl<'a> Lowerings<'a> {
@@ -1922,6 +1975,20 @@ fn signature_over(takes: &[Ty], answers: &Ty, call_conv: CallConv) -> Lowered<ir
     Ok(signature)
 }
 
+/// A behavior's signature: the shape [`signature_over`] gives every body, with what the behavior was
+/// constructed with first — the address of the capabilities of what it requires, in order, or
+/// null where it requires nothing.
+///
+/// First because that is what the code of a capability is handed first
+/// ([`souther_native_abi::CAPABILITY_ENVIRONMENT`]): a behavior's symbol is the code of its
+/// capability as it stands, so a call of the symbol and a call through a capability hand over the
+/// same words, and a body is one thing whichever way it is reached.
+fn behavior_signature(takes: &[Ty], answers: &Ty, call_conv: CallConv) -> Lowered<ir::Signature> {
+    let mut signature = signature_over(takes, answers, call_conv)?;
+    signature.params.insert(0, AbiParam::new(POINTER));
+    Ok(signature)
+}
+
 /// A lifted function's signature: the same `status + out` shape [`signature_over`] gives every
 /// other generated function, with one more parameter prepended — the closure calling it, which
 /// *is* its environment (see this module's own doc on the flat-closure layout) and not a second
@@ -1967,12 +2034,7 @@ fn word_on_the_machine(word: Word) -> types::Type {
     match word {
         Word::Host(word) => interface::machine(word),
         Word::Comparison => types::I64,
-        Word::Memory
-        | Word::Form
-        | Word::Node
-        | Word::Path
-        | Word::Injection
-        | Word::Implementation => POINTER,
+        Word::Memory | Word::Form | Word::Node | Word::Path => POINTER,
     }
 }
 
@@ -2476,9 +2538,11 @@ fn out_of_slot(builder: &mut FunctionBuilder, held: ir::Value, wanted: types::Ty
 /// Not sealed until the whole body is lowered, because a block sealed before every jump that
 /// reaches it is written is a block Cranelift has already closed the door on — and which sites
 /// jump here is exactly what lowering the body decides.
+#[allow(clippy::too_many_arguments)]
 fn define(
     function: &mut Function,
     shapes: &mut FunctionBuilderContext,
+    handed: Handed,
     takes: &[Ty],
     body: &Node,
     frontend: TargetFrontendConfig,
@@ -2492,13 +2556,39 @@ fn define(
     builder.seal_block(entry);
 
     let mut bindings = Bindings::default();
+    let first = match handed {
+        Handed::Nothing => 0,
+        Handed::Row {
+            constructs,
+            requirements,
+        } => {
+            let requirements = match requirements {
+                Some(laid) => {
+                    let laid = module.declare_data_in_func(laid, builder.func);
+                    builder.ins().symbol_value(POINTER, laid)
+                }
+                None => builder.ins().iconst(POINTER, 0),
+            };
+            bindings.row = Some((constructs.to_string(), requirements));
+            0
+        }
+        Handed::Requirements(requires) => {
+            if !requires.is_empty() {
+                let variable = builder.declare_var(POINTER);
+                let given = builder.block_params(entry)[0];
+                builder.def_var(variable, given);
+                bindings.environment = Some(Environment::of(variable, requires));
+            }
+            1
+        }
+    };
     for (at, taken) in takes.iter().enumerate() {
         let variable = builder.declare_var(machine_type(taken)?);
-        let given = builder.block_params(entry)[at];
+        let given = builder.block_params(entry)[first + at];
         builder.def_var(variable, given);
         bindings.at(at, variable);
     }
-    let out = builder.block_params(entry)[takes.len()];
+    let out = builder.block_params(entry)[first + takes.len()];
 
     let abort = builder.create_block();
     builder.append_block_param(abort, types::I32);
@@ -2507,6 +2597,190 @@ fn define(
     builder.ins().store(TRUSTED, answer, out, 0);
     let ok = builder.ins().iconst(types::I32, i64::from(ANSWERED));
     builder.ins().return_(&[ok]);
+
+    builder.seal_block(abort);
+    builder.switch_to_block(abort);
+    let status = builder.block_params(abort)[0];
+    builder.ins().return_(&[status]);
+
+    builder.finalize(frontend);
+    Ok(())
+}
+
+/// What a function [`define`] lowers a body as is handed besides what the body takes.
+#[derive(Clone, Copy)]
+enum Handed<'a> {
+    /// Nothing: a value's home and entry, and a row's entry.
+    Nothing,
+    /// What a behavior was constructed with, first, whatever it requires: a behavior's symbol takes
+    /// it ([`behavior_signature`]). The capabilities of `requires`, in order.
+    Requirements(&'a [Requirement]),
+    /// Nothing, as a row's entry: the behavior it `constructs` is called with `requirements`, what
+    /// the row stands in with, where it stands in with anything.
+    Row {
+        constructs: &'a str,
+        requirements: Option<DataId>,
+    },
+}
+
+/// What each row stands in with, by the row's entry: the function answering for each dependency,
+/// and the capabilities of them laid out in the order the behavior requires them.
+#[derive(Default)]
+struct Stood {
+    answering: HashMap<(String, usize), FuncId>,
+    requirements: HashMap<String, DataId>,
+}
+
+impl Stood {
+    /// Declares what `example`, whose entry is `row`, stands in with, and lays out its capabilities.
+    /// Read-only data: a capability of a row's stand-in is what it is for as long as the object is.
+    fn row(
+        &mut self,
+        module: &mut ObjectModule,
+        targets: &Targets,
+        row: &str,
+        example: &transport::Example,
+        call_conv: CallConv,
+    ) -> Lowered<()> {
+        if example.stands_in.is_empty() {
+            return Ok(());
+        }
+        let mut capabilities = Vec::with_capacity(example.stands_in.len());
+        for (at, stand_in) in example.stands_in.iter().enumerate() {
+            let dependency = targets.reached(&stand_in.declared());
+            let signature =
+                behavior_signature(&dependency.takes(), &dependency.answers(), call_conv)?;
+            let answering = accepted(module.declare_function(
+                &format!("{row}$standsIn${at}"),
+                Linkage::Local,
+                &signature,
+            ));
+            index::unique(&mut self.answering, (row.to_string(), at), answering);
+            let capability = accepted(module.declare_data(
+                &format!("{row}$standsIn${at}$capability"),
+                Linkage::Local,
+                false,
+                false,
+            ));
+            let mut laid = DataDescription::new();
+            laid.define(vec![0; room_for_capability() as usize].into_boxed_slice());
+            let code = module.declare_func_in_data(answering, &mut laid);
+            laid.write_function_addr(CAPABILITY_INVOKE as u32, code);
+            accepted(module.define_data(capability, &laid));
+            capabilities.push(capability);
+        }
+        let requirements = accepted(module.declare_data(
+            &format!("{row}$requirements"),
+            Linkage::Local,
+            false,
+            false,
+        ));
+        let mut laid = DataDescription::new();
+        laid.define(vec![0; room_for_requirements(capabilities.len()) as usize].into_boxed_slice());
+        for (at, capability) in capabilities.into_iter().enumerate() {
+            let capability = module.declare_data_in_data(capability, &mut laid);
+            laid.write_data_addr(requirement_at(at) as u32, capability, 0);
+        }
+        accepted(module.define_data(requirements, &laid));
+        index::unique(&mut self.requirements, row.to_string(), requirements);
+        Ok(())
+    }
+
+    /// What the row whose entry is `row` stands in with, where it stands in with anything.
+    fn requirements(&self, row: &str) -> Option<DataId> {
+        self.requirements.get(row).copied()
+    }
+
+    /// What answers for the dependency the row whose entry is `row` stands in for at `at`.
+    fn answering(&self, row: &str, at: usize) -> FuncId {
+        *self
+            .answering
+            .get(&(row.to_string(), at))
+            .expect("every stand-in was declared what answers for it before any was defined")
+    }
+}
+
+/// What answers for a dependency as a row states it (upstream `StandsIn.answering`): the first entry
+/// whose arguments are each equal to what the call arrived with, compared as `==` compares two values
+/// of the type the dependency takes, answers what it states; where none does, what the row states
+/// for the rest, and where it states nothing for the rest, [`FAKE_NO_OUTPUT`].
+///
+/// The code of a capability, like any behavior's: what it is handed first is null and never read.
+/// What it answers is handed on by whatever called through it, [`FAKE_NO_OUTPUT`] too, since a
+/// status is held to what may be answered only where a host's implementation answers it.
+fn define_stand_in(
+    function: &mut Function,
+    shapes: &mut FunctionBuilderContext,
+    stand_in: &transport::StandIn,
+    dependency: &Target,
+    frontend: TargetFrontendConfig,
+    lowering: &Lowering,
+    module: &mut ObjectModule,
+) -> Lowered<()> {
+    let mut builder = FunctionBuilder::new(function, shapes);
+    let entry = builder.create_block();
+    builder.append_block_params_for_function_params(entry);
+    builder.switch_to_block(entry);
+    builder.seal_block(entry);
+    let takes = dependency.takes();
+    let given = builder.block_params(entry).to_vec();
+    let (asked, out) = (&given[1..=takes.len()], given[takes.len() + 1]);
+
+    let abort = builder.create_block();
+    builder.append_block_param(abort, types::I32);
+    let mut bindings = Bindings::default();
+
+    let answered = |builder: &mut FunctionBuilder, answer: ir::Value| {
+        builder.ins().store(TRUSTED, answer, out, 0);
+        let ok = builder.ins().iconst(types::I32, i64::from(ANSWERED));
+        builder.ins().return_(&[ok]);
+    };
+    for stated in &stand_in.entries {
+        let next = builder.create_block();
+        for ((argument, taken), asked) in stated.arguments.iter().zip(&takes).zip(asked) {
+            let argument = lower(
+                &mut builder,
+                lowering,
+                module,
+                &mut bindings,
+                abort,
+                argument,
+            )?;
+            let same = equality::equal(&mut builder, lowering, module, taken, *asked, argument)?;
+            let holds = builder.create_block();
+            builder.ins().brif(same, holds, &[], next, &[]);
+            builder.seal_block(holds);
+            builder.switch_to_block(holds);
+        }
+        let answer = lower(
+            &mut builder,
+            lowering,
+            module,
+            &mut bindings,
+            abort,
+            &stated.answer,
+        )?;
+        answered(&mut builder, answer);
+        builder.seal_block(next);
+        builder.switch_to_block(next);
+    }
+    match &stand_in.otherwise {
+        Some(otherwise) => {
+            let answer = lower(
+                &mut builder,
+                lowering,
+                module,
+                &mut bindings,
+                abort,
+                otherwise,
+            )?;
+            answered(&mut builder, answer);
+        }
+        None => {
+            let missed = builder.ins().iconst(types::I32, i64::from(FAKE_NO_OUTPUT));
+            builder.ins().return_(&[missed]);
+        }
+    }
 
     builder.seal_block(abort);
     builder.switch_to_block(abort);
@@ -2692,6 +2966,17 @@ fn define_closure(
         let variable = builder.declare_var(wanted);
         builder.def_var(variable, restored);
         bindings.at(capture.binding, variable);
+    }
+    if let Some(requires) = site.environment {
+        let held = builder.ins().load(
+            POINTER,
+            TRUSTED,
+            closure,
+            capture_at(site.captures.len()) as i32,
+        );
+        let variable = builder.declare_var(POINTER);
+        builder.def_var(variable, held);
+        bindings.environment = Some(Environment::of(variable, requires));
     }
 
     let takes = &site.signature.takes;
@@ -3352,11 +3637,19 @@ fn define_composed(
     function: &mut Function,
     shapes: &mut FunctionBuilderContext,
     composed: &Target,
-    stages: &[Stage],
+    written: &Definition,
     frontend: TargetFrontendConfig,
     lowering: &Lowerings,
     module: &mut ObjectModule,
 ) -> Lowered<()> {
+    let Definition::Composed {
+        requirements: requires,
+        stages,
+        ..
+    } = written
+    else {
+        unreachable!("a composition is lowered from what composes it");
+    };
     let takes = composed.takes().len();
     let answers = composed.answers();
     let mut builder = FunctionBuilder::new(function, shapes);
@@ -3364,7 +3657,8 @@ fn define_composed(
     builder.append_block_params_for_function_params(entry);
     builder.switch_to_block(entry);
     builder.seal_block(entry);
-    let out = builder.block_params(entry)[takes];
+    let handed = builder.block_params(entry)[0];
+    let out = builder.block_params(entry)[1 + takes];
 
     let abort = builder.create_block();
     builder.append_block_param(abort, types::I32);
@@ -3372,13 +3666,23 @@ fn define_composed(
     let (first, rest) = stages
         .split_first()
         .expect("`Coherent` held every composition to compose something");
-    let arguments: Vec<ir::Value> = builder.block_params(entry)[..takes].to_vec();
+    let arguments: Vec<ir::Value> = builder.block_params(entry)[1..=takes].to_vec();
+    let through = stage_through(
+        &mut builder,
+        lowering,
+        module,
+        abort,
+        requires,
+        handed,
+        &first.behavior,
+    );
     let mut running = call_behavior(
         &mut builder,
         lowering,
         module,
         abort,
         &first.behavior,
+        through,
         &arguments,
     )?;
     // What the value running is, which is what a stage is handed it from and what the composition
@@ -3393,14 +3697,25 @@ fn define_composed(
         });
         match &stage.routing {
             Routing::Always => {
-                let handed = restate(&mut builder, lowering, module, running, &running_is, &taken)?;
+                let offered =
+                    restate(&mut builder, lowering, module, running, &running_is, &taken)?;
+                let through = stage_through(
+                    &mut builder,
+                    lowering,
+                    module,
+                    abort,
+                    requires,
+                    handed,
+                    &stage.behavior,
+                );
                 running = call_behavior(
                     &mut builder,
                     lowering,
                     module,
                     abort,
                     &stage.behavior,
-                    &[handed],
+                    through,
+                    &[offered],
                 )?;
             }
             Routing::OnCases { accepted } => {
@@ -3428,14 +3743,25 @@ fn define_composed(
                 builder.ins().return_(&[ok]);
 
                 builder.switch_to_block(offer);
-                let handed = restate(&mut builder, lowering, module, running, &running_is, &taken)?;
+                let offered =
+                    restate(&mut builder, lowering, module, running, &running_is, &taken)?;
+                let through = stage_through(
+                    &mut builder,
+                    lowering,
+                    module,
+                    abort,
+                    requires,
+                    handed,
+                    &stage.behavior,
+                );
                 running = call_behavior(
                     &mut builder,
                     lowering,
                     module,
                     abort,
                     &stage.behavior,
-                    &[handed],
+                    through,
+                    &[offered],
                 )?;
             }
         }
@@ -3461,6 +3787,63 @@ fn define_composed(
 
     builder.finalize(frontend);
     Ok(())
+}
+
+/// How a composition constructed with `requirements`, handed as `handed`, applies its stage
+/// `stage` (spec §composition-with-requirements).
+///
+/// A stage a host implements is one of what the composition was handed, and is called through that
+/// capability. A stage constructed here is built by the composition: its symbol, handed the
+/// capabilities of what it requires, picked out of the composition's own in the stage's order.
+/// Those are laid out in room taken from the arena and not on this function's stack, since the
+/// stage may make a function value that carries them past this call's end, the way the JVM's
+/// composition holds the stage it built for as long as the stage is held. One requiring nothing
+/// is handed nothing, as is a stage another build implements, which `Coherent` held to stand only
+/// in a composition requiring nothing.
+fn stage_through(
+    builder: &mut FunctionBuilder,
+    lowering: &Lowerings,
+    module: &mut ObjectModule,
+    abort: ir::Block,
+    requirements: &[Requirement],
+    handed: ir::Value,
+    stage: &str,
+) -> Through {
+    let at = |behavior: &str| {
+        requirements
+            .iter()
+            .position(|it| it.declared() == behavior)
+            .expect("`Coherent` held every stage to be handed what it requires")
+    };
+    let reached = lowering.targets.reached(stage);
+    let stage_requires = match reached.is {
+        transport::Answers::Injected => {
+            return Through::Capability(capability_at(builder, abort, handed, at(stage)));
+        }
+        transport::Answers::Body | transport::Answers::Composed => lowering
+            .locals
+            .get(stage)
+            .expect("`Coherent` held every target answering with a local definition to have one")
+            .requirements(),
+        transport::Answers::Elsewhere | transport::Answers::Unwritten => &[],
+    };
+    if stage_requires.is_empty() {
+        return Through::Symbol(builder.ins().iconst(POINTER, 0));
+    }
+    handed_or_unbound(builder, abort, handed);
+    let picked = lowering.room(builder, module, room_for_requirements(stage_requires.len()));
+    for (position, required) in stage_requires.iter().enumerate() {
+        let capability = builder.ins().load(
+            POINTER,
+            TRUSTED,
+            handed,
+            requirement_at(at(&required.declared())) as i32,
+        );
+        builder
+            .ins()
+            .store(TRUSTED, capability, picked, requirement_at(position) as i32);
+    }
+    Through::Symbol(picked)
 }
 
 /// A call to a behavior this object either defines or names, and what it answered.
@@ -3497,7 +3880,23 @@ fn call_reached(
     Ok(status_or_answer(builder, abort, status, out, answers))
 }
 
-/// A behavior applied to `arguments`, and its answer where it keeps what the behavior declares.
+/// How a call reaches the behavior it applies: its symbol, handed an environment, or a capability
+/// the caller holds for it.
+///
+/// Decided by the caller and not by the behavior: whether the behavior is one the caller was
+/// constructed with is the caller's, and a behavior reached through a capability is answered by
+/// whatever the capability holds — a body, a host's implementation, a row's stand-in — and never by
+/// the symbol a call would recover from its name.
+#[derive(Clone, Copy)]
+enum Through {
+    /// The behavior's symbol, handed this as what it was constructed with.
+    Symbol(ir::Value),
+    /// The address of a capability for the behavior.
+    Capability(ir::Value),
+}
+
+/// A behavior applied to `arguments` the way `through` says, and its answer where it keeps what
+/// the behavior declares.
 ///
 /// The one way a behavior is applied, whether a body calls it, a row runs it or a composition's
 /// stage applies it, so what is done about the answer is decided here for all of them. Where the
@@ -3512,18 +3911,43 @@ fn call_behavior(
     module: &mut ObjectModule,
     abort: ir::Block,
     declared: &str,
+    through: Through,
     arguments: &[ir::Value],
 ) -> Lowered<ir::Value> {
     let target = lowering.targets.reached(declared);
-    let reached = lowering.reachable.of_behavior_named(declared);
-    let answer = call_reached(
-        builder,
-        module,
-        abort,
-        reached,
-        machine_type(&target.answers())?,
-        arguments,
-    )?;
+    let answers = machine_type(&target.answers())?;
+    let answer = match through {
+        Through::Symbol(environment) => {
+            let reached = lowering.reachable.of_behavior_named(declared);
+            let mut given = Vec::with_capacity(arguments.len() + 1);
+            given.push(environment);
+            given.extend_from_slice(arguments);
+            call_reached(builder, module, abort, reached, answers, &given)?
+        }
+        Through::Capability(capability) => {
+            let signature = behavior_signature(
+                &target.takes(),
+                &target.answers(),
+                module.isa().default_call_conv(),
+            )?;
+            let code = builder
+                .ins()
+                .load(POINTER, TRUSTED, capability, CAPABILITY_INVOKE as i32);
+            let environment =
+                builder
+                    .ins()
+                    .load(POINTER, TRUSTED, capability, CAPABILITY_ENVIRONMENT as i32);
+            let signature = builder.import_signature(signature);
+            let out = out_slot(builder);
+            let mut given = Vec::with_capacity(arguments.len() + 2);
+            given.push(environment);
+            given.extend_from_slice(arguments);
+            given.push(out);
+            let called = builder.ins().call_indirect(signature, code, &given);
+            let status = builder.inst_results(called)[0];
+            status_or_answer(builder, abort, status, out, answers)
+        }
+    };
     match target.ensures {
         Ensures::Crossing { .. } => {
             let rules = lowering.reachable.of_rules(declared);
@@ -3539,8 +3963,41 @@ fn call_behavior(
     Ok(answer)
 }
 
-/// `answer` held to what `rules` hold it to, given what it was answered for: the run goes on where
-/// it keeps them, and ends with the status the rules answered where it does not.
+/// The address of the capability at `at` among `requirements`, where there is one: a caller handed
+/// null requirements, or a null in the place of one, is handed nothing for the behavior, and the
+/// call answers [`INJECTION_UNBOUND`] rather than reading behind a null.
+fn capability_at(
+    builder: &mut FunctionBuilder,
+    abort: ir::Block,
+    requirements: ir::Value,
+    at: usize,
+) -> ir::Value {
+    handed_or_unbound(builder, abort, requirements);
+    let capability = builder
+        .ins()
+        .load(POINTER, TRUSTED, requirements, requirement_at(at) as i32);
+    handed_or_unbound(builder, abort, capability);
+    capability
+}
+
+/// The run carried on past `address` where it is not null, and ended with [`INJECTION_UNBOUND`]
+/// where it is.
+fn handed_or_unbound(builder: &mut FunctionBuilder, abort: ir::Block, address: ir::Value) {
+    let handed = builder.create_block();
+    let unbound = builder.create_block();
+    builder.ins().brif(address, handed, &[], unbound, &[]);
+    builder.seal_block(handed);
+    builder.seal_block(unbound);
+
+    builder.switch_to_block(unbound);
+    let status = builder
+        .ins()
+        .iconst(types::I32, i64::from(INJECTION_UNBOUND));
+    builder.ins().jump(abort, &[status.into()]);
+
+    builder.switch_to_block(handed);
+}
+
 fn hold(
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
@@ -3590,15 +4047,21 @@ fn define_held(
     builder.switch_to_block(entry);
     builder.seal_block(entry);
     let given = builder.block_params(entry).to_vec();
-    let (arguments, out) = given.split_at(target.inputs.len());
+    // What it was constructed with, handed on as it came, then what it takes.
+    let (constructed, arguments, out) = (
+        &given[..1],
+        &given[1..=target.inputs.len()],
+        given[target.inputs.len() + 1],
+    );
 
     let abort = builder.create_block();
     builder.append_block_param(abort, types::I32);
 
     let answers = machine_type(&target.answers())?;
-    let answer = call_reached(&mut builder, module, abort, unheld, answers, arguments)?;
+    let handed = [constructed, arguments].concat();
+    let answer = call_reached(&mut builder, module, abort, unheld, answers, &handed)?;
     hold(&mut builder, module, abort, rules, arguments, answer);
-    builder.ins().store(TRUSTED, answer, out[0], 0);
+    builder.ins().store(TRUSTED, answer, out, 0);
     let ok = builder.ins().iconst(types::I32, i64::from(ANSWERED));
     builder.ins().return_(&[ok]);
 
@@ -3833,6 +4296,26 @@ struct Bindings {
     /// The bindings holding what a walk grows a list in, which is laid out as nothing else is
     /// ([`Growing`]): the step's accumulator, and every name a `let` gives it.
     growing: HashSet<usize>,
+    /// What the function was handed capabilities for, where it was handed any.
+    environment: Option<Environment>,
+    /// The behavior a row's entry constructs, and what it constructs it with.
+    row: Option<(String, ir::Value)>,
+}
+
+/// The capabilities a function was handed: the variable holding their address, and the behavior
+/// each is for, in the order they stand ([`transport::Body::environment`]).
+struct Environment {
+    held: Variable,
+    requires: Vec<String>,
+}
+
+impl Environment {
+    fn of(held: Variable, requires: &[Requirement]) -> Environment {
+        Environment {
+            held,
+            requires: requires.iter().map(Requirement::declared).collect(),
+        }
+    }
 }
 
 impl Bindings {
@@ -3877,6 +4360,24 @@ impl Bindings {
             .held
             .get(&number)
             .expect("`Coherent` held every read to be of a binding in scope")
+    }
+
+    /// How a call from here reaches `declared`: through the capability this function was handed
+    /// for it, where it was handed one, and by its symbol, handed nothing, otherwise — which
+    /// `Coherent` held to be a behavior that requires nothing.
+    fn through(&self, builder: &mut FunctionBuilder, abort: ir::Block, declared: &str) -> Through {
+        if let Some((constructs, requirements)) = &self.row
+            && constructs == declared
+        {
+            return Through::Symbol(*requirements);
+        }
+        if let Some(environment) = &self.environment
+            && let Some(at) = environment.requires.iter().position(|it| it == declared)
+        {
+            let requirements = builder.use_var(environment.held);
+            return Through::Capability(capability_at(builder, abort, requirements, at));
+        }
+        Through::Symbol(builder.ins().iconst(POINTER, 0))
     }
 }
 
@@ -4074,7 +4575,8 @@ fn lower(
                 for argument in arguments {
                     given.push(lower(builder, lowering, module, bindings, abort, argument)?);
                 }
-                call_behavior(builder, lowering, module, abort, declared, &given)?
+                let through = bindings.through(builder, abort, declared);
+                call_behavior(builder, lowering, module, abort, declared, through, &given)?
             }
             Reaches::Emitted { operation } => match operation {
                 Emitted::BuildList => build_list(builder, lowering, module, bindings, abort, node)?,
@@ -4249,7 +4751,8 @@ fn lower(
                 .expect("every closure site was declared a lifted function before any was defined");
 
             let flags = TRUSTED;
-            let value = lowering.room(builder, module, room_for_closure(plan.captures.len()));
+            let carried = plan.captures.len() + usize::from(plan.environment.is_some());
+            let value = lowering.room(builder, module, room_for_closure(carried));
 
             let code_ref = module.declare_func_in_func(code_id, builder.func);
             let code = builder.ins().func_addr(POINTER, code_ref);
@@ -4262,6 +4765,18 @@ fn lower(
                 builder
                     .ins()
                     .store(flags, held, value, capture_at(position) as i32);
+            }
+            // What the function making it was handed, after the captures, where the site calls
+            // through it.
+            if plan.environment.is_some() {
+                let environment = bindings
+                    .environment
+                    .as_ref()
+                    .expect("a site reaching the environment stands where there is one");
+                let held = builder.use_var(environment.held);
+                builder
+                    .ins()
+                    .store(flags, held, value, capture_at(plan.captures.len()) as i32);
             }
             value
         }

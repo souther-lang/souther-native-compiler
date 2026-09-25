@@ -39,7 +39,7 @@ const HARNESS: &str = r#"
 #include <stdio.h>
 #include <stdlib.h>
 
-extern uint32_t pipeline(int64_t, int64_t *) __asm__("PREFIXsouther3.routing.pipeline");
+extern uint32_t pipeline(const void *, int64_t, int64_t *) __asm__("PREFIXsouther4.routing.pipeline");
 extern uint8_t tokenOfB __asm__("PREFIXsouther$type$routing$B");
 extern uint8_t tokenOfC __asm__("PREFIXsouther$type$routing$C");
 
@@ -49,7 +49,7 @@ int main(int argc, char **argv) {
     }
     int64_t n = strtoll(argv[1], NULL, 10);
     int64_t out;
-    uint32_t status = pipeline(n, &out);
+    uint32_t status = pipeline(NULL, n, &out);
     if (status != 0) {
         printf("aborted %u\n", status);
         return 0;

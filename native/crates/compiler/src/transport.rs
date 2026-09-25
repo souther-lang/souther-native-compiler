@@ -52,6 +52,11 @@ pub const MOVES: &[(u32, &str)] = &[
         "an operation the checker's compiler emits for a backend to lower whole, as the member it \
          is (`emitted`), and the type of what has no value (`nothing`)",
     ),
+    (
+        21,
+        "what a row states each dependency of its behavior answers, entry by entry and for the \
+         rest (`standsIn`)",
+    ),
 ];
 
 /// A document of [`TRANSPORT_VERSION`], and no other, read through [`Program::read`] and nothing
@@ -156,15 +161,30 @@ impl Program {
                 .iter()
                 .map(move |it| Body::at(module, Owner::Entry(it), &it.body));
             let definitions = definitions.iter().filter_map(move |it| match it {
-                Definition::Body { declared, body, .. } => {
-                    Some(Body::at(module, Owner::Definition(declared), body))
-                }
+                Definition::Body {
+                    declared,
+                    body,
+                    requirements,
+                    ..
+                } => Some(Body {
+                    environment: requirements,
+                    ..Body::at(module, Owner::Definition(declared), body)
+                }),
                 // Stages reach other behaviors by name, and there is no `Core` of its own.
                 Definition::Composed { .. } => None,
             });
-            let examples = examples
-                .iter()
-                .map(move |it| Body::at(module, Owner::Example(it), &it.body));
+            let examples = examples.iter().flat_map(move |it| {
+                let stood = it
+                    .stands_in
+                    .iter()
+                    .enumerate()
+                    .flat_map(move |(at, stand_in)| {
+                        stand_in.values().map(move |value| {
+                            Body::at(module, Owner::StoodIn { example: it, at }, value)
+                        })
+                    });
+                std::iter::once(Body::at(module, Owner::Example(it), &it.body)).chain(stood)
+            });
             helpers
                 .chain(values)
                 .chain(entries)
@@ -208,6 +228,8 @@ pub struct Body<'p> {
     module: &'p str,
     pub owner: Owner<'p>,
     pub node: &'p Node,
+    /// What the function it is lowered as is handed a capability for, one each, in order.
+    environment: &'p [Requirement],
 }
 
 impl<'p> Body<'p> {
@@ -216,7 +238,15 @@ impl<'p> Body<'p> {
             module,
             owner,
             node,
+            environment: &[],
         }
+    }
+
+    /// The behaviors a call from this body reaches through a capability it was handed, in the
+    /// order it was handed them: what the behavior whose body it is was constructed with, and
+    /// nothing for any other body. A call reaching any other behavior reaches its symbol.
+    pub fn environment(&self) -> &'p [Requirement] {
+        self.environment
     }
 
     /// Where a call from this body is resolved.
@@ -257,6 +287,11 @@ pub enum Owner<'p> {
     /// A behavior's own body, by the name it defines.
     Definition(&'p str),
     Example(&'p Example),
+    /// A value the row `example` states its stand-in at `at` is asked with or answers.
+    StoodIn {
+        example: &'p Example,
+        at: usize,
+    },
     /// The clause at `at` among what `declaration` holds its values to, in the order they run.
     Invariant {
         declaration: &'p Declaration,
@@ -280,6 +315,7 @@ impl<'p> Owner<'p> {
             | Owner::Entry(_)
             | Owner::Definition(_)
             | Owner::Example(_)
+            | Owner::StoodIn { .. }
             | Owner::Invariant { .. }
             | Owner::Ensures { .. } => None,
         }
@@ -709,6 +745,50 @@ pub struct Example {
     pub behavior: String,
     pub at: usize,
     pub body: Node,
+    /// What the row states each dependency of the behavior answers, in the order the behavior
+    /// requires them, and none where it states nothing of any (upstream `CheckedRow.WithStandIns`).
+    #[serde(rename = "standsIn")]
+    pub stands_in: Vec<StandIn>,
+}
+
+/// What a row states one dependency answers (upstream `StandsIn`): the first of `entries` stating
+/// the arguments a call arrived with answers, compared as the language compares two values, and
+/// `otherwise` answers the rest, where the row states anything for the rest.
+///
+/// The entries in order and not a table keyed by them: which entry states a call is the
+/// comparison's to say, and the first to say so answers.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StandIn {
+    pub module: String,
+    pub name: String,
+    pub entries: Vec<StoodEntry>,
+    pub otherwise: Option<Node>,
+}
+
+impl StandIn {
+    /// What a reference to the dependency says, which is the two halves joined the one way.
+    pub fn declared(&self) -> String {
+        format!("{}.{}", self.module, self.name)
+    }
+
+    /// Every value it states, each as the expression that makes it: each entry's arguments then its
+    /// answer, entry after entry, then what it answers for the rest.
+    pub fn values(&self) -> impl Iterator<Item = &Node> {
+        self.entries
+            .iter()
+            .flat_map(|entry| entry.arguments.iter().chain([&entry.answer]))
+            .chain(&self.otherwise)
+    }
+}
+
+/// One entry of what a row states a dependency answers: the arguments, in the order the dependency
+/// takes them, and the answer.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StoodEntry {
+    pub arguments: Vec<Node>,
+    pub answer: Node,
 }
 
 /// A behavior as a caller reaches it.
@@ -1322,9 +1402,9 @@ impl LanguageCase {
 pub enum Answers {
     /// Code this object holds, which is emitted.
     Body,
-    /// Supplied by whoever runs the program, which registers an implementation for it when it
-    /// runs. The object of the build that declares it answers it with that; any other object only
-    /// names it.
+    /// Supplied by whoever runs the program, as a capability handed to what requires it. The object
+    /// of the build that declares it makes a capability of what a host implements it as; no object
+    /// defines it under a symbol, since nothing reaches it but through a capability.
     Injected,
     /// Implemented by another build. The same call to whoever reaches in, and a different thing to
     /// whoever links.

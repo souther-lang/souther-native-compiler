@@ -158,17 +158,17 @@ class AHostReachesAValueWithoutItsLayoutTest {
                 extern uint8_t owedOverdue(Value) __asm__("%11$s");
                 extern uint32_t settledCase(Value) __asm__("%12$s");
                 extern uint32_t outcomeCase(Value) __asm__("%13$s");
-                extern uint32_t settle(Value, int64_t, Value *) __asm__("%14$s");
-                extern uint32_t owing(Value, int64_t *) __asm__("%15$s");
+                extern uint32_t settle(const void *, Value, int64_t, Value *) __asm__("%14$s");
+                extern uint32_t owing(const void *, Value, int64_t *) __asm__("%15$s");
 
                 static Value untouched = (Value) &untouched;
 
                 static void settled(const char *said, Value bought, int64_t paid) {
                     Value outcome = untouched;
-                    uint32_t status = settle(bought, paid, &outcome);
+                    uint32_t status = settle(NULL, bought, paid, &outcome);
                     uint32_t which = outcomeCase(outcome);
                     int64_t owed = -1;
-                    owing(outcome, &owed);
+                    owing(NULL, outcome, &owed);
                     printf("%%s: status %%u, case %%u", said, status, which);
                     if (which == 3) {
                         printf(", amount %%lld, overdue %%u", (long long) moneyValue(owedAmount(outcome)),
@@ -227,7 +227,7 @@ class AHostReachesAValueWithoutItsLayoutTest {
                     Value free = untouched;
                     status = free_(&free);
                     int64_t owed = -1;
-                    owing(free, &owed);
+                    owing(NULL, free, &owed);
                     printf("free from here: status %%u, case %%u, owing %%lld\\n", status,
                            outcomeCase(free), (long long) owed);
 

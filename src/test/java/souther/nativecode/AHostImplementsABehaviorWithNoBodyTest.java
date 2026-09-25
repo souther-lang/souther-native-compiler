@@ -19,13 +19,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * A behavior with no body that declares nothing to depend on is implemented by the host that runs
- * the program, when it runs it: the host registers a function for it on the thread it calls from,
- * and the object of the build that declares the behavior calls that function.
+ * the program: the host makes a capability of an implementation of its own through the object of
+ * the build that declares the behavior, and hands it, among the requirements, to what requires the
+ * behavior. Nothing is registered anywhere, so two implementations of one behavior are two
+ * capabilities, each reached by what it was handed to.
  *
  * <p>So a library of such a program links with nothing but Souther objects and the runtime, and a
  * host language that can hand C a function pointer implements one in its own language. What the
- * host registers through is declared in the header, described in the manifest and exported by the
- * library, the same as everything else a host reaches.
+ * host makes a capability through is declared in the header, described in the manifest and
+ * exported by the library, the same as everything else a host reaches.
  */
 class AHostImplementsABehaviorWithNoBodyTest {
 
@@ -40,16 +42,17 @@ class AHostImplementsABehaviorWithNoBodyTest {
             """;
 
     /**
-     * A binding's shape, written by hand: an implementation is made into a C function pointer
-     * once, registered around each call it is for, and what it replaced is put back after. An
-     * exception thrown by an implementation is kept, answered as a status, and thrown again where
-     * the outermost call returns: PHP cannot throw through a C frame, and nothing unwinds through
-     * generated code anyway.
+     * A binding's shape, written by hand: the implementation C calls is made into a C function
+     * pointer once, and each implementation a host hands over is a capability of that pointer and a
+     * number of its own, which the pointer is handed first and reads which implementation it is by.
+     * An exception thrown by an implementation is kept, answered as a status, and thrown again
+     * where the outermost call returns: PHP cannot throw through a C frame, and nothing unwinds
+     * through generated code anyway.
      *
-     * <p>Made into a pointer once and not handed over as a closure each call: PHP makes a new C
+     * <p>Made into a pointer once and not handed over as a closure each time: PHP makes a new C
      * entry for a closure every time one is handed to C as a function pointer, and keeps each
-     * until the request ends, so a binding handing its closure over on every call grows for as
-     * long as the process lives. The script holds itself to that.
+     * until the request ends, so a binding handing its closures over as they come grows for as long
+     * as the process lives. The script holds itself to that.
      */
     private static final String PHP = """
             <?php
@@ -59,24 +62,51 @@ class AHostImplementsABehaviorWithNoBodyTest {
                 public static ?Throwable $thrown = null;
             }
 
-            /** The implementation as C calls it, made once and held for as long as it is used. */
-            function implementing(FFI $ffi, callable $implementation): FFI\\CData {
-                $held = $ffi->new("souther3_m_pricing_b_lookUp_implementation[1]");
-                $held[0] = function (int $a, $out) use ($ffi, $implementation): int {
-                    try {
-                        $out[0] = $implementation($a);
-                        return $ffi->SOUTHER_ANSWERED;
-                    } catch (Throwable $thrown) {
-                        Pending::$thrown = $thrown;
-                        return $ffi->SOUTHER_HOST_EXCEPTION;
-                    }
-                };
-                return $held[0];
+            /** Every implementation a capability was made of, by the number it is handed. */
+            final class Implementations {
+                public static array $by = [];
+                public static int $next = 0;
+                public static ?FFI\\CData $pointer = null;
             }
 
-            function twice(FFI $ffi, int $a): int {
+            /** The implementation as C calls it, made once and held for as long as it is used. */
+            function pointer(FFI $ffi): FFI\\CData {
+                if (Implementations::$pointer === null) {
+                    $held = $ffi->new("souther4_m_pricing_b_lookUp_implementation[1]");
+                    $held[0] = function ($by, int $a, $out) use ($ffi): int {
+                        try {
+                            $out[0] = (Implementations::$by[$ffi->cast("int64_t *", $by)[0]])($a);
+                            return $ffi->SOUTHER_ANSWERED;
+                        } catch (Throwable $thrown) {
+                            Pending::$thrown = $thrown;
+                            return $ffi->SOUTHER_HOST_EXCEPTION;
+                        }
+                    };
+                    Implementations::$pointer = $held[0];
+                }
+                return Implementations::$pointer;
+            }
+
+            /**
+             * What `twice` is called with to reach `$implementation`, and what that is made of, all
+             * held for as long as it is used.
+             */
+            function implementing(FFI $ffi, callable $implementation): array {
+                $number = $ffi->new("int64_t");
+                $number->cdata = ++Implementations::$next;
+                Implementations::$by[$number->cdata] = $implementation;
+                $capability = $ffi->new("souther_capability");
+                $hosted = $ffi->new("souther_hosted");
+                $ffi->souther4_m_pricing_b_lookUp_implement(
+                        FFI::addr($capability), FFI::addr($hosted), pointer($ffi), FFI::addr($number));
+                $requirements = $ffi->new("const souther_capability *[1]");
+                $requirements[0] = FFI::addr($capability);
+                return [$requirements, $capability, $hosted, $number];
+            }
+
+            function twice(FFI $ffi, ?array $with, int $a): int {
                 $answer = $ffi->new("int64_t");
-                $status = $ffi->souther3_m_pricing_b_twice($a, FFI::addr($answer));
+                $status = $ffi->souther4_m_pricing_b_twice($with[0] ?? null, $a, FFI::addr($answer));
                 if ($status === $ffi->SOUTHER_HOST_EXCEPTION) {
                     $thrown = Pending::$thrown;
                     Pending::$thrown = null;
@@ -88,57 +118,48 @@ class AHostImplementsABehaviorWithNoBodyTest {
                 return $answer->cdata;
             }
 
-            function bound(FFI $ffi, FFI\\CData $implementation, int $a): int {
-                $before = $ffi->souther3_m_pricing_b_lookUp_register($implementation);
-                try {
-                    return twice($ffi, $a);
-                } finally {
-                    $ffi->souther3_m_pricing_b_lookUp_register($before);
-                }
-            }
-
             try {
-                twice($ffi, 1);
+                twice($ffi, null, 1);
             } catch (RuntimeException $unbound) {
                 echo "nothing: ", $unbound->getMessage() === "status " . $ffi->SOUTHER_INJECTION_UNBOUND
                         ? "unbound" : $unbound->getMessage(), "\\n";
             }
 
             $added = implementing($ffi, fn(int $a): int => $a + 20);
-            echo "added: ", bound($ffi, $added, 1), "\\n";
+            $other = implementing($ffi, fn(int $a): int => $a + 30);
+            echo "added: ", twice($ffi, $added, 1), "\\n";
+            echo "other: ", twice($ffi, $other, 1), "\\n";
+            echo "again: ", twice($ffi, $added, 1), "\\n";
 
             $down = new LogicException("the database is down");
             $throwing = implementing($ffi, function (int $a) use ($down): int { throw $down; });
             try {
-                bound($ffi, $throwing, 1);
+                twice($ffi, $throwing, 1);
             } catch (LogicException $caught) {
                 echo "thrown: ", $caught === $down ? "the same one" : "another", "\\n";
             }
 
-            // One implementation calling the program with another bound inside it, and then again
-            // with nothing bound anew: the second call is answered by the first implementation.
+            // One implementation calling the program with another inside it, and then with itself:
+            // each call reaches the implementation it was handed, whatever is going around it.
             $inner = implementing($ffi, fn(int $a): int => $a + 1);
-            $outer = implementing($ffi, function (int $a) use ($ffi, $inner): int {
+            $outer = null;
+            $outer = implementing($ffi, function (int $a) use ($ffi, $inner, &$outer): int {
                 if ($a === 2) {
                     return 100;
                 }
-                return bound($ffi, $inner, 5) + twice($ffi, 2);
+                return twice($ffi, $inner, 5) + twice($ffi, $outer, 2);
             });
-            echo "nested: ", bound($ffi, $outer, 1), "\\n";
+            echo "nested: ", twice($ffi, $outer, 1), "\\n";
 
-            try {
-                twice($ffi, 1);
-            } catch (RuntimeException $unbound) {
-                echo "after: ", $unbound->getMessage() === "status " . $ffi->SOUTHER_INJECTION_UNBOUND
-                        ? "unbound" : $unbound->getMessage(), "\\n";
-            }
-
-            // Registered around ten thousand calls, and PHP holds no more than it did. A closure
-            // handed over on each call would hold a C entry for every one of them, which is
-            // megabytes, well past what PHP's own allocator moves by.
+            // A capability made for each of ten thousand calls, and PHP holds no more than it did. A
+            // closure handed over as each is made would hold a C entry for every one of them, which
+            // is megabytes, well past what PHP's own allocator moves by.
+            $adding = fn(int $a): int => $a + 20;
             $before = memory_get_usage();
             for ($call = 0; $call < 10000; $call++) {
-                bound($ffi, $added, $call);
+                $made = implementing($ffi, $adding);
+                twice($ffi, $made, $call);
+                unset(Implementations::$by[$made[3]->cdata], $made);
             }
             $grown = memory_get_usage() - $before;
             echo "repeated: ", $grown < 64 * 1024 ? "steady" : "grew $grown bytes", "\\n";
@@ -150,11 +171,10 @@ class AHostImplementsABehaviorWithNoBodyTest {
                 NativeCompiler.library(CheckedProgram.of(List.of(PRICING)), into);
 
         assertThat(Files.readString(library.declarations(), StandardCharsets.UTF_8))
-                .contains("typedef souther_status (*souther3_m_pricing_b_lookUp_implementation)"
-                        + "(int64_t, int64_t *);")
-                .contains("souther3_m_pricing_b_lookUp_implementation "
-                        + "souther3_m_pricing_b_lookUp_register("
-                        + "souther3_m_pricing_b_lookUp_implementation);");
+                .contains("typedef souther_status (*souther4_m_pricing_b_lookUp_implementation)"
+                        + "(void *, int64_t, int64_t *);")
+                .contains("void souther4_m_pricing_b_lookUp_implement(souther_capability *, "
+                        + "souther_hosted *, souther4_m_pricing_b_lookUp_implementation, void *);");
 
         Path script = into.resolve("host.php");
         Files.writeString(script, PHP, StandardCharsets.UTF_8);
@@ -163,9 +183,10 @@ class AHostImplementsABehaviorWithNoBodyTest {
                 .isEqualTo("""
                         nothing: unbound
                         added: 42
+                        other: 62
+                        again: 42
                         thrown: the same one
                         nested: 424
-                        after: unbound
                         repeated: steady
                         """);
     }
@@ -200,28 +221,35 @@ class AHostImplementsABehaviorWithNoBodyTest {
             #include <string.h>
             #include "souther.h"
 
-            static souther_status priced(souther_string sku, uint8_t gift, souther_value *out) {
+            static souther_status priced(void *by, souther_string sku, uint8_t gift, souther_value *out) {
                 int64_t cents = strncmp((const char *) souther_string_bytes(sku), "free", 4) == 0
                         ? -1 : souther_string_length(sku) * 100 + (gift ? 50 : 0);
-                return souther3_m_shop_t_Money_construct(cents, out);
+                return souther4_m_shop_t_Money_construct(cents, out);
             }
 
-            static souther_status judged(souther_value price, uint8_t *out) {
-                *out = souther3_m_shop_t_Money_f_value(price) < 300;
+            static souther_status judged(void *by, souther_value price, uint8_t *out) {
+                *out = souther4_m_shop_t_Money_f_value(price) < 300;
                 return SOUTHER_ANSWERED;
             }
+
+            static const souther_capability *priceOf[1];
+            static const souther_capability *isCheap[1];
 
             static int64_t quoted(const char *sku, uint8_t gift, int64_t count, souther_status *status) {
                 souther_string text = souther_string_of_utf8((const uint8_t *) sku, (int64_t) strlen(sku));
                 int64_t answer = -1;
-                *status = souther3_m_shop_b_quote(text, gift, count, &answer);
+                *status = souther4_m_shop_b_quote(priceOf, text, gift, count, &answer);
                 return answer;
             }
 
             int main(void) {
                 int64_t mark = souther_mark();
-                souther3_m_shop_b_priceOf_register(priced);
-                souther3_m_shop_b_isCheap_register(judged);
+                souther_capability pricing, judging;
+                souther_hosted priced_by, judged_by;
+                souther4_m_shop_b_priceOf_implement(&pricing, &priced_by, priced, NULL);
+                souther4_m_shop_b_isCheap_implement(&judging, &judged_by, judged, NULL);
+                priceOf[0] = &pricing;
+                isCheap[0] = &judging;
                 souther_status status;
                 int64_t answer = quoted("abc", 1, 2, &status);
                 printf("gift %u %lld\\n", status, (long long) answer);
@@ -231,9 +259,9 @@ class AHostImplementsABehaviorWithNoBodyTest {
                 printf("refused %d %lld\\n", status == SOUTHER_INJECTION_PROTOCOL_VIOLATION,
                        (long long) answer);
                 uint8_t cheap = 9;
-                status = souther3_m_shop_b_cheap(250, &cheap);
+                status = souther4_m_shop_b_cheap(isCheap, 250, &cheap);
                 printf("cheap %u %u\\n", status, cheap);
-                status = souther3_m_shop_b_cheap(400, &cheap);
+                status = souther4_m_shop_b_cheap(isCheap, 400, &cheap);
                 printf("dear %u %u\\n", status, cheap);
                 souther_reset(mark);
                 return 0;
@@ -245,10 +273,10 @@ class AHostImplementsABehaviorWithNoBodyTest {
         NativeCompiler.Library library =
                 NativeCompiler.library(CheckedProgram.of(List.of(SHOP)), into);
         assertThat(Files.readString(library.declarations(), StandardCharsets.UTF_8))
-                .contains("typedef souther_status (*souther3_m_shop_b_priceOf_implementation)"
-                        + "(souther_string, uint8_t, souther_value *);")
-                .contains("typedef souther_status (*souther3_m_shop_b_isCheap_implementation)"
-                        + "(souther_value, uint8_t *);");
+                .contains("typedef souther_status (*souther4_m_shop_b_priceOf_implementation)"
+                        + "(void *, souther_string, uint8_t, souther_value *);")
+                .contains("typedef souther_status (*souther4_m_shop_b_isCheap_implementation)"
+                        + "(void *, souther_value, uint8_t *);");
 
         Path source = into.resolve("host.c");
         Files.writeString(source, WORDS, StandardCharsets.UTF_8);
@@ -294,26 +322,30 @@ class AHostImplementsABehaviorWithNoBodyTest {
             #include <stdio.h>
             #include "souther.h"
 
-            static souther_status added(int64_t a, int64_t *out) {
+            static souther_status added(void *by, int64_t a, int64_t *out) {
                 *out = a + 20;
                 return SOUTHER_ANSWERED;
             }
 
             int main(void) {
-                souther3_m_lib_m_port_b_lookUp_register(added);
+                souther_capability adding;
+                souther_hosted added_by;
+                souther4_m_lib_m_port_b_lookUp_implement(&adding, &added_by, added, NULL);
+                const souther_capability *lookUp[1] = {&adding};
                 int64_t twice = -1;
                 int64_t thrice = -1;
-                souther_status first = souther3_m_app_m_first_b_twice(1, &twice);
-                souther_status second = souther3_m_app_m_second_b_thrice(1, &thrice);
+                souther_status first = souther4_m_app_m_first_b_twice(lookUp, 1, &twice);
+                souther_status second = souther4_m_app_m_second_b_thrice(lookUp, 1, &thrice);
                 printf("%u %" PRId64 " %u %" PRId64 "\\n", first, twice, second, thrice);
                 return 0;
             }
             """;
 
     /**
-     * Two builds calling one behavior with no body, and the build that declares it: the declaring
-     * build's object answers it, and the others only call it. So the library holds one definition
-     * of it and one function a host registers through, however many objects reach it.
+     * Two builds requiring one behavior with no body, and the build that declares it: the declaring
+     * build's object makes the capability a host's implementation is handed over as, and the others
+     * only call through one. So the library holds one function a host makes it through, however
+     * many objects reach it, and nothing defines the behavior under a symbol of its own.
      */
     @Test
     void theBuildThatDeclaresItAnswersItForEveryBuildThatCallsIt(@TempDir Path into)
@@ -325,16 +357,17 @@ class AHostImplementsABehaviorWithNoBodyTest {
         CheckedProgram first = CheckedProgram.of(List.of(FIRST), ModulePath.of(published));
 
         String symbol = "souther" + Running.ABI + ".lib.port.lookUp";
-        String register = "souther" + Running.ABI + "_m_lib_m_port_b_lookUp_register";
-        assertThat(symbols(port, false)).contains(symbol, register);
-        assertThat(symbols(second, true)).contains(symbol);
-        assertThat(symbols(second, false)).doesNotContain(symbol, register);
+        String implement = "souther" + Running.ABI + "_m_lib_m_port_b_lookUp_implement";
+        assertThat(symbols(port, false)).contains(implement).doesNotContain(symbol);
+        assertThat(symbols(second, true)).doesNotContain(symbol, implement);
+        assertThat(symbols(second, false)).doesNotContain(symbol, implement);
 
         NativeCompiler.Library library =
                 NativeCompiler.library(first, List.of(port, second), into);
-        assertThat(symbols(Files.readAllBytes(library.object()), true)).contains(symbol);
+        assertThat(symbols(Files.readAllBytes(library.object()), true))
+                .doesNotContain(symbol, implement);
         String declarations = Files.readString(library.declarations(), StandardCharsets.UTF_8);
-        assertThat(declarations.split(register + "\\(", -1)).hasSize(2);
+        assertThat(declarations.split(implement + "\\(", -1)).hasSize(2);
 
         Path source = into.resolve("host.c");
         Files.writeString(source, BOTH, StandardCharsets.UTF_8);

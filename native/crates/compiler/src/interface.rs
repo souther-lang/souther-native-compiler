@@ -116,7 +116,10 @@ pub(crate) fn machine(word: HostWord) -> types::Type {
         | HostWord::String
         | HostWord::Decoded
         | HostWord::Issue
-        | HostWord::List => POINTER,
+        | HostWord::List
+        | HostWord::Requirements
+        | HostWord::Capability
+        | HostWord::Userdata => POINTER,
     }
 }
 
@@ -137,6 +140,9 @@ fn c_word(word: Word) -> &'static str {
         Word::Decoded => "souther_decoded",
         Word::Issue => "souther_issue",
         Word::List => "souther_list",
+        Word::Requirements => "const souther_capability *const *",
+        Word::Capability => "souther_capability",
+        Word::Userdata => "void *",
     }
 }
 
@@ -186,18 +192,19 @@ fn parameters(takes: &[Parameter]) -> String {
     }
 }
 
-/// What a host implements a behavior as, and registers one through, as the header declares them:
-/// the pointer's type, named, and the function taking one and answering one, with what a host owes
-/// what it registers.
+/// What a host implements a behavior as, and makes a capability of one through, as the header
+/// declares them: the pointer's type, named, and the function taking one, with what a host owes
+/// what it hands over.
 fn declared_injection(injection: &manifest::Injection) -> String {
     let implementation = &injection.implementation;
     let answers = c_word(implementation.answers);
     let pointer = &implementation.type_name;
     format!(
-        "/* What is registered stays callable while it is registered on any thread. */\n\
-         typedef {answers} (*{pointer})({});\n{pointer} {}({pointer});",
+        "typedef {answers} (*{pointer})({});\n\
+         /* The rooms, the function and what it is handed stay as they are while the capability may be called. */\n\
+         void {}(souther_capability *, souther_hosted *, {pointer}, void *);",
         parameters(&implementation.takes),
-        injection.register
+        injection.implement
     )
 }
 
@@ -388,6 +395,7 @@ impl Surface {
         requires: &[transport::Requirement],
         declared: &Declared,
         call: Option<&HostFunction>,
+        bind: Option<&HostFunction>,
     ) {
         let behavior = manifest::Behavior {
             name: name.to_string(),
@@ -412,12 +420,13 @@ impl Surface {
                 })
                 .collect(),
             call: call.map(HostFunction::described),
+            bind: bind.map(HostFunction::described),
         };
         self.module(module).behaviors.push(behavior);
     }
 
     /// A behavior a module of this object declares with no body, which a host implements as
-    /// `implementation` says and registers through `register`.
+    /// `implementation` says and makes a capability of through `implement`.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn injection(
         &mut self,
@@ -428,14 +437,14 @@ impl Surface {
         answers: &Ty,
         declared: &Declared,
         implementation: &HostImplementation,
-        register: &str,
+        implement: &str,
     ) {
         let injection = manifest::Injection {
             name: name.to_string(),
             parameters: named(names, takes, declared),
             answers: type_of(answers, declared),
             implementation: implementation.described(),
-            register: register.to_string(),
+            implement: implement.to_string(),
         };
         self.module(module).injections.push(injection);
     }
@@ -598,14 +607,14 @@ fn functions(manifest: &Manifest) -> impl Iterator<Item = &manifest::Function> {
 }
 
 /// Every function a behavior is reached through, in the order the header declares them: its call,
-/// and which case its answer is.
+/// what a capability of it is made through, and which case its answer is.
 fn behavior_functions(behavior: &manifest::Behavior) -> impl Iterator<Item = &manifest::Function> {
     let case = behavior
         .answers
         .union
         .as_ref()
         .and_then(|union| union.case.as_ref());
-    behavior.call.iter().chain(case)
+    behavior.call.iter().chain(&behavior.bind).chain(case)
 }
 
 /// Every function a list is reached through, in the order the header declares them.
@@ -657,17 +666,17 @@ fn declaration_functions(
 
 /// Every symbol a shared library with this manifest exports: what a host calls, and nothing else.
 ///
-/// What a host registers an implementation through is one of them. What it implements is not: that
-/// is the host's own function, named in C and defined by nobody here.
+/// What a host makes a capability of an implementation through is one of them. What it implements
+/// is not: that is the host's own function, named in C and defined by nobody here.
 pub(crate) fn exported(manifest: &Manifest) -> Vec<String> {
-    let registers = manifest
+    let implements = manifest
         .modules
         .iter()
         .flat_map(|module| &module.injections)
-        .map(|injection| &injection.register);
+        .map(|injection| &injection.implement);
     functions(manifest)
         .map(|function| &function.name)
-        .chain(registers)
+        .chain(implements)
         .cloned()
         .collect()
 }
@@ -690,6 +699,14 @@ pub(crate) fn declarations(manifest: &Manifest) -> String {
          typedef const struct souther_decoded_ *souther_decoded;\n\
          typedef const struct souther_issue_ *souther_issue;\n\
          typedef const struct souther_list_ *souther_list;\n\
+         /* The address of code, which a host never calls or reads: what makes a capability writes it. */\n\
+         typedef void (*souther_code)(void);\n\
+         /* What is handed where a behavior is required: laid out by a host as room, and written by\n \
+         * what makes one. */\n\
+         typedef struct souther_capability {{ souther_code invoke; const void *environment; }} souther_capability;\n\
+         /* What a capability of a host's own implementation reads it out of: laid out by a host as\n \
+         * room, and written by what makes the capability. */\n\
+         typedef struct souther_hosted {{ souther_code implementation; void *userdata; }} souther_hosted;\n\
          \n",
         manifest.abi
     );

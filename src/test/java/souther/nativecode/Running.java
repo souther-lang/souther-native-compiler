@@ -4,7 +4,6 @@ import souther.compiler.abort.AbortKind;
 import souther.compiler.observe.ObservedValue;
 import souther.compiler.observe.StoodIn;
 import souther.compiler.program.CheckedBehavior;
-import souther.compiler.program.CheckedImplementation;
 import souther.compiler.program.CheckedModule;
 import souther.compiler.program.CheckedProgram;
 import souther.compiler.program.CheckedSignature;
@@ -12,6 +11,7 @@ import souther.compiler.program.Publication;
 import souther.compiler.program.StandsIn;
 import souther.compiler.types.Type;
 import souther.compiler.types.ValueName;
+import org.jspecify.annotations.Nullable;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -53,7 +53,7 @@ final class Running {
      * exactly the silent ABI mismatch embedding this in the symbol exists to turn into a linker
      * error instead.
      */
-    static final String ABI = "3";
+    static final String ABI = "4";
 
     /**
      * One thing a run can reach in the object: a behavior by its own symbol, or a row by the entry
@@ -61,7 +61,13 @@ final class Running {
      * the harness declares to reach it; the types are what its call is made of, written into the
      * harness for it and not handed to it as data.
      */
-    private record Entry(String name, String symbol, List<Type> takes) {}
+    /**
+     * One entry a harness can call: a behavior's boundary, which takes what the behavior was
+     * constructed with first, each of {@code requires} in order, or a row's, which takes nothing and
+     * has none ({@code requires} null): a row states what it stands in with, and its entry runs it.
+     */
+    private record Entry(String name, String symbol, List<Type> takes,
+                         @Nullable List<ValueName.Behavior> requires) {}
 
     private final CheckedProgram program;
     private final List<NativeArtifacts.Bytes> alongside;
@@ -114,6 +120,9 @@ final class Running {
             case RunOutcome.Aborted it -> throw new AssertionError(
                     "the run ended with " + it.kind() + " rather than answering: "
                             + behavior.name() + " of " + module.name() + ", handed " + inputs);
+            case RunOutcome.StoodInForNothing it -> throw new AssertionError(
+                    "a stand-in was asked for what nothing states: " + behavior.name() + " of "
+                            + module.name() + ", handed " + inputs);
         };
     }
 
@@ -149,6 +158,9 @@ final class Running {
             case BoundaryOutcome.Aborted it -> throw new AssertionError(
                     "the run ended with " + it.kind() + " rather than answering: "
                             + behavior.name() + " of " + module.name() + ", handed " + inputs);
+            case BoundaryOutcome.StoodInForNothing it -> throw new AssertionError(
+                    "a stand-in was asked for what nothing states: " + behavior.name() + " of "
+                            + module.name() + ", handed " + inputs);
         };
     }
 
@@ -160,6 +172,9 @@ final class Running {
             case BoundaryOutcome.Aborted it -> throw new AssertionError(
                     "row " + at + " of " + behavior.name() + " of " + module.name()
                             + " ended with " + it.kind() + " rather than answering");
+            case BoundaryOutcome.StoodInForNothing it -> throw new AssertionError(
+                    "row " + at + " of " + behavior.name() + " of " + module.name()
+                            + " asked a stand-in for what it states nothing about");
         };
     }
 
@@ -179,6 +194,9 @@ final class Running {
             case RunOutcome.Aborted it -> throw new AssertionError(
                     "row " + at + " of " + behavior.name() + " of " + module.name()
                             + " ended with " + it.kind() + " rather than answering");
+            case RunOutcome.StoodInForNothing it -> throw new AssertionError(
+                    "row " + at + " of " + behavior.name() + " of " + module.name()
+                            + " asked a stand-in for what it states nothing about");
         };
     }
 
@@ -216,12 +234,15 @@ final class Running {
         record Answered(JsonNode written) implements BoundaryOutcome {}
 
         record Aborted(AbortKind kind) implements BoundaryOutcome {}
+
+        record StoodInForNothing() implements BoundaryOutcome {}
     }
 
     private static RunOutcome observed(BoundaryOutcome outcome) {
         return switch (outcome) {
             case BoundaryOutcome.Answered it -> new RunOutcome.Answered(observed(it.written()));
             case BoundaryOutcome.Aborted it -> new RunOutcome.Aborted(it.kind());
+            case BoundaryOutcome.StoodInForNothing it -> new RunOutcome.StoodInForNothing();
         };
     }
 
@@ -283,8 +304,18 @@ final class Running {
             }
             return new BoundaryOutcome.Answered(JSON.readTree(lines.get(1)));
         }
+        if (status == FAKE_NO_OUTPUT) {
+            return new BoundaryOutcome.StoodInForNothing();
+        }
         return new BoundaryOutcome.Aborted(abortKindOf(status));
     }
+
+    /**
+     * What a row's entry answers where a stand-in the row states is asked for what the row states
+     * nothing about: {@code souther_native_abi::FAKE_NO_OUTPUT}, written here a second time for the
+     * reason {@link #ANSWERED} is. No Souther computation answers it, so it is not an abort.
+     */
+    static final int FAKE_NO_OUTPUT = 0x7fff_fffc;
 
     /**
      * The one status a generated function's status answers with when the pointer it was handed
@@ -365,12 +396,13 @@ final class Running {
                 List<Type> takes = behavior.signature().takes();
                 String boundary = "souther" + ABI + "." + reached + "$boundary";
                 if (carried.contains(PREFIX + boundary) && everyOneCrosses(takes)) {
-                    entries.add(new Entry(reached, "souther" + ABI + "." + reached, takes));
+                    entries.add(new Entry(reached, "souther" + ABI + "." + reached, takes,
+                            behavior.requirements()));
                 }
                 for (int at = 0; at < behavior.rows().size(); at++) {
                     String symbol = "souther" + ABI + "." + reached + "$example$" + at;
                     if (carried.contains(PREFIX + symbol + "$boundary")) {
-                        entries.add(new Entry(reached + ".example." + at, symbol, List.of()));
+                        entries.add(new Entry(reached + ".example." + at, symbol, List.of(), null));
                     }
                 }
             }
@@ -403,6 +435,21 @@ final class Running {
      * a harness the contract had never been put to.
      */
     private String harnessFor(List<Entry> entries, List<StandsIn> standIns) {
+        // What stands in for each dependency an entry requires, counted out here: a C function of
+        // what a capability's code is, and a capability of it. What it is called in C means
+        // nothing, and two modules declaring a dependency of one name are two of these.
+        Map<ValueName.Behavior, String> standing = new LinkedHashMap<>();
+        StringJoiner supplied = new StringJoiner("\n");
+        for (Entry entry : entries) {
+            for (ValueName.Behavior dependency : entry.requires() == null
+                    ? List.<ValueName.Behavior>of() : entry.requires()) {
+                if (!standing.containsKey(dependency)) {
+                    String named = "standsIn" + standing.size();
+                    standing.put(dependency, named);
+                    supplied.add(standingIn(named, dependency, stated(standIns, dependency)));
+                }
+            }
+        }
         StringBuilder declared = new StringBuilder();
         StringBuilder reaching = new StringBuilder();
         StringBuilder chosen = new StringBuilder();
@@ -422,6 +469,19 @@ final class Running {
             taken.add("const uint8_t **");
             given.add("answered");
             text |= textCrossesHere(entry.takes());
+            // What a behavior was constructed with, first: a capability for each dependency, in
+            // the order it requires them, or null where it requires none.
+            if (entry.requires() != null) {
+                taken.addFirst("const capability *const *");
+                if (entry.requires().isEmpty()) {
+                    given.addFirst("NULL");
+                } else {
+                    given.addFirst("requires" + number);
+                    declared.append("static const capability *const requires%d[] = {%s};\n"
+                            .formatted(number, String.join(", ", entry.requires().stream()
+                                    .map(it -> "&" + standing.get(it) + "Capability").toList())));
+                }
+            }
 
             declared.append("extern uint32_t reached%d(%s) __asm__(\"%s%s$boundary\");\n"
                     .formatted(number, takenIn(taken), PREFIX, entry.symbol()));
@@ -441,27 +501,15 @@ final class Running {
                         else\s""".formatted(entry.name(), entry.takes().size() + 2, number));
         }
 
-        // Every behavior a host answers, and not only the ones this row states. The object is the
-        // whole program, so any of them may be reached whichever behavior is being run, and one
-        // this row says nothing about ends the run rather than answering what nobody stated.
-        //
-        // What each stand-in is called in C is counted out here. The name it is registered
-        // through is the object's, spelt from the behavior's module and name.
-        StringJoiner supplied = new StringJoiner("\n");
-        StringBuilder registering = new StringBuilder();
-        int counted = 0;
-        for (Map.Entry<ValueName.Behavior, StandsIn> named : injected(standIns).entrySet()) {
-            String standsIn = "standsIn" + counted++;
-            supplied.add(standingIn(standsIn, named.getKey(), named.getValue()));
-            registering.append("    %s(%s);\n".formatted(registerSymbol(named.getKey()), standsIn));
-        }
-
         return """
                 #include <inttypes.h>
                 #include <stdint.h>
                 #include <stdio.h>
                 #include <stdlib.h>
                 #include <string.h>
+
+                /* A capability, as the object lays one out: its code and what the code is handed. */
+                typedef struct { void (*invoke)(void); const void *environment; } capability;
 
                 %s%s
 
@@ -479,7 +527,7 @@ final class Running {
                     int64_t mark = souther_mark();
                     const uint8_t *answered;
                     uint32_t status;
-                %s%s
+                %s
                     {
                         return 2;
                     }
@@ -497,45 +545,29 @@ final class Running {
                 supplied.toString(),
                 declared,
                 reaching,
-                registering,
                 chosen);
     }
 
-    /**
-     * Every behavior a host answers in this program, with what the row says it answers where the
-     * row says anything.
-     *
-     * <p>The row says what the dependency answers, entry by entry, and this is that table as what
-     * a host registers for it. Arguments it was not told about end the run rather than answering
-     * something: a stand-in asked for what the row never stated would be this harness deciding
-     * what the dependency does, which is the row's to say.
-     *
-     * <p>A dependency the row is silent about is registered all the same, and what it answers is
-     * nothing the row stated — so it ends the run, the same as an argument the table was not told
-     * about, rather than answering that nothing was registered.
-     */
-    private Map<ValueName.Behavior, StandsIn> injected(List<StandsIn> standIns) {
-        Map<ValueName.Behavior, StandsIn> supplied = new LinkedHashMap<>();
-        for (CheckedModule module : program.modules()) {
-            for (CheckedBehavior behavior : module.behaviors()) {
-                if (behavior.implementation() instanceof CheckedImplementation.Injected) {
-                    supplied.put(behavior.name(), null);
-                }
+    /** What `standIns` states `dependency` answers, and null where it states nothing of it. */
+    private static @Nullable StandsIn stated(List<StandsIn> standIns, ValueName.Behavior dependency) {
+        for (StandsIn standsIn : standIns) {
+            if (standsIn.dependency().equals(dependency)) {
+                return standsIn;
             }
         }
-        for (StandsIn standsIn : standIns) {
-            supplied.put(standsIn.dependency(), standsIn);
-        }
-        return supplied;
+        return null;
     }
 
     /**
-     * A C function a host registers for one behavior it answers, and the declaration of what it is
-     * registered through.
+     * A C function standing in for one dependency as a capability's code, and a capability of it.
      *
-     * <p>What it is called in C is handed in, and it is a physical name that means nothing: two
-     * modules declaring a dependency of one name are two stand-ins, told apart by what each is
-     * registered through, which carries the module and the name entire.
+     * <p>The row says what the dependency answers, entry by entry, and this is that table. Arguments
+     * it was not told about end the run rather than answering something: a stand-in asked for what
+     * the row never stated would be this harness deciding what the dependency does, which is the
+     * row's to say. A dependency the row is silent about is stood in for all the same, and ends the
+     * run the same way wherever it is reached.
+     *
+     * <p>What it is called in C is handed in, and it is a physical name that means nothing.
      */
     private String standingIn(String reached, ValueName.Behavior dependency, StandsIn standsIn) {
         CheckedSignature signature = program.behavior(dependency).signature();
@@ -544,9 +576,10 @@ final class Running {
         for (int at = 0; at < takes.size(); at++) {
             taken.add(cType(takes.get(at)) + " a" + at);
         }
-        // One more than the Souther signature shows, the same as every generated function: this
-        // stands in for a symbol a generated object calls through call_reached, which hands every
-        // callee room for the answer and reads a status back rather than trusting a plain return.
+        // What a capability's code is handed first, then what the dependency takes, and room for
+        // the answer, the same as every generated function: a generated object calls it through
+        // the capability, hands it room for the answer and reads a status back.
+        taken.addFirst("const void *environment");
         taken.add(cType(signature.answers()) + " *out");
         String parameters = takenIn(taken);
 
@@ -568,23 +601,9 @@ final class Running {
             };
         }
 
-        return ("typedef uint32_t (*%s_t)(%s);\nextern %s_t %s(%s_t);\n"
-                + "static uint32_t %s(%s) {\n%s%s}")
-                .formatted(reached, parameters, reached, registerSymbol(dependency), reached,
-                        reached, parameters, answering, otherwise);
-    }
-
-    /**
-     * What a host registers an implementation of {@code dependency} through, in C. Spelt a second
-     * time for the reason {@link #hostSymbol} is, and for the same names.
-     */
-    private static String registerSymbol(ValueName.Behavior dependency) {
-        StringBuilder symbol = new StringBuilder("souther").append(ABI);
-        for (String segment : dependency.module().toString().split("\\.", -1)) {
-            symbol.append("_m_").append(plain(segment));
-        }
-        return symbol.append("_b_").append(plain(dependency.name())).append("_register")
-                .toString();
+        return ("static uint32_t %s(%s) {\n%s%s}\n"
+                + "static const capability %sCapability = {(void (*)(void)) %s, NULL};")
+                .formatted(reached, parameters, answering, otherwise, reached, reached);
     }
 
     /**

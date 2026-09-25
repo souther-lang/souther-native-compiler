@@ -68,8 +68,9 @@ public final class NativeCompiler {
      * <p>{@code alongside} is every object another build wrote that the program reaches: the same
      * objects an executable of it would be linked with. Each carries what it offers a host, and
      * what the library offers is what all of them carry beside this program's object. A behavior
-     * with no body is one of them too: the object of the build that declares it answers it with
-     * what a host registers for it when the program runs, so nothing is left to link in besides.
+     * with no body is one of them too: the object of the build that declares it makes the
+     * capability a host's implementation of it is handed over as, so nothing is left to link in
+     * besides.
      *
      * <p>All of it is written by the driver, from what the objects' emission decided. Nothing here
      * reads the program to say what a host can call: that would be a second answer to a question

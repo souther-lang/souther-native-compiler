@@ -32,7 +32,7 @@ const HARNESS: &str = r#"
 #include <stdio.h>
 #include <stdlib.h>
 
-extern uint32_t grown(int64_t, int64_t *) __asm__("PREFIXsouther3.growing.grown");
+extern uint32_t grown(const void *, int64_t, int64_t *) __asm__("PREFIXsouther4.growing.grown");
 extern int64_t souther_mark(void);
 extern void souther_reset(int64_t);
 
@@ -43,7 +43,7 @@ int main(int argc, char **argv) {
     int64_t n = strtoll(argv[1], NULL, 10);
     int64_t out;
     int64_t before = souther_mark();
-    uint32_t status = grown(n, &out);
+    uint32_t status = grown(NULL, n, &out);
     int64_t after = souther_mark();
     souther_reset(before);
     printf("%u\n%" PRId64 "\n%" PRId64 "\n", status, out, after - before);

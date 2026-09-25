@@ -14,7 +14,6 @@
 use crate::decoding::*;
 use crate::document::Node;
 use crate::external::*;
-use crate::injection::*;
 use crate::*;
 use souther_native_abi::{GENERATED_RUNTIME, HOST_RUNTIME, HostWord, Parameter, Word};
 use std::collections::BTreeSet;
@@ -72,8 +71,6 @@ words! {
     *mut Form => Word::Form,
     *const Node => Word::Node,
     *const Path => Word::Path,
-    *const Injection => Word::Injection,
-    *const Implementation => Word::Implementation,
 }
 
 rooms! {
@@ -307,22 +304,6 @@ fn functions() -> Vec<(&'static str, Shape)> {
             shape_of(souther_read_invariant as unsafe extern "C" fn(*const Path, D, T, T, T)),
         ),
         (
-            "souther_injection_get",
-            shape_of(
-                souther_injection_get as extern "C" fn(*const Injection) -> *const Implementation,
-            ),
-        ),
-        (
-            "souther_injection_exchange",
-            shape_of(
-                souther_injection_exchange
-                    as extern "C" fn(
-                        *const Injection,
-                        *const Implementation,
-                    ) -> *const Implementation,
-            ),
-        ),
-        (
             "souther_decoded_outcome",
             shape_of(souther_decoded_outcome as unsafe extern "C" fn(C) -> i32),
         ),
@@ -408,7 +389,6 @@ fn every_function_the_runtime_defines_is_in_one_table() {
         include_str!("decoding.rs"),
         include_str!("external.rs"),
         include_str!("document.rs"),
-        include_str!("injection.rs"),
     ];
     let marker = "extern \"C\" fn ";
     let mut defined = BTreeSet::new();

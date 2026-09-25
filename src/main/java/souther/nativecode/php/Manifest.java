@@ -41,14 +41,15 @@ record Manifest(int abi, Map<String, Integer> statuses, Map<String, Integer> out
     static final String FORMAT = "souther-native-interface";
 
     /** The version of what a manifest says that this reads. */
-    static final int VERSION = 6;
+    static final int VERSION = 7;
 
     /** The ABI generation the functions this binds answer to. */
-    static final int ABI = 3;
+    static final int ABI = 4;
 
     /** One word a host hands over or is handed. */
     enum Word {
-        STATUS, INT, BOOL, CASE, OUTCOME, COUNT, MARK, BYTES, VALUE, STRING, DECODED, ISSUE, LIST
+        STATUS, INT, BOOL, CASE, OUTCOME, COUNT, MARK, BYTES, VALUE, STRING, DECODED, ISSUE, LIST,
+        REQUIREMENTS, CAPABILITY, USERDATA
     }
 
     /**
@@ -93,11 +94,11 @@ record Manifest(int abi, Map<String, Integer> statuses, Map<String, Integer> out
     }
 
     /**
-     * A published behavior, what constructing it requires injected, and what a host calls it
-     * through where it can.
+     * A published behavior, what constructing it requires injected, what a host calls it through
+     * where it can, and what a host makes a capability of it through where something may require it.
      */
     record Behavior(String name, Parameters parameters, Answer answers, List<Required> requires,
-                    @Nullable Function call) {
+                    @Nullable Function call, @Nullable Function bind) {
     }
 
     /** A behavior another requires injected, by its module and its name. */
@@ -143,9 +144,13 @@ record Manifest(int abi, Map<String, Integer> statuses, Map<String, Integer> out
     record NamedParameter(String name, Type type) {
     }
 
-    /** A behavior a host implements, and what it registers an implementation through. */
+    /**
+     * A behavior a host implements, and what it makes a capability of an implementation of its own
+     * through: {@code (room for a capability, room for a souther_hosted, the implementation, what
+     * it is handed first)}.
+     */
     record Injection(String name, List<NamedParameter> parameters, Type answers,
-                     Implementation implementation, String register) {
+                     Implementation implementation, String implement) {
     }
 
     /** The C type of the function a host implements a behavior as. */
@@ -328,7 +333,8 @@ record Manifest(int abi, Map<String, Integer> statuses, Map<String, Integer> out
             field("parameters", PARAMETERS),
             field("answers", ANSWER),
             field("requires", list(REQUIRED)),
-            nullableField("call", FUNCTION)).strict(Behavior::new);
+            nullableField("call", FUNCTION),
+            nullableField("bind", FUNCTION)).strict(Behavior::new);
 
     private static final Decoder<JsonNode, Implementation> IMPLEMENTATION = combine(
             field("type", string()),
@@ -340,7 +346,7 @@ record Manifest(int abi, Map<String, Integer> statuses, Map<String, Integer> out
             field("parameters", list(NAMED_PARAMETER)),
             field("answers", TYPE),
             field("implementation", IMPLEMENTATION),
-            field("register", string())).strict(Injection::new);
+            field("implement", string())).strict(Injection::new);
 
     private static final Decoder<JsonNode, PublishedValue> VALUE = combine(
             field("name", string()),

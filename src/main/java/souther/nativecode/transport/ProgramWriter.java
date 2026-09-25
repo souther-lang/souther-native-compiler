@@ -10,6 +10,7 @@ import souther.compiler.core.Kernel;
 import souther.compiler.core.ValueShape;
 import souther.compiler.observe.ObservedValue;
 import souther.compiler.observe.RowStatement;
+import souther.compiler.observe.StoodIn;
 import souther.compiler.program.BehaviorTarget;
 import souther.compiler.program.CheckedAlternativesForm;
 import souther.compiler.program.CheckedBoundaryInput;
@@ -28,6 +29,7 @@ import souther.compiler.program.CheckedValueEntry;
 import souther.compiler.program.Declared;
 import souther.compiler.program.DeclaredBy;
 import souther.compiler.program.Publication;
+import souther.compiler.program.StandsIn;
 import souther.compiler.types.BinOp;
 import souther.compiler.types.BindingId;
 import souther.compiler.types.LanguageCaseId;
@@ -87,7 +89,7 @@ public final class ProgramWriter {
      * written moves, so that a driver and a writer that disagree say so rather than producing an
      * object that is wrong quietly.
      */
-    public static final int TRANSPORT_VERSION = 20;
+    public static final int TRANSPORT_VERSION = 21;
 
     private final CheckedProgram program;
 
@@ -623,6 +625,8 @@ public final class ProgramWriter {
      * does not write it yet.
      */
     private String example(CheckedModule module, CheckedBehavior behavior, int at, CheckedRow row) {
+        List<StandsIn> standIns = row.statement() instanceof CheckedRow.WithStandIns it
+                ? it.standsIn() : List.of();
         RowStatement.Stated states = switch (row.statement()) {
             case CheckedRow.SelfContained it -> it.states();
             case CheckedRow.WithStandIns it -> it.states();
@@ -634,9 +638,57 @@ public final class ProgramWriter {
         if (states == null) {
             return null;
         }
+        StringJoiner standing = new StringJoiner(",", "[", "]");
+        for (StandsIn standsIn : standIns) {
+            standing.add(standsIn(standsIn));
+        }
         return "{\"behavior\":" + quoted(behavior.name().name())
                 + ",\"at\":" + at
-                + ",\"body\":" + applied(module, behavior, states) + "}";
+                + ",\"body\":" + applied(module, behavior, states)
+                + ",\"standsIn\":" + standing + "}";
+    }
+
+    /**
+     * What a row states one dependency answers: each entry, the arguments it states and the answer,
+     * in the order the stand-in reads them, and what it answers for the rest, null where it states
+     * nothing for the rest.
+     *
+     * <p>The values are written as the expressions that make them, at the types the dependency takes
+     * and answers, the way a row's own values are ({@link #given}). What answers the dependency is
+     * the stand-in's rule ({@link StandsIn#answering}): the first entry stating the arguments a call
+     * arrived with, compared as the language compares two values, and otherwise the rest. That rule
+     * is carried as the entries in order and not as a table keyed by them, since which entry states
+     * a call is the comparison's to say and a key would be this writer's.
+     */
+    private String standsIn(StandsIn standsIn) {
+        ValueName.Behavior dependency = standsIn.dependency();
+        behaviorsMet.add(dependency);
+        CheckedSignature signature = program.behavior(dependency).signature();
+        List<Type> takes = signature.takes();
+        StoodIn stated = standsIn.stated();
+        StringJoiner entries = new StringJoiner(",", "[", "]");
+        for (StoodIn.Entry entry : stated.entries()) {
+            List<ObservedValue> arguments = entry.arguments();
+            if (arguments.size() != takes.size()) {
+                throw notYet("a stand-in for `" + dependency + "` stating " + arguments.size()
+                        + " arguments where it takes " + takes.size());
+            }
+            StringJoiner written = new StringJoiner(",", "[", "]");
+            for (int at = 0; at < takes.size(); at++) {
+                written.add(given(arguments.get(at), takes.get(at)));
+            }
+            entries.add("{\"arguments\":" + written
+                    + ",\"answer\":" + given(entry.answer(), signature.answers()) + "}");
+        }
+        String otherwise = switch (stated.otherwise()) {
+            case StoodIn.Otherwise.Answer(ObservedValue value, var ignored) ->
+                    given(value, signature.answers());
+            case StoodIn.Otherwise.NothingStated ignored -> "null";
+        };
+        return "{\"module\":" + quoted(dependency.module())
+                + ",\"name\":" + quoted(dependency.name())
+                + ",\"entries\":" + entries
+                + ",\"otherwise\":" + otherwise + "}";
     }
 
     /**

@@ -1,0 +1,137 @@
+package souther.nativecode;
+
+import org.junit.jupiter.api.Test;
+import souther.compiler.Compiler;
+import souther.compiler.jvm.ClassFileImage;
+import souther.compiler.meta.ModulePath;
+import souther.compiler.program.CheckedProgram;
+
+import java.util.List;
+import java.util.Map;
+
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+/**
+ * A behavior is called with a capability for each behavior it requires, which it was constructed
+ * with, and a call through one reaches whatever the capability holds: a body, a host's
+ * implementation, or what a row states. Nothing recovers what answers a requirement from the
+ * behavior's name (#72).
+ *
+ * <p>So what a row stands in with reaches the requirement wherever the body calls it: inside a
+ * function value the body makes, however deep; in each stage of a composition, which is handed the
+ * capabilities of what it requires out of the composition's own; and in place of a behavior with a
+ * body of its own, which a row may stand in for as it may for one a host implements.
+ */
+class ABehaviorIsCalledWithWhatItWasConstructedWithTest {
+
+    private static final String CONSTRUCTED = """
+            module constructed
+
+            behavior lookUp : (a: Int) -> Int
+
+            behavior other : (a: Int) -> Int
+
+            let applied (f: (Int) -> Int, x: Int) = f(x)
+
+            behavior viaClosure : (a: Int) -> Int
+                depends on lookUp
+            let viaClosure (a, lookUp) = applied((x) -> lookUp(x) + 1, a)
+
+            behavior viaNested : (a: Int) -> Int
+                depends on lookUp
+            let viaNested (a, lookUp) = applied((x) -> applied((y) -> lookUp(y) * 10, x), a)
+
+            behavior first : (a: Int) -> Int
+                depends on lookUp
+            let first (a, lookUp) = lookUp(a) + 1
+
+            behavior second : (a: Int) -> Int
+                depends on lookUp, other
+            let second (a, lookUp, other) = lookUp(a) * other(a)
+
+            behavior staged = first >-> second
+
+            behavior restaged = staged >-> first
+
+            behavior quote : (a: Int) -> Int
+                depends on lookUp
+            let quote (a, lookUp) = lookUp(a) + 100
+
+            behavior both : (a: Int) -> Int
+                depends on quote, lookUp
+            let both (a, quote, lookUp) = quote(a) + lookUp(a)
+
+            fake lookUp
+                | (1) -> 21
+                | (22) -> 3
+                | _ -> 0
+
+            fake other
+                | (22) -> 2
+                | _ -> 5
+
+            fake quote
+                | (1) -> 7
+                | _ -> 0
+
+            example viaClosure
+                | "through a function value the body made" : (1) -> 22
+
+            example viaNested
+                | "through one made inside another" : (1) -> 210
+
+            example staged
+                | "each stage handed what it requires, one of them shared" : (1) -> 6
+
+            example restaged
+                | "a composition staged inside another" : (1) -> 1
+
+            example quote
+                | "a body calling what it requires" : (1) -> 121
+
+            example both
+                | "a behavior with a body stood in for, beside what it requires itself" : (1) -> 28
+            """;
+
+    @Test
+    void whatARowStandsInWithIsReachedWhereverTheBodyCallsIt() throws Exception {
+        ARowHoldsWhereverItIsRunTest.assertEveryRowHolds(CONSTRUCTED);
+    }
+
+    private static final String PORT = """
+            module lib.port exposing ( lookUp, looked )
+
+            behavior lookUp : (a: Int) -> Int
+
+            behavior looked : (a: Int) -> Int
+                depends on lookUp
+            let looked (a, lookUp) = lookUp(a)
+            """;
+
+    private static final String PIPED = """
+            module app.piped exposing ( piped : Int )
+
+            import lib.port ( looked )
+
+            behavior doubled : (a: Int) -> Int
+            let doubled (a) = a * 2
+
+            behavior piped = looked >-> doubled
+            """;
+
+    /**
+     * A stage another build implements is handed what it requires in the order that build answered
+     * it, which the checker's program does not say of a behavior read off the path. Where the
+     * composition requires something, which of its capabilities the stage takes cannot be said, and
+     * the composition is refused as not written yet rather than handed the wrong ones.
+     */
+    @Test
+    void aStageAnotherBuildImplementsInACompositionRequiringSomethingIsNotWrittenYet() {
+        Map<String, ClassFileImage> published = Compiler.compile(PORT);
+        CheckedProgram piped = CheckedProgram.of(List.of(PIPED), ModulePath.of(published));
+
+        assertThatThrownBy(() -> NativeArtifacts.object(piped))
+                .hasMessageContaining("app.piped.piped's stage lib.port.looked")
+                .hasMessageContaining("souther-lang/souther#1964");
+    }
+}
