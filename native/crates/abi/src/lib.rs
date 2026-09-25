@@ -405,6 +405,19 @@ pub fn host_decode_symbol(module: &str, name: &str) -> String {
     format!("{}_decode", host_under(module, 't', name))
 }
 
+/// Where a host reads a value of a declared type out of a value it built itself, written out with
+/// every container as an object keyed as the host keyed it: `(bytes, length, out) -> status`, as
+/// [`host_decode_symbol`] in every other respect.
+///
+/// For a host whose one container is an ordered map, as PHP's array is. To such a host a list is
+/// the map keyed by its indices and an empty list is its empty object, so its value cannot say of
+/// a container which of the two it is, and text written from it would have to guess. Written with
+/// every container as an object, it loses nothing, and the reading takes a map keyed by its
+/// indices as an array where the declaration holds one there ([`DECODE_HOST_BEGIN`]).
+pub fn host_decode_host_value_symbol(module: &str, name: &str) -> String {
+    format!("{}_decode_host", host_under(module, 't', name))
+}
+
 /// Where a host writes a value of a declared type in the language's external form: `(value) ->
 /// string`, JSON in a string of the runtime's layout, in the arena. Writing a value ends with its
 /// form whatever the value is, so this answers no status.
@@ -849,6 +862,10 @@ pub const EXTERNAL_JSON: &str = "souther_external_json";
 /// not answered. The reading, its issues and every string they hold are taken from the arena; the
 /// document is not, and ending or abandoning a reading is what drops it.
 pub const DECODE_BEGIN: &str = "souther_decode_begin";
+/// `(bytes, length) -> reading`, as [`DECODE_BEGIN`], for a value a host built out of ordered
+/// maps and wrote with every container as an object ([`host_decode_host_value_symbol`]): a map
+/// keyed by its indices is read as an array wherever the reader takes one.
+pub const DECODE_HOST_BEGIN: &str = "souther_decode_host_begin";
 /// `(reading) -> node`.
 pub const DECODE_ROOT: &str = "souther_decode_root";
 /// `(reading, value)`.
@@ -1262,6 +1279,11 @@ pub const GENERATED_RUNTIME: &[GeneratedCall] = {
         },
         GeneratedCall {
             name: DECODE_BEGIN,
+            takes: &[Given(Host(Bytes)), Given(Host(Count))],
+            answers: Some(Host(Decoded)),
+        },
+        GeneratedCall {
+            name: DECODE_HOST_BEGIN,
             takes: &[Given(Host(Bytes)), Given(Host(Count))],
             answers: Some(Host(Decoded)),
         },

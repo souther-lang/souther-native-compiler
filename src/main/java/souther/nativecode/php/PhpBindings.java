@@ -68,7 +68,7 @@ public final class PhpBindings {
      * The version of what generated code calls of the runtime package that this writes against:
      * {@code Binding::PROTOCOL} in {@code bindings/php/runtime}, which a test holds to this.
      */
-    static final int RUNTIME_PROTOCOL = 5;
+    static final int RUNTIME_PROTOCOL = 6;
 
     private final Manifest manifest;
     private final String root;
@@ -672,8 +672,8 @@ public final class PhpBindings {
         if (construct != null) {
             of(php, it, fields, construct);
         }
-        decode(php, it, it.declaration().decode(), it.fqcn(), "new " + it.fqcn()
-                + "($session->held($value))");
+        decode(php, it, it.declaration().decode(), it.declaration().decodeHost(), it.fqcn(),
+                "new " + it.fqcn() + "($session->held($value))");
         for (Manifest.Field field : fields) {
             getter(php, it, field);
         }
@@ -778,13 +778,28 @@ public final class PhpBindings {
                 String.join(", ", given), session, status, it.fqcn(), it.fqcn(), session, made));
     }
 
-    /** Reading a value of the type out of its external form. */
+    /**
+     * Reading a value of the type: out of text in its external form ({@code decode}), and out of a
+     * PHP value ({@code decoder}).
+     *
+     * <p>Two functions of the library's and not one. Text says of every container whether it is an
+     * object or an array; a PHP array does not, since a list is the array keyed by its indices and
+     * the empty list is the empty array. So a PHP value is handed over through the library's reading
+     * of a host's value ({@code decodeHost}), which takes a map keyed by its indices as an array
+     * where the declaration holds one, and never through text it would have to be guessed into.
+     */
     private void decode(StringBuilder php, Declared it, @Nullable Function decode,
-                               String answers, String made) {
-        if (decode == null) {
+                        @Nullable Function decodeHost, String answers, String made) {
+        if (decode == null && decodeHost == null) {
             return;
         }
+        if (decode == null || decodeHost == null) {
+            throw new IllegalStateException("the manifest says `" + it.key() + "` is read out of"
+                    + (decode == null ? " a host's value and not out of text"
+                    : " text and not out of a host's value") + ", and the two are emitted together");
+        }
         agrees(decode, List.of(Word.BYTES, Word.COUNT), List.of(Word.DECODED), Word.STATUS);
+        agrees(decodeHost, List.of(Word.BYTES, Word.COUNT), List.of(Word.DECODED), Word.STATUS);
         php.append("""
 
                     /**
@@ -794,27 +809,42 @@ public final class PhpBindings {
                      */
                     public static function decode(string $json): \\Raoh\\Result
                     {
-                        $session = %s;
-                        $ffi = $session->call();
-                        $reading = $ffi->new('souther_decoded');
-                        $status = $ffi->%s($session->bytes($json), \\strlen($json), \\FFI::addr($reading));
-                        return $session->decoded($status, $reading,
-                            static fn (\\FFI\\CData $value): %s => %s);
+                %s
                     }
 
                     /**
-                     * `decode` as a raoh-php decoder, to compose with a host's own: what it is handed
-                     * is a PHP value, read as the external form of `%s` it is written in, and what is
-                     * wrong in it is an issue at the path the decoder is reached at.
+                     * A raoh-php decoder of `%s`, to compose with a host's own: what it is handed is a
+                     * PHP value, read as a value of the type, and what is wrong in it is an issue at
+                     * the path the decoder is reached at. An array is read as whatever the position
+                     * holds, an object or a list, as PHP makes no difference between the two where
+                     * the array is empty or keyed by its indices.
                      *
                      * @return \\Raoh\\Decoder<mixed, %s>
                      */
                     public static function decoder(): \\Raoh\\Decoder
                     {
-                        return %s::decoder(static fn (string $json): \\Raoh\\Result => self::decode($json));
+                        return %s::decoder(static function (string $json): \\Raoh\\Result {
+                %s
+                        });
                     }
-                """.formatted(it.key(), answers, innermost(), decode.name(), answers, made, it.key(),
-                answers, RUNTIME + "Session"));
+                """.formatted(it.key(), answers, reading(decode, "        ", answers, made), it.key(),
+                answers, RUNTIME + "Session", reading(decodeHost, "            ", answers, made)));
+    }
+
+    /**
+     * The body that reads `$json` through {@code function}, one of a type's two readings, and
+     * answers what the reading came to: written once for both, each line indented by {@code indent}.
+     */
+    private String reading(Function function, String indent, String answers, String made) {
+        return """
+                $session = %s;
+                $ffi = $session->call();
+                $reading = $ffi->new('souther_decoded');
+                $status = $ffi->%s($session->bytes($json), \\strlen($json), \\FFI::addr($reading));
+                return $session->decoded($status, $reading,
+                    static fn (\\FFI\\CData $value): %s => %s);""".formatted(innermost(),
+                function.name(), answers, made).lines().map(line -> indent + line)
+                .collect(Collectors.joining("\n"));
     }
 
     private void getter(StringBuilder php, Declared it, Manifest.Field field) {
@@ -921,7 +951,8 @@ public final class PhpBindings {
                 %s
                     }
                 """.formatted(it.fqcn(), cases));
-        decode(codec, it, sum.decode(), it.fqcn(), it.codec() + "::wrap($session, $value)");
+        decode(codec, it, sum.decode(), sum.decodeHost(), it.fqcn(),
+                it.codec() + "::wrap($session, $value)");
         Function encode = sum.encode();
         if (encode != null) {
             agrees(encode, List.of(Word.VALUE), List.of(), Word.STRING);

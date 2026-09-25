@@ -25,7 +25,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 class APhpHostComposesATypesDecoderWithItsOwnTest {
 
     private static final String ORDERING = """
-            module ordering exposing ( Email, Individual, Corporation, Orderer, Quantity, Line, Lines )
+            module ordering exposing ( Email, Individual, Corporation, Orderer, Quantity, Line, Lines,
+                                       Free, Voucher, Perks )
 
             data Email = String
                 invariant String.length(value) >= 3
@@ -37,6 +38,10 @@ class APhpHostComposesATypesDecoderWithItsOwnTest {
                 invariant value > 0
             data Line = { sku: String, quantity: Quantity }
             data Lines = { lines: List<Line> }
+
+            data Free
+            data Voucher = { note: String, perk: Free }
+            data Perks = { perks: List<Free> }
             """;
 
     private static final String HOST = """
@@ -48,10 +53,13 @@ class APhpHostComposesATypesDecoderWithItsOwnTest {
 
             use Acme\\Shop\\Binding;
             use Acme\\Shop\\Ordering\\Corporation;
+            use Acme\\Shop\\Ordering\\Free;
             use Acme\\Shop\\Ordering\\Individual;
             use Acme\\Shop\\Ordering\\Lines;
             use Acme\\Shop\\Ordering\\OrdererCodec;
+            use Acme\\Shop\\Ordering\\Perks;
             use Acme\\Shop\\Ordering\\Quantity;
+            use Acme\\Shop\\Ordering\\Voucher;
             use Raoh\\Issue;
             use Raoh\\Result;
 
@@ -105,6 +113,23 @@ class APhpHostComposesATypesDecoderWithItsOwnTest {
                 $out[] = 'no lines: ' . said(Lines::decoder()->decode(['lines' => []]));
                 $out[] = 'not json: ' . said(Quantity::decoder()->decode(NAN));
                 $out[] = 'made before the run: ' . said($quantity->decode(3));
+
+                // An empty object is an empty PHP array, as an empty list is: which of the two it
+                // is, is what the position holds, and that is the library's to say.
+                $out[] = 'a unit from json: ' . said(from_json(Free::decoder())->decode('{}'));
+                $out[] = 'a unit in a product: ' . said(from_json(Voucher::decoder())
+                    ->decode('{"note":"x","perk":{}}'));
+                $out[] = 'a list of units: ' . said(from_json(Perks::decoder())
+                    ->decode('{"perks":[{},{}]}'));
+                $out[] = 'no units: ' . said(from_json(Perks::decoder())->decode('{"perks":[]}'));
+                $out[] = 'a unit as an array: ' . said(Free::decoder()->decode([]));
+                $out[] = 'keys where a list is taken: ' . said(Lines::decoder()->decode(
+                    ['lines' => ['first' => ['sku' => 'a', 'quantity' => 1]]]));
+                // A PHP list is the map keyed by its indices, and a unit reads that map as it reads
+                // the same object written as text.
+                $out[] = 'a map keyed by its indices where a unit is taken: ' . said(
+                    Voucher::decoder()->decode(['note' => 'x', 'perk' => [1]]));
+                $out[] = 'the same map as text: ' . said(Free::decode('{"0":1}'));
                 $out[] = 'case alone: ' . said(Corporation::decoder()->decode(
                     ['email' => 'x@y', 'companyName' => 'Acme']));
                 return implode("\\n", $out);
@@ -125,6 +150,14 @@ class APhpHostComposesATypesDecoderWithItsOwnTest {
             no lines: ok Lines
             not json: [/ type_mismatch]
             made before the run: ok Quantity
+            a unit from json: ok Free
+            a unit in a product: ok Voucher
+            a list of units: ok Perks
+            no units: ok Perks
+            a unit as an array: ok Free
+            keys where a list is taken: [/lines type_mismatch]
+            a map keyed by its indices where a unit is taken: ok Voucher
+            the same map as text: ok Free
             case alone: ok Corporation
             """;
 

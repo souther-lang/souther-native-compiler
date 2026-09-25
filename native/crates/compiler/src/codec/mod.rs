@@ -29,11 +29,11 @@ use cranelift::codegen::isa::CallConv;
 use cranelift::module::{FuncId, Linkage, Module};
 use cranelift::object::ObjectModule;
 use souther_native_abi::{
-    DECODE_ABANDON, DECODE_BEGIN, DECODE_END, DECODE_ROOT, EXTERNAL_APPEND, EXTERNAL_ARRAY,
-    EXTERNAL_BOOL, EXTERNAL_INT, EXTERNAL_JSON, EXTERNAL_NULL, EXTERNAL_OBJECT, EXTERNAL_PUT,
-    EXTERNAL_STRING, PATH_AT, PATH_BELOW, READ_ARRAY, READ_ARRAY_LENGTH, READ_BOOL, READ_CASE,
-    READ_ELEMENT, READ_INT, READ_INVARIANT, READ_IS, READ_MEMBER, READ_MISSING, READ_NOT_A_CASE,
-    READ_NULL, READ_OBJECT, READ_STRING, READ_TAG, reader_symbol,
+    DECODE_ABANDON, DECODE_BEGIN, DECODE_END, DECODE_HOST_BEGIN, DECODE_ROOT, EXTERNAL_APPEND,
+    EXTERNAL_ARRAY, EXTERNAL_BOOL, EXTERNAL_INT, EXTERNAL_JSON, EXTERNAL_NULL, EXTERNAL_OBJECT,
+    EXTERNAL_PUT, EXTERNAL_STRING, PATH_AT, PATH_BELOW, READ_ARRAY, READ_ARRAY_LENGTH, READ_BOOL,
+    READ_CASE, READ_ELEMENT, READ_INT, READ_INVARIANT, READ_IS, READ_MEMBER, READ_MISSING,
+    READ_NOT_A_CASE, READ_NULL, READ_OBJECT, READ_STRING, READ_TAG, reader_symbol,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -147,6 +147,7 @@ pub(crate) enum Runtime {
     ExternalPut,
     ExternalJson,
     DecodeBegin,
+    DecodeHostBegin,
     DecodeRoot,
     DecodeEnd,
     DecodeAbandon,
@@ -182,6 +183,7 @@ impl Runtime {
             Runtime::ExternalPut => EXTERNAL_PUT,
             Runtime::ExternalJson => EXTERNAL_JSON,
             Runtime::DecodeBegin => DECODE_BEGIN,
+            Runtime::DecodeHostBegin => DECODE_HOST_BEGIN,
             Runtime::DecodeRoot => DECODE_ROOT,
             Runtime::DecodeEnd => DECODE_END,
             Runtime::DecodeAbandon => DECODE_ABANDON,

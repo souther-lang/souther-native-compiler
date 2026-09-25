@@ -335,8 +335,11 @@ entry for it. A parameter is `given`, `room`, or a `slice`, as many of a word as
 says. A behavior `requires` what constructing it requires injected, each by its module and its name,
 in the order the checker answered it: a behavior a host implements, or one constructed from what it
 requires in turn. It is the checker's list as it crossed, and not what the body calls, since a
-composition requires what its stages require. What a manifest may say is Rust types, and version 6
-is `native/crates/compiler/tests/interface-v6.json`: a test holds a program's manifest to it, and
+composition requires what its stages require. A declaration names two readings of a value: `decode`,
+out of text in the external form, and `decodehost`, out of a value a host built of ordered maps and
+wrote with every container as an object, in which a map keyed by its indices is read as an array
+wherever the declaration holds one. What a manifest may say is Rust types, and version 7
+is `native/crates/compiler/tests/interface-v7.json`: a test holds a program's manifest to it, and
 another reads it with those types and writes it back unchanged. The manifest carries its own
 `version`, moved when what it says is read differently, and the `abi` its functions answer to,
 which is the generation in every symbol.
@@ -409,9 +412,13 @@ of the same name can then stand in one application. A module is a namespace unde
 `Acme\Billing\Shop`). A product, a newtype and a unit are each a `final readonly` class holding the
 value where the library made it, with a reader for each field, a static `of` building one and
 answering a raoh-php `Result`, a static `decode` reading one out of its external form, and `encode`.
-`decoder` is `decode` as a raoh-php `Decoder` over a PHP value, which a host composes with its own
-the way a JVM host composes a type's `decoder()`: what the library finds wrong is an issue at the
-path the decoder was reached at.
+`decoder` is a raoh-php `Decoder` over a PHP value, which a host composes with its own the way a JVM
+host composes a type's `decoder()`: what the library finds wrong is an issue at the path the decoder
+was reached at. A PHP array is an ordered map, and a list is the one keyed by its indices, so an
+empty array is an empty object and an empty list at once. The value is therefore not written as
+text, which would have to say which: it is written with every array as an object and read by the
+declaration's `decodehost`, which takes an array keyed by its indices as a list wherever the
+declaration holds one.
 A sum is an interface, which a sum whose cases are all its cases extends, and each case's class
 implements it. `<Sum>Codec` finds which class a value is through the sum's `case` function, and
 reads and writes the sum's own external form, which says which case it is, with a `decoder` of its

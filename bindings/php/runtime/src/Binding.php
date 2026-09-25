@@ -16,7 +16,7 @@ abstract class Binding
      * binding generated before would call something this does not have, or call it as something it
      * is not; a binding says which it was generated for and refuses to load over any other.
      */
-    public const PROTOCOL = 5;
+    public const PROTOCOL = 6;
 
     private readonly InjectionRegistry $registry;
 
@@ -38,6 +38,9 @@ abstract class Binding
             . 'decoder() (Session::decoder)',
         5 => 'a binding\'s functions take no session and ask for the innermost run going, and a run\'s '
             . 'body is called with nothing (Binding::innermostOf, Binding::run)',
+        6 => 'a decoder writes a PHP value with every array as an object and hands it to the library\'s '
+            . 'reading of a host\'s value, which reads an array keyed by its indices as a list '
+            . '(Session::decoder)',
     ];
 
     /**
