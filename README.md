@@ -88,6 +88,11 @@ The binding is mapped by the application like its own classes, or loaded with th
 written beside it. `scripts/php-from-the-command-line.sh` does all of this in CI, with no Java calling
 the API.
 
+`examples/php-cart` is an application built this way: the cart model of the Java
+`raoh-souther` example, with its HTTP boundary decoded by raoh-php and its injected behaviors
+implemented over PDO. Its README says how to build and run it, and what differs from the Java one.
+`scripts/php-cart-example.sh` builds it and runs its tests in CI.
+
 ## Where it runs
 
 Unix hosts: what the object is written as is decided by the host's format, and Mach-O and ELF are
@@ -330,8 +335,11 @@ entry for it. A parameter is `given`, `room`, or a `slice`, as many of a word as
 says. A behavior `requires` what constructing it requires injected, each by its module and its name,
 in the order the checker answered it: a behavior a host implements, or one constructed from what it
 requires in turn. It is the checker's list as it crossed, and not what the body calls, since a
-composition requires what its stages require. What a manifest may say is Rust types, and version 6
-is `native/crates/compiler/tests/interface-v6.json`: a test holds a program's manifest to it, and
+composition requires what its stages require. A declaration names two readings of a value: `decode`,
+out of text in the external form, and `decodehost`, out of a value a host built of ordered maps and
+wrote with every container as an object, in which a map keyed by its indices is read as an array
+wherever the declaration holds one. What a manifest may say is Rust types, and version 7
+is `native/crates/compiler/tests/interface-v7.json`: a test holds a program's manifest to it, and
 another reads it with those types and writes it back unchanged. The manifest carries its own
 `version`, moved when what it says is read differently, and the `abi` its functions answer to,
 which is the generation in every symbol.
@@ -404,9 +412,17 @@ of the same name can then stand in one application. A module is a namespace unde
 `Acme\Billing\Shop`). A product, a newtype and a unit are each a `final readonly` class holding the
 value where the library made it, with a reader for each field, a static `of` building one and
 answering a raoh-php `Result`, a static `decode` reading one out of its external form, and `encode`.
+`decoder` is a raoh-php `Decoder` over a PHP value, which a host composes with its own the way a JVM
+host composes a type's `decoder()`: what the library finds wrong is an issue at the path the decoder
+was reached at. A PHP array is an ordered map, and a list is the one keyed by its indices, so an
+empty array is an empty object and an empty list at once. The value is therefore not written as
+text, which would have to say which: it is written with every array as an object and read by the
+declaration's `decodehost`, which takes an array keyed by its indices as a list wherever the
+declaration holds one.
 A sum is an interface, which a sum whose cases are all its cases extends, and each case's class
 implements it. `<Sum>Codec` finds which class a value is through the sum's `case` function, and
-reads and writes the sum's own external form, which says which case it is. A case the model keeps,
+reads and writes the sum's own external form, which says which case it is, with a `decoder` of its
+own. A case the model keeps,
 or a sum whose cases the library cannot tell apart, is `<Sum>Value`, which is still the sum and can
 still be written. A module's behaviors are static functions on `Behaviors`, its values on `Values`.
 A behavior is also a class named after it (`quote` is `Quote`), which an application holds the
@@ -415,9 +431,10 @@ says, and an application extends it. One the library defines is final: `bind` ta
 the class of each behavior it `requires`, in that order, each named after the behavior, or by its
 place (`$dependency0`) where two of one name from two modules are both required. `of` makes one that
 requires nothing.
-`apply` calls it with what it was bound to registered for the length of the call. It takes the
-session and answers a value of the caller's run, as every function does, and opens no run of its
-own, whose values would be gone by the time the caller held them. A missing or mistyped
+`apply` calls it with what it was bound to registered for the length of the call, and the class is
+callable, so `($placeOrder)($orderId, $userId, $orderer)` is the same call. It answers a value of the
+caller's run, as every function does, and opens no run of its own, whose values would be gone by
+the time the caller held them. A missing or mistyped
 implementation is PHP's `TypeError` at `bind`, not an `UnboundInjection` at the call. A behavior
 bound to another brings what that one was bound to, and one bound to two implementations of one
 behavior is refused at `bind`, since the library calls one implementation of a behavior at a time
@@ -432,7 +449,7 @@ is, or, for a case with no class of its own, through the codec of the member sum
 Nothing is generated for the union itself, which has no name in the model. A host implementing a
 behavior that answers one hands back an object of one of those classes as it is. A list is a PHP
 list both ways, typed `array` for PHP and `list<T>` in the docblock for PHPStan: an element is handed
-over as a value of its type is anywhere else, through the session the list is built in, so an array
+over as a value of its type is anywhere else, in the run the list is built in, so an array
 with a key out of order or an element of another type is refused before the library is called. A
 list read is copied into a PHP array when it is read, each element held as a field's value is.
 A module's classes build and read a list through that module's own functions and no other
@@ -464,16 +481,19 @@ that and not as whichever member moved since, as the driver reads a transport an
 carries.
 
 Everything else is in `bindings/php/runtime`, one Composer package every generated binding runs on.
-A host calls `$binding->run(fn (Session $session) => ...)`: the run marks the arena, and when it ends
-it expires its session and resets the arena to the mark. Every value holds a handle to the session it
+A host calls `$binding->run(fn () => ...)`: the run marks the arena, and when it ends it expires the
+run's session and resets the arena to the mark. No function of a binding takes a session. Each
+finds the innermost run going on this fiber of a library the binding was loaded for, and one called
+outside any run throws `OutsideAnyRun`. There is nothing for a caller to choose there: a
+computation belongs to the innermost run of its library, and a library's runs are on one fiber at a
+time. A decoder holds no run, so it can be made once and kept. Every value holds a handle to the session it
 was made in, and every read of one goes through the handle, which refuses a value whose run has ended
 (`Expired`) or that another library made (`ForeignHandle`) before anything reads the memory. A value
 that has to outlive its run leaves it as its external form. Runs nest, and a value from an outer run
 may be handed to a call in an inner one. A value belongs to the run its memory is dropped with,
 which a binding knows by where the value came from. What a computation (a construction, a reading, a
-behavior, a published value) answers is made after the mark of the innermost run going, so a
-computation is started only through that run's session (`NotTheInnermostRun` otherwise) and its
-answer belongs to it. What a field reader answers is a value the one read already held, made no
+behavior, a published value) answers is made after the mark of the innermost run going, which is
+the run a function finds, and its answer belongs to it. What a field reader answers is a value the one read already held, made no
 later, so it belongs to that value's run, whichever run it is read in. What an implementation is
 handed belongs to the innermost run, which is no longer than it lives. A library is
 one per file, told apart by device and inode rather than by the path it was loaded through, since
@@ -484,7 +504,7 @@ A status crosses as one of three things. A construction that does not hold its t
 an `Err` with `invariant_violation`, and a reading answers the issues the library found, their codes
 being Raoh's already, or `invalid_format` where the text is not JSON. A Souther computation that
 ends without a value throws `SoutherAbort`, naming the status. A behavior the host implements is
-handed to a run as `Injections::of(name: fn (Session $session, ...) => ...)`, or bound to a behavior
+handed to a run as `Injections::of(name: fn (...) => ...)`, or bound to a behavior
 class as an instance of its own. Each behavior a host implements is one C function pointer, made
 once per binding, and what is registered through it is registered around each run or bound call
 and put back after, so a worker does not grow with every request. A call with nothing registered
@@ -499,8 +519,8 @@ of that file would be. The arena and what is registered
 are per thread, and a handle is PHP's, which a ZTS runtime such as FrankenPHP does not hand from one
 thread to another; nothing here checks for one that was. A fiber is checked for: runs are one stack,
 ended in the order they nest, so while a run is going on one fiber, another fiber can neither start
-one nor use a session or a value of it (`RunOnAnotherFiber`), and one suspended in a run holds the
-library until it ends that run.
+one nor use a value of it (`RunOnAnotherFiber`), a call made there finds no run of its own
+(`OutsideAnyRun`), and one suspended in a run holds the library until it ends that run.
 
 ## Where a value lives
 
@@ -543,12 +563,16 @@ no second reading of what a row means either.
 A row the compile did not run arrives saying so and carrying why. Those are not skipped: skipping
 them is how a check goes on being green over fewer and fewer rows.
 
-The object carries an entry per row, which is what runs one. The values the row states are written
-into the entry when the program crosses, so running a row is the object doing something with the
+The object carries an entry per row, which is what runs one. The entry calls the behavior with what
+computes each of the row's inputs: the definition the checked program names for it, which the module
+holds as one of its helpers, whose body is the operand as the row writes it, elaborated by the
+checker at the parameter it is handed to. So running a row is the object doing something with the
 row and not the behavior being reached with values from outside — which is what lets a row of a
-name the module keeps be run at all. A row stating a value this backend has no expression for
-refuses the build rather than being left out of the object, for the same reason: an object missing
-an entry would link and answer every row it did carry.
+name the module keeps be run at all — and how a value stands where it is handed over, a case where
+its sum is taken or a value given to an optional field, is the checker's to say and not this
+backend's. A row whose operand this backend has no expression for refuses the build, as any body
+does, rather than being left out of the object: an object missing an entry would link and answer
+every row it did carry.
 
 This is not the two carriers compared against each other. Holding both to one statement is not
 running both and comparing what came back, and running a program on every carrier and comparing the

@@ -6,6 +6,9 @@ namespace Souther\Runtime;
 
 use FFI;
 use FFI\CData;
+use Raoh\CallableDecoder;
+use Raoh\Decoder;
+use Raoh\Err;
 use Raoh\Issue;
 use Raoh\Issues;
 use Raoh\Path;
@@ -15,13 +18,20 @@ use Raoh\Result;
  * One run of a library: what is made in it stands in the library's arena from the mark the run
  * took, and is handed back when the run ends. A value made in a run is good until then.
  *
- * Handed to the body of {@see Binding::run()} and to every implementation the library calls during
- * it. Everything that makes a value takes one, so which arena a value stands in is never a
- * question of what happens to be loaded.
+ * Held by the runtime and the binding, and by no host code. A function of a binding asks its
+ * `Binding` for the session of the innermost run going on this fiber ({@see Binding::innermostOf()})
+ * and makes what it makes there, so which arena a value stands in is decided by the run a call is
+ * made in and never chosen by the caller. A value keeps the session it was made in, which is how
+ * it is refused once that run has ended, on another fiber, or by another library.
  */
 final class Session
 {
+    private static int $opened = 0;
+
     private bool $active = true;
+
+    /** Where this run stands among every run opened in the process, later ones higher. */
+    private readonly int $order;
 
     /** @internal */
     public function __construct(
@@ -29,6 +39,13 @@ final class Session
         private readonly ?\Fiber $fiber,
         private readonly InjectionRegistry $registry,
     ) {
+        $this->order = ++self::$opened;
+    }
+
+    /** @internal Whether this run was opened after `$other`, which is the one inside the other where both are going. */
+    public function openedAfter(self $other): bool
+    {
+        return $this->order > $other->order;
     }
 
     public function isActive(): bool
@@ -254,6 +271,41 @@ final class Session
         }
         $at = $ffi->souther_decoded_malformed_at($reading);
         return Result::fail(Path::root(), 'invalid_format', "the text stops being JSON at byte {$at}");
+    }
+
+    /**
+     * @internal A type's reading of a host's value as a raoh-php decoder, which a host composes with
+     * its own the way a JVM host composes a type's `decoder()`.
+     *
+     * What it is handed is a PHP value, and PHP's one container is an ordered map: a list is the
+     * array keyed by its indices, and the empty list and the empty object are one value. So the
+     * value is written with every array as an object keyed as PHP keyed it, which keeps everything
+     * the value says and adds nothing it does not, and `$decode` hands that to the library's reading
+     * of a host's value, which takes an array keyed by its indices as a list where the declaration
+     * holds one there and as an object where it holds one of those. Text written with `json_encode`
+     * would instead have guessed each array into one or the other, and guessed an empty one into a
+     * list. What the library finds wrong is found at the path the decoder was reached at. A float
+     * stays one, so a `1.0` handed where an `Int` is taken is refused rather than read as `1`.
+     *
+     * It holds no session: `$decode` finds the run it reads in when it is called, so a decoder can be
+     * made once and kept, as a JVM host keeps one in a constant.
+     *
+     * @template T
+     * @param \Closure(string): Result<T> $decode
+     * @return Decoder<mixed, T>
+     */
+    public static function decoder(\Closure $decode): Decoder
+    {
+        return CallableDecoder::of(static function (mixed $in, ?Path $path = null) use ($decode): Result {
+            $at = $path ?? Path::root();
+            try {
+                $json = json_encode($in, JSON_FORCE_OBJECT | JSON_PRESERVE_ZERO_FRACTION | JSON_THROW_ON_ERROR);
+            } catch (\JsonException $unwritten) {
+                return Result::fail($at, 'type_mismatch', 'a value no JSON writes: ' . $unwritten->getMessage());
+            }
+            $read = $decode($json);
+            return $read instanceof Err ? Result::err($read->issues->rebase($at)) : $read;
+        });
     }
 
     /**

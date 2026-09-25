@@ -26,7 +26,7 @@ import static net.unit8.raoh.json.JsonDecoders.string;
 import static net.unit8.raoh.json.JsonDecoders.strict;
 
 /**
- * What a manifest says, as this generator reads it: version 6 of {@code souther-native-interface},
+ * What a manifest says, as this generator reads it: version 7 of {@code souther-native-interface},
  * and nothing else.
  *
  * <p>Read strictly, as the driver writes it. A member this does not name, or a version or ABI
@@ -41,7 +41,7 @@ record Manifest(int abi, Map<String, Integer> statuses, Map<String, Integer> out
     static final String FORMAT = "souther-native-interface";
 
     /** The version of what a manifest says that this reads. */
-    static final int VERSION = 6;
+    static final int VERSION = 7;
 
     /** The ABI generation the functions this binds answer to. */
     static final int ABI = 3;
@@ -160,25 +160,37 @@ record Manifest(int abi, Map<String, Integer> statuses, Map<String, Integer> out
 
         String name();
 
+        /** Reads a value of it out of text in its external form. */
         @Nullable Function decode();
+
+        /**
+         * Reads a value of it out of a value a host built of ordered maps, written with every
+         * container as an object: where the reader takes an array, a map keyed by its indices is
+         * one.
+         */
+        @Nullable Function decodeHost();
 
         @Nullable Function encode();
 
         record Product(String name, List<Field> fields, @Nullable Function construct,
-                       @Nullable Function decode, @Nullable Function encode) implements Declaration {
+                       @Nullable Function decode, @Nullable Function decodeHost,
+                       @Nullable Function encode) implements Declaration {
         }
 
         record Newtype(String name, Field field, @Nullable Function construct,
-                       @Nullable Function decode, @Nullable Function encode) implements Declaration {
+                       @Nullable Function decode, @Nullable Function decodeHost,
+                       @Nullable Function encode) implements Declaration {
         }
 
         record Unit(String name, @Nullable Function construct, @Nullable Function decode,
-                    @Nullable Function encode) implements Declaration {
+                    @Nullable Function decodeHost, @Nullable Function encode)
+                implements Declaration {
         }
 
         /** A sum, and the cases {@code which} counts, where every case is a declared type. */
         record Sum(String name, List<Case> cases, @Nullable Function which,
-                   @Nullable Function decode, @Nullable Function encode) implements Declaration {
+                   @Nullable Function decode, @Nullable Function decodeHost,
+                   @Nullable Function encode) implements Declaration {
         }
     }
 
@@ -355,24 +367,30 @@ record Manifest(int abi, Map<String, Integer> statuses, Map<String, Integer> out
     private static final Decoder<JsonNode, Declaration> DECLARATION = oneOf(
             combine(field("kind", literal("product")), field("name", string()),
                     field("fields", list(FIELD)), nullableField("construct", FUNCTION),
-                    nullableField("decode", FUNCTION), nullableField("encode", FUNCTION))
-                    .strict((kind, name, fields, construct, decode, encode) ->
-                            new Declaration.Product(name, fields, construct, decode, encode)),
+                    nullableField("decode", FUNCTION), nullableField("decodehost", FUNCTION),
+                    nullableField("encode", FUNCTION))
+                    .strict((kind, name, fields, construct, decode, decodeHost, encode) ->
+                            new Declaration.Product(name, fields, construct, decode, decodeHost,
+                                    encode)),
             combine(field("kind", literal("newtype")), field("name", string()),
                     field("field", FIELD), nullableField("construct", FUNCTION),
-                    nullableField("decode", FUNCTION), nullableField("encode", FUNCTION))
-                    .strict((kind, name, held, construct, decode, encode) ->
-                            new Declaration.Newtype(name, held, construct, decode, encode)),
+                    nullableField("decode", FUNCTION), nullableField("decodehost", FUNCTION),
+                    nullableField("encode", FUNCTION))
+                    .strict((kind, name, held, construct, decode, decodeHost, encode) ->
+                            new Declaration.Newtype(name, held, construct, decode, decodeHost,
+                                    encode)),
             combine(field("kind", literal("unit")), field("name", string()),
                     nullableField("construct", FUNCTION), nullableField("decode", FUNCTION),
-                    nullableField("encode", FUNCTION))
-                    .strict((kind, name, construct, decode, encode) ->
-                            new Declaration.Unit(name, construct, decode, encode)),
+                    nullableField("decodehost", FUNCTION), nullableField("encode", FUNCTION))
+                    .strict((kind, name, construct, decode, decodeHost, encode) ->
+                            new Declaration.Unit(name, construct, decode, decodeHost, encode)),
             combine(field("kind", literal("sum")), field("name", string()),
                     field("cases", list(CASE)), nullableField("case", FUNCTION),
-                    nullableField("decode", FUNCTION), nullableField("encode", FUNCTION))
-                    .strict((kind, name, cases, which, decode, encode) ->
-                            new Declaration.Sum(name, cases, which, decode, encode)));
+                    nullableField("decode", FUNCTION), nullableField("decodehost", FUNCTION),
+                    nullableField("encode", FUNCTION))
+                    .strict((kind, name, cases, which, decode, decodeHost, encode) ->
+                            new Declaration.Sum(name, cases, which, decode, decodeHost,
+                                    encode)));
 
     private static final Decoder<JsonNode, Element> ELEMENT = oneOf(
             strict(field("whole", WORD).asDecoder().map(word -> new Element(false, word)),

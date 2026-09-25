@@ -106,8 +106,7 @@ class APhpHostBindsABehaviorToWhatItRequiresTest {
             use Acme\\Billing\\Shop\\Resold;
             use Acme\\Billing\\Wholesale\\PriceOf as WholesalePriceOf;
             use Souther\\Runtime\\Expired;
-            use Souther\\Runtime\\NotTheInnermostRun;
-            use Souther\\Runtime\\Session;
+            use Souther\\Runtime\\OutsideAnyRun;
             use Souther\\Runtime\\UnboundInjection;
 
             /** A price list with a dependency of its own, as a container would wire one. */
@@ -117,9 +116,9 @@ class APhpHostBindsABehaviorToWhatItRequiresTest {
                 {
                 }
 
-                public function apply(Session $session, string $sku): Price
+                public function apply(string $sku): Price
                 {
-                    return Price::of($session, $this->each * strlen($sku))->getOrThrow();
+                    return Price::of($this->each * strlen($sku))->getOrThrow();
                 }
             }
 
@@ -129,7 +128,7 @@ class APhpHostBindsABehaviorToWhatItRequiresTest {
                 {
                 }
 
-                public function apply(Session $session, string $sku): int
+                public function apply(string $sku): int
                 {
                     return $this->by;
                 }
@@ -137,7 +136,7 @@ class APhpHostBindsABehaviorToWhatItRequiresTest {
 
             final class MarkedUp extends WholesalePriceOf
             {
-                public function apply(Session $session, Price $price): int
+                public function apply(Price $price): int
                 {
                     return $price->value() + 1;
                 }
@@ -147,23 +146,24 @@ class APhpHostBindsABehaviorToWhatItRequiresTest {
             $prices = new ListedPrice(3);
             $quote = Quote::bind($prices, new Off(1));
 
-            echo "quote: ", $binding->run(fn (Session $s): int => $quote->apply($s, 'ab', 2)), "\\n";
-            echo "total: ", $binding->run(fn (Session $s): int => Total::bind($quote)->apply($s, 'ab')), "\\n";
-            echo "both: ", $binding->run(fn (Session $s): int => Both::bind($quote, $prices)->apply($s, 'ab')), "\\n";
-            echo "twice: ", $binding->run(fn (Session $s): int => Twice::of()->apply($s, 4)), "\\n";
-            echo "priced: ", $binding->run(fn (Session $s): int => Priced::bind($prices)->apply($s, 'abc')), "\\n";
+            // A bound behavior is called as a function, or through apply.
+            echo "quote: ", $binding->run(fn (): int => $quote('ab', 2)), "\\n";
+            echo "total: ", $binding->run(fn (): int => Total::bind($quote)->apply('ab')), "\\n";
+            echo "both: ", $binding->run(fn (): int => Both::bind($quote, $prices)('ab')), "\\n";
+            echo "twice: ", $binding->run(fn (): int => Twice::of()(4)), "\\n";
+            echo "priced: ", $binding->run(fn (): int => Priced::bind($prices)('abc')), "\\n";
 
             // Two requirements of one name, from two modules, taken by their places.
-            echo "resold: ", $binding->run(fn (Session $s): int =>
-                Resold::bind(dependency0: $prices, dependency1: new MarkedUp())->apply($s, 'ab')), "\\n";
+            echo "resold: ", $binding->run(fn (): int =>
+                Resold::bind(dependency0: $prices, dependency1: new MarkedUp())('ab')), "\\n";
 
-            // What apply answers is a value of the caller's run: read after apply has put back what
-            // it registered, and refused once the run has ended.
-            echo "line: ", $binding->run(function (Session $s) use ($prices): string {
-                $line = LineOf::bind($prices)->apply($s, 'abc');
+            // What a behavior answers is a value of the caller's run: read after the call has put
+            // back what it registered, and refused once the run has ended.
+            echo "line: ", $binding->run(function () use ($prices): string {
+                $line = LineOf::bind($prices)('abc');
                 return $line->sku() . ' at ' . $line->amount();
             }), "\\n";
-            $kept = $binding->run(fn (Session $s): Line => LineOf::bind($prices)->apply($s, 'abc'));
+            $kept = $binding->run(fn (): Line => LineOf::bind($prices)('abc'));
             try {
                 $kept->amount();
             } catch (Expired $expired) {
@@ -171,33 +171,32 @@ class APhpHostBindsABehaviorToWhatItRequiresTest {
             }
 
             // What an implementation answers is a value of the caller's run too.
-            echo "held: ", $binding->run(function (Session $s) use ($prices): int {
+            echo "held: ", $binding->run(function () use ($prices): int {
                 $price = new class ($prices) extends PriceOf {
                     public function __construct(private readonly PriceOf $listed)
                     {
                     }
 
-                    public function apply(Session $session, string $sku): Price
+                    public function apply(string $sku): Price
                     {
-                        return $this->listed->apply($session, $sku . $sku);
+                        return $this->listed->apply($sku . $sku);
                     }
                 };
-                $answered = $price->apply($s, 'ab');
-                return Priced::bind($price)->apply($s, 'ab') + $answered->value();
+                $answered = $price->apply('ab');
+                return Priced::bind($price)('ab') + $answered->value();
             }), "\\n";
 
             // Registered for the call and not after it: the run's own are registered again.
-            echo "after: ", $binding->run(function (Session $s) use ($quote): string {
-                $bound = $quote->apply($s, 'ab', 1);
-                $own = Behaviors::quote($s, 'ab', 1);
+            echo "after: ", $binding->run(function () use ($quote): string {
+                $bound = $quote('ab', 1);
+                $own = Behaviors::quote('ab', 1);
                 return "{$bound} then {$own}";
-            }, CatalogInjections::of(priceOf: fn (Session $s, string $sku): Price =>
-                Price::of($s, 100)->getOrThrow()),
-                ShopInjections::of(discountFor: fn (Session $s, string $sku): int => 0)), "\\n";
+            }, CatalogInjections::of(priceOf: fn (string $sku): Price => Price::of(100)->getOrThrow()),
+                ShopInjections::of(discountFor: fn (string $sku): int => 0)), "\\n";
             try {
-                $binding->run(function (Session $s) use ($quote): int {
-                    $quote->apply($s, 'ab', 1);
-                    return Behaviors::quote($s, 'ab', 1);
+                $binding->run(function () use ($quote): int {
+                    $quote('ab', 1);
+                    return Behaviors::quote('ab', 1);
                 });
             } catch (UnboundInjection $unbound) {
                 echo "unbound after: ", $unbound::class, "\\n";
@@ -209,12 +208,12 @@ class APhpHostBindsABehaviorToWhatItRequiresTest {
                 {
                 }
 
-                public function apply(Session $session, string $sku): int
+                public function apply(string $sku): int
                 {
-                    return $this->inner->apply($session, $sku, 1);
+                    return ($this->inner)($sku, 1);
                 }
             });
-            echo "nested: ", $binding->run(fn (Session $s): int => $nested->apply($s, 'ab', 2)), "\\n";
+            echo "nested: ", $binding->run(fn (): int => $nested('ab', 2)), "\\n";
 
             try {
                 Quote::bind($prices);
@@ -231,14 +230,21 @@ class APhpHostBindsABehaviorToWhatItRequiresTest {
             } catch (InvalidArgumentException $two) {
                 echo "two: ", $two->getMessage(), "\\n";
             }
-            echo "same twice: ", $binding->run(fn (Session $s): int =>
-                Both::bind(Quote::bind($prices, new Off(0)), $prices)->apply($s, 'a')), "\\n";
+            echo "same twice: ", $binding->run(fn (): int =>
+                Both::bind(Quote::bind($prices, new Off(0)), $prices)('a')), "\\n";
 
-            $binding->run(function (Session $outer) use ($binding): void {
+            // A call finds the run it is in: none outside one, and the inner one inside two.
+            try {
+                Twice::of()(1);
+            } catch (OutsideAnyRun $outside) {
+                echo "outside any run: ", $outside::class, "\\n";
+            }
+            $binding->run(function () use ($binding, $prices): void {
+                $inner = $binding->run(fn (): Line => LineOf::bind($prices)('abc'));
                 try {
-                    $binding->run(fn (Session $inner): int => Twice::of()->apply($outer, 1));
-                } catch (NotTheInnermostRun $refused) {
-                    echo "outer in inner: ", $refused::class, "\\n";
+                    $inner->amount();
+                } catch (Expired $expired) {
+                    echo "made in the inner run: ", $expired::class, "\\n";
                 }
             });
             """;
@@ -260,7 +266,8 @@ class APhpHostBindsABehaviorToWhatItRequiresTest {
             wrong: TypeError
             two: catalog.priceOf is bound to two implementations, and the library calls one implementation of it at a time
             same twice: 6
-            outer in inner: Souther\\Runtime\\NotTheInnermostRun
+            outside any run: Souther\\Runtime\\OutsideAnyRun
+            made in the inner run: Souther\\Runtime\\Expired
             """;
 
     private static final Path RUNTIME = Path.of("bindings", "php", "runtime");

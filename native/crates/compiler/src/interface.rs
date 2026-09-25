@@ -216,6 +216,7 @@ pub(crate) struct DeclarationSurface {
     construct: Option<manifest::Function>,
     case: Option<manifest::Function>,
     decode: Option<manifest::Function>,
+    decode_host: Option<manifest::Function>,
     encode: Option<manifest::Function>,
 }
 
@@ -253,6 +254,7 @@ impl DeclarationSurface {
             construct: None,
             case: None,
             decode: None,
+            decode_host: None,
             encode: None,
         }
     }
@@ -267,6 +269,10 @@ impl DeclarationSurface {
 
     pub(crate) fn decoded_by(&mut self, function: &HostFunction) {
         self.decode = Some(function.described());
+    }
+
+    pub(crate) fn host_value_decoded_by(&mut self, function: &HostFunction) {
+        self.decode_host = Some(function.described());
     }
 
     pub(crate) fn encoded_by(&mut self, function: &HostFunction) {
@@ -288,6 +294,7 @@ impl DeclarationSurface {
             construct,
             case,
             decode,
+            decode_host,
             encode,
         } = self;
         let no_case = |kind: &str| {
@@ -301,6 +308,7 @@ impl DeclarationSurface {
                     fields,
                     construct,
                     decode,
+                    decode_host,
                     encode,
                 }
             }
@@ -313,6 +321,7 @@ impl DeclarationSurface {
                     field,
                     construct,
                     decode,
+                    decode_host,
                     encode,
                 }
             }
@@ -323,6 +332,7 @@ impl DeclarationSurface {
                     name,
                     construct,
                     decode,
+                    decode_host,
                     encode,
                 }
             }
@@ -336,6 +346,7 @@ impl DeclarationSurface {
                     cases,
                     case,
                     decode,
+                    decode_host,
                     encode,
                 }
             }
@@ -614,40 +625,49 @@ fn list_functions(list: &manifest::ListCrossing) -> [&manifest::Function; 3] {
 }
 
 /// Every function a declaration is reached through, in the order the header declares them.
+///
+/// Every field of every kind is named, with no rest pattern: a function a kind gains is then one
+/// this has to be told about, rather than one the header and the exported symbols quietly leave
+/// out.
 fn declaration_functions(
     declaration: &manifest::Declaration,
 ) -> impl Iterator<Item = &manifest::Function> {
-    let (operations, fields): ([&Option<manifest::Function>; 4], &[manifest::Field]) =
+    let (operations, fields): ([&Option<manifest::Function>; 5], &[manifest::Field]) =
         match declaration {
             manifest::Declaration::Product {
+                name: _,
                 fields,
                 construct,
                 decode,
+                decode_host,
                 encode,
-                ..
-            } => ([construct, &None, decode, encode], fields),
+            } => ([construct, &None, decode, decode_host, encode], fields),
             manifest::Declaration::Newtype {
+                name: _,
                 field,
                 construct,
                 decode,
+                decode_host,
                 encode,
-                ..
             } => (
-                [construct, &None, decode, encode],
+                [construct, &None, decode, decode_host, encode],
                 std::slice::from_ref(field),
             ),
             manifest::Declaration::Unit {
+                name: _,
                 construct,
                 decode,
+                decode_host,
                 encode,
-                ..
-            } => ([construct, &None, decode, encode], &[]),
+            } => ([construct, &None, decode, decode_host, encode], &[]),
             manifest::Declaration::Sum {
+                name: _,
+                cases: _,
                 case,
                 decode,
+                decode_host,
                 encode,
-                ..
-            } => ([&None, case, decode, encode], &[]),
+            } => ([&None, case, decode, decode_host, encode], &[]),
         };
     operations
         .into_iter()

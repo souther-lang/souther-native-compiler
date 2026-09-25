@@ -166,36 +166,34 @@ class WhatThisBackendDoesNotWriteYetTest {
     }
 
     /**
-     * A row states its values and the object carries an entry that runs them, so a value with no
-     * expression to make it is a row the object cannot run.
+     * A row's entry calls what computes each of its inputs, so an input whose operand has no
+     * expression here is a row the object cannot run.
      *
      * <p>Refused rather than left out. An object missing an entry would still link and still
      * answer every row it did carry, so what a check of the rows compared would shrink by however
      * many rows had values like this one — and it would go on being green over the ones that were
      * left.
+     *
+     * <p>A date is the value here. What refuses it is the definition computing the input, which
+     * the module holds and which is written like any other of its helpers.
      */
     @Test
     void aRowStatingAValueWithNoExpressionToMakeItIsRefusedRatherThanLeftOut() {
         CheckedProgram program = CheckedProgram.of(List.of("""
                 module owing
 
-                data Paid = { value: Int }
-                data Owed = { value: Int }
-                data Amount = Paid | Owed
+                data Due = { on: Date, label: String }
 
-                behavior tally : (a: Amount) -> Int
-                let tally (a) = match a with
-                    | Paid as p -> p.value
-                    | Owed as o -> -o.value
+                behavior labelled : (due: Due) -> String
+                let labelled (due) = due.label
 
-                example tally
-                    | "one of its cases" : (Paid { value = 7 }) -> 7
+                example labelled
+                    | "a date" : (Due { on = Date("2026-07-25"), label = "rent" }) -> "rent"
                 """));
 
         assertThatThrownBy(() -> ProgramWriter.written(program))
                 .isInstanceOf(NotLowered.class)
-                .hasMessageContaining("a row stating")
-                .hasMessageContaining("owing.Paid");
+                .hasMessageContaining("a temporal literal");
     }
 
     /**

@@ -108,9 +108,8 @@ class APhpHostCallsALibraryThroughItsBindingTest {
             use Raoh\\Result;
             use Souther\\Runtime\\Expired;
             use Souther\\Runtime\\ForeignHandle;
-            use Souther\\Runtime\\NotTheInnermostRun;
+            use Souther\\Runtime\\OutsideAnyRun;
             use Souther\\Runtime\\RunOnAnotherFiber;
-            use Souther\\Runtime\\Session;
             use Souther\\Runtime\\SoutherAbort;
             use Souther\\Runtime\\UnboundInjection;
 
@@ -124,119 +123,120 @@ class APhpHostCallsALibraryThroughItsBindingTest {
 
             $binding = Binding::load($argv[3]);
 
-            $binding->run(function (Session $session): void {
-                $money = Money::of($session, 3)->getOrThrow();
-                echo "money: ", $money->value(), ", standard ", Values::standardPrice($session)->value(), "\\n";
-                echo "below: ", issues(Money::of($session, -1)), "\\n";
-                echo "none: ", issues(Line::of($session, $money, 0)), "\\n";
+            $binding->run(function (): void {
+                $money = Money::of(3)->getOrThrow();
+                echo "money: ", $money->value(), ", standard ", Values::standardPrice()->value(), "\\n";
+                echo "below: ", issues(Money::of(-1)), "\\n";
+                echo "none: ", issues(Line::of($money, 0)), "\\n";
 
-                $line = Line::of($session, $money, 2, 'gift wrap')->getOrThrow();
+                $line = Line::of($money, 2, 'gift wrap')->getOrThrow();
                 echo "line: ", $line->quantity(), " at ", $line->price()->value(), ", ", $line->note(), "\\n";
-                echo "bare: ", var_export(Line::of($session, $money, 2)->getOrThrow()->note(), true), "\\n";
+                echo "bare: ", var_export(Line::of($money, 2)->getOrThrow()->note(), true), "\\n";
                 echo "written: ", $line->encode(), "\\n";
 
-                $owed = Behaviors::settle($session, $line, 2);
+                $owed = Behaviors::settle($line, 2);
                 echo "owed: ", $owed::class, ", amount ", $owed->amount()->value(),
                     ", overdue ", var_export($owed->overdue(), true),
                     ", an outcome ", var_export($owed instanceof Outcome, true),
                     ", settled ", var_export($owed instanceof Settled, true), "\\n";
-                $paid = Behaviors::settle($session, $line, 6);
+                $paid = Behaviors::settle($line, 6);
                 echo "paid: ", $paid::class, ", settled ", var_export($paid instanceof Settled, true),
                     ", an outcome ", var_export($paid instanceof Outcome, true), "\\n";
-                echo "owing: ", Behaviors::owing($session, $owed), " and ", Behaviors::owing($session, $paid), "\\n";
-                echo "still owing: ", Behaviors::stillOwing($session, input1: 2, input0: $line), "\\n";
+                echo "owing: ", Behaviors::owing($owed), " and ", Behaviors::owing($paid), "\\n";
+                echo "still owing: ", Behaviors::stillOwing(input1: 2, input0: $line), "\\n";
 
-                $owes = Behaviors::charge($session, 0);
-                $free = Behaviors::charge($session, 1);
-                $waived = Behaviors::charge($session, 2);
+                $owes = Behaviors::charge(0);
+                $free = Behaviors::charge(1);
+                $waived = Behaviors::charge(2);
                 echo "charged: ", $owes::class, " ", $owes->amount()->value(), ", ", $free::class,
                     ", ", $waived::class, " settled ", var_export($waived instanceof Settled, true), "\\n";
 
                 $said = OutcomeCodec::encode($owed);
                 echo "outcome: ", $said, "\\n";
-                $read = OutcomeCodec::decode($session, $said)->getOrThrow();
+                $read = OutcomeCodec::decode($said)->getOrThrow();
                 echo "read back: ", $read::class, ", amount ", $read->amount()->value(), "\\n";
-                echo "free: ", Free::of($session)->getOrThrow()->encode(), "\\n";
+                echo "free: ", Free::of()->getOrThrow()->encode(), "\\n";
 
-                echo "order: ", issues(Order::decode($session,
-                    '{"line": {"price": 4, "quantity": 5}, "placed": true}')), "\\n";
-                echo "nested: ", issues(Order::decode($session,
-                    '{"line": {"price": -1, "quantity": 5}, "placed": true}')), "\\n";
-                echo "not json: ", issues(Line::decode($session, '{"price"')), "\\n";
+                echo "order: ", issues(Order::decode('{"line": {"price": 4, "quantity": 5}, "placed": true}')), "\\n";
+                echo "nested: ", issues(Order::decode('{"line": {"price": -1, "quantity": 5}, "placed": true}')), "\\n";
+                echo "not json: ", issues(Line::decode('{"price"')), "\\n";
 
-                $composed = Line::of($session, $money, 1, "cafe\\u{0301}")->getOrThrow()->note();
+                $composed = Line::of($money, 1, "cafe\\u{0301}")->getOrThrow()->note();
                 echo "normalized: ", bin2hex($composed), "\\n";
 
                 try {
-                    Behaviors::squared($session, 4000000000);
+                    Behaviors::squared(4000000000);
                 } catch (SoutherAbort $abort) {
                     echo "aborted: ", $abort->status, "\\n";
                 }
                 try {
-                    Behaviors::discounted($session, $line);
+                    Behaviors::discounted($line);
                 } catch (UnboundInjection $unbound) {
                     echo "unbound: ", $unbound::class, "\\n";
                 }
             });
 
-            $discounts = Injections::of(discountFor: fn (Session $session, Line $line): int => $line->quantity());
+            $discounts = Injections::of(discountFor: fn (Line $line): int => $line->quantity());
             echo "discounted: ", $binding->run(
-                fn (Session $session): int => Behaviors::discounted($session,
-                    Line::of($session, Money::of($session, 3)->getOrThrow(), 2)->getOrThrow()),
+                fn (): int => Behaviors::discounted(Line::of(Money::of(3)->getOrThrow(), 2)->getOrThrow()),
                 $discounts), "\\n";
 
-            $charging = Injections::of(chooseCharge: fn (Session $session, int $paid): Owed|Settled =>
-                $paid > 0 ? Free::of($session)->getOrThrow()
-                    : Owed::of($session, Money::of($session, 1)->getOrThrow(), true)->getOrThrow());
+            $charging = Injections::of(chooseCharge: fn (int $paid): Owed|Settled =>
+                $paid > 0 ? Free::of()->getOrThrow()
+                    : Owed::of(Money::of(1)->getOrThrow(), true)->getOrThrow());
             echo "charged free: ", var_export($binding->run(
-                fn (Session $session): bool => Behaviors::chargedFree($session, 1), $charging), true),
+                fn (): bool => Behaviors::chargedFree(1), $charging), true),
                 " and ", var_export($binding->run(
-                fn (Session $session): bool => Behaviors::chargedFree($session, 0), $charging), true), "\\n";
+                fn (): bool => Behaviors::chargedFree(0), $charging), true), "\\n";
 
             $down = new LogicException('the price list is down');
             try {
                 $binding->run(
-                    fn (Session $session): int => Behaviors::discounted($session,
-                        Line::of($session, Money::of($session, 3)->getOrThrow(), 2)->getOrThrow()),
-                    Injections::of(discountFor: function (Session $session, Line $line) use ($down): int {
+                    fn (): int => Behaviors::discounted(Line::of(Money::of(3)->getOrThrow(), 2)->getOrThrow()),
+                    Injections::of(discountFor: function (Line $line) use ($down): int {
                         throw $down;
                     }));
             } catch (LogicException $caught) {
                 echo "thrown: ", $caught === $down ? 'the same one' : 'another', "\\n";
             }
 
-            echo "nested runs: ", $binding->run(function (Session $outer) use ($binding): int {
-                $money = Money::of($outer, 5)->getOrThrow();
-                return $binding->run(fn (Session $inner): int =>
-                    Behaviors::owing($inner, Behaviors::settle($inner,
-                        Line::of($inner, $money, 1)->getOrThrow(), 1)));
+            echo "nested runs: ", $binding->run(function () use ($binding): int {
+                $money = Money::of(5)->getOrThrow();
+                return $binding->run(fn (): int =>
+                    Behaviors::owing(Behaviors::settle(Line::of($money, 1)->getOrThrow(), 1)));
             }), "\\n";
 
             // A fiber suspended inside a run holds the library's runs until it ends them: another
             // fiber's run on top would be ended in some other order.
-            $first = new Fiber(fn () => $binding->run(function (Session $session): int {
-                $money = Money::of($session, 6)->getOrThrow();
-                $handed = Fiber::suspend($session);
+            $first = new Fiber(fn () => $binding->run(function (): int {
+                $money = Money::of(6)->getOrThrow();
+                $handed = Fiber::suspend($money);
                 return $money->value() + $handed;
             }));
             $suspended = $first->start();
-            $second = new Fiber(fn () => $binding->run(fn (Session $session): int => 1));
+            $second = new Fiber(fn () => $binding->run(fn (): int => 1));
             try {
                 $second->start();
             } catch (RunOnAnotherFiber $refused) {
                 echo "second fiber: ", $refused::class, "\\n";
             }
             try {
-                (new Fiber(fn () => Money::of($suspended, 1)))->start();
+                (new Fiber(fn () => $suspended->value()))->start();
             } catch (RunOnAnotherFiber $refused) {
-                echo "session on another fiber: ", $refused::class, "\\n";
+                echo "value on another fiber: ", $refused::class, "\\n";
+            }
+            // A run going on another fiber is not one a call here is in.
+            try {
+                (new Fiber(fn () => Money::of(1)))->start();
+            } catch (OutsideAnyRun $outside) {
+                echo "call on another fiber: ", $outside::class, "\\n";
             }
             $first->resume(1);
             echo "first fiber: ", $first->getReturn(), ", then ",
-                $binding->run(fn (Session $session): int => Money::of($session, 2)->getOrThrow()->value()),
+                $binding->run(fn (): int => Money::of(2)->getOrThrow()->value()),
                 "\\n";
 
-            $kept = $binding->run(fn (Session $session): Money => Money::of($session, 5)->getOrThrow());
+            $kept = $binding->run(fn (): Money => Money::of(5)->getOrThrow());
             try {
                 $kept->value();
             } catch (Expired $expired) {
@@ -244,8 +244,10 @@ class APhpHostCallsALibraryThroughItsBindingTest {
             }
             $again = Binding::load($argv[4]);
             try {
-                $binding->run(fn (Session $here) => $again->run(fn (Session $there) =>
-                    Line::of($there, Money::of($here, 3)->getOrThrow(), 1)));
+                $binding->run(function () use ($again) {
+                    $money = Money::of(3)->getOrThrow();
+                    return $again->run(fn () => Line::of($money, 1));
+                });
             } catch (ForeignHandle $foreign) {
                 echo "foreign: ", $foreign->getMessage(), "\\n";
             }
@@ -254,26 +256,18 @@ class APhpHostCallsALibraryThroughItsBindingTest {
             link($argv[3], $linked);
             echo "one file: ", var_export(Binding::load($linked) === $binding, true), "\\n";
 
-            // A computation started through an outer session while an inner run is going would
-            // make a value in the inner run's part of the arena, which that run drops.
-            $binding->run(function (Session $outer) use ($binding): void {
-                try {
-                    $binding->run(fn (Session $inner) => Money::of($outer, 5));
-                } catch (NotTheInnermostRun $refused) {
-                    echo "outer in inner: ", $refused::class, "\\n";
-                }
-                // A field read out of an outer value is a value the outer one holds, which lives as
-                // long, whichever run it was read in.
-                $line = Line::of($outer, Money::of($outer, 3)->getOrThrow(), 1)->getOrThrow();
-                $price = $binding->run(fn (Session $inner): Money => $line->price());
+            // A field read out of an outer value is a value the outer one holds, which lives as long,
+            // whichever run it was read in.
+            $binding->run(function () use ($binding): void {
+                $line = Line::of(Money::of(3)->getOrThrow(), 1)->getOrThrow();
+                $price = $binding->run(fn (): Money => $line->price());
                 echo "read in inner: still ", $price->value(), "\\n";
             });
 
-            $keptSession = $binding->run(fn (Session $session): Session => $session);
             try {
-                Money::of($keptSession, 1);
-            } catch (Expired $expired) {
-                echo "session expired: ", $expired->getMessage(), "\\n";
+                Money::of(1);
+            } catch (OutsideAnyRun $outside) {
+                echo "outside any run: ", $outside::class, "\\n";
             }
             """;
 
@@ -303,15 +297,15 @@ class APhpHostCallsALibraryThroughItsBindingTest {
             thrown: the same one
             nested runs: 4
             second fiber: Souther\\Runtime\\RunOnAnotherFiber
-            session on another fiber: Souther\\Runtime\\RunOnAnotherFiber
+            value on another fiber: Souther\\Runtime\\RunOnAnotherFiber
+            call on another fiber: Souther\\Runtime\\OutsideAnyRun
             first fiber: 7, then 2
             expired: a value was used after the run it was made in ended
             foreign: a value one library made was handed to another
             one binding: true
             one file: true
-            outer in inner: Souther\\Runtime\\NotTheInnermostRun
             read in inner: still 3
-            session expired: a session was used after its run ended
+            outside any run: Souther\\Runtime\\OutsideAnyRun
             """;
 
     /** Where the runtime package stands, with what Composer installed for it. */
@@ -366,12 +360,10 @@ class APhpHostCallsALibraryThroughItsBindingTest {
                 use Acme\\Billing\\Shop\\Behaviors;
                 use Acme\\Billing\\Shop\\Line;
                 use Acme\\Billing\\Shop\\Money;
-                use Souther\\Runtime\\Session;
 
                 $binding = Binding::preloaded('souther_shop', $argv[1]);
-                echo $binding->run(fn (Session $session): int => Behaviors::owing($session,
-                    Behaviors::settle($session, Line::of($session,
-                        Money::of($session, 3)->getOrThrow(), 2)->getOrThrow(), 2))), "\\n";
+                echo $binding->run(fn (): int => Behaviors::owing(Behaviors::settle(
+                    Line::of(Money::of(3)->getOrThrow(), 2)->getOrThrow(), 2))), "\\n";
                 """, StandardCharsets.UTF_8);
 
         assertThat(Php.ran(List.of("-d", "opcache.enable_cli=1",

@@ -189,6 +189,13 @@ final class NativeLibrary
         return $current;
     }
 
+    /** @internal The session of the innermost run going on this fiber, or null where none is. */
+    public function innermostHere(): ?Session
+    {
+        $current = end($this->open);
+        return $current !== false && $this->holder === \Fiber::getCurrent() ? $current : null;
+    }
+
     /** @internal What a status other than `ANSWERED` means, as something to throw. */
     public function failure(int $status): \Throwable
     {
