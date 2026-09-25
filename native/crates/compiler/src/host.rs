@@ -377,7 +377,7 @@ pub(crate) fn define(
                             literals,
                             codecs: &mut *codecs,
                         };
-                        let form = writing.named(&key, given[0]);
+                        let form = writing.declared(&key, given[0]);
                         writing.call(Runtime::ExternalJson, &[form])
                     };
                     builder.ins().return_(&[json]);
