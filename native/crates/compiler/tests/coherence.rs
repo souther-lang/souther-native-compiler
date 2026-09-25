@@ -1343,8 +1343,8 @@ fn a_function_stands_as_one_taking_less_and_answering_more() {
 }
 
 /// Both sides of `++` stand as the list it answers, each under a `Widen` where it holds a narrower
-/// element. A document with one side left at its own list is one the checker does not write, and it
-/// is refused as that and not as a list this backend does not lay out.
+/// element, and so written the two are joined. A document with one side left at its own list is one
+/// the checker does not write, and it is refused as that.
 #[test]
 fn a_concat_operand_narrower_than_its_slot_without_a_widen_is_the_halves_disagreeing() {
     let listed = |of: &str| format!(r#"{{"list":{of}}}"#);
@@ -1364,8 +1364,7 @@ fn a_concat_operand_narrower_than_its_slot_without_a_widen_is_the_halves_disagre
         &widen(&read(0, &listed(A)), &listed(S)),
         &widen(&read(1, &listed(b)), &listed(S)),
     );
-    let refused = object_for(&helpers(&[h(&takes, &both)])).expect_err("nothing lays a list out");
-    assert!(refused.downcast_ref::<NotLowered>().is_some(), "{refused}");
+    object_for(&helpers(&[h(&takes, &both)])).expect("two lists standing as one type are joined");
 
     let bare = joined(
         &read(0, &listed(A)),

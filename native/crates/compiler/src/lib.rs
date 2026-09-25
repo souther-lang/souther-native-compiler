@@ -1824,9 +1824,20 @@ impl Lowerings<'_> {
         module: &mut ObjectModule,
         bytes: i64,
     ) -> ir::Value {
-        let taking = module.declare_func_in_func(self.allocate, builder.func);
         let size = builder.ins().iconst(types::I64, bytes);
-        let taken = builder.ins().call(taking, &[size]);
+        self.room_of(builder, module, size)
+    }
+
+    /// Room for as many bytes as `bytes` comes to when the run gets there: what a value whose size
+    /// is not known until then, a list two others are joined into, is made in.
+    fn room_of(
+        &self,
+        builder: &mut FunctionBuilder,
+        module: &mut ObjectModule,
+        bytes: ir::Value,
+    ) -> ir::Value {
+        let taking = module.declare_func_in_func(self.allocate, builder.func);
+        let taken = builder.ins().call(taking, &[bytes]);
         builder.inst_results(taken)[0]
     }
 }
@@ -4423,7 +4434,8 @@ fn unlowered_operator(op: Op, left: &Held, right: &Held) -> NotLowered {
 
 /// Two values joined, which the language writes over two strings and over two lists.
 ///
-/// Two strings are joined here. Anything else is refused as not lowered.
+/// Two strings are joined by the runtime, and two lists of one type here ([`joined_lists`]).
+/// Anything else is refused as not lowered.
 fn join(
     builder: &mut FunctionBuilder,
     lowering: &Lowering,
@@ -4449,8 +4461,79 @@ fn join(
             | Prim::Instant
             | Prim::Raw => Err(unlowered_operator(Op::Concat, &left, &right)),
         },
+        (Ty::List { .. }, Ty::List { .. }) if left.ty == right.ty => {
+            Ok(joined_lists(builder, lowering, module, a, b))
+        }
         _ => Err(unlowered_operator(Op::Concat, &left, &right)),
     }
+}
+
+/// A list holding the elements of `a` and then those of `b`, as `souther-native-abi` lays a list
+/// out: new room for the two lengths together, and each list's slots copied into it in order.
+///
+/// Neither list is changed, and nothing of either is shared with what is made: a list is a value,
+/// and so is each of the two. What an element is does not come into it, since every element is one
+/// slot whatever it holds, so the slots are copied as they are.
+fn joined_lists(
+    builder: &mut FunctionBuilder,
+    lowering: &Lowering,
+    module: &mut ObjectModule,
+    a: ir::Value,
+    b: ir::Value,
+) -> ir::Value {
+    let first = builder
+        .ins()
+        .load(types::I64, TRUSTED, a, LIST_LENGTH as i32);
+    let second = builder
+        .ins()
+        .load(types::I64, TRUSTED, b, LIST_LENGTH as i32);
+    let length = builder.ins().iadd(first, second);
+    let slots = builder.ins().imul_imm_s(length, SLOT);
+    let bytes = builder.ins().iadd_imm_s(slots, room_for_list(0));
+    let joined = lowering.room_of(builder, module, bytes);
+    builder
+        .ins()
+        .store(TRUSTED, length, joined, LIST_LENGTH as i32);
+
+    let into = builder.ins().iadd_imm_s(joined, list_at(0));
+    let from = builder.ins().iadd_imm_s(a, list_at(0));
+    copy_slots(builder, from, into, first);
+    let past = builder.ins().imul_imm_s(first, SLOT);
+    let into = builder.ins().iadd(into, past);
+    let from = builder.ins().iadd_imm_s(b, list_at(0));
+    copy_slots(builder, from, into, second);
+    joined
+}
+
+/// `count` slots from `from` onwards copied to `to` onwards, one at a time and in order: none where
+/// `count` is nought.
+fn copy_slots(builder: &mut FunctionBuilder, from: ir::Value, to: ir::Value, count: ir::Value) {
+    let head = builder.create_block();
+    builder.append_block_param(head, types::I64);
+    let copying = builder.create_block();
+    let done = builder.create_block();
+
+    let nought = builder.ins().iconst(types::I64, 0);
+    builder.ins().jump(head, &[nought.into()]);
+
+    builder.switch_to_block(head);
+    let at = builder.block_params(head)[0];
+    let more = builder.ins().icmp(IntCC::SignedLessThan, at, count);
+    builder.ins().brif(more, copying, &[], done, &[]);
+    builder.seal_block(copying);
+    builder.seal_block(done);
+
+    builder.switch_to_block(copying);
+    let along = builder.ins().imul_imm_s(at, SLOT);
+    let source = builder.ins().iadd(from, along);
+    let slot = builder.ins().load(types::I64, TRUSTED, source, 0);
+    let target = builder.ins().iadd(to, along);
+    builder.ins().store(TRUSTED, slot, target, 0);
+    let next = builder.ins().iadd_imm_s(at, 1);
+    builder.ins().jump(head, &[next.into()]);
+    builder.seal_block(head);
+
+    builder.switch_to_block(done);
 }
 
 /// Every string literal this object holds, one per text however many places spell it.
