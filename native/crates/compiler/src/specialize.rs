@@ -18,13 +18,24 @@
 //! `foldFrom<Int, Int>` again. Which copy a call reaches is answered here, once, by the call it is;
 //! the lowering reads that answer and does not work it out a second time from a name and some types.
 //!
-//! A helper that calls itself at other types than it was called at is refused. Each copy would need
-//! another after it, and there is no number of them that is enough.
+//! Which recursions are lowered is decided of the helpers as written, before any copy is made
+//! ([`Recursions`]). Helpers that reach one another in a cycle are one recursion, and within one a
+//! call hands each variable of what it calls the caller's own variable of the same number: the
+//! recursion runs at the types it was entered at. One that does not is refused, whichever calls
+//! reach it and in whatever order they are read. Such a recursion either calls for a copy after
+//! every copy (`f<'a>` calling `f<List<'a>>`) or goes round two copies of one helper (`h<'a, 'b>`
+//! calling `h<'b, 'a>`), where a call to itself is a call to another function, so it is never the
+//! jump that runs a recursion in one frame. The rule is also what bounds the copies: a recursion
+//! entered at some types makes one copy of each of its helpers at those types, and a call out of it
+//! reaches a helper no recursion of it comes back from.
 
 use crate::index;
 use crate::transport::{Body, Carrier, Held, Node, Owner, Reaches, Ty};
 use crate::{Lowered, Runs, not_lowered};
 use std::collections::HashMap;
+
+/// A helper, by the module holding the copy and the reference a call there reaches it by.
+type HelperKey<'p> = (&'p str, &'p str);
 
 /// What each variable of a helper comes to at one call, by the variable's number.
 #[derive(Default, Debug)]
@@ -169,8 +180,6 @@ pub(crate) struct Instance<'p> {
     /// which is what tells the functions of one helper apart.
     pub ordinal: usize,
     body: Settled<'p>,
-    /// The copy whose body called for this one, where one did.
-    called_from: Option<InstanceId>,
 }
 
 /// A copy's body: the helper's own where it leaves nothing open, and the helper's rewritten
@@ -228,9 +237,9 @@ impl<'p> Specializations<'p> {
             by_key: HashMap::new(),
             reached: HashMap::new(),
         };
-        let mut helpers: HashMap<(&'p str, &'p str), Body<'p>> = HashMap::new();
+        let mut helpers: HashMap<HelperKey<'p>, Body<'p>> = HashMap::new();
         for body in runs.bodies() {
-            if let Owner::Helper(held) = body.owner {
+            if let Some(held) = body.owner.helper() {
                 index::unique(
                     &mut helpers,
                     (body.carrier().module(), held.reached.as_str()),
@@ -238,11 +247,12 @@ impl<'p> Specializations<'p> {
                 );
             }
         }
+        let recursions = Recursions::of(runs, &helpers);
         let mut roots = Vec::new();
         for body in runs.bodies() {
             match body.owner {
                 Owner::Helper(held) if held.variables() == 0 => {
-                    specializations.copy(body.carrier(), held, Vec::new(), None)?;
+                    specializations.copy(&recursions, body.carrier(), held, Vec::new())?;
                 }
                 // A helper over variables is lowered as its copies and never as itself.
                 Owner::Helper(_) => {}
@@ -255,7 +265,7 @@ impl<'p> Specializations<'p> {
             }
         }
         for body in roots {
-            specializations.resolve(&helpers, body.carrier(), calls_in(body.node), None)?;
+            specializations.resolve(&helpers, &recursions, body.carrier(), calls_in(body.node))?;
         }
         // Each copy's body, once, in the order the copies were made: a copy made while one is
         // read is read after it.
@@ -264,7 +274,7 @@ impl<'p> Specializations<'p> {
             let instance = &specializations.instances[at];
             let carrier = instance.carrier;
             let calls = calls_in(instance.body());
-            specializations.resolve(&helpers, carrier, calls, Some(InstanceId(at)))?;
+            specializations.resolve(&helpers, &recursions, carrier, calls)?;
             at += 1;
         }
         Ok(specializations)
@@ -273,10 +283,10 @@ impl<'p> Specializations<'p> {
     /// Every call reaching a helper in `node`, each to the copy it needs.
     fn resolve(
         &mut self,
-        helpers: &HashMap<(&'p str, &'p str), Body<'p>>,
+        helpers: &HashMap<HelperKey<'p>, Body<'p>>,
+        recursions: &Recursions,
         carrier: Carrier<'p>,
         calls: Vec<Called>,
-        within: Option<InstanceId>,
     ) -> Lowered<()> {
         for call in calls {
             let helper = helpers
@@ -294,7 +304,7 @@ impl<'p> Specializations<'p> {
                     "{reached}, whose body leaves open a type no call of it settles"
                 ))
             })?;
-            let id = self.copy(helper.carrier(), held, types, within)?;
+            let id = self.copy(recursions, helper.carrier(), held, types)?;
             index::unique(&mut self.reached, call.at, id);
         }
         Ok(())
@@ -303,29 +313,19 @@ impl<'p> Specializations<'p> {
     /// The copy of `held` whose variables come to `types`, made where there is none yet.
     fn copy(
         &mut self,
+        recursions: &Recursions,
         carrier: Carrier<'p>,
         held: &'p Held,
         types: Vec<Ty>,
-        called_from: Option<InstanceId>,
     ) -> Lowered<InstanceId> {
+        // Asked of the helper and not of the copies made so far, so what is refused does not turn
+        // on which call was read first.
+        recursions.lowered(carrier.module(), &held.reached)?;
         let key = (carrier.module(), held.reached.as_str(), types);
         if let Some(id) = self.by_key.get(&key) {
             return Ok(*id);
         }
         let (_, _, types) = key;
-        // A helper met again on the way to this copy, at other types: each copy would call for
-        // another.
-        let mut from = called_from;
-        while let Some(InstanceId(at)) = from {
-            let before = &self.instances[at];
-            if std::ptr::eq(before.held, held) {
-                return Err(not_lowered(format!(
-                    "{}, which calls itself at other types than it was called at",
-                    held.reached
-                )));
-            }
-            from = before.called_from;
-        }
         let body = if types.is_empty() {
             Settled::AsHeld(&held.body)
         } else {
@@ -355,7 +355,6 @@ impl<'p> Specializations<'p> {
             types: types.clone(),
             ordinal,
             body,
-            called_from,
         });
         index::unique(
             &mut self.by_key,
@@ -380,6 +379,164 @@ impl<'p> Specializations<'p> {
             .get(&std::ptr::from_ref(call))
             .expect("every call reaching a helper in a body lowered here was resolved to a copy")
     }
+}
+
+/// Which helpers run as a recursion at the types it was entered at, decided of the helpers as
+/// written.
+///
+/// Helpers reaching one another in a cycle are one recursion: a strongly connected part of the
+/// graph whose edges are the calls in each helper's body, a helper calling itself included. Within
+/// one, every call has to hand the variable of each number of what it calls the caller's variable
+/// of that number and nothing else. What is refused is kept by each helper of the recursion and
+/// said only where a copy of one is asked for, so a helper no body here reaches is refused for
+/// nothing.
+struct Recursions {
+    refused: HashMap<(String, String), String>,
+}
+
+impl Recursions {
+    fn of<'p>(runs: &Runs<'p>, helpers: &HashMap<HelperKey<'p>, Body<'p>>) -> Self {
+        // Every helper once, in the order the program holds them, so what is found is found the
+        // same way every time.
+        let order: Vec<HelperKey<'p>> = runs
+            .bodies()
+            .filter_map(|body| {
+                let held = body.owner.helper()?;
+                Some((body.carrier().module(), held.reached.as_str()))
+            })
+            .collect();
+        let at: HashMap<HelperKey<'p>, usize> = order
+            .iter()
+            .enumerate()
+            .map(|(place, key)| (*key, place))
+            .collect();
+        // Each call in a helper's body: whom it reaches, and what it settles each variable of that
+        // to, over the caller's variables. `None` where a variable is settled to nothing.
+        let calls: Vec<Vec<(usize, Option<Vec<Ty>>)>> = order
+            .iter()
+            .map(|key| {
+                let Owner::Helper(caller) = helpers[key].owner else {
+                    unreachable!("gathered from the helpers' bodies alone");
+                };
+                calls_in(&caller.body)
+                    .into_iter()
+                    .map(|call| {
+                        let callee = &helpers[&(key.0, call.reached.as_str())];
+                        let Owner::Helper(held) = callee.owner else {
+                            unreachable!("gathered from the helpers' bodies alone");
+                        };
+                        let handed: Vec<&Ty> = call.handed.iter().collect();
+                        let settled = called(held, &handed, &call.answers)
+                            .expect("`Coherent` held every call of a helper to fit it")
+                            .settled(held.variables());
+                        (at[&(key.0, call.reached.as_str())], settled)
+                    })
+                    .collect()
+            })
+            .collect();
+        let part = strongly_connected(&calls);
+        let mut refused = HashMap::new();
+        for (caller, reaching) in calls.iter().enumerate() {
+            for (callee, settled) in reaching {
+                if part[caller] != part[*callee] {
+                    continue;
+                }
+                let (_, reached) = order[*callee];
+                let Owner::Helper(held) = helpers[&order[*callee]].owner else {
+                    unreachable!("gathered from the helpers' bodies alone");
+                };
+                let own: Vec<Ty> = (0..held.variables()).map(|var| Ty::Var { var }).collect();
+                if settled.as_ref() == Some(&own) {
+                    continue;
+                }
+                let why = format!(
+                    "{reached}, which a recursion it is part of reaches at other types than it was \
+                     called at, from {}",
+                    order[caller].1
+                );
+                for (member, of) in part.iter().enumerate() {
+                    if *of == part[caller] {
+                        let (module, reached) = order[member];
+                        refused
+                            .entry((module.to_string(), reached.to_string()))
+                            .or_insert_with(|| why.clone());
+                    }
+                }
+            }
+        }
+        Recursions { refused }
+    }
+
+    /// Refuses a copy of the helper `reached` held by `module`, where its recursion is refused.
+    fn lowered(&self, module: &str, reached: &str) -> Lowered<()> {
+        match self.refused.get(&(module.to_string(), reached.to_string())) {
+            Some(why) => Err(not_lowered(why.clone())),
+            None => Ok(()),
+        }
+    }
+}
+
+/// Which strongly connected part of the graph each node is in, numbered in no order that means
+/// anything beyond telling the parts apart: `calls[n]` is where node `n` has an edge to.
+fn strongly_connected<T>(calls: &[Vec<(usize, T)>]) -> Vec<usize> {
+    struct Walk<'c, T> {
+        calls: &'c [Vec<(usize, T)>],
+        index: Vec<Option<usize>>,
+        low: Vec<usize>,
+        stack: Vec<usize>,
+        on_stack: Vec<bool>,
+        part: Vec<usize>,
+        next: usize,
+        parts: usize,
+    }
+    impl<T> Walk<'_, T> {
+        fn visit(&mut self, node: usize) {
+            self.index[node] = Some(self.next);
+            self.low[node] = self.next;
+            self.next += 1;
+            self.stack.push(node);
+            self.on_stack[node] = true;
+            for &(to, _) in &self.calls[node] {
+                match self.index[to] {
+                    None => {
+                        self.visit(to);
+                        self.low[node] = self.low[node].min(self.low[to]);
+                    }
+                    Some(index) if self.on_stack[to] => {
+                        self.low[node] = self.low[node].min(index);
+                    }
+                    Some(_) => {}
+                }
+            }
+            if Some(self.low[node]) == self.index[node] {
+                while let Some(member) = self.stack.pop() {
+                    self.on_stack[member] = false;
+                    self.part[member] = self.parts;
+                    if member == node {
+                        break;
+                    }
+                }
+                self.parts += 1;
+            }
+        }
+    }
+    let count = calls.len();
+    let mut walk = Walk {
+        calls,
+        index: vec![None; count],
+        low: vec![0; count],
+        stack: Vec::new(),
+        on_stack: vec![false; count],
+        part: vec![0; count],
+        next: 0,
+        parts: 0,
+    };
+    for node in 0..count {
+        if walk.index[node].is_none() {
+            walk.visit(node);
+        }
+    }
+    walk.part
 }
 
 /// A call reaching a helper, by where it stands, with what it names and the types it was settled
@@ -666,6 +823,77 @@ mod tests {
             "{refused}"
         );
         assert!(refused.to_string().contains("function value"), "{refused}");
+    }
+
+    const OTHER: &str = r#"{"var":1}"#;
+
+    fn refused_as_other_types(document: &str) {
+        let refused = specialized(document, |_, _| ()).expect_err("a recursion at other types");
+        assert!(
+            refused.downcast_ref::<crate::NotLowered>().is_some(),
+            "{refused}"
+        );
+        assert!(refused.to_string().contains("other types"), "{refused}");
+    }
+
+    /// `h<'a, 'b>` calling `h<'b, 'a>` goes round two copies, whichever of them a body asks for
+    /// first and however many it asks for: what is refused is the helper's, and not what the
+    /// copies made before it happen to be.
+    #[test]
+    fn a_recursion_swapping_its_types_is_refused_whatever_reaches_it_first() {
+        let swapped = [helper(
+            "m.h",
+            &[VAR, OTHER],
+            &call("m.h", &[read(1, OTHER), read(0, VAR)], INT),
+        )];
+        let int_text = call("m.h", &[number(1), text("a")], INT);
+        let text_int = call("m.h", &[text("a"), number(1)], INT);
+        for body in [
+            int_text.clone(),
+            tuple(&[int_text.clone(), text_int.clone()], &[INT, INT]),
+            tuple(&[text_int, int_text], &[INT, INT]),
+        ] {
+            refused_as_other_types(&holding(&swapped, &body));
+        }
+    }
+
+    /// Two helpers calling each other, each handing the other its own variable of each number,
+    /// run at the types they were entered at: one copy of each.
+    #[test]
+    fn a_recursion_through_two_helpers_at_its_own_types_is_one_copy_of_each() {
+        let helpers = [
+            helper("m.even", &[VAR], &call("m.odd", &[read(0, VAR)], INT)),
+            helper("m.odd", &[VAR], &call("m.even", &[read(0, VAR)], INT)),
+        ];
+        specialized(
+            &holding(&helpers, &call("m.even", &[text("a")], INT)),
+            |specializations, _| {
+                let copies: Vec<(String, Vec<Ty>)> = specializations
+                    .iter()
+                    .map(|(_, it)| (it.held.reached.clone(), it.types.clone()))
+                    .collect();
+                let text = vec![Ty::Prim { prim: Prim::String }];
+                assert_eq!(
+                    copies,
+                    [
+                        ("m.even".to_string(), text.clone()),
+                        ("m.odd".to_string(), text)
+                    ]
+                );
+            },
+        )
+        .expect("a recursion at its own types");
+    }
+
+    /// A helper leaving nothing open, in a recursion with one that does, can only call it back at
+    /// a type of its own choosing, which is other types than the recursion was entered at.
+    #[test]
+    fn a_recursion_calling_back_at_a_fixed_type_is_refused() {
+        let helpers = [
+            helper("m.open", &[VAR], &call("m.shut", &[], INT)),
+            helper("m.shut", &[], &call("m.open", &[number(1)], INT)),
+        ];
+        refused_as_other_types(&holding(&helpers, &call("m.open", &[text("a")], INT)));
     }
 
     /// A variable nothing a call hands over or answers reaches is one no call settles.

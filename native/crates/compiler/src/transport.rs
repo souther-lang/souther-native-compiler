@@ -194,7 +194,7 @@ impl<'p> Body<'p> {
     /// lowered as it is written, and nothing in it is planned for a function of its own: what is
     /// lowered is its copies ([`crate::specialize`]).
     pub fn leaves_types_open(&self) -> bool {
-        matches!(self.owner, Owner::Helper(held) if held.variables() > 0)
+        self.owner.helper().is_some_and(|held| held.variables() > 0)
     }
 }
 
@@ -233,6 +233,23 @@ pub enum Owner<'p> {
         target: &'p Target,
         at: usize,
     },
+}
+
+impl<'p> Owner<'p> {
+    /// The helper this is the body of, where it is one: the one kind of body the checker leaves type
+    /// variables open in, and the one lowered as copies. Every kind is named, so a kind added here
+    /// says whether it is one.
+    pub fn helper(self) -> Option<&'p Held> {
+        match self {
+            Owner::Helper(held) => Some(held),
+            Owner::Value(_)
+            | Owner::Entry(_)
+            | Owner::Definition(_)
+            | Owner::Example(_)
+            | Owner::Invariant { .. }
+            | Owner::Ensures { .. } => None,
+        }
+    }
 }
 
 /// Who declared a type, which is what decides who defines the byte its values are tagged with.

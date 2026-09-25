@@ -261,7 +261,7 @@ impl<'a> Coherent<'a> {
             };
             let mut walk = Walk {
                 owner,
-                open: matches!(body.owner, Owner::Helper(_)),
+                open: body.owner.helper().is_some(),
                 carrier: body.carrier(),
                 targets: &targets,
                 declared: &declared,
