@@ -2,7 +2,7 @@
 //!
 //! Written as types and not built as JSON, so that what a manifest of one version says is a thing
 //! the compiler holds this code to. A field renamed here is a change to these types, and the
-//! fixture `tests/interface-v4.json` is what version 4 is: every manifest this writes is read back
+//! fixture `tests/interface-v5.json` is what version 5 is: every manifest this writes is read back
 //! by these same types, which refuse a member they do not name.
 //!
 //! [`VERSION`] moves when what a manifest says is read differently. What the functions it names
@@ -11,7 +11,11 @@
 //! ([`Module::injections`]) beside what it offers one. Version 3 names what a behavior takes as
 //! its declaration does ([`Parameters`]), which a binding writes its functions' parameters under.
 //! Version 4 is `souther-native-compiler#50`: what a behavior answers is an [`Answer`], which says
-//! beside the type how a host tells apart the cases of a union no declaration names.
+//! beside the type how a host tells apart the cases of a union no declaration names. Version 5 is
+//! `souther-native-compiler#53`: a module says what a host builds and reads a list through
+//! ([`Module::lists`]), and a function may take the words of many elements at once
+//! ([`Parameter::Slice`]). Nothing a function of version 4 was called as changed, so the ABI
+//! generation did not move with it.
 //!
 //! Where a function is `null`, the model has the thing and a host has no way to reach it yet: a
 //! behavior taking a type with no way across, a field of a type with no representation for a host,
@@ -26,7 +30,7 @@ use std::collections::BTreeMap;
 pub(crate) const FORMAT: &str = "souther-native-interface";
 
 /// Which version of what a manifest says this is.
-pub(crate) const VERSION: u32 = 4;
+pub(crate) const VERSION: u32 = 5;
 
 /// Everything a host can call in one shared library, and the model it reaches.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -123,6 +127,37 @@ pub(crate) struct Module {
     pub values: Vec<PublishedValue>,
     /// Every type it declares and publishes.
     pub declarations: Vec<Declaration>,
+    /// What a host builds and reads a list through, one for each way an element of a list crosses
+    /// where a list crosses in anything above.
+    ///
+    /// Apart from [`Type::List`], which is what the model says a position holds: a list of one
+    /// declared type and a list of another cross through the same functions, and which those are
+    /// is a matter of how the element crosses, not of what the model says it is. A binding finds
+    /// the one for a position by working out how the position's element crosses.
+    pub lists: Vec<ListCrossing>,
+}
+
+/// What a host builds and reads a list whose elements cross as `element` through.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ListCrossing {
+    pub element: Element,
+    /// `(count, a slice for each word an element crosses as) -> list`.
+    pub construct: Function,
+    /// `(list) -> count`.
+    pub length: Function,
+    /// `(list, index, room for each word an element crosses as) -> bool`: whether the index is
+    /// inside the list, the element written through the room only where it is.
+    pub at: Function,
+}
+
+/// How an element of a list crosses: one word, or a presence beside one for an optional, the way a
+/// field of the element's type is handed across.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum Element {
+    Whole(Word),
+    Present(Word),
 }
 
 /// A published behavior.
@@ -371,12 +406,14 @@ pub(crate) struct Function {
     pub answers: Option<Word>,
 }
 
-/// One parameter: a word handed over, or room the function writes one through.
+/// One parameter: a word handed over, room the function writes one through, or as many of a word
+/// as another parameter counts, which the function reads and does not keep.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum Parameter {
     Given(Word),
     Room(Word),
+    Slice(Word),
 }
 
 /// One word a host hands over or is handed. What each is on the machine is `souther_native_abi`'s,
@@ -396,6 +433,7 @@ pub(crate) enum Word {
     String,
     Decoded,
     Issue,
+    List,
 }
 
 impl From<HostWord> for Word {
@@ -413,6 +451,7 @@ impl From<HostWord> for Word {
             HostWord::String => Word::String,
             HostWord::Decoded => Word::Decoded,
             HostWord::Issue => Word::Issue,
+            HostWord::List => Word::List,
         }
     }
 }
@@ -432,6 +471,7 @@ impl From<Word> for HostWord {
             Word::String => HostWord::String,
             Word::Decoded => HostWord::Decoded,
             Word::Issue => HostWord::Issue,
+            Word::List => HostWord::List,
         }
     }
 }
@@ -441,6 +481,7 @@ impl From<HostParameter> for Parameter {
         match parameter {
             HostParameter::Given(word) => Parameter::Given(word.into()),
             HostParameter::Room(word) => Parameter::Room(word.into()),
+            HostParameter::Slice(word) => Parameter::Slice(word.into()),
         }
     }
 }
@@ -449,36 +490,34 @@ impl From<HostParameter> for Parameter {
 mod tests {
     use super::{Carried, FORMAT, Manifest, VERSION};
 
-    /// What version 4 is. Read by these types, which refuse a member they do not name, and
+    /// What version 5 is. Read by these types, which refuse a member they do not name, and
     /// written back the same: a field renamed or a kind reshaped here stops matching the fixture
     /// the Java half's test also holds a written manifest to.
-    const V4: &str = include_str!("../tests/interface-v4.json");
+    const V5: &str = include_str!("../tests/interface-v5.json");
 
     #[test]
-    fn version_four_is_read_and_written_back_as_it_is() {
-        let read: Manifest = serde_json::from_str(V4).expect("version 4 reads");
+    fn version_five_is_read_and_written_back_as_it_is() {
+        let read: Manifest = serde_json::from_str(V5).expect("version 5 reads");
         assert_eq!(read.format, FORMAT);
         assert_eq!(read.version, VERSION);
         let mut written = serde_json::to_string_pretty(&read).unwrap();
         written.push('\n');
-        assert_eq!(written, V4);
+        assert_eq!(written, V5);
     }
 
     /// A surface an object of an earlier release carries is refused as that, and not as whichever
-    /// member moved since: version 3 wrote what a behavior answers as a type, which 4 reads as an
-    /// answer.
+    /// member moved since: a module of version 4 says nothing of `lists`, which 5 reads.
     #[test]
     fn a_surface_of_an_earlier_version_is_refused_by_its_version() {
-        let earlier = br#"{"version":3,"abi":3,"modules":[{"name":"m","behaviors":[
-            {"name":"f","parameters":{"named":[]},"answers":{"kind":"primitive","name":"Int"},
-            "call":null}],"injections":[],"values":[],"declarations":[]}]}"#;
+        let earlier = br#"{"version":4,"abi":3,"modules":[{"name":"m","behaviors":[],
+            "injections":[],"values":[],"declarations":[]}]}"#;
 
         let refused = Carried::read(earlier).expect_err("a surface of another version");
 
         assert!(
             refused
                 .to_string()
-                .contains("manifest version 3 and ABI generation 3"),
+                .contains("manifest version 4 and ABI generation 3"),
             "{refused}"
         );
     }

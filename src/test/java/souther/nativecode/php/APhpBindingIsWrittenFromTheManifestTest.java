@@ -5,11 +5,16 @@ import org.junit.jupiter.api.io.TempDir;
 import souther.compiler.program.CheckedProgram;
 import souther.nativecode.NativeCompiler;
 import souther.nativecode.Php;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ArrayNode;
+import tools.jackson.databind.node.ObjectNode;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.function.Consumer;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -225,7 +230,7 @@ class APhpBindingIsWrittenFromTheManifestTest {
                 "Acme\\Billing"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("is version 3 of souther-native-interface for ABI generation"
-                        + " 3, and this generator reads version 4")
+                        + " 3, and this generator reads version 5")
                 .hasMessageNotContaining("answers");
     }
 
@@ -332,5 +337,102 @@ class APhpBindingIsWrittenFromTheManifestTest {
                 .isInstanceOf(PhpBindings.NotBindable.class)
                 .hasMessageContaining("holds files a binding did not write");
         assertThat(php.resolve("mine.php")).exists();
+    }
+
+    /** Two modules each holding a list of values of a type of its own. */
+    private static final String TWO_MODULES_OF_LISTS = """
+            module shop exposing ( Item, Cart )
+
+            data Item = { n: Int }
+            data Cart = { items: List<Item> }
+            """;
+
+    private static final String SECOND_MODULE_OF_LISTS = """
+            module stock exposing ( Part, Bin )
+
+            data Part = { n: Int }
+            data Bin = { parts: List<Part> }
+            """;
+
+    private static NativeCompiler.Library twoModules(Path into) throws Exception {
+        return NativeCompiler.library(CheckedProgram.of(List.of(TWO_MODULES_OF_LISTS,
+                SECOND_MODULE_OF_LISTS)), into.resolve("native"));
+    }
+
+    private static final JsonMapper JSON = JsonMapper.builder().build();
+
+    /** Generates from the library's manifest after {@code changing} the module named {@code module}. */
+    private static void generatedAfter(Path into, NativeCompiler.Library library, String module,
+                                       Consumer<ObjectNode> changing) throws Exception {
+        JsonNode manifest = JSON.readTree(library.manifest().toFile());
+        for (JsonNode it : manifest.get("modules")) {
+            if (it.get("name").stringValue().equals(module)) {
+                changing.accept((ObjectNode) it);
+            }
+        }
+        Path changed = into.resolve("changed.json");
+        Files.writeString(changed, JSON.writeValueAsString(manifest), StandardCharsets.UTF_8);
+        PhpBindings.generate(changed, library.declarations(), into.resolve("php"), "Acme\\Billing");
+    }
+
+    /**
+     * A list is built and read through the functions of the module whose function hands it across,
+     * though another module's for the same element would do the same: those are what that module's
+     * object offers, and the binding of one module does not reach into another's.
+     */
+    @Test
+    void aListIsBuiltThroughItsOwnModulesFunctions(@TempDir Path into) throws Exception {
+        PhpBindings.Generated generated =
+                PhpBindings.generate(twoModules(into), into.resolve("php"), "Acme\\Billing");
+
+        assertThat(Files.readString(generated.root().resolve("Shop").resolve("Cart.php")))
+                .contains("souther3_m_shop_l_value_construct", "souther3_m_shop_l_value_at")
+                .doesNotContain("souther3_m_stock_");
+        assertThat(Files.readString(generated.root().resolve("Stock").resolve("Bin.php")))
+                .contains("souther3_m_stock_l_value_construct", "souther3_m_stock_l_value_at")
+                .doesNotContain("souther3_m_shop_");
+    }
+
+    /**
+     * Every list a module says is held to what a list of its element is built and read through,
+     * whether or not another module says a good one for the same element.
+     */
+    @Test
+    void aListAModuleSaysOtherThanAListIsRefused(@TempDir Path into) throws Exception {
+        NativeCompiler.Library library = twoModules(into);
+
+        assertThatThrownBy(() -> generatedAfter(into, library, "stock", module -> {
+            ObjectNode at = (ObjectNode) module.get("lists").get(0).get("at");
+            ((ArrayNode) at.get("takes")).remove(2);
+        }))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("souther3_m_stock_l_value_at");
+    }
+
+    /**
+     * A module with a function handing a list across and nothing to build one through is the
+     * manifest and the binding disagreeing, and is refused rather than written without the function.
+     */
+    @Test
+    void aListWithNothingToBuildItThroughIsRefused(@TempDir Path into) throws Exception {
+        NativeCompiler.Library library = twoModules(into);
+
+        assertThatThrownBy(() -> generatedAfter(into, library, "stock",
+                module -> ((ArrayNode) module.get("lists")).removeAll()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("module `stock` nothing to build a list of");
+    }
+
+    /** One element twice in a module is two things said of one list. */
+    @Test
+    void aListOfOneElementSaidTwiceIsRefused(@TempDir Path into) throws Exception {
+        NativeCompiler.Library library = twoModules(into);
+
+        assertThatThrownBy(() -> generatedAfter(into, library, "shop", module -> {
+            ArrayNode lists = (ArrayNode) module.get("lists");
+            lists.add(lists.get(0).deepCopy());
+        }))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("module `shop` two lists of");
     }
 }

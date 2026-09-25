@@ -60,6 +60,11 @@ use transport::{
 /// ending without a value, and the two are told apart by which channel answers for them.
 const NO_ARM: u8 = 2;
 
+/// A host handing a list's constructor a count no list holds: below nought, or past what room can
+/// be counted for. A trap for the reason [`NO_ARM`] is one: no Souther computation came to this,
+/// and a status would say one had.
+const COUNT_NO_LIST_HOLDS: u8 = 3;
+
 /// Every reason a Souther computation ends without a value, mapped to the wire number a generated
 /// function's status answers with. `souther_native_abi` reserves `ANSWERED` and the
 /// `HOST_STATUSES`, so every member here gets one of what is left, which is held below at compile
@@ -1004,11 +1009,19 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
     // What a host builds, reads, decodes and encodes a value of a published type through, each
     // running on the constructors just defined and the layout they write.
     let mut surface = Surface::default();
-    host::define(&mut emitting, &mut codecs, &mut surface, program, &runs)?;
+    let mut lists = host::Lists::default();
+    host::define(
+        &mut emitting,
+        &mut codecs,
+        &mut surface,
+        &mut lists,
+        program,
+        &runs,
+    )?;
     // What a host calls a behavior and reads a value through, beside what another object built by
     // this compiler calls: the two are different parties and are told different things.
-    host::define_behaviors(&mut emitting, &mut surface, &published)?;
-    host::define_values(&mut emitting, &mut surface, &values)?;
+    host::define_behaviors(&mut emitting, &mut surface, &mut lists, &published)?;
+    host::define_values(&mut emitting, &mut surface, &mut lists, &values)?;
     // What a host implements, and registers an implementation through.
     let injections: Vec<host::Injected> = program
         .behaviors
@@ -1025,7 +1038,15 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
             output: &target.output,
         })
         .collect();
-    host::define_injections(&mut emitting, &mut surface, &injections, &registrations)?;
+    host::define_injections(
+        &mut emitting,
+        &mut surface,
+        &mut lists,
+        &injections,
+        &registrations,
+    )?;
+    // What a host builds and reads every list above through.
+    host::define_lists(&mut emitting, &mut surface, &lists)?;
     boundary::define(&mut emitting, &mut codecs, &boundaries)?;
     // Every writer and reader the entries above reached.
     codecs.define(&mut emitting)?;
@@ -1819,7 +1840,7 @@ fn import_runtime(module: &mut ObjectModule, name: &str, call_conv: CallConv) ->
     for taken in call.takes {
         signature.params.push(AbiParam::new(match taken {
             Parameter::Given(word) => word_on_the_machine(*word),
-            Parameter::Room(_) => POINTER,
+            Parameter::Room(_) | Parameter::Slice(_) => POINTER,
         }));
     }
     if let Some(word) = call.answers {

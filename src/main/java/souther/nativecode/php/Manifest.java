@@ -26,7 +26,7 @@ import static net.unit8.raoh.json.JsonDecoders.string;
 import static net.unit8.raoh.json.JsonDecoders.strict;
 
 /**
- * What a manifest says, as this generator reads it: version 4 of {@code souther-native-interface},
+ * What a manifest says, as this generator reads it: version 5 of {@code souther-native-interface},
  * and nothing else.
  *
  * <p>Read strictly, as the driver writes it. A member this does not name, or a version or ABI
@@ -41,18 +41,35 @@ record Manifest(int abi, Map<String, Integer> statuses, Map<String, Integer> out
     static final String FORMAT = "souther-native-interface";
 
     /** The version of what a manifest says that this reads. */
-    static final int VERSION = 4;
+    static final int VERSION = 5;
 
     /** The ABI generation the functions this binds answer to. */
     static final int ABI = 3;
 
     /** One word a host hands over or is handed. */
     enum Word {
-        STATUS, INT, BOOL, CASE, OUTCOME, COUNT, MARK, BYTES, VALUE, STRING, DECODED, ISSUE
+        STATUS, INT, BOOL, CASE, OUTCOME, COUNT, MARK, BYTES, VALUE, STRING, DECODED, ISSUE, LIST
     }
 
-    /** One parameter of a function: a word handed over, or room the function writes one through. */
-    record Parameter(boolean room, Word word) {
+    /**
+     * One parameter of a function: a word handed over, room the function writes one through, or as
+     * many of a word as another parameter counts, which the function reads.
+     */
+    record Parameter(Mode mode, Word word) {
+
+        enum Mode { GIVEN, ROOM, SLICE }
+
+        static Parameter given(Word word) {
+            return new Parameter(Mode.GIVEN, word);
+        }
+
+        static Parameter room(Word word) {
+            return new Parameter(Mode.ROOM, word);
+        }
+
+        static Parameter slice(Word word) {
+            return new Parameter(Mode.SLICE, word);
+        }
     }
 
     /** A function the library defines, by its symbol. */
@@ -60,7 +77,19 @@ record Manifest(int abi, Map<String, Integer> statuses, Map<String, Integer> out
     }
 
     record Module(String name, List<Behavior> behaviors, List<Injection> injections,
-                  List<PublishedValue> values, List<Declaration> declarations) {
+                  List<PublishedValue> values, List<Declaration> declarations,
+                  List<ListCrossing> lists) {
+    }
+
+    /**
+     * What a list whose elements cross as {@code element} is built and read through: a list of one
+     * declared type through the same functions as a list of any other.
+     */
+    record ListCrossing(Element element, Function construct, Function length, Function at) {
+    }
+
+    /** How an element of a list crosses: one word, or a presence beside one for an optional. */
+    record Element(boolean present, Word word) {
     }
 
     /** A published behavior, and what a host calls it through where it can. */
@@ -158,7 +187,10 @@ record Manifest(int abi, Map<String, Integer> statuses, Map<String, Integer> out
         record Option(Type of) implements Type {
         }
 
-        /** A type no host has a representation for yet: a tuple, a function, a collection. */
+        record ListOf(Type of) implements Type {
+        }
+
+        /** A type no host has a representation for yet: a tuple, a function, a set or a map. */
         record Unrepresented(String kind) implements Type {
         }
     }
@@ -214,10 +246,9 @@ record Manifest(int abi, Map<String, Integer> statuses, Map<String, Integer> out
     });
 
     private static final Decoder<JsonNode, Parameter> PARAMETER = oneOf(
-            strict(field("given", WORD).asDecoder().map(word -> new Parameter(false, word)),
-                    Set.of("given")),
-            strict(field("room", WORD).asDecoder().map(word -> new Parameter(true, word)),
-                    Set.of("room")));
+            strict(field("given", WORD).asDecoder().map(Parameter::given), Set.of("given")),
+            strict(field("room", WORD).asDecoder().map(Parameter::room), Set.of("room")),
+            strict(field("slice", WORD).asDecoder().map(Parameter::slice), Set.of("slice")));
 
     private static final Decoder<JsonNode, Function> FUNCTION = combine(
             field("name", string()),
@@ -251,7 +282,7 @@ record Manifest(int abi, Map<String, Integer> statuses, Map<String, Integer> out
                         field("answers", TYPE))
                         .strict((kind, takes, answers) -> new Type.Unrepresented(kind)),
                 combine(field("kind", literal("list")), field("of", TYPE))
-                        .strict((kind, of) -> new Type.Unrepresented(kind)),
+                        .strict((kind, of) -> new Type.ListOf(of)),
                 combine(field("kind", literal("set")), field("of", TYPE))
                         .strict((kind, of) -> new Type.Unrepresented(kind)),
                 combine(field("kind", literal("map")), field("key", TYPE), field("value", TYPE))
@@ -325,12 +356,25 @@ record Manifest(int abi, Map<String, Integer> statuses, Map<String, Integer> out
                     .strict((kind, name, cases, which, decode, encode) ->
                             new Declaration.Sum(name, cases, which, decode, encode)));
 
+    private static final Decoder<JsonNode, Element> ELEMENT = oneOf(
+            strict(field("whole", WORD).asDecoder().map(word -> new Element(false, word)),
+                    Set.of("whole")),
+            strict(field("present", WORD).asDecoder().map(word -> new Element(true, word)),
+                    Set.of("present")));
+
+    private static final Decoder<JsonNode, ListCrossing> LIST_CROSSING = combine(
+            field("element", ELEMENT),
+            field("construct", FUNCTION),
+            field("length", FUNCTION),
+            field("at", FUNCTION)).strict(ListCrossing::new);
+
     private static final Decoder<JsonNode, Module> MODULE = combine(
             field("name", string()),
             field("behaviors", list(BEHAVIOR)),
             field("injections", list(INJECTION)),
             field("values", list(VALUE)),
-            field("declarations", list(DECLARATION))).strict(Module::new);
+            field("declarations", list(DECLARATION)),
+            field("lists", list(LIST_CROSSING))).strict(Module::new);
 
     private static final Decoder<JsonNode, Manifest> MANIFEST = combine(
             field("format", string()),

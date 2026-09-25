@@ -120,6 +120,67 @@ final class Session
         return $held;
     }
 
+    /**
+     * @internal A list the library builds of `$elements`, through `$construct`.
+     *
+     * Each element is handed over as `$words` makes it, one word for each of `$columns`, which are
+     * what C calls each word; the library is handed a column of each word, every element's at its
+     * index. The columns are read for the length of the call and not kept, and the list is made in
+     * this run, which is why the call is started through the innermost run's session.
+     *
+     * @param list<string> $columns
+     * @param array<mixed> $elements
+     * @param \Closure(mixed): list<mixed> $words
+     */
+    public function list(string $construct, array $columns, array $elements, \Closure $words): CData
+    {
+        if (!array_is_list($elements)) {
+            throw new \InvalidArgumentException(
+                'an array handed to a Souther library as a list has keys other than 0, 1, 2 and on');
+        }
+        $ffi = $this->call();
+        $count = count($elements);
+        $held = array_map(
+            static fn (string $type): CData => $ffi->new($type . '[' . max(1, $count) . ']'),
+            $columns,
+        );
+        foreach ($elements as $at => $element) {
+            foreach ($words($element) as $column => $word) {
+                $held[$column][$at] = $word;
+            }
+        }
+        return $ffi->{$construct}($count, ...$held);
+    }
+
+    /**
+     * @internal The elements of a list the library holds, in order, each made by `$made` out of
+     * room for each of `$rooms`, which `$at` wrote the element into.
+     *
+     * Room of its own for each element, since what is made may hold on to it.
+     *
+     * @template T
+     * @param list<string> $rooms
+     * @param \Closure(CData ...): T $made
+     * @return list<T>
+     */
+    public function elements(string $length, string $at, array $rooms, CData $list, \Closure $made): array
+    {
+        $ffi = $this->ffi();
+        $count = $ffi->{$length}($list);
+        $elements = [];
+        for ($index = 0; $index < $count; $index++) {
+            $held = array_map(static fn (string $type): CData => $ffi->new($type), $rooms);
+            $inside = $ffi->{$at}($list, $index, ...array_map(
+                static fn (CData $room): CData => FFI::addr($room), $held));
+            if ($inside === 0) {
+                throw new \LogicException("the library answered no element at {$index} of a list it"
+                    . " says holds {$count}");
+            }
+            $elements[] = $made(...$held);
+        }
+        return $elements;
+    }
+
     /** @internal Text the library answered, as a PHP string. */
     public function text(CData $string): string
     {

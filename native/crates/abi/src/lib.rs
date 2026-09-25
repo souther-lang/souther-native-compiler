@@ -206,9 +206,10 @@ pub fn constructor_symbol(module: &str, name: &str) -> String {
 ///
 /// `souther<abi>`, then the module, one `_m_<segment>` per segment of its dotted name, then what is
 /// reached under it: `_b_<behavior>`, with `_register`, `_implementation` or `_answer_case` after it
-/// for what is reached of the behavior, `_v_<value>`, or `_t_<type>` and the operation —
-/// `_construct`, `_f_<field>`, `_case`, `_decode`, `_encode`. The ABI generation is in it for the
-/// reason it is in every other function symbol here.
+/// for what is reached of the behavior, `_v_<value>`, `_t_<type>` and the operation —
+/// `_construct`, `_f_<field>`, `_case`, `_decode`, `_encode` — or `_l_`, what an element crosses
+/// as, and the operation on a list of those ([`host_list_symbol`]). The ABI generation is in it for
+/// the reason it is in every other function symbol here.
 ///
 /// A name is written as it is where it is ASCII letters and digits, with `_` doubled and any other
 /// character as `_u<hex>_`, its code point in lower-case hexadecimal. So a name reads as itself in
@@ -348,6 +349,55 @@ pub fn host_decode_symbol(module: &str, name: &str) -> String {
 /// form whatever the value is, so this answers no status.
 pub fn host_encode_symbol(module: &str, name: &str) -> String {
     format!("{}_encode", host_under(module, 't', name))
+}
+
+/// What a host does with a list, through a function the object defines for each way an element
+/// crosses ([`host_list_symbol`]).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum HostListOperation {
+    /// `(count, the elements as columns) -> list`: a list of `count` elements, the one at an index
+    /// being what each column holds at that index. A column is a [`HostParameter::Slice`] of one of
+    /// the words the element crosses as, so an element crossing as a presence and a value is two
+    /// columns. Building a list ends with the list whatever the elements are, so this answers no
+    /// status; a count below nought, or one no room could be taken for, is the host's mistake and
+    /// ends the process rather than being read as some other count.
+    Construct,
+    /// `(list) -> count`: how many elements the list holds.
+    Length,
+    /// `(list, index, room for each word the element crosses as) -> bool`: one where the index is
+    /// inside the list, with the element written through the room as a field of its type is
+    /// handed over, and nought where it is outside it, with nothing written.
+    At,
+}
+
+/// Where a host builds or reads a list whose elements cross as `element`, and as a presence beside
+/// it where `present`: `_l_`, then `present_` where they do, the word as [`HostWord::spelt`] spells
+/// it, and the operation.
+///
+/// Under what an element crosses as and not under the element's type: a list of one declared type
+/// and a list of another are both a list of addresses to the functions here, which put an element
+/// in its slot and take one out without knowing what it is. Under a module all the same, for
+/// the reason every other function a host reaches is: two builds' objects linked into one library
+/// each define their own, and a symbol under no module would be defined twice. Which module's a
+/// host calls makes no difference to the list it is handed.
+pub fn host_list_symbol(
+    module: &str,
+    present: bool,
+    element: HostWord,
+    operation: HostListOperation,
+) -> String {
+    let mut spelt = host_module(module);
+    spelt.push_str("_l_");
+    if present {
+        spelt.push_str("present_");
+    }
+    spelt.push_str(element.spelt());
+    spelt.push_str(match operation {
+        HostListOperation::Construct => "_construct",
+        HostListOperation::Length => "_length",
+        HostListOperation::At => "_at",
+    });
+    spelt
 }
 
 /// The symbol a value of a declared type is read out of a document through, by another object this
@@ -858,6 +908,31 @@ pub enum HostWord {
     Decoded,
     /// One issue a reading found, asked through the `ISSUE_*` functions.
     Issue,
+    /// The address of a list, which a host never reads behind and reaches through the functions
+    /// [`host_list_symbol`] names. A word of its own and not a [`HostWord::Value`]: a host handed a
+    /// list where a value of a declared type was meant has been handed something else.
+    List,
+}
+
+impl HostWord {
+    /// The word as a symbol and a manifest spell it: its name, in lower case.
+    pub const fn spelt(self) -> &'static str {
+        match self {
+            HostWord::Status => "status",
+            HostWord::Int => "int",
+            HostWord::Bool => "bool",
+            HostWord::Case => "case",
+            HostWord::Outcome => "outcome",
+            HostWord::Count => "count",
+            HostWord::Mark => "mark",
+            HostWord::Bytes => "bytes",
+            HostWord::Value => "value",
+            HostWord::String => "string",
+            HostWord::Decoded => "decoded",
+            HostWord::Issue => "issue",
+            HostWord::List => "list",
+        }
+    }
 }
 
 /// One parameter of a function a host calls: a word handed over, or room the function writes one
@@ -868,6 +943,9 @@ pub enum HostParameter {
     Given(HostWord),
     /// The address of room for one, written only where the function says it writes it.
     Room(HostWord),
+    /// The address of as many of the word, one after another, as another parameter counts: read
+    /// for the length of the call and not kept.
+    Slice(HostWord),
 }
 
 /// A function of the runtime's that a host calls, with what it takes and answers.
@@ -1021,6 +1099,8 @@ pub enum Parameter {
     Given(Word),
     /// The address of room for one, which the function writes.
     Room(Word),
+    /// The address of as many of one as another parameter counts, which the function reads.
+    Slice(Word),
 }
 
 impl From<HostParameter> for Parameter {
@@ -1028,6 +1108,7 @@ impl From<HostParameter> for Parameter {
         match parameter {
             HostParameter::Given(word) => Parameter::Given(Word::Host(word)),
             HostParameter::Room(word) => Parameter::Room(Word::Host(word)),
+            HostParameter::Slice(word) => Parameter::Slice(Word::Host(word)),
         }
     }
 }
@@ -1339,13 +1420,13 @@ pub const IMPLEMENTATION_ANSWERS: &[Status] = &[ANSWERED, HOST_EXCEPTION];
 #[cfg(test)]
 mod tests {
     use super::{
-        ABI_GENERATION, FIRST_FIELD, HOST_STATUSES, IMPLEMENTATION_ANSWERS,
-        INJECTION_PROTOCOL_VIOLATION, INJECTION_UNBOUND, SLOT, TOKEN, WHICH, behavior_symbol,
-        boundary_symbol, constructor_symbol, example_symbol, field_at, held_symbol, home_symbol,
-        host_behavior_answer_case_symbol, host_behavior_symbol, host_case_symbol,
-        host_constructor_symbol, host_decode_symbol, host_encode_symbol, host_field_symbol,
-        host_implementation_type, host_register_symbol, host_value_symbol, member_at,
-        reader_symbol, type_symbol, value_symbol,
+        ABI_GENERATION, FIRST_FIELD, HOST_STATUSES, HostListOperation, HostWord,
+        IMPLEMENTATION_ANSWERS, INJECTION_PROTOCOL_VIOLATION, INJECTION_UNBOUND, SLOT, TOKEN,
+        WHICH, behavior_symbol, boundary_symbol, constructor_symbol, example_symbol, field_at,
+        held_symbol, home_symbol, host_behavior_answer_case_symbol, host_behavior_symbol,
+        host_case_symbol, host_constructor_symbol, host_decode_symbol, host_encode_symbol,
+        host_field_symbol, host_implementation_type, host_list_symbol, host_register_symbol,
+        host_value_symbol, member_at, reader_symbol, type_symbol, value_symbol,
     };
 
     #[test]
@@ -1583,6 +1664,22 @@ mod tests {
     }
 
     #[test]
+    fn a_host_reaches_a_list_under_its_module_and_what_an_element_crosses_as() {
+        assert_eq!(
+            host_list_symbol("shop", false, HostWord::Value, HostListOperation::Construct),
+            "souther3_m_shop_l_value_construct"
+        );
+        assert_eq!(
+            host_list_symbol("lib.shop", true, HostWord::Int, HostListOperation::At),
+            "souther3_m_lib_m_shop_l_present_int_at"
+        );
+        assert_eq!(
+            host_list_symbol("shop", false, HostWord::List, HostListOperation::Length),
+            "souther3_m_shop_l_list_length"
+        );
+    }
+
+    #[test]
     fn a_name_that_is_not_ascii_letters_and_digits_is_escaped() {
         assert_eq!(
             host_behavior_symbol("shop", "foo_bar"),
@@ -1756,6 +1853,32 @@ mod tests {
                         host_field_symbol(module, name, field),
                         under(module, vec![named('t', name), named('f', field)]),
                     );
+                }
+            }
+            for present in [false, true] {
+                for word in [
+                    HostWord::Int,
+                    HostWord::Bool,
+                    HostWord::String,
+                    HostWord::Value,
+                    HostWord::List,
+                ] {
+                    for (done, spelt) in [
+                        (HostListOperation::Construct, "construct"),
+                        (HostListOperation::Length, "length"),
+                        (HostListOperation::At, "at"),
+                    ] {
+                        let mut read = vec![operation("l")];
+                        if present {
+                            read.push(operation("present"));
+                        }
+                        read.push(operation(word.spelt()));
+                        read.push(operation(spelt));
+                        hold(
+                            host_list_symbol(module, present, word, done),
+                            under(module, read),
+                        );
+                    }
                 }
             }
         }

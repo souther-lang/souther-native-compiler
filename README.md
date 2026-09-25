@@ -194,6 +194,19 @@ across yet has no reader, and keeps its type from having a host constructor, and
 siblings are still read. A type the module keeps has none of these, whichever published sum it is a
 case of.
 
+A list crosses as an address too, of type `souther_list`, wherever its element crosses: as a field,
+as what a behavior takes or answers, and as what a behavior a host implements takes or answers. A
+host builds one and reads one through functions the object defines for each way an element crosses,
+under the module: `souther3_m_<module>_l_<element>_construct`, taking a count and a column for each
+word an element crosses as and answering the list, `..._length`, and `..._at`, taking the list, an
+index and room for the element's words and answering one where the index is inside the list and
+nought, with nothing written, where it is not. `<element>` is the word, `value` or `int` and so on,
+with `present_` before it for an optional element, which is two columns, a presence and the value,
+as an optional field is. So a list of one declared type is built through the same functions as a
+list of another, a list of lists is a list of `list` elements, and none of it asks where the list
+keeps its length. A count below nought, or one no room can be taken for, is the host's mistake and
+ends the process.
+
 A clause of a type the module keeps and nothing here builds or reads, or one whose fields have no
 representation here, is read, and refused if the two halves disagree about it, and is not run: no
 value of the type is built here to run it over.
@@ -236,7 +249,7 @@ In the external form a list is an array of its elements, and a mistake inside on
 the element's index (`/lines/2/quantity`). Two values of one type compare by what they are made
 of, a list element by element, through a comparator the object holds per type.
 
-Still ahead: a `Decimal`, a `Set` and a `Map`, a list handed to a host,
+Still ahead: a `Decimal`, a `Set` and a `Map`,
 every kernel but `Int.add`, `Int.truncatingDivide`, `Int.truncatingRemainder`,
 `String.length`, `List.length` and `List.get`, a value
 that runs in the module declaring it, an attempted
@@ -263,7 +276,8 @@ object defines, to one set, reading each of them as it is.
 A host calls a function by a C identifier. The symbols one object built here calls in another carry
 `.` and `$`, and no C compiler or FFI that reads C declarations can name those. So what a host
 calls is spelt apart: `souther3`, the ABI generation, then the module as `_m_<segment>` per segment
-of its dotted name, then `_b_<behavior>`, `_v_<value>`, or `_t_<type>` and what is done with it. A
+of its dotted name, then `_b_<behavior>`, `_v_<value>`, `_t_<type>`, or `_l_` and how a list's
+element crosses, and what is done with it. A
 name is written as it is where it is ASCII letters and digits, with `_` doubled and any other
 character as `_u<hex>_`, its code point. So `shop.quote` is `souther3_m_shop_b_quote` and a
 behavior named `数量` is `..._b__u6570__u91cf_`, and inside a name `_` is only ever followed by `_`
@@ -296,9 +310,13 @@ signature's and never those a `let` binds. What a behavior answers is its `type`
 which is `null` unless the type is a union no declaration names, and then lists the `cases` the
 union descends to and the `case` function answering which of them a value is. The type stays what
 the model says, members and all, the same as wherever else it is written. A type is said by its
-module and its name, never by the key the Java half hands this one. What a manifest may say is Rust
-types, and version 4 is `native/crates/compiler/tests/interface-v4.json`: a test holds a program's
-manifest to it, and
+module and its name, never by the key the Java half hands this one. Each module's `lists` are the
+functions a list is built and read through, one entry for each way an element of a list crosses
+there (`{"whole": "value"}`, `{"present": "string"}`), apart from the type `{"kind": "list"}`, which
+says only what the model says: a binding works out how a position's element crosses and finds the
+entry for it. A parameter is `given`, `room`, or a `slice`, as many of a word as a count before it
+says. What a manifest may say is Rust types, and version 5 is
+`native/crates/compiler/tests/interface-v5.json`: a test holds a program's manifest to it, and
 another reads it with those types and writes it back unchanged. The manifest carries its own
 `version`, moved when what it says is read differently, and the `abi` its functions answer to,
 which is the generation in every symbol.
@@ -380,7 +398,15 @@ A behavior answering a union no declaration names answers the PHP union of its m
 (`Found|Missing`), each value made as the class of the case the behavior's `case` function says it
 is, or, for a case with no class of its own, through the codec of the member sum it is a case of.
 Nothing is generated for the union itself, which has no name in the model. A host implementing a
-behavior that answers one hands back an object of one of those classes as it is.
+behavior that answers one hands back an object of one of those classes as it is. A list is a PHP
+list both ways, typed `array` for PHP and `list<T>` in the docblock for PHPStan: an element is handed
+over as a value of its type is anywhere else, through the session the list is built in, so an array
+with a key out of order or an element of another type is refused before the library is called. A
+list read is copied into a PHP array when it is read, each element held as a field's value is.
+A module's classes build and read a list through that module's own functions and no other
+module's, every list a module's manifest entry says is held to what a list of its element is built
+and read through, and a module with a function handing a list across and nothing to build one
+through is refused rather than written without the function.
 The FFI declarations are the build's own, copied beside the binding as `souther.ffi.h`, and
 `autoload.php` loads the binding's classes for a host that does not map the namespace itself. The
 directory is written beside where it goes and put there whole, so it is the binding of one manifest:
