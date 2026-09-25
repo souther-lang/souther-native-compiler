@@ -2,6 +2,7 @@ package souther.nativecode.transport;
 
 import org.junit.jupiter.api.Test;
 import souther.compiler.program.CheckedProgram;
+import souther.nativecode.NativeCompiler;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -10,6 +11,7 @@ import java.nio.file.Path;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 
 /**
  * A helper crosses under the reference a call in its module reaches it by, and the type variables
@@ -46,12 +48,44 @@ class AHelperCrossesUnderTheReferenceItIsReachedByTest {
         return ProgramWriter.written(CheckedProgram.of(List.of(FOLDING)));
     }
 
+    private static final String FOLD_FROM =
+            "{\"is\":\"library\",\"alias\":\"List\",\"name\":\"foldFrom\"}";
+
+    /**
+     * The helper and the call carry one reference, the route and what it reaches, and not a
+     * spelling of it: the library's operation under the alias it publishes it as.
+     */
     @Test
-    void aHelperTheLibraryDeclaresCrossesUnderTheNameItIsReachedBy() {
+    void aHelperTheLibraryDeclaresCrossesAsTheReferenceItIsReachedBy() {
         assertThat(written())
-                .contains("\"helpers\":[{\"reached\":\"List.foldFrom\",")
-                .contains("\"reaches\":{\"is\":\"helper\",\"reached\":\"List.foldFrom\"}")
+                .contains("\"helpers\":[{\"reached\":" + FOLD_FROM + ",")
+                .contains("\"reaches\":{\"is\":\"helper\",\"reached\":" + FOLD_FROM + "}")
                 .doesNotContain("souther.list");
+    }
+
+    /**
+     * A module reaches a helper it declares as its own and one another module declares under that
+     * module's name, and holds a copy of each under the reference it reaches it by.
+     */
+    @Test
+    void aHelperOfAnotherModuleCrossesUnderThatModulesName() {
+        CheckedProgram program = CheckedProgram.of(List.of("""
+                module lib.walk exposing ( count )
+
+                partial let count (n: Int, acc: Int): Int = if n == 0 then acc else count(n - 1, acc + 1)
+                """, """
+                module app.use exposing ( counted )
+                import lib.walk ( count )
+
+                behavior counted : (n: Int) -> Int
+                let counted (n) = count(n, 0)
+                """));
+
+        assertThat(ProgramWriter.written(program))
+                .contains("{\"reached\":{\"is\":\"ofmodule\",\"module\":\"lib.walk\","
+                        + "\"name\":\"count\"},");
+        // And the driver takes the route as the checker's from the module holding the copy.
+        assertThatCode(() -> NativeCompiler.compile(program)).doesNotThrowAnyException();
     }
 
     /**
@@ -70,7 +104,7 @@ class AHelperCrossesUnderTheReferenceItIsReachedByTest {
     @Test
     void aCallOfItCarriesTheTypesItWasSettledAt() {
         assertThat(written()).contains("""
-                "reaches":{"is":"helper","reached":"List.foldFrom"},"arguments":[{"core":"block",""")
+                "reaches":{"is":"helper","reached":{"is":"library","alias":"List","name":"foldFrom"}},"arguments":[{"core":"block",""")
                 .contains("""
                 "type":{"fn":{"takes":[{"prim":"STRING"},{"prim":"INT"}],"answers":{"prim":"STRING"}}}""");
     }

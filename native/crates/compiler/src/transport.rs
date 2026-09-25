@@ -38,9 +38,9 @@ pub const MOVES: &[(u32, &str)] = &[
     ),
     (
         18,
-        "a helper, and a call of one, under the reference a call reaches it by (`reached`), with \
-         the declaration it is a copy of beside that (`declares`), and a type variable a helper's \
-         body leaves open (`var`)",
+        "a helper, and a call of one, under the reference a call reaches it by (`reached`), as the \
+         route and the declaration it reaches, and a type variable a helper's body leaves open \
+         (`var`)",
     ),
 ];
 
@@ -1309,10 +1309,9 @@ pub enum Answers {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Held {
-    pub reached: String,
-    /// The declaration it is a copy of, which is a different fact from the reference a call
-    /// reaches it by: what a module is held to about its helpers is stated over this.
-    pub declares: Declares,
+    /// The reference a call in the holding module reaches it by, which is also what it is a copy
+    /// of: the declaration is the half of the reference the route reaches.
+    pub reached: Reference,
     pub parameters: Vec<HeldParameter>,
     pub body: Node,
 }
@@ -1350,22 +1349,59 @@ impl Held {
     }
 }
 
-/// The declaration a [`Held`] is a copy of.
+/// A reference to a helper, as the checker settled it: the route the holding module reaches it by,
+/// and the declaration the route reaches, in one value (`ReachName.Declaration`).
+///
+/// Not its spelling. A helper and a call of it carry this same value, so a call finds its helper by
+/// the value and not by a spelling both sides would have to render alike; and what a module is held
+/// to about its helpers is asked of the declaration inside it ([`Reference::declaration`]). The
+/// spelling is worked out from it ([`Reference::rendered`]) the one way the checker renders one, for
+/// a symbol and for a message, and read for nothing else.
 #[derive(Debug, Deserialize, Clone, PartialEq, Eq, Hash)]
 #[serde(tag = "is", rename_all = "lowercase", deny_unknown_fields)]
-pub enum Declares {
-    /// One a module declares, its module and its own name apart, as a value's identity crosses.
-    Module { module: String, name: String },
-    /// An operation the standard library writes, by the alias it publishes it under and its name.
+pub enum Reference {
+    /// A declaration of the module doing the reading, reached as it stands.
+    Own { module: String, name: String },
+    /// A declaration of another module, reached under that module's name.
+    OfModule { module: String, name: String },
+    /// An operation the standard library writes, reached under the alias it publishes it as.
     Library { alias: String, name: String },
 }
 
-impl Declares {
-    /// What a refusal says this is.
-    pub fn spelt(&self) -> String {
+/// What a [`Reference`] reaches: a declaration a module declares, or an operation the standard
+/// library writes. Two references reaching one of these reach one declaration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Reaching<'r> {
+    Module { module: &'r str, name: &'r str },
+    Library { alias: &'r str, name: &'r str },
+}
+
+impl Reference {
+    /// The declaration this reaches.
+    pub fn declaration(&self) -> Reaching<'_> {
         match self {
-            Declares::Module { module, name } => format!("{module}.{name}"),
-            Declares::Library { alias, name } => format!("the library's {alias}.{name}"),
+            Reference::Own { module, name } | Reference::OfModule { module, name } => {
+                Reaching::Module { module, name }
+            }
+            Reference::Library { alias, name } => Reaching::Library { alias, name },
+        }
+    }
+
+    /// The module whose declaration this reaches by a route of a module's, where it does.
+    pub fn declaring_module(&self) -> Option<&str> {
+        match self {
+            Reference::Own { module, .. } | Reference::OfModule { module, .. } => Some(module),
+            Reference::Library { .. } => None,
+        }
+    }
+
+    /// How the checker spells it (`ReachName::rendered`): its own declaration bare, another
+    /// module's under that module's name, and a library operation under its alias.
+    pub fn rendered(&self) -> String {
+        match self {
+            Reference::Own { module: _, name } => name.clone(),
+            Reference::OfModule { module, name } => format!("{module}.{name}"),
+            Reference::Library { alias, name } => format!("{alias}.{name}"),
         }
     }
 }
@@ -1885,8 +1921,8 @@ pub struct Parameter {
 #[serde(tag = "is", rename_all = "lowercase", deny_unknown_fields)]
 pub enum Reaches {
     /// A definition the calling module holds, which is a copy of its own, by the reference the
-    /// call reaches it by: what the definition is written under ([`Held::reached`]).
-    Helper { reached: String },
+    /// call reaches it by: the same value the definition is written under ([`Held::reached`]).
+    Helper { reached: Reference },
     /// A value that runs where it is declared, and this module is that module: an ordinary call to
     /// the method this object runs the value as, the same call a helper's own reach is (souther's
     /// JVM backend calls it through the identical path a recursive helper's is — `BodyGen`'s

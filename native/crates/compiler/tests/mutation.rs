@@ -74,8 +74,7 @@ fn helper(name: &str, takes: &[Value], body: Value) -> Value {
         .collect();
     let (module, own) = name.rsplit_once('.').expect("a helper written module.name");
     json!({
-        "reached": name,
-        "declares": { "is": "module", "module": module, "name": own },
+        "reached": { "is": "own", "module": module, "name": own },
         "parameters": parameters,
         "body": body,
     })

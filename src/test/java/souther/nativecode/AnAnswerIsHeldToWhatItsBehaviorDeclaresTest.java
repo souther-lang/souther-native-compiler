@@ -204,13 +204,13 @@ class AnAnswerIsHeldToWhatItsBehaviorDeclaresTest {
         String written = ProgramWriter.written(program);
         assertThat(written)
                 .as("the rule calls the helper rather than holding it written out")
-                .contains("\"reaches\":{\"is\":\"helper\",\"reached\":\"depth\"}");
+                .contains("\"reaches\":{\"is\":\"helper\",\"reached\":{\"is\":\"own\",\"module\":\"lib.declaring\",\"name\":\"depth\"}}");
         assertThat(written)
                 .as("only the declaring module holds a copy of it")
                 .contains("{\"name\":\"lib.declaring\",\"publishes\":[\"lib.declaring.Zero\"");
         assertThat(written.substring(written.indexOf("{\"name\":\"app.calling\"")))
                 .as("the calling module, written last, holds none")
-                .doesNotContain("{\"reached\":\"depth\"");
+                .doesNotContain("\"name\":\"depth\"");
         CheckedModule calling = program.modules().stream()
                 .filter(it -> it.name().equals("app.calling"))
                 .findFirst()

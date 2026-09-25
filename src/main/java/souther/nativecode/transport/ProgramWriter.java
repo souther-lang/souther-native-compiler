@@ -33,6 +33,7 @@ import souther.compiler.types.BindingId;
 import souther.compiler.types.LanguageCaseId;
 import souther.compiler.types.LeafScalar;
 import souther.compiler.types.MapKeyRepresentation;
+import souther.compiler.types.ReachName;
 import souther.compiler.types.Refinement;
 import souther.compiler.types.ResolvedCase;
 import souther.compiler.types.Type;
@@ -729,10 +730,11 @@ public final class ProgramWriter {
      * there are. What the helper answers is not written at all: it is its body's type, which the body
      * already carries, and a second copy would only be something a reader has to hold to the first.
      *
-     * <p>What it is a copy of crosses beside that, as {@code declares}: which declaration the
-     * module carries a method for. The two are different facts about one helper, a reference and a
-     * declaration, and what the module is held to is stated over the second — it carries one method
-     * for a declaration, and none for a declaration it holds as a value.
+     * <p>The reference crosses as what it is, a route and what the route reaches
+     * ({@link #reference}), and not as its spelling. The declaration it is a copy of is the second
+     * half of it, which what the module is held to is stated over; and a spelling written beside a
+     * declaration would be the same fact twice, which {@link souther.compiler.types.ReachName}
+     * says of itself.
      *
      * <p>A type in it may be a variable the body leaves open ({@link #typeVariables}). What each one
      * comes to is a call's to say, and every call already carries the types its arguments and its
@@ -748,8 +750,7 @@ public final class ProgramWriter {
                 parameters.add("{\"name\":" + quoted(parameter.binder().name())
                         + ",\"type\":" + type(parameter.type()) + "}");
             }
-            return "{\"reached\":" + quoted(helper.reachedAs().rendered())
-                    + ",\"declares\":" + declares(helper.declares())
+            return "{\"reached\":" + reference(helper.reachedAs())
                     + ",\"parameters\":" + parameters
                     + ",\"body\":" + core(helper.body(), bindings)
                     + "}";
@@ -759,30 +760,36 @@ public final class ProgramWriter {
     }
 
     /**
-     * The declaration a helper is a copy of: one a module declares, split into the module and its
-     * own name the way a value's identity crosses, or an operation the standard library writes, by
-     * the alias it publishes and the operation's name.
+     * A reference to a helper, as the checker settled it: the route a module reaches it by, and
+     * the declaration the route reaches. A declaration of the module doing the reading is reached
+     * as its own, one of another module under that module's name, and an operation of the standard
+     * library under the alias the library publishes it as.
      *
-     * <p>Those two and nothing else: {@link Core.Reached.OfDeclaration#reaches} settles a helper
-     * only over one of them, so any other name here is this writer holding something that is not a
-     * helper.
+     * <p>Written as that structure and not as its spelling, so a reader holding a call and a reader
+     * holding the helper compare one value, and what a module is held to about its helpers is
+     * asked of the declaration inside it. The declaration is the module's and its name apart, the
+     * way a value's identity crosses.
+     *
+     * <p>A helper is reached over a declaration a module declares as a helper, or over an operation
+     * of the library, and over nothing else ({@link Core.Reached.OfDeclaration#reaches}); anything
+     * else here is this writer holding something that is not a helper.
      */
-    private static String declares(ValueName declares) {
-        return switch (declares) {
-            case ValueName.Helper it -> "{\"is\":\"module\",\"module\":" + quoted(it.module())
-                    + ",\"name\":" + quoted(it.name()) + "}";
-            case ValueName.Stdlib.Operation it -> "{\"is\":\"library\",\"alias\":"
-                    + quoted(it.alias()) + ",\"name\":" + quoted(it.name()) + "}";
+    private static String reference(ReachName.Declaration reference) {
+        return switch (reference) {
+            case ReachName.Own it -> "{\"is\":\"own\"," + helperDeclaration(it.denotes()) + "}";
+            case ReachName.OfModule it ->
+                    "{\"is\":\"ofmodule\"," + helperDeclaration(it.denotes()) + "}";
+            case ReachName.OfLibrary it -> "{\"is\":\"library\",\"alias\":"
+                    + quoted(it.denotes().alias()) + ",\"name\":" + quoted(it.denotes().name()) + "}";
+        };
+    }
+
+    private static String helperDeclaration(ValueName.OfAModule declared) {
+        return switch (declared) {
+            case ValueName.Helper it ->
+                    "\"module\":" + quoted(it.module()) + ",\"name\":" + quoted(it.name());
             case ValueName.Behavior it ->
-                    throw new IllegalStateException("a helper declared as the behavior " + it);
-            case ValueName.Stdlib.Namespace it ->
-                    throw new IllegalStateException("a helper declared as the namespace " + it);
-            case ValueName.Local it ->
-                    throw new IllegalStateException("a helper declared as the binding " + it);
-            case ValueName.OfType it ->
-                    throw new IllegalStateException("a helper declared as the type " + it);
-            case ValueName.Builtin it ->
-                    throw new IllegalStateException("a helper declared as the builtin " + it);
+                    throw new IllegalStateException("a helper reached over the behavior " + it);
         };
     }
 
@@ -1391,7 +1398,7 @@ public final class ProgramWriter {
                 // holds is written under too ({@link #helper}): the two are one reference, and a
                 // name made up out of the declaration would not be the one the module holds.
                 case Core.Reaches.AHelper ignored ->
-                        "{\"is\":\"helper\",\"reached\":" + quoted(target.name().rendered()) + "}";
+                        "{\"is\":\"helper\",\"reached\":" + reference(target.name()) + "}";
                 case Core.Reaches.ABehavior held -> {
                     behaviorsMet.add(held.behavior());
                     yield "{\"is\":\"behavior\",\"declared\":"

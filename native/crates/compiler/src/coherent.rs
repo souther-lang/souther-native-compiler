@@ -55,8 +55,9 @@ use crate::closures::ClosureSites;
 use crate::index;
 use crate::kernels::{Bound, LoweredKernel};
 use crate::transport::{
-    AbortKind, Answers, Carrier, Case, Declaration, Declares, Definition, Ensures, Guard, Held,
-    Node, Op, Owner, Prim, Program, Reaches, Reading, Routing, Selects, Target, Ty, Value,
+    AbortKind, Answers, Carrier, Case, Declaration, Definition, Ensures, Guard, Held, Node, Op,
+    Owner, Prim, Program, Reaches, Reaching, Reading, Reference, Routing, Selects, Target, Ty,
+    Value,
 };
 use crate::{Declared, Runs, Targets, departures_taken, not_lowered, says_its_case, spelt};
 use anyhow::{Result, anyhow, bail};
@@ -203,7 +204,10 @@ impl<'a> Coherent<'a> {
             // What a rule tests the answer for before it reads it, against what the answer is.
             let mut guarded: Option<(&Guard, Ty)> = None;
             let (owner, bound) = match body.owner {
-                Owner::Helper(held) => (held.reached.clone(), positional(held.takes())),
+                Owner::Helper(held) => (
+                    spelt_declaration(held.reached.declaration()),
+                    positional(held.takes()),
+                ),
                 Owner::Value(value) => (
                     value.declared(),
                     positional(value.handovers.iter().map(|it| it.ty.clone()).collect()),
@@ -367,7 +371,7 @@ struct Reached<'a> {
     /// The modules this document builds, by name.
     modules: HashMap<&'a str, ()>,
     /// A helper, by the module holding the copy and the reference a call there reaches it by.
-    helpers: HashMap<(&'a str, &'a str), &'a Held>,
+    helpers: HashMap<(&'a str, &'a Reference), &'a Held>,
     /// A value's home, by the module it runs in and its joined name.
     values: HashMap<(&'a str, String), &'a Value>,
     /// A published value's entry body, by the value's module and name, where this document
@@ -398,17 +402,19 @@ impl<'a> Reached<'a> {
                 format!("two modules are both written {module}")
             })?;
             // A helper is looked up by the reference a call reaches it by, and what the module is
-            // held to about it is stated over the declaration it is a copy of: one method for a
-            // declaration, and none for a declaration it holds as a value. Two questions over two
-            // names, each asked of the name it is about.
+            // held to about it is stated over the declaration the reference reaches: one method
+            // for a declaration, and none for a declaration it holds as a value. Both are asked of
+            // the one reference, so what a call finds and what the module is held to cannot be
+            // about two different helpers.
             let mut copies = HashMap::new();
             for held in &written.helpers {
-                index::once(
-                    &mut reached.helpers,
-                    (module, held.reached.as_str()),
-                    held,
-                    || format!("{module} holds two helpers both written {}", held.reached),
-                )?;
+                routed(module, &held.reached)?;
+                index::once(&mut reached.helpers, (module, &held.reached), held, || {
+                    format!(
+                        "{module} holds two helpers both reaching {}",
+                        spelt_declaration(held.reached.declaration())
+                    )
+                })?;
                 // The writer numbers a helper's variables where it first meets each, from nought,
                 // so they are every number below how many there are. What reads a variable
                 // afterwards takes its number as a place in a table that long, and a document
@@ -418,16 +424,14 @@ impl<'a> Reached<'a> {
                     bail!(
                         "{module}'s helper {} numbers its type variables {numbers:?}, where the \
                          writer numbers them from nought as it meets each: the two halves disagree",
-                        held.reached
+                        held.reached.rendered()
                     );
                 }
-                index::once(&mut copies, &held.declares, (), || {
-                    format!(
-                        "{module} carries {} twice, the second as {}",
-                        held.declares.spelt(),
-                        held.reached
-                    )
-                })?;
+                // One method for a declaration follows from the two above: a reference is one route
+                // to one declaration, the route is the one the checker takes from here, and no two
+                // helpers here share a reference. So two copies of one declaration are this
+                // compiler's mistake and not something a document can say.
+                index::unique(&mut copies, held.reached.declaration(), ());
             }
             for value in &written.values {
                 let declared = value.declared();
@@ -442,9 +446,9 @@ impl<'a> Reached<'a> {
                 if !spells_a_name(&value.name) {
                     bail!("a value is written {declared}, which no symbol can carry");
                 }
-                let as_helper = Declares::Module {
-                    module: value.module.clone(),
-                    name: value.name.clone(),
+                let as_helper = Reaching::Module {
+                    module: &value.module,
+                    name: &value.name,
                 };
                 if copies.contains_key(&as_helper) {
                     bail!("{module} holds {declared} both as a helper and as a value");
@@ -954,7 +958,7 @@ impl<'a> Walk<'_, 'a> {
                             .expect("a parameter's variables are bound by what is handed to it")
                     })
                     .collect();
-                (reached.clone(), takes)
+                (spelt_declaration(reached.declaration()), takes)
             }
             Reaches::Value { module, name } => {
                 let joined = format!("{module}.{name}");
@@ -1682,14 +1686,15 @@ impl<'a> Walk<'_, 'a> {
     /// halves disagreeing.
     fn helper_called(
         &self,
-        reached: &str,
+        reference: &Reference,
         arguments: &[Node],
         answers: &Ty,
     ) -> Result<(&'a Held, crate::specialize::Substitution)> {
+        let reached = spelt_declaration(reference.declaration());
         let held = *self
             .reached
             .helpers
-            .get(&(self.carrier.module(), reached))
+            .get(&(self.carrier.module(), reference))
             .ok_or_else(|| {
                 anyhow!(
                     "{}: a call of {reached}, which {} holds no copy of",
@@ -2111,6 +2116,38 @@ fn fields_bound(declaration: &Declaration) -> Vec<(usize, Ty)> {
         .iter()
         .map(|field| (field.binding, field.codec.ty()))
         .collect()
+}
+
+/// Refuses a reference whose route is not the one the checker takes from `module` to what it
+/// reaches (`ReachName.of`): a declaration of the module doing the reading is reached as its own,
+/// and one of another module under that module's name. A library operation has one route from
+/// everywhere.
+fn routed(module: &str, reference: &Reference) -> Result<()> {
+    let refused = match reference {
+        Reference::Own {
+            module: declaring, ..
+        } => declaring != module,
+        Reference::OfModule {
+            module: declaring, ..
+        } => declaring == module,
+        Reference::Library { .. } => false,
+    };
+    if refused {
+        bail!(
+            "{module} reaches a helper as {reference:?}, which is not the route the checker takes \
+             from {module} to {}: the two halves disagree",
+            spelt_declaration(reference.declaration())
+        );
+    }
+    Ok(())
+}
+
+/// What a refusal says a declaration a reference reaches is.
+fn spelt_declaration(declaration: Reaching) -> String {
+    match declaration {
+        Reaching::Module { module, name } => format!("{module}.{name}"),
+        Reaching::Library { alias, name } => format!("the library's {alias}.{name}"),
+    }
 }
 
 /// Refuses a test naming no case, or naming a sum where the checker answers the leaves it descends

@@ -50,14 +50,19 @@ fn helper(declared: &str, takes: &[&str], body: &str) -> String {
         .enumerate()
         .map(|(at, ty)| format!(r#"{{"name":"p{at}","type":{ty}}}"#))
         .collect();
-    // Reached under the declaration's own spelling, and a copy of that declaration.
+    format!(
+        r#"{{"reached":{},"parameters":[{}],"body":{body}}}"#,
+        own(declared),
+        parameters.join(",")
+    )
+}
+
+/// A declaration of `m`, written `m.name`, as `m` reaches it: as its own.
+fn own(declared: &str) -> String {
     let (module, name) = declared
         .rsplit_once('.')
         .expect("a helper written module.name");
-    format!(
-        r#"{{"reached":"{declared}","declares":{{"is":"module","module":"{module}","name":"{name}"}},"parameters":[{}],"body":{body}}}"#,
-        parameters.join(",")
-    )
+    format!(r#"{{"is":"own","module":"{module}","name":"{name}"}}"#)
 }
 
 fn helpers(helpers: &[String]) -> String {
@@ -249,7 +254,7 @@ fn a_let_given_what_it_does_not_bind_is_the_halves_disagreeing() {
 #[test]
 fn a_call_of_a_helper_stands_at_what_the_helper_answers() {
     let g = helper("m.g", &[], &truth(true));
-    let reaches = r#"{"is":"helper","reached":"m.g"}"#;
+    let reaches = &format!(r#"{{"is":"helper","reached":{}}}"#, own("m.g"));
     reads_whole(&helpers(&[g.clone(), h(&[], &call(reaches, &[], BOOL))]));
     is_the_halves_disagreeing(&helpers(&[g, h(&[], &call(reaches, &[], INT))]), "m.g");
 }
@@ -278,7 +283,7 @@ fn a_call_of_a_behavior_stands_at_what_its_target_answers() {
 #[test]
 fn an_argument_is_a_value_of_what_the_callee_takes() {
     let g = helper("m.g", &[S], &read(0, S));
-    let reaches = r#"{"is":"helper","reached":"m.g"}"#;
+    let reaches = &format!(r#"{{"is":"helper","reached":{}}}"#, own("m.g"));
     reads_whole(&helpers(&[
         g.clone(),
         h(&[], &call(reaches, &[widen(&unit("m.A"), S)], S)),
@@ -775,28 +780,30 @@ fn a_helper_written_twice_is_refused_before_either_is_lowered() {
     is_the_halves_disagreeing(&helpers(&[first, second]), "m.g");
 }
 
-/// A module carries one method for a declaration. Two helpers reached under two references and
-/// both copies of one declaration are two methods for it, which is asked of what each is a copy
-/// of and not of how a call reaches it.
+/// A reference's route is the checker's from the module holding it (`ReachName.of`): a module
+/// reaches a declaration of its own as its own, and one of another module under that module's
+/// name. A reference taking the other route names one declaration two ways, and what a call finds
+/// and what the module is held to would be read off two spellings of it.
 #[test]
-fn one_declaration_carried_under_two_references_is_the_halves_disagreeing() {
-    let reached_as_its_own =
-        helper("m.g", &[INT], &read(0, INT)).replacen(r#""reached":"m.g""#, r#""reached":"g""#, 1);
-    let reached_through_its_module = helper("m.g", &[INT], &read(0, INT));
-    is_the_halves_disagreeing(
-        &helpers(&[reached_as_its_own, reached_through_its_module]),
-        "carries m.g twice",
+fn a_reference_routed_otherwise_than_the_checker_routes_it_is_the_halves_disagreeing() {
+    let as_another_modules =
+        helper("m.g", &[INT], &read(0, INT)).replacen(r#""is":"own""#, r#""is":"ofmodule""#, 1);
+    is_the_halves_disagreeing(&helpers(&[as_another_modules]), "not the route");
+    let another_modules_as_own = helper("m.g", &[INT], &read(0, INT)).replacen(
+        r#""module":"m","name":"g""#,
+        r#""module":"elsewhere","name":"g""#,
+        1,
     );
+    is_the_halves_disagreeing(&helpers(&[another_modules_as_own]), "not the route");
 }
 
 /// A module holds a declaration as a value or carries a method for it as a helper, not both. A
 /// helper is reached under a reference and a value under its declaration, so the two are held
-/// against each other by the declaration the helper is a copy of: a reference spelt otherwise
-/// does not hide it.
+/// against each other by the declaration the reference reaches.
 #[test]
 fn a_declaration_held_both_as_a_value_and_as_a_helper_is_the_halves_disagreeing() {
     let values = include_str!("values.transport.json");
-    let copy = r#"{"reached":"ks","declares":{"is":"module","module":"m","name":"ks"},"parameters":[],"body":{"core":"int","value":1,"type":{"prim":"INT"},"aborts":[]}}"#;
+    let copy = r#"{"reached":{"is":"own","module":"m","name":"ks"},"parameters":[],"body":{"core":"int","value":1,"type":{"prim":"INT"},"aborts":[]}}"#;
     let document = values.replacen(r#""helpers":[]"#, &format!(r#""helpers":[{copy}]"#), 1);
     assert_ne!(document, values, "the fixture this perturbs moved");
     is_the_halves_disagreeing(&document, "m.ks both as a helper and as a value");
@@ -1898,7 +1905,7 @@ fn only_the_kinds_that_can_end_a_run_name_a_reason_to() {
     }
     // A call to a helper ends with what the helper ends with, and names none of its own.
     let g = helper("m.g", &[INT], &read(0, INT));
-    let reaches = r#"{"is":"helper","reached":"m.g"}"#;
+    let reaches = &format!(r#"{{"is":"helper","reached":{}}}"#, own("m.g"));
     let called = with_reason(call(reaches, &[int(1)], INT));
     is_the_halves_disagreeing(
         &helpers(&[g, h(&[], &called)]),

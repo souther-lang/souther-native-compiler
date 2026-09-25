@@ -35,12 +35,12 @@
 //! standard library writes needs it, and no model can write a type variable.
 
 use crate::index;
-use crate::transport::{Body, Carrier, Held, Node, Owner, Reaches, Ty};
+use crate::transport::{Body, Carrier, Held, Node, Owner, Reaches, Reference, Ty};
 use crate::{Lowered, Runs, not_lowered};
 use std::collections::HashMap;
 
 /// A helper, by the module holding the copy and the reference a call there reaches it by.
-type HelperKey<'p> = (&'p str, &'p str);
+type HelperKey<'p> = (&'p str, &'p Reference);
 
 /// What each variable of a helper comes to at one call, by the variable's number.
 #[derive(Default, Debug)]
@@ -225,7 +225,7 @@ impl<'p> Instance<'p> {
 /// Every copy of a helper this object defines, and which of them each call reaches.
 pub(crate) struct Specializations<'p> {
     instances: Vec<Instance<'p>>,
-    by_key: HashMap<(&'p str, &'p str, Vec<Ty>), InstanceId>,
+    by_key: HashMap<(&'p str, &'p Reference, Vec<Ty>), InstanceId>,
     /// Which copy each call reaching a helper reaches, by where the call stands.
     reached: HashMap<*const Node, InstanceId>,
 }
@@ -245,11 +245,7 @@ impl<'p> Specializations<'p> {
         let mut helpers: HashMap<HelperKey<'p>, Body<'p>> = HashMap::new();
         for body in runs.bodies() {
             if let Some(held) = body.owner.helper() {
-                index::unique(
-                    &mut helpers,
-                    (body.carrier().module(), held.reached.as_str()),
-                    body,
-                );
+                index::unique(&mut helpers, (body.carrier().module(), &held.reached), body);
             }
         }
         let recursions = Recursions::of(runs, &helpers);
@@ -295,12 +291,12 @@ impl<'p> Specializations<'p> {
     ) -> Lowered<()> {
         for call in calls {
             let helper = helpers
-                .get(&(carrier.module(), call.reached.as_str()))
+                .get(&(carrier.module(), &call.reached))
                 .expect("`Coherent` held every helper a call reaches to be one its module holds");
             let Owner::Helper(held) = helper.owner else {
                 unreachable!("gathered from the helpers' bodies alone");
             };
-            let reached = &held.reached;
+            let reached = held.reached.rendered();
             let handed: Vec<&Ty> = call.handed.iter().collect();
             let bound = called(held, &handed, &call.answers)
                 .expect("`Coherent` held every call of a helper to fit what the helper takes");
@@ -326,7 +322,7 @@ impl<'p> Specializations<'p> {
         // Asked of the helper and not of the copies made so far, so what is refused does not turn
         // on which call was read first.
         recursions.lowered(carrier.module(), &held.reached)?;
-        let key = (carrier.module(), held.reached.as_str(), types);
+        let key = (carrier.module(), &held.reached, types);
         if let Some(id) = self.by_key.get(&key) {
             return Ok(*id);
         }
@@ -341,7 +337,7 @@ impl<'p> Specializations<'p> {
             if written {
                 return Err(not_lowered(format!(
                     "a function value written inside {}, which leaves type variables open",
-                    held.reached
+                    held.reached.rendered()
                 )));
             }
             let mut body = held.body.clone();
@@ -363,7 +359,7 @@ impl<'p> Specializations<'p> {
         });
         index::unique(
             &mut self.by_key,
-            (carrier.module(), held.reached.as_str(), types),
+            (carrier.module(), &held.reached, types),
             id,
         );
         Ok(id)
@@ -396,7 +392,7 @@ impl<'p> Specializations<'p> {
 /// said only where a copy of one is asked for, so a helper no body here reaches is refused for
 /// nothing.
 struct Recursions {
-    refused: HashMap<(String, String), String>,
+    refused: HashMap<(String, Reference), String>,
 }
 
 impl Recursions {
@@ -407,7 +403,7 @@ impl Recursions {
             .bodies()
             .filter_map(|body| {
                 let held = body.owner.helper()?;
-                Some((body.carrier().module(), held.reached.as_str()))
+                Some((body.carrier().module(), &held.reached))
             })
             .collect();
         let at: HashMap<HelperKey<'p>, usize> = order
@@ -426,7 +422,7 @@ impl Recursions {
                 calls_in(&caller.body)
                     .into_iter()
                     .map(|call| {
-                        let callee = &helpers[&(key.0, call.reached.as_str())];
+                        let callee = &helpers[&(key.0, &call.reached)];
                         let Owner::Helper(held) = callee.owner else {
                             unreachable!("gathered from the helpers' bodies alone");
                         };
@@ -434,7 +430,7 @@ impl Recursions {
                         let settled = called(held, &handed, &call.answers)
                             .expect("`Coherent` held every call of a helper to fit it")
                             .settled(held.variables());
-                        (at[&(key.0, call.reached.as_str())], settled)
+                        (at[&(key.0, &call.reached)], settled)
                     })
                     .collect()
             })
@@ -455,15 +451,16 @@ impl Recursions {
                     continue;
                 }
                 let why = format!(
-                    "{reached}, which a recursion it is part of reaches at other types than it was \
+                    "{}, which a recursion it is part of reaches at other types than it was \
                      called at, from {}",
-                    order[caller].1
+                    reached.rendered(),
+                    order[caller].1.rendered()
                 );
                 for (member, of) in part.iter().enumerate() {
                     if *of == part[caller] {
                         let (module, reached) = order[member];
                         refused
-                            .entry((module.to_string(), reached.to_string()))
+                            .entry((module.to_string(), reached.clone()))
                             .or_insert_with(|| why.clone());
                     }
                 }
@@ -473,8 +470,8 @@ impl Recursions {
     }
 
     /// Refuses a copy of the helper `reached` held by `module`, where its recursion is refused.
-    fn lowered(&self, module: &str, reached: &str) -> Lowered<()> {
-        match self.refused.get(&(module.to_string(), reached.to_string())) {
+    fn lowered(&self, module: &str, reached: &Reference) -> Lowered<()> {
+        match self.refused.get(&(module.to_string(), reached.clone())) {
             Some(why) => Err(not_lowered(why.clone())),
             None => Ok(()),
         }
@@ -549,7 +546,7 @@ fn strongly_connected<T>(calls: &[Vec<(usize, T)>]) -> Vec<usize> {
 /// of another to what is being read.
 struct Called {
     at: *const Node,
-    reached: String,
+    reached: Reference,
     handed: Vec<Ty>,
     answers: Ty,
 }
@@ -650,13 +647,19 @@ mod tests {
             .enumerate()
             .map(|(at, ty)| format!(r#"{{"name":"p{at}","type":{ty}}}"#))
             .collect();
+        format!(
+            r#"{{"reached":{},"parameters":[{}],"body":{body}}}"#,
+            own(reached),
+            parameters.join(",")
+        )
+    }
+
+    /// A declaration of `m`, written `m.name`, as `m` reaches it: as its own.
+    fn own(reached: &str) -> String {
         let (module, name) = reached
             .rsplit_once('.')
             .expect("a helper written module.name");
-        format!(
-            r#"{{"reached":"{reached}","declares":{{"is":"module","module":"{module}","name":"{name}"}},"parameters":[{}],"body":{body}}}"#,
-            parameters.join(",")
-        )
+        format!(r#"{{"is":"own","module":"{module}","name":"{name}"}}"#)
     }
 
     fn node(core: &str, fields: &str, ty: &str) -> String {
@@ -676,7 +679,8 @@ mod tests {
         node(
             "call",
             &format!(
-                r#""reaches":{{"is":"helper","reached":"{reached}"}},"arguments":[{}]"#,
+                r#""reaches":{{"is":"helper","reached":{}}},"arguments":[{}]"#,
+                own(reached),
                 arguments.join(",")
             ),
             ty,
@@ -718,7 +722,7 @@ mod tests {
                 "one copy for each set of types"
             );
             for (id, copy) in &copies {
-                assert_eq!(copy.held.reached, "List.foldFrom");
+                assert_eq!(copy.held.reached.rendered(), "List.foldFrom");
                 let own = calls(copy.body());
                 assert_eq!(own.len(), 1, "foldFrom calls itself once");
                 assert_eq!(
@@ -776,16 +780,13 @@ mod tests {
         specialized(&holding(&helpers, &body), |specializations, _| {
             let copies: Vec<(String, Vec<Ty>)> = specializations
                 .iter()
-                .map(|(_, it)| (it.held.reached.clone(), it.types.clone()))
+                .map(|(_, it)| (it.held.reached.rendered(), it.types.clone()))
                 .collect();
             assert_eq!(
                 copies,
                 [
-                    ("m.first".to_string(), vec![Ty::Prim { prim: Prim::Int }]),
-                    (
-                        "m.second".to_string(),
-                        vec![Ty::Prim { prim: Prim::String }]
-                    ),
+                    ("first".to_string(), vec![Ty::Prim { prim: Prim::Int }]),
+                    ("second".to_string(), vec![Ty::Prim { prim: Prim::String }]),
                 ]
             );
         })
@@ -888,14 +889,14 @@ mod tests {
             |specializations, _| {
                 let copies: Vec<(String, Vec<Ty>)> = specializations
                     .iter()
-                    .map(|(_, it)| (it.held.reached.clone(), it.types.clone()))
+                    .map(|(_, it)| (it.held.reached.rendered(), it.types.clone()))
                     .collect();
                 let text = vec![Ty::Prim { prim: Prim::String }];
                 assert_eq!(
                     copies,
                     [
-                        ("m.even".to_string(), text.clone()),
-                        ("m.odd".to_string(), text)
+                        ("even".to_string(), text.clone()),
+                        ("odd".to_string(), text)
                     ]
                 );
             },
@@ -990,7 +991,10 @@ mod tests {
             refused.downcast_ref::<crate::NotLowered>().is_none(),
             "{refused}"
         );
-        assert!(refused.to_string().contains("m.same"), "{refused}");
+        assert!(
+            refused.to_string().contains("a call of m.same"),
+            "{refused}"
+        );
     }
 
     #[test]

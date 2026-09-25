@@ -600,7 +600,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
     // A helper leaving nothing open is one function under its own name, and one over variables is
     // a function for each set of types a call needs, told apart by which of its copies each is.
     for (id, instance) in specializations.iter() {
-        let symbol = held_symbol(instance.carrier.module(), &instance.held.reached);
+        let symbol = held_symbol(instance.carrier.module(), &instance.held.reached.rendered());
         let symbol = if instance.types.is_empty() {
             symbol
         } else {
