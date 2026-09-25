@@ -3,6 +3,12 @@
 //! The object is for the machine this runs on. Choosing a target for another machine is a question
 //! about linkers and a runtime built for it, and answering that before the code generation works
 //! would be answering the easier question first.
+//!
+//! A module whose private items state the reasons of a design the code alone does not show denies
+//! a missing doc comment itself, with `#![deny(clippy::missing_docs_in_private_items)]`. Where that
+//! is enforced follows what a module is responsible for, not which of its items are private: a doc
+//! comment that code inserted above it carries onto another item leaves the first undocumented,
+//! and the build says so.
 
 mod boundary;
 mod closures;
@@ -15,6 +21,7 @@ mod index;
 mod interface;
 mod kernels;
 mod link;
+mod literals;
 mod manifest;
 mod replaced;
 mod specialize;
@@ -37,17 +44,17 @@ use cranelift::module::{DataDescription, DataId, FuncId, Linkage, Module, defaul
 use cranelift::object::{ObjectBuilder, ObjectModule};
 use interface::Surface;
 use kernels::LoweredKernel;
+use literals::Literals;
 use souther_native_abi::{
     ALLOCATE, ANSWERED, CARRIED, HELD, HOST_STATUSES, INJECTION_EXCHANGE, INJECTION_GET,
     LIST_LENGTH, NO_FAILED_CLAUSE, NOTHING, Parameter, SLOT, STRING_CODE_POINTS, STRING_COMPARE,
-    STRING_CONCAT, Status, TEXT_BYTES, TEXT_LENGTH, TOKEN, WHICH, Word, behavior_symbol,
-    boundary_symbol, built_in_case_symbol, checked_constructor_symbol, constructor_symbol,
-    example_symbol, field_at, generated_call, held_symbol, home_symbol, list_at, member_at,
-    room_for_carried, room_for_fields, room_for_held, room_for_list, room_for_members,
-    room_for_text, spells_a_module, spells_a_name, type_symbol, value_symbol,
+    STRING_CONCAT, Status, TOKEN, WHICH, Word, behavior_symbol, boundary_symbol,
+    built_in_case_symbol, checked_constructor_symbol, constructor_symbol, example_symbol, field_at,
+    generated_call, held_symbol, home_symbol, list_at, member_at, room_for_carried,
+    room_for_fields, room_for_held, room_for_list, room_for_members, spells_a_module,
+    spells_a_name, type_symbol, value_symbol,
 };
 use specialize::{Instance, InstanceId, Specializations};
-use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::fs;
@@ -1188,11 +1195,6 @@ impl<'a> Targets<'a> {
             .copied()
             .ok_or_else(|| anyhow!("{declared}, which no target names"))
     }
-}
-
-/// Several types, spelt the way one reads a diagnostic naming a signature.
-fn spelt(types: &[Ty]) -> String {
-    types.iter().map(Ty::spelt).collect::<Vec<_>>().join(", ")
 }
 
 /// What an entry that runs one of a behavior's rows takes and answers.
@@ -3958,7 +3960,7 @@ fn lower(
             builder.block_params(after)[0]
         }
         Node::Bool { value, ty, .. } => builder.ins().iconst(machine_type(ty)?, i64::from(*value)),
-        Node::Str { value, .. } => text_in_the_object(builder, module, lowering.literals, value)?,
+        Node::Str { value, .. } => lowering.literals.address(builder, module, value)?,
         Node::Binary {
             op,
             reading,
@@ -5270,61 +5272,6 @@ impl Growing {
     fn sealed(self, builder: &mut FunctionBuilder) -> ir::Value {
         builder.ins().load(POINTER, TRUSTED, self.0, GROWN)
     }
-}
-
-/// Every string literal this object holds, one per text however many places spell it.
-///
-/// Held for the whole object rather than asked of each site, because a site is not what a literal
-/// is: two places spelling one text are one literal, and data declared per site would be the same
-/// bytes written as many times as the program says them.
-#[derive(Default)]
-struct Literals {
-    held: RefCell<HashMap<String, DataId>>,
-}
-
-/// A string the object carries, and the address of it.
-///
-/// A literal says the same text every run, so it is written into the object rather than worked out
-/// into the arena. What comes back is the address of a string like any other: a comparison and a
-/// join read it the way they read one a run made, and nothing in the value says which of the two
-/// it is. That is what keeps where a string is kept out of what a string means.
-///
-/// One data object per text, shared by every site that spells it ([`Literals`]), and anonymous
-/// because nothing outside this object reaches one.
-fn text_in_the_object(
-    builder: &mut FunctionBuilder,
-    module: &mut ObjectModule,
-    literals: &Literals,
-    value: &str,
-) -> Lowered<ir::Value> {
-    let already = literals.held.borrow().get(value).copied();
-    let id = match already {
-        Some(id) => id,
-        None => {
-            let id = literal(module, value)?;
-            index::unique(&mut *literals.held.borrow_mut(), value.to_string(), id);
-            id
-        }
-    };
-    let named = module.declare_data_in_func(id, builder.func);
-    Ok(builder.ins().symbol_value(POINTER, named))
-}
-
-/// A literal's bytes, laid out as the runtime lays a string out, defined once in the object.
-fn literal(module: &mut ObjectModule, value: &str) -> Lowered<DataId> {
-    let length = i64::try_from(value.len()).expect("a literal is shorter than an Int");
-    let mut written = vec![0u8; room_for_text(length) as usize];
-    written[TEXT_LENGTH as usize..][..SLOT as usize].copy_from_slice(&length.to_ne_bytes());
-    written[TEXT_BYTES as usize..].copy_from_slice(value.as_bytes());
-
-    let mut held = DataDescription::new();
-    held.define(written.into_boxed_slice());
-    // Aligned as everything the arena answers is. The count before the text is read as a slot, and
-    // every access this emits says the address is aligned rather than checking that it is.
-    held.set_align(SLOT as u64);
-    let id = accepted(module.declare_anonymous_data(false, false));
-    accepted(module.define_data(id, &held));
-    Ok(id)
 }
 
 /// Which machine condition one of the six comparisons is, over a signed whole number.

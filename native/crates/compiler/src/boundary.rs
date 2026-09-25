@@ -10,6 +10,10 @@
 //! Nothing here decides a representation. What the answer leaves as — a scalar, a declared type, a
 //! set of alternatives and the form it travels in — arrives on the transport, and writing it is
 //! the writers' in [`codec`](crate::codec), the same ones a host reaches to write any value.
+//!
+//! That is what every named item here says, so this module denies an item without documentation.
+
+#![deny(clippy::missing_docs_in_private_items)]
 
 use crate::codec::write::Writing;
 use crate::codec::{Codecs, Runtime};
@@ -22,9 +26,15 @@ use souther_native_abi::ANSWERED;
 /// An entry a host reaches for its answer as the language writes it: what it runs, what that
 /// takes, and what the checker settled the answer leaves as.
 pub(crate) struct Boundary<'a> {
+    /// The symbol the entry is exported under. It is not the symbol of what it runs: a host that
+    /// reaches this one is handed the answer written out, not the value.
     pub symbol: String,
+    /// What the entry runs, whose answer it writes.
     pub runs: FuncId,
+    /// What `runs` takes, in order. The entry takes the same, and then where to put what it wrote.
     pub takes: Vec<Ty>,
+    /// What the checker settled the answer leaves as, which the entry writes without deciding it
+    /// again.
     pub output: &'a BoundaryOutput,
 }
 

@@ -59,7 +59,7 @@ use crate::transport::{
     Node, Op, Owner, Prim, Program, Reaches, Reaching, Reading, Reference, Routing, Selects,
     Target, Ty, Value,
 };
-use crate::{Declared, Runs, Targets, departures_taken, not_lowered, says_its_case, spelt};
+use crate::{Declared, Runs, Targets, departures_taken, not_lowered, says_its_case};
 use anyhow::{Result, anyhow, bail};
 use souther_native_abi::{spells_a_module, spells_a_name};
 use std::collections::HashMap;
@@ -1791,9 +1791,9 @@ impl<'a> Walk<'_, 'a> {
                 "{}: a call of {reached} is handed {} and answers {}, where it takes {} and \
                  answers {}: the two halves disagree",
                 self.owner,
-                spelt(&handed.iter().map(|it| (*it).clone()).collect::<Vec<_>>()),
+                types_spelt(&handed.iter().map(|it| (*it).clone()).collect::<Vec<_>>()),
                 answers.spelt(),
-                spelt(&held.takes()),
+                types_spelt(&held.takes()),
                 held.answers().spelt()
             )
         })?;
@@ -2110,9 +2110,9 @@ fn composes(
         bail!(
             "{name} takes {} and its first stage {} takes {}: a composition takes whatever its \
              first stage takes, and the two halves disagree about what that is",
-            spelt(&target.takes()),
+            types_spelt(&target.takes()),
             first.behavior,
-            spelt(&leads.takes())
+            types_spelt(&leads.takes())
         );
     }
     let mut running = leads.answers();
@@ -2122,7 +2122,7 @@ fn composes(
             anyhow!(
                 "{name}'s stage {} takes {}: a stage after the first takes one value",
                 stage.behavior,
-                spelt(&takes)
+                types_spelt(&takes)
             )
         })?;
         // What runs is offered by its cases exactly where it is a declared type or a union, and
@@ -2219,6 +2219,11 @@ fn composes(
         &answers,
     );
     Ok(())
+}
+
+/// Several types, spelt the way one reads a diagnostic naming a signature.
+fn types_spelt(types: &[Ty]) -> String {
+    types.iter().map(Ty::spelt).collect::<Vec<_>>().join(", ")
 }
 
 /// That what has to hold is a truth, and builds no value.

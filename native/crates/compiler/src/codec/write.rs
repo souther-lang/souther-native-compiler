@@ -33,12 +33,13 @@
 //! do at once. The runtime's own walk over the tree, and its drop, take no frame per level either.
 
 use super::{Codecs, Runtime};
+use crate::literals::Literals;
 use crate::transport::{
     AlternativesForm, BoundaryOutput, Case, CodecShape, Declaration, Field, LeafScalar, Prim, Ty,
 };
 use crate::{
-    A_WALK_OUT_OF_ORDER, Declared, Emitting, Literals, Lowered, NO_ARM, POINTER, TRUSTED, Tagged,
-    accepted, machine_type, not_lowered, out_of_slot, text_in_the_object,
+    A_WALK_OUT_OF_ORDER, Declared, Emitting, Lowered, NO_ARM, POINTER, TRUSTED, Tagged, accepted,
+    machine_type, not_lowered, out_of_slot,
 };
 use cranelift::codegen::ir::condcodes::IntCC;
 use cranelift::codegen::ir::{self, AbiParam, InstBuilder, TrapCode, types};
@@ -399,7 +400,7 @@ impl<'w, 'f> Writing<'w, 'f> {
     /// A string written into the object, a literal of the runtime's own layout: a key, or a
     /// case's name.
     fn literal(&mut self, text: &str) -> Lowered<ir::Value> {
-        text_in_the_object(self.builder, self.module, self.literals, text)
+        self.literals.address(self.builder, self.module, text)
     }
 
     fn object(&mut self) -> ir::Value {

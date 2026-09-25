@@ -21,11 +21,11 @@
 //! any other call.
 
 use super::{Codecs, Runtime};
+use crate::literals::Literals;
 use crate::transport::{AlternativesForm, Case, CodecShape, Declaration, Field, Prim};
 use crate::{
-    Construction, Constructors, Declared, Emitting, Literals, Lowered, POINTER, TRUSTED,
-    construction, decide, into_slot, lay_out, machine_type, not_lowered, out_slot,
-    text_in_the_object,
+    Construction, Constructors, Declared, Emitting, Lowered, POINTER, TRUSTED, construction,
+    decide, into_slot, lay_out, machine_type, not_lowered, out_slot,
 };
 use cranelift::codegen::ir::condcodes::IntCC;
 use cranelift::codegen::ir::{self, InstBuilder, types};
@@ -123,7 +123,7 @@ impl Reading<'_, '_> {
     }
 
     fn literal(&mut self, text: &str) -> Lowered<ir::Value> {
-        text_in_the_object(self.builder, self.module, self.literals, text)
+        self.literals.address(self.builder, self.module, text)
     }
 
     /// The place `step` below `path`.
