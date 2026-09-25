@@ -23,7 +23,7 @@
 use super::{Codecs, Runtime};
 use crate::transport::{AlternativesForm, Case, CodecShape, Declaration, Field, Prim};
 use crate::{
-    Construction, Constructors, Declared, Emitting, Literals, Lowered, POINTER, TRUSTED,
+    Construction, Constructors, Decision, Declared, Emitting, Literals, Lowered, POINTER, TRUSTED,
     construction, into_slot, lay_out, machine_type, not_lowered, out_slot, text_in_the_object,
 };
 use cranelift::codegen::ir::condcodes::IntCC;
@@ -436,30 +436,21 @@ impl Reading<'_, '_> {
             );
         }
         let checked = self.constructors.checked(key)?;
-        let reaching = self.module.declare_func_in_func(checked, self.builder.func);
-        let value_room = out_slot(self.builder);
-        let clause_room = out_slot(self.builder);
-        let mut given = fields.to_vec();
-        given.push(value_room);
-        given.push(clause_room);
-        let call = self.builder.ins().call(reaching, &given);
-        let status = self.builder.inst_results(call)[0];
-        self.forward(status);
+        let decision = Decision::of(self.builder, self.module, checked, fields);
+        self.forward(decision.status);
 
-        let clause = self.builder.ins().load(types::I64, TRUSTED, clause_room, 0);
+        let (clause, every_clause_held) = decision.clause(self.builder);
         let broken = self.builder.create_block();
         let held = self.builder.create_block();
-        let breaks = self
-            .builder
+        self.builder
             .ins()
-            .icmp_imm_s(IntCC::SignedGreaterThanOrEqual, clause, 0);
-        self.builder.ins().brif(breaks, broken, &[], held, &[]);
+            .brif(every_clause_held, held, &[], broken, &[]);
 
         self.builder.switch_to_block(broken);
         self.broken(declaration, clause, path)?;
 
         self.builder.switch_to_block(held);
-        Ok(self.builder.ins().load(POINTER, TRUSTED, value_room, 0))
+        Ok(decision.value(self.builder))
     }
 
     /// Records that the clause at `clause` among `declaration`'s did not hold of the value at

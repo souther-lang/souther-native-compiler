@@ -18,7 +18,7 @@ use serde::Deserialize;
 
 /// What this side reads. A document written to say anything else is refused rather than read as
 /// much of as happens to parse.
-pub const TRANSPORT_VERSION: u32 = 16;
+pub const TRANSPORT_VERSION: u32 = 17;
 
 /// A document of [`TRANSPORT_VERSION`], and no other, read through [`Program::read`] and nothing
 /// else ([`crate::versioned`]).
@@ -272,6 +272,12 @@ pub enum Declaration {
         /// built by its own build's object, and a construction here calls that.
         #[serde(default)]
         invariants: Option<Vec<Invariant>>,
+        /// What each of those clauses is answered under, in the same order, where another build
+        /// runs them: carried for a declaration on the path and for no other. What a clause says
+        /// is that build's, and which clause did not hold is what that build's object answers, so
+        /// this is what an arm naming the clause is matched to here.
+        #[serde(default)]
+        headers: Option<Vec<Header>>,
     },
     /// One value under another name: one field, and not a list of them that happens to hold one.
     Newtype {
@@ -281,6 +287,8 @@ pub enum Declaration {
         field: Field,
         #[serde(default)]
         invariants: Option<Vec<Invariant>>,
+        #[serde(default)]
+        headers: Option<Vec<Header>>,
     },
     /// One value, and naming it is that value: no field, and no clause, since there is nothing
     /// for one to observe.
@@ -368,6 +376,33 @@ impl Declaration {
                 invariants.as_deref()
             }
             Declaration::Unit { .. } | Declaration::Sum { .. } => Some(&[]),
+        }
+    }
+
+    /// What each clause a value of this owes is answered under, in the order a construction runs
+    /// them, whichever build runs them: read off the clauses where this build runs them and off
+    /// the headers where another does. `None` for a clause its author gave no name. None for a
+    /// unit or a sum.
+    ///
+    /// The place of a name here is the place the object that runs the clauses answers when that
+    /// clause does not hold, which is what makes it the one list an arm is matched against.
+    pub fn clause_names(&self) -> Vec<Option<&str>> {
+        match self {
+            Declaration::Product {
+                invariants,
+                headers,
+                ..
+            }
+            | Declaration::Newtype {
+                invariants,
+                headers,
+                ..
+            } => match (invariants, headers) {
+                (Some(invariants), _) => invariants.iter().map(|it| it.name.as_deref()).collect(),
+                (None, Some(headers)) => headers.iter().map(|it| it.name.as_deref()).collect(),
+                (None, None) => Vec::new(),
+            },
+            Declaration::Unit { .. } | Declaration::Sum { .. } => Vec::new(),
         }
     }
 }
@@ -1126,6 +1161,14 @@ pub struct Invariant {
     pub condition: Node,
 }
 
+/// The name one clause of a declaration another build runs is answered under, where its author
+/// gave one, and nothing of what the clause says.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Header {
+    pub name: Option<String>,
+}
+
 /// Which case a name is: one a module declares, a primitive standing as a case, or one the
 /// language gives. The identity only — how a case is written is read off what it reaches.
 #[derive(Debug, Deserialize, PartialEq, Eq, Hash, Clone)]
@@ -1466,6 +1509,25 @@ pub enum Node {
         ty: Ty,
         aborts: Vec<AbortKind>,
     },
+    /// An attempted construction: the fields worked out as a construction's are, and which way the
+    /// run goes decided by the declaration's clauses. Where every clause holds, the value is bound
+    /// under `binding` at `binds` and `then` answers; where one does not, the departure answering
+    /// that clause does.
+    ///
+    /// Its own node and not a [`Node::Construct`] under a fork: a construction ends the run where a
+    /// clause does not hold, and this never does, so a walk that met a construction here would be
+    /// told something this is not. `type` is what the branches join at, and not what is built.
+    Attempt {
+        declared: String,
+        values: Vec<Node>,
+        binding: usize,
+        binds: Ty,
+        then: Box<Node>,
+        departures: Vec<Departure>,
+        #[serde(rename = "type")]
+        ty: Ty,
+        aborts: Vec<AbortKind>,
+    },
     Field {
         target: Box<Node>,
         field: String,
@@ -1560,6 +1622,16 @@ pub enum Node {
         ty: Ty,
         aborts: Vec<AbortKind>,
     },
+}
+
+/// One departure of a [`Node::Attempt`]: the clause it answers, by the name the clause is answered
+/// under, and what the run answers when that clause does not hold. A departure naming no clause
+/// answers every clause no other departure names.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Departure {
+    pub clause: Option<String>,
+    pub body: Node,
 }
 
 /// One parameter of a [`Node::Block`], numbered the way any other binder on the wire is: where it
@@ -1850,6 +1922,17 @@ impl Node {
                 ty,
                 aborts: _,
             } => vec![ty, binds],
+            Node::Attempt {
+                declared: _,
+                values: _,
+                binding: _,
+                binds,
+                then: _,
+                // A departure carries no type of its own: its body stands at the attempt's.
+                departures: _,
+                ty,
+                aborts: _,
+            } => vec![ty, binds],
             Node::Match {
                 subject: _,
                 arms,
@@ -1888,6 +1971,7 @@ impl Node {
             | Node::If { aborts, .. }
             | Node::Unit { aborts, .. }
             | Node::Construct { aborts, .. }
+            | Node::Attempt { aborts, .. }
             | Node::Field { aborts, .. }
             | Node::Match { aborts, .. }
             | Node::Some { aborts, .. }
@@ -1905,7 +1989,9 @@ impl Node {
     /// Whether a node of this kind is one the checker ever gives a reason to end a run without a
     /// value: arithmetic and negation over a number, a construction of a type that states a
     /// clause, and a call to a kernel. Every other kind is total in itself, and what a call to a
-    /// behavior, a helper or a value ends with is the callee's own.
+    /// behavior, a helper or a value ends with is the callee's own. An attempted construction is
+    /// total too: a clause that does not hold takes a departure, and what a clause ends with where
+    /// it does not answer is that clause's own, as a callee's is.
     ///
     /// Asked of what decides it and not of the kind alone: a binary operator by which operator it
     /// is, since a comparison, a truth operator and a join end no run and arithmetic may, and a call
@@ -1934,6 +2020,7 @@ impl Node {
             | Node::Let { .. }
             | Node::If { .. }
             | Node::Unit { .. }
+            | Node::Attempt { .. }
             | Node::Field { .. }
             | Node::Match { .. }
             | Node::Some { .. }
@@ -1960,6 +2047,16 @@ impl Node {
                 cond, then, els, ..
             } => vec![cond, then, els],
             Node::Construct { values, .. } => values.iter().collect(),
+            Node::Attempt {
+                values,
+                then,
+                departures,
+                ..
+            } => values
+                .iter()
+                .chain(std::iter::once(then.as_ref()))
+                .chain(departures.iter().map(|departure| &departure.body))
+                .collect(),
             Node::Field { target, .. } => vec![target],
             Node::Match { subject, arms, .. } => std::iter::once(subject.as_ref())
                 .chain(arms.iter().map(|arm| &arm.body))
@@ -1992,9 +2089,43 @@ impl Node {
     /// Asked here, once, by everything that has to know what a body builds — which constructors an
     /// object defines and which it reaches — so that what counts as building a value is not a list
     /// of kinds each of them keeps.
+    ///
+    /// Not an attempted construction, which reaches what decides a construction and never the
+    /// constructor ([`Node::attempts`]).
     pub fn builds(&self) -> Option<&str> {
         match self {
             Node::Construct { declared, .. } | Node::Unit { declared, .. } => Some(declared),
+            Node::Attempt { .. }
+            | Node::Int { .. }
+            | Node::Read { .. }
+            | Node::Bool { .. }
+            | Node::Str { .. }
+            | Node::Binary { .. }
+            | Node::Neg { .. }
+            | Node::Let { .. }
+            | Node::If { .. }
+            | Node::Field { .. }
+            | Node::Match { .. }
+            | Node::Some { .. }
+            | Node::None { .. }
+            | Node::Tuple { .. }
+            | Node::Member { .. }
+            | Node::List { .. }
+            | Node::Call { .. }
+            | Node::Block { .. }
+            | Node::Apply { .. }
+            | Node::Widen { .. } => None,
+        }
+    }
+
+    /// The declaration this node attempts to build a value of, where it attempts one.
+    ///
+    /// Apart from [`Node::builds`] because the two reach different functions of the declaring
+    /// object: a construction its constructor, which ends the run where a clause does not hold,
+    /// and an attempt what decides a construction, which answers which clause did not.
+    pub fn attempts(&self) -> Option<&str> {
+        match self {
+            Node::Attempt { declared, .. } => Some(declared),
             Node::Int { .. }
             | Node::Read { .. }
             | Node::Bool { .. }
@@ -2003,6 +2134,8 @@ impl Node {
             | Node::Neg { .. }
             | Node::Let { .. }
             | Node::If { .. }
+            | Node::Unit { .. }
+            | Node::Construct { .. }
             | Node::Field { .. }
             | Node::Match { .. }
             | Node::Some { .. }
@@ -2042,6 +2175,7 @@ impl Node {
             | Node::If { ty, .. }
             | Node::Unit { ty, .. }
             | Node::Construct { ty, .. }
+            | Node::Attempt { ty, .. }
             | Node::Field { ty, .. }
             | Node::Match { ty, .. }
             | Node::Some { ty, .. }
