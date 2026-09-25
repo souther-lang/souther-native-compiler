@@ -30,19 +30,19 @@ use cranelift::codegen::ir::{
 use cranelift::codegen::isa::{CallConv, TargetFrontendConfig};
 use cranelift::codegen::settings::{self, Configurable};
 use cranelift::codegen::{Context, ir};
-use cranelift::frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
+use cranelift::frontend::{FunctionBuilder, FunctionBuilderContext, Switch, Variable};
 use cranelift::module::{DataDescription, DataId, FuncId, Linkage, Module, default_libcall_names};
 use cranelift::object::{ObjectBuilder, ObjectModule};
 use interface::Surface;
 use kernels::LoweredKernel;
 use souther_native_abi::{
     ALLOCATE, ANSWERED, CARRIED, HELD, HOST_STATUSES, INJECTION_EXCHANGE, INJECTION_GET,
-    LIST_LENGTH, NOTHING, Parameter, SLOT, STRING_CODE_POINTS, STRING_COMPARE, STRING_CONCAT,
-    Status, TEXT_BYTES, TEXT_LENGTH, TOKEN, WHICH, Word, behavior_symbol, boundary_symbol,
-    built_in_case_symbol, constructor_symbol, example_symbol, field_at, generated_call,
-    held_symbol, home_symbol, list_at, member_at, room_for_carried, room_for_fields, room_for_held,
-    room_for_list, room_for_members, room_for_text, spells_a_module, spells_a_name, type_symbol,
-    value_symbol,
+    LIST_LENGTH, NO_FAILED_CLAUSE, NOTHING, Parameter, SLOT, STRING_CODE_POINTS, STRING_COMPARE,
+    STRING_CONCAT, Status, TEXT_BYTES, TEXT_LENGTH, TOKEN, WHICH, Word, behavior_symbol,
+    boundary_symbol, built_in_case_symbol, checked_constructor_symbol, constructor_symbol,
+    example_symbol, field_at, generated_call, held_symbol, home_symbol, list_at, member_at,
+    room_for_carried, room_for_fields, room_for_held, room_for_list, room_for_members,
+    room_for_text, spells_a_module, spells_a_name, type_symbol, value_symbol,
 };
 use specialize::{Instance, InstanceId, Specializations};
 use std::cell::RefCell;
@@ -51,9 +51,9 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 use transport::{
-    AbortKind, AlternativesForm, Arm, Carrier, Case, Declaration, DeclaredBy, Definition, Ensures,
-    Guard, LanguageCase, Node, Op, Owner, Prim, Program, Publication, Reaches, Reading, Routing,
-    Selects, Stage, Target, Ty,
+    AbortKind, AlternativesForm, Arm, Carrier, Case, Declaration, DeclaredBy, Definition,
+    Departures, Ensures, Guard, LanguageCase, Node, Op, Owner, Prim, Program, Publication, Reaches,
+    Reading, Routing, Selects, Stage, Target, Ty,
 };
 
 /// A fork that ran out of arms, which is this compiler having emitted the wrong test rather than
@@ -467,9 +467,12 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
         let symbol = constructor_symbol(declaration.module(), declaration.name());
         let id = accepted(module.declare_function(&symbol, linkage, &signature));
         index::unique(&mut constructors.by_key, key.to_string(), id);
+        // Reached from another build exactly where the constructor is: an attempted construction
+        // there asks this which clause the constructor would have ended the run for.
+        let symbol = checked_constructor_symbol(declaration.module(), declaration.name());
         let checked = accepted(module.declare_function(
-            &format!("$checked${key}"),
-            Linkage::Local,
+            &symbol,
+            linkage,
             &checked_signature(declaration, call_conv)?,
         ));
         index::unique(&mut constructors.checked, key.to_string(), checked);
@@ -496,6 +499,30 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
         let symbol = constructor_symbol(declaration.module(), declaration.name());
         let id = accepted(module.declare_function(&symbol, Linkage::Import, &signature));
         index::unique(&mut constructors.by_key, key.to_string(), id);
+    }
+    // What decides a construction of each declaration a body here attempts, reached the way its
+    // constructor is: defined above where this object builds the declaration, and named here where
+    // a module on the path declares it.
+    for key in runs.attempts() {
+        let declaration = declared.laid(key);
+        match declaration.by() {
+            DeclaredBy::AModule => continue,
+            DeclaredBy::OnThePath => {}
+            DeclaredBy::TheLanguage => unreachable!(
+                "`Declared` held that the language declares only sums and units, and neither is \
+                 attempted"
+            ),
+        }
+        for field in declaration.fields() {
+            crosses_object(
+                &format!("{key}, attempted through the build that declares it, takes"),
+                &field.codec.ty(),
+            )?;
+        }
+        let signature = checked_signature(declaration, call_conv)?;
+        let symbol = checked_constructor_symbol(declaration.module(), declaration.name());
+        let id = accepted(module.declare_function(&symbol, Linkage::Import, &signature));
+        index::unique(&mut constructors.checked, key.to_string(), id);
     }
 
     // Every function is declared before any is defined, because a body may reach one written
@@ -1372,21 +1399,46 @@ impl<'a> Declared<'a> {
                     )
                 })?;
             }
-            // A declaration's clauses cross exactly where this build is the one that runs them.
-            if let Declaration::Product { invariants, .. } | Declaration::Newtype { invariants, .. } =
-                declaration
-                && invariants.is_some() != (declaration.by() == DeclaredBy::AModule)
+            // A declaration's clauses cross exactly where this build is the one that runs them, and
+            // what they are answered under exactly where another build is.
+            if let Declaration::Product {
+                invariants,
+                headers,
+                ..
+            }
+            | Declaration::Newtype {
+                invariants,
+                headers,
+                ..
+            } = declaration
             {
-                bail!(
-                    "{key} is declared by {:?} and its clauses {} carried: they cross for a \
-                     declaration this build builds and for no other",
-                    declaration.by(),
-                    if invariants.is_some() {
-                        "are"
-                    } else {
-                        "are not"
-                    }
-                );
+                let are = |carried: bool| if carried { "are" } else { "are not" };
+                if invariants.is_some() != (declaration.by() == DeclaredBy::AModule) {
+                    bail!(
+                        "{key} is declared by {:?} and its clauses {} carried: they cross for a \
+                         declaration this build builds and for no other",
+                        declaration.by(),
+                        are(invariants.is_some())
+                    );
+                }
+                if headers.is_some() != (declaration.by() == DeclaredBy::OnThePath) {
+                    bail!(
+                        "{key} is declared by {:?} and what its clauses are answered under {} \
+                         carried apart from them: that crosses for a declaration another build \
+                         builds and for no other",
+                        declaration.by(),
+                        are(headers.is_some())
+                    );
+                }
+            }
+            // A failure is answered by the name of the clause that did not hold, so two clauses
+            // under one name would be one arm for two rules, which the checker refuses
+            // (`checkClauseNames`) and an arm matched by the name would take for either.
+            let mut named = HashMap::new();
+            for name in declaration.clause_names().into_iter().flatten() {
+                index::once(&mut named, name, (), || {
+                    format!("{key} states two clauses both named {name}")
+                })?;
             }
             if let Declaration::Sum { cases, form, .. } = declaration {
                 declared.settled(&key, cases, form)?;
@@ -2696,7 +2748,8 @@ fn define_closure(
 struct Constructors {
     by_key: BTreeMap<String, FuncId>,
     /// What decides a construction of each declaration this object builds ([`define_checked`]),
-    /// which its constructor and its reader both call.
+    /// which its constructor, its reader and an attempted construction call, and of each one a
+    /// module on the path declares that a body here attempts.
     checked: BTreeMap<String, FuncId>,
 }
 
@@ -2711,11 +2764,12 @@ impl Constructors {
         })
     }
 
-    /// What decides a construction of `declared`, which this object builds.
+    /// What decides a construction of `declared`. None where the declaration is this build's and
+    /// holds something with no representation here, which is not lowered.
     fn checked(&self, declared: &str) -> Lowered<FuncId> {
         self.checked.get(declared).copied().ok_or_else(|| {
             not_lowered(format!(
-                "a value of {declared} read here, which this object does not build"
+                "a value of {declared}, whose fields have no representation here"
             ))
         })
     }
@@ -2730,7 +2784,8 @@ impl Constructors {
 /// the way the constructor of a type it publishes is. It builds one for a declaration a module of this compile declares, whose fields all have a
 /// representation here, wherever something may build a value of it through this object: another
 /// build or a host, where the module publishes it; a body here, through a call
-/// ([`Construction::Called`]); and a reader, where a value of a published type is read through it
+/// ([`Construction::Called`]) or an attempted construction ([`Node::attempts`]); and a reader,
+/// where a value of a published type is read through it
 /// ([`codec::reached_from`]). A declaration none of those reaches is read, and its clauses held to
 /// what the checker held them to, and nothing of it is run here: no value of it is built here to
 /// run a clause over, and the program is not refused for what nothing runs.
@@ -2756,6 +2811,9 @@ pub(crate) struct Runs<'p> {
 struct Reach<'p> {
     /// Every declaration a body here builds a value of by calling its constructor.
     calls: BTreeSet<&'p str>,
+    /// Every declaration a body here attempts to build a value of, through what decides a
+    /// construction of it and never its constructor.
+    attempts: BTreeSet<&'p str>,
     /// Every published value a call here reaches, by the module and the name the call names, with
     /// the answer type one of its call sites carries.
     ///
@@ -2778,6 +2836,18 @@ impl<'p> Reach<'p> {
                         if construction(declaration) == Construction::Called {
                             self.calls.insert(key);
                         }
+                    }
+                    Err(missing) => {
+                        if named.is_ok() {
+                            named = Err(missing);
+                        }
+                    }
+                }
+            }
+            if let Some(key) = node.attempts() {
+                match declared.shape(key) {
+                    Ok(_) => {
+                        self.attempts.insert(key);
                     }
                     Err(missing) => {
                         if named.is_ok() {
@@ -2841,6 +2911,7 @@ impl<'p> Runs<'p> {
                     && !matches!(declaration, Declaration::Sum { .. })
                     && (published.contains(&key)
                         || reach.calls.contains(key.as_str())
+                        || reach.attempts.contains(key.as_str())
                         || read.contains(&key))
                     && declaration
                         .fields()
@@ -2885,6 +2956,11 @@ impl<'p> Runs<'p> {
     /// Every declaration a body here builds a value of by calling its constructor.
     fn calls(&self) -> impl Iterator<Item = &'p str> + '_ {
         self.reach.calls.iter().copied()
+    }
+
+    /// Every declaration a body here attempts to build a value of.
+    fn attempts(&self) -> impl Iterator<Item = &'p str> + '_ {
+        self.reach.attempts.iter().copied()
     }
 
     /// Every published value a call here reaches, with the type it answers.
@@ -2964,14 +3040,17 @@ fn checked_signature(declaration: &Declaration, call_conv: CallConv) -> Lowered<
 /// One function for every way a value of the declaration is made, so there is one place what a
 /// value of the type is gets decided. The constructor a body or another build calls is this with
 /// its answer read as a status ([`define_constructor`]); a reader calls it directly, since a reader
-/// reports which clause did not hold and a status says only that one did not.
+/// reports which clause did not hold and a status says only that one did not; and an attempted
+/// construction calls it directly too, since it takes the arm that clause names. None of them runs
+/// a clause of its own, and each asks this through [`decide`].
 ///
 /// It takes the fields, room for the value and room for which clause did not hold, and answers a
-/// status. `ANSWERED` with the clause's room holding below nought is a value, written through its
-/// room. `ANSWERED` with the clause's room holding a clause's place among the declaration's, counted
-/// from nought, is that clause not holding, and nothing after it runs and nothing is laid out. A
-/// clause that itself ends without a value, dividing by nought or leaving an `Int`'s range, ends
-/// the construction with that status instead: the clause did not answer false, it did not answer.
+/// status, as [`checked_constructor_symbol`] states. `ANSWERED` with the clause's room holding
+/// [`NO_FAILED_CLAUSE`] is a value, written through its room. `ANSWERED` with the clause's room
+/// holding a clause's place among the declaration's, counted from nought, is that clause not
+/// holding, and nothing after it runs and nothing is laid out. A clause that itself ends without a
+/// value, dividing by nought or leaving an `Int`'s range, ends the construction with that status
+/// instead: the clause did not answer false, it did not answer.
 ///
 /// A field is put under the binding its clauses read it through and not under where it sits, which
 /// is what lets a clause a spread took in read the field the declaration that wrote it named.
@@ -3056,7 +3135,7 @@ fn define_checked(
         &given,
     )?;
     builder.ins().store(TRUSTED, value, out, 0);
-    let none = builder.ins().iconst(types::I64, -1);
+    let none = builder.ins().iconst(types::I64, NO_FAILED_CLAUSE);
     builder.ins().store(TRUSTED, none, which_clause, 0);
     let ok = builder.ins().iconst(types::I32, i64::from(ANSWERED));
     builder.ins().return_(&[ok]);
@@ -3095,35 +3174,15 @@ fn define_constructor(
     let given = builder.block_params(entry).to_vec();
     let (fields, out) = given.split_at(fields);
 
-    let value_room = out_slot(&mut builder);
-    let clause_room = out_slot(&mut builder);
-    let mut arguments = fields.to_vec();
-    arguments.push(value_room);
-    arguments.push(clause_room);
-    let reaching = module.declare_func_in_func(checked, builder.func);
-    let called = builder.ins().call(reaching, &arguments);
-    let status = builder.inst_results(called)[0];
-
-    let answered = builder.create_block();
-    let not_answered = builder.create_block();
-    let is_answered = builder
-        .ins()
-        .icmp_imm_s(IntCC::Equal, status, i64::from(ANSWERED));
-    builder
-        .ins()
-        .brif(is_answered, answered, &[], not_answered, &[]);
-
-    builder.switch_to_block(not_answered);
-    builder.ins().return_(&[status]);
-
-    builder.switch_to_block(answered);
-    let clause = builder.ins().load(types::I64, TRUSTED, clause_room, 0);
+    let abort = builder.create_block();
+    builder.append_block_param(abort, types::I32);
     let broken = builder.create_block();
-    let held = builder.create_block();
-    let breaks = builder
-        .ins()
-        .icmp_imm_s(IntCC::SignedGreaterThanOrEqual, clause, 0);
-    builder.ins().brif(breaks, broken, &[], held, &[]);
+    builder.append_block_param(broken, types::I64);
+
+    let value = decide(&mut builder, module, checked, fields, abort, broken);
+    builder.ins().store(TRUSTED, value, out[0], 0);
+    let ok = builder.ins().iconst(types::I32, i64::from(ANSWERED));
+    builder.ins().return_(&[ok]);
 
     builder.switch_to_block(broken);
     let not_held = builder.ins().iconst(
@@ -3132,13 +3191,104 @@ fn define_constructor(
     );
     builder.ins().return_(&[not_held]);
 
-    builder.switch_to_block(held);
-    let value = builder.ins().load(POINTER, TRUSTED, value_room, 0);
-    builder.ins().store(TRUSTED, value, out[0], 0);
+    builder.switch_to_block(abort);
+    let status = builder.block_params(abort)[0];
     builder.ins().return_(&[status]);
 
     builder.seal_all_blocks();
     builder.finalize(frontend);
+}
+
+/// A construction from `fields` decided by `checked`, and the value where every clause held.
+///
+/// The one way [`define_checked`] is asked and its answer read, by the constructor, a reader and an
+/// attempted construction alike, so the order its answer is read in is written once: a status other
+/// than `ANSWERED` goes to `abort` as it came, since a clause that did not answer wrote nothing; a
+/// clause that did not hold goes to `broken`, with its place among the declaration's as that
+/// block's one parameter; and only then is the value read, in the block this leaves the builder in.
+/// A caller is never handed a room to read before the answer says what is in it.
+///
+/// `broken` is the caller's to fill and to seal.
+fn decide(
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    checked: FuncId,
+    fields: &[ir::Value],
+    abort: ir::Block,
+    broken: ir::Block,
+) -> ir::Value {
+    let value_room = out_slot(builder);
+    let clause_room = out_slot(builder);
+    let mut given = fields.to_vec();
+    given.push(value_room);
+    given.push(clause_room);
+    let reaching = module.declare_func_in_func(checked, builder.func);
+    let called = builder.ins().call(reaching, &given);
+    let status = builder.inst_results(called)[0];
+    forward_unless_answered(builder, abort, status);
+
+    let clause = builder.ins().load(types::I64, TRUSTED, clause_room, 0);
+    let every_clause_held = builder
+        .ins()
+        .icmp_imm_s(IntCC::Equal, clause, NO_FAILED_CLAUSE);
+    let held = builder.create_block();
+    builder
+        .ins()
+        .brif(every_clause_held, held, &[], broken, &[clause.into()]);
+    builder.seal_block(held);
+    builder.switch_to_block(held);
+    builder.ins().load(POINTER, TRUSTED, value_room, 0)
+}
+
+/// Which of an attempted construction's departures answers each clause of the declaration it
+/// attempts, by the clause's place, as a place among [`Departures::bodies`].
+///
+/// The checker's rule, as `checkArmsAnswerClauses` states it, and the one statement of it here:
+/// [`Coherent`] holds a document to it and the lowering reads which way to go from it, so the two
+/// cannot come apart. One value for any failure answers every clause. Otherwise each clause with a
+/// name is answered by the arm naming it and by no other, and the clauses with no name by the arm
+/// naming none; an arm naming a clause the declaration does not state, two naming one clause, a
+/// clause no arm answers, and an arm naming none where every clause has a name are each refused.
+/// So the arm naming none never answers a clause with a name.
+///
+/// By the place and not the name, because the place is what the object running the clauses
+/// answers; the names are only what an author wrote an arm against, and nothing at run time reads
+/// them.
+pub(crate) fn departures_taken(
+    clauses: &[Option<&str>],
+    departures: &Departures,
+) -> Result<Vec<usize>> {
+    let (named, unnamed) = match departures {
+        Departures::Any(_) => return Ok(vec![0; clauses.len()]),
+        Departures::ByClause { named, unnamed } => (named, unnamed),
+    };
+    let mut arms: HashMap<&str, usize> = HashMap::new();
+    for (at, (name, _)) in named.iter().enumerate() {
+        if !clauses.contains(&Some(name.as_str())) {
+            bail!("a departure answers the clause {name}, which it does not state");
+        }
+        index::once(&mut arms, name.as_str(), at, || {
+            format!("two departures answer the clause {name}")
+        })?;
+    }
+    // Where it stands among the bodies: after every arm naming a clause.
+    let unnamed = unnamed.as_ref().map(|_| named.len());
+    if unnamed.is_some() && !clauses.contains(&None) {
+        bail!("a departure answers the clauses that have no name, and every clause has one");
+    }
+    clauses
+        .iter()
+        .enumerate()
+        .map(|(place, clause)| match clause {
+            Some(name) => arms
+                .get(name)
+                .copied()
+                .ok_or_else(|| anyhow!("its clause {name} is answered by no departure")),
+            None => unnamed.ok_or_else(|| {
+                anyhow!("its clause {place}, which has no name, is answered by no departure")
+            }),
+        })
+        .collect()
 }
 
 /// A value of `declared` built from `fields`, the way [`construction`] says one is made where it
@@ -3832,6 +3982,75 @@ fn lower(
                 given.push(lower(builder, lowering, module, bindings, abort, value)?);
             }
             construct(builder, lowering, module, abort, declared, &given)?
+        }
+        // The fields as a construction works them out, and then what decides a construction of the
+        // type asked, which is the declaring object's: nothing here runs a clause or knows what one
+        // says. Where every clause held the value is bound for `then`; where one did not, the
+        // departure answering that clause answers, chosen by the clause's place
+        // (`departures_taken`). A clause that did not answer at all ends the run as it ended the
+        // decision.
+        Node::Attempt {
+            declared,
+            values,
+            binding,
+            binds,
+            then,
+            departures,
+            ty,
+            ..
+        } => {
+            let mut given = Vec::with_capacity(values.len());
+            for value in values {
+                given.push(lower(builder, lowering, module, bindings, abort, value)?);
+            }
+            let checked = lowering.constructors.checked(declared)?;
+            let taken =
+                departures_taken(&lowering.declared.laid(declared).clause_names(), departures)
+                    .expect("`Coherent` held every clause of what is attempted to one departure");
+            let answers = machine_type(ty)?;
+            let after = builder.create_block();
+            builder.append_block_param(after, answers);
+            let departing = builder.create_block();
+            builder.append_block_param(departing, types::I64);
+
+            let built = decide(builder, module, checked, &given, abort, departing);
+            let variable = builder.declare_var(machine_type(binds)?);
+            builder.def_var(variable, built);
+            bindings.at(*binding, variable);
+            let answered = lower(builder, lowering, module, bindings, abort, then);
+            bindings.leave(*binding);
+            builder.ins().jump(after, &[answered?.into()]);
+
+            builder.seal_block(departing);
+            builder.switch_to_block(departing);
+            let clause = builder.block_params(departing)[0];
+            let bodies = departures.bodies();
+            let arms: Vec<ir::Block> = bodies.iter().map(|_| builder.create_block()).collect();
+            let astray = builder.create_block();
+            let mut which = Switch::new();
+            for (place, &departure) in taken.iter().enumerate() {
+                which.set_entry(place as u128, arms[departure]);
+            }
+            which.emit(builder, clause, astray);
+
+            // A place no clause of the declaration has, which the object that ran the clauses and
+            // this one's copy of their names disagreeing about how many there are would reach.
+            builder.seal_block(astray);
+            builder.switch_to_block(astray);
+            builder
+                .ins()
+                .trap(TrapCode::user(NO_ARM).expect("a trap code of its own"));
+
+            for (body, arm) in bodies.into_iter().zip(arms) {
+                builder.seal_block(arm);
+                builder.switch_to_block(arm);
+                let answered = lower(builder, lowering, module, bindings, abort, body)?;
+                builder.ins().jump(after, &[answered.into()]);
+            }
+
+            builder.seal_block(after);
+            builder.switch_to_block(after);
+            builder.block_params(after)[0]
         }
         Node::Field {
             target, field, ty, ..

@@ -24,7 +24,8 @@ use super::{Codecs, Runtime};
 use crate::transport::{AlternativesForm, Case, CodecShape, Declaration, Field, Prim};
 use crate::{
     Construction, Constructors, Declared, Emitting, Literals, Lowered, POINTER, TRUSTED,
-    construction, into_slot, lay_out, machine_type, not_lowered, out_slot, text_in_the_object,
+    construction, decide, into_slot, lay_out, machine_type, not_lowered, out_slot,
+    text_in_the_object,
 };
 use cranelift::codegen::ir::condcodes::IntCC;
 use cranelift::codegen::ir::{self, InstBuilder, types};
@@ -436,30 +437,30 @@ impl Reading<'_, '_> {
             );
         }
         let checked = self.constructors.checked(key)?;
-        let reaching = self.module.declare_func_in_func(checked, self.builder.func);
-        let value_room = out_slot(self.builder);
-        let clause_room = out_slot(self.builder);
-        let mut given = fields.to_vec();
-        given.push(value_room);
-        given.push(clause_room);
-        let call = self.builder.ins().call(reaching, &given);
-        let status = self.builder.inst_results(call)[0];
-        self.forward(status);
-
-        let clause = self.builder.ins().load(types::I64, TRUSTED, clause_room, 0);
         let broken = self.builder.create_block();
+        self.builder.append_block_param(broken, types::I64);
+        let value = decide(
+            self.builder,
+            self.module,
+            checked,
+            fields,
+            self.abort,
+            broken,
+        );
+        // Where every clause held is left for the rest of the reading, which goes on past what a
+        // clause that did not hold records.
         let held = self.builder.create_block();
-        let breaks = self
-            .builder
-            .ins()
-            .icmp_imm_s(IntCC::SignedGreaterThanOrEqual, clause, 0);
-        self.builder.ins().brif(breaks, broken, &[], held, &[]);
+        self.builder.append_block_param(held, POINTER);
+        self.builder.ins().jump(held, &[value.into()]);
 
+        self.builder.seal_block(broken);
         self.builder.switch_to_block(broken);
+        let clause = self.builder.block_params(broken)[0];
         self.broken(declaration, clause, path)?;
 
+        self.builder.seal_block(held);
         self.builder.switch_to_block(held);
-        Ok(self.builder.ins().load(POINTER, TRUSTED, value_room, 0))
+        Ok(self.builder.block_params(held)[0])
     }
 
     /// Records that the clause at `clause` among `declaration`'s did not hold of the value at

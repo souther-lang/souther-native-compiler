@@ -229,6 +229,27 @@ impl<'p, 'a> Planner<'p, 'a> {
                     self.walk(value, bound, acc, seen)?;
                 }
             }
+            // What is built is bound where every clause held and nowhere else: the fields are
+            // worked out before it exists, and a departure is taken where it never did.
+            Node::Attempt {
+                values,
+                binding,
+                then,
+                departures,
+                ..
+            } => {
+                for value in values {
+                    self.walk(value, bound, acc, seen)?;
+                }
+                let added = bound.insert(*binding);
+                self.walk(then, bound, acc, seen)?;
+                if added {
+                    bound.remove(binding);
+                }
+                for body in departures.bodies() {
+                    self.walk(body, bound, acc, seen)?;
+                }
+            }
             Node::Field { target, .. } => self.walk(target, bound, acc, seen)?,
             Node::Some { value, .. } => self.walk(value, bound, acc, seen)?,
             Node::Tuple { members, .. }
