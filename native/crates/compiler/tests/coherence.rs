@@ -2433,18 +2433,27 @@ fn field_of_r(binding: usize) -> String {
 
 /// `m.R` stating a named clause and one with no name, and a helper attempting it.
 fn attempting(body: &str) -> String {
-    let counted = clause(Some("counted"), &at_least(&read(0, INT), &int(0)));
-    let unnamed = clause(None, &at_least(&int(100), &read(0, INT)));
+    attempting_under(&[Some("counted"), None], body)
+}
+
+/// `m.R` stating one clause for each of `names`, under that name or none, and a helper attempting
+/// it.
+fn attempting_under(names: &[Option<&str>], body: &str) -> String {
+    let clauses: Vec<String> = names
+        .iter()
+        .map(|name| clause(*name, &at_least(&read(0, INT), &int(0))))
+        .collect();
     with_clauses(
         &field("count", 0, "INT"),
-        &[counted, unnamed].join(","),
+        &clauses.join(","),
         &[h(&[INT], body)],
     )
 }
 
-/// Every clause of what is attempted is answered by one departure: the one naming it, or the one
-/// naming none. A departure naming what the type does not state, two answering one clause, and a
-/// clause nothing answers are each a document the checker could not have written.
+/// Every clause of what is attempted is answered by one departure, by the checker's rule: each
+/// clause with a name by the arm naming it, and the clauses with no name by the arm naming none. A
+/// departure naming what the type does not state, two answering one clause, and a clause nothing
+/// answers are each a document the checker could not have written.
 #[test]
 fn every_clause_of_what_is_attempted_is_answered_by_one_departure() {
     let minus = |n: i64| node("int", &format!(r#""value":{}"#, -n), INT);
@@ -2457,8 +2466,6 @@ fn every_clause_of_what_is_attempted_is_answered_by_one_departure() {
         (None, &minus(2)),
         (Some("counted"), &minus(1)),
     ])));
-    // One departure naming no clause answers every one of them.
-    reads_whole(&attempting(&attempted(&[(None, &minus(2))])));
 
     is_the_halves_disagreeing(
         &attempting(&attempted(&[(Some("roomy"), &minus(1)), (None, &minus(2))])),
@@ -2473,12 +2480,80 @@ fn every_clause_of_what_is_attempted_is_answered_by_one_departure() {
         "two departures answer the clause counted",
     );
     is_the_halves_disagreeing(
-        &attempting(&attempted(&[(None, &minus(1)), (None, &minus(2))])),
-        "two departures answer every clause",
+        &attempting(&attempted(&[
+            (Some("counted"), &minus(1)),
+            (None, &minus(2)),
+            (None, &minus(3)),
+        ])),
+        "two departures answer the clauses that have no name",
     );
     is_the_halves_disagreeing(
         &attempting(&attempted(&[(Some("counted"), &minus(1))])),
         "its clause 1, which has no name, is answered by no departure",
+    );
+}
+
+/// The arm naming no clause answers the clauses with no name and nothing else, where arms name
+/// clauses beside it: a clause with a name that no arm names is not answered by it, and where every
+/// clause has a name it answers nothing. Both are refused by the checker (E2015, E2017), and read
+/// as an arm to fall back on they would be run.
+#[test]
+fn the_arm_naming_no_clause_answers_only_the_clauses_with_no_name() {
+    let minus = |n: i64| node("int", &format!(r#""value":{}"#, -n), INT);
+    let two_named_and_one_not = [Some("a"), Some("b"), None];
+    is_the_halves_disagreeing(
+        &attempting_under(
+            &two_named_and_one_not,
+            &attempted(&[(Some("a"), &minus(1)), (None, &minus(3))]),
+        ),
+        "its clause b is answered by no departure",
+    );
+    reads_whole(&attempting_under(
+        &two_named_and_one_not,
+        &attempted(&[
+            (Some("a"), &minus(1)),
+            (Some("b"), &minus(2)),
+            (None, &minus(3)),
+        ]),
+    ));
+
+    let every_one_named = [Some("a"), Some("b")];
+    is_the_halves_disagreeing(
+        &attempting_under(
+            &every_one_named,
+            &attempted(&[
+                (Some("a"), &minus(1)),
+                (Some("b"), &minus(2)),
+                (None, &minus(3)),
+            ]),
+        ),
+        "every clause has one",
+    );
+    reads_whole(&attempting_under(
+        &every_one_named,
+        &attempted(&[(Some("a"), &minus(1)), (Some("b"), &minus(2))]),
+    ));
+}
+
+/// One departure naming no clause is one value for any failure, which is what `else e` and a lone
+/// `| _ -> e` both are to the checker: it answers every clause, named or not.
+#[test]
+fn one_departure_naming_no_clause_answers_every_clause() {
+    let minus = |n: i64| node("int", &format!(r#""value":{}"#, -n), INT);
+    reads_whole(&attempting(&attempted(&[(None, &minus(2))])));
+    reads_whole(&attempting_under(
+        &[Some("a"), Some("b")],
+        &attempted(&[(None, &minus(2))]),
+    ));
+}
+
+/// Two clauses of one declaration under one name would be one arm for two rules, which the checker
+/// refuses.
+#[test]
+fn a_declaration_states_each_clause_name_once() {
+    is_the_halves_disagreeing(
+        &attempting_under(&[Some("a"), Some("a")], &int(0)),
+        "states two clauses both named a",
     );
 }
 

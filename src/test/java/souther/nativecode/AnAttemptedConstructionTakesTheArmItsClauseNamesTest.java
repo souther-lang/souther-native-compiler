@@ -25,7 +25,7 @@ class AnAttemptedConstructionTakesTheArmItsClauseNamesTest {
     private static final long MOST = Long.MAX_VALUE;
 
     private static final String SOURCE = """
-            module attempting exposing ( measured, reordered, narrowed, anyway )
+            module attempting exposing ( measured, reordered, narrowed, anyway, lumped )
 
             data Span = { lo: Int, hi: Int }
                 invariant ordered = lo <= hi
@@ -62,6 +62,12 @@ class AnAttemptedConstructionTakesTheArmItsClauseNamesTest {
                 s.hi - s.lo
             }
 
+            behavior lumped : (lo: Int, hi: Int) -> Int
+            let lumped (lo, hi) = {
+                guard Span { lo = lo, hi = hi } as s else | _ -> 0
+                s.hi - s.lo
+            }
+
             example measured
                 | "built" : (1, 5) -> 4
                 | "out of order" : (5, 1) -> -1
@@ -78,6 +84,11 @@ class AnAttemptedConstructionTakesTheArmItsClauseNamesTest {
                 | "too wide" : (0, 500) -> -3
 
             example anyway
+                | "built" : (1, 5) -> 4
+                | "out of order" : (5, 1) -> 0
+                | "no room" : (3, 3) -> 0
+
+            example lumped
                 | "built" : (1, 5) -> 4
                 | "out of order" : (5, 1) -> 0
                 | "no room" : (3, 3) -> 0
@@ -110,12 +121,17 @@ class AnAttemptedConstructionTakesTheArmItsClauseNamesTest {
         assertThat(ran("narrowed", 5, 1)).isEqualTo(answered(-1));
     }
 
-    /** One {@code else} answers every clause. */
+    /**
+     * One {@code else} answers every clause, and so does a {@code | _ ->} on its own, which the
+     * language reads as the same thing even where every clause has a name.
+     */
     @Test
     void oneElseAnswersEveryClause() throws Exception {
-        assertThat(ran("anyway", 5, 1)).isEqualTo(answered(0));
-        assertThat(ran("anyway", 3, 3)).isEqualTo(answered(0));
-        assertThat(ran("anyway", 1, 5)).isEqualTo(answered(4));
+        for (String behavior : List.of("anyway", "lumped")) {
+            assertThat(ran(behavior, 5, 1)).as(behavior).isEqualTo(answered(0));
+            assertThat(ran(behavior, 3, 3)).as(behavior).isEqualTo(answered(0));
+            assertThat(ran(behavior, 1, 5)).as(behavior).isEqualTo(answered(4));
+        }
     }
 
     /**

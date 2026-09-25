@@ -170,8 +170,9 @@ which clause did not hold, as its place among the type's, beside the status. The
 that place into `InvariantNotHeld`, a reader into an issue at the value's path, and an attempted
 construction into the arm naming the clause: `guard PendingItem { ... } as pending else |
 withinCapacity -> CartFull` builds the value and goes on where every clause holds, and answers
-`CartFull` where `withinCapacity` does not. An arm naming no clause answers every clause no other
-arm names, and a clause that itself ends without a value still ends the run. The deciding function
+`CartFull` where `withinCapacity` does not. `else e` on its own answers every clause; beside arms
+naming clauses, `| _ ->` answers the clauses that have no name and no other, as the checker holds
+it. A clause that itself ends without a value still ends the run. The deciding function
 is the declaring build's too, reached from another build under a symbol of its own, so an attempt of
 a type another build declares runs that build's clauses and takes its arm here. What crosses to the
 attempting build is what each clause is answered under, in the order the clauses run, and nothing

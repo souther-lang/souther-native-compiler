@@ -1511,8 +1511,8 @@ pub enum Node {
     },
     /// An attempted construction: the fields worked out as a construction's are, and which way the
     /// run goes decided by the declaration's clauses. Where every clause holds, the value is bound
-    /// under `binding` at `binds` and `then` answers; where one does not, the departure answering
-    /// that clause does.
+    /// under `binding` at `binds` and `then` answers; where one does not, what `departures` says
+    /// answers that clause does.
     ///
     /// Its own node and not a [`Node::Construct`] under a fork: a construction ends the run where a
     /// clause does not hold, and this never does, so a walk that met a construction here would be
@@ -1523,7 +1523,7 @@ pub enum Node {
         binding: usize,
         binds: Ty,
         then: Box<Node>,
-        departures: Vec<Departure>,
+        departures: Departures,
         #[serde(rename = "type")]
         ty: Ty,
         aborts: Vec<AbortKind>,
@@ -1624,14 +1624,87 @@ pub enum Node {
     },
 }
 
-/// One departure of a [`Node::Attempt`]: the clause it answers, by the name the clause is answered
-/// under, and what the run answers when that clause does not hold. A departure naming no clause
-/// answers every clause no other departure names.
+/// What a [`Node::Attempt`] answers where a clause does not hold, in the one of the two forms the
+/// language has that it was written in.
+///
+/// Two forms and not one list with a catch-all, because the arm naming no clause means a different
+/// thing in each: on its own it answers every clause, and beside arms naming clauses it answers the
+/// clauses that have no name and nothing else. A list read one way for both is how an arm naming
+/// no clause came to answer a named clause no arm named.
+///
+/// The document writes the arms as the checker keeps them, a list, and which form the list is in
+/// is told here, where it is read, the way the checker tells it (`mapsClauses`): one arm naming no
+/// clause is the first form, and anything else the second.
+#[derive(Debug, Deserialize)]
+#[serde(try_from = "Vec<Departure>")]
+pub enum Departures {
+    /// `else e`, or `| _ -> e` on its own: one value for whichever clause did not hold.
+    Any(Box<Node>),
+    /// One arm per clause: an arm for each clause with a name, by that name, and the arm naming
+    /// none for the clauses with no name.
+    ByClause {
+        named: Vec<(String, Node)>,
+        unnamed: Option<Box<Node>>,
+    },
+}
+
+/// One departure of a [`Node::Attempt`] as the document writes it: the clause it answers, by the
+/// name the clause is answered under, or none, and what the run answers there.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Departure {
     pub clause: Option<String>,
     pub body: Node,
+}
+
+impl TryFrom<Vec<Departure>> for Departures {
+    type Error = String;
+
+    fn try_from(written: Vec<Departure>) -> Result<Self, Self::Error> {
+        if let [
+            Departure {
+                clause: None,
+                body: _,
+            },
+        ] = written.as_slice()
+        {
+            let only = written.into_iter().next().expect("one departure");
+            return Ok(Departures::Any(Box::new(only.body)));
+        }
+        if written.is_empty() {
+            return Err("an attempted construction departs nowhere".to_string());
+        }
+        let mut named = Vec::new();
+        let mut unnamed = None;
+        for departure in written {
+            match departure.clause {
+                Some(name) => named.push((name, departure.body)),
+                None => {
+                    if unnamed.replace(Box::new(departure.body)).is_some() {
+                        return Err(
+                            "two departures answer the clauses that have no name".to_string()
+                        );
+                    }
+                }
+            }
+        }
+        Ok(Departures::ByClause { named, unnamed })
+    }
+}
+
+impl Departures {
+    /// What each departure answers, in the order [`Node::children`] lists them: the arms naming a
+    /// clause as they were written, and then the one naming none.
+    pub fn bodies(&self) -> Vec<&Node> {
+        match self {
+            Departures::Any(body) => vec![body],
+            Departures::ByClause { named, unnamed } => named
+                .iter()
+                .map(|(_, body)| body)
+                .chain(unnamed.as_deref())
+                .collect(),
+        }
+    }
 }
 
 /// One parameter of a [`Node::Block`], numbered the way any other binder on the wire is: where it
@@ -2055,7 +2128,7 @@ impl Node {
             } => values
                 .iter()
                 .chain(std::iter::once(then.as_ref()))
-                .chain(departures.iter().map(|departure| &departure.body))
+                .chain(departures.bodies())
                 .collect(),
             Node::Field { target, .. } => vec![target],
             Node::Match { subject, arms, .. } => std::iter::once(subject.as_ref())

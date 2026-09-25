@@ -246,8 +246,8 @@ impl<'p, 'a> Planner<'p, 'a> {
                 if added {
                     bound.remove(binding);
                 }
-                for departure in departures {
-                    self.walk(&departure.body, bound, acc, seen)?;
+                for body in departures.bodies() {
+                    self.walk(body, bound, acc, seen)?;
                 }
             }
             Node::Field { target, .. } => self.walk(target, bound, acc, seen)?,

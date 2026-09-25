@@ -23,8 +23,9 @@
 use super::{Codecs, Runtime};
 use crate::transport::{AlternativesForm, Case, CodecShape, Declaration, Field, Prim};
 use crate::{
-    Construction, Constructors, Decision, Declared, Emitting, Literals, Lowered, POINTER, TRUSTED,
-    construction, into_slot, lay_out, machine_type, not_lowered, out_slot, text_in_the_object,
+    Construction, Constructors, Declared, Emitting, Literals, Lowered, POINTER, TRUSTED,
+    construction, decide, into_slot, lay_out, machine_type, not_lowered, out_slot,
+    text_in_the_object,
 };
 use cranelift::codegen::ir::condcodes::IntCC;
 use cranelift::codegen::ir::{self, InstBuilder, types};
@@ -436,21 +437,30 @@ impl Reading<'_, '_> {
             );
         }
         let checked = self.constructors.checked(key)?;
-        let decision = Decision::of(self.builder, self.module, checked, fields);
-        self.forward(decision.status);
-
-        let (clause, every_clause_held) = decision.clause(self.builder);
         let broken = self.builder.create_block();
+        self.builder.append_block_param(broken, types::I64);
+        let value = decide(
+            self.builder,
+            self.module,
+            checked,
+            fields,
+            self.abort,
+            broken,
+        );
+        // Where every clause held is left for the rest of the reading, which goes on past what a
+        // clause that did not hold records.
         let held = self.builder.create_block();
-        self.builder
-            .ins()
-            .brif(every_clause_held, held, &[], broken, &[]);
+        self.builder.append_block_param(held, POINTER);
+        self.builder.ins().jump(held, &[value.into()]);
 
+        self.builder.seal_block(broken);
         self.builder.switch_to_block(broken);
+        let clause = self.builder.block_params(broken)[0];
         self.broken(declaration, clause, path)?;
 
+        self.builder.seal_block(held);
         self.builder.switch_to_block(held);
-        Ok(decision.value(self.builder))
+        Ok(self.builder.block_params(held)[0])
     }
 
     /// Records that the clause at `clause` among `declaration`'s did not hold of the value at

@@ -50,7 +50,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use transport::{
     AbortKind, AlternativesForm, Arm, Carrier, Case, Declaration, DeclaredBy, Definition,
-    Departure, Ensures, Guard, LanguageCase, Node, Op, Owner, Prim, Program, Publication, Reaches,
+    Departures, Ensures, Guard, LanguageCase, Node, Op, Owner, Prim, Program, Publication, Reaches,
     Reading, Routing, Selects, Stage, Target, Ty,
 };
 
@@ -1411,6 +1411,15 @@ impl<'a> Declared<'a> {
                         are(headers.is_some())
                     );
                 }
+            }
+            // A failure is answered by the name of the clause that did not hold, so two clauses
+            // under one name would be one arm for two rules, which the checker refuses
+            // (`checkClauseNames`) and an arm matched by the name would take for either.
+            let mut named = HashMap::new();
+            for name in declaration.clause_names().into_iter().flatten() {
+                index::once(&mut named, name, (), || {
+                    format!("{key} states two clauses both named {name}")
+                })?;
             }
             if let Declaration::Sum { cases, form, .. } = declaration {
                 declared.settled(&key, cases, form)?;
@@ -2788,7 +2797,7 @@ fn checked_signature(declaration: &Declaration, call_conv: CallConv) -> Lowered<
 /// its answer read as a status ([`define_constructor`]); a reader calls it directly, since a reader
 /// reports which clause did not hold and a status says only that one did not; and an attempted
 /// construction calls it directly too, since it takes the arm that clause names. None of them runs
-/// a clause of its own, and each asks this through [`Decision`].
+/// a clause of its own, and each asks this through [`decide`].
 ///
 /// It takes the fields, room for the value and room for which clause did not hold, and answers a
 /// status, as [`checked_constructor_symbol`] states. `ANSWERED` with the clause's room holding
@@ -2920,28 +2929,15 @@ fn define_constructor(
     let given = builder.block_params(entry).to_vec();
     let (fields, out) = given.split_at(fields);
 
-    let decision = Decision::of(&mut builder, module, checked, fields);
-    let status = decision.status;
-
-    let answered = builder.create_block();
-    let not_answered = builder.create_block();
-    let is_answered = builder
-        .ins()
-        .icmp_imm_s(IntCC::Equal, status, i64::from(ANSWERED));
-    builder
-        .ins()
-        .brif(is_answered, answered, &[], not_answered, &[]);
-
-    builder.switch_to_block(not_answered);
-    builder.ins().return_(&[status]);
-
-    builder.switch_to_block(answered);
-    let (_, every_clause_held) = decision.clause(&mut builder);
+    let abort = builder.create_block();
+    builder.append_block_param(abort, types::I32);
     let broken = builder.create_block();
-    let held = builder.create_block();
-    builder
-        .ins()
-        .brif(every_clause_held, held, &[], broken, &[]);
+    builder.append_block_param(broken, types::I64);
+
+    let value = decide(&mut builder, module, checked, fields, abort, broken);
+    builder.ins().store(TRUSTED, value, out[0], 0);
+    let ok = builder.ins().iconst(types::I32, i64::from(ANSWERED));
+    builder.ins().return_(&[ok]);
 
     builder.switch_to_block(broken);
     let not_held = builder.ins().iconst(
@@ -2950,113 +2946,102 @@ fn define_constructor(
     );
     builder.ins().return_(&[not_held]);
 
-    builder.switch_to_block(held);
-    let value = decision.value(&mut builder);
-    builder.ins().store(TRUSTED, value, out[0], 0);
+    builder.switch_to_block(abort);
+    let status = builder.block_params(abort)[0];
     builder.ins().return_(&[status]);
 
     builder.seal_all_blocks();
     builder.finalize(frontend);
 }
 
-/// What [`define_checked`] answered for one construction: the status, and the rooms it wrote the
-/// value and which clause did not hold through.
+/// A construction from `fields` decided by `checked`, and the value where every clause held.
 ///
-/// The one way the decision is asked for and its answer read, by the constructor, a reader and an
-/// attempted construction alike, so what the answer says is read the one way whichever of them
-/// asks. Neither room is read until the status is `ANSWERED`: a clause that did not answer wrote
-/// nothing into either.
-struct Decision {
-    status: ir::Value,
-    value_room: ir::Value,
-    clause_room: ir::Value,
+/// The one way [`define_checked`] is asked and its answer read, by the constructor, a reader and an
+/// attempted construction alike, so the order its answer is read in is written once: a status other
+/// than `ANSWERED` goes to `abort` as it came, since a clause that did not answer wrote nothing; a
+/// clause that did not hold goes to `broken`, with its place among the declaration's as that
+/// block's one parameter; and only then is the value read, in the block this leaves the builder in.
+/// A caller is never handed a room to read before the answer says what is in it.
+///
+/// `broken` is the caller's to fill and to seal.
+fn decide(
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    checked: FuncId,
+    fields: &[ir::Value],
+    abort: ir::Block,
+    broken: ir::Block,
+) -> ir::Value {
+    let value_room = out_slot(builder);
+    let clause_room = out_slot(builder);
+    let mut given = fields.to_vec();
+    given.push(value_room);
+    given.push(clause_room);
+    let reaching = module.declare_func_in_func(checked, builder.func);
+    let called = builder.ins().call(reaching, &given);
+    let status = builder.inst_results(called)[0];
+    forward_unless_answered(builder, abort, status);
+
+    let clause = builder.ins().load(types::I64, TRUSTED, clause_room, 0);
+    let every_clause_held = builder
+        .ins()
+        .icmp_imm_s(IntCC::Equal, clause, NO_FAILED_CLAUSE);
+    let held = builder.create_block();
+    builder
+        .ins()
+        .brif(every_clause_held, held, &[], broken, &[clause.into()]);
+    builder.seal_block(held);
+    builder.switch_to_block(held);
+    builder.ins().load(POINTER, TRUSTED, value_room, 0)
 }
 
-impl Decision {
-    /// `checked` asked to decide a construction from `fields`.
-    fn of(
-        builder: &mut FunctionBuilder,
-        module: &mut ObjectModule,
-        checked: FuncId,
-        fields: &[ir::Value],
-    ) -> Self {
-        let value_room = out_slot(builder);
-        let clause_room = out_slot(builder);
-        let mut given = fields.to_vec();
-        given.push(value_room);
-        given.push(clause_room);
-        let reaching = module.declare_func_in_func(checked, builder.func);
-        let called = builder.ins().call(reaching, &given);
-        Decision {
-            status: builder.inst_results(called)[0],
-            value_room,
-            clause_room,
-        }
-    }
-
-    /// Which clause did not hold, as its place among the declaration's, and whether that is none
-    /// of them: every clause held, and the value was written.
-    fn clause(&self, builder: &mut FunctionBuilder) -> (ir::Value, ir::Value) {
-        let clause = builder.ins().load(types::I64, TRUSTED, self.clause_room, 0);
-        let none = builder
-            .ins()
-            .icmp_imm_s(IntCC::Equal, clause, NO_FAILED_CLAUSE);
-        (clause, none)
-    }
-
-    /// The value, where every clause held.
-    fn value(&self, builder: &mut FunctionBuilder) -> ir::Value {
-        builder.ins().load(POINTER, TRUSTED, self.value_room, 0)
-    }
-}
-
-/// Which departure of an attempted construction answers each clause of the declaration it
-/// attempts, by the clause's place: the one naming the clause, and otherwise the one naming none.
+/// Which of an attempted construction's departures answers each clause of the declaration it
+/// attempts, by the clause's place, as a place among [`Departures::bodies`].
 ///
-/// The one statement of how a clause is matched to a departure. [`Coherent`] holds a document to it
-/// and the lowering reads which way to go from it, so the two cannot come apart. Refused, with
-/// why, where a departure names no clause the declaration states, two name one clause, two name
-/// none, or a clause is answered by none.
+/// The checker's rule, as `checkArmsAnswerClauses` states it, and the one statement of it here:
+/// [`Coherent`] holds a document to it and the lowering reads which way to go from it, so the two
+/// cannot come apart. One value for any failure answers every clause. Otherwise each clause with a
+/// name is answered by the arm naming it and by no other, and the clauses with no name by the arm
+/// naming none; an arm naming a clause the declaration does not state, two naming one clause, a
+/// clause no arm answers, and an arm naming none where every clause has a name are each refused.
+/// So the arm naming none never answers a clause with a name.
 ///
 /// By the place and not the name, because the place is what the object running the clauses
 /// answers; the names are only what an author wrote an arm against, and nothing at run time reads
 /// them.
 pub(crate) fn departures_taken(
     clauses: &[Option<&str>],
-    departures: &[Departure],
+    departures: &Departures,
 ) -> Result<Vec<usize>> {
-    let mut named: HashMap<&str, usize> = HashMap::new();
-    let mut otherwise = None;
-    for (at, departure) in departures.iter().enumerate() {
-        match departure.clause.as_deref() {
-            Some(name) => {
-                if !clauses.contains(&Some(name)) {
-                    bail!("a departure answers the clause {name}, which it does not state");
-                }
-                index::once(&mut named, name, at, || {
-                    format!("two departures answer the clause {name}")
-                })?;
-            }
-            None => {
-                if otherwise.replace(at).is_some() {
-                    bail!("two departures answer every clause no other one names");
-                }
-            }
+    let (named, unnamed) = match departures {
+        Departures::Any(_) => return Ok(vec![0; clauses.len()]),
+        Departures::ByClause { named, unnamed } => (named, unnamed),
+    };
+    let mut arms: HashMap<&str, usize> = HashMap::new();
+    for (at, (name, _)) in named.iter().enumerate() {
+        if !clauses.contains(&Some(name.as_str())) {
+            bail!("a departure answers the clause {name}, which it does not state");
         }
+        index::once(&mut arms, name.as_str(), at, || {
+            format!("two departures answer the clause {name}")
+        })?;
+    }
+    // Where it stands among the bodies: after every arm naming a clause.
+    let unnamed = unnamed.as_ref().map(|_| named.len());
+    if unnamed.is_some() && !clauses.contains(&None) {
+        bail!("a departure answers the clauses that have no name, and every clause has one");
     }
     clauses
         .iter()
         .enumerate()
-        .map(|(place, clause)| {
-            clause
-                .and_then(|name| named.get(name).copied())
-                .or(otherwise)
-                .ok_or_else(|| match clause {
-                    Some(name) => anyhow!("its clause {name} is answered by no departure"),
-                    None => anyhow!(
-                        "its clause {place}, which has no name, is answered by no departure"
-                    ),
-                })
+        .map(|(place, clause)| match clause {
+            Some(name) => arms
+                .get(name)
+                .copied()
+                .ok_or_else(|| anyhow!("its clause {name} is answered by no departure")),
+            None => unnamed.ok_or_else(|| {
+                anyhow!("its clause {place}, which has no name, is answered by no departure")
+            }),
         })
         .collect()
 }
@@ -3756,8 +3741,9 @@ fn lower(
         // The fields as a construction works them out, and then what decides a construction of the
         // type asked, which is the declaring object's: nothing here runs a clause or knows what one
         // says. Where every clause held the value is bound for `then`; where one did not, the
-        // departure answering that clause answers, chosen by the clause's place. A clause that did
-        // not answer at all ends the run as it ended the decision.
+        // departure answering that clause answers, chosen by the clause's place
+        // (`departures_taken`). A clause that did not answer at all ends the run as it ended the
+        // decision.
         Node::Attempt {
             declared,
             values,
@@ -3777,22 +3763,12 @@ fn lower(
                 departures_taken(&lowering.declared.laid(declared).clause_names(), departures)
                     .expect("`Coherent` held every clause of what is attempted to one departure");
             let answers = machine_type(ty)?;
-            let decision = Decision::of(builder, module, checked, &given);
-            forward_unless_answered(builder, abort, decision.status);
-
             let after = builder.create_block();
             builder.append_block_param(after, answers);
-            let building = builder.create_block();
             let departing = builder.create_block();
-            let (clause, every_clause_held) = decision.clause(builder);
-            builder
-                .ins()
-                .brif(every_clause_held, building, &[], departing, &[]);
-            builder.seal_block(building);
-            builder.seal_block(departing);
+            builder.append_block_param(departing, types::I64);
 
-            builder.switch_to_block(building);
-            let built = decision.value(builder);
+            let built = decide(builder, module, checked, &given, abort, departing);
             let variable = builder.declare_var(machine_type(binds)?);
             builder.def_var(variable, built);
             bindings.at(*binding, variable);
@@ -3800,8 +3776,11 @@ fn lower(
             bindings.leave(*binding);
             builder.ins().jump(after, &[answered?.into()]);
 
+            builder.seal_block(departing);
             builder.switch_to_block(departing);
-            let arms: Vec<ir::Block> = departures.iter().map(|_| builder.create_block()).collect();
+            let clause = builder.block_params(departing)[0];
+            let bodies = departures.bodies();
+            let arms: Vec<ir::Block> = bodies.iter().map(|_| builder.create_block()).collect();
             let astray = builder.create_block();
             let mut which = Switch::new();
             for (place, &departure) in taken.iter().enumerate() {
@@ -3817,10 +3796,10 @@ fn lower(
                 .ins()
                 .trap(TrapCode::user(NO_ARM).expect("a trap code of its own"));
 
-            for (departure, arm) in departures.iter().zip(arms) {
+            for (body, arm) in bodies.into_iter().zip(arms) {
                 builder.seal_block(arm);
                 builder.switch_to_block(arm);
-                let answered = lower(builder, lowering, module, bindings, abort, &departure.body)?;
+                let answered = lower(builder, lowering, module, bindings, abort, body)?;
                 builder.ins().jump(after, &[answered.into()]);
             }
 

@@ -704,9 +704,9 @@ impl<'a> Walk<'_, 'a> {
                     ty,
                     "what an attempted construction answers where it builds".to_string(),
                 )))
-                .chain(departures.iter().map(|departure| {
+                .chain(departures.bodies().into_iter().map(|body| {
                     typed(
-                        &departure.body,
+                        body,
                         ty,
                         "what an attempted construction's departure answers".to_string(),
                     )
@@ -1116,8 +1116,8 @@ impl<'a> Walk<'_, 'a> {
                     self.node(value)?;
                 }
                 self.under(vec![(*binding, binds.clone())], then)?;
-                for departure in departures {
-                    self.node(&departure.body)?;
+                for body in departures.bodies() {
+                    self.node(body)?;
                 }
                 Ok(())
             }
