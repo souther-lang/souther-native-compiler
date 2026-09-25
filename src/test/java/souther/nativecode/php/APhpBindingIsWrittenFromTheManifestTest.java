@@ -432,15 +432,27 @@ class APhpBindingIsWrittenFromTheManifestTest {
                 .hasMessageContaining("`GLOBALS`, which PHP takes for no parameter");
     }
 
-    /** Two parameters of one function under one name would be PHP no binding can load. */
+    /**
+     * Two parameters of one function under one name would be PHP no binding can load.
+     *
+     * <p>Written into the manifest, because the checker refuses a signature naming two parameters
+     * alike (E1011) before any manifest is written. A manifest is read from a file, and one another
+     * build wrote is not held to what this compile's checker refuses.
+     */
     @Test
-    void twoParametersUnderOneNameAreRefused(@TempDir Path into) {
-        assertThatThrownBy(() -> generated(into, """
+    void twoParametersUnderOneNameAreRefused(@TempDir Path into) throws Exception {
+        NativeCompiler.Library library = NativeCompiler.library(CheckedProgram.of(List.of("""
                 module m exposing ( f )
 
-                behavior f : (a: Int, a: Int) -> Int
+                behavior f : (a: Int, b: Int) -> Int
                 let f (x, y) = x
-                """))
+                """)), into.resolve("native"));
+
+        assertThatThrownBy(() -> generatedAfter(into, library, "m", module -> {
+            ObjectNode second = (ObjectNode) module.get("behaviors").get(0)
+                    .get("parameters").get("named").get(1);
+            second.put("name", "a");
+        }))
                 .isInstanceOf(PhpBindings.NotBindable.class)
                 .hasMessageContaining("parameter `a`")
                 .hasMessageContaining("PHP takes for one parameter");

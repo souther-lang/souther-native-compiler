@@ -240,6 +240,73 @@ class ARowHoldsWhereverItIsRunTest {
                 | "holding nothing" : (true, false) -> false
             """;
 
+    /**
+     * Rows that hand a behavior a value of a declared type: a product, a product holding a list of
+     * products, an optional field holding nothing and one holding something, and types that hold
+     * their values to an invariant, one of them inside a list.
+     *
+     * <p>A present optional is written as the value it holds, and only the field's type says it is
+     * one. The first order's fields are written in an order other than the one they are declared
+     * in, which is not the order the value is built in.
+     */
+    private static final String ORDERING = """
+            module ordering
+
+            data Line = { sku: String, quantity: Int }
+            data Order = { number: Int, lines: List<Line>, note: Int? }
+
+            data Quantity = Int
+                invariant value >= 1
+            data Stock = { held: Int, reserved: Int }
+                invariant reserved <= held
+
+            behavior counted : (order: Order) -> Int
+            let counted (order) = List.length(order.lines) * 100 + order.number
+
+            behavior second : (order: Order) -> Int
+            let second (order) = match List.get(1, order.lines) with
+                | Some line -> line.quantity
+                | None -> -1
+
+            behavior noted : (order: Order) -> Int
+            let noted (order) = match order.note with
+                | Some n -> n
+                | None -> 0
+
+            behavior doubled : (q: Quantity) -> Int
+            let doubled (q) = q.value * 2
+
+            behavior free : (stock: Stock) -> Int
+            let free (stock) = stock.held - stock.reserved
+
+            behavior firstOf : (quantities: List<Quantity>) -> Int
+            let firstOf (quantities) = match List.get(0, quantities) with
+                | Some q -> q.value
+                | None -> 0
+
+            example counted
+                | "two lines" : (Order { note = None, lines = [Line { sku = "apple", quantity = 2 }, Line { sku = "pear", quantity = 3 }], number = 7 }) -> 207
+                | "no lines" : (Order { number = 1, lines = [], note = None }) -> 1
+
+            example second
+                | "the second line" : (Order { number = 1, lines = [Line { sku = "apple", quantity = 2 }, Line { sku = "pear", quantity = 3 }], note = None }) -> 3
+                | "only one line" : (Order { number = 1, lines = [Line { sku = "apple", quantity = 2 }], note = None }) -> -1
+
+            example noted
+                | "a note held" : (Order { number = 1, lines = [], note = 42 }) -> 42
+                | "no note" : (Order { number = 1, lines = [], note = None }) -> 0
+
+            example doubled
+                | "one of them" : (Quantity(4)) -> 8
+
+            example free
+                | "some reserved" : (Stock { held = 10, reserved = 3 }) -> 7
+
+            example firstOf
+                | "a list of them" : ([Quantity(3), Quantity(5)]) -> 3
+                | "none of them" : ([]) -> 0
+            """;
+
     /** A definition the module holds and reaches, including one that reaches itself. */
     private static final String REACHING = """
             module reaching
@@ -400,6 +467,7 @@ class ARowHoldsWhereverItIsRunTest {
         assertEveryRowHolds(NAMING);
         assertEveryRowHolds(SHAPES);
         assertEveryRowHolds(HOLDING);
+        assertEveryRowHolds(ORDERING);
         assertEveryRowHolds(REACHING);
         assertEveryRowHolds(DEPENDING);
         assertEveryRowHolds(COUNTING, ONE, TWO);
