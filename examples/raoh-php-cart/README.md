@@ -3,19 +3,33 @@
 The PHP counterpart of
 [`boundaries-not-layers/examples/raoh-souther`](https://github.com/kawasima/boundaries-not-layers/tree/main/examples/raoh-souther).
 The domain is the same `cart.sou`, compiled by this repository into a shared library and its PHP
-binding. The boundaries are PHP: HTTP JSON decoded with [raoh-php](https://github.com/kawasima/raoh-php)
-into the model's values, the behaviors the model asks a host for implemented over PDO and SQLite,
-and the answers written back as JSON.
+binding. What is written in PHP is the boundaries around it: HTTP JSON decoded with
+[raoh-php](https://github.com/kawasima/raoh-php) into the model's values, and the behaviors the
+model asks a host for implemented over PDO and SQLite.
 
-The PHP reads like the Java it is a port of. Each injected behavior (`loadProduct`, `loadCart`,
-`saveItem`, `priceCart`, `saveOrder`) is a class extending the one the binding generates for it, in
-`src/Infrastructure`. The composed behaviors (`addItemToCart`, `placeOrder`, `issueQuote`) are bound
-to those once, in `src/CartApplication.php`, which is what `CartConfig` does with Spring. The
-controller applies a composed behavior and picks the response with a `match` on the class of what it
-answered, where the Java `switch`es on it.
+## What is in it
 
-The router is a few lines of plain PHP and not a framework, so what the example shows is the binding
-and not a container.
+The rules of the cart are in `model/cart.sou` and nowhere else: the capacity of 10000, which a
+`PendingItem` holds or is not built; the 10% discount at 5000 and above; that an empty cart is not
+ordered and a quotation is for a corporation. Its `example` rows state what each behavior answers,
+and they run when it is built, so a rule that stopped holding stops the build.
+
+The PHP is two directories, one for each boundary. `src/Http` decodes a request into the model's
+values, applies a behavior, and picks the response with a `match` on the class of what it answered.
+`src/Database` holds the five behaviors the model leaves to a host (`loadProduct`, `loadCart`,
+`saveItem`, `priceCart`, `saveOrder`), each a class extending the one the binding generates for it.
+`src/CartApplication.php` binds the three composed behaviors (`addItemToCart`, `placeOrder`,
+`issueQuote`) to those once, and routes the requests.
+
+There is no entity, no DTO, no repository and no view model. The classes of the model's types are
+the binding's, and what a request is decoded into is a value of one of them. What an order or a
+quotation is written back as is the model's own encoding of it, `encode()`, so there is no second
+description of an order to keep in step with the first. A `match` over an answer lists the cases
+the model says it can answer, and the binding types the answer as a union of exactly those classes.
+
+The one route the model plays no part in is the listing of a cart, `GET /carts/items`. The model has
+no behavior for a screen's listing and needs none, so the handler reads the rows and writes them out
+as they are.
 
 ## Building and running it
 
@@ -36,9 +50,8 @@ It writes the library into `build/native` and its binding into `build/php`, unde
 `com.example.cart.domain`, so its classes are `Model\Com\Example\Cart\Domain\*`. The runtime the
 binding calls comes from `bindings/php/runtime` as a Composer path repository.
 
-The rows of `cart.sou` run as part of that build. A row that does not hold refuses the build, so
-there is no separate step for them. The rows of the five injected behaviors state what an
-implementation should answer and are owed by one; nothing in the model can answer them.
+The rows of the five injected behaviors state what an implementation should answer and are owed by
+one; nothing in the model can answer them.
 
 To serve it:
 
@@ -52,7 +65,13 @@ user `11111111-1111-1111-1111-111111111111`, a product on sale at 1200
     curl -X POST localhost:8080/carts/items \
         -d '{"userId":"11111111-1111-1111-1111-111111111111","productId":"33333333-3333-3333-3333-333333333333","quantity":5}'
     curl -X POST localhost:8080/carts/checkout \
-        -d '{"userId":"11111111-1111-1111-1111-111111111111","orderer":{"type":"individual","email":"taro@example.com","name":"Taro"}}'
+        -d '{"userId":"11111111-1111-1111-1111-111111111111","orderer":{"type":"Individual","email":"taro@example.com","name":"Taro"}}'
+
+The second answers the order as the model writes it:
+
+    {"id":"…","userId":"11111111-…","orderer":{"type":"Individual","email":"taro@example.com","name":"Taro"},
+     "lines":[{"productId":"33333333-…","quantity":5,"unitPrice":1200}],
+     "charge":{"subtotal":6000,"discount":600,"total":5400}}
 
 The routes are the Java example's: `POST /carts/items`, `POST /carts/checkout`, `POST /carts/quote`
 and `GET /carts/items?userId=...`. A body that does not decode is a 400 with raoh-php's issues, each
@@ -66,11 +85,17 @@ any other. Here it is held in the library's arena for the length of one run, `Bi
 value used after its run has ended throws `Expired`. A value leaves a run only as its external form.
 
 So each request is one run. The controller opens it, and everything that makes or reads a value of
-the model happens inside: decoding the body, applying the behavior, and reading the answer into the
-response body, which is plain PHP arrays by the time the run ends. The decoders are made for the
-session they build values in (`JsonCartDecoders::addItem($session)`), where the Java ones are
-constants. Nothing holds a value of the model across requests. What the application does keep, the
-bound behaviors and the PDO implementations, holds no value of the model at all.
+the model happens inside: decoding the body, applying the behavior, and encoding the answer, which is
+JSON text by the time the run ends. The decoders are made for the session they build values in
+(`Decoders::addItem($session)`), where the Java ones are constants. Nothing the application keeps
+across requests, the bound behaviors and the PDO implementations, holds a value of the model.
+
+The Java example writes its responses by hand, from each value's accessors into a map. Here the
+responses are the model's encoding, so an order's amounts are under `charge` and a line carries no
+subtotal of its own. An orderer's `type` is the name of its case, `Individual` or `Corporation`, in
+the request as in the response, where the Java example spells it in lower case. The Java example
+also reads the cart's listing into `CartItem` values through a repository; here it is rows, for the
+reason above.
 
 The model is the Java example's `cart.sou` with two changes. The module has an `exposing` line,
 which the Java example's does not. A module with no `exposing` clause publishes everything, and the
@@ -90,12 +115,11 @@ base class. A `match` over an answer's class is not checked for the cases it lea
 where it throws `UnhandledMatchError`; the Java `switch` over a sealed type is checked when it is
 compiled.
 
-On the way in, the web boundary builds values with each type's `of`, which takes the typed values
-raoh-php decoded and answers a `Raoh\Result`, so the model's `invariant_violation` lands under the
-field's path like any other issue. The gateways read a database row back with the type's `decode`,
-from the row laid out in the type's external form, which is what the Java gateways do with a map and
-the generated `decoder()`. `saveOrder` answers `OrderPlaced::of($session, $order)` where the Java
-encodes the order and decodes it again.
+On the way in, a request is decoded into values with each type's `of`, which takes what raoh-php
+checked and answers a `Raoh\Result`, so the model's `invariant_violation` lands under the field's
+path like any other issue. The database implementations read a row back with the type's `decode`,
+from the row laid out in the type's external form, which is what the Java ones do with a map and the
+generated `decoder()`.
 
 The rest is the platform. SQLite in place of H2, with UUIDs as text. PDO in place of jOOQ, and a
 small `Transaction` in place of Spring's `TransactionTemplate`. Each test in

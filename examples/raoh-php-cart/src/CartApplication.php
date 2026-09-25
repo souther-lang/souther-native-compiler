@@ -4,17 +4,16 @@ declare(strict_types=1);
 
 namespace App;
 
+use App\Database\PdoLoadCart;
+use App\Database\PdoLoadProduct;
+use App\Database\PdoPriceCart;
+use App\Database\PdoSaveItem;
+use App\Database\PdoSaveOrder;
+use App\Database\Transaction;
+use App\Http\CartController;
 use App\Http\Request;
 use App\Http\Response;
 use App\Http\Router;
-use App\Infrastructure\CartQueryRepository;
-use App\Infrastructure\PdoLoadCart;
-use App\Infrastructure\PdoLoadProduct;
-use App\Infrastructure\PdoPriceCart;
-use App\Infrastructure\PdoSaveItem;
-use App\Infrastructure\PdoSaveOrder;
-use App\Infrastructure\Transaction;
-use App\Web\CartController;
 use Model\Binding;
 use Model\Com\Example\Cart\Domain\AddItemToCart;
 use Model\Com\Example\Cart\Domain\IssueQuote;
@@ -49,8 +48,8 @@ final readonly class CartApplication
             AddItemToCart::bind($loadProduct, $loadCart, $saveItem),
             PlaceOrder::bind($priceCart, $saveOrder),
             IssueQuote::bind($priceCart),
-            new CartQueryRepository($pdo),
             new Transaction($pdo),
+            $pdo,
         );
 
         return new self((new Router())

@@ -4,43 +4,45 @@ declare(strict_types=1);
 
 namespace App\Http;
 
-/** A status and, where there is one, a body that is written as JSON. */
+use Raoh\Issues;
+
+/** A status and, where there is one, a body that is JSON text. */
 final readonly class Response
 {
-    private function __construct(public int $status, public mixed $body)
+    private function __construct(public int $status, public ?string $body)
     {
     }
 
-    public static function ok(mixed $body): self
+    /** A 200 with `$json`, which is what a value of the model encodes to, or any other JSON. */
+    public static function ok(string $json): self
     {
-        return new self(200, $body);
+        return new self(200, $json);
     }
 
-    public static function created(mixed $body = null): self
+    public static function created(?string $json = null): self
     {
-        return new self(201, $body);
+        return new self(201, $json);
     }
 
-    public static function badRequest(mixed $body): self
+    /** raoh-php's issues, each with its path, and the messages by path. */
+    public static function badRequest(Issues $issues): self
     {
-        return new self(400, $body);
+        return new self(400, self::json(['issues' => $issues->toJsonList(), 'errors' => $issues->flatten()]));
     }
 
     public static function notFound(): self
     {
-        return new self(404, ['error' => 'not_found']);
+        return new self(404, self::json(['error' => 'not_found']));
     }
 
-    public static function unprocessable(mixed $body): self
+    public static function unprocessable(string $error): self
     {
-        return new self(422, is_string($body) ? ['error' => $body] : $body);
+        return new self(422, self::json(['error' => $error]));
     }
 
-    public function json(): string
+    public static function json(mixed $body): string
     {
-        return $this->body === null
-            ? ''
-            : json_encode($this->body, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
+        return json_encode($body, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
     }
 
     public function send(): void
@@ -48,7 +50,7 @@ final readonly class Response
         http_response_code($this->status);
         if ($this->body !== null) {
             header('Content-Type: application/json');
-            echo $this->json();
+            echo $this->body;
         }
     }
 }

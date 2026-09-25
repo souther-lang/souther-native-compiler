@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace App\Infrastructure;
+namespace App\Database;
 
 use Model\Com\Example\Cart\Domain\ItemAdded;
 use Model\Com\Example\Cart\Domain\PendingItem;

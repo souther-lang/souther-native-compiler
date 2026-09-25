@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace App\Infrastructure;
+namespace App\Database;
 
 use Model\Com\Example\Cart\Domain\PriceCart;
 use Model\Com\Example\Cart\Domain\PricedCart;
@@ -17,7 +17,7 @@ use Souther\Runtime\Session;
  * there and on sale, and answers the lines with their prices as a `PricedCart`. A product that is
  * gone or no longer on sale ends it with the model's own case.
  *
- * The loop that asks for each line's product stays here, inside the gateway, for the same reason
+ * The loop that asks for each line's product stays here, in the implementation, for the same reason
  * it does in the Java example: the model has no traverse, and a fold cannot call another injected
  * behavior.
  */

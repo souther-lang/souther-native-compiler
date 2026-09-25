@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace App\Infrastructure;
+namespace App\Database;
 
 /** A random (version 4) UUID in its lowercase text form. */
 final class Uuid

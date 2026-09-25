@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace App\Infrastructure;
+namespace App\Database;
 
 use Model\Com\Example\Cart\Domain\LoadProduct;
 use Model\Com\Example\Cart\Domain\Product;

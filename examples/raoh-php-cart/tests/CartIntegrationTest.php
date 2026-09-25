@@ -15,7 +15,8 @@ use PHPUnit\Framework\TestCase;
 /**
  * The HTTP contract of the Java example, over the native library and SQLite: 201 where an item is
  * added or an order placed, 422 for a business case the model answers, 400 for an input that does
- * not decode. The capacity is the 10000 `PendingItem` states in cart.sou.
+ * not decode. The capacity is the 10000 `PendingItem` states in cart.sou. An order and a quotation
+ * come back as the model writes them.
  *
  * Each test starts from a database of its own, seeded as the application seeds it.
  */
@@ -45,7 +46,7 @@ final class CartIntegrationTest extends TestCase
         $response = $this->addItem(self::USER, self::ON_SALE, 10001);
 
         self::assertSame(422, $response->status);
-        self::assertSame(['error' => 'cart_full'], $response->body);
+        self::assertSame(['error' => 'cart_full'], self::body($response));
     }
 
     #[Test]
@@ -62,7 +63,7 @@ final class CartIntegrationTest extends TestCase
         $response = $this->addItem(self::USER, self::OFF_SALE, 1);
 
         self::assertSame(422, $response->status);
-        self::assertSame(['error' => 'sale_ended'], $response->body);
+        self::assertSame(['error' => 'sale_ended'], self::body($response));
     }
 
     #[Test]
@@ -71,7 +72,7 @@ final class CartIntegrationTest extends TestCase
         $response = $this->addItem(self::USER, '55555555-5555-5555-5555-555555555555', 1);
 
         self::assertSame(422, $response->status);
-        self::assertSame(['error' => 'product_not_found'], $response->body);
+        self::assertSame(['error' => 'product_not_found'], self::body($response));
     }
 
     #[Test]
@@ -80,8 +81,8 @@ final class CartIntegrationTest extends TestCase
         $response = $this->addItem('not-a-uuid', self::ON_SALE, 1);
 
         self::assertSame(400, $response->status);
-        self::assertSame('/userId', $response->body['issues'][0]['path']);
-        self::assertSame('invalid_format', $response->body['issues'][0]['code']);
+        self::assertSame('/userId', self::body($response)['issues'][0]['path']);
+        self::assertSame('invalid_format', self::body($response)['issues'][0]['code']);
     }
 
     #[Test]
@@ -90,7 +91,7 @@ final class CartIntegrationTest extends TestCase
         $response = $this->addItem(self::USER, self::ON_SALE, 0);
 
         self::assertSame(400, $response->status);
-        self::assertSame('/quantity', $response->body['issues'][0]['path']);
+        self::assertSame('/quantity', self::body($response)['issues'][0]['path']);
     }
 
     #[Test]
@@ -109,7 +110,7 @@ final class CartIntegrationTest extends TestCase
         self::assertSame(200, $response->status);
         self::assertSame(
             ['total' => 1, 'page' => 0, 'size' => 20, 'items' => [['productId' => self::ON_SALE, 'quantity' => 3]]],
-            $response->body);
+            self::body($response));
     }
 
     #[Test]
@@ -120,13 +121,14 @@ final class CartIntegrationTest extends TestCase
         $this->addItem($user, self::ON_SALE, 8);
 
         $response = $this->checkout('/carts/checkout', $user, self::individual());
+        $order = self::body($response);
 
         self::assertSame(201, $response->status);
-        self::assertSame(['type' => 'individual', 'email' => 'taro@example.com', 'name' => '山田太郎'],
-            $response->body['orderer']);
-        self::assertSame([9600, 960, 8640],
-            [$response->body['subtotal'], $response->body['discount'], $response->body['total']]);
-        self::assertSame(self::ON_SALE, $response->body['lines'][0]['productId']);
+        self::assertSame($user, $order['userId']);
+        self::assertSame(['type' => 'Individual', 'email' => 'taro@example.com', 'name' => '山田太郎'],
+            $order['orderer']);
+        self::assertSame(['subtotal' => 9600, 'discount' => 960, 'total' => 8640], $order['charge']);
+        self::assertSame([['productId' => self::ON_SALE, 'quantity' => 8, 'unitPrice' => 1200]], $order['lines']);
     }
 
     #[Test]
@@ -136,13 +138,12 @@ final class CartIntegrationTest extends TestCase
         $this->addItem($user, self::ON_SALE, 3);
 
         $response = $this->checkout('/carts/checkout', $user, self::corporation());
+        $order = self::body($response);
 
         self::assertSame(201, $response->status);
-        self::assertSame('corporation', $response->body['orderer']['type']);
-        self::assertSame('Acme株式会社', $response->body['orderer']['companyName']);
-        self::assertSame('1234567890123', $response->body['orderer']['corporateNumber']);
-        self::assertSame([3600, 0, 3600],
-            [$response->body['subtotal'], $response->body['discount'], $response->body['total']]);
+        self::assertSame(['type' => 'Corporation', 'email' => 'info@acme.co.jp', 'companyName' => 'Acme株式会社',
+            'corporateNumber' => '1234567890123'], $order['orderer']);
+        self::assertSame(['subtotal' => 3600, 'discount' => 0, 'total' => 3600], $order['charge']);
     }
 
     #[Test]
@@ -154,7 +155,16 @@ final class CartIntegrationTest extends TestCase
         $response = $this->checkout('/carts/checkout', $user, ['corporateNumber' => '12345'] + self::corporation());
 
         self::assertSame(400, $response->status);
-        self::assertSame('/orderer/corporateNumber', $response->body['issues'][0]['path']);
+        self::assertSame('/orderer/corporateNumber', self::body($response)['issues'][0]['path']);
+    }
+
+    #[Test]
+    public function anOrdererOfNoKnownTypeIs400(): void
+    {
+        $response = $this->checkout('/carts/checkout', self::USER, ['type' => 'Robot'] + self::individual());
+
+        self::assertSame(400, $response->status);
+        self::assertSame('/orderer/type', self::body($response)['issues'][0]['path']);
     }
 
     #[Test]
@@ -163,7 +173,7 @@ final class CartIntegrationTest extends TestCase
         $response = $this->checkout('/carts/checkout', '11111111-1111-1111-1111-111111111113', self::individual());
 
         self::assertSame(422, $response->status);
-        self::assertSame(['error' => 'empty_cart'], $response->body);
+        self::assertSame(['error' => 'empty_cart'], self::body($response));
     }
 
     #[Test]
@@ -173,13 +183,13 @@ final class CartIntegrationTest extends TestCase
         $this->addItem($user, self::ON_SALE, 8);
 
         $response = $this->checkout('/carts/quote', $user, self::corporation());
+        $quote = self::body($response);
 
         self::assertSame(200, $response->status);
-        self::assertMatchesRegularExpression('/^[0-9a-f-]{36}$/', $response->body['quoteId']);
-        self::assertSame('corporation', $response->body['orderer']['type']);
-        self::assertSame([9600, 960, 8640],
-            [$response->body['subtotal'], $response->body['discount'], $response->body['total']]);
-        self::assertMatchesRegularExpression('/^\d{4}-\d{2}-\d{2}$/', $response->body['validUntil']);
+        self::assertMatchesRegularExpression('/^[0-9a-f-]{36}$/', $quote['id']);
+        self::assertSame('Corporation', $quote['orderer']['type']);
+        self::assertSame(['subtotal' => 9600, 'discount' => 960, 'total' => 8640], $quote['charge']);
+        self::assertMatchesRegularExpression('/^\d{4}-\d{2}-\d{2}$/', $quote['validUntil']);
     }
 
     #[Test]
@@ -197,7 +207,7 @@ final class CartIntegrationTest extends TestCase
         $response = $this->checkout('/carts/quote', '11111111-1111-1111-1111-111111111118', self::corporation());
 
         self::assertSame(422, $response->status);
-        self::assertSame(['error' => 'empty_cart'], $response->body);
+        self::assertSame(['error' => 'empty_cart'], self::body($response));
     }
 
     private function addItem(string $userId, string $productId, int $quantity): Response
@@ -217,16 +227,22 @@ final class CartIntegrationTest extends TestCase
         return $this->app->handle(new Request('POST', $path, [], json_encode($body, JSON_THROW_ON_ERROR)));
     }
 
+    /** @return array<string, mixed> */
+    private static function body(Response $response): array
+    {
+        return json_decode((string) $response->body, true, flags: JSON_THROW_ON_ERROR);
+    }
+
     /** @return array<string, string> */
     private static function individual(): array
     {
-        return ['type' => 'individual', 'email' => 'Taro@Example.com ', 'name' => '山田太郎'];
+        return ['type' => 'Individual', 'email' => 'Taro@Example.com ', 'name' => '山田太郎'];
     }
 
     /** @return array<string, string> */
     private static function corporation(): array
     {
-        return ['type' => 'corporation', 'email' => 'info@acme.co.jp', 'companyName' => 'Acme株式会社',
+        return ['type' => 'Corporation', 'email' => 'info@acme.co.jp', 'companyName' => 'Acme株式会社',
             'corporateNumber' => '1234567890123'];
     }
 }
