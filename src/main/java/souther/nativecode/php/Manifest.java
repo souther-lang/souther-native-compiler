@@ -26,7 +26,7 @@ import static net.unit8.raoh.json.JsonDecoders.string;
 import static net.unit8.raoh.json.JsonDecoders.strict;
 
 /**
- * What a manifest says, as this generator reads it: version 5 of {@code souther-native-interface},
+ * What a manifest says, as this generator reads it: version 6 of {@code souther-native-interface},
  * and nothing else.
  *
  * <p>Read strictly, as the driver writes it. A member this does not name, or a version or ABI
@@ -41,7 +41,7 @@ record Manifest(int abi, Map<String, Integer> statuses, Map<String, Integer> out
     static final String FORMAT = "souther-native-interface";
 
     /** The version of what a manifest says that this reads. */
-    static final int VERSION = 5;
+    static final int VERSION = 6;
 
     /** The ABI generation the functions this binds answer to. */
     static final int ABI = 3;
@@ -92,8 +92,21 @@ record Manifest(int abi, Map<String, Integer> statuses, Map<String, Integer> out
     record Element(boolean present, Word word) {
     }
 
-    /** A published behavior, and what a host calls it through where it can. */
-    record Behavior(String name, Parameters parameters, Answer answers, @Nullable Function call) {
+    /**
+     * A published behavior, what constructing it requires injected, and what a host calls it
+     * through where it can.
+     */
+    record Behavior(String name, Parameters parameters, Answer answers, List<Required> requires,
+                    @Nullable Function call) {
+    }
+
+    /** A behavior another requires injected, by its module and its name. */
+    record Required(String module, String name) {
+
+        /** The module and the name joined the one way, which no two behaviors share. */
+        String key() {
+            return module + "." + name;
+        }
     }
 
     /**
@@ -306,10 +319,15 @@ record Manifest(int abi, Map<String, Integer> statuses, Map<String, Integer> out
             field("type", TYPE),
             nullableField("union", UNION_ANSWER)).strict(Answer::new);
 
+    private static final Decoder<JsonNode, Required> REQUIRED = combine(
+            field("module", string()),
+            field("name", string())).strict(Required::new);
+
     private static final Decoder<JsonNode, Behavior> BEHAVIOR = combine(
             field("name", string()),
             field("parameters", PARAMETERS),
             field("answers", ANSWER),
+            field("requires", list(REQUIRED)),
             nullableField("call", FUNCTION)).strict(Behavior::new);
 
     private static final Decoder<JsonNode, Implementation> IMPLEMENTATION = combine(

@@ -327,8 +327,11 @@ functions a list is built and read through, one entry for each way an element of
 there (`{"whole": "value"}`, `{"present": "string"}`), apart from the type `{"kind": "list"}`, which
 says only what the model says: a binding works out how a position's element crosses and finds the
 entry for it. A parameter is `given`, `room`, or a `slice`, as many of a word as a count before it
-says. What a manifest may say is Rust types, and version 5 is
-`native/crates/compiler/tests/interface-v5.json`: a test holds a program's manifest to it, and
+says. A behavior `requires` what constructing it requires injected, each by its module and its name,
+in the order the checker answered it: a behavior a host implements, or one constructed from what it
+requires in turn. It is the checker's list as it crossed, and not what the body calls, since a
+composition requires what its stages require. What a manifest may say is Rust types, and version 6
+is `native/crates/compiler/tests/interface-v6.json`: a test holds a program's manifest to it, and
 another reads it with those types and writes it back unchanged. The manifest carries its own
 `version`, moved when what it says is read differently, and the `abi` its functions answer to,
 which is the generation in every symbol.
@@ -406,6 +409,17 @@ implements it. `<Sum>Codec` finds which class a value is through the sum's `case
 reads and writes the sum's own external form, which says which case it is. A case the model keeps,
 or a sum whose cases the library cannot tell apart, is `<Sum>Value`, which is still the sum and can
 still be written. A module's behaviors are static functions on `Behaviors`, its values on `Values`.
+A behavior is also a class named after it (`quote` is `Quote`), which an application holds the
+way the JVM backend's does. One a host implements is abstract, with an `apply` typed as the model
+says, and an application extends it. One the library defines is final: `bind` takes an instance of
+the class of each behavior it `requires`, in that order, and `of` makes one that requires nothing.
+`apply` calls it with what it was bound to registered for the length of the call. It takes the
+session and answers a value of the caller's run, as every function does, and opens no run of its
+own, whose values would be gone by the time the caller held them. A missing or mistyped
+implementation is PHP's `TypeError` at `bind`, not an `UnboundInjection` at the call. A behavior
+bound to another brings what that one was bound to, and one bound to two implementations of one
+behavior is refused at `bind`, since the library calls one implementation of a behavior at a time.
+A behavior requiring what has no class gets none either, and stays a function on `Behaviors`.
 A behavior answering a union no declaration names answers the PHP union of its members' classes
 (`Found|Missing`), each value made as the class of the case the behavior's `case` function says it
 is, or, for a case with no class of its own, through the codec of the member sum it is a case of.
@@ -431,8 +445,9 @@ behavior taking or answering a type with no representation for a host, and a uni
 names that PHP would be handed other than as a behavior's answer, since nothing else says which case
 a value of it is.
 A name PHP will not take is refused with the name, rather than spelt some other way: a reserved
-word, `this` or a superglobal for a parameter, two parameters of one function under one name, a
-field named as a method the binding writes, and two names that are one where they are looked up. Two
+word, `this` or a superglobal for a parameter, two parameters of one function under one name (two
+behaviors of one name from two modules that one behavior requires among them), a field named as a
+method the binding writes, and two names that are one where they are looked up. Two
 methods are one where they differ in the case of ASCII letters, as PHP compares them. Two classes or
 namespaces are one where they differ in the case of any letter, since each is also a file or a
 directory, and the file systems macOS and Windows use by default do not tell those apart. What PHP
@@ -462,10 +477,12 @@ A status crosses as one of three things. A construction that does not hold its t
 an `Err` with `invariant_violation`, and a reading answers the issues the library found, their codes
 being Raoh's already, or `invalid_format` where the text is not JSON. A Souther computation that
 ends without a value throws `SoutherAbort`, naming the status. A behavior the host implements is
-handed to a run as `Injections::of(name: fn (Session $session, ...) => ...)`. Each is made into a C
-function pointer once per binding and registered around each run that is handed it, so a worker does
-not grow with every request; a call with nothing registered throws `UnboundInjection`, and an
-exception an implementation throws is the one that comes back out of the call that reached it.
+handed to a run as `Injections::of(name: fn (Session $session, ...) => ...)`, or bound to a behavior
+class as an instance of its own. Each behavior a host implements is one C function pointer, made
+once per binding, and what is registered through it is registered around each run or bound call
+and put back after, so a worker does not grow with every request. A call with nothing registered
+throws `UnboundInjection`, and an exception an implementation throws is the one that comes back out
+of the call that reached it.
 
 A binding says which version of the runtime's surface it was generated for, and refuses to load
 over a runtime that says another (`Binding::PROTOCOL`). The runtime loads a library once per

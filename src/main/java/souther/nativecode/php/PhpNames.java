@@ -107,13 +107,26 @@ final class PhpNames {
     static String moduleNamespace(String root, String module) {
         StringBuilder namespace = new StringBuilder(root);
         for (String part : module.split("\\.", -1)) {
-            // The first letter made capital where it is an ASCII one, as PHP would: a letter past
-            // ASCII is left as it is, rather than made one Java's rules make it.
-            String capital = part.isEmpty() || part.charAt(0) < 'a' || part.charAt(0) > 'z' ? part
-                    : (char) (part.charAt(0) - ('a' - 'A')) + part.substring(1);
-            namespace.append('\\').append(typeName(capital, "module `" + module + "`"));
+            namespace.append('\\').append(typeName(capitalized(part), "module `" + module + "`"));
         }
         return namespace.toString();
+    }
+
+    /**
+     * The class generated for a behavior: its name with the first letter made capital, the way a
+     * module's namespace is, and refused where PHP will not take that for a class.
+     */
+    static String behaviorClass(String name, String what) {
+        return typeName(capitalized(name), what);
+    }
+
+    /**
+     * {@code name} with its first letter made capital where it is an ASCII one, as PHP would: a
+     * letter past ASCII is left as it is, rather than made one Java's rules make it.
+     */
+    private static String capitalized(String name) {
+        return name.isEmpty() || name.charAt(0) < 'a' || name.charAt(0) > 'z' ? name
+                : (char) (name.charAt(0) - ('a' - 'A')) + name.substring(1);
     }
 
     /** Refused where {@code root} is not a namespace. */
