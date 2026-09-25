@@ -374,7 +374,8 @@ impl Surface {
     ///
     /// `names` are what its declaration calls what it takes, and none for a composition. `union` is
     /// where it answers a union no declaration names: the cases that descends to, and what a host
-    /// asks which of them an answer is through, where it can.
+    /// asks which of them an answer is through, where it can. `requires` is what constructing it
+    /// requires injected, as the checker answered it.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn behavior(
         &mut self,
@@ -384,6 +385,7 @@ impl Surface {
         takes: &[Ty],
         answers: &Ty,
         union: Option<(&[transport::Case], Option<&HostFunction>)>,
+        requires: &[transport::Requirement],
         declared: &Declared,
         call: Option<&HostFunction>,
     ) {
@@ -402,6 +404,13 @@ impl Surface {
                     case: case.map(HostFunction::described),
                 }),
             },
+            requires: requires
+                .iter()
+                .map(|it| manifest::Required {
+                    module: it.module.clone(),
+                    name: it.name.clone(),
+                })
+                .collect(),
             call: call.map(HostFunction::described),
         };
         self.module(module).behaviors.push(behavior);

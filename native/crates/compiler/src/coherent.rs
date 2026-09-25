@@ -193,6 +193,7 @@ impl<'a> Coherent<'a> {
         for (&name, &local) in &locals {
             let target = targets.named(name)?;
             agrees_with_its_target(name, target, local, &targets, &declared, &mut owed)?;
+            requires_what_it_names(name, local, &targets)?;
         }
 
         for body in program.bodies() {
@@ -1897,6 +1898,27 @@ fn agrees_with_its_target(
              definition: the two halves disagree about how it is defined"
         ),
     }
+}
+
+/// That what a local definition requires injected is behaviors the table of targets names, each
+/// once and none of them the definition itself: a host binding it is handed one implementation of
+/// each, so a name twice would be a place the two halves disagree on which of them a host means.
+fn requires_what_it_names(name: &str, local: &Definition, targets: &Targets) -> Result<()> {
+    let mut seen = std::collections::HashSet::new();
+    for requirement in local.requirements() {
+        let required = requirement.declared();
+        targets.named(&required)?;
+        if required == name {
+            bail!("{name} requires itself injected, which constructing it could never be handed");
+        }
+        if !seen.insert(required.clone()) {
+            bail!(
+                "{name} requires {required} twice: the checker answers each dependency once, and \
+                 the two halves disagree about what constructing it takes"
+            );
+        }
+    }
+    Ok(())
 }
 
 /// A composition's stages against the targets they name (spec §sequential-composition).

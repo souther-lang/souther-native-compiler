@@ -16,7 +16,9 @@ abstract class Binding
      * binding generated before would call something this does not have, or call it as something it
      * is not; a binding says which it was generated for and refuses to load over any other.
      */
-    public const PROTOCOL = 2;
+    public const PROTOCOL = 3;
+
+    private readonly InjectionRegistry $registry;
 
     /**
      * What each version of the protocol moved, by its number, oldest first. The versions before the
@@ -30,6 +32,8 @@ abstract class Binding
     public const MOVES = [
         2 => 'a list is handed over and read back as a PHP list, packed into columns and unpacked '
             . 'into elements (Session::list, Session::elements)',
+        3 => 'a class per behavior, bound to what it requires: registering implementations for a '
+            . 'call is InjectionRegistry\'s, apart from the run\'s arena (Bound, InjectionRegistry)',
     ];
 
     /**
@@ -37,8 +41,9 @@ abstract class Binding
      */
     protected function __construct(
         private readonly NativeLibrary $library,
-        private readonly array $slots,
+        array $slots,
     ) {
+        $this->registry = new InjectionRegistry($slots);
     }
 
     /**
@@ -56,22 +61,13 @@ abstract class Binding
     {
         $ffi = $this->library->ffi();
         $mark = $ffi->souther_mark();
-        $session = $this->library->open();
-        $entered = [];
+        $session = $this->library->open($this->registry);
         try {
-            foreach ($injections as $set) {
-                foreach ($set->implementations() as $behavior => $implementation) {
-                    $slot = $this->slots[$behavior]
-                        ?? throw new \InvalidArgumentException(
-                            "the library asks no host to implement {$behavior}");
-                    $entered[] = [$slot, $slot->enter($implementation)];
-                }
-            }
-            return $body($session);
+            return $this->registry->around(
+                static fn (): mixed => $body($session),
+                ...array_map(static fn (Injections $set): array => $set->implementations(),
+                    $injections));
         } finally {
-            foreach (array_reverse($entered) as [$slot, $replaced]) {
-                $slot->leave($replaced);
-            }
             $this->library->close($session);
             $ffi->souther_reset($mark);
         }

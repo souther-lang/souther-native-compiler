@@ -151,8 +151,11 @@ final class NativeLibrary
             ?? throw new \LogicException("the library numbers no outcome {$name}");
     }
 
-    /** @internal A session for a run starting now, inside whichever runs are going. */
-    public function open(): Session
+    /**
+     * @internal A session for a run starting now, inside whichever runs are going, registering
+     * implementations through `$registry`.
+     */
+    public function open(InjectionRegistry $registry): Session
     {
         $fiber = \Fiber::getCurrent();
         if ($this->open !== [] && $fiber !== $this->holder) {
@@ -160,7 +163,7 @@ final class NativeLibrary
                 'a run of this library is going on another fiber, which has to end it first');
         }
         $this->holder = $fiber;
-        return $this->open[] = new Session($this, $fiber);
+        return $this->open[] = new Session($this, $fiber, $registry);
     }
 
     /** @internal Ends the run `$session` is for, which is the innermost one. */

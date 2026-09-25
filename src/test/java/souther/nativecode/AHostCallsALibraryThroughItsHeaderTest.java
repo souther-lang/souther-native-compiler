@@ -32,7 +32,7 @@ class AHostCallsALibraryThroughItsHeaderTest {
 
     private static final String SHOP = """
             module shop exposing ( Money, Line, Free, Paid, Owed, Settled, Outcome, settle, owing, stillOwing : Int,
-                                   charge, Basket, counted, doubled )
+                                   charge, Basket, counted, doubled, discounted )
 
             data Money = Int
                 invariant notNegative = value >= 0
@@ -369,9 +369,9 @@ class AHostCallsALibraryThroughItsHeaderTest {
             not json: status 0, malformed at 8
             """;
 
-    /** What version 5 of the manifest is, for the program above. */
-    private static final Path INTERFACE_V5 =
-            Path.of("native", "crates", "compiler", "tests", "interface-v5.json");
+    /** What version 6 of the manifest is, for the program above. */
+    private static final Path INTERFACE_V6 =
+            Path.of("native", "crates", "compiler", "tests", "interface-v6.json");
 
     private static final JsonMapper JSON = JsonMapper.builder().build();
 
@@ -405,21 +405,21 @@ class AHostCallsALibraryThroughItsHeaderTest {
     }
 
     /**
-     * The manifest a binding is written against, as version 5 says it for this program. A change
+     * The manifest a binding is written against, as version 6 says it for this program. A change
      * to what the manifest says is a change here, and whether it moves the version is decided
      * looking at it.
      */
     @Test
-    void theManifestIsWhatVersionFiveSays(@TempDir Path into) throws Exception {
+    void theManifestIsWhatVersionSixSays(@TempDir Path into) throws Exception {
         NativeCompiler.Library library =
                 NativeCompiler.library(CheckedProgram.of(List.of(SHOP)), into);
 
         String written = Files.readString(library.manifest(), StandardCharsets.UTF_8);
-        String fixed = Files.exists(INTERFACE_V5)
-                ? Files.readString(INTERFACE_V5, StandardCharsets.UTF_8) : "";
+        String fixed = Files.exists(INTERFACE_V6)
+                ? Files.readString(INTERFACE_V6, StandardCharsets.UTF_8) : "";
         if (!written.equals(fixed)) {
             // Kept where it can be compared with the fixture, and copied over it once it is read.
-            Files.writeString(Path.of("target", "interface-v5.written.json"), written,
+            Files.writeString(Path.of("target", "interface-v6.written.json"), written,
                     StandardCharsets.UTF_8);
         }
         assertThat(written).isEqualTo(fixed);

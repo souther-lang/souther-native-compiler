@@ -2,7 +2,7 @@
 //!
 //! Written as types and not built as JSON, so that what a manifest of one version says is a thing
 //! the compiler holds this code to. A field renamed here is a change to these types, and the
-//! fixture `tests/interface-v5.json` is what version 5 is: every manifest this writes is read back
+//! fixture `tests/interface-v6.json` is what version 6 is: every manifest this writes is read back
 //! by these same types, which refuse a member they do not name.
 //!
 //! [`VERSION`] moves when what a manifest says is read differently. What the functions it names
@@ -15,7 +15,9 @@
 //! `souther-native-compiler#53`: a module says what a host builds and reads a list through
 //! ([`Module::lists`]), and a function may take the words of many elements at once
 //! ([`Parameter::Slice`]). Nothing a function of version 4 was called as changed, so the ABI
-//! generation did not move with it.
+//! generation did not move with it. Version 6 is `souther-native-compiler#56`: a behavior says
+//! what constructing it requires injected ([`Behavior::requires`]), which a binding takes as what
+//! it is bound to. No function changed, and the ABI generation did not move either.
 //!
 //! Where a function is `null`, the model has the thing and a host has no way to reach it yet: a
 //! behavior taking a type with no way across, a field of a type with no representation for a host,
@@ -40,11 +42,17 @@ pub(crate) const VERSION: u32 = MOVES[MOVES.len() - 1].0;
 /// each moving to the same number add two different lines at one place, which a merge stops at;
 /// two edits of one constant to the same number merge without a word. That the numbers follow on
 /// from one another is held by a test.
-pub(crate) const MOVES: &[(u32, &str)] = &[(
-    5,
-    "a list crosses to a host through functions each module defines for how its element crosses \
-     (`lists`), and a parameter may be a `slice`",
-)];
+pub(crate) const MOVES: &[(u32, &str)] = &[
+    (
+        5,
+        "a list crosses to a host through functions each module defines for how its element \
+         crosses (`lists`), and a parameter may be a `slice`",
+    ),
+    (
+        6,
+        "a behavior says what constructing it requires injected (`requires`)",
+    ),
+];
 
 /// Everything a host can call in one shared library, and the model it reaches.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -182,8 +190,24 @@ pub(crate) struct Behavior {
     /// What it takes, in order.
     pub parameters: Parameters,
     pub answers: Answer,
+    /// What constructing it requires injected, in the order the checker answered it: each a
+    /// behavior a host implements ([`Module::injections`]), or one constructed from what it
+    /// requires in turn, of this module or another.
+    ///
+    /// What a binding is bound to, and not what its body calls: a composition requires what its
+    /// stages require. A host calls the behavior with an implementation of each registered, and
+    /// one of a behavior constructed in turn is an implementation of each of its own.
+    pub requires: Vec<Required>,
     /// What a host calls it through.
     pub call: Option<Function>,
+}
+
+/// A behavior another requires injected, by its module and its name.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Required {
+    pub module: String,
+    pub name: String,
 }
 
 /// What a published behavior answers: the type, as the model says it, and where that is a union no
@@ -518,34 +542,36 @@ mod tests {
         }
     }
 
-    /// What version 5 is. Read by these types, which refuse a member they do not name, and
+    /// What version 6 is. Read by these types, which refuse a member they do not name, and
     /// written back the same: a field renamed or a kind reshaped here stops matching the fixture
     /// the Java half's test also holds a written manifest to.
-    const V5: &str = include_str!("../tests/interface-v5.json");
+    const V6: &str = include_str!("../tests/interface-v6.json");
 
     #[test]
-    fn version_five_is_read_and_written_back_as_it_is() {
-        let read: Manifest = serde_json::from_str(V5).expect("version 5 reads");
+    fn version_six_is_read_and_written_back_as_it_is() {
+        let read: Manifest = serde_json::from_str(V6).expect("version 6 reads");
         assert_eq!(read.format, FORMAT);
         assert_eq!(read.version, VERSION);
         let mut written = serde_json::to_string_pretty(&read).unwrap();
         written.push('\n');
-        assert_eq!(written, V5);
+        assert_eq!(written, V6);
     }
 
     /// A surface an object of an earlier release carries is refused as that, and not as whichever
-    /// member moved since: a module of version 4 says nothing of `lists`, which 5 reads.
+    /// member moved since: a behavior of version 5 says nothing of `requires`, which 6 reads.
     #[test]
     fn a_surface_of_an_earlier_version_is_refused_by_its_version() {
-        let earlier = br#"{"version":4,"abi":3,"modules":[{"name":"m","behaviors":[],
-            "injections":[],"values":[],"declarations":[]}]}"#;
+        let earlier = br#"{"version":5,"abi":3,"modules":[{"name":"m","behaviors":[{"name":"b",
+            "parameters":{"named":[]},"answers":{"type":{"kind":"primitive","name":"Int"},
+            "union":null},"call":null}],"injections":[],"values":[],"declarations":[],
+            "lists":[]}]}"#;
 
         let refused = Carried::read(earlier).expect_err("a surface of another version");
 
         assert!(
             refused
                 .to_string()
-                .contains("manifest version 4 and ABI generation 3"),
+                .contains("manifest version 5 and ABI generation 3"),
             "{refused}"
         );
     }

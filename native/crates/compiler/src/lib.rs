@@ -1006,6 +1006,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
                 transport::BoundaryOutput::Cases { cases, .. } => Some(cases),
                 _ => None,
             },
+            requires: local.requirements(),
         });
     }
     // Every value a module of this object publishes, through the entry another object reaches it
@@ -1022,6 +1023,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
             names: Some(&[]),
             answers: entry.body.ty().clone(),
             cases: None,
+            requires: &[],
         })
         .collect();
     for written in &program.modules {
