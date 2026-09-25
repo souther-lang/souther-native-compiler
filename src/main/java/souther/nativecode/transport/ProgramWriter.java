@@ -620,11 +620,11 @@ public final class ProgramWriter {
      */
     private String example(CheckedBehavior behavior, int at, CheckedRow row) {
         List<CheckedHelper> inputs = switch (row.statement()) {
-            case CheckedRow.SelfContained it -> it.inputs();
-            case CheckedRow.WithStandIns it -> it.inputs();
+            case CheckedRow.SelfContained it -> it.inputDefinitions();
+            case CheckedRow.WithStandIns it -> it.inputDefinitions();
             // Its answer is owed, which is a row nothing holds an answer to and still a row whose
             // values were read. The entry runs it; what the run answers is nobody's claim yet.
-            case CheckedRow.AnswerOwed it -> it.inputs();
+            case CheckedRow.AnswerOwed it -> it.inputDefinitions();
             case CheckedRow.NotReproducible it -> null;
         };
         if (inputs == null) {
@@ -640,7 +640,7 @@ public final class ProgramWriter {
      *
      * <p>A call and not a shape of its own, so that what an entry does is lowered by whatever
      * lowers a call and the two cannot come apart. Each argument is a call of the definition the
-     * row names for that input ({@link CheckedRow.SelfContained#inputs}), which the module holds as
+     * row names for that input ({@link CheckedRow.SelfContained#inputDefinitions}), which the module holds as
      * one of its helpers: its body is the operand the row writes, elaborated by the checker at the
      * parameter it is handed to, so how a value stands there — a case where its sum is taken, a
      * value given to an optional field — is the checker's and not worked out here from what the row
