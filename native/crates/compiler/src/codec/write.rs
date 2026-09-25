@@ -5,37 +5,46 @@
 //! object, or by a behavior the host supplies. So what is left to do in a walk is kept in a list
 //! of the walk's own, and not on the native stack. Each declaration has a step, a function of this
 //! object's that writes in place what of a value it can and adds to the list what has to wait for a
-//! declared value it holds; one loop, [`Machine::Run`], takes work off the list until none is left.
+//! declared value it holds; one loop, [`Driver::Run`], takes work off the list until none is left.
 //! A step never calls another step, so writing a value takes the same few native frames however
 //! deeply its declarations nest. Splitting the writing by declaration is what a step is for; it is
 //! not a native call, and nothing here makes it one.
 //!
-//! What a piece of work leaves for the one after it is a form, in the walk's `result`: the work for
-//! a field's value leaves the field's form there, and the work under it puts that form into the
-//! object it belongs to. A form is put into its object only once it is whole, as it always was,
-//! so what the runtime is asked stays what it was asked before. Work is added last first, so it is
-//! taken in the order the fields are laid out, and an object keeps its members in the order they
-//! were put.
+//! Only what waits on a declared value goes on the list ([`defers`], [`output_defers`]). Anything
+//! else is written in place, as deep as its shape is and no deeper, and an answer that holds no
+//! declared value starts no walk at all. A list whose elements wait adds one element's work at a
+//! time, so what is left to do stays as much as the value is deep and not as long as its lists.
 //!
-//! The list, its records and a step's signature are this object's own and nothing another object
-//! or the runtime knows about, the way a closure's layout is. A record is taken from the arena, and
-//! one taken off the list is kept for the next push, so the room a walk takes is as much as was
-//! ever left to do at once. The runtime's own walk over the tree, and its drop, take no frame per
-//! level either.
+//! What a piece of work leaves for the one after it is a form, in the walk's `result`, and the
+//! form there is owned by nothing else. Work that leaves a form ([`Continuation::Give`], a step)
+//! finds `result` empty and fills it; work that takes one ([`Continuation::Put`],
+//! [`Continuation::Append`]) finds it filled, moves the form into the object or array it belongs
+//! to, and empties it. Each checks that it finds `result` the way it expects, and traps if not, so
+//! work added out of that order is caught where it runs and never reads a form already moved. A
+//! form is put into its object only once it is whole, as it always was, so what the runtime is
+//! asked stays what it was asked before. Work is added last first, so it is taken in the order the
+//! fields are laid out, and an object keeps its members in the order they were put.
+//!
+//! The list, its records and the signature work is called by are this object's own and nothing
+//! another object or the runtime knows about, the way a closure's layout is. A record names its
+//! work by a [`Work`], which only a function declared with that signature is, so a record never
+//! names a function the loop would call wrongly. A record is taken from the arena, and one taken
+//! off the list is kept for the next push, so the room a walk takes is as much as was ever left to
+//! do at once. The runtime's own walk over the tree, and its drop, take no frame per level either.
 
 use super::{Codecs, Runtime};
 use crate::transport::{
     AlternativesForm, BoundaryOutput, Case, CodecShape, Declaration, Field, LeafScalar, Prim, Ty,
 };
 use crate::{
-    Declared, Emitting, Literals, Lowered, NO_ARM, POINTER, TRUSTED, Tagged, machine_type,
-    not_lowered, out_of_slot, text_in_the_object,
+    A_WALK_OUT_OF_ORDER, Declared, Emitting, Literals, Lowered, NO_ARM, POINTER, TRUSTED, Tagged,
+    accepted, machine_type, not_lowered, out_of_slot, text_in_the_object,
 };
 use cranelift::codegen::ir::condcodes::IntCC;
 use cranelift::codegen::ir::{self, AbiParam, InstBuilder, TrapCode, types};
 use cranelift::codegen::isa::CallConv;
 use cranelift::frontend::FunctionBuilder;
-use cranelift::module::{FuncId, Module};
+use cranelift::module::{FuncId, Linkage, Module};
 use cranelift::object::ObjectModule;
 use souther_native_abi::{HELD, LIST_ELEMENTS, LIST_LENGTH, NOTHING, SLOT, field_at};
 
@@ -47,52 +56,36 @@ const FREE: i32 = 8;
 const RESULT: i32 = 16;
 const WALK: u32 = 24;
 
-/// A record of work: the record under it, the function that does it, and the two words that
+/// A record of work: the record under it, the function that does it, and the three words that
 /// function is handed.
 const NEXT: i32 = 0;
 const CODE: i32 = 8;
-const FIRST: i32 = 16;
-const SECOND: i32 = 24;
-const WORK: i64 = 32;
+const HANDED: [i32; 3] = [16, 24, 32];
+const WORK: i64 = 40;
 
-/// The functions a walk is made of besides each declaration's step.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(super) enum Machine {
-    /// Takes work off the list and does it until none is left.
-    Run,
-    /// Adds a record to the list.
-    Push,
-    /// Leaves the form it is handed as the result.
-    Give,
-    /// Puts the result into an object under a key.
-    Put,
-    /// Adds the result to the end of an array.
-    Append,
-}
+/// A function a record of work can name: one declared with the signature [`Driver::Run`] calls
+/// work by, the walk and the record's three words. Made only by [`declare_work`], so whatever
+/// declares a function under another signature has no `Work` to put in a record.
+#[derive(Clone, Copy)]
+pub(super) struct Work(FuncId);
 
-impl Machine {
-    pub(super) fn symbol(self) -> &'static str {
-        match self {
-            Machine::Run => "$encoding$run",
-            Machine::Push => "$encoding$push",
-            Machine::Give => "$encoding$give",
-            Machine::Put => "$encoding$put",
-            Machine::Append => "$encoding$append",
-        }
-    }
-
-    pub(super) fn signature(self, call_conv: CallConv) -> ir::Signature {
-        match self {
-            Machine::Run => words(call_conv, 1),
-            Machine::Push => words(call_conv, 4),
-            Machine::Give | Machine::Put | Machine::Append => step_signature(call_conv),
-        }
+impl Work {
+    pub(super) fn id(self) -> FuncId {
+        self.0
     }
 }
 
-/// What every piece of work is called with: the walk and the record's two words.
-pub(super) fn step_signature(call_conv: CallConv) -> ir::Signature {
-    words(call_conv, 3)
+/// Declares a function of this object's that a record of work can name.
+pub(super) fn declare_work(module: &mut ObjectModule, call_conv: CallConv, symbol: &str) -> Work {
+    Work(accepted(module.declare_function(
+        symbol,
+        Linkage::Local,
+        &work_signature(call_conv),
+    )))
+}
+
+fn work_signature(call_conv: CallConv) -> ir::Signature {
+    words(call_conv, 1 + HANDED.len())
 }
 
 fn words(call_conv: CallConv, count: usize) -> ir::Signature {
@@ -103,17 +96,80 @@ fn words(call_conv: CallConv, count: usize) -> ir::Signature {
     signature
 }
 
+/// What a function that starts a walk calls, and never a record's work.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum Driver {
+    /// Takes work off the list and does it until none is left.
+    Run,
+    /// Adds a record to the list.
+    Push,
+}
+
+impl Driver {
+    pub(super) fn symbol(self) -> &'static str {
+        match self {
+            Driver::Run => "$encoding$run",
+            Driver::Push => "$encoding$push",
+        }
+    }
+
+    pub(super) fn signature(self, call_conv: CallConv) -> ir::Signature {
+        match self {
+            Driver::Run => words(call_conv, 1),
+            Driver::Push => words(call_conv, 2 + HANDED.len()),
+        }
+    }
+}
+
+/// The work a walk does besides each declaration's step and each list's elements.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum Continuation {
+    /// Leaves the form it is handed as the result.
+    Give,
+    /// Moves the result into an object under a key.
+    Put,
+    /// Moves the result to the end of an array.
+    Append,
+}
+
+impl Continuation {
+    pub(super) fn symbol(self) -> &'static str {
+        match self {
+            Continuation::Give => "$encoding$give",
+            Continuation::Put => "$encoding$put",
+            Continuation::Append => "$encoding$append",
+        }
+    }
+}
+
+/// What the elements of a list whose elements wait are written as: a value where it has no key of
+/// its own, or an answer.
+#[derive(Clone)]
+pub(super) enum Element {
+    Value(CodecShape),
+    Output(BoundaryOutput),
+}
+
+impl Element {
+    fn ty(&self) -> Ty {
+        match self {
+            Element::Value(shape) => shape.ty(),
+            Element::Output(output) => output.ty(),
+        }
+    }
+}
+
 /// Defines the step of `key`.
 pub(super) fn define(
     emitting: &mut Emitting,
     codecs: &mut Codecs,
-    id: FuncId,
+    work: Work,
     key: &str,
 ) -> Lowered<()> {
     let declared = emitting.declared;
     let literals = emitting.literals;
-    let signature = step_signature(emitting.call_conv);
-    emitting.function(id, signature, |builder, module, given| {
+    let signature = work_signature(emitting.call_conv);
+    emitting.function(work.id(), signature, |builder, module, given| {
         let mut writing = Writing {
             builder,
             module,
@@ -131,20 +187,104 @@ pub(super) fn define(
     })
 }
 
-/// Defines one of the functions a walk is made of.
-pub(super) fn define_machine(
+/// Defines the work that writes the element of a list at an index, handed the list, the array its
+/// elements go into, and the index. It adds, under that element's work, the moving of what the
+/// element leaves into the array and then itself at the next index, so one element's work is on
+/// the list at a time.
+pub(super) fn define_each(
     emitting: &mut Emitting,
     codecs: &mut Codecs,
-    id: FuncId,
-    part: Machine,
+    work: Work,
+    element: &Element,
 ) -> Lowered<()> {
+    let declared = emitting.declared;
+    let literals = emitting.literals;
+    let signature = work_signature(emitting.call_conv);
+    emitting.function(work.id(), signature, |builder, module, given| {
+        let (walk, list, array, index) = (given[0], given[1], given[2], given[3]);
+        let mut writing = Writing {
+            builder,
+            module,
+            declared,
+            literals,
+            codecs,
+        };
+        let length = writing.length(list);
+        let more = writing.builder.create_block();
+        let done = writing.builder.create_block();
+        let inside = writing
+            .builder
+            .ins()
+            .icmp(IntCC::SignedLessThan, index, length);
+        writing.builder.ins().brif(inside, more, &[], done, &[]);
+
+        writing.builder.switch_to_block(more);
+        let next = writing.builder.ins().iadd_imm_s(index, 1);
+        let value = writing.element_at(list, index, &element.ty())?;
+        let mut scheduling = Scheduling {
+            writing: &mut writing,
+            walk,
+        };
+        scheduling.push(work, &[list, array, next]);
+        scheduling.push_continuation(Continuation::Append, &[array]);
+        match element {
+            Element::Value(shape) => scheduling.value(shape, value)?,
+            Element::Output(output) => scheduling.output(output, value)?,
+        }
+        writing.builder.ins().jump(done, &[]);
+
+        writing.builder.switch_to_block(done);
+        writing.builder.ins().return_(&[]);
+        Ok(())
+    })
+}
+
+/// Defines one of the continuations.
+pub(super) fn define_continuation(
+    emitting: &mut Emitting,
+    codecs: &mut Codecs,
+    work: Work,
+    part: Continuation,
+) -> Lowered<()> {
+    let signature = work_signature(emitting.call_conv);
+    emitting.function(work.id(), signature, |builder, module, given| {
+        let walk = given[0];
+        let result = builder.ins().load(POINTER, TRUSTED, walk, RESULT);
+        let out_of_order = TrapCode::user(A_WALK_OUT_OF_ORDER).expect("a trap code of its own");
+        match part {
+            Continuation::Give => {
+                builder.ins().trapnz(result, out_of_order);
+                builder.ins().store(TRUSTED, given[1], walk, RESULT);
+            }
+            Continuation::Put | Continuation::Append => {
+                builder.ins().trapz(result, out_of_order);
+                let (called, arguments) = if part == Continuation::Put {
+                    (Runtime::ExternalPut, vec![given[1], given[2], result])
+                } else {
+                    (Runtime::ExternalAppend, vec![given[1], result])
+                };
+                let reached = codecs.runtime(module, called);
+                let reaching = module.declare_func_in_func(reached, builder.func);
+                builder.ins().call(reaching, &arguments);
+                // The form is the object's or the array's now, and nothing is left for the next.
+                let none = builder.ins().iconst(POINTER, 0);
+                builder.ins().store(TRUSTED, none, walk, RESULT);
+            }
+        }
+        builder.ins().return_(&[]);
+        Ok(())
+    })
+}
+
+/// Defines one of the functions a walk is driven by.
+pub(super) fn define_driver(emitting: &mut Emitting, id: FuncId, part: Driver) -> Lowered<()> {
     let allocate = emitting.allocate;
     let call_conv = emitting.call_conv;
     let signature = part.signature(call_conv);
     emitting.function(id, signature, |builder, module, given| {
         let walk = given[0];
         match part {
-            Machine::Run => {
+            Driver::Run => {
                 let head = builder.create_block();
                 let work = builder.create_block();
                 let done = builder.create_block();
@@ -160,21 +300,21 @@ pub(super) fn define_machine(
                 let next = builder.ins().load(POINTER, TRUSTED, record, NEXT);
                 builder.ins().store(TRUSTED, next, walk, LEFT);
                 let code = builder.ins().load(POINTER, TRUSTED, record, CODE);
-                let first = builder.ins().load(POINTER, TRUSTED, record, FIRST);
-                let second = builder.ins().load(POINTER, TRUSTED, record, SECOND);
+                let mut handed = vec![walk];
+                for at in HANDED {
+                    handed.push(builder.ins().load(POINTER, TRUSTED, record, at));
+                }
                 let free = builder.ins().load(POINTER, TRUSTED, walk, FREE);
                 builder.ins().store(TRUSTED, free, record, NEXT);
                 builder.ins().store(TRUSTED, record, walk, FREE);
-                let doing = builder.import_signature(step_signature(call_conv));
-                builder
-                    .ins()
-                    .call_indirect(doing, code, &[walk, first, second]);
+                let doing = builder.import_signature(work_signature(call_conv));
+                builder.ins().call_indirect(doing, code, &handed);
                 builder.ins().jump(head, &[]);
 
                 builder.switch_to_block(done);
             }
-            Machine::Push => {
-                let (code, first, second) = (given[1], given[2], given[3]);
+            Driver::Push => {
+                let code = given[1];
                 let again = builder.create_block();
                 let taken = builder.create_block();
                 let fill = builder.create_block();
@@ -199,23 +339,10 @@ pub(super) fn define_machine(
                 let left = builder.ins().load(POINTER, TRUSTED, walk, LEFT);
                 builder.ins().store(TRUSTED, left, record, NEXT);
                 builder.ins().store(TRUSTED, code, record, CODE);
-                builder.ins().store(TRUSTED, first, record, FIRST);
-                builder.ins().store(TRUSTED, second, record, SECOND);
+                for (at, &word) in HANDED.iter().zip(&given[2..]) {
+                    builder.ins().store(TRUSTED, word, record, *at);
+                }
                 builder.ins().store(TRUSTED, record, walk, LEFT);
-            }
-            Machine::Give => {
-                builder.ins().store(TRUSTED, given[1], walk, RESULT);
-            }
-            Machine::Put | Machine::Append => {
-                let result = builder.ins().load(POINTER, TRUSTED, walk, RESULT);
-                let (called, arguments) = if part == Machine::Put {
-                    (Runtime::ExternalPut, vec![given[1], given[2], result])
-                } else {
-                    (Runtime::ExternalAppend, vec![given[1], result])
-                };
-                let reached = codecs.runtime(module, called);
-                let reaching = module.declare_func_in_func(reached, builder.func);
-                builder.ins().call(reaching, &arguments);
             }
         }
         builder.ins().return_(&[]);
@@ -231,6 +358,18 @@ fn defers(shape: &CodecShape) -> bool {
         CodecShape::OptionOf { present } => defers(present.shape()),
         CodecShape::ListOf { element } => defers(element),
         CodecShape::Scalar { .. } | CodecShape::SetOf { .. } | CodecShape::MapOf { .. } => false,
+    }
+}
+
+/// [`defers`] for an answer. A set of alternatives waits, since each of its cases is a declared
+/// type.
+fn output_defers(output: &BoundaryOutput) -> bool {
+    match output {
+        BoundaryOutput::Nominal { .. } | BoundaryOutput::Cases { .. } => true,
+        BoundaryOutput::ListOf { element } => output_defers(element),
+        BoundaryOutput::Scalar { .. }
+        | BoundaryOutput::SetOf { .. }
+        | BoundaryOutput::MapOf { .. } => false,
     }
 }
 
@@ -257,12 +396,6 @@ impl<'w, 'f> Writing<'w, 'f> {
         self.builder.ins().call(reaching, arguments);
     }
 
-    /// The address of a function of this object's, to be done as a piece of work.
-    fn address(&mut self, id: FuncId) -> ir::Value {
-        let reaching = self.module.declare_func_in_func(id, self.builder.func);
-        self.builder.ins().func_addr(POINTER, reaching)
-    }
-
     /// A string written into the object, a literal of the runtime's own layout: a key, or a
     /// case's name.
     fn literal(&mut self, text: &str) -> Lowered<ir::Value> {
@@ -284,12 +417,16 @@ impl<'w, 'f> Writing<'w, 'f> {
         Ok(self.call(Runtime::ExternalString, &[spelt]))
     }
 
-    /// What an answer leaves as, written by a walk this function starts and finishes.
+    /// What an answer leaves as. One that holds no declared value is written in place, and one
+    /// that does by a walk this function starts and finishes.
     pub(crate) fn output(
         &mut self,
         output: &BoundaryOutput,
         answer: ir::Value,
     ) -> Lowered<ir::Value> {
+        if !output_defers(output) {
+            return self.output_in_place(output, answer);
+        }
         self.walked(|scheduling| scheduling.output(output, answer))
     }
 
@@ -322,10 +459,39 @@ impl<'w, 'f> Writing<'w, 'f> {
             writing: &mut *self,
             walk,
         })?;
-        let run = self.codecs.machine(self.module, Machine::Run);
+        let run = self.codecs.driver(self.module, Driver::Run);
         let reaching = self.module.declare_func_in_func(run, self.builder.func);
         self.builder.ins().call(reaching, &[walk]);
-        Ok(self.builder.ins().load(POINTER, TRUSTED, walk, RESULT))
+        let result = self.builder.ins().load(POINTER, TRUSTED, walk, RESULT);
+        self.builder.ins().trapz(
+            result,
+            TrapCode::user(A_WALK_OUT_OF_ORDER).expect("a trap code of its own"),
+        );
+        Ok(result)
+    }
+
+    /// An answer that holds no declared value, written in place.
+    fn output_in_place(
+        &mut self,
+        output: &BoundaryOutput,
+        answer: ir::Value,
+    ) -> Lowered<ir::Value> {
+        match output {
+            BoundaryOutput::Scalar { scalar } => self.scalar(*scalar, answer),
+            // Each element as an answer of the element's shape is written, which is how a value of
+            // the element's type is written anywhere else.
+            BoundaryOutput::ListOf { element } => {
+                self.array(&element.ty(), answer, |writing, value| {
+                    writing.output_in_place(element, value)
+                })
+            }
+            BoundaryOutput::Nominal { .. } | BoundaryOutput::Cases { .. } => unreachable!(
+                "`output_defers` keeps what holds a declared value from being written in place"
+            ),
+            BoundaryOutput::SetOf { .. } | BoundaryOutput::MapOf { .. } => Err(not_lowered(
+                format!("an answer written as {}", output.ty().spelt()),
+            )),
+        }
     }
 
     fn scalar(&mut self, scalar: LeafScalar, value: ir::Value) -> Lowered<ir::Value> {
@@ -370,15 +536,9 @@ impl<'w, 'f> Writing<'w, 'f> {
                 Ok(self.builder.block_params(written)[0])
             }
             // A list, as an array of its elements in the order it holds them.
-            CodecShape::ListOf { element } => {
-                let array = self.call(Runtime::ExternalArray, &[]);
-                self.elements(&element.ty(), value, false, |writing, value| {
-                    let form = writing.value(element, value)?;
-                    writing.call_for_effect(Runtime::ExternalAppend, &[array, form]);
-                    Ok(())
-                })?;
-                Ok(array)
-            }
+            CodecShape::ListOf { element } => self.array(&element.ty(), value, |writing, value| {
+                writing.value(element, value)
+            }),
             CodecShape::SetOf { .. } | CodecShape::MapOf { .. } => Err(not_lowered(format!(
                 "{} written at a boundary",
                 shape.ty().spelt()
@@ -386,64 +546,62 @@ impl<'w, 'f> Writing<'w, 'f> {
         }
     }
 
-    /// Emits `each` over every element of a list of `element`s, first to last, or last to first
-    /// where `backwards`.
-    fn elements(
+    /// A list of `element`s written in place, as an array of what `write` writes each as, in the
+    /// order it holds them.
+    fn array(
         &mut self,
         element: &Ty,
         list: ir::Value,
-        backwards: bool,
-        mut each: impl FnMut(&mut Self, ir::Value) -> Lowered<()>,
-    ) -> Lowered<()> {
-        let length = self
-            .builder
-            .ins()
-            .load(types::I64, TRUSTED, list, LIST_LENGTH as i32);
+        mut write: impl FnMut(&mut Self, ir::Value) -> Lowered<ir::Value>,
+    ) -> Lowered<ir::Value> {
+        let array = self.call(Runtime::ExternalArray, &[]);
+        let length = self.length(list);
         let head = self.builder.create_block();
         self.builder.append_block_param(head, types::I64);
         let step = self.builder.create_block();
-        let walked = self.builder.create_block();
-        // Counted up from nought to the length, or down from the length to nought, the index
-        // reached being one below the count in the second.
-        let start = if backwards {
-            length
-        } else {
-            self.builder.ins().iconst(types::I64, 0)
-        };
+        let written = self.builder.create_block();
+        let start = self.builder.ins().iconst(types::I64, 0);
         self.builder.ins().jump(head, &[start.into()]);
 
         self.builder.switch_to_block(head);
-        let count = self.builder.block_params(head)[0];
-        let inside = if backwards {
-            self.builder
-                .ins()
-                .icmp_imm_s(IntCC::SignedGreaterThan, count, 0)
-        } else {
-            self.builder
-                .ins()
-                .icmp(IntCC::SignedLessThan, count, length)
-        };
-        self.builder.ins().brif(inside, step, &[], walked, &[]);
+        let index = self.builder.block_params(head)[0];
+        let inside = self
+            .builder
+            .ins()
+            .icmp(IntCC::SignedLessThan, index, length);
+        self.builder.ins().brif(inside, step, &[], written, &[]);
 
         self.builder.switch_to_block(step);
-        let (index, next) = if backwards {
-            let below = self.builder.ins().iadd_imm_s(count, -1);
-            (below, below)
-        } else {
-            (count, self.builder.ins().iadd_imm_s(count, 1))
-        };
+        let value = self.element_at(list, index, element)?;
+        let form = write(self, value)?;
+        self.call_for_effect(Runtime::ExternalAppend, &[array, form]);
+        let next = self.builder.ins().iadd_imm_s(index, 1);
+        self.builder.ins().jump(head, &[next.into()]);
+
+        self.builder.switch_to_block(written);
+        Ok(array)
+    }
+
+    fn length(&mut self, list: ir::Value) -> ir::Value {
+        self.builder
+            .ins()
+            .load(types::I64, TRUSTED, list, LIST_LENGTH as i32)
+    }
+
+    /// The element of a list of `element`s at `index`, read out of its slot the way any value is.
+    fn element_at(
+        &mut self,
+        list: ir::Value,
+        index: ir::Value,
+        element: &Ty,
+    ) -> Lowered<ir::Value> {
         let along = self.builder.ins().imul_imm_s(index, SLOT);
         let at = self.builder.ins().iadd(list, along);
         let slot = self
             .builder
             .ins()
             .load(types::I64, TRUSTED, at, LIST_ELEMENTS as i32);
-        let value = out_of_slot(self.builder, slot, machine_type(element)?);
-        each(self, value)?;
-        self.builder.ins().jump(head, &[next.into()]);
-
-        self.builder.switch_to_block(walked);
-        Ok(())
+        Ok(out_of_slot(self.builder, slot, machine_type(element)?))
     }
 
     /// A field of an object written in place, which has a second way of holding nothing: not being
@@ -495,68 +653,69 @@ impl<'w, 'f> Writing<'w, 'f> {
     }
 }
 
-/// A function adding work to a walk: a declaration's step, or the function that starts the walk.
-/// Each of its methods leaves, once the work it adds is done, one form as the walk's result.
+/// A function adding work to a walk: a piece of work itself, or the function that starts the walk.
+/// Each of its methods adds work that, once done, leaves one form as the walk's result.
 struct Scheduling<'s, 'w, 'f> {
     writing: &'s mut Writing<'w, 'f>,
     walk: ir::Value,
 }
 
 impl<'w, 'f> Scheduling<'_, 'w, 'f> {
-    fn push(&mut self, code: ir::Value, first: ir::Value, second: ir::Value) {
-        let push = self
-            .writing
-            .codecs
-            .machine(self.writing.module, Machine::Push);
-        let reaching = self
-            .writing
+    /// Adds a record naming `work`, handed `handed` and noughts for the words it is not handed.
+    fn push(&mut self, work: Work, handed: &[ir::Value]) {
+        assert!(
+            handed.len() <= HANDED.len(),
+            "a record hands its work {} words",
+            HANDED.len()
+        );
+        let writing = &mut *self.writing;
+        let reaching = writing
             .module
-            .declare_func_in_func(push, self.writing.builder.func);
-        self.writing
-            .builder
-            .ins()
-            .call(reaching, &[self.walk, code, first, second]);
+            .declare_func_in_func(work.id(), writing.builder.func);
+        let code = writing.builder.ins().func_addr(POINTER, reaching);
+        let mut given = vec![self.walk, code];
+        given.extend_from_slice(handed);
+        while given.len() < 2 + HANDED.len() {
+            given.push(writing.builder.ins().iconst(POINTER, 0));
+        }
+        let push = writing.codecs.driver(writing.module, Driver::Push);
+        let reaching = writing
+            .module
+            .declare_func_in_func(push, writing.builder.func);
+        writing.builder.ins().call(reaching, &given);
     }
 
-    fn push_machine(&mut self, part: Machine, first: ir::Value, second: ir::Value) {
-        let id = self.writing.codecs.machine(self.writing.module, part);
-        let code = self.writing.address(id);
-        self.push(code, first, second);
-    }
-
-    fn none(&mut self) -> ir::Value {
-        self.writing.builder.ins().iconst(POINTER, 0)
+    fn push_continuation(&mut self, part: Continuation, handed: &[ir::Value]) {
+        let work = self.writing.codecs.continuation(self.writing.module, part);
+        self.push(work, handed);
     }
 
     /// `form`, as it stands.
     fn give(&mut self, form: ir::Value) {
-        let none = self.none();
-        self.push_machine(Machine::Give, form, none);
+        self.push_continuation(Continuation::Give, &[form]);
     }
 
     /// A value of `declared`, written by that type's step.
     fn step(&mut self, declared: &str, value: ir::Value) {
-        let id = self.writing.codecs.step(self.writing.module, declared);
-        let code = self.writing.address(id);
-        let none = self.none();
-        self.push(code, value, none);
+        let work = self.writing.codecs.step(self.writing.module, declared);
+        self.push(work, &[value]);
     }
 
-    /// Adds the putting of what the work pushed after this leaves into `object` under `key`.
+    /// Adds the moving of what the work pushed after this leaves into `object` under `key`.
     fn put_later(&mut self, object: ir::Value, key: &str) -> Lowered<()> {
         let key = self.writing.literal(key)?;
-        self.push_machine(Machine::Put, object, key);
+        self.push_continuation(Continuation::Put, &[object, key]);
         Ok(())
     }
 
     /// What an answer leaves as.
     fn output(&mut self, output: &BoundaryOutput, answer: ir::Value) -> Lowered<()> {
+        if !output_defers(output) {
+            let form = self.writing.output_in_place(output, answer)?;
+            self.give(form);
+            return Ok(());
+        }
         match output {
-            BoundaryOutput::Scalar { scalar } => {
-                let form = self.writing.scalar(*scalar, answer)?;
-                self.give(form);
-                Ok(())
-            }
             BoundaryOutput::Nominal { declared } => {
                 self.step(declared, answer);
                 Ok(())
@@ -564,16 +723,15 @@ impl<'w, 'f> Scheduling<'_, 'w, 'f> {
             BoundaryOutput::Cases { ty, cases, form } => {
                 self.alternatives(cases, form, Tagged::of(answer, ty))
             }
-            // Each element as an answer of the element's shape is written, which is how a value of
-            // the element's type is written anywhere else.
             BoundaryOutput::ListOf { element } => {
-                self.array(&element.ty(), answer, |scheduling, value| {
-                    scheduling.output(element, value)
-                })
+                self.array(Element::Output((**element).clone()), answer);
+                Ok(())
             }
-            BoundaryOutput::SetOf { .. } | BoundaryOutput::MapOf { .. } => Err(not_lowered(
-                format!("an answer written as {}", output.ty().spelt()),
-            )),
+            BoundaryOutput::Scalar { .. }
+            | BoundaryOutput::SetOf { .. }
+            | BoundaryOutput::MapOf { .. } => {
+                unreachable!("`output_defers` holds only what holds a declared value to wait")
+            }
         }
     }
 
@@ -617,9 +775,8 @@ impl<'w, 'f> Scheduling<'_, 'w, 'f> {
                 Ok(())
             }
             CodecShape::ListOf { element } => {
-                self.array(&element.ty(), value, |scheduling, value| {
-                    scheduling.value(element, value)
-                })
+                self.array(Element::Value((**element).clone()), value);
+                Ok(())
             }
             CodecShape::Scalar { .. } | CodecShape::SetOf { .. } | CodecShape::MapOf { .. } => {
                 unreachable!("`defers` holds only what holds a declared value to wait")
@@ -627,25 +784,15 @@ impl<'w, 'f> Scheduling<'_, 'w, 'f> {
         }
     }
 
-    /// A list of `element`s, as an array of what `each` leaves for each, in the order it holds
-    /// them. Every element's work is added at once, last first, each with the adding of what it
-    /// leaves to the array under it.
-    fn array(
-        &mut self,
-        element: &Ty,
-        list: ir::Value,
-        mut each: impl FnMut(&mut Scheduling<'_, 'w, 'f>, ir::Value) -> Lowered<()>,
-    ) -> Lowered<()> {
+    /// A list whose elements wait, as an array of what each element leaves, in the order the list
+    /// holds them. What is added is the array, given once every element is in it, and the work
+    /// that writes the first element, which adds the next one's only once it is done.
+    fn array(&mut self, element: Element, list: ir::Value) {
         let array = self.writing.call(Runtime::ExternalArray, &[]);
         self.give(array);
-        let walk = self.walk;
-        self.writing
-            .elements(element, list, true, |writing, value| {
-                let mut scheduling = Scheduling { writing, walk };
-                let none = scheduling.none();
-                scheduling.push_machine(Machine::Append, array, none);
-                each(&mut scheduling, value)
-            })
+        let each = self.writing.codecs.each(self.writing.module, element);
+        let first = self.writing.builder.ins().iconst(types::I64, 0);
+        self.push(each, &[list, array, first]);
     }
 
     /// A field of an object, which has a second way of holding nothing: not being there.

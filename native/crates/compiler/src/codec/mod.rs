@@ -38,7 +38,7 @@ use souther_native_abi::{
     READ_NOT_A_CASE, READ_NULL, READ_OBJECT, READ_STRING, READ_TAG, reader_symbol,
 };
 use std::collections::{BTreeMap, BTreeSet};
-use write::Machine;
+use write::{Continuation, Driver, Element, Work};
 
 /// Every declaration whose values have an external form this backend reads and writes, by the key a
 /// reference to it says.
@@ -213,12 +213,12 @@ impl Runtime {
 
 /// The functions one kind of thing is reached through, each declared the first time it is asked
 /// for and defined once every entry that asks has been.
-struct Per<K> {
-    ids: BTreeMap<K, FuncId>,
+struct Per<K, F = FuncId> {
+    ids: BTreeMap<K, F>,
     left: Vec<K>,
 }
 
-impl<K> Default for Per<K> {
+impl<K, F> Default for Per<K, F> {
     fn default() -> Self {
         Per {
             ids: BTreeMap::new(),
@@ -232,8 +232,13 @@ impl<K> Default for Per<K> {
 pub(crate) struct Codecs {
     call_conv: CallConv,
     imported: BTreeMap<Runtime, FuncId>,
-    steps: Per<String>,
-    machine: Per<Machine>,
+    steps: Per<String, Work>,
+    continuations: Per<Continuation, Work>,
+    drivers: Per<Driver>,
+    /// The work writing each list whose elements wait, one for every place such a list is written,
+    /// with what its elements are written as, left to define.
+    each: Vec<(Work, Element)>,
+    eaches: usize,
     readers: Per<String>,
 }
 
@@ -243,7 +248,10 @@ impl Codecs {
             call_conv,
             imported: BTreeMap::new(),
             steps: Per::default(),
-            machine: Per::default(),
+            continuations: Per::default(),
+            drivers: Per::default(),
+            each: Vec::new(),
+            eaches: 0,
             readers: Per::default(),
         }
     }
@@ -272,24 +280,31 @@ impl Codecs {
 
     /// The step of `declared`'s writer: this object's own, whoever declared it. A step reads where
     /// a value keeps what it holds and asks nothing of it that only its build could answer.
-    fn step(&mut self, module: &mut ObjectModule, declared: &str) -> FuncId {
-        if let Some(&id) = self.steps.ids.get(declared) {
-            return id;
+    fn step(&mut self, module: &mut ObjectModule, declared: &str) -> Work {
+        if let Some(&work) = self.steps.ids.get(declared) {
+            return work;
         }
-        let id = accepted(module.declare_function(
-            &format!("$encode${declared}"),
-            Linkage::Local,
-            &write::step_signature(self.call_conv),
-        ));
-        crate::index::unique(&mut self.steps.ids, declared.to_string(), id);
+        let work = write::declare_work(module, self.call_conv, &format!("$encode${declared}"));
+        crate::index::unique(&mut self.steps.ids, declared.to_string(), work);
         self.steps.left.push(declared.to_string());
-        id
+        work
     }
 
-    /// One of the functions a walk that writes is made of, declared the first time a function here
-    /// reaches it: an object that writes nothing holds none of them.
-    fn machine(&mut self, module: &mut ObjectModule, part: Machine) -> FuncId {
-        if let Some(&id) = self.machine.ids.get(&part) {
+    /// One of the continuations a walk that writes is made of, declared the first time a function
+    /// here reaches it: an object that writes nothing holds none of them.
+    fn continuation(&mut self, module: &mut ObjectModule, part: Continuation) -> Work {
+        if let Some(&work) = self.continuations.ids.get(&part) {
+            return work;
+        }
+        let work = write::declare_work(module, self.call_conv, part.symbol());
+        crate::index::unique(&mut self.continuations.ids, part, work);
+        self.continuations.left.push(part);
+        work
+    }
+
+    /// One of the functions a walk is driven by, declared the first time a function here reaches it.
+    fn driver(&mut self, module: &mut ObjectModule, part: Driver) -> FuncId {
+        if let Some(&id) = self.drivers.ids.get(&part) {
             return id;
         }
         let id = accepted(module.declare_function(
@@ -297,9 +312,23 @@ impl Codecs {
             Linkage::Local,
             &part.signature(self.call_conv),
         ));
-        crate::index::unique(&mut self.machine.ids, part, id);
-        self.machine.left.push(part);
+        crate::index::unique(&mut self.drivers.ids, part, id);
+        self.drivers.left.push(part);
         id
+    }
+
+    /// The work writing the elements of one list whose elements wait, written as `element`: a
+    /// function of its own for every place such a list is written, since what it adds for an
+    /// element is compiled from where the list stands.
+    fn each(&mut self, module: &mut ObjectModule, element: Element) -> Work {
+        let work = write::declare_work(
+            module,
+            self.call_conv,
+            &format!("$encoding$each${}", self.eaches),
+        );
+        self.eaches += 1;
+        self.each.push((work, element));
+        work
     }
 
     /// The reader of `declared`: the one the build that declared it defines, whatever kind of
@@ -343,11 +372,16 @@ impl Codecs {
     pub(crate) fn define(&mut self, emitting: &mut Emitting) -> Lowered<()> {
         loop {
             if let Some(key) = self.steps.left.pop() {
-                let id = self.steps.ids[&key];
-                write::define(emitting, self, id, &key)?;
-            } else if let Some(part) = self.machine.left.pop() {
-                let id = self.machine.ids[&part];
-                write::define_machine(emitting, self, id, part)?;
+                let work = self.steps.ids[&key];
+                write::define(emitting, self, work, &key)?;
+            } else if let Some((work, element)) = self.each.pop() {
+                write::define_each(emitting, self, work, &element)?;
+            } else if let Some(part) = self.continuations.left.pop() {
+                let work = self.continuations.ids[&part];
+                write::define_continuation(emitting, self, work, part)?;
+            } else if let Some(part) = self.drivers.left.pop() {
+                let id = self.drivers.ids[&part];
+                write::define_driver(emitting, id, part)?;
             } else if let Some(key) = self.readers.left.pop() {
                 let id = self.readers.ids[&key];
                 let signature = self.reader_signature();
