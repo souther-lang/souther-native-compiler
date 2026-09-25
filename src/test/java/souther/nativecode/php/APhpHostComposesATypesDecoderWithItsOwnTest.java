@@ -54,7 +54,6 @@ class APhpHostComposesATypesDecoderWithItsOwnTest {
             use Acme\\Shop\\Ordering\\Quantity;
             use Raoh\\Issue;
             use Raoh\\Result;
-            use Souther\\Runtime\\Session;
 
             use function Raoh\\Boundary\\Json\\combine;
             use function Raoh\\Boundary\\Json\\field;
@@ -69,10 +68,13 @@ class APhpHostComposesATypesDecoderWithItsOwnTest {
                         $issues->toArray())));
             }
 
-            echo Binding::load($argv[3])->run(function (Session $session): string {
+            // A decoder holds no run: made once, it reads in whichever run it is used in.
+            $quantity = Quantity::decoder();
+
+            echo Binding::load($argv[3])->run(function () use ($quantity): string {
                 // The model's decoder reads the orderer: which case it is by `type`, its fields, and
                 // what Email states.
-                $checkout = from_json(field('orderer', OrdererCodec::decoder($session)));
+                $checkout = from_json(field('orderer', OrdererCodec::decoder()));
                 $out = [];
                 $out[] = 'individual: ' . said($checkout->decode(
                     '{"orderer":{"type":"Individual","email":"a@b","name":"Taro"}}'));
@@ -91,18 +93,19 @@ class APhpHostComposesATypesDecoderWithItsOwnTest {
                 // issue is at its own path.
                 $both = combine(
                     field('who', string_()->minLength(2)),
-                    field('individual', Individual::decoder($session)),
+                    field('individual', Individual::decoder()),
                 )->map(fn (string $who, Individual $individual): Individual => $individual);
                 $out[] = 'both: ' . said($both->decode(['who' => 'x', 'individual' => ['email' => 'ab', 'name' => 'T']]));
 
                 // A newtype reads its value, and a list its elements, each at its index.
-                $out[] = 'quantity: ' . said(field('n', Quantity::decoder($session))->decode(['n' => 0]));
-                $out[] = 'a float: ' . said(Quantity::decoder($session)->decode(2.0));
-                $out[] = 'lines: ' . said(Lines::decoder($session)->decode(
+                $out[] = 'quantity: ' . said(field('n', Quantity::decoder())->decode(['n' => 0]));
+                $out[] = 'a float: ' . said(Quantity::decoder()->decode(2.0));
+                $out[] = 'lines: ' . said(Lines::decoder()->decode(
                     ['lines' => [['sku' => 'a', 'quantity' => 1], ['sku' => 'b', 'quantity' => 0]]]));
-                $out[] = 'no lines: ' . said(Lines::decoder($session)->decode(['lines' => []]));
-                $out[] = 'not json: ' . said(Quantity::decoder($session)->decode(NAN));
-                $out[] = 'case alone: ' . said(Corporation::decoder($session)->decode(
+                $out[] = 'no lines: ' . said(Lines::decoder()->decode(['lines' => []]));
+                $out[] = 'not json: ' . said(Quantity::decoder()->decode(NAN));
+                $out[] = 'made before the run: ' . said($quantity->decode(3));
+                $out[] = 'case alone: ' . said(Corporation::decoder()->decode(
                     ['email' => 'x@y', 'companyName' => 'Acme']));
                 return implode("\\n", $out);
             }), "\\n";
@@ -121,6 +124,7 @@ class APhpHostComposesATypesDecoderWithItsOwnTest {
             lines: [/lines/1/quantity invariant_violation]
             no lines: ok Lines
             not json: [/ type_mismatch]
+            made before the run: ok Quantity
             case alone: ok Corporation
             """;
 

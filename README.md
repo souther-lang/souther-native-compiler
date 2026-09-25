@@ -424,9 +424,10 @@ says, and an application extends it. One the library defines is final: `bind` ta
 the class of each behavior it `requires`, in that order, each named after the behavior, or by its
 place (`$dependency0`) where two of one name from two modules are both required. `of` makes one that
 requires nothing.
-`apply` calls it with what it was bound to registered for the length of the call. It takes the
-session and answers a value of the caller's run, as every function does, and opens no run of its
-own, whose values would be gone by the time the caller held them. A missing or mistyped
+`apply` calls it with what it was bound to registered for the length of the call, and the class is
+callable, so `($placeOrder)($orderId, $userId, $orderer)` is the same call. It answers a value of the
+caller's run, as every function does, and opens no run of its own, whose values would be gone by
+the time the caller held them. A missing or mistyped
 implementation is PHP's `TypeError` at `bind`, not an `UnboundInjection` at the call. A behavior
 bound to another brings what that one was bound to, and one bound to two implementations of one
 behavior is refused at `bind`, since the library calls one implementation of a behavior at a time
@@ -441,7 +442,7 @@ is, or, for a case with no class of its own, through the codec of the member sum
 Nothing is generated for the union itself, which has no name in the model. A host implementing a
 behavior that answers one hands back an object of one of those classes as it is. A list is a PHP
 list both ways, typed `array` for PHP and `list<T>` in the docblock for PHPStan: an element is handed
-over as a value of its type is anywhere else, through the session the list is built in, so an array
+over as a value of its type is anywhere else, in the run the list is built in, so an array
 with a key out of order or an element of another type is refused before the library is called. A
 list read is copied into a PHP array when it is read, each element held as a field's value is.
 A module's classes build and read a list through that module's own functions and no other
@@ -473,16 +474,19 @@ that and not as whichever member moved since, as the driver reads a transport an
 carries.
 
 Everything else is in `bindings/php/runtime`, one Composer package every generated binding runs on.
-A host calls `$binding->run(fn (Session $session) => ...)`: the run marks the arena, and when it ends
-it expires its session and resets the arena to the mark. Every value holds a handle to the session it
+A host calls `$binding->run(fn () => ...)`: the run marks the arena, and when it ends it expires the
+run's session and resets the arena to the mark. No function of a binding takes a session. Each
+finds the innermost run going on this fiber of a library the binding was loaded for, and one called
+outside any run throws `OutsideAnyRun`. There is nothing for a caller to choose there: a
+computation belongs to the innermost run of its library, and a library's runs are on one fiber at a
+time. A decoder holds no run, so it can be made once and kept. Every value holds a handle to the session it
 was made in, and every read of one goes through the handle, which refuses a value whose run has ended
 (`Expired`) or that another library made (`ForeignHandle`) before anything reads the memory. A value
 that has to outlive its run leaves it as its external form. Runs nest, and a value from an outer run
 may be handed to a call in an inner one. A value belongs to the run its memory is dropped with,
 which a binding knows by where the value came from. What a computation (a construction, a reading, a
-behavior, a published value) answers is made after the mark of the innermost run going, so a
-computation is started only through that run's session (`NotTheInnermostRun` otherwise) and its
-answer belongs to it. What a field reader answers is a value the one read already held, made no
+behavior, a published value) answers is made after the mark of the innermost run going, which is
+the run a function finds, and its answer belongs to it. What a field reader answers is a value the one read already held, made no
 later, so it belongs to that value's run, whichever run it is read in. What an implementation is
 handed belongs to the innermost run, which is no longer than it lives. A library is
 one per file, told apart by device and inode rather than by the path it was loaded through, since
@@ -493,7 +497,7 @@ A status crosses as one of three things. A construction that does not hold its t
 an `Err` with `invariant_violation`, and a reading answers the issues the library found, their codes
 being Raoh's already, or `invalid_format` where the text is not JSON. A Souther computation that
 ends without a value throws `SoutherAbort`, naming the status. A behavior the host implements is
-handed to a run as `Injections::of(name: fn (Session $session, ...) => ...)`, or bound to a behavior
+handed to a run as `Injections::of(name: fn (...) => ...)`, or bound to a behavior
 class as an instance of its own. Each behavior a host implements is one C function pointer, made
 once per binding, and what is registered through it is registered around each run or bound call
 and put back after, so a worker does not grow with every request. A call with nothing registered
@@ -508,8 +512,8 @@ of that file would be. The arena and what is registered
 are per thread, and a handle is PHP's, which a ZTS runtime such as FrankenPHP does not hand from one
 thread to another; nothing here checks for one that was. A fiber is checked for: runs are one stack,
 ended in the order they nest, so while a run is going on one fiber, another fiber can neither start
-one nor use a session or a value of it (`RunOnAnotherFiber`), and one suspended in a run holds the
-library until it ends that run.
+one nor use a value of it (`RunOnAnotherFiber`), a call made there finds no run of its own
+(`OutsideAnyRun`), and one suspended in a run holds the library until it ends that run.
 
 ## Where a value lives
 

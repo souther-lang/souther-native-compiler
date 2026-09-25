@@ -65,15 +65,14 @@ use Shop\Binding;
 use Shop\Cart\Lines\Behaviors;
 use Shop\Cart\Lines\Line;
 use Shop\Cart\Money\Money;
-use Souther\Runtime\Session;
 
 $library = glob(__DIR__ . '/native/libsouther.*')[0];
-echo Binding::load($library)->run(function (Session $session): string {
-    $line = Line::of($session, Money::of($session, 3)->getOrThrow(), 4)->getOrThrow();
-    $none = Line::of($session, Money::of($session, 3)->getOrThrow(), 0)->fold(
+echo Binding::load($library)->run(function (): string {
+    $line = Line::of(Money::of(3)->getOrThrow(), 4)->getOrThrow();
+    $none = Line::of(Money::of(3)->getOrThrow(), 0)->fold(
         fn ($line) => 'built',
         fn ($issues) => implode(' ', array_map(fn (Issue $it) => $it->code, $issues->toArray())));
-    return 'total ' . Behaviors::total($session, $line) . ', none ' . $none;
+    return 'total ' . Behaviors::total($line) . ', none ' . $none;
 }), "\n";
 EOF
 

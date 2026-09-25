@@ -24,7 +24,12 @@ use Raoh\Result;
  */
 final class Session
 {
+    private static int $opened = 0;
+
     private bool $active = true;
+
+    /** Where this run stands among every run opened in the process, later ones higher. */
+    private readonly int $order;
 
     /** @internal */
     public function __construct(
@@ -32,6 +37,13 @@ final class Session
         private readonly ?\Fiber $fiber,
         private readonly InjectionRegistry $registry,
     ) {
+        $this->order = ++self::$opened;
+    }
+
+    /** @internal Whether this run was opened after `$other`, which is the one inside the other where both are going. */
+    public function openedAfter(self $other): bool
+    {
+        return $this->order > $other->order;
     }
 
     public function isActive(): bool
@@ -269,11 +281,14 @@ final class Session
      * `1.0` handed where an `Int` is taken is refused rather than read as `1`. An empty PHP array is
      * the empty list, as `json_encode` writes it.
      *
+     * It holds no session: `$decode` finds the run it reads in when it is called, so a decoder can be
+     * made once and kept, as a JVM host keeps one in a constant.
+     *
      * @template T
      * @param \Closure(string): Result<T> $decode
      * @return Decoder<mixed, T>
      */
-    public function decoder(\Closure $decode): Decoder
+    public static function decoder(\Closure $decode): Decoder
     {
         return CallableDecoder::of(static function (mixed $in, ?Path $path = null) use ($decode): Result {
             $at = $path ?? Path::root();
