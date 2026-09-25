@@ -18,7 +18,30 @@ use serde::Deserialize;
 
 /// What this side reads. A document written to say anything else is refused rather than read as
 /// much of as happens to parse.
-pub const TRANSPORT_VERSION: u32 = 18;
+///
+/// The last of [`MOVES`], and written nowhere else on this side.
+pub const TRANSPORT_VERSION: u32 = MOVES[MOVES.len() - 1].0;
+
+/// What each version moved, since the one before it, oldest first. The versions before the first
+/// here are in the history of this file.
+///
+/// A change to what the document means adds its line at the end, under the next number. That is
+/// what the list is for, beside saying what moved: two branches that each move the document to the
+/// same number each add a different line at one place, which a merge stops at. Two edits of one
+/// constant to the same number merge without a word, which is how two different documents were
+/// both once written as 17. That the numbers follow on from one another is held by a test.
+pub const MOVES: &[(u32, &str)] = &[
+    (
+        17,
+        "an attempted construction (`attempt`), and what another build's clauses are answered \
+         under (`headers`)",
+    ),
+    (
+        18,
+        "a helper, and a call of one, under the reference a call reaches it by (`reached`), and a \
+         type variable a helper's body leaves open (`var`)",
+    ),
+];
 
 /// A document of [`TRANSPORT_VERSION`], and no other, read through [`Program::read`] and nothing
 /// else ([`crate::versioned`]).
@@ -2575,6 +2598,26 @@ impl AbortKind {
             AbortKind::DivisionByZero => "DIVISION_BY_ZERO",
             AbortKind::RequiredFormHasNoPlace => "REQUIRED_FORM_HAS_NO_PLACE",
             AbortKind::InvalidBounds => "INVALID_BOUNDS",
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Each move is under the number after the one before it, so a version is never taken twice
+    /// and never skipped.
+    #[test]
+    fn every_move_takes_the_next_version() {
+        for pair in MOVES.windows(2) {
+            assert_eq!(
+                pair[1].0,
+                pair[0].0 + 1,
+                "{:?} after {:?}",
+                pair[1],
+                pair[0]
+            );
         }
     }
 }

@@ -48,7 +48,27 @@
 /// Public, because a host is a party to it too: what a binding reads off the manifest a build
 /// writes beside the object says which generation the functions it names answer to, and that is
 /// this number and not a copy of it.
-pub const ABI_GENERATION: u32 = 3;
+///
+/// The last of [`GENERATIONS`], and written nowhere else.
+pub const ABI_GENERATION: u32 = GENERATIONS[GENERATIONS.len() - 1].0;
+
+/// What each generation moved, oldest first, as the paragraphs above tell it at length.
+///
+/// A change that moves the generation adds its line at the end under the next number, and the
+/// number is read off the last line. Two branches each moving to the same number add two different
+/// lines at one place, which a merge stops at; two edits of one constant to the same number merge
+/// without a word. That the numbers follow on from one another is held by a test.
+pub const GENERATIONS: &[(u32, &str)] = &[
+    (
+        2,
+        "a status answered and the value written through a pointer (souther-native-compiler#19)",
+    ),
+    (
+        3,
+        "a behavior with no body answered by what a host registered for it, and the statuses a \
+         host's implementation brings about (souther-native-compiler#46)",
+    ),
+];
 
 /// Whether a module's name can stand in a symbol: it carries no `$`, which is what every symbol
 /// below is split on. A module's name carries dots.
@@ -1467,6 +1487,20 @@ mod tests {
         host_register_symbol, host_value_symbol, member_at, reader_symbol, type_symbol,
         value_symbol,
     };
+
+    /// Each generation is under the number after the one before it.
+    #[test]
+    fn every_generation_takes_the_next_number() {
+        for pair in super::GENERATIONS.windows(2) {
+            assert_eq!(
+                pair[1].0,
+                pair[0].0 + 1,
+                "{:?} after {:?}",
+                pair[1],
+                pair[0]
+            );
+        }
+    }
 
     #[test]
     fn a_behavior_is_reached_by_its_module_and_its_name() {

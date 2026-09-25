@@ -247,6 +247,21 @@ class APhpBindingIsWrittenFromTheManifestTest {
                 .isEqualTo(String.valueOf(PhpBindings.RUNTIME_PROTOCOL));
     }
 
+    /**
+     * The runtime's version is the last of the moves it lists, and each move is under the number
+     * after the one before it: a version is never taken twice and never skipped.
+     */
+    @Test
+    void theRuntimesVersionIsTheLastOfItsMoves() throws Exception {
+        Path binding = Path.of("bindings", "php", "runtime", "src", "Binding.php");
+
+        assertThat(Php.ran(List.of("-r", "require '" + binding.toAbsolutePath() + "';"
+                + " $moves = array_keys(\\Souther\\Runtime\\Binding::MOVES);"
+                + " echo end($moves) === \\Souther\\Runtime\\Binding::PROTOCOL"
+                + " && $moves === range($moves[0], end($moves)) ? 'held' : 'not held';")))
+                .isEqualTo("held");
+    }
+
     /** A parameter the model names as PHP names a superglobal is one no PHP function can have. */
     @Test
     void aParameterNamedAsASuperglobalIsRefused(@TempDir Path into) {

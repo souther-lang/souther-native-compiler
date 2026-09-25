@@ -29,8 +29,22 @@ use std::collections::BTreeMap;
 /// What a manifest says it is.
 pub(crate) const FORMAT: &str = "souther-native-interface";
 
-/// Which version of what a manifest says this is.
-pub(crate) const VERSION: u32 = 5;
+/// Which version of what a manifest says this is: the last of [`MOVES`], and written nowhere else
+/// on this side.
+pub(crate) const VERSION: u32 = MOVES[MOVES.len() - 1].0;
+
+/// What each version of a manifest moved, oldest first. The versions before the first here are in
+/// the history of this file.
+///
+/// A change to what a manifest says adds its line at the end under the next number. Two branches
+/// each moving to the same number add two different lines at one place, which a merge stops at;
+/// two edits of one constant to the same number merge without a word. That the numbers follow on
+/// from one another is held by a test.
+pub(crate) const MOVES: &[(u32, &str)] = &[(
+    5,
+    "a list crosses to a host through functions each module defines for how its element crosses \
+     (`lists`), and a parameter may be a `slice`",
+)];
 
 /// Everything a host can call in one shared library, and the model it reaches.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -488,7 +502,21 @@ impl From<HostParameter> for Parameter {
 
 #[cfg(test)]
 mod tests {
-    use super::{Carried, FORMAT, Manifest, VERSION};
+    use super::{Carried, FORMAT, MOVES, Manifest, VERSION};
+
+    /// Each version is under the number after the one before it.
+    #[test]
+    fn every_move_takes_the_next_version() {
+        for pair in MOVES.windows(2) {
+            assert_eq!(
+                pair[1].0,
+                pair[0].0 + 1,
+                "{:?} after {:?}",
+                pair[1],
+                pair[0]
+            );
+        }
+    }
 
     /// What version 5 is. Read by these types, which refuse a member they do not name, and
     /// written back the same: a field renamed or a kind reshaped here stops matching the fixture
