@@ -88,6 +88,11 @@ The binding is mapped by the application like its own classes, or loaded with th
 written beside it. `scripts/php-from-the-command-line.sh` does all of this in CI, with no Java calling
 the API.
 
+`examples/raoh-php-cart` is an application built this way: the cart model of the Java
+`raoh-souther` example, with its HTTP boundary decoded by raoh-php and its injected behaviors
+implemented over PDO. Its README says how to build and run it, and what differs from the Java one.
+`scripts/php-cart-example.sh` builds it and runs its tests in CI.
+
 ## Where it runs
 
 Unix hosts: what the object is written as is decided by the host's format, and Mach-O and ELF are
