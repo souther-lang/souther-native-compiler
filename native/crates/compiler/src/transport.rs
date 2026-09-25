@@ -1383,7 +1383,9 @@ impl Held {
         for parameter in &self.parameters {
             parameter.ty.numbers(&mut numbers);
         }
-        self.body.each(&mut |node| {
+        // Every variable the helper writes, whether or not what writes it runs: which variables a
+        // helper numbers is what its copies are made over.
+        self.body.each_written(&mut |node| {
             for ty in node.types() {
                 ty.numbers(&mut numbers);
             }
@@ -2632,11 +2634,17 @@ impl Node {
         }
     }
 
-    /// Every node under this one, this one first, depth first and in the order they are written.
-    pub fn each<'n>(&'n self, visit: &mut impl FnMut(&'n Node)) {
+    /// Every node the document writes under this one, this one first, depth first and in the order
+    /// they are written, whether or not anything runs it.
+    ///
+    /// For a question about what the document says. What an object runs, reaches or has to lower is
+    /// a narrower question, since the step of a walk that never runs is written and never lowered,
+    /// and it is walked with `growing::each_lowered`. There is no walk called plain `each`, so a
+    /// pass walking a body says which of the two it asks.
+    pub fn each_written<'n>(&'n self, visit: &mut impl FnMut(&'n Node)) {
         visit(self);
         for child in self.children() {
-            child.each(visit);
+            child.each_written(visit);
         }
     }
 

@@ -302,8 +302,11 @@ impl<'p> Specializations<'p> {
             };
             let reached = held.reached.rendered();
             let handed: Vec<&Ty> = call.handed.iter().collect();
-            let bound = called(held, &handed, &call.answers)
-                .expect("`Coherent` held every call of a helper to fit what the helper takes");
+            let bound = called(held, &handed, &call.answers).expect(
+                "`Coherent` held every call of a helper to fit what the helper takes, and \
+                     refused one that fits only through `Nothing` wherever it is lowered, which is \
+                     everywhere this reads (`growing::each_lowered`)",
+            );
             let types = bound.settled(held.variables()).ok_or_else(|| {
                 not_lowered(format!(
                     "{reached}, whose body leaves open a type no call of it settles"
@@ -432,7 +435,10 @@ impl Recursions {
                         };
                         let handed: Vec<&Ty> = call.handed.iter().collect();
                         let settled = called(held, &handed, &call.answers)
-                            .expect("`Coherent` held every call of a helper to fit it")
+                            .expect(
+                                "`Coherent` held every call of a helper to fit it wherever it is \
+                                 lowered, which is everywhere this reads",
+                            )
                             .settled(held.variables());
                         (at[&(key.0, &call.reached)], settled)
                     })
@@ -555,10 +561,11 @@ struct Called {
     answers: Ty,
 }
 
-/// Every call reaching a helper in `node`, a function value's body included.
+/// Every call reaching a helper that is lowered where `node` is, a function value's body included:
+/// a call only in the step of a walk that never runs needs no copy, and none is made for it.
 fn calls_in(node: &Node) -> Vec<Called> {
     let mut calls = Vec::new();
-    node.each(&mut |node| {
+    crate::growing::each_lowered(node, &mut |node| {
         if let Node::Call {
             reaches: Reaches::Helper { reached },
             arguments,
@@ -625,7 +632,7 @@ mod tests {
     /// Every call reaching a helper in `node`.
     fn calls(node: &Node) -> Vec<&Node> {
         let mut found = Vec::new();
-        node.each(&mut |node| {
+        node.each_written(&mut |node| {
             if let Node::Call {
                 reaches: Reaches::Helper { .. },
                 ..
@@ -735,7 +742,7 @@ mod tests {
                     "and reaches its own copy"
                 );
                 let mut open = 0;
-                copy.body().each(&mut |node| {
+                copy.body().each_written(&mut |node| {
                     open += node.types().iter().filter(|ty| ty.is_open()).count();
                 });
                 assert_eq!(open, 0, "no variable is left in a copy");

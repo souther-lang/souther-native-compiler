@@ -21,7 +21,7 @@ class AListAWalkGrowsIsBuiltOnceTest {
     private static final String SOURCE = """
             module growing exposing (
                 mapped, filtered, emptyTyped, emptyLiteral, filteredThenMapped, closing,
-                pastTheFirstRoom, flattened, truths, values
+                pastTheFirstRoom, flattened, truths, values, neverASet, neverACopy
             )
 
             data A = { v: Int }
@@ -50,6 +50,12 @@ class AListAWalkGrowsIsBuiltOnceTest {
 
             behavior emptyLiteral : (a: Int) -> Int
             let emptyLiteral (a) = List.length(List.map((x) -> a, [])) + a
+
+            behavior neverASet : (a: Int) -> Int
+            let neverASet (a) = List.length(List.map((x) -> Set.singleton(a), [])) + a
+
+            behavior neverACopy : (a: Int) -> Int
+            let neverACopy (a) = List.length(List.map((x) -> List.drop(1, [a, a]), [])) + a
 
             behavior filteredThenMapped : (a: Int) -> Int
             let filteredThenMapped (a) = {
@@ -138,6 +144,17 @@ class AListAWalkGrowsIsBuiltOnceTest {
     void anEmptyListWalksToAnEmptyList() throws Exception {
         assertThat(run("emptyTyped", 1)).isEqualTo(answered(0));
         assertThat(run("emptyLiteral", 4)).isEqualTo(answered(4));
+    }
+
+    /**
+     * The step of a walk over an empty list literal never runs, so nothing in it is asked of this
+     * backend: not a set, which nothing here lays out, and not a call of a helper this backend
+     * refuses (souther-lang/souther#1958), whose copy is then never made.
+     */
+    @Test
+    void whatAStepThatNeverRunsWouldDoIsNotAskedFor() throws Exception {
+        assertThat(run("neverASet", 4)).isEqualTo(answered(4));
+        assertThat(run("neverACopy", 5)).isEqualTo(answered(5));
     }
 
     @Test

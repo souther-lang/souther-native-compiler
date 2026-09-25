@@ -114,6 +114,45 @@ impl<'n> Step<'n> {
     }
 }
 
+/// What `node` writes and nothing lowers: the body of its step, where `node` is a walk whose step
+/// never runs ([`Step::never_runs`]). `None` for every other node.
+///
+/// The one statement of which part of a body is not run. A body either runs or does not
+/// (`Runs::runs`), and inside one that runs this is the only code that does not: every pass that
+/// asks what an object runs, reaches or has to lower asks it through this, by way of
+/// [`each_lowered`] or directly, and asks nothing of what it answers. Whether the document is
+/// coherent is asked of all of it, run or not.
+pub(crate) fn never_lowered(node: &Node) -> Option<&Node> {
+    Step::of_walk(node)
+        .filter(Step::never_runs)
+        .map(|step| step.body)
+}
+
+/// Every node lowered where `node` is lowered, `node` first, depth first and in the order they are
+/// written: every node under it but what [`never_lowered`] answers of a node above it.
+///
+/// What a pass asking what an object runs walks. One asking what the document says walks
+/// [`Node::each_written`] instead.
+pub(crate) fn each_lowered<'n>(node: &'n Node, visit: &mut impl FnMut(&'n Node)) {
+    fn walk<'n>(node: &'n Node, unrun: &mut Vec<&'n Node>, visit: &mut impl FnMut(&'n Node)) {
+        if unrun.iter().any(|it| std::ptr::eq(*it, node)) {
+            return;
+        }
+        visit(node);
+        let entered = never_lowered(node);
+        if let Some(body) = entered {
+            unrun.push(body);
+        }
+        for child in node.children() {
+            walk(child, unrun, visit);
+        }
+        if entered.is_some() {
+            unrun.pop();
+        }
+    }
+    walk(node, &mut Vec::new(), visit);
+}
+
 /// Refuses, as the two halves disagreeing, a body in which the list a walk grows could be read as
 /// a list: a `$grow` anywhere but where a step answers, adding to anything but that step's own
 /// accumulator; the accumulator read anywhere else, including inside another walk's step or a
@@ -300,5 +339,93 @@ impl Confining<'_> {
             other => other,
         };
         matches!(read, Node::Read { binding, .. } if self.growing.contains(binding))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn int(value: i64) -> serde_json::Value {
+        json!({ "core": "int", "value": value, "type": { "prim": "INT" }, "aborts": [] })
+    }
+
+    /// `$build` over `[]` whose step is bound around by a `let` of 7 and answers what a value
+    /// published elsewhere answers: the published value is only ever reached by a step that never
+    /// runs.
+    fn walk_over_nothing() -> Node {
+        let nothing = json!({ "nothing": {} });
+        let grown = json!({ "list": { "prim": "INT" } });
+        let seeded = json!({ "list": nothing });
+        let step_ty = json!({ "fn": { "takes": [seeded, nothing], "answers": grown } });
+        let published = json!({
+            "core": "call", "reaches": { "is": "publishedvalue", "module": "m", "name": "v" },
+            "arguments": [], "type": grown, "aborts": []
+        });
+        let step = json!({
+            "core": "let", "binding": 0, "binds": { "prim": "INT" }, "value": int(7),
+            "body": {
+                "core": "block", "site": 0,
+                "parameters": [{ "binding": 1, "name": "acc" }, { "binding": 2, "name": "x" }],
+                "body": published, "type": step_ty, "aborts": []
+            },
+            "type": step_ty, "aborts": []
+        });
+        serde_json::from_value(json!({
+            "core": "call", "reaches": { "is": "emitted", "operation": "BUILD_LIST" },
+            "arguments": [
+                step,
+                { "core": "list", "elements": [], "type": { "list": nothing }, "aborts": [] },
+                int(0)
+            ],
+            "type": grown, "aborts": []
+        }))
+        .expect("a node")
+    }
+
+    fn published(node: &Node) -> bool {
+        matches!(
+            node,
+            Node::Call {
+                reaches: Reaches::PublishedValue { .. },
+                ..
+            }
+        )
+    }
+
+    #[test]
+    fn what_is_lowered_leaves_out_the_step_that_never_runs_and_nothing_else() {
+        let walk = walk_over_nothing();
+        let mut lowered = Vec::new();
+        each_lowered(&walk, &mut |node| lowered.push(node));
+        assert!(!lowered.iter().any(|node| published(node)));
+        // What is bound around the step, the list walked and where the walk starts all run.
+        assert!(
+            lowered
+                .iter()
+                .any(|node| matches!(node, Node::Int { value: 7, .. }))
+        );
+        assert!(lowered.iter().any(|node| matches!(node, Node::List { .. })));
+        assert!(
+            lowered
+                .iter()
+                .any(|node| matches!(node, Node::Int { value: 0, .. }))
+        );
+
+        let mut written = Vec::new();
+        walk.each_written(&mut |node| written.push(node));
+        assert!(written.iter().any(|node| published(node)));
+    }
+
+    #[test]
+    fn only_a_step_taking_a_value_of_nothing_is_never_lowered() {
+        let walk = walk_over_nothing();
+        assert!(never_lowered(&walk).is_some_and(published));
+
+        let Node::Call { arguments, .. } = &walk else {
+            unreachable!("a walk is a call");
+        };
+        assert!(never_lowered(&arguments[0]).is_none());
     }
 }

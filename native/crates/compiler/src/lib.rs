@@ -2810,10 +2810,11 @@ struct Reach<'p> {
 }
 
 impl<'p> Reach<'p> {
-    /// What `body` reaches, added to what is already here.
+    /// What `body` reaches where it runs, added to what is already here: nothing in the step of a
+    /// walk that never runs.
     fn of(&mut self, body: &transport::Body<'p>, declared: &Declared) -> Result<()> {
         let mut named = Ok(());
-        body.node.each(&mut |node| {
+        growing::each_lowered(body.node, &mut |node| {
             if let Some(key) = node.builds() {
                 match declared.shape(key) {
                     Ok(declaration) => {

@@ -274,6 +274,7 @@ impl<'a> Coherent<'a> {
                 bound: HashMap::new(),
                 owed: &mut owed,
                 runs: runs.runs(&body),
+                unrun: Vec::new(),
             };
             // A rule over a case tests the answer the way an arm tests what it forks on, and reads
             // it as an arm reads what it binds.
@@ -572,9 +573,13 @@ struct Walk<'w, 'a> {
     /// What each binding in scope is in force at, as the node that made it says.
     bound: HashMap<usize, Ty>,
     owed: &'w mut Owed,
-    /// Whether this object runs the body. What this backend has no lowering for is refused only
-    /// where it would be lowered; the two halves disagreeing is refused wherever it stands.
+    /// Whether this object runs what is being read: the body, and not the step of a walk that
+    /// never runs inside it ([`growing::never_lowered`](crate::growing::never_lowered)). What this
+    /// backend has no lowering for is refused only where it would be lowered; the two halves
+    /// disagreeing is refused wherever it stands.
     runs: bool,
+    /// The steps of the walks read so far that never run, whose bodies are read with `runs` false.
+    unrun: Vec<&'a Node>,
 }
 
 impl<'a> Walk<'_, 'a> {
@@ -665,8 +670,20 @@ impl<'a> Walk<'_, 'a> {
     /// `node` and everything under it: what each node says it is against where its value comes
     /// from, and each child against the slot it stands in.
     fn node(&mut self, node: &'a Node) -> Result<()> {
-        self.relations(node)?;
-        self.hold_slots(node)
+        let runs = self.runs;
+        if self.unrun.iter().any(|it| std::ptr::eq(*it, node)) {
+            self.runs = false;
+        }
+        let entered = crate::growing::never_lowered(node);
+        if let Some(body) = entered {
+            self.unrun.push(body);
+        }
+        let read = self.relations(node).and_then(|()| self.hold_slots(node));
+        if entered.is_some() {
+            self.unrun.pop();
+        }
+        self.runs = runs;
+        read
     }
 
     /// Every child of `node` against the slot it stands in, from the one table of them.
@@ -2208,7 +2225,7 @@ fn holds_and_builds_nothing(owner: &str, condition: &Node) -> Result<()> {
         );
     }
     let mut built = None;
-    condition.each(&mut |node| {
+    condition.each_written(&mut |node| {
         if let Node::Construct { declared, .. } | Node::Attempt { declared, .. } = node {
             built.get_or_insert(declared);
         }
