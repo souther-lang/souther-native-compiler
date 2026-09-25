@@ -3307,7 +3307,14 @@ fn construct(
         ),
         Construction::Called => {
             let constructor = lowering.constructors.of(declared)?;
-            call_reached(builder, module, abort, constructor, POINTER, fields)
+            Ok(call_reached(
+                builder,
+                module,
+                abort,
+                constructor,
+                POINTER,
+                fields,
+            ))
         }
     }
 }
@@ -3495,14 +3502,14 @@ fn call_reached(
     reached: FuncId,
     answers: types::Type,
     arguments: &[ir::Value],
-) -> Lowered<ir::Value> {
+) -> ir::Value {
     let reaching = module.declare_func_in_func(reached, builder.func);
     let out = out_slot(builder);
     let mut given = arguments.to_vec();
     given.push(out);
     let called = builder.ins().call(reaching, &given);
     let status = builder.inst_results(called)[0];
-    Ok(status_or_answer(builder, abort, status, out, answers))
+    status_or_answer(builder, abort, status, out, answers)
 }
 
 /// A behavior applied to `arguments`, and its answer where it keeps what the behavior declares.
@@ -3531,7 +3538,7 @@ fn call_behavior(
         reached,
         machine_type(&target.answers())?,
         arguments,
-    )?;
+    );
     match target.ensures {
         Ensures::Crossing { .. } => {
             let rules = lowering.reachable.of_rules(declared);
@@ -3604,7 +3611,7 @@ fn define_held(
     builder.append_block_param(abort, types::I32);
 
     let answers = machine_type(&target.answers())?;
-    let answer = call_reached(&mut builder, module, abort, unheld, answers, arguments)?;
+    let answer = call_reached(&mut builder, module, abort, unheld, answers, arguments);
     hold(&mut builder, module, abort, rules, arguments, answer);
     builder.ins().store(TRUSTED, answer, out[0], 0);
     let ok = builder.ins().iconst(types::I32, i64::from(ANSWERED));
@@ -3931,7 +3938,7 @@ fn lower(
             let width = machine_type(operand.ty())?;
             let held = lower(builder, lowering, module, bindings, abort, operand)?;
             let nought = builder.ins().iconst(width, 0);
-            difference(builder, abort, overflow_status(aborts), nought, held)?
+            difference(builder, abort, overflow_status(aborts), nought, held)
         }
         // A fork answers what the branch it takes answers, and each branch hands that to the block
         // after the fork. Which nodes are forks, and how each chooses a branch, is `branched`'s.
@@ -3960,7 +3967,7 @@ fn lower(
             builder.block_params(after)[0]
         }
         Node::Bool { value, ty, .. } => builder.ins().iconst(machine_type(ty)?, i64::from(*value)),
-        Node::Str { value, .. } => lowering.literals.address(builder, module, value)?,
+        Node::Str { value, .. } => lowering.literals.address(builder, module, value),
         Node::Binary {
             op,
             reading,
@@ -4138,7 +4145,7 @@ fn lower(
                 for argument in arguments {
                     given.push(lower(builder, lowering, module, bindings, abort, argument)?);
                 }
-                call_reached(builder, module, abort, reached, machine_type(ty)?, &given)?
+                call_reached(builder, module, abort, reached, machine_type(ty)?, &given)
             }
             // The kernels this backend lowers are `kernels::Lowered`'s and nowhere else's, so one it
             // has not met falls to NotLowered rather than a list here claiming to know. What one
@@ -4893,8 +4900,8 @@ fn arithmetic(
                     );
                     Ok(sum)
                 }
-                Op::Sub => difference(builder, abort, overflow_status(aborts), a, b),
-                Op::Mul => product(builder, abort, overflow_status(aborts), a, b),
+                Op::Sub => Ok(difference(builder, abort, overflow_status(aborts), a, b)),
+                Op::Mul => Ok(product(builder, abort, overflow_status(aborts), a, b)),
                 _ => unreachable!("reached from a sum, a difference or a product and nothing else"),
             },
             Prim::Decimal
@@ -5304,12 +5311,12 @@ fn difference(
     status: Status,
     a: ir::Value,
     b: ir::Value,
-) -> Lowered<ir::Value> {
+) -> ir::Value {
     let difference = builder.ins().isub(a, b);
     let apart = builder.ins().bxor(a, b);
     let moved = builder.ins().bxor(a, difference);
     abort_where_the_sign_bit_is_set(builder, abort, status, apart, moved);
-    Ok(difference)
+    difference
 }
 
 /// Which of the two a truncating division answers.
@@ -5387,7 +5394,7 @@ fn product(
     status: Status,
     a: ir::Value,
     b: ir::Value,
-) -> Lowered<ir::Value> {
+) -> ir::Value {
     let a_wide = builder.ins().sextend(types::I128, a);
     let b_wide = builder.ins().sextend(types::I128, b);
     let wide = builder.ins().imul(a_wide, b_wide);
@@ -5395,7 +5402,7 @@ fn product(
     let back = builder.ins().sextend(types::I128, held);
     let past = builder.ins().icmp(IntCC::NotEqual, wide, back);
     abort_where(builder, abort, status, past);
-    Ok(held)
+    held
 }
 
 /// Ends the computation where both of these have their sign bit set.

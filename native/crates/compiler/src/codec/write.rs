@@ -399,7 +399,7 @@ impl<'w, 'f> Writing<'w, 'f> {
 
     /// A string written into the object, a literal of the runtime's own layout: a key, or a
     /// case's name.
-    fn literal(&mut self, text: &str) -> Lowered<ir::Value> {
+    fn literal(&mut self, text: &str) -> ir::Value {
         self.literals.address(self.builder, self.module, text)
     }
 
@@ -407,15 +407,14 @@ impl<'w, 'f> Writing<'w, 'f> {
         self.call(Runtime::ExternalObject, &[])
     }
 
-    fn put(&mut self, object: ir::Value, key: &str, item: ir::Value) -> Lowered<()> {
-        let key = self.literal(key)?;
+    fn put(&mut self, object: ir::Value, key: &str, item: ir::Value) {
+        let key = self.literal(key);
         self.call_for_effect(Runtime::ExternalPut, &[object, key, item]);
-        Ok(())
     }
 
-    fn name(&mut self, name: &str) -> Lowered<ir::Value> {
-        let spelt = self.literal(name)?;
-        Ok(self.call(Runtime::ExternalString, &[spelt]))
+    fn name(&mut self, name: &str) -> ir::Value {
+        let spelt = self.literal(name);
+        self.call(Runtime::ExternalString, &[spelt])
     }
 
     /// What an answer leaves as. One that holds no declared value is written in place, and one
@@ -617,7 +616,8 @@ impl<'w, 'f> Writing<'w, 'f> {
         let CodecShape::OptionOf { present } = shape else {
             let value = out_of_slot(self.builder, slot, machine_type(&shape.ty())?);
             let form = self.value(shape, value)?;
-            return self.put(object, name, form);
+            self.put(object, name, form);
+            return Ok(());
         };
         let held = self.builder.create_block();
         let done = self.builder.create_block();
@@ -627,7 +627,7 @@ impl<'w, 'f> Writing<'w, 'f> {
         self.builder.switch_to_block(held);
         let inner = self.held(present.shape(), slot)?;
         let form = self.value(present.shape(), inner)?;
-        self.put(object, name, form)?;
+        self.put(object, name, form);
         self.builder.ins().jump(done, &[]);
 
         self.builder.switch_to_block(done);
@@ -703,10 +703,9 @@ impl<'w, 'f> Scheduling<'_, 'w, 'f> {
     }
 
     /// Adds the moving of what the work pushed after this leaves into `object` under `key`.
-    fn put_later(&mut self, object: ir::Value, key: &str) -> Lowered<()> {
-        let key = self.writing.literal(key)?;
+    fn put_later(&mut self, object: ir::Value, key: &str) {
+        let key = self.writing.literal(key);
         self.push_continuation(Continuation::Put, &[object, key]);
-        Ok(())
     }
 
     /// What an answer leaves as.
@@ -806,7 +805,7 @@ impl<'w, 'f> Scheduling<'_, 'w, 'f> {
     ) -> Lowered<()> {
         let CodecShape::OptionOf { present } = shape else {
             let value = out_of_slot(self.writing.builder, slot, machine_type(&shape.ty())?);
-            self.put_later(object, name)?;
+            self.put_later(object, name);
             return self.value(shape, value);
         };
         let held = self.writing.builder.create_block();
@@ -823,7 +822,7 @@ impl<'w, 'f> Scheduling<'_, 'w, 'f> {
 
         self.writing.builder.switch_to_block(held);
         let inner = self.writing.held(present.shape(), slot)?;
-        self.put_later(object, name)?;
+        self.put_later(object, name);
         self.value(present.shape(), inner)?;
         self.writing.builder.ins().jump(done, &[]);
 
@@ -950,7 +949,7 @@ impl<'w, 'f> Scheduling<'_, 'w, 'f> {
                 unreachable!("`Declared::settled` refused a sum standing as a case of {key}")
             }
             (AlternativesForm::Enumeration, Declaration::Unit { .. }) => {
-                let name = self.writing.name(shape.name())?;
+                let name = self.writing.name(shape.name());
                 self.give(name);
                 Ok(())
             }
@@ -961,18 +960,18 @@ impl<'w, 'f> Scheduling<'_, 'w, 'f> {
                 "`Declared::settled` refused {key}, which has fields, in an enumeration"
             ),
             (AlternativesForm::Discriminated { tag, .. }, Declaration::Product { fields, .. }) => {
-                let object = self.tagged_object(tag, shape.name())?;
+                let object = self.tagged_object(tag, shape.name());
                 self.fields(object, fields, value)
             }
             (AlternativesForm::Discriminated { tag, .. }, Declaration::Unit { .. }) => {
-                let object = self.tagged_object(tag, shape.name())?;
+                let object = self.tagged_object(tag, shape.name());
                 self.give(object);
                 Ok(())
             }
             (AlternativesForm::Discriminated { tag, contents }, Declaration::Newtype { .. }) => {
-                let object = self.tagged_object(tag, shape.name())?;
+                let object = self.tagged_object(tag, shape.name());
                 self.give(object);
-                self.put_later(object, contents)?;
+                self.put_later(object, contents);
                 self.step(key, value);
                 Ok(())
             }
@@ -980,10 +979,10 @@ impl<'w, 'f> Scheduling<'_, 'w, 'f> {
     }
 
     /// An object made here with a case's name under `tag`.
-    fn tagged_object(&mut self, tag: &str, name: &str) -> Lowered<ir::Value> {
+    fn tagged_object(&mut self, tag: &str, name: &str) -> ir::Value {
         let object = self.writing.object();
-        let name = self.writing.name(name)?;
-        self.writing.put(object, tag, name)?;
-        Ok(object)
+        let name = self.writing.name(name);
+        self.writing.put(object, tag, name);
+        object
     }
 }

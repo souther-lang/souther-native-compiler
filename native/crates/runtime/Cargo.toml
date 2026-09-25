@@ -15,3 +15,6 @@ souther-json-syntax.workspace = true
 souther-text.workspace = true
 # What text arriving from outside is canonicalized to (spec §string-canonical).
 unicode-normalization = "0.1"
+
+[lints]
+workspace = true

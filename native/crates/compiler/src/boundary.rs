@@ -66,7 +66,7 @@ pub(crate) fn define(
             // A status that is not `ANSWERED` goes back as it came, and nothing is written.
             let abort = builder.create_block();
             builder.append_block_param(abort, types::I32);
-            let answer = call_reached(builder, module, abort, boundary.runs, answers, arguments)?;
+            let answer = call_reached(builder, module, abort, boundary.runs, answers, arguments);
 
             let json = {
                 let mut writing = Writing {

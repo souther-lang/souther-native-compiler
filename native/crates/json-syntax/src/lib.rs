@@ -221,9 +221,9 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn malformed(&mut self, at: usize) -> Option<Result<Event<'a>, Malformed>> {
+    fn malformed(&mut self, at: usize) -> Malformed {
         self.next = Next::Done;
-        Some(Err(Malformed { at }))
+        Malformed { at }
     }
 
     fn spaces(&mut self) {
@@ -435,7 +435,7 @@ impl<'a> Parser<'a> {
                         self.next = Next::Done;
                         None
                     } else {
-                        self.malformed(self.at)
+                        Some(Err(self.malformed(self.at)))
                     };
                 }
                 let object = self.objects[self.depth - 1];
@@ -463,7 +463,7 @@ impl<'a> Parser<'a> {
         };
         match answer {
             Ok(event) => Some(Ok(event)),
-            Err(malformed) => self.malformed(malformed.at),
+            Err(malformed) => Some(Err(self.malformed(malformed.at))),
         }
     }
 }
