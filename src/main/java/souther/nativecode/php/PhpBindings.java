@@ -36,9 +36,11 @@ import java.util.stream.Collectors;
  *
  * <p>Reads the manifest and nothing else: not the checked program, and nothing of how a value is
  * laid out. What it writes is the manifest's surface as PHP types — a class for each published
- * type, an interface for each sum, a static function for each behavior — over the runtime package
- * in {@code bindings/php/runtime}, which is where a run's arena, a value's lifetime and what each
- * status means are kept. The FFI declarations are the ones the build wrote, copied beside it.
+ * type, an interface for each sum, a static function for each behavior, and a class for each
+ * behavior as an application holds one, bound to what it requires or extended to implement it —
+ * over the runtime package in {@code bindings/php/runtime}, which is where a run's arena, a value's
+ * lifetime and what each status means are kept. The FFI declarations are the ones the build wrote,
+ * copied beside it.
  *
  * <p>What a host has no way to reach is not written: a behavior the manifest gives no {@code call},
  * a field with no {@code read}, a type no host has a representation for. A function that could not
@@ -66,7 +68,7 @@ public final class PhpBindings {
      * The version of what generated code calls of the runtime package that this writes against:
      * {@code Binding::PROTOCOL} in {@code bindings/php/runtime}, which a test holds to this.
      */
-    static final int RUNTIME_PROTOCOL = 2;
+    static final int RUNTIME_PROTOCOL = 3;
 
     private final Manifest manifest;
     private final String root;
@@ -84,6 +86,9 @@ public final class PhpBindings {
      */
     private final Map<String, Map<Manifest.Element, Manifest.ListCrossing>> lists =
             new LinkedHashMap<>();
+
+    /** The class each behavior is written as, by {@code module.name}, where it has one. */
+    private final Map<String, BehaviorClass> behaviorClasses = new LinkedHashMap<>();
 
     private PhpBindings(Manifest manifest, String root, Path into) {
         this.manifest = manifest;
@@ -163,6 +168,22 @@ public final class PhpBindings {
         }
     }
 
+    /**
+     * The class a behavior is written as: abstract where a host implements the behavior, and
+     * otherwise final, bound to what the behavior requires.
+     */
+    private record BehaviorClass(String module, String name, String namespace, String className,
+                                 boolean injected) {
+
+        String fqcn() {
+            return "\\" + namespace + "\\" + className;
+        }
+
+        String key() {
+            return module + "." + name;
+        }
+    }
+
     private void write() throws IOException {
         PhpNames.Claimed namespaces = PhpNames.Claimed.classes("namespace " + root);
         for (Manifest.Module module : manifest.modules()) {
@@ -176,11 +197,97 @@ public final class PhpBindings {
             }
             lists.put(module.name(), listsOf(module));
         }
+        classes();
         for (Manifest.Module module : manifest.modules()) {
             module(module);
         }
         binding();
         autoload();
+    }
+
+    /**
+     * Which behaviors are written as a class, of every module: each a host implements and can be
+     * handed across to, and each published behavior a host can call whose every requirement has a
+     * class too, since binding it hands an instance of each over.
+     *
+     * <p>A class is what this generator adds beside what the model publishes, and its name is this
+     * generator's: the behavior's, made capital. So a name PHP will not take for it, or one that is
+     * one class with another the module's binding writes, leaves the behavior with no class rather
+     * than refusing the binding. The behavior is still a function on {@code Behaviors}, and what
+     * requires it has no class either. What the model itself names is refused where PHP will not
+     * take it, as before; this never is.
+     */
+    private void classes() {
+        Map<String, BehaviorClass> candidates = new LinkedHashMap<>();
+        Map<String, List<Manifest.Required>> requires = new LinkedHashMap<>();
+        for (Manifest.Module module : manifest.modules()) {
+            String namespace = PhpNames.moduleNamespace(root, module.name());
+            for (Manifest.Injection injection : module.injections()) {
+                if (adapter(module, injection) != null) {
+                    BehaviorClass it = new BehaviorClass(module.name(), injection.name(), namespace,
+                            PhpNames.capitalized(injection.name()), true);
+                    candidates.put(it.key(), it);
+                    requires.put(it.key(), List.of());
+                }
+            }
+            Crossings crossings = in(module.name());
+            for (Manifest.Behavior behavior : module.behaviors()) {
+                String key = module.name() + "." + behavior.name();
+                if (behavior.call() != null
+                        && crossings.givens(behavior.parameters().types()) != null
+                        && crossings.received(behavior.answers(), key) != null) {
+                    candidates.put(key, new BehaviorClass(module.name(), behavior.name(), namespace,
+                            PhpNames.capitalized(behavior.name()), false));
+                    requires.put(key, behavior.requires());
+                }
+            }
+        }
+
+        // One class to PHP or to a file system is one file, whichever two claim it.
+        Map<String, Set<String>> written = new LinkedHashMap<>();
+        for (Manifest.Module module : manifest.modules()) {
+            written.put(module.name(), coreClasses(module).stream()
+                    .map(it -> PhpNames.asAFile(it.getKey())).collect(Collectors.toSet()));
+        }
+        Map<String, Long> spelt = candidates.values().stream().collect(Collectors.groupingBy(
+                it -> it.module() + "\n" + PhpNames.asAFile(it.className()), Collectors.counting()));
+        candidates.values().removeIf(it -> !PhpNames.takesAsClass(it.className())
+                || written.get(it.module()).contains(PhpNames.asAFile(it.className()))
+                || spelt.get(it.module() + "\n" + PhpNames.asAFile(it.className())) > 1);
+
+        // A behavior requiring one with no class has none either, and so on up what requires it.
+        boolean dropped = true;
+        while (dropped) {
+            dropped = candidates.values().removeIf(it -> requires.get(it.key()).stream()
+                    .anyMatch(required -> !candidates.containsKey(required.key())));
+        }
+        behaviorClasses.putAll(candidates);
+    }
+
+    /**
+     * Every class the binding writes for {@code module} whatever else it writes, each with what it
+     * is: the three it always may, and each type's. Two of them that are one name are refused, since
+     * each is what the model or the binding cannot go without.
+     */
+    private List<Map.Entry<String, String>> coreClasses(Manifest.Module module) {
+        // A list and not a map: two of these under one name is what claiming them refuses, and a
+        // map would keep one of the two.
+        List<Map.Entry<String, String>> classes = new ArrayList<>();
+        classes.add(Map.entry("Behaviors", "the generated `Behaviors`"));
+        classes.add(Map.entry("Values", "the generated `Values`"));
+        classes.add(Map.entry("Injections", "the generated `Injections`"));
+        for (Declaration declaration : module.declarations()) {
+            Declared it = declared.get(module.name() + "." + declaration.name());
+            classes.add(Map.entry(it.name(), "type `" + it.key() + "`"));
+            if (declaration instanceof Declaration.Sum sum) {
+                classes.add(Map.entry(it.name() + "Codec", "the codec of `" + it.key() + "`"));
+                if (opaque(sum)) {
+                    classes.add(Map.entry(it.name() + "Value",
+                            "a value of `" + it.key() + "` no class names"));
+                }
+            }
+        }
+        return classes;
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -448,17 +555,11 @@ public final class PhpBindings {
     private void module(Manifest.Module module) throws IOException {
         String namespace = PhpNames.moduleNamespace(root, module.name());
         PhpNames.Claimed classes = PhpNames.Claimed.classes("namespace " + namespace);
-        classes.claim("Behaviors", "the generated `Behaviors`");
-        classes.claim("Values", "the generated `Values`");
-        classes.claim("Injections", "the generated `Injections`");
-        for (Declaration declaration : module.declarations()) {
-            Declared it = declared.get(module.name() + "." + declaration.name());
-            classes.claim(it.name(), "type `" + it.key() + "`");
-            if (declaration instanceof Declaration.Sum sum) {
-                classes.claim(it.name() + "Codec", "the codec of `" + it.key() + "`");
-                if (opaque(sum)) {
-                    classes.claim(it.name() + "Value", "a value of `" + it.key() + "` no class names");
-                }
+        coreClasses(module).forEach(it -> classes.claim(it.getKey(), it.getValue()));
+        // Each left with a name no other class here is ({@link #classes}), so these never refuse.
+        for (BehaviorClass it : behaviorClasses.values()) {
+            if (it.module().equals(module.name())) {
+                classes.claim(it.className(), "the class of behavior `" + it.key() + "`");
             }
         }
 
@@ -472,6 +573,12 @@ public final class PhpBindings {
         behaviors(module, namespace);
         values(module, namespace);
         injections(module, namespace);
+        for (Manifest.Injection injection : module.injections()) {
+            BehaviorClass it = behaviorClasses.get(module.name() + "." + injection.name());
+            if (it != null) {
+                injectedClass(module, injection, it);
+            }
+        }
     }
 
     /**
@@ -844,6 +951,10 @@ public final class PhpBindings {
                         PhpNames.positional(positional.types().size());
             };
             functions.append(call(what, behavior.name(), names, takes, answers, call));
+            BehaviorClass it = behaviorClasses.get(module.name() + "." + behavior.name());
+            if (it != null) {
+                behaviorClass(it, behavior, names, takes, answers);
+            }
         }
         if (functions.isEmpty()) {
             return;
@@ -1044,6 +1155,159 @@ public final class PhpBindings {
                 %s                }""".formatted(String.join(", ", arguments), answers.holds("$answer"),
                 quotedInSingle(module.name() + "." + injection.name()),
                 quotedInSingle(answers.phpType()), written);
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // A behavior as an application holds one.
+
+    /**
+     * The class an application extends to implement {@code injection}: an abstract {@code apply}
+     * typed as the model says, which the library calls with the session of the innermost run going,
+     * the way it calls a closure handed to {@code Injections}.
+     */
+    private void injectedClass(Manifest.Module module, Manifest.Injection injection,
+                               BehaviorClass it) throws IOException {
+        Crossings crossings = in(module.name());
+        // Named as the model names them where PHP takes that: nothing else publishes these names,
+        // and an override is not held to them.
+        List<String> names = PhpNames.ownParameters(injection.parameters().stream()
+                .map(Manifest.NamedParameter::name).toList(), "input");
+        List<Received> takes = injection.parameters().stream()
+                .map(parameter -> crossings.received(parameter.type())).toList();
+        Given answers = crossings.given(injection.answers());
+        String session = PhpNames.freeOf("session", names);
+        List<String> parameters = new ArrayList<>();
+        parameters.add(RUNTIME + "Session $" + session);
+        List<String> described = new ArrayList<>();
+        for (int at = 0; at < takes.size(); at++) {
+            parameters.add(takes.get(at).phpType() + " $" + names.get(at));
+            described.addAll(paramTag(takes.get(at), names.get(at)));
+        }
+        StringBuilder php = header(it.namespace());
+        php.append(doc("", "What implements `" + it.key() + "`, which the library asks a host to"
+                + " implement. An instance is handed to what is bound to it, and the library calls"
+                + " `apply` of the one registered wherever the behavior is reached."));
+        php.append("abstract class ").append(it.className()).append("\n{\n");
+        php.append(docLines(List.of("Answers `" + it.key() + "`, in the session of the innermost"
+                + " run going. An exception thrown here comes back out of the call into the library"
+                + " that reached it."), described, answers));
+        php.append("    abstract public function apply(").append(String.join(", ", parameters))
+                .append("): ").append(answers.phpType()).append(";\n}\n");
+        file(it.namespace(), it.className(), php);
+    }
+
+    /**
+     * The class an application binds {@code behavior} through and calls it on: {@code bind}, taking
+     * an implementation of each behavior it requires, or {@code of} where it requires none, and
+     * {@code apply}, calling it with what it was bound to registered for the call.
+     *
+     * <p>{@code apply} takes the session, as every function a binding writes does, and does not
+     * open a run of its own: what it answers is a value of the caller's run, and a run it opened
+     * would have ended by the time the caller held it.
+     */
+    private void behaviorClass(BehaviorClass it, Manifest.Behavior behavior, List<String> names,
+                               List<Given> takes, Received answers) throws IOException {
+        String session = PhpNames.freeOf("session", names);
+        List<String> parameters = new ArrayList<>();
+        parameters.add(RUNTIME + "Session $" + session);
+        List<String> arguments = new ArrayList<>();
+        arguments.add("$" + session);
+        List<String> described = new ArrayList<>();
+        for (int at = 0; at < takes.size(); at++) {
+            parameters.add(takes.get(at).phpType() + " $" + names.get(at));
+            arguments.add("$" + names.get(at));
+            described.addAll(paramTag(takes.get(at), names.get(at)));
+        }
+
+        StringBuilder php = header(it.namespace());
+        php.append(doc("", "`" + it.key() + "` as an application holds it: each call registers what"
+                + " it was bound to for the call's length, in the caller's run."));
+        php.append("final class ").append(it.className()).append("\n{\n");
+        php.append("""
+                    private function __construct(private readonly \\Souther\\Runtime\\Bound $bound)
+                    {
+                    }
+                """);
+        php.append(construction(it, behavior.requires()));
+        php.append("""
+
+                    /** @internal What this was bound to, for what requires it to be bound to the same. */
+                    public function bound(): \\Souther\\Runtime\\Bound
+                    {
+                        return $this->bound;
+                    }
+
+                """);
+        php.append(docLines(List.of("Calls `" + it.key() + "` with what this was bound to"
+                + " registered."), described, answers));
+        php.append("""
+                    public function apply(%s): %s
+                    {
+                        return $this->bound->around($%s,
+                            static fn (): %s => \\%s\\Behaviors::%s(%s));
+                    }
+                }
+                """.formatted(String.join(", ", parameters), answers.phpType(), session,
+                answers.phpType(), it.namespace(), behavior.name(), String.join(", ", arguments)));
+        file(it.namespace(), it.className(), php);
+    }
+
+    /**
+     * How an application makes {@code it}: {@code bind}, taking one implementation of each of
+     * {@code requires} in order, or {@code of}, where it requires nothing. A
+     * behavior a host implements is registered as the instance handed over, and one constructed in
+     * turn brings what it was bound to.
+     */
+    private String construction(BehaviorClass it, List<Manifest.Required> requires) {
+        if (requires.isEmpty()) {
+            return """
+
+                        /** `%s`, which requires nothing. */
+                        public static function of(): self
+                        {
+                            return new self(\\Souther\\Runtime\\Bound::of([]));
+                        }
+                    """.formatted(it.key());
+        }
+        // A requirement is its module and its name, and two of one name from two modules are two
+        // requirements (a composition over `a.load` and `b.load`), so a parameter is named after
+        // the name only where no other is, and after its place otherwise.
+        List<String> names = PhpNames.ownParameters(
+                requires.stream().map(Manifest.Required::name).toList(), "dependency");
+        List<String> parameters = new ArrayList<>();
+        List<String> implementers = new ArrayList<>();
+        List<String> constructed = new ArrayList<>();
+        for (int at = 0; at < requires.size(); at++) {
+            Manifest.Required required = requires.get(at);
+            BehaviorClass of = behaviorClasses.get(required.key());
+            String name = names.get(at);
+            parameters.add(of.fqcn() + " $" + name);
+            if (of.injected()) {
+                implementers.add("'" + quotedInSingle(required.key()) + "' => $" + name);
+            } else {
+                constructed.add("$" + name + "->bound()");
+            }
+        }
+        List<String> bound = new ArrayList<>();
+        bound.add("[" + String.join(", ", implementers) + "]");
+        bound.addAll(constructed);
+        return """
+
+                    /** `%s`, bound to an implementation of each behavior it requires. */
+                    public static function bind(%s): self
+                    {
+                        return new self(\\Souther\\Runtime\\Bound::of(%s));
+                    }
+                """.formatted(it.key(), String.join(", ", parameters), String.join(", ", bound));
+    }
+
+    /**
+     * The {@code @param} tag of a docblock for {@code crossing} under {@code name}, where the
+     * docblock says more of it than its PHP type does, and none where it does not.
+     */
+    private static List<String> paramTag(Crossing crossing, String name) {
+        return crossing.phpDocType().equals(crossing.phpType()) ? List.of()
+                : List.of("@param " + crossing.phpDocType() + " $" + name);
     }
 
     // ---------------------------------------------------------------------------------------------

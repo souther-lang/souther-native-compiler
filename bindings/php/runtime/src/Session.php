@@ -27,6 +27,7 @@ final class Session
     public function __construct(
         private readonly NativeLibrary $library,
         private readonly ?\Fiber $fiber,
+        private readonly InjectionRegistry $registry,
     ) {
     }
 
@@ -76,6 +77,24 @@ final class Session
                 . ' inside it; start it through the session of the innermost run');
         }
         return $ffi;
+    }
+
+    /**
+     * @internal Runs `$body` with `$implementations` registered for its length, in this run.
+     *
+     * Only through the innermost run's session, as a computation is started ({@see call()}): what
+     * is registered is put back when `$body` ends, and a run inside it would end after.
+     *
+     * @template T
+     * @param callable(): T $body
+     * @param array<string, \Closure> $implementations by the declared name of the behavior each
+     *        implements
+     * @return T
+     */
+    public function withInjections(callable $body, array $implementations): mixed
+    {
+        $this->call();
+        return $this->registry->around($body, $implementations);
     }
 
     /**

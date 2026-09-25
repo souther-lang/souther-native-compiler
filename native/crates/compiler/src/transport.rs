@@ -18,7 +18,7 @@ use serde::Deserialize;
 
 /// What this side reads. A document written to say anything else is refused rather than read as
 /// much of as happens to parse.
-pub const TRANSPORT_VERSION: u32 = 17;
+pub const TRANSPORT_VERSION: u32 = 18;
 
 /// A document of [`TRANSPORT_VERSION`], and no other, read through [`Program::read`] and nothing
 /// else ([`crate::versioned`]).
@@ -530,6 +530,8 @@ pub enum Definition {
         parameters: Vec<String>,
         /// What the module declaring it says about the name.
         publication: Publication,
+        /// What constructing it requires injected, in order.
+        requirements: Vec<Requirement>,
         body: Node,
     },
     /// Written as `>->`: the stages, and what each is offered (spec §type-routing). Carried
@@ -541,6 +543,9 @@ pub enum Definition {
         declared: String,
         /// What the module declaring it says about the name.
         publication: Publication,
+        /// What constructing it requires injected, in order: what its stages require, which is
+        /// not what it calls.
+        requirements: Vec<Requirement>,
         stages: Vec<Stage>,
     },
 }
@@ -560,6 +565,34 @@ impl Definition {
                 *publication
             }
         }
+    }
+
+    /// What constructing it requires injected, in the order the checker answered it: the
+    /// behaviors a host binding it has to be handed, each either one a host implements or one
+    /// constructed from what it requires in turn.
+    pub fn requirements(&self) -> &[Requirement] {
+        match self {
+            Definition::Body { requirements, .. } | Definition::Composed { requirements, .. } => {
+                requirements
+            }
+        }
+    }
+}
+
+/// A behavior a definition requires injected: its module and its name, apart, since a module's
+/// name carries dots.
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Requirement {
+    pub module: String,
+    pub name: String,
+}
+
+impl Requirement {
+    /// What a reference to this behavior in the document says, which is the two halves joined the
+    /// one way.
+    pub fn declared(&self) -> String {
+        format!("{}.{}", self.module, self.name)
     }
 }
 

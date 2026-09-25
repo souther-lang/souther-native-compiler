@@ -1,6 +1,6 @@
 {
   "format": "souther-native-interface",
-  "version": 5,
+  "version": 6,
   "abi": 3,
   "statuses": {
     "ANSWERED": 0,
@@ -197,6 +197,7 @@
             },
             "union": null
           },
+          "requires": [],
           "call": {
             "name": "souther3_m_shop_b_settle",
             "takes": [
@@ -234,6 +235,7 @@
             },
             "union": null
           },
+          "requires": [],
           "call": {
             "name": "souther3_m_shop_b_owing",
             "takes": [
@@ -269,6 +271,7 @@
             },
             "union": null
           },
+          "requires": [],
           "call": {
             "name": "souther3_m_shop_b_stillOwing",
             "takes": [
@@ -348,6 +351,7 @@
               }
             }
           },
+          "requires": [],
           "call": {
             "name": "souther3_m_shop_b_charge",
             "takes": [
@@ -385,6 +389,7 @@
             },
             "union": null
           },
+          "requires": [],
           "call": {
             "name": "souther3_m_shop_b_counted",
             "takes": [
@@ -423,6 +428,7 @@
             },
             "union": null
           },
+          "requires": [],
           "call": {
             "name": "souther3_m_shop_b_doubled",
             "takes": [
@@ -431,6 +437,46 @@
               },
               {
                 "room": "list"
+              }
+            ],
+            "answers": "status"
+          }
+        },
+        {
+          "name": "discounted",
+          "parameters": {
+            "named": [
+              {
+                "name": "line",
+                "type": {
+                  "kind": "declared",
+                  "module": "shop",
+                  "name": "Line"
+                }
+              }
+            ]
+          },
+          "answers": {
+            "type": {
+              "kind": "primitive",
+              "name": "Int"
+            },
+            "union": null
+          },
+          "requires": [
+            {
+              "module": "shop",
+              "name": "discountFor"
+            }
+          ],
+          "call": {
+            "name": "souther3_m_shop_b_discounted",
+            "takes": [
+              {
+                "given": "value"
+              },
+              {
+                "room": "int"
               }
             ],
             "answers": "status"

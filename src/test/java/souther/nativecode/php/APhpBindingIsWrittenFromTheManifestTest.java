@@ -122,7 +122,7 @@ class APhpBindingIsWrittenFromTheManifestTest {
                 "1 => new \\Acme\\Billing\\M\\Missing($session->held($answer))");
         assertThat(generated.files()).extracting(it -> generated.root().relativize(it).toString())
                 .containsExactlyInAnyOrder("Binding.php", "autoload.php", "souther.ffi.h",
-                        "M/Found.php", "M/Missing.php", "M/Behaviors.php");
+                        "M/Found.php", "M/Missing.php", "M/Behaviors.php", "M/Find.php");
     }
 
     /**
@@ -159,6 +159,163 @@ class APhpBindingIsWrittenFromTheManifestTest {
                 """))
                 .isInstanceOf(PhpBindings.NotBindable.class)
                 .hasMessageContaining("type `m.Behaviors`");
+    }
+
+    /**
+     * A behavior's class is what this generator adds beside the model's surface, under a name of
+     * its own making: where PHP will not take that name, or it is one class with another the
+     * module's binding writes (to PHP, or to a file system that does not tell case apart), the
+     * behavior has no class and the binding is written all the same. What requires it has none
+     * either. The model's own surface is what it was.
+     */
+    @Test
+    void aBehaviorWhoseClassCannotBeNamedHasNoneAndTheBindingStands(@TempDir Path into)
+            throws Exception {
+        PhpBindings.Generated generated = generated(into, """
+                module m exposing ( Found, Missing, Lookup, clone, behaviors, lookupCodec, charged,
+                                    twice )
+
+                data Found = { id: Int }
+                data Missing
+                data Lookup = Found | Missing
+
+                behavior clone : (n: Int) -> Int
+                let clone (n) = n
+
+                behavior behaviors : (n: Int) -> Int
+                let behaviors (n) = n
+
+                behavior lookupCodec : (n: Int) -> Int
+                let lookupCodec (n) = n
+
+                behavior print : (n: Int) -> Int
+
+                behavior charged : (n: Int) -> Int
+                    depends on print
+                let charged (n, print) = print(n)
+
+                behavior twice : (n: Int) -> Int
+                let twice (n) = n * 2
+                """);
+
+        assertThat(generated.files()).extracting(it -> generated.root().relativize(it).toString())
+                .contains("M/Twice.php", "M/LookupCodec.php", "M/Behaviors.php", "M/Injections.php")
+                .doesNotContain("M/Clone.php", "M/Print.php", "M/Charged.php");
+        assertThat(behaviors(generated)).contains("function clone(", "function behaviors(",
+                "function lookupCodec(", "function charged(");
+        assertThat(Files.readString(generated.root().resolve("M").resolve("LookupCodec.php")))
+                .contains("final class LookupCodec");
+        for (Path file : generated.files()) {
+            if (file.toString().endsWith(".php")) {
+                assertThat(Php.compiles(file)).as("%s", file).isTrue();
+            }
+        }
+    }
+
+    /**
+     * Two behaviors whose classes differ only in case are one file where case is not told apart,
+     * and neither has a class, rather than whichever was written first. A host implements one and
+     * calls the other, so nothing else the binding writes names both.
+     */
+    @Test
+    void twoBehaviorsWhoseClassesAreOneFileHaveNone(@TempDir Path into) throws Exception {
+        PhpBindings.Generated generated = generated(into, """
+                module m exposing ( itema )
+
+                behavior itemA : (n: Int) -> Int
+
+                behavior itema : (n: Int) -> Int
+                let itema (n) = n
+                """);
+
+        assertThat(generated.files()).extracting(it -> generated.root().relativize(it).toString())
+                .contains("M/Behaviors.php", "M/Injections.php")
+                .doesNotContain("M/ItemA.php", "M/Itema.php");
+        assertThat(behaviors(generated)).contains("function itema(");
+    }
+
+    /**
+     * What a class a host implements takes is named as the model names it where PHP takes that,
+     * and by its place where it does not: nothing else publishes the names, and an override is not
+     * held to them, so none of them is a reason to refuse the binding.
+     */
+    @Test
+    void anImplementationTakesWhatPhpCannotNameByItsPlace(@TempDir Path into) throws Exception {
+        PhpBindings.Generated generated = generated(into, """
+                module m
+
+                behavior lookUp : (GLOBALS: Int, id: Int) -> Int
+                """);
+
+        assertThat(Files.readString(generated.root().resolve("M").resolve("LookUp.php"))).contains(
+                "abstract public function apply(\\Souther\\Runtime\\Session $session, int $input0,"
+                        + " int $id): int;");
+    }
+
+    /**
+     * A behavior requiring one the manifest gives a host no way to implement has no class, since
+     * binding it could not be handed what it requires, and neither has what requires it in turn.
+     * Each is still called as a function, with what a run registers.
+     */
+    @Test
+    void aBehaviorRequiringWhatNoHostCanImplementHasNoClass(@TempDir Path into) throws Exception {
+        NativeCompiler.Library library = NativeCompiler.library(CheckedProgram.of(List.of("""
+                module m exposing ( charge, charged, twice )
+
+                behavior rate : (n: Int) -> Int
+
+                behavior charge : (n: Int) -> Int
+                    depends on rate
+                let charge (n, rate) = rate(n)
+
+                behavior charged : (n: Int) -> Int
+                    depends on charge
+                let charged (n, charge) = charge(n) + 1
+
+                behavior twice : (n: Int) -> Int
+                let twice (n) = n * 2
+                """)), into.resolve("native"));
+
+        generatedAfter(into, library, "m", module -> ((ArrayNode) module.get("injections")).removeAll());
+
+        Path written = into.resolve("php").resolve("M");
+        assertThat(written.resolve("Twice.php")).exists();
+        assertThat(written.resolve("Charge.php")).doesNotExist();
+        assertThat(written.resolve("Charged.php")).doesNotExist();
+        assertThat(Files.readString(written.resolve("Behaviors.php")))
+                .contains("function charge(", "function charged(");
+    }
+
+    /**
+     * A requirement is its module and its name, so a composition over `a.load` and `b.load`
+     * requires two behaviors of one name. What binding it takes is named by place there, as the
+     * JVM backend names the fields (upstream ADR-0068), and by name wherever the name is the only
+     * one.
+     */
+    @Test
+    void twoRequirementsOfOneNameAreTakenByTheirPlaces(@TempDir Path into) throws Exception {
+        PhpBindings.Generated generated = PhpBindings.generate(NativeCompiler.library(
+                CheckedProgram.of(List.of("""
+                        module a exposing ( load )
+
+                        behavior load : (n: Int) -> Int
+                        """, """
+                        module b exposing ( load )
+
+                        behavior load : (n: Int) -> Int
+                        """, """
+                        module m exposing ( both : Int )
+
+                        import a
+                        import b
+
+                        behavior both = a.load >-> b.load
+                        """)), into.resolve("native")), into.resolve("php"), "Acme\\Billing");
+
+        assertThat(Files.readString(generated.root().resolve("M").resolve("Both.php"))).contains(
+                "bind(\\Acme\\Billing\\A\\Load $dependency0, \\Acme\\Billing\\B\\Load"
+                        + " $dependency1): self",
+                "Bound::of(['a.load' => $dependency0, 'b.load' => $dependency1])");
     }
 
     /** The session a call takes is named so that no parameter of the model's is renamed for it. */
@@ -230,7 +387,7 @@ class APhpBindingIsWrittenFromTheManifestTest {
                 "Acme\\Billing"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("is version 3 of souther-native-interface for ABI generation"
-                        + " 3, and this generator reads version 5")
+                        + " 3, and this generator reads version 6")
                 .hasMessageNotContaining("answers");
     }
 

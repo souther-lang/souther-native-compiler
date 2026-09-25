@@ -16,15 +16,18 @@ abstract class Binding
      * binding generated before would call something this does not have, or call it as something it
      * is not; a binding says which it was generated for and refuses to load over any other.
      */
-    public const PROTOCOL = 2;
+    public const PROTOCOL = 3;
+
+    private readonly InjectionRegistry $registry;
 
     /**
      * @param array<string, InjectionSlot> $slots by the declared name of the behavior each is for
      */
     protected function __construct(
         private readonly NativeLibrary $library,
-        private readonly array $slots,
+        array $slots,
     ) {
+        $this->registry = new InjectionRegistry($slots);
     }
 
     /**
@@ -42,22 +45,13 @@ abstract class Binding
     {
         $ffi = $this->library->ffi();
         $mark = $ffi->souther_mark();
-        $session = $this->library->open();
-        $entered = [];
+        $session = $this->library->open($this->registry);
         try {
-            foreach ($injections as $set) {
-                foreach ($set->implementations() as $behavior => $implementation) {
-                    $slot = $this->slots[$behavior]
-                        ?? throw new \InvalidArgumentException(
-                            "the library asks no host to implement {$behavior}");
-                    $entered[] = [$slot, $slot->enter($implementation)];
-                }
-            }
-            return $body($session);
+            return $this->registry->around(
+                static fn (): mixed => $body($session),
+                ...array_map(static fn (Injections $set): array => $set->implementations(),
+                    $injections));
         } finally {
-            foreach (array_reverse($entered) as [$slot, $replaced]) {
-                $slot->leave($replaced);
-            }
             $this->library->close($session);
             $ffi->souther_reset($mark);
         }

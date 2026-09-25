@@ -49,7 +49,7 @@ use crate::codec::{Codecs, Runtime};
 use crate::interface::{DeclarationSurface, HostFunction, HostImplementation, Surface, machine};
 use crate::manifest;
 use crate::transport::{
-    BoundaryInput, BoundaryOutput, Case, Declaration, DeclaredBy, Prim, Program, Ty,
+    BoundaryInput, BoundaryOutput, Case, Declaration, DeclaredBy, Prim, Program, Requirement, Ty,
 };
 use cranelift::codegen::ir::condcodes::IntCC;
 use cranelift::codegen::ir::{self, InstBuilder, TrapCode, types};
@@ -461,6 +461,9 @@ pub(crate) struct Entry<'a> {
     /// The cases `answers` descends to, where it is a union no declaration names and a behavior's
     /// answer. None for a value, which a host is told nothing of the cases of yet.
     pub cases: Option<&'a [Case]>,
+    /// What constructing it requires injected, in order, and nothing for a value, which is not
+    /// constructed.
+    pub requires: &'a [Requirement],
 }
 
 /// The word a behavior's parameter is handed over in, where a host can hand one over.
@@ -514,6 +517,7 @@ pub(crate) fn define_behaviors(
             &takes,
             &behavior.answers,
             union.as_ref().map(|(cases, case)| (*cases, case.as_ref())),
+            behavior.requires,
             emitting.declared,
             call.as_ref(),
         );

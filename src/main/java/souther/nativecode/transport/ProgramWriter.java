@@ -86,7 +86,7 @@ public final class ProgramWriter {
      * written moves, so that a driver and a writer that disagree say so rather than producing an
      * object that is wrong quietly.
      */
-    public static final int TRANSPORT_VERSION = 17;
+    public static final int TRANSPORT_VERSION = 18;
 
     private final CheckedProgram program;
 
@@ -1012,6 +1012,7 @@ public final class ProgramWriter {
         return "{\"is\":\"body\",\"declared\":" + quoted(module.name() + "." + behavior.name().name())
                 + ",\"parameters\":" + parameters
                 + ",\"publication\":" + quoted(publication(module.publicationOf(behavior.name())))
+                + ",\"requirements\":" + requirements(behavior)
                 + ",\"body\":" + core(written.body(), bindings)
                 + "}";
     }
@@ -1043,8 +1044,28 @@ public final class ProgramWriter {
         return "{\"is\":\"composed\",\"declared\":"
                 + quoted(module.name() + "." + behavior.name().name())
                 + ",\"publication\":" + quoted(publication(module.publicationOf(behavior.name())))
+                + ",\"requirements\":" + requirements(behavior)
                 + ",\"stages\":" + stages
                 + "}";
+    }
+
+    /**
+     * What constructing {@code behavior} requires injected, in the order the checker answered it.
+     *
+     * <p>The checker's list as it is and not worked out here from what the body calls: a
+     * composition requires what its stages do, which is not what it calls, and a second reading
+     * of that would come apart from the first. Each is the module and the name apart, as a value
+     * is referred to, since a module's name carries dots. Met like a call, so the table of targets
+     * says what each one is.
+     */
+    private String requirements(CheckedBehavior behavior) {
+        StringJoiner required = new StringJoiner(",", "[", "]");
+        for (ValueName.Behavior dependency : behavior.requirements()) {
+            behaviorsMet.add(dependency);
+            required.add("{\"module\":" + quoted(dependency.module())
+                    + ",\"name\":" + quoted(dependency.name()) + "}");
+        }
+        return required.toString();
     }
 
     /** One stage of a composition: the behavior it applies, and when. */
