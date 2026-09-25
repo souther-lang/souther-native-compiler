@@ -16,6 +16,7 @@ mod kernels;
 mod link;
 mod manifest;
 mod replaced;
+mod specialize;
 pub mod transport;
 mod versioned;
 
@@ -43,6 +44,7 @@ use souther_native_abi::{
     room_for_list, room_for_members, room_for_text, spells_a_module, spells_a_name, type_symbol,
     value_symbol,
 };
+use specialize::{InstanceId, Specializations};
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
@@ -378,6 +380,11 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
         closures,
         defined,
     } = coherent;
+    // Every copy of a helper this object defines, and which of them each call reaches, settled
+    // before anything is declared: a helper that leaves type variables open is a function only once
+    // a call has said what each variable is.
+    let specializations = Specializations::of(&runs)?;
+
     let mut context = Context::new();
     let mut shapes = FunctionBuilderContext::new();
     let frontend = module.isa().frontend_config();
@@ -561,19 +568,28 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
             }
         }
     }
-    // A helper's copy and a value's home, each under where its body stands: the same statement a
-    // call from a body is resolved by, so the key a copy is put under and the key a call asks for
-    // are read off one thing.
+    // Every copy of a helper, each under where the helper stands. Held and not exported: a
+    // definition a module holds is that module's copy, and nothing outside the object reaches one.
+    // A helper leaving nothing open is one function under its own name, and one over variables is
+    // a function for each set of types a call needs, told apart by which of its copies each is.
+    for (id, instance) in specializations.iter() {
+        let symbol = held_symbol(instance.carrier.module(), &instance.held.reached);
+        let symbol = if instance.types.is_empty() {
+            symbol
+        } else {
+            format!("{symbol}.{}", instance.ordinal)
+        };
+        let signature = signature_over(&instance.takes(), instance.answers(), call_conv)?;
+        let defined = accepted(module.declare_function(&symbol, Linkage::Local, &signature));
+        reachable.instance(id, defined);
+    }
+    // A value's home, under where its body stands: the same statement a call from a body is
+    // resolved by, so the key a home is put under and the key a call asks for are read off one
+    // thing.
     for body in runs.bodies() {
         match body.owner {
-            Owner::Helper(held) => {
-                let symbol = held_symbol(body.carrier().module(), &held.declared);
-                let signature = signature_over(&held.takes(), held.answers(), call_conv)?;
-                // Held and not exported: a definition a module holds is that module's copy, and
-                // nothing outside the object reaches one.
-                let id = accepted(module.declare_function(&symbol, Linkage::Local, &signature));
-                reachable.held(body.carrier(), &held.declared, id);
-            }
+            // Declared above, as its copies.
+            Owner::Helper(_) => {}
             Owner::Value(value) => {
                 // As private as a helper's method, and named the same way: a value's home is this
                 // module's own business (ADR-0074) — nothing outside this object reaches it
@@ -655,6 +671,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
         declared: &declared,
         comparators: &comparators,
         reachable: &reachable,
+        specializations: &specializations,
         allocate,
         compare_text,
         join_text,
@@ -668,25 +685,27 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
 
     // Every body this object runs, each lowered where it stands: what a call from it reaches is
     // what `Coherent` held reachable from there, because both read it off the one `Body`.
+    for (id, instance) in specializations.iter() {
+        let lowering = lowerings.at(instance.carrier);
+        let signature = signature_over(&instance.takes(), instance.answers(), call_conv)?;
+        context.clear();
+        context.func = Function::with_name_signature(UserFuncName::default(), signature);
+        define(
+            &mut context.func,
+            &mut shapes,
+            &instance.takes(),
+            instance.body(),
+            frontend,
+            &lowering,
+            &mut module,
+        )?;
+        accepted(module.define_function(reachable.of_instance(id), &mut context));
+    }
     for body in runs.bodies() {
         let lowering = lowerings.at(body.carrier());
         match body.owner {
-            Owner::Helper(held) => {
-                let signature = signature_over(&held.takes(), held.answers(), call_conv)?;
-                let id = reachable.of_held(body.carrier(), &held.declared);
-                context.clear();
-                context.func = Function::with_name_signature(UserFuncName::default(), signature);
-                define(
-                    &mut context.func,
-                    &mut shapes,
-                    &held.takes(),
-                    body.node,
-                    frontend,
-                    &lowering,
-                    &mut module,
-                )?;
-                accepted(module.define_function(id, &mut context));
-            }
+            // Defined above, as its copies.
+            Owner::Helper(_) => {}
             Owner::Value(value) => {
                 let takes = handover_types(value);
                 let signature = signature_over(&takes, value.answers(), call_conv)?;
@@ -1175,11 +1194,12 @@ fn linkage_of(published: Publication) -> Linkage {
 
 /// Everything a body can reach, by the name the document reaches it under.
 ///
-/// A definition a module holds is keyed by both modules — the one holding it and the one that
-/// declared it — because two modules holding one declaration hold a copy each and a call reaches
-/// the copy its own module holds.
+/// A definition a module holds is keyed by which copy of it a call reaches, which
+/// [`Specializations`] answers: two modules holding one declaration hold a copy each, a call
+/// reaches the copy its own module holds, and a helper leaving type variables open is a function
+/// for each set of types a call needs.
 ///
-/// A value's own home is kept apart from a helper's copy (`values`, not folded into `held`),
+/// A value's own home is kept apart from a helper's copy (`values`, not folded into `instances`),
 /// because the two are different identities even where a document never confuses them: a helper
 /// is carried, a value is declared, and souther's own `CheckedModule` already refuses to hold one
 /// declaration as both. A published entry is kept apart again (`published_values`), keyed by the
@@ -1188,7 +1208,8 @@ fn linkage_of(published: Publication) -> Linkage {
 /// where it happens to be the declaring module's own.
 #[derive(Default)]
 struct Reachable {
-    held: HashMap<(String, String), FuncId>,
+    /// Each copy of a helper, by which copy it is ([`Specializations`]).
+    instances: HashMap<InstanceId, FuncId>,
     values: HashMap<(String, String), FuncId>,
     behaviors: HashMap<String, FuncId>,
     published_values: HashMap<(String, String), FuncId>,
@@ -1204,9 +1225,8 @@ struct Reachable {
 /// Built from names [`Coherent`] already held to be named once each, so a name written twice here
 /// is this compiler's mistake and not the document's.
 impl Reachable {
-    fn held(&mut self, carrier: Carrier, declared: &str, id: FuncId) {
-        let key = (carrier.module().to_string(), declared.to_string());
-        index::unique(&mut self.held, key, id);
+    fn instance(&mut self, instance: InstanceId, id: FuncId) {
+        index::unique(&mut self.instances, instance, id);
     }
 
     fn value(&mut self, carrier: Carrier, declared: &str, id: FuncId) {
@@ -1239,11 +1259,11 @@ impl Reachable {
             .contains_key(&(module.to_string(), name.to_string()))
     }
 
-    fn of_held(&self, carrier: Carrier, declared: &str) -> FuncId {
+    fn of_instance(&self, instance: InstanceId) -> FuncId {
         *self
-            .held
-            .get(&(carrier.module().to_string(), declared.to_string()))
-            .expect("`Coherent` held every helper a call reaches to be one its module holds")
+            .instances
+            .get(&instance)
+            .expect("every copy of a helper was declared before any body was defined")
     }
 
     fn of_value(&self, carrier: Carrier, declared: &str) -> FuncId {
@@ -1378,8 +1398,19 @@ impl<'a> Declared<'a> {
 
     /// Refuses a type naming a declaration no declaration of the document is, at any depth: every
     /// key a type names is one the checker declared, and the document carries every declaration
-    /// anything in it names.
+    /// anything in it names. And a type variable, which is a type nobody settled wherever it stands
+    /// outside a helper's body ([`Declared::resolves_open`]).
     fn resolves(&self, owner: &str, ty: &Ty) -> Result<()> {
+        self.resolving(owner, ty, false)
+    }
+
+    /// The same inside a helper's body, where a type may be a variable the body leaves open: what
+    /// it comes to is what a call of the helper settles, and the variable names nothing here.
+    fn resolves_open(&self, owner: &str, ty: &Ty) -> Result<()> {
+        self.resolving(owner, ty, true)
+    }
+
+    fn resolving(&self, owner: &str, ty: &Ty, open: bool) -> Result<()> {
         let named = |declared: &str| {
             self.shape(declared)
                 .map(|_| ())
@@ -1396,20 +1427,27 @@ impl<'a> Declared<'a> {
                 }
                 Ok(())
             }
-            Ty::Option { option } => self.resolves(owner, option),
-            Ty::List { list } => self.resolves(owner, list),
-            Ty::Set { set } => self.resolves(owner, set),
+            Ty::Option { option } => self.resolving(owner, option, open),
+            Ty::List { list } => self.resolving(owner, list, open),
+            Ty::Set { set } => self.resolving(owner, set, open),
             Ty::Map { map } => {
-                self.resolves(owner, &map.key)?;
-                self.resolves(owner, &map.value)
+                self.resolving(owner, &map.key, open)?;
+                self.resolving(owner, &map.value, open)
             }
-            Ty::Tuple { tuple } => tuple.iter().try_for_each(|it| self.resolves(owner, it)),
+            Ty::Tuple { tuple } => tuple
+                .iter()
+                .try_for_each(|it| self.resolving(owner, it, open)),
             Ty::Fn { fn_ } => {
                 for taken in &fn_.takes {
-                    self.resolves(owner, taken)?;
+                    self.resolving(owner, taken, open)?;
                 }
-                self.resolves(owner, &fn_.answers)
+                self.resolving(owner, &fn_.answers, open)
             }
+            Ty::Var { .. } if open => Ok(()),
+            Ty::Var { var } => bail!(
+                "{owner}: the type variable {var} stands outside a helper's body, which is the one \
+                 place the checker leaves a type open: the two halves disagree"
+            ),
         }
     }
 
@@ -1609,7 +1647,8 @@ impl<'a> Declared<'a> {
             | Ty::Set { .. }
             | Ty::Map { .. }
             | Ty::Tuple { .. }
-            | Ty::Fn { .. } => false,
+            | Ty::Fn { .. }
+            | Ty::Var { .. } => false,
         })
     }
 
@@ -1720,6 +1759,8 @@ struct Lowerings<'a> {
     /// The function comparing two values of each type a comparison here asked about.
     comparators: &'a equality::Comparators,
     reachable: &'a Reachable,
+    /// Which copy of a helper each call reaching one reaches.
+    specializations: &'a Specializations<'a>,
     allocate: FuncId,
     compare_text: FuncId,
     join_text: FuncId,
@@ -1899,6 +1940,7 @@ fn machine_type(ty: &Ty) -> Lowered<types::Type> {
         // none of that is a second machine type; a function value is a pointer here exactly as a
         // tuple or a declared value is.
         Ty::Fn { .. } => Ok(POINTER),
+        Ty::Var { var } => laid_out_nowhere(*var),
         // Every primitive is named. A set the language closed is one this has to answer for member
         // by member: caught by an arm standing for the rest, a primitive added to the language
         // would arrive here as something with no representation and nothing would have said so.
@@ -2065,6 +2107,7 @@ fn held_alike(one: &Ty, other: &Ty) -> bool {
             | Ty::Map { .. },
             _,
         ) => false,
+        (Ty::Var { var }, _) => laid_out_nowhere(*var),
     }
 }
 
@@ -2257,7 +2300,18 @@ fn means_the_same_elsewhere(ty: &Ty) -> bool {
         // convention in `souther-native-abi`) and not one to grant by recursing into a signature
         // that happens to be built from types that already cross.
         Ty::Fn { .. } => false,
+        Ty::Var { var } => laid_out_nowhere(*var),
     }
+}
+
+/// A type variable met where a value's layout is asked for, which is nowhere: `Coherent` refuses one
+/// outside a helper's body, and a helper that leaves variables open is lowered only as its copies,
+/// each with every variable replaced ([`specialize`]).
+fn laid_out_nowhere(var: usize) -> ! {
+    unreachable!(
+        "the type variable {var} reached a lowering, which is handed only copies of a helper with \
+         every variable replaced"
+    )
 }
 
 /// What holds the address of a value made of fields.
@@ -3698,9 +3752,11 @@ fn lower(
             }
             Reaches::Helper { .. } | Reaches::Value { .. } | Reaches::PublishedValue { .. } => {
                 let reached = match reaches {
-                    Reaches::Helper { declared } => {
-                        lowering.reachable.of_held(lowering.carrier, declared)
-                    }
+                    // The copy `Specializations` resolved this call to, and not one worked out here
+                    // again from the name and the types.
+                    Reaches::Helper { reached: _ } => lowering
+                        .reachable
+                        .of_instance(lowering.specializations.callee(node)),
                     Reaches::Value { module, name } => lowering
                         .reachable
                         .of_value(lowering.carrier, &format!("{module}.{name}")),

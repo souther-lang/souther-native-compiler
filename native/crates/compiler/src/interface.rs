@@ -833,6 +833,7 @@ fn type_of(ty: &Ty, declared: &Declared) -> manifest::Type {
             key: boxed(&map.key),
             value: boxed(&map.value),
         },
+        Ty::Var { var } => crate::laid_out_nowhere(*var),
     }
 }
 

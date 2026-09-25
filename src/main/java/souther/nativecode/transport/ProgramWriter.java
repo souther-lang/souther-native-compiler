@@ -86,7 +86,7 @@ public final class ProgramWriter {
      * written moves, so that a driver and a writer that disagree say so rather than producing an
      * object that is wrong quietly.
      */
-    public static final int TRANSPORT_VERSION = 16;
+    public static final int TRANSPORT_VERSION = 17;
 
     private final CheckedProgram program;
 
@@ -123,6 +123,20 @@ public final class ProgramWriter {
      */
     private final Set<ValueName.Behavior> behaviorsMet = new LinkedHashSet<>();
     private final Set<TypeSymbol.AtModule> declarationsMet = new LinkedHashSet<>();
+
+    /**
+     * The numbers the type variables of the helper being written cross under, and nothing while
+     * anything else is written.
+     *
+     * <p>A helper is the one definition whose body the checker leaves open over variables
+     * (ADR-0092), so it is the one place a variable can stand. Anywhere else a variable is a type
+     * nobody settled, and it is refused as one. Within a helper a variable is numbered where it is
+     * first met, starting again at nought for every helper: two helpers that both spell {@code 'a}
+     * do not share a variable, and what binds a variable is a call of the helper that holds it.
+     * The number is this document's, the same as a binding's, and says nothing about what the
+     * variable comes to.
+     */
+    private Map<Type.Var, Integer> typeVariables;
 
     private ProgramWriter(CheckedProgram program) {
         this.program = program;
@@ -683,27 +697,38 @@ public final class ProgramWriter {
      * A definition the module holds as one of its own.
      *
      * <p>A module carries every helper it reaches, including one another module declares, so what
-     * a helper is called here is where it is declared and what it is holding is which module is
-     * holding it. Two modules holding one helper hold a copy each, which is what the language says
-     * a published helper is.
+     * is holding it is which module is holding it and what it is called is the reference a call in
+     * that module reaches it by ({@link CheckedHelper#reachedAs}). Not where it is declared: the
+     * standard library declares {@code foldFrom} and a module reaches it as {@code List.foldFrom},
+     * and a call carries the second. Two modules holding one helper hold a copy each, which is what
+     * the language says a published helper is.
      *
      * <p>Each parameter is written once, its name and its type together, because they are one
      * {@link CheckedHelper.Parameter}; written as two lists they would be two statements of how many
      * there are. What the helper answers is not written at all: it is its body's type, which the body
      * already carries, and a second copy would only be something a reader has to hold to the first.
+     *
+     * <p>A type in it may be a variable the body leaves open ({@link #typeVariables}). What each one
+     * comes to is a call's to say, and every call already carries the types its arguments and its
+     * answer were settled at.
      */
     private String helper(CheckedHelper helper) {
-        Bindings bindings = new Bindings();
-        StringJoiner parameters = new StringJoiner(",", "[", "]");
-        for (CheckedHelper.Parameter parameter : helper.parameters()) {
-            bindings.number(parameter.binder().binding());
-            parameters.add("{\"name\":" + quoted(parameter.binder().name())
-                    + ",\"type\":" + type(parameter.type()) + "}");
+        typeVariables = new HashMap<>();
+        try {
+            Bindings bindings = new Bindings();
+            StringJoiner parameters = new StringJoiner(",", "[", "]");
+            for (CheckedHelper.Parameter parameter : helper.parameters()) {
+                bindings.number(parameter.binder().binding());
+                parameters.add("{\"name\":" + quoted(parameter.binder().name())
+                        + ",\"type\":" + type(parameter.type()) + "}");
+            }
+            return "{\"reached\":" + quoted(helper.reachedAs().rendered())
+                    + ",\"parameters\":" + parameters
+                    + ",\"body\":" + core(helper.body(), bindings)
+                    + "}";
+        } finally {
+            typeVariables = null;
         }
-        return "{\"declared\":" + quoted(reached(helper.declares()))
-                + ",\"parameters\":" + parameters
-                + ",\"body\":" + core(helper.body(), bindings)
-                + "}";
     }
 
     /**
@@ -1268,8 +1293,11 @@ public final class ProgramWriter {
         }
         String reaches = switch (it.fn()) {
             case Core.Reached.OfDeclaration target -> switch (target.reaches()) {
-                case Core.Reaches.AHelper held ->
-                        "{\"is\":\"helper\",\"declared\":" + quoted(reached(held.declaration())) + "}";
+                // Under the reference the call reaches it by, which is what the helper the module
+                // holds is written under too ({@link #helper}): the two are one reference, and a
+                // name made up out of the declaration would not be the one the module holds.
+                case Core.Reaches.AHelper ignored ->
+                        "{\"is\":\"helper\",\"reached\":" + quoted(target.name().rendered()) + "}";
                 case Core.Reaches.ABehavior held -> {
                     behaviorsMet.add(held.behavior());
                     yield "{\"is\":\"behavior\",\"declared\":"
@@ -1506,7 +1534,19 @@ public final class ProgramWriter {
             case Type.Nothing it -> throw notYet("the type " + it);
             case Type.Never it -> throw notYet("the type " + it);
             case Type.Erroneous it -> throw notYet("the type " + it);
-            case Type.Var it -> throw notYet("a type variable");
+            // A variable crosses only inside the helper that leaves it open, under the number that
+            // helper gives it. Anywhere else it is a type the checker did not settle.
+            case Type.Var it -> {
+                if (typeVariables == null) {
+                    throw notYet("a type variable");
+                }
+                Integer number = typeVariables.get(it);
+                if (number == null) {
+                    number = typeVariables.size();
+                    typeVariables.put(it, number);
+                }
+                yield "{\"var\":" + number + "}";
+            }
             case Type.MetaVar it -> throw notYet("a type this compiler left open");
             case Type.Ref it -> "{\"declared\":" + quoted(declaredName(it.name())) + "}";
             case Type.OptionOf it -> "{\"option\":" + type(it.element()) + "}";

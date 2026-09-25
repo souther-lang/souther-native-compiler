@@ -260,6 +260,7 @@ fn whole(ty: &Ty) -> Option<HostWord> {
         // functions, the way `means_the_same_elsewhere` says of a function value, and nothing
         // offers it to a host.
         Ty::Tuple { .. } | Ty::Fn { .. } => None,
+        Ty::Var { var } => crate::laid_out_nowhere(*var),
     }
 }
 

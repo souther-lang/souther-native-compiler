@@ -203,7 +203,7 @@ impl<'a> Coherent<'a> {
             // What a rule tests the answer for before it reads it, against what the answer is.
             let mut guarded: Option<(&Guard, Ty)> = None;
             let (owner, bound) = match body.owner {
-                Owner::Helper(held) => (held.declared.clone(), positional(held.takes())),
+                Owner::Helper(held) => (held.reached.clone(), positional(held.takes())),
                 Owner::Value(value) => (
                     value.declared(),
                     positional(value.handovers.iter().map(|it| it.ty.clone()).collect()),
@@ -261,6 +261,7 @@ impl<'a> Coherent<'a> {
             };
             let mut walk = Walk {
                 owner,
+                open: matches!(body.owner, Owner::Helper(_)),
                 carrier: body.carrier(),
                 targets: &targets,
                 declared: &declared,
@@ -281,7 +282,9 @@ impl<'a> Coherent<'a> {
 
         owed.settle(&declared)?;
 
-        let closures = ClosureSites::of(runs.bodies())?;
+        // What a function value written in a helper over type variables carries is not laid out
+        // for the helper as it is written: nothing of it is lowered but its copies.
+        let closures = ClosureSites::of(runs.bodies().filter(|body| !body.leaves_types_open()))?;
         Ok(Coherent {
             declared,
             targets,
@@ -363,7 +366,7 @@ impl Owed {
 struct Reached<'a> {
     /// The modules this document builds, by name.
     modules: HashMap<&'a str, ()>,
-    /// A helper, by the module holding the copy and the name it was declared under.
+    /// A helper, by the module holding the copy and the reference a call there reaches it by.
     helpers: HashMap<(&'a str, &'a str), &'a Held>,
     /// A value's home, by the module it runs in and its joined name.
     values: HashMap<(&'a str, String), &'a Value>,
@@ -397,9 +400,9 @@ impl<'a> Reached<'a> {
             for held in &written.helpers {
                 index::once(
                     &mut reached.helpers,
-                    (module, held.declared.as_str()),
+                    (module, held.reached.as_str()),
                     held,
-                    || format!("{module} holds two helpers both written {}", held.declared),
+                    || format!("{module} holds two helpers both written {}", held.reached),
                 )?;
             }
             for value in &written.values {
@@ -524,6 +527,9 @@ enum Untyped {
 struct Walk<'w, 'a> {
     /// Whose body this is, which every refusal names.
     owner: String,
+    /// Whether a type here may be a variable: in a helper's body, which is the one place the
+    /// checker leaves one open, and nowhere else.
+    open: bool,
     /// The module whose copy of a helper a call from here reaches.
     carrier: Carrier<'a>,
     targets: &'w Targets<'a>,
@@ -557,6 +563,16 @@ impl<'a> Walk<'_, 'a> {
         self.owed.fits_where(self.runs, what, actual, expected);
     }
 
+    /// Refuses a type naming a declaration the document does not carry, and a type variable
+    /// outside a helper's body, which is a type nobody settled.
+    fn resolves(&self, what: &str, ty: &Ty) -> Result<()> {
+        if self.open {
+            self.declared.resolves_open(what, ty)
+        } else {
+            self.declared.resolves(what, ty)
+        }
+    }
+
     fn not_lowered(&mut self, what: String) {
         if self.runs {
             self.owed.not_lowered.push(what);
@@ -584,7 +600,6 @@ impl<'a> Walk<'_, 'a> {
         let mut entered: Vec<usize> = Vec::new();
         for (binding, ty) in bindings {
             let bound = self
-                .declared
                 .resolves(&format!("{}: binding {binding}", self.owner), &ty)
                 .and_then(|()| {
                     index::once(&mut self.bound, binding, ty, || {
@@ -796,9 +811,12 @@ impl<'a> Walk<'_, 'a> {
                     .collect()
             }
             Node::Call {
-                reaches, arguments, ..
+                reaches,
+                arguments,
+                ty,
+                ..
             } => {
-                let (callee, takes) = self.parameters(reaches)?;
+                let (callee, takes) = self.parameters(reaches, arguments, ty)?;
                 arguments
                     .iter()
                     .zip(takes)
@@ -851,25 +869,31 @@ impl<'a> Walk<'_, 'a> {
     }
 
     /// What a call hands each argument over as: the parameters of what it reaches, by the name of
-    /// that. A kernel's are what the checker settled its signature to for this application.
-    fn parameters(&self, reaches: &Reaches) -> Result<(String, Vec<Ty>)> {
+    /// that. A kernel's are what the checker settled its signature to for this application, and a
+    /// helper's are what it takes with each variable it leaves open standing as what this call
+    /// settles it to ([`Walk::helper_called`]).
+    fn parameters(
+        &self,
+        reaches: &Reaches,
+        arguments: &[Node],
+        answers: &Ty,
+    ) -> Result<(String, Vec<Ty>)> {
         Ok(match reaches {
             Reaches::Behavior { declared } => {
                 (declared.clone(), self.targets.named(declared)?.takes())
             }
-            Reaches::Helper { declared } => {
-                let held = self
-                    .reached
-                    .helpers
-                    .get(&(self.carrier.module(), declared.as_str()))
-                    .ok_or_else(|| {
-                        anyhow!(
-                            "{}: a call of {declared}, which {} holds no copy of",
-                            self.owner,
-                            self.carrier.module()
-                        )
-                    })?;
-                (declared.clone(), held.takes())
+            Reaches::Helper { reached } => {
+                let (held, bound) = self.helper_called(reached, arguments, answers)?;
+                let takes = held
+                    .parameters
+                    .iter()
+                    .map(|parameter| {
+                        bound
+                            .applied(&parameter.ty)
+                            .expect("a parameter's variables are bound by what is handed to it")
+                    })
+                    .collect();
+                (reached.clone(), takes)
             }
             Reaches::Value { module, name } => {
                 let joined = format!("{module}.{name}");
@@ -904,7 +928,7 @@ impl<'a> Walk<'_, 'a> {
         // Every type the node writes, not only its own: one carried beside it is as much a name the
         // document says it declares.
         for ty in node.types() {
-            self.declared.resolves(&self.owner, ty)?;
+            self.resolves(&self.owner, ty)?;
         }
         // What a node can end without a value for is its kind's, and only some kinds can. A node
         // of any other kind naming a reason is one the checker does not write, and the lowering,
@@ -1528,6 +1552,51 @@ impl<'a> Walk<'_, 'a> {
         }
     }
 
+    /// The helper a call reaches, and what the call settles each variable the helper leaves open
+    /// to: read off what it hands each parameter and what it answers, against what the helper takes
+    /// and answers. A helper leaving nothing open is held to what it takes and answers exactly.
+    ///
+    /// Nothing is worked out here that the checker did not write: what each argument and the call
+    /// were settled at is on the call, and this only reads where a variable stands in the one what
+    /// stands there in the other. So a call whose types do not fit the helper's that way is the two
+    /// halves disagreeing.
+    fn helper_called(
+        &self,
+        reached: &str,
+        arguments: &[Node],
+        answers: &Ty,
+    ) -> Result<(&'a Held, crate::specialize::Substitution)> {
+        let held = *self
+            .reached
+            .helpers
+            .get(&(self.carrier.module(), reached))
+            .ok_or_else(|| {
+                anyhow!(
+                    "{}: a call of {reached}, which {} holds no copy of",
+                    self.owner,
+                    self.carrier.module()
+                )
+            })?;
+        self.arity(
+            &format!("a call of {reached}"),
+            arguments.len(),
+            held.parameters.len(),
+        )?;
+        let handed: Vec<&Ty> = arguments.iter().map(Node::ty).collect();
+        let bound = crate::specialize::called(held, &handed, answers).ok_or_else(|| {
+            anyhow!(
+                "{}: a call of {reached} is handed {} and answers {}, where it takes {} and \
+                 answers {}: the two halves disagree",
+                self.owner,
+                spelt(&handed.iter().map(|it| (*it).clone()).collect::<Vec<_>>()),
+                answers.spelt(),
+                spelt(&held.takes()),
+                held.answers().spelt()
+            )
+        })?;
+        Ok((held, bound))
+    }
+
     /// A call's type against what it reaches answers, and how many values it hands over against
     /// how many that takes. What each argument stands as is [`Walk::slots`]'s.
     fn call(
@@ -1537,7 +1606,7 @@ impl<'a> Walk<'_, 'a> {
         ty: &Ty,
         aborts: &[AbortKind],
     ) -> Result<()> {
-        let (callee, takes) = self.parameters(reaches)?;
+        let (callee, takes) = self.parameters(reaches, arguments, ty)?;
         self.arity(&format!("a call of {callee}"), arguments.len(), takes.len())?;
         match reaches {
             Reaches::Behavior { declared } => self.same(
@@ -1546,16 +1615,9 @@ impl<'a> Walk<'_, 'a> {
                 &self.targets.named(declared)?.answers(),
                 "what it answers",
             ),
-            Reaches::Helper { declared } => {
-                let held = self.reached.helpers[&(self.carrier.module(), declared.as_str())];
-                // The helper's body stands as the answer it declares, so its type is that answer.
-                self.same(
-                    &format!("a call of {declared}"),
-                    ty,
-                    held.answers(),
-                    "what it answers",
-                )
-            }
+            // What it answers stands where its variables are bound from, so a call answering
+            // other than what the helper answers was refused where they were bound.
+            Reaches::Helper { reached: _ } => Ok(()),
             Reaches::Value { module, name } => {
                 let joined = format!("{module}.{name}");
                 let value = self.reached.values[&(self.carrier.module(), joined.clone())];

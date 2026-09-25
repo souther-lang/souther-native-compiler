@@ -18,7 +18,7 @@ use serde::Deserialize;
 
 /// What this side reads. A document written to say anything else is refused rather than read as
 /// much of as happens to parse.
-pub const TRANSPORT_VERSION: u32 = 16;
+pub const TRANSPORT_VERSION: u32 = 17;
 
 /// A document of [`TRANSPORT_VERSION`], and no other, read through [`Program::read`] and nothing
 /// else ([`crate::versioned`]).
@@ -188,6 +188,13 @@ impl<'p> Body<'p> {
     /// Where a call from this body is resolved.
     pub fn carrier(&self) -> Carrier<'p> {
         Carrier(self.module)
+    }
+
+    /// Whether this is the body of a helper that leaves type variables open. Such a body is not
+    /// lowered as it is written, and nothing in it is planned for a function of its own: what is
+    /// lowered is its copies ([`crate::specialize`]).
+    pub fn leaves_types_open(&self) -> bool {
+        matches!(self.owner, Owner::Helper(held) if held.variables() > 0)
     }
 }
 
@@ -1203,15 +1210,22 @@ pub enum Answers {
 
 /// A definition the module holds as one of its own.
 ///
-/// Named by where it was declared, held by the module that reaches it. Two modules reaching one
-/// definition hold a copy each.
+/// Named by the reference a call in the holding module reaches it by, which is what a call to it
+/// writes ([`Reaches::Helper`]); not by where it was declared, which for an operation of the
+/// standard library is a module the reference does not name. Two modules reaching one definition
+/// hold a copy each.
 ///
 /// What it takes is its parameters, each a name and a type together, and what it answers is its
 /// body's type. Neither is carried a second time, so the two cannot disagree.
+///
+/// A type in it may be a variable its body leaves open ([`Ty::Var`]), numbered within this
+/// definition alone. Such a definition is not a function yet: what each variable comes to is what a
+/// call hands it, and what is lowered is one copy of it for each set of types a call needs
+/// ([`crate::specialize`]).
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Held {
-    pub declared: String,
+    pub reached: String,
     pub parameters: Vec<HeldParameter>,
     pub body: Node,
 }
@@ -1225,6 +1239,22 @@ impl Held {
     /// What it answers: its body's type.
     pub fn answers(&self) -> &Ty {
         self.body.ty()
+    }
+
+    /// How many type variables it leaves open: one more than the largest number any of its types
+    /// writes, and none where no type of it writes one.
+    pub fn variables(&self) -> usize {
+        let mut count = 0;
+        let mut counted = |ty: &Ty| count = count.max(ty.variables());
+        for parameter in &self.parameters {
+            counted(&parameter.ty);
+        }
+        self.body.each(&mut |node| {
+            for ty in node.types() {
+                counted(ty);
+            }
+        });
+        count
     }
 }
 
@@ -1325,6 +1355,12 @@ pub enum Ty {
     Map {
         map: MapTy,
     },
+    /// A type a helper's body leaves open, by the number it has within that helper ([`Held`]). It
+    /// stands nowhere else, and means nothing outside the helper that numbers it: two helpers' `0`
+    /// are two variables.
+    Var {
+        var: usize,
+    },
 }
 
 #[derive(Debug, Deserialize, PartialEq, Eq, Hash, Clone)]
@@ -1369,11 +1405,42 @@ impl Ty {
             Ty::List { list } => format!("a List of {}", list.spelt()),
             Ty::Set { set } => format!("a Set of {}", set.spelt()),
             Ty::Map { map } => format!("a Map from {} to {}", map.key.spelt(), map.value.spelt()),
+            Ty::Var { var } => format!("the type variable {var}"),
+        }
+    }
+
+    /// Every type directly inside this one, in the order it is written.
+    ///
+    /// No arm standing for the rest, so a type added here is one every walk over types stops
+    /// compiling over until it says what it holds.
+    pub fn members(&self) -> Vec<&Ty> {
+        match self {
+            Ty::Prim { .. } | Ty::Declared { .. } | Ty::Union { .. } | Ty::Var { .. } => Vec::new(),
+            Ty::Option { option: held } | Ty::List { list: held } | Ty::Set { set: held } => {
+                vec![held]
+            }
+            Ty::Tuple { tuple } => tuple.iter().collect(),
+            Ty::Fn { fn_ } => fn_.takes.iter().chain([fn_.answers.as_ref()]).collect(),
+            Ty::Map { map } => vec![&map.key, &map.value],
+        }
+    }
+
+    /// How many type variables this type writes: one more than the largest number it writes, and
+    /// none where it writes none.
+    pub fn variables(&self) -> usize {
+        match self {
+            Ty::Var { var } => var + 1,
+            _ => self
+                .members()
+                .into_iter()
+                .map(Ty::variables)
+                .max()
+                .unwrap_or(0),
         }
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(tag = "core", rename_all = "lowercase", deny_unknown_fields)]
 pub enum Node {
     Int {
@@ -1564,7 +1631,7 @@ pub enum Node {
 
 /// One parameter of a [`Node::Block`], numbered the way any other binder on the wire is: where it
 /// is written, by `ProgramWriter`'s own counter.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct Parameter {
     pub binding: usize,
@@ -1588,8 +1655,9 @@ pub struct Parameter {
 #[derive(Debug, Deserialize, PartialEq, Eq, Clone)]
 #[serde(tag = "is", rename_all = "lowercase", deny_unknown_fields)]
 pub enum Reaches {
-    /// A definition the calling module holds, which is a copy of its own.
-    Helper { declared: String },
+    /// A definition the calling module holds, which is a copy of its own, by the reference the
+    /// call reaches it by: what the definition is written under ([`Held::reached`]).
+    Helper { reached: String },
     /// A value that runs where it is declared, and this module is that module: an ordinary call to
     /// the method this object runs the value as, the same call a helper's own reach is (souther's
     /// JVM backend calls it through the identical path a recursive helper's is — `BodyGen`'s
@@ -1656,7 +1724,7 @@ pub enum Reading {
 }
 
 /// One arm of a fork on what a value is.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct Arm {
     pub selects: Vec<Selects>,
@@ -1672,7 +1740,7 @@ pub struct Arm {
 }
 
 /// What one case of an arm tests for.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(tag = "tests", rename_all = "lowercase", deny_unknown_fields)]
 pub enum Selects {
     /// The value's own type is one of these. The atoms are the leaves the checker resolved the
@@ -1692,7 +1760,7 @@ impl Reaches {
     /// over until it is listed.
     pub fn types(&self) -> Vec<&Ty> {
         match self {
-            Reaches::Helper { declared: _ }
+            Reaches::Helper { reached: _ }
             | Reaches::Value { module: _, name: _ }
             | Reaches::PublishedValue { module: _, name: _ }
             | Reaches::Behavior { declared: _ } => Vec::new(),
@@ -1701,6 +1769,21 @@ impl Reaches {
                 takes,
                 fact,
             } => takes.iter().chain(fact.types()).collect(),
+        }
+    }
+
+    /// The same types, to be rewritten in place.
+    pub fn types_mut(&mut self) -> Vec<&mut Ty> {
+        match self {
+            Reaches::Helper { reached: _ }
+            | Reaches::Value { module: _, name: _ }
+            | Reaches::PublishedValue { module: _, name: _ }
+            | Reaches::Behavior { declared: _ } => Vec::new(),
+            Reaches::Kernel {
+                kernel: _,
+                takes,
+                fact,
+            } => takes.iter_mut().chain(fact.types_mut()).collect(),
         }
     }
 }
@@ -1713,11 +1796,27 @@ impl KernelFact {
             KernelFact::OrderingSubject { ty } => vec![ty],
         }
     }
+
+    /// The same types, to be rewritten in place.
+    pub fn types_mut(&mut self) -> Vec<&mut Ty> {
+        match self {
+            KernelFact::None | KernelFact::StringMatches { pattern: _ } => Vec::new(),
+            KernelFact::OrderingSubject { ty } => vec![ty],
+        }
+    }
 }
 
 impl Reading {
     /// Every type this reading writes.
     pub fn types(&self) -> Vec<&Ty> {
+        match self {
+            Reading::AsTheyStand | Reading::ExactNumbers => Vec::new(),
+            Reading::In { ty } => vec![ty],
+        }
+    }
+
+    /// The same types, to be rewritten in place.
+    pub fn types_mut(&mut self) -> Vec<&mut Ty> {
         match self {
             Reading::AsTheyStand | Reading::ExactNumbers => Vec::new(),
             Reading::In { ty } => vec![ty],
@@ -1872,6 +1971,80 @@ impl Node {
                 ty,
                 aborts: _,
             } => std::iter::once(ty).chain(reaches.types()).collect(),
+        }
+    }
+
+    /// Every type this node itself writes, as [`Node::types`] lists them, to be rewritten in place.
+    ///
+    /// The same fields, named the same way, so that a type [`Node::types`] reads is one this
+    /// rewrites: a copy of a body with its variables settled ([`crate::specialize`]) that settled
+    /// fewer types than are read would leave a variable standing where a lowering reads a type.
+    pub fn types_mut(&mut self) -> Vec<&mut Ty> {
+        match self {
+            Node::Int { ty, .. }
+            | Node::Read { ty, .. }
+            | Node::Bool { ty, .. }
+            | Node::Str { ty, .. }
+            | Node::Neg { ty, .. }
+            | Node::If { ty, .. }
+            | Node::Unit { ty, .. }
+            | Node::Construct { ty, .. }
+            | Node::Field { ty, .. }
+            | Node::Some { ty, .. }
+            | Node::None { ty, .. }
+            | Node::Tuple { ty, .. }
+            | Node::Member { ty, .. }
+            | Node::List { ty, .. }
+            | Node::Block { ty, .. }
+            | Node::Widen { ty, .. }
+            | Node::Apply { ty, .. } => vec![ty],
+            Node::Binary { reading, ty, .. } => {
+                std::iter::once(ty).chain(reading.types_mut()).collect()
+            }
+            Node::Let { binds, ty, .. } => vec![ty, binds],
+            Node::Match { arms, ty, .. } => std::iter::once(ty)
+                .chain(arms.iter_mut().filter_map(|arm| arm.binds.as_mut()))
+                .collect(),
+            Node::Call { reaches, ty, .. } => {
+                std::iter::once(ty).chain(reaches.types_mut()).collect()
+            }
+        }
+    }
+
+    /// The nodes directly under this one, as [`Node::children`] lists them, to be rewritten in
+    /// place.
+    pub fn children_mut(&mut self) -> Vec<&mut Node> {
+        match self {
+            Node::Binary { left, right, .. } => vec![left, right],
+            Node::Neg { operand, .. } => vec![operand],
+            Node::Let { value, body, .. } => vec![value, body],
+            Node::If {
+                cond, then, els, ..
+            } => vec![cond, then, els],
+            Node::Construct { values, .. } => values.iter_mut().collect(),
+            Node::Field { target, .. } => vec![target],
+            Node::Match { subject, arms, .. } => std::iter::once(subject.as_mut())
+                .chain(arms.iter_mut().map(|arm| &mut arm.body))
+                .collect(),
+            Node::Some { value, .. } | Node::Widen { value, .. } => vec![value],
+            Node::Tuple { members, .. } => members.iter_mut().collect(),
+            Node::Member { tuple, .. } => vec![tuple],
+            Node::List { elements, .. } => elements.iter_mut().collect(),
+            Node::Call { arguments, .. } => arguments.iter_mut().collect(),
+            Node::Block { body, .. } => vec![body],
+            Node::Apply {
+                function,
+                arguments,
+                ..
+            } => std::iter::once(function.as_mut())
+                .chain(arguments.iter_mut())
+                .collect(),
+            Node::Int { .. }
+            | Node::Read { .. }
+            | Node::Bool { .. }
+            | Node::Str { .. }
+            | Node::Unit { .. }
+            | Node::None { .. } => Vec::new(),
         }
     }
 

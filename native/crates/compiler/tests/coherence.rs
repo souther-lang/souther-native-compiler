@@ -21,7 +21,7 @@ const P: &str = r#"{"declared":"m.P"}"#;
 fn document(behaviors: &[String], helpers: &[String], definitions: &[String]) -> String {
     format!(
         concat!(
-            r#"{{"transport":16,"declarations":["#,
+            r#"{{"transport":17,"declarations":["#,
             r#"{{"module":"m","name":"A","by":"amodule","is":"unit"}},"#,
             r#"{{"module":"m","name":"B","by":"amodule","is":"unit"}},"#,
             r#"{{"module":"m","name":"S","by":"amodule","is":"sum","#,
@@ -51,7 +51,7 @@ fn helper(declared: &str, takes: &[&str], body: &str) -> String {
         .map(|(at, ty)| format!(r#"{{"name":"p{at}","type":{ty}}}"#))
         .collect();
     format!(
-        r#"{{"declared":"{declared}","parameters":[{}],"body":{body}}}"#,
+        r#"{{"reached":"{declared}","parameters":[{}],"body":{body}}}"#,
         parameters.join(",")
     )
 }
@@ -245,7 +245,7 @@ fn a_let_given_what_it_does_not_bind_is_the_halves_disagreeing() {
 #[test]
 fn a_call_of_a_helper_stands_at_what_the_helper_answers() {
     let g = helper("m.g", &[], &truth(true));
-    let reaches = r#"{"is":"helper","declared":"m.g"}"#;
+    let reaches = r#"{"is":"helper","reached":"m.g"}"#;
     reads_whole(&helpers(&[g.clone(), h(&[], &call(reaches, &[], BOOL))]));
     is_the_halves_disagreeing(&helpers(&[g, h(&[], &call(reaches, &[], INT))]), "m.g");
 }
@@ -274,7 +274,7 @@ fn a_call_of_a_behavior_stands_at_what_its_target_answers() {
 #[test]
 fn an_argument_is_a_value_of_what_the_callee_takes() {
     let g = helper("m.g", &[S], &read(0, S));
-    let reaches = r#"{"is":"helper","declared":"m.g"}"#;
+    let reaches = r#"{"is":"helper","reached":"m.g"}"#;
     reads_whole(&helpers(&[
         g.clone(),
         h(&[], &call(reaches, &[widen(&unit("m.A"), S)], S)),
@@ -1403,7 +1403,7 @@ fn a_concat_of_two_strings_reads_whole() {
 fn with_clauses(fields: &str, invariants: &str, helpers: &[String]) -> String {
     format!(
         concat!(
-            r#"{{"transport":16,"declarations":["#,
+            r#"{{"transport":17,"declarations":["#,
             r#"{{"module":"m","name":"R","by":"amodule","is":"product","#,
             r#""fields":[{}],"invariants":[{}]}}],"#,
             r#""behaviors":[],"#,
@@ -1868,7 +1868,7 @@ fn only_the_kinds_that_can_end_a_run_name_a_reason_to() {
     }
     // A call to a helper ends with what the helper ends with, and names none of its own.
     let g = helper("m.g", &[INT], &read(0, INT));
-    let reaches = r#"{"is":"helper","declared":"m.g"}"#;
+    let reaches = r#"{"is":"helper","reached":"m.g"}"#;
     let called = with_reason(call(reaches, &[int(1)], INT));
     is_the_halves_disagreeing(
         &helpers(&[g, h(&[], &called)]),
@@ -1963,7 +1963,7 @@ fn a_construction_of_another_builds_type_names_no_reason_but_a_clause() {
         );
         format!(
             concat!(
-                r#"{{"transport":16,"declarations":["#,
+                r#"{{"transport":17,"declarations":["#,
                 r#"{{"module":"m","name":"R","by":"onthepath","is":"product","#,
                 r#""fields":[{}]}}],"behaviors":[],"#,
                 r#""modules":[{{"name":"m","publishes":[],"helpers":[{}],"values":[],"#,
@@ -2142,7 +2142,7 @@ fn an_arm_binds_and_says_what_it_reads_it_as_together() {
 fn a_handover_carries_a_value_the_module_builds() {
     let value = |carries: &str| {
         format!(
-            r#"{{"transport":16,"declarations":[],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[],"values":[{{"module":"m","name":"ks","handovers":[],"body":{}}},{{"module":"m","name":"ys","handovers":[{{"parameter":"dep","type":{INT},"carries":{{"module":"m","name":"{carries}"}}}}],"body":{}}}],"entries":[],"definitions":[],"examples":[]}}]}}"#,
+            r#"{{"transport":17,"declarations":[],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[],"values":[{{"module":"m","name":"ks","handovers":[],"body":{}}},{{"module":"m","name":"ys","handovers":[{{"parameter":"dep","type":{INT},"carries":{{"module":"m","name":"{carries}"}}}}],"body":{}}}],"entries":[],"definitions":[],"examples":[]}}]}}"#,
             int(1),
             read(0, INT)
         )
