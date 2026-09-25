@@ -6,6 +6,9 @@ namespace Souther\Runtime;
 
 use FFI;
 use FFI\CData;
+use Raoh\CallableDecoder;
+use Raoh\Decoder;
+use Raoh\Err;
 use Raoh\Issue;
 use Raoh\Issues;
 use Raoh\Path;
@@ -254,6 +257,34 @@ final class Session
         }
         $at = $ffi->souther_decoded_malformed_at($reading);
         return Result::fail(Path::root(), 'invalid_format', "the text stops being JSON at byte {$at}");
+    }
+
+    /**
+     * @internal A type's `decode` as a raoh-php decoder, which a host composes with its own the way
+     * a JVM host composes a type's `decoder()`.
+     *
+     * What it is handed is a PHP value as `json_decode(…, true)` gives one, and it is read as the
+     * external form that value is written in: the text is the value's JSON, and what the library
+     * finds wrong in it is found at the path the decoder was reached at. A float stays one, so a
+     * `1.0` handed where an `Int` is taken is refused rather than read as `1`. An empty PHP array is
+     * the empty list, as `json_encode` writes it.
+     *
+     * @template T
+     * @param \Closure(string): Result<T> $decode
+     * @return Decoder<mixed, T>
+     */
+    public function decoder(\Closure $decode): Decoder
+    {
+        return CallableDecoder::of(static function (mixed $in, ?Path $path = null) use ($decode): Result {
+            $at = $path ?? Path::root();
+            try {
+                $json = json_encode($in, JSON_PRESERVE_ZERO_FRACTION | JSON_THROW_ON_ERROR);
+            } catch (\JsonException $unwritten) {
+                return Result::fail($at, 'type_mismatch', 'a value no JSON writes: ' . $unwritten->getMessage());
+            }
+            $read = $decode($json);
+            return $read instanceof Err ? Result::err($read->issues->rebase($at)) : $read;
+        });
     }
 
     /**

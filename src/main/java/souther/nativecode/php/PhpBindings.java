@@ -68,7 +68,7 @@ public final class PhpBindings {
      * The version of what generated code calls of the runtime package that this writes against:
      * {@code Binding::PROTOCOL} in {@code bindings/php/runtime}, which a test holds to this.
      */
-    static final int RUNTIME_PROTOCOL = 3;
+    static final int RUNTIME_PROTOCOL = 4;
 
     private final Manifest manifest;
     private final String root;
@@ -792,7 +792,19 @@ public final class PhpBindings {
                         return $session->decoded($status, $reading,
                             static fn (\\FFI\\CData $value): %s => %s);
                     }
-                """.formatted(it.key(), answers, decode.name(), answers, made));
+
+                    /**
+                     * `decode` as a raoh-php decoder, to compose with a host's own: what it is handed
+                     * is a PHP value, read as the external form of `%s` it is written in, and what is
+                     * wrong in it is an issue at the path the decoder is reached at.
+                     *
+                     * @return \\Raoh\\Decoder<mixed, %s>
+                     */
+                    public static function decoder(\\Souther\\Runtime\\Session $session): \\Raoh\\Decoder
+                    {
+                        return $session->decoder(static fn (string $json): \\Raoh\\Result => self::decode($session, $json));
+                    }
+                """.formatted(it.key(), answers, decode.name(), answers, made, it.key(), answers));
     }
 
     private void getter(StringBuilder php, Declared it, Manifest.Field field) {

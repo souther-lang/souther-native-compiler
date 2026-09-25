@@ -409,9 +409,13 @@ of the same name can then stand in one application. A module is a namespace unde
 `Acme\Billing\Shop`). A product, a newtype and a unit are each a `final readonly` class holding the
 value where the library made it, with a reader for each field, a static `of` building one and
 answering a raoh-php `Result`, a static `decode` reading one out of its external form, and `encode`.
+`decoder` is `decode` as a raoh-php `Decoder` over a PHP value, which a host composes with its own
+the way a JVM host composes a type's `decoder()`: what the library finds wrong is an issue at the
+path the decoder was reached at.
 A sum is an interface, which a sum whose cases are all its cases extends, and each case's class
 implements it. `<Sum>Codec` finds which class a value is through the sum's `case` function, and
-reads and writes the sum's own external form, which says which case it is. A case the model keeps,
+reads and writes the sum's own external form, which says which case it is, with a `decoder` of its
+own. A case the model keeps,
 or a sum whose cases the library cannot tell apart, is `<Sum>Value`, which is still the sum and can
 still be written. A module's behaviors are static functions on `Behaviors`, its values on `Values`.
 A behavior is also a class named after it (`quote` is `Quote`), which an application holds the

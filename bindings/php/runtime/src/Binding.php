@@ -16,7 +16,7 @@ abstract class Binding
      * binding generated before would call something this does not have, or call it as something it
      * is not; a binding says which it was generated for and refuses to load over any other.
      */
-    public const PROTOCOL = 3;
+    public const PROTOCOL = 4;
 
     private readonly InjectionRegistry $registry;
 
@@ -34,6 +34,8 @@ abstract class Binding
             . 'into elements (Session::list, Session::elements)',
         3 => 'a class per behavior, bound to what it requires: registering implementations for a '
             . 'call is InjectionRegistry\'s, apart from the run\'s arena (Bound, InjectionRegistry)',
+        4 => 'a type\'s decode as a raoh-php decoder over a PHP value, composed like a JVM type\'s '
+            . 'decoder() (Session::decoder)',
     ];
 
     /**
