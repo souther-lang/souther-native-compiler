@@ -8,6 +8,7 @@ import souther.nativecode.NativeCompiler;
 import souther.nativecode.Php;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;
 
 import java.nio.charset.StandardCharsets;
@@ -81,15 +82,15 @@ class APhpBindingIsWrittenFromTheManifestTest {
                 behavior twice : (n: Int) -> Int
                 let twice (n) = n * 2
                 """)), into.resolve("native"));
-        Path manifest = into.resolve("unreachable.json");
-        String written = Files.readString(library.manifest());
-        int half = written.indexOf("\"name\": \"half\"");
-        int call = written.indexOf("\"call\": {", half);
-        int closed = written.indexOf("\n          }", call);
-        Files.writeString(manifest, written.substring(0, call) + "\"call\": null"
-                + written.substring(closed + "\n          }".length()), StandardCharsets.UTF_8);
 
-        PhpBindings.generate(manifest, library.declarations(), into.resolve("php"), "Acme\\Billing");
+        generatedAfter(into, library, "m", module -> {
+            for (JsonNode behavior : module.get("behaviors")) {
+                if (behavior.get("name").stringValue().equals("half")) {
+                    ((ObjectNode) behavior).set("call", JSON.readTree(
+                            "{\"unavailable\": {\"reason\": \"no_representation\", \"path\": []}}"));
+                }
+            }
+        });
 
         assertThat(Files.readString(into.resolve("php").resolve("M").resolve("Behaviors.php")))
                 .contains("function twice(").doesNotContain("half");
@@ -117,7 +118,7 @@ class APhpBindingIsWrittenFromTheManifestTest {
         assertThat(written).contains(
                 "find(int $id):"
                         + " \\Acme\\Billing\\M\\Found|\\Acme\\Billing\\M\\Missing",
-                "$session->ffi()->souther4_m_m_b_find_answer_case($answer)",
+                "$session->ffi()->souther5_m_m_b_find_answer_case($answer)",
                 "0 => new \\Acme\\Billing\\M\\Found($session->held($answer))",
                 "1 => new \\Acme\\Billing\\M\\Missing($session->held($answer))");
         assertThat(generated.files()).extracting(it -> generated.root().relativize(it).toString())
@@ -276,10 +277,17 @@ class APhpBindingIsWrittenFromTheManifestTest {
                 let twice (n) = n * 2
                 """)), into.resolve("native"));
 
-        // What the implementation takes is made something no binding hands a host.
-        generatedAfter(into, library, "m", module -> ((ObjectNode) module.get("injections").get(0)
-                .get("parameters").get(0)).set("type", JsonMapper.builder().build()
-                .readTree("{\"kind\":\"tuple\",\"of\":[]}")));
+        // What the implementation takes is made a value of a type this binding has no class for,
+        // crossing as one: the manifest may say it crosses, and PHP has no way to hold it.
+        generatedAfter(into, library, "m", module -> {
+            ObjectNode rate = (ObjectNode) module.get("injections").get(0);
+            ((ObjectNode) rate.get("parameters").get(0)).set("type",
+                    JSON.readTree("{\"kind\":\"declared\",\"module\":\"m\",\"name\":\"Nowhere\"}"));
+            ((ArrayNode) rate.get("signature").get("takes"))
+                    .set(0, JSON.readTree("{\"leaf\":\"value\"}"));
+            ((ArrayNode) rate.get("implementation").get("takes"))
+                    .set(1, JSON.readTree("{\"given\":\"value\"}"));
+        });
 
         Path written = into.resolve("php").resolve("M");
         assertThat(written.resolve("Twice.php")).exists();
@@ -561,10 +569,10 @@ class APhpBindingIsWrittenFromTheManifestTest {
                 LibraryBinding.generated(twoModules(into), into.resolve("php"), "Acme\\Billing");
 
         assertThat(Files.readString(generated.root().resolve("Shop").resolve("Cart.php")))
-                .contains("souther4_m_shop_l_value_construct", "souther4_m_shop_l_value_at")
-                .doesNotContain("souther4_m_stock_");
+                .contains("souther5_m_shop_l_value_construct", "souther5_m_shop_l_value_at")
+                .doesNotContain("souther5_m_stock_");
         assertThat(Files.readString(generated.root().resolve("Stock").resolve("Bin.php")))
-                .contains("souther4_m_stock_l_value_construct", "souther4_m_stock_l_value_at")
-                .doesNotContain("souther4_m_shop_");
+                .contains("souther5_m_stock_l_value_construct", "souther5_m_stock_l_value_at")
+                .doesNotContain("souther5_m_shop_");
     }
 }

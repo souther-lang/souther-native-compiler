@@ -78,6 +78,20 @@ public final class NativeCompiler {
      */
     public static Library library(CheckedProgram program, List<byte[]> alongside, Path into)
             throws IOException, InterruptedException {
+        return library(ProgramWriter.written(program), alongside, into);
+    }
+
+    /**
+     * The library a transport document is built into, reaching no other build's object.
+     * Package-visible for a test that asks what a binding makes of a document no checked program of
+     * today's language writes, as {@link #driven} is for an object.
+     */
+    static Library library(String document, Path into) throws IOException, InterruptedException {
+        return library(document, List.of(), into);
+    }
+
+    private static Library library(String document, List<byte[]> alongside, Path into)
+            throws IOException, InterruptedException {
         Path handed = Files.createTempDirectory("souther-native-alongside");
         try {
             List<String> arguments = new ArrayList<>(
@@ -88,7 +102,7 @@ public final class NativeCompiler {
                 arguments.add("--with");
                 arguments.add(object.toString());
             }
-            byte[] said = run(ProgramWriter.written(program), arguments);
+            byte[] said = run(document, arguments);
             // Where the driver wrote each, one to a line, which is how what a shared library is
             // called on this host is said by the side that named it.
             List<Path> written =

@@ -72,7 +72,7 @@ class AHostImplementsABehaviorWithNoBodyTest {
             /** The implementation as C calls it, made once and held for as long as it is used. */
             function pointer(FFI $ffi): FFI\\CData {
                 if (Implementations::$pointer === null) {
-                    $held = $ffi->new("souther4_m_pricing_b_lookUp_implementation[1]");
+                    $held = $ffi->new("souther5_m_pricing_b_lookUp_implementation[1]");
                     $held[0] = function ($by, int $a, $out) use ($ffi): int {
                         try {
                             $out[0] = (Implementations::$by[$ffi->cast("int64_t *", $by)[0]])($a);
@@ -97,7 +97,7 @@ class AHostImplementsABehaviorWithNoBodyTest {
                 Implementations::$by[$number->cdata] = $implementation;
                 $capability = $ffi->new("souther_capability");
                 $hosted = $ffi->new("souther_hosted");
-                $ffi->souther4_m_pricing_b_lookUp_implement(
+                $ffi->souther5_m_pricing_b_lookUp_implement(
                         FFI::addr($capability), FFI::addr($hosted), pointer($ffi), FFI::addr($number));
                 $requirements = $ffi->new("const souther_capability *[1]");
                 $requirements[0] = FFI::addr($capability);
@@ -106,7 +106,7 @@ class AHostImplementsABehaviorWithNoBodyTest {
 
             function twice(FFI $ffi, ?array $with, int $a): int {
                 $answer = $ffi->new("int64_t");
-                $status = $ffi->souther4_m_pricing_b_twice($with[0] ?? null, $a, FFI::addr($answer));
+                $status = $ffi->souther5_m_pricing_b_twice($with[0] ?? null, $a, FFI::addr($answer));
                 if ($status === $ffi->SOUTHER_HOST_EXCEPTION) {
                     $thrown = Pending::$thrown;
                     Pending::$thrown = null;
@@ -171,10 +171,10 @@ class AHostImplementsABehaviorWithNoBodyTest {
                 NativeCompiler.library(Checked.of(List.of(PRICING)), into);
 
         assertThat(Files.readString(library.declarations(), StandardCharsets.UTF_8))
-                .contains("typedef souther_status (*souther4_m_pricing_b_lookUp_implementation)"
+                .contains("typedef souther_status (*souther5_m_pricing_b_lookUp_implementation)"
                         + "(void *, int64_t, int64_t *);")
-                .contains("void souther4_m_pricing_b_lookUp_implement(souther_capability *, "
-                        + "souther_hosted *, souther4_m_pricing_b_lookUp_implementation, void *);");
+                .contains("void souther5_m_pricing_b_lookUp_implement(souther_capability *, "
+                        + "souther_hosted *, souther5_m_pricing_b_lookUp_implementation, void *);");
 
         Path script = into.resolve("host.php");
         Files.writeString(script, PHP, StandardCharsets.UTF_8);
@@ -224,11 +224,13 @@ class AHostImplementsABehaviorWithNoBodyTest {
             static souther_status priced(void *by, souther_string sku, uint8_t gift, souther_value *out) {
                 int64_t cents = strncmp((const char *) souther_string_bytes(sku), "free", 4) == 0
                         ? -1 : souther_string_length(sku) * 100 + (gift ? 50 : 0);
-                return souther4_m_shop_t_Money_construct(cents, out);
+                return souther5_m_shop_t_Money_construct(cents, out);
             }
 
             static souther_status judged(void *by, souther_value price, uint8_t *out) {
-                *out = souther4_m_shop_t_Money_f_value(price) < 300;
+                int64_t cents = -1;
+                souther5_m_shop_t_Money_f_value(price, &cents);
+                *out = cents < 300;
                 return SOUTHER_ANSWERED;
             }
 
@@ -238,7 +240,7 @@ class AHostImplementsABehaviorWithNoBodyTest {
             static int64_t quoted(const char *sku, uint8_t gift, int64_t count, souther_status *status) {
                 souther_string text = souther_string_of_utf8((const uint8_t *) sku, (int64_t) strlen(sku));
                 int64_t answer = -1;
-                *status = souther4_m_shop_b_quote(priceOf, text, gift, count, &answer);
+                *status = souther5_m_shop_b_quote(priceOf, text, gift, count, &answer);
                 return answer;
             }
 
@@ -246,8 +248,8 @@ class AHostImplementsABehaviorWithNoBodyTest {
                 int64_t mark = souther_mark();
                 souther_capability pricing, judging;
                 souther_hosted priced_by, judged_by;
-                souther4_m_shop_b_priceOf_implement(&pricing, &priced_by, priced, NULL);
-                souther4_m_shop_b_isCheap_implement(&judging, &judged_by, judged, NULL);
+                souther5_m_shop_b_priceOf_implement(&pricing, &priced_by, priced, NULL);
+                souther5_m_shop_b_isCheap_implement(&judging, &judged_by, judged, NULL);
                 priceOf[0] = &pricing;
                 isCheap[0] = &judging;
                 souther_status status;
@@ -259,9 +261,9 @@ class AHostImplementsABehaviorWithNoBodyTest {
                 printf("refused %d %lld\\n", status == SOUTHER_INJECTION_PROTOCOL_VIOLATION,
                        (long long) answer);
                 uint8_t cheap = 9;
-                status = souther4_m_shop_b_cheap(isCheap, 250, &cheap);
+                status = souther5_m_shop_b_cheap(isCheap, 250, &cheap);
                 printf("cheap %u %u\\n", status, cheap);
-                status = souther4_m_shop_b_cheap(isCheap, 400, &cheap);
+                status = souther5_m_shop_b_cheap(isCheap, 400, &cheap);
                 printf("dear %u %u\\n", status, cheap);
                 souther_reset(mark);
                 return 0;
@@ -273,9 +275,9 @@ class AHostImplementsABehaviorWithNoBodyTest {
         NativeCompiler.Library library =
                 NativeCompiler.library(Checked.of(List.of(SHOP)), into);
         assertThat(Files.readString(library.declarations(), StandardCharsets.UTF_8))
-                .contains("typedef souther_status (*souther4_m_shop_b_priceOf_implementation)"
+                .contains("typedef souther_status (*souther5_m_shop_b_priceOf_implementation)"
                         + "(void *, souther_string, uint8_t, souther_value *);")
-                .contains("typedef souther_status (*souther4_m_shop_b_isCheap_implementation)"
+                .contains("typedef souther_status (*souther5_m_shop_b_isCheap_implementation)"
                         + "(void *, souther_value, uint8_t *);");
 
         Path source = into.resolve("host.c");
@@ -330,12 +332,12 @@ class AHostImplementsABehaviorWithNoBodyTest {
             int main(void) {
                 souther_capability adding;
                 souther_hosted added_by;
-                souther4_m_lib_m_port_b_lookUp_implement(&adding, &added_by, added, NULL);
+                souther5_m_lib_m_port_b_lookUp_implement(&adding, &added_by, added, NULL);
                 const souther_capability *lookUp[1] = {&adding};
                 int64_t twice = -1;
                 int64_t thrice = -1;
-                souther_status first = souther4_m_app_m_first_b_twice(lookUp, 1, &twice);
-                souther_status second = souther4_m_app_m_second_b_thrice(lookUp, 1, &thrice);
+                souther_status first = souther5_m_app_m_first_b_twice(lookUp, 1, &twice);
+                souther_status second = souther5_m_app_m_second_b_thrice(lookUp, 1, &thrice);
                 printf("%u %" PRId64 " %u %" PRId64 "\\n", first, twice, second, thrice);
                 return 0;
             }

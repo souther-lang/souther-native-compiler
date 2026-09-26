@@ -3,6 +3,7 @@ package souther.bindings;
 import souther.nativecode.Checked;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import souther.nativecode.Documents;
 import souther.nativecode.NativeCompiler;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
@@ -139,7 +140,7 @@ class AManifestIsReadAsTheDriverPromisesItTest {
         assertThatThrownBy(() -> Manifest.read(earlier))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("is version 3 of souther-native-interface for ABI generation"
-                        + " 3, and this generator reads version 9")
+                        + " 3, and this generator reads version 10")
                 .hasMessageNotContaining("answers");
     }
 
@@ -172,7 +173,7 @@ class AManifestIsReadAsTheDriverPromisesItTest {
             ((ArrayNode) at.get("takes")).remove(2);
         }))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("souther4_m_stock_l_value_at");
+                .hasMessageContaining("souther5_m_stock_l_value_at");
     }
 
     /**
@@ -201,8 +202,8 @@ class AManifestIsReadAsTheDriverPromisesItTest {
             }
         }))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("holds Primitive[name=Int], and nothing of how a value of it"
-                        + " is made or read");
+                .hasMessageContaining("hands across Primitive[name=Int], and nothing of how a value"
+                        + " of it is made or read");
     }
 
     /**
@@ -244,9 +245,9 @@ class AManifestIsReadAsTheDriverPromisesItTest {
                 .hasMessageContaining("module `shop` says two lists of");
     }
 
-    private static final Manifest.Element VALUES = new Manifest.Element(false, Manifest.Word.VALUE);
+    private static final Manifest.Shape VALUES = new Manifest.Shape.Leaf(Manifest.Word.VALUE);
 
-    private static Manifest.ListCrossing listOf(Manifest.Element element, String name) {
+    private static Manifest.ListCrossing listOf(Manifest.Shape element, String name) {
         List<Manifest.Parameter> built = new ArrayList<>(
                 List.of(Manifest.Parameter.given(Manifest.Word.COUNT)));
         element.words().forEach(word -> built.add(Manifest.Parameter.slice(word)));
@@ -262,7 +263,8 @@ class AManifestIsReadAsTheDriverPromisesItTest {
     }
 
     private static Manifest.Module moduleOf(List<Manifest.ListCrossing> lists) {
-        return new Manifest.Module("m", List.of(), List.of(), List.of(), List.of(), List.of(), lists);
+        return new Manifest.Module("m", List.of(), List.of(), List.of(), List.of(), List.of(), lists,
+                List.of());
     }
 
     /**
@@ -274,7 +276,7 @@ class AManifestIsReadAsTheDriverPromisesItTest {
         Manifest.ListCrossing values = listOf(VALUES, "values");
 
         assertThatThrownBy(() -> new Manifest.ListCrossing(
-                new Manifest.Element(true, Manifest.Word.INT),
+                new Manifest.Shape.Option(new Manifest.Shape.Leaf(Manifest.Word.INT)),
                 values.construct(), values.length(), values.at()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("values_construct");
@@ -282,6 +284,80 @@ class AManifestIsReadAsTheDriverPromisesItTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("module `m` says two lists of");
     }
+
+    /**
+     * What reaches a value says the shape each value crosses in, and that shape is the one the
+     * type is made of: a published value of an `Int` said to cross as the members of a tuple is
+     * the manifest disagreeing with itself, however well the function agrees with the shape.
+     */
+    @Test
+    void aShapeThatIsNotHowItsTypeCrossesIsRefused(@TempDir Path into) throws Exception {
+        NativeCompiler.Library library = built(into, SHAPED);
+
+        assertThatThrownBy(() -> readAfter(into, library, "shaped", module -> {
+            ObjectNode pair = (ObjectNode) module.get("values").get(0);
+            pair.set("type", JSON.readTree("{\"kind\": \"primitive\", \"name\": \"Int\"}"));
+        }))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("the value pair is said to cross as");
+    }
+
+    /**
+     * A list a module hands across is one it says the functions of: one handed across with
+     * nothing to build it through is one no host can reach.
+     */
+    @Test
+    void aListHandedAcrossWithNothingToBuildItThroughIsRefused(@TempDir Path into)
+            throws Exception {
+        NativeCompiler.Library library = built(into, SHAPED);
+
+        assertThatThrownBy(() -> readAfter(into, library, "shaped",
+                module -> ((ArrayNode) module.get("lists")).removeAll()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("module `shaped` hands a list of");
+    }
+
+    /**
+     * A function value a module hands across is one it says the functions of, as a list is: one
+     * handed across with nothing to call it through is one no host can reach.
+     */
+    @Test
+    void aFunctionValueHandedAcrossWithNothingToCallItThroughIsRefused(@TempDir Path into)
+            throws Exception {
+        NativeCompiler.Library library = Documents.library(Documents.FUNCTIONS,
+                into.resolve("native"));
+
+        assertThat(Manifest.read(library.manifest()).modules().getFirst().functions())
+                .isNotEmpty();
+        assertThatThrownBy(() -> readAfter(into, library, "m",
+                module -> ((ArrayNode) module.get("functions")).remove(0)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("module `m` hands a function of");
+    }
+
+    /** Why nothing reaches a value is read as the reason and where it stands. */
+    @Test
+    void whyNothingReachesAValueIsRead(@TempDir Path into) throws Exception {
+        Manifest read = Manifest.read(built(into, SHAPED).manifest());
+
+        Manifest.PublishedValue either = read.modules().getFirst().values().stream()
+                .filter(it -> it.name().equals("either")).findFirst().orElseThrow();
+        assertThat(either.read()).isEqualTo(new Manifest.Reach.Unavailable<>(new Manifest.Refusal(
+                Manifest.Reason.NO_DISCRIMINATOR, List.of(new Manifest.Step.Answers()))));
+    }
+
+    /** A tuple, a list of tuples, and a union a host would be handed with nothing to say which case it is. */
+    private static final String SHAPED = """
+            module shaped exposing ( Free, pair, pairs, either )
+
+            data Free
+
+            let pair: (Int, Bool) = (3, true)
+
+            let pairs = [(1, true)]
+
+            let either: Int | Free = Free
+            """;
 
     /** What a module was made of is copied, so changing it afterwards changes nothing it holds. */
     @Test

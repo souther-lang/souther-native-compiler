@@ -1,24 +1,25 @@
 package souther.bindings.php;
 
 import org.jspecify.annotations.Nullable;
-import souther.bindings.CrossingShape;
 import souther.bindings.Manifest;
 import souther.bindings.Manifest.Case;
 import souther.bindings.Manifest.Declaration;
 import souther.bindings.Manifest.Function;
+import souther.bindings.Manifest.Shape;
 import souther.bindings.Manifest.Type;
 import souther.bindings.Manifest.Word;
 import souther.bindings.NotBindable;
 import souther.bindings.Output;
 import souther.bindings.php.Crossing.Both;
+import souther.bindings.php.Crossing.Callable;
 import souther.bindings.php.Crossing.Given;
 import souther.bindings.php.Crossing.Listed;
 import souther.bindings.php.Crossing.Member;
 import souther.bindings.php.Crossing.OneOf;
-import souther.bindings.php.Crossing.Present;
+import souther.bindings.php.Crossing.Optional;
 import souther.bindings.php.Crossing.Received;
-import souther.bindings.php.Crossing.Single;
 import souther.bindings.php.Crossing.Told;
+import souther.bindings.php.Crossing.Tuple;
 import souther.bindings.php.Crossing.Whole;
 
 import java.io.IOException;
@@ -46,9 +47,10 @@ import java.util.stream.Collectors;
  * lifetime and what each status means are kept. The FFI declarations are the ones the build wrote,
  * copied beside it.
  *
- * <p>What a host has no way to reach is not written: a behavior the manifest gives no {@code call},
- * a field with no {@code read}, a type no host has a representation for. A function that could not
- * be called would be one a caller finds out about by calling it.
+ * <p>What a host has no way to reach is not written: a behavior the manifest says is unavailable, a
+ * field with no {@code read}, a type PHP has no representation for. A function that could not be
+ * called would be one a caller finds out about by calling it. How a value crosses is read off the
+ * manifest's shape for it, and what is decided here is only how PHP holds it ({@link Crossing}).
  */
 public final class PhpBindings {
 
@@ -72,7 +74,7 @@ public final class PhpBindings {
      * The version of what generated code calls of the runtime package that this writes against:
      * {@code Binding::PROTOCOL} in {@code bindings/php/runtime}, which a test holds to this.
      */
-    static final int RUNTIME_PROTOCOL = 7;
+    static final int RUNTIME_PROTOCOL = 8;
 
     private final Manifest manifest;
     private final String root;
@@ -95,6 +97,15 @@ public final class PhpBindings {
 
     /** What a host constructs each behavior out of, by {@code module.name}. */
     private final Map<String, Manifest.Construction> constructions = new LinkedHashMap<>();
+
+    /**
+     * Each function value PHP hands the library, as PHP holds one, by the slot the binding keeps
+     * for it, in the order they were first written: what the library calls a closure of PHP's
+     * through. One for each function type as PHP holds it and not for each shape, since what a
+     * closure is handed is made into the classes its type names, and two types crossing in one
+     * shape are two sets of classes.
+     */
+    private final Map<String, Callable> hosting = new LinkedHashMap<>();
 
     private PhpBindings(Manifest manifest, String root, Path into) {
         this.manifest = manifest;
@@ -252,9 +263,12 @@ public final class PhpBindings {
             Crossings crossings = in(module.name());
             for (Manifest.Behavior behavior : module.behaviors()) {
                 String key = module.name() + "." + behavior.name();
-                if (behavior.call() != null
-                        && crossings.givens(behavior.parameters().types()) != null
-                        && crossings.received(behavior.answers(), key) != null) {
+                Manifest.Call call = behavior.call().available();
+                if (call != null
+                        && crossings.givens(behavior.parameters().types(), call.signature().takes())
+                        != null
+                        && crossings.received(behavior.answers(), call.signature().answers(), key)
+                        != null) {
                     candidates.put(key, new BehaviorClass(module.name(), behavior.name(), namespace,
                             PhpNames.capitalized(behavior.name()), false));
                     requires.put(key, requiresOf(key));
@@ -319,13 +333,14 @@ public final class PhpBindings {
 
     /**
      * How a value crosses in the functions one module hands it across in, as PHP holds it: the
-     * shape the library's ABI gives it ({@link CrossingShape}), and whether PHP has a way to hold
-     * what crosses in that shape. Every way this generator asks how a type crosses goes through one
-     * of these, so none of them can be asked without saying whose function the value crosses in.
+     * shape the manifest says it crosses in, and whether PHP has a way to hold what crosses in that
+     * shape. Every way this generator asks how a type crosses goes through one of these, so none of
+     * them can be asked without saying whose function the value crosses in, which is whose lists
+     * and function values it is built and called through.
      *
-     * <p>Where the ABI hands a value over, what this adds is what PHP cannot hold: a value of a
-     * declared type this binding has no class for, and a union no declaration names anywhere but
-     * where PHP hands one over whole, as the class of one of its members.
+     * <p>What this adds to the shape is what PHP cannot hold: a value of a declared type this
+     * binding has no class for, and a union no declaration names anywhere but where PHP hands one
+     * over whole, as the class of one of its members, or is told its case by a behavior.
      */
     private final class Crossings {
 
@@ -335,20 +350,18 @@ public final class PhpBindings {
             this.module = module;
         }
 
-        /** How PHP hands the library a value of {@code type}, or null where it has no way to. */
-        @Nullable Given given(Type type) {
-            CrossingShape.Plain shape = CrossingShape.given(module, type);
-            if (shape instanceof CrossingShape.Whole whole && whole.type() instanceof Type.Union union) {
+        /** How PHP hands the library a value of {@code type} in {@code shape}, or null where it has no way to. */
+        @Nullable Given given(Type type, Shape shape) {
+            if (shape instanceof Shape.Leaf && type instanceof Type.Union union) {
                 List<Member> members = members(union);
-                return members == null ? null : new OneOf(whole, members);
+                return members == null ? null : new OneOf(union, members);
             }
-            return shape == null ? null : both(shape);
+            return both(type, shape);
         }
 
-        /** How the library hands PHP a value of {@code type}, or null where it has no way to. */
-        @Nullable Received received(Type type) {
-            CrossingShape.Plain shape = CrossingShape.received(module, type);
-            return shape == null ? null : both(shape);
+        /** How the library hands PHP a value of {@code type} in {@code shape}, or null where it has no way to. */
+        @Nullable Received received(Type type, Shape shape) {
+            return both(type, shape);
         }
 
         /**
@@ -361,44 +374,42 @@ public final class PhpBindings {
          * and is still a value of the sum the union names. A case neither way is a union PHP cannot
          * be handed.
          */
-        @Nullable Received received(Manifest.Answer answer, String what) {
-            return switch (CrossingShape.received(module, answer)) {
-                case null -> null;
-                case CrossingShape.Plain plain -> both(plain);
-                case CrossingShape.Told told -> {
-                    List<Member> members = members(told.union());
-                    if (members == null) {
-                        yield null;
-                    }
-                    List<Member> made = new ArrayList<>();
-                    for (Case of : told.cases()) {
-                        Member it = switch (of) {
-                            case Case.Declared d -> {
-                                Whole whole = caseClass(of);
-                                if (whole == null) {
-                                    whole = memberHolding(told.union(), of);
-                                }
-                                yield whole == null ? null : new Member(whole, null);
-                            }
-                            case Case.Primitive p -> carried(p);
-                            case Case.Language l -> null;
-                        };
-                        if (it == null) {
-                            yield null;
+        @Nullable Received received(Manifest.Answer answer, Shape shape, String what) {
+            if (!(answer.type() instanceof Type.Union union)) {
+                return received(answer.type(), shape);
+            }
+            Manifest.UnionAnswer told = Objects.requireNonNull(answer.union());
+            List<Member> members = members(union);
+            if (members == null || told.which() == null) {
+                return null;
+            }
+            List<Member> made = new ArrayList<>();
+            for (Case of : told.cases()) {
+                Member it = switch (of) {
+                    case Case.Declared d -> {
+                        Whole whole = caseClass(of);
+                        if (whole == null) {
+                            whole = memberHolding(union, of);
                         }
-                        made.add(it);
+                        yield whole == null ? null : new Member(whole, null);
                     }
-                    yield new Told(told, members.stream().map(it -> it.whole().phpType())
-                            .collect(Collectors.joining("|")), made, quotedInSingle("`" + what + "`"));
+                    case Case.Primitive p -> carried(p);
+                    case Case.Language l -> null;
+                };
+                if (it == null) {
+                    return null;
                 }
-            };
+                made.add(it);
+            }
+            return new Told(told.which(), members.stream().map(it -> it.whole().phpType())
+                    .collect(Collectors.joining("|")), made, quotedInSingle("`" + what + "`"));
         }
 
-        /** How PHP hands over each of {@code types}, or null where any of them has no way. */
-        @Nullable List<Given> givens(List<Type> types) {
+        /** How PHP hands over each of {@code types} in its shape, or null where any of them has no way. */
+        @Nullable List<Given> givens(List<Type> types, List<Shape> shapes) {
             List<Given> crossings = new ArrayList<>();
-            for (Type type : types) {
-                Given crossing = given(type);
+            for (int at = 0; at < types.size(); at++) {
+                Given crossing = given(types.get(at), shapes.get(at));
                 if (crossing == null) {
                     return null;
                 }
@@ -407,61 +418,96 @@ public final class PhpBindings {
             return crossings;
         }
 
-        /** How PHP is handed each of {@code types}, or null where any of them has no way. */
-        @Nullable List<Received> receiveds(List<Type> types) {
+        /** How PHP is handed each of {@code types} in its shape, or null where any of them has no way. */
+        @Nullable List<Received> receiveds(List<Type> types, List<Shape> shapes) {
             List<Received> crossings = new ArrayList<>();
-            for (Type type : types) {
-                Received crossing = received(type);
+            for (int at = 0; at < types.size(); at++) {
+                Received crossing = received(types.get(at), shapes.get(at));
                 if (crossing == null) {
                     return null;
                 }
                 crossings.add(crossing);
             }
             return crossings;
-        }
-
-        /** How PHP holds a value crossing both ways in {@code shape}, or null where it has no way. */
-        private @Nullable Both both(CrossingShape.Plain shape) {
-            return switch (shape) {
-                case CrossingShape.Present present -> {
-                    Single of = single(present.of());
-                    yield of == null ? null : new Present(of);
-                }
-                case CrossingShape.Single single -> single(single);
-            };
         }
 
         /**
-         * How PHP holds a value crossing as one word in {@code shape}, or null where it has no way.
-         * A list is held as a PHP list where its element is held both ways, even where the list is
-         * only handed one way, since an element of either is the same words: a union no
-         * declaration names is refused as an element, having no way to say which case one read out
-         * of a list is.
+         * How PHP holds a value of {@code type} crossing both ways in {@code shape}, or null where
+         * it has no way. What a list holds, what a tuple is made of, what an optional holds and
+         * what a function value takes and answers are each held both ways, even where the value
+         * crosses one way, since what they are made of crosses either way inside it: a union no
+         * declaration names is refused inside any of them, having no way to say which case a
+         * value read out of one is.
          */
-        private @Nullable Single single(CrossingShape.Single shape) {
+        private @Nullable Both both(Type type, Shape shape) {
             return switch (shape) {
-                case CrossingShape.Whole whole -> whole(whole);
-                case CrossingShape.Listed listed -> {
-                    Both element = both(listed.element());
-                    yield element == null ? null : new Listed(element, listed.crossing());
+                case Shape.Leaf leaf -> switch (type) {
+                    case Type.Primitive it -> Whole.primitive(leaf.word());
+                    case Type.Declared it -> whole(it.module(), it.name());
+                    default -> null;
+                };
+                case Shape.Option option -> {
+                    Both of = both(((Type.Option) type).of(), option.of());
+                    yield of == null ? null : new Optional(of);
+                }
+                case Shape.Product product -> {
+                    List<Type> types = ((Type.Tuple) type).of();
+                    List<Both> members = new ArrayList<>();
+                    for (int at = 0; at < types.size(); at++) {
+                        Both member = both(types.get(at), product.of().get(at));
+                        if (member == null) {
+                            yield null;
+                        }
+                        members.add(member);
+                    }
+                    yield new Tuple(members);
+                }
+                case Shape.ListOf list -> {
+                    Both element = both(((Type.ListOf) type).of(), list.element());
+                    yield element == null ? null : new Listed(element, module.lists().stream()
+                            .filter(it -> it.element().equals(list.element())).findFirst()
+                            .orElseThrow());
+                }
+                case Shape.FunctionOf function -> {
+                    Type.Function fn = (Type.Function) type;
+                    List<Both> takes = new ArrayList<>();
+                    for (int at = 0; at < fn.takes().size(); at++) {
+                        Both taken = both(fn.takes().get(at), function.signature().takes().get(at));
+                        if (taken == null) {
+                            yield null;
+                        }
+                        takes.add(taken);
+                    }
+                    Both answers = both(fn.answers(), function.signature().answers());
+                    yield answers == null ? null : hosted(new Callable(takes, answers,
+                            module.functions().stream()
+                                    .filter(it -> it.signature().equals(function.signature()))
+                                    .findFirst().orElseThrow(), bindingClass()));
                 }
             };
         }
     }
 
     /**
-     * How PHP holds a value that is one word of the library's, or null where it has no way: a
-     * primitive as PHP's own type for it, a value of a declared type as the class generated for
-     * it, and a union no declaration names no way, since where PHP holds one is where it is handed
-     * over whole ({@link Crossings#given}).
+     * {@code callable}, with the slot the binding keeps for a closure of its type, which it is
+     * written the first time it is asked for.
      */
-    private @Nullable Whole whole(CrossingShape.Whole shape) {
-        return switch (shape.type()) {
-            case Type.Primitive it -> Whole.primitive(shape);
-            case Type.Declared it -> whole(it.module(), it.name());
-            case Type.Union it -> null;
-            default -> throw new IllegalStateException("one word is not a " + shape.type());
-        };
+    private Callable hosted(Callable callable) {
+        hosting.putIfAbsent(callable.slot(), callable);
+        return callable;
+    }
+
+    /**
+     * How PHP holds a value that is one word of the library's, of the declared type {@code
+     * module.name}, as the class generated for it, or null where there is none.
+     */
+    private @Nullable Whole whole(String module, String name) {
+        Declared it = declared.get(module + "." + name);
+        if (it == null) {
+            return null;
+        }
+        return it.declaration() instanceof Declaration.Sum
+                ? Whole.sum(it.fqcn(), it.codec()) : Whole.product(it.fqcn());
     }
 
     /**
@@ -488,18 +534,14 @@ public final class PhpBindings {
 
     /**
      * A primitive case as PHP's own type for it, made and read through what the manifest names
-     * for it, or null where PHP has none.
+     * for it, or null where PHP has none. Said for every primitive of a union that crosses, which
+     * the manifest was refused for leaving out, so a missing one is never read here as PHP having
+     * no way to hold it.
      */
     private @Nullable Member carried(Case.Primitive of) {
-        Word word = CrossingShape.heldAs(of);
-        if (word == null) {
-            return null;
-        }
-        // Said for every primitive a host is handed, which the manifest was refused for leaving
-        // out, so a missing one is never read here as PHP having no way to hold it.
         Manifest.CaseCrossing crossing = manifest.crossing(of);
-        CrossingShape.agreesAsCarried(crossing);
-        Whole whole = Whole.primitive(new CrossingShape.Whole(word, new Type.Primitive(of.name())));
+        Word held = crossing.holds();
+        Whole whole = held == null ? null : Whole.primitive(held);
         return whole == null ? null : new Member(whole, crossing);
     }
 
@@ -513,27 +555,12 @@ public final class PhpBindings {
                     && declared.get(d.module() + "." + d.name()) instanceof Declared it
                     && it.declaration() instanceof Declaration.Sum sum
                     && cases(sum).contains(leaf.module() + "." + leaf.name())) {
-                return Whole.sum(CrossingShape.declared(d.module(), d.name()), it.fqcn(),
-                        it.codec());
+                return Whole.sum(it.fqcn(), it.codec());
             }
         }
         return null;
     }
 
-    private @Nullable Whole whole(String module, String name) {
-        Declared it = declared.get(module + "." + name);
-        if (it == null) {
-            return null;
-        }
-        CrossingShape.Whole shape = CrossingShape.declared(module, name);
-        return it.declaration() instanceof Declaration.Sum
-                ? Whole.sum(shape, it.fqcn(), it.codec()) : Whole.product(shape, it.fqcn());
-    }
-
-    /** The shape each of {@code crossings} crosses in, in order. */
-    private static List<CrossingShape> shapes(List<? extends Crossing> crossings) {
-        return crossings.stream().map(Crossing::shape).toList();
-    }
 
     // ---------------------------------------------------------------------------------------------
     // A module.
@@ -622,18 +649,11 @@ public final class PhpBindings {
     // A product, a newtype or a unit.
 
     private void valueClass(Declared it) throws IOException {
-        List<Manifest.Field> fields = switch (it.declaration()) {
-            case Declaration.Product product -> product.fields();
-            case Declaration.Newtype newtype -> List.of(newtype.field());
-            case Declaration.Unit unit -> List.of();
-            case Declaration.Sum sum -> throw new IllegalStateException("a sum has no class");
-        };
-        @Nullable Function construct = switch (it.declaration()) {
-            case Declaration.Product product -> product.construct();
-            case Declaration.Newtype newtype -> newtype.construct();
-            case Declaration.Unit unit -> unit.construct();
-            case Declaration.Sum sum -> null;
-        };
+        if (it.declaration() instanceof Declaration.Sum) {
+            throw new IllegalStateException("a sum has no class");
+        }
+        List<Manifest.Field> fields = it.declaration().fields();
+        Manifest.@Nullable Construct construct = Declaration.built(it.declaration());
 
         PhpNames.Claimed members = PhpNames.Claimed.methods("class " + it.fqcn());
         for (String fixed : List.of("__construct", "nativeHandle", "of", "decode", "encode")) {
@@ -666,7 +686,6 @@ public final class PhpBindings {
         }
         Function encode = it.declaration().encode();
         if (encode != null) {
-            CrossingShape.agreesAsEncode(encode);
             php.append("""
 
                         /** This value in the external form of `%s`. */
@@ -711,13 +730,13 @@ public final class PhpBindings {
     }
 
     /** The static constructor: the value, or the invariant it does not hold as an issue. */
-    private void of(StringBuilder php, Declared it, List<Manifest.Field> fields, Function construct) {
-        List<Given> crossings =
-                in(it.module()).givens(fields.stream().map(Manifest.Field::type).toList());
+    private void of(StringBuilder php, Declared it, List<Manifest.Field> fields,
+                    Manifest.Construct construct) {
+        List<Given> crossings = in(it.module())
+                .givens(fields.stream().map(Manifest.Field::type).toList(), construct.takes());
         if (crossings == null) {
             return;
         }
-        CrossingShape.agreesAsConstruct(construct, shapes(crossings));
         PhpNames.Claimed claimed = PhpNames.Claimed.parameters(it.fqcn() + "::of");
         List<String> names = new ArrayList<>();
         for (Manifest.Field field : fields) {
@@ -733,7 +752,7 @@ public final class PhpBindings {
         // An optional takes null where nothing after it has to be named: PHP reads a default
         // before a parameter that has none as a mistake.
         int defaulted = crossings.size();
-        while (defaulted > 0 && crossings.get(defaulted - 1) instanceof Present) {
+        while (defaulted > 0 && crossings.get(defaulted - 1).nullable()) {
             defaulted--;
         }
         List<String> given = new ArrayList<>();
@@ -767,7 +786,7 @@ public final class PhpBindings {
                     }
                 """.formatted(it.key(), described, it.fqcn(), String.join(", ", parameters),
                 session, innermost(), ffi, session, made, ffi,
-                Crossing.storage(construct.takes().getLast().word()), status, ffi, construct.name(),
+                Crossing.storage(Word.VALUE), status, ffi, construct.function().name(),
                 String.join(", ", given), session, status, it.fqcn(), it.fqcn(), session, made));
     }
 
@@ -791,8 +810,6 @@ public final class PhpBindings {
                     + (decode == null ? " a host's value and not out of text"
                     : " text and not out of a host's value") + ", and the two are emitted together");
         }
-        CrossingShape.agreesAsDecode(decode);
-        CrossingShape.agreesAsDecode(decodeHost);
         php.append("""
 
                     /**
@@ -844,30 +861,28 @@ public final class PhpBindings {
     private void getter(StringBuilder php, Declared it, Manifest.Field field) {
         // Whether there is a reader first: a field with none is one no function hands across, and
         // nothing is asked of how it would cross.
-        Function read = field.read();
+        Manifest.Read read = field.read().available();
         if (read == null) {
             return;
         }
-        Received crossing = in(it.module()).received(field.type());
+        Received crossing = in(it.module()).received(field.type(), read.answers());
         if (crossing == null) {
             return;
         }
-        String body = switch (crossing) {
-            case Single single -> {
-                CrossingShape.agreesAsRead(read, single.shape());
-                yield "return " + single.of(List.of("$ffi->" + read.name() + "($value)"),
-                        "$session") + ";";
-            }
-            case Present present -> {
-                CrossingShape.agreesAsRead(read, present.shape());
-                yield "$room = $ffi->new('" + present.of().storage() + "');\n"
-                        + "        $present = $ffi->" + read.name()
-                        + "($value, \\FFI::addr($room));\n"
-                        + "        return " + present.of(List.of("$present",
-                        present.of().fromRoom("$room")), "$session") + ";";
-            }
-            case Told told -> throw new IllegalStateException("a field is not told its case");
-        };
+        List<Word> words = crossing.words();
+        StringBuilder body = new StringBuilder();
+        List<String> rooms = new ArrayList<>();
+        List<String> handed = new ArrayList<>(List.of("$value"));
+        for (int at = 0; at < words.size(); at++) {
+            String room = "$room" + (words.size() == 1 ? "" : at);
+            rooms.add(room);
+            handed.add("\\FFI::addr(" + room + ")");
+            body.append(room).append(" = $ffi->new('").append(Crossing.storage(words.get(at)))
+                    .append("');\n        ");
+        }
+        body.append("$ffi->").append(read.function().name()).append("(")
+                .append(String.join(", ", handed)).append(");\n        return ")
+                .append(crossing.of(crossing.fromRooms(rooms), "$session")).append(";");
         php.append("\n").append(docLines(List.of("The `" + field.name() + "` of this value."),
                 List.of(), crossing));
         php.append("""
@@ -924,7 +939,6 @@ public final class PhpBindings {
         if (sum.which() == null) {
             cases = "        return new " + it.opaque() + "($session->held($value));";
         } else {
-            CrossingShape.agreesAsWhich(sum.which());
             StringBuilder arms = new StringBuilder();
             for (int at = 0; at < sum.cases().size(); at++) {
                 Whole made = caseClass(sum.cases().get(at));
@@ -949,7 +963,6 @@ public final class PhpBindings {
                 it.codec() + "::wrap($session, $value)");
         Function encode = sum.encode();
         if (encode != null) {
-            CrossingShape.agreesAsEncode(encode);
             codec.append("""
 
                         /** `$value` in the external form of `%s`, which says which case it is. */
@@ -974,13 +987,14 @@ public final class PhpBindings {
         PhpNames.Claimed members = PhpNames.Claimed.methods("class " + namespace + "\\Behaviors");
         members.claim("__construct", "the generated `__construct`");
         for (Manifest.Behavior behavior : module.behaviors()) {
-            Function call = behavior.call();
+            Manifest.Call call = behavior.call().available();
             if (call == null) {
                 continue;
             }
             Crossings crossings = in(module.name());
-            List<Given> takes = crossings.givens(behavior.parameters().types());
-            Received answers = crossings.received(behavior.answers(),
+            List<Given> takes = crossings.givens(behavior.parameters().types(),
+                    call.signature().takes());
+            Received answers = crossings.received(behavior.answers(), call.signature().answers(),
                     module.name() + "." + behavior.name());
             if (takes == null || answers == null) {
                 continue;
@@ -1002,7 +1016,7 @@ public final class PhpBindings {
                     : bindingClass() + "::in($" + session + "->library())->requirementsOf($" + session
                     + ", '" + quotedInSingle(module.name() + "." + behavior.name()) + "')";
             functions.append(call(what, "public static function " + behavior.name(), names, takes,
-                    answers, call, requirements));
+                    answers, call.function(), requirements));
             BehaviorClass it = behaviorClasses.get(module.name() + "." + behavior.name());
             if (it != null) {
                 behaviorClass(it, behavior, names, takes, answers);
@@ -1030,18 +1044,19 @@ public final class PhpBindings {
         PhpNames.Claimed members = PhpNames.Claimed.methods("class " + namespace + "\\Values");
         members.claim("__construct", "the generated `__construct`");
         for (Manifest.PublishedValue value : module.values()) {
-            Function read = value.read();
+            Manifest.Call read = value.read().available();
             if (read == null) {
                 continue;
             }
-            Received answers = in(module.name()).received(value.type());
+            Received answers = in(module.name()).received(value.type(),
+                    read.signature().answers());
             if (answers == null) {
                 continue;
             }
             String what = "value `" + module.name() + "." + value.name() + "`";
             members.claim(PhpNames.memberName(value.name(), what), what);
             functions.append(call(what, "public static function " + value.name(), List.of(),
-                    List.of(), answers, read, null));
+                    List.of(), answers, read.function(), null));
         }
         if (functions.isEmpty()) {
             return;
@@ -1066,7 +1081,6 @@ public final class PhpBindings {
      */
     private String call(String what, String declared, List<String> names, List<Given> takes,
                         Received answers, Function function, @Nullable String requirements) {
-        CrossingShape.agreesAsCall(function, requirements != null, shapes(takes), answers.shape());
         List<Word> rooms = answers.words();
         String session = PhpNames.freeOf("session", names);
         Set<String> taken = new HashSet<>(names);
@@ -1136,13 +1150,14 @@ public final class PhpBindings {
             String name = claimed.claim(PhpNames.parameterName(injection.name(), what), what);
             parameters.add("?callable $" + name + " = null");
             entries.add("'" + module.name() + "." + injection.name() + "' => $" + name);
-            List<String> types = new ArrayList<>();
             Crossings crossings = in(module.name());
-            for (Manifest.NamedParameter parameter : injection.parameters()) {
-                types.add(crossings.received(parameter.type()).phpDocType());
-            }
+            List<String> types = Objects.requireNonNull(crossings.receiveds(
+                            injection.parameters().stream().map(Manifest.NamedParameter::type)
+                                    .toList(), injection.signature().takes())).stream()
+                    .map(Crossing::phpDocType).toList();
             described.add("     * @param (callable(" + String.join(", ", types) + "): "
-                    + crossings.given(injection.answers()).phpDocType() + ")|null $" + name);
+                    + Objects.requireNonNull(crossings.given(injection.answers(),
+                            injection.signature().answers())).phpDocType() + ")|null $" + name);
         }
         if (parameters.isEmpty()) {
             return;
@@ -1178,15 +1193,23 @@ public final class PhpBindings {
     private @Nullable String adapter(Manifest.Module module, Manifest.Injection injection) {
         Crossings crossings = in(module.name());
         List<Received> takes = crossings.receiveds(injection.parameters().stream()
-                .map(Manifest.NamedParameter::type).toList());
-        Given answers = crossings.given(injection.answers());
+                .map(Manifest.NamedParameter::type).toList(), injection.signature().takes());
+        Given answers = crossings.given(injection.answers(), injection.signature().answers());
         if (takes == null || answers == null) {
             return null;
         }
-        // What the implementation was handed where its capability was made comes first, and the
-        // runtime takes it off before this is handed the rest.
-        CrossingShape.agreesAsImplementation(injection.implementation(),
-                module.name() + "." + injection.name(), shapes(takes), answers.shape());
+        return adapting(takes, answers, module.name() + "." + injection.name());
+    }
+
+    /**
+     * What the runtime hands what C passes a function a host wrote through, the function taking
+     * {@code takes} and answering {@code answers}: PHP values made of each word C handed over, the
+     * implementation called with them, and what it answered written through the room C handed over,
+     * word for word. What it was handed where it was laid out comes first, and the runtime takes it
+     * off before this is handed the rest. {@code what} is what the function answers for, for the
+     * error an answer of another type is.
+     */
+    private static String adapting(List<Received> takes, Given answers, String what) {
         List<String> arguments = new ArrayList<>();
         int at = 0;
         for (Received crossing : takes) {
@@ -1209,8 +1232,7 @@ public final class PhpBindings {
                                         throw new \\TypeError('an implementation of %s answered other than %s');
                                     }
                 %s                }""".formatted(String.join(", ", arguments), answers.holds("$answer"),
-                quotedInSingle(module.name() + "." + injection.name()),
-                quotedInSingle(answers.phpType()), written);
+                quotedInSingle(what), quotedInSingle(answers.phpType()), written);
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -1228,9 +1250,11 @@ public final class PhpBindings {
         // and an override is not held to them.
         List<String> names = PhpNames.ownParameters(injection.parameters().stream()
                 .map(Manifest.NamedParameter::name).toList(), "input");
-        List<Received> takes = injection.parameters().stream()
-                .map(parameter -> crossings.received(parameter.type())).toList();
-        Given answers = crossings.given(injection.answers());
+        List<Received> takes = Objects.requireNonNull(crossings.receiveds(injection.parameters()
+                .stream().map(Manifest.NamedParameter::type).toList(),
+                injection.signature().takes()));
+        Given answers = Objects.requireNonNull(crossings.given(injection.answers(),
+                injection.signature().answers()));
         List<String> parameters = new ArrayList<>();
         List<String> described = new ArrayList<>();
         for (int at = 0; at < takes.size(); at++) {
@@ -1291,7 +1315,7 @@ public final class PhpBindings {
                     }
                 """);
         php.append(call("`" + it.key() + "` with what this was bound to", "public function apply",
-                names, takes, answers, Objects.requireNonNull(behavior.call()),
+                names, takes, answers, Objects.requireNonNull(behavior.call().available()).function(),
                 "$this->bound->requirements($" + session + ")"));
         php.append("\n");
         php.append(docLines(List.of("`apply`, for calling this as a function."), described, answers));
@@ -1481,11 +1505,31 @@ public final class PhpBindings {
                                 . ' is version ' . $speaks);
                         }
                         return self::$bindings[spl_object_id($library)] ??= new self($library, [
+                %s        ], [
                 %s        ], self::CONSTRUCTIONS, self::INJECTED);
                     }
                 }
-                """.formatted(DECLARATIONS, DECLARATIONS, RUNTIME_PROTOCOL, RUNTIME_PROTOCOL, slots));
+                """.formatted(DECLARATIONS, DECLARATIONS, RUNTIME_PROTOCOL, RUNTIME_PROTOCOL, slots,
+                functionSlots()));
         file(root, "Binding", php);
+    }
+
+    /**
+     * What the library calls each closure PHP hands it as a function value through, one slot for
+     * each function type as PHP holds it, as the members of a PHP array.
+     */
+    private String functionSlots() {
+        StringBuilder slots = new StringBuilder();
+        for (Callable callable : hosting.values()) {
+            slots.append("            '").append(quotedInSingle(callable.slot()))
+                    .append("' => new \\Souther\\Runtime\\FunctionSlot($library, '")
+                    .append(callable.crossing().implementation().type()).append("', '")
+                    .append(callable.crossing().implement()).append("',\n                ")
+                    .append(adapting(List.copyOf(callable.takes()), callable.answers(),
+                            "a function value of " + callable.phpDocType()))
+                    .append("),\n");
+        }
+        return slots.toString();
     }
 
     /** A PHP array of {@code numbers}, in the order of the names so a build writes it the same. */

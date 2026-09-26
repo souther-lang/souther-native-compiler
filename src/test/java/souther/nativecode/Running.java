@@ -53,7 +53,7 @@ final class Running {
      * exactly the silent ABI mismatch embedding this in the symbol exists to turn into a linker
      * error instead.
      */
-    static final String ABI = "4";
+    static final String ABI = "5";
 
     /**
      * One thing a run can reach in the object: a behavior by its own symbol, or a row by the entry

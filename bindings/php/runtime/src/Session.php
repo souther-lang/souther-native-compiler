@@ -40,6 +40,12 @@ final class Session
     private array $constructed = [];
 
     /**
+     * @var list<object> what a value of this run reads that PHP laid out, kept until the run ends:
+     *      each function value made of a closure PHP handed over ({@see FunctionSlot})
+     */
+    private array $kept = [];
+
+    /**
      * @internal
      * @param array<string, Implemented> $injected what the run was handed, by the declared name of
      *        the behavior each implements, each with the binding it was written against
@@ -73,6 +79,35 @@ final class Session
     public function expire(): void
     {
         $this->active = false;
+        $this->kept = [];
+    }
+
+    /** @internal Keeps `$it` for as long as this run is going: a value of the run reads it. */
+    public function keep(object $it): void
+    {
+        $this->kept[] = $it;
+    }
+
+    /**
+     * @internal A function value the library answered, held for this session's run, as a closure:
+     * each call of it is made by `$calling` in the innermost run going when it is called, which
+     * `$binding` finds, handed that run's session, the function value, and what the closure was
+     * called with.
+     *
+     * The function value is held as any other value is ({@see held()}), so a closure called after
+     * the run it was answered in has ended is refused before anything reads memory the arena has
+     * handed out again.
+     *
+     * @param class-string<Binding> $binding
+     * @param \Closure(Session, CData, mixed...): mixed $calling
+     */
+    public function callable(string $binding, CData $value, \Closure $calling): \Closure
+    {
+        $held = $this->held($value);
+        return static function (mixed ...$arguments) use ($binding, $held, $calling): mixed {
+            $session = $binding::session();
+            return $calling($session, $held->borrow($session), ...$arguments);
+        };
     }
 
     /** @internal The library's functions, to read what a value of a run still going holds. */
