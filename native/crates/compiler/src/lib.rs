@@ -4542,16 +4542,21 @@ fn lower(
             let Ty::Declared { declared } = of else {
                 unreachable!("`Coherent` held every field read to be of a declared type");
             };
-            let shape = lowering.declared.laid(declared);
-            let at = shape
-                .position_of(field)
-                .expect("`Coherent` held every field read to be one its declaration declares");
             let value = lower(builder, lowering, module, bindings, abort, target)?;
-            let flags = TRUSTED;
-            let held = builder
-                .ins()
-                .load(types::I64, flags, value, field_at(at) as i32);
-            out_of_slot(builder, held, machine_type(ty)?)
+            match lowering.declared.laid(declared) {
+                Declaration::Sum { .. } => {
+                    shared_field(builder, lowering, module, value, of, field, ty)?
+                }
+                shape => {
+                    let at = shape.position_of(field).expect(
+                        "`Coherent` held every field read to be one its declaration declares",
+                    );
+                    let held = builder
+                        .ins()
+                        .load(types::I64, TRUSTED, value, field_at(at) as i32);
+                    out_of_slot(builder, held, machine_type(ty)?)
+                }
+            }
         }
         Node::Some { value, .. } => {
             let held = lower(builder, lowering, module, bindings, abort, value)?;
@@ -4854,6 +4859,70 @@ fn lower(
             )?
         }
     })
+}
+
+/// A field read off a value of a sum, `of`, which is the field of whichever case the value is.
+///
+/// Each case lays its own fields out, and one it takes in by spread need not stand where it stands
+/// in another case, so the value is told apart by its token first and the field read where that
+/// case lays it, then held as what the read answers. The last case is the one a value tagged by
+/// none of the others is, which the checker settles every value of the sum to be one of.
+fn shared_field(
+    builder: &mut FunctionBuilder,
+    lowering: &Lowering,
+    module: &mut ObjectModule,
+    value: ir::Value,
+    of: &Ty,
+    field: &str,
+    ty: &Ty,
+) -> Lowered<ir::Value> {
+    let Ty::Declared { declared } = of else {
+        unreachable!("a field is read off a sum only where the sum is its target's type");
+    };
+    let cases = lowering
+        .declared
+        .leaves_of(&[Case::Declared {
+            declared: declared.clone(),
+        }])
+        .expect("`Coherent` held every case of the sum to be one a declaration crossed for");
+    let which = Tagged::of(value, of).which(builder);
+    let read = builder.create_block();
+    builder.append_block_param(read, machine_type(ty)?);
+    for (at, case) in cases.iter().enumerate() {
+        let Case::Declared { declared: key } = case else {
+            unreachable!("`Coherent` held every case a field is read off to be declared");
+        };
+        let next = if at + 1 < cases.len() {
+            let this = builder.create_block();
+            let next = builder.create_block();
+            let token = token_of(builder, lowering.declared, module, case)?;
+            let is_it = builder.ins().icmp(IntCC::Equal, which, token);
+            builder.ins().brif(is_it, this, &[], next, &[]);
+            builder.seal_block(this);
+            builder.switch_to_block(this);
+            Some(next)
+        } else {
+            None
+        };
+        let laid = lowering.declared.laid(key);
+        let position = laid
+            .position_of(field)
+            .expect("`Coherent` held every case of the sum to lay the field out");
+        let laid_as = laid.fields()[position].codec.ty();
+        let held = builder
+            .ins()
+            .load(types::I64, TRUSTED, value, field_at(position) as i32);
+        let held = out_of_slot(builder, held, machine_type(&laid_as)?);
+        let held = restate(builder, lowering, module, held, &laid_as, ty)?;
+        builder.ins().jump(read, &[held.into()]);
+        if let Some(next) = next {
+            builder.seal_block(next);
+            builder.switch_to_block(next);
+        }
+    }
+    builder.seal_block(read);
+    builder.switch_to_block(read);
+    Ok(builder.block_params(read)[0])
 }
 
 /// Where `node` is a fork, what chooses its branch, with each branch ended by `branch`; and

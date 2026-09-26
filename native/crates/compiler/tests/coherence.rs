@@ -2768,3 +2768,16 @@ fn a_behavior_requires_behaviors_the_document_names_once_each() {
         "a host's is not constructed",
     );
 }
+
+/// A field is read off a sum where every case of it lays one of that name out, which is the only
+/// read of one the checker writes: `m.S`'s cases are units, and a field read off it is the two
+/// halves disagreeing, not something this backend is behind on.
+#[test]
+fn a_field_is_read_off_a_sum_only_where_every_case_lays_it_out() {
+    let read_off = node(
+        "field",
+        &format!(r#""target":{},"field":"v""#, read(0, S)),
+        INT,
+    );
+    is_the_halves_disagreeing(&helpers(&[h(&[S], &read_off)]), "declares none");
+}

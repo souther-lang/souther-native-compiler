@@ -1323,8 +1323,37 @@ impl<'a> Walk<'_, 'a> {
                     );
                 };
                 let shape = self.declared.shape(declared)?;
+                // A sum has no fields of its own; the checker lets one be read off it where every
+                // case lays one of that name out (a field each takes in by spread), and the read is
+                // of the case's field, whichever case the value is. So every case is asked, and
+                // what each lays out stands as what the read answers.
                 if let crate::transport::Declaration::Sum { .. } = shape {
-                    self.not_lowered(format!("a field {field} read off the sum {declared}"));
+                    let cases = self.declared.leaves_of(&[Case::Declared {
+                        declared: declared.clone(),
+                    }])?;
+                    for case in &cases {
+                        let Case::Declared { declared: key } = case else {
+                            bail!(
+                                "{}: a field {field} read off {declared}, whose case {} holds no \
+                                 fields: the two halves disagree",
+                                self.owner,
+                                case.spelt()
+                            );
+                        };
+                        let laid = self.declared.shape(key)?;
+                        let at = laid.position_of(field).ok_or_else(|| {
+                            anyhow!(
+                                "{}: a field {field} read off {declared}, whose case {key} \
+                                 declares none: the two halves disagree",
+                                self.owner
+                            )
+                        })?;
+                        self.fits(
+                            &format!("{key}'s field {field}, read off {declared}"),
+                            &laid.fields()[at].codec.ty(),
+                            ty,
+                        );
+                    }
                     return Ok(());
                 }
                 let at = shape.position_of(field).ok_or_else(|| {

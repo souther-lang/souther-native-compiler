@@ -303,7 +303,78 @@ fn behaviors() -> Vec<(&'static str, Value)> {
                 2,
             ),
         ),
+        // A field every case of `m.Q` lays out, read off a value of it: `m.P` lays it second and as
+        // an `Int`, carried where the read answers the union, and `m.R` first and as an `m.A`.
+        (
+            "shared",
+            opened(
+                shared_v(widen(
+                    node(
+                        "construct",
+                        json!({"declared": "m.P", "values": [truth(true), a()]}),
+                        json!({"declared": "m.P"}),
+                    ),
+                    q(),
+                )),
+                1,
+            ),
+        ),
+        (
+            "unshared",
+            opened(
+                shared_v(widen(
+                    node(
+                        "construct",
+                        json!({"declared": "m.R", "values": [unit_a()]}),
+                        json!({"declared": "m.R"}),
+                    ),
+                    q(),
+                )),
+                1,
+            ),
+        ),
     ]
+}
+
+fn truth(value: bool) -> Value {
+    node("bool", json!({"value": value}), json!({"prim": "BOOL"}))
+}
+
+fn unit_a() -> Value {
+    node(
+        "unit",
+        json!({"declared": "m.A"}),
+        json!({"declared": "m.A"}),
+    )
+}
+
+/// The sum `m.P | m.R`.
+fn q() -> Value {
+    json!({"declared": "m.Q"})
+}
+
+/// The field `v` of a value of `m.Q`, as the union it is `Int` in one case and `m.A` in the other.
+fn shared_v(of: Value) -> Value {
+    node("field", json!({"target": of, "field": "v"}), union())
+}
+
+/// The unit `m.A`; `m.P`, laying `w: Bool` and then `v: Int`; `m.R`, laying `v: m.A`; and the sum
+/// `m.Q` of the two.
+fn declarations() -> Value {
+    let field = |name: &str, binding: usize, codec: Value| json!({"name": name, "binding": binding, "codec": codec});
+    json!([
+        {"module": "m", "name": "A", "by": "amodule", "is": "unit"},
+        {"module": "m", "name": "P", "by": "amodule", "is": "product",
+         "fields": [field("w", 0, json!({"is": "scalar", "scalar": "BOOL"})),
+                    field("v", 1, json!({"is": "scalar", "scalar": "INT"}))],
+         "invariants": []},
+        {"module": "m", "name": "R", "by": "amodule", "is": "product",
+         "fields": [field("v", 0, json!({"is": "named", "declared": "m.A"}))],
+         "invariants": []},
+        {"module": "m", "name": "Q", "by": "amodule", "is": "sum",
+         "cases": [{"is": "declared", "declared": "m.P"}, {"is": "declared", "declared": "m.R"}],
+         "form": {"is": "discriminated", "tag": "type", "contents": "value"}}
+    ])
 }
 
 fn document() -> String {
@@ -326,9 +397,9 @@ fn document() -> String {
         .collect();
     json!({
         "transport": 22,
-        "declarations": [{"module": "m", "name": "A", "by": "amodule", "is": "unit"}],
+        "declarations": declarations(),
         "behaviors": targets,
-        "modules": [{"name": "m", "publishes": ["m.A"], "helpers": [], "values": [],
+        "modules": [{"name": "m", "publishes": ["m.A", "m.P", "m.R", "m.Q"], "helpers": [], "values": [],
                      "entries": [], "definitions": definitions, "examples": []}]
     })
     .to_string()
@@ -350,6 +421,8 @@ BEHAVIOR(tupled)
 BEHAVIOR(answering)
 BEHAVIOR(taking)
 BEHAVIOR(aborting)
+BEHAVIOR(shared)
+BEHAVIOR(unshared)
 extern int64_t souther_mark(void);
 extern void souther_reset(int64_t);
 
@@ -375,6 +448,8 @@ int main(void) {
     ran("answering", answering, 5);
     ran("taking", taking, 5);
     ran("aborting", aborting, 1);
+    ran("shared", shared, 5);
+    ran("unshared", unshared, 5);
     return 0;
 }
 "#;
@@ -414,6 +489,8 @@ fn a_value_rebuilt_to_stand_wider_answers_what_went_in() {
             "answering 5\n",
             "taking 5\n",
             "aborting ended\n",
+            "shared 5\n",
+            "unshared -2\n",
         )
     );
 }
