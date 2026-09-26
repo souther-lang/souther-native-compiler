@@ -500,8 +500,8 @@ unsafe fn written(at: &*const Text) -> &[u8] {
     unsafe { text(at) }.as_str().as_bytes()
 }
 
-/// A `Date` of the text that names one, for a caller outside a Souther program and for a literal
-/// the checker has read.
+/// A `Date` of the text that names one, for a caller outside a Souther program. A literal is not
+/// made of text ([`souther_date_literal`]).
 ///
 /// # Safety
 ///
