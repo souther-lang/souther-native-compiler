@@ -45,7 +45,7 @@
 
 use super::{
     COUNT_NO_LIST_HOLDS, Declared, Emitting, Lowered, NO_ARM, POINTER, Runs, TRUSTED, Tagged,
-    accepted, into_slot, machine_type, not_lowered, out_of_slot, out_slot,
+    accepted, into_slot, machine_type, not_lowered, out_of_slot, out_slot, token_of,
 };
 use crate::codec::write::Writing;
 use crate::codec::{Codecs, Runtime};
@@ -249,12 +249,16 @@ fn whole(ty: &Ty) -> Option<HostWord> {
         // is one a host could hold and do nothing with.
         Ty::List { list } => Host::of(list).map(|_| HostWord::List),
         // What holds a union holds one of its members, each of which says which it is. A host is
-        // handed one where every member is a declared type, and asks which through a sum's own
-        // reader, or, for a union a behavior answers, through the behavior's. What carries a
-        // primitive or a case the language gives is not something a host is handed yet.
+        // handed one where it could be handed each member: a declared case is a value as it is,
+        // a primitive is carried and read back through the runtime where a host is handed the
+        // primitive at all, and a case the language gives holds nothing. It asks which through a
+        // sum's own reader, or, for a union a behavior answers, through the behavior's.
         Ty::Union { union } => union
             .iter()
-            .all(|case| matches!(case, Case::Declared { .. }))
+            .all(|case| match case {
+                Case::Declared { .. } | Case::Language { .. } => true,
+                Case::Primitive { prim } => whole(&Ty::Prim { prim: *prim }).is_some(),
+            })
             .then_some(HostWord::Value),
         // An optional inside an optional would need a presence for each, and nothing asks for one.
         Ty::Option { .. } => None,
@@ -393,8 +397,14 @@ pub(crate) fn define(
             let sum = Ty::Declared {
                 declared: key.clone(),
             };
-            let symbol = host_case_symbol(module_name, name);
-            if let Some(casing) = expose_case(emitting, symbol, &sum, cases)? {
+            // Where a host could be handed each case, as it could a union of them.
+            let crosses = whole(&Ty::Union {
+                union: cases.clone(),
+            })
+            .is_some();
+            if crosses {
+                let symbol = host_case_symbol(module_name, name);
+                let casing = expose_case(emitting, symbol, &sum, cases)?;
                 described.cased_by(&casing);
             }
             surface.declaration(module_name, described);
@@ -456,24 +466,18 @@ pub(crate) fn define(
     Ok(())
 }
 
-/// Defines what a host asks which of `cases` a value of `ty` is through, under `symbol`, where every
-/// one of them is a declared type. None where one is not: a host is handed a value of a declared
-/// type, and never what carries a primitive or a case the language gives.
+/// Defines what a host asks which of `cases` a value of `ty` is through, under `symbol`.
 ///
 /// The one reader of a case a host is given, whatever the cases are the cases of: a sum's, or a
-/// union's a behavior answers.
+/// union's a behavior answers. It answers which case, and nothing of what the case holds: a
+/// declared case is the value itself, and one no declaration names is read through the runtime
+/// ([`souther_native_abi::HOST_CASES`]), which lays it out the same whatever union it stands in.
 fn expose_case(
     emitting: &mut Emitting,
     symbol: String,
     ty: &Ty,
     cases: &[Case],
-) -> Lowered<Option<HostFunction>> {
-    if !cases
-        .iter()
-        .all(|case| matches!(case, Case::Declared { .. }))
-    {
-        return Ok(None);
-    }
+) -> Lowered<HostFunction> {
     let casing = HostFunction {
         symbol,
         takes: vec![HostParameter::Given(HostWord::Value)],
@@ -484,7 +488,6 @@ fn expose_case(
         let value = Tagged::of(given[0], ty);
         which_case(builder, module, declared, cases, value)
     })
-    .map(Some)
 }
 
 /// A behavior or a published value's entry, as a host would call it: what it runs, what each
@@ -574,12 +577,12 @@ pub(crate) fn define_behaviors(
         let union = match behavior.cases {
             Some(cases) => {
                 let case = match call {
-                    Some(_) => expose_case(
+                    Some(_) => Some(expose_case(
                         emitting,
                         host_behavior_answer_case_symbol(behavior.module, behavior.name),
                         &behavior.answers,
                         cases,
-                    )?,
+                    )?),
                     None => None,
                 };
                 Some((cases, case))
@@ -1279,7 +1282,8 @@ fn read(builder: &mut FunctionBuilder, at: usize, host: Host, given: &[ir::Value
 /// having handed over something else or this compiler having built it wrongly, and traps the way a
 /// fork that runs out of arms does rather than answering a number that means nothing.
 ///
-/// Defined only where every case is a declared type, since a host is handed nothing else.
+/// A case is told by its token whatever kind it is: a declaration's, or the runtime's for a
+/// primitive or a case the language gives.
 fn which_case(
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
@@ -1289,12 +1293,7 @@ fn which_case(
 ) -> Lowered<()> {
     let which = value.which(builder);
     for (place, case) in cases.iter().enumerate() {
-        let Case::Declared { declared: key } = case else {
-            unreachable!("a case reader is defined only where every case is declared");
-        };
-        let token = declared.tag(module, key)?;
-        let token = module.declare_data_in_func(token, builder.func);
-        let expected = builder.ins().symbol_value(POINTER, token);
+        let expected = token_of(builder, declared, module, case)?;
         let same = builder.ins().icmp(IntCC::Equal, which, expected);
         let this = builder.create_block();
         let next = builder.create_block();

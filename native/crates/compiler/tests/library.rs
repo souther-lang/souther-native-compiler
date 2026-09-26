@@ -499,3 +499,78 @@ fn an_object_carrying_no_surface_is_refused() {
         "{refused}"
     );
 }
+
+/// A sum with a primitive and a case the language gives among its cases: no program declares one
+/// (a sum's cases are declared, E1020), and the reader and the writer walk the cases of one the way
+/// they walk a union's a behavior answers, so it is where both are put to a host's documents. The
+/// primitive stands under the contents key beside its name, and the case the language gives is its
+/// name alone.
+const CARRYING: &str = r#"{"transport":22,"declarations":[
+    {"module":"m","name":"A","by":"amodule","is":"unit"},
+    {"module":"m","name":"Q","by":"amodule","is":"sum",
+     "cases":[{"is":"primitive","prim":"INT"},{"is":"language","case":"DIVISION_BY_ZERO"},
+              {"is":"declared","declared":"m.A"}],
+     "form":{"is":"discriminated","tag":"type","contents":"value"}}],
+  "behaviors":[],
+  "modules":[{"name":"m","publishes":["m.A","m.Q"],"helpers":[],"values":[],"entries":[],
+              "definitions":[],"examples":[]}]}"#;
+
+const READING_CASES: &str = r#"
+#include <inttypes.h>
+#include <stdio.h>
+#include <string.h>
+#include "souther.h"
+
+static void said(souther_string text) {
+    fwrite(souther_string_bytes(text), 1, (size_t) souther_string_length(text), stdout);
+    printf("\n");
+}
+
+static void read(const char *json) {
+    souther_decoded reading = NULL;
+    souther_status status = souther4_m_m_t_Q_decode((const uint8_t *) json, (int64_t) strlen(json),
+                                                   &reading);
+    if (souther_decoded_outcome(reading) != SOUTHER_DECODED_VALUE) {
+        printf("%u issues %" PRId64 " ", status, souther_decoded_issue_count(reading));
+        said(souther_issue_code(souther_decoded_issue(reading, 0)));
+        return;
+    }
+    souther_value value = souther_decoded_value(reading);
+    uint32_t which = souther4_m_m_t_Q_case(value);
+    printf("%u case %u", status, which);
+    if (which == 0) {
+        printf(" holds %" PRId64, souther_case_int_read(value));
+    }
+    printf(" ");
+    said(souther4_m_m_t_Q_encode(value));
+}
+
+int main(void) {
+    int64_t mark = souther_mark();
+    read("{\"type\": \"Int\", \"value\": 4}");
+    read("{\"type\": \"DivisionByZero\"}");
+    read("{\"type\": \"A\"}");
+    read("{\"type\": \"Int\"}");
+    read("{\"type\": \"Int\", \"value\": true}");
+    said(souther4_m_m_t_Q_encode(souther_case_int_make(9)));
+    said(souther4_m_m_t_Q_encode(souther_case_division_by_zero_make()));
+    souther_reset(mark);
+    return 0;
+}
+"#;
+
+#[test]
+fn a_case_no_declaration_names_is_read_and_written_as_the_language_writes_it() {
+    assert_eq!(
+        ran(CARRYING, READING_CASES),
+        concat!(
+            "0 case 0 holds 4 {\"type\":\"Int\",\"value\":4}\n",
+            "0 case 1 {\"type\":\"DivisionByZero\"}\n",
+            "0 case 2 {\"type\":\"A\"}\n",
+            "0 issues 1 missing_field\n",
+            "0 issues 1 type_mismatch\n",
+            "{\"type\":\"Int\",\"value\":9}\n",
+            "{\"type\":\"DivisionByZero\"}\n",
+        )
+    );
+}

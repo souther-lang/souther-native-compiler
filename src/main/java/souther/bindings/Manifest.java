@@ -50,7 +50,7 @@ public final class Manifest {
     public static final String FORMAT = "souther-native-interface";
 
     /** The version of what a manifest says that this reads. */
-    public static final int VERSION = 8;
+    public static final int VERSION = 9;
 
     /** The ABI generation the functions this binds answer to. */
     public static final int ABI = 4;
@@ -59,6 +59,7 @@ public final class Manifest {
     private final Map<String, Integer> statuses;
     private final Map<String, Integer> outcomes;
     private final List<Function> runtime;
+    private final List<CaseCrossing> cases;
     private final List<Module> modules;
 
     /**
@@ -68,12 +69,38 @@ public final class Manifest {
      * call, as something no binding can build.
      */
     private Manifest(int abi, Map<String, Integer> statuses, Map<String, Integer> outcomes,
-                     List<Function> runtime, List<Module> modules) {
+                     List<Function> runtime, List<CaseCrossing> cases, List<Module> modules) {
         this.abi = abi;
         this.statuses = Collections.unmodifiableMap(new LinkedHashMap<>(statuses));
         this.outcomes = Collections.unmodifiableMap(new LinkedHashMap<>(outcomes));
         this.runtime = List.copyOf(runtime);
+        this.cases = List.copyOf(cases);
         this.modules = List.copyOf(modules);
+        // One way to make and read each case, and one for every case a union a behavior answers
+        // has that no declaration names: a binding handed such a union has to read what the case
+        // holds, and one the manifest said nothing of would be a case it could name and not hold.
+        Set<Case> crossed = new HashSet<>();
+        for (CaseCrossing crossing : this.cases) {
+            if (!crossed.add(crossing.of())) {
+                throw new IllegalArgumentException("it says twice how " + crossing.of()
+                        + " is made and read");
+            }
+        }
+        for (Module module : this.modules) {
+            for (Behavior behavior : module.behaviors()) {
+                UnionAnswer union = behavior.answers().union();
+                if (union == null) {
+                    continue;
+                }
+                for (Case of : union.cases()) {
+                    if (!(of instanceof Case.Declared) && !crossed.contains(of)) {
+                        throw new IllegalArgumentException("it says " + module.name() + "."
+                                + behavior.name() + " answers " + of + ", and nothing of how a"
+                                + " value of it is made or read");
+                    }
+                }
+            }
+        }
         Set<String> constructible = new HashSet<>();
         for (Module module : this.modules) {
             module.constructions().forEach(it -> constructible.add(module.name() + "." + it.name()));
@@ -113,6 +140,19 @@ public final class Manifest {
     /** The runtime's functions a host calls. */
     public List<Function> runtime() {
         return runtime;
+    }
+
+    /**
+     * How a host makes and reads a value of each case no declaration names, as a union holds one:
+     * a property of the case, whatever union it stands in.
+     */
+    public List<CaseCrossing> cases() {
+        return cases;
+    }
+
+    /** How a value of {@code of} is made and read, or null where the manifest says nothing of it. */
+    public @Nullable CaseCrossing crossing(Case of) {
+        return cases.stream().filter(it -> it.of().equals(of)).findFirst().orElse(null);
     }
 
     /** What each module of the library offers a host. */
@@ -356,7 +396,7 @@ public final class Manifest {
                 implements Declaration {
         }
 
-        /** A sum, and the cases {@code which} counts, where every case is a declared type. */
+        /** A sum, and the cases {@code which} counts, where a host can be handed each of them. */
         record Sum(String name, List<Case> cases, @Nullable Function which,
                    @Nullable Function decode, @Nullable Function decodeHost,
                    @Nullable Function encode) implements Declaration {
@@ -397,14 +437,47 @@ public final class Manifest {
         }
     }
 
-    /** One case of a sum. */
+    /** One case of a sum or of a union. */
     public sealed interface Case {
 
+        /** A declared type, whose value is the case's value as it is. */
         record Declared(String module, String name) implements Case {
         }
 
-        /** A primitive or a case the language gives, which a host reaches nothing of. */
-        record Other(String kind, String name) implements Case {
+        /** A primitive, carried: made and read through {@link Manifest#cases}. */
+        record Primitive(String name) implements Case {
+        }
+
+        /** A case the language gives, which holds nothing: made through {@link Manifest#cases}. */
+        record Language(String name) implements Case {
+        }
+    }
+
+    /**
+     * How a host makes a value of a case no declaration names and reads what it holds: {@code make}
+     * takes what the case holds, where it holds something, and answers the value; {@code read}
+     * takes a value that says it is the case and answers what it holds. A primitive holds itself
+     * and a case the language gives nothing, so one has a {@code read} and the other none.
+     */
+    public record CaseCrossing(Case of, Function make, @Nullable Function read) {
+
+        public CaseCrossing {
+            if (of instanceof Case.Declared) {
+                throw new IllegalArgumentException(of + " is a declared type, which a host holds as"
+                        + " it is and makes through its own constructor");
+            }
+            if ((of instanceof Case.Primitive) != (read != null)) {
+                throw new IllegalArgumentException(of + " is read " + (read == null ? "no way" : "by "
+                        + read.name()) + ", where a primitive holds itself and a case the language"
+                        + " gives nothing");
+            }
+            if (make.answers() != Word.VALUE || (read != null && (!read.takes().equals(
+                    List.of(Parameter.given(Word.VALUE))) || read.answers() == null
+                    || !make.takes().equals(List.of(Parameter.given(read.answers())))))
+                    || (read == null && !make.takes().isEmpty())) {
+                throw new IllegalArgumentException(of + " is made by " + make + " and read by " + read
+                        + ", which are not one value and what it holds, both ways");
+            }
         }
     }
 
@@ -469,9 +542,14 @@ public final class Manifest {
             combine(field("kind", literal("declared")), field("module", string()),
                     field("name", string())).strict((kind, module, name) -> new Case.Declared(module, name)),
             combine(field("kind", literal("primitive")), field("name", string()))
-                    .strict(Case.Other::new),
+                    .strict((kind, name) -> new Case.Primitive(name)),
             combine(field("kind", literal("language")), field("name", string()))
-                    .strict(Case.Other::new));
+                    .strict((kind, name) -> new Case.Language(name)));
+
+    private static final Decoder<JsonNode, CaseCrossing> CASE_CROSSING = combine(
+            field("case", CASE),
+            field("make", FUNCTION),
+            nullableField("read", FUNCTION)).strict(CaseCrossing::new);
 
     private static final Decoder<JsonNode, Type> TYPE = lazy(Manifest::type);
 
@@ -609,7 +687,8 @@ public final class Manifest {
             field("statuses", map(int_())),
             field("outcomes", map(int_())),
             field("runtime", list(FUNCTION)),
+            field("cases", list(CASE_CROSSING)),
             field("modules", list(MODULE)))
-            .strict((format, version, abi, statuses, outcomes, runtime, modules) ->
-                    new Manifest(abi, statuses, outcomes, runtime, modules));
+            .strict((format, version, abi, statuses, outcomes, runtime, cases, modules) ->
+                    new Manifest(abi, statuses, outcomes, runtime, cases, modules));
 }

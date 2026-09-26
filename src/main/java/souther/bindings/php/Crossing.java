@@ -347,10 +347,47 @@ sealed interface Crossing {
     }
 
     /**
-     * A value of a union no declaration names, handed over by PHP: an object of the class of one
-     * of its members, which already is the case it is, so the value is handed over as it is.
+     * One member of a union no declaration names, as PHP holds a value of it: a declared type as
+     * the class generated for it, which is the union's value as it is, or a primitive as PHP's own
+     * type for it, carried into the union and read back out of it through the functions the
+     * manifest names for the case ({@code carried}).
      */
-    record OneOf(CrossingShape.Whole shape, List<Whole> members) implements Given {
+    record Member(Whole whole, Manifest.@Nullable CaseCrossing carried) {
+
+        public Member {
+            boolean primitive = switch (whole.kind()) {
+                case INT, BOOL, STRING -> true;
+                case PRODUCT, SUM -> false;
+            };
+            if (primitive != (carried != null)) {
+                throw new IllegalArgumentException(whole.phpType() + " is " + (primitive
+                        ? "a primitive, carried into a union" : "a declared type, a union's value as"
+                        + " it is") + ", and " + (carried == null ? "nothing" : carried.make().name())
+                        + " is said to make it");
+            }
+        }
+
+        /** The PHP expression handing {@code value}, a value of this member, over as the union. */
+        String given(String value, String session) {
+            String word = whole.given(value, session).getFirst();
+            return carried == null ? word
+                    : session + "->ffi()->" + carried.make().name() + "(" + word + ")";
+        }
+
+        /** The PHP expression making a value of this member out of the union's value {@code word}. */
+        String of(String word, String session) {
+            return whole.of(List.of(carried == null ? word
+                    : session + "->ffi()->" + java.util.Objects.requireNonNull(carried.read()).name()
+                    + "(" + word + ")"), session);
+        }
+    }
+
+    /**
+     * A value of a union no declaration names, handed over by PHP: a value of one of its members,
+     * which says which one it is by what PHP holds it as. A declared member is handed over as it
+     * is, and a primitive carried into the union.
+     */
+    record OneOf(CrossingShape.Whole shape, List<Member> members) implements Given {
 
         public OneOf {
             members = List.copyOf(members);
@@ -362,31 +399,47 @@ sealed interface Crossing {
 
         @Override
         public String phpType() {
-            return members.stream().map(Whole::phpType).collect(Collectors.joining("|"));
+            return members.stream().map(it -> it.whole().phpType())
+                    .collect(Collectors.joining("|"));
         }
 
+        /**
+         * Each primitive member tested for first, by PHP's own type, and a declared one handed over
+         * as the object it is: whichever class it is of, its handle is the union's value. PHP's type
+         * of the parameter has already refused anything that is none of them.
+         */
         @Override
         public List<String> given(String value, String session) {
-            return List.of(value + "->nativeHandle()->borrow(" + session + ")");
+            String declared = members.stream().filter(it -> it.carried() == null).findFirst()
+                    .map(it -> it.given(value, session))
+                    .orElse("throw new \\LogicException('no member of " + phpType() + " holds it')");
+            String handed = declared;
+            for (Member member : members.reversed()) {
+                if (member.carried() != null) {
+                    handed = "(" + member.whole().holds(value) + " ? " + member.given(value, session)
+                            + " : " + handed + ")";
+                }
+            }
+            return List.of(handed);
         }
 
         @Override
         public String holds(String value) {
-            return members.stream().map(it -> it.holds(value))
+            return members.stream().map(it -> it.whole().holds(value))
                     .collect(Collectors.joining(" || ", "(", ")"));
         }
     }
 
     /**
      * A value of a union no declaration names, handed to PHP as a behavior's answer: made as the
-     * class of the case the shape's {@code which} says it is, each of {@code cases} at the place the
+     * member the case the shape's {@code which} says it is, each of {@code cases} at the place the
      * library counts it.
      *
      * @param phpType the union of what PHP calls each of its members
      * @param cases   how a value of each case is made, in the order {@code which} counts them
      * @param what    what the answer is of, for the exception a case past them throws
      */
-    record Told(CrossingShape.Told shape, String phpType, List<Whole> cases, String what)
+    record Told(CrossingShape.Told shape, String phpType, List<Member> cases, String what)
             implements Received {
 
         public Told {
@@ -403,7 +456,7 @@ sealed interface Crossing {
                     + shape.which().name() + "(" + word + ")) {\n");
             for (int at = 0; at < cases.size(); at++) {
                 match.append("            ").append(at).append(" => ")
-                        .append(cases.get(at).of(List.of(word), session)).append(",\n");
+                        .append(cases.get(at).of(word, session)).append(",\n");
             }
             return match.append("            default => throw new \\LogicException('the library")
                     .append(" answered a case ").append(what).append(" does not answer'),\n")

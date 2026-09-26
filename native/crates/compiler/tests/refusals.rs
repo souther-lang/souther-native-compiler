@@ -338,11 +338,12 @@ fn an_answer_that_is_a_set_is_read_and_not_lowered() {
 }
 
 /// A primitive standing as a member of an answer is a case the transport carries, and a value of
-/// the union has a representation here: the `Int` is carried with the runtime's token for it, and
-/// another object reads it by the same token. What answers the behavior is a host, and a host is
-/// not handed a way to make one yet. So the behavior is not lowered.
+/// the union has a representation here: the `Int` is carried with the runtime's token for it,
+/// another object reads it by the same token, and a host implementing the behavior makes one
+/// through the runtime (`souther_case_int_make`). So the behavior is lowered, and is not refused
+/// for its answer anywhere.
 #[test]
-fn an_answer_with_a_primitive_among_its_cases_is_read_and_not_lowered() {
+fn an_answer_with_a_primitive_among_its_cases_is_lowered() {
     let document = concat!(
         r#"{"transport":22,"declarations":["#,
         r#"{"module":"m","name":"NotFound","by":"amodule","is":"unit"}],"#,
@@ -354,16 +355,9 @@ fn an_answer_with_a_primitive_among_its_cases_is_read_and_not_lowered() {
         r#""modules":[{"name":"m","publishes":[],"helpers":[],"values":[],"entries":[],"definitions":[],"examples":[]}]}"#,
     );
 
-    let refused = object_for(document).expect_err("no host makes a carried Int");
-
-    assert!(
-        refused.downcast_ref::<NotLowered>().is_some(),
-        "a union no host makes is the backend being behind: {refused}"
-    );
-    assert!(
-        refused.to_string().contains("what a host cannot be handed"),
-        "{refused}"
-    );
+    if let Err(refused) = object_for(document) {
+        panic!("a union a host makes through the runtime is refused: {refused}");
+    }
 }
 
 /// Two calls reaching one published value at two different types is not a document this backend

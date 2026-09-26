@@ -1,6 +1,6 @@
 {
   "format": "souther-native-interface",
-  "version": 8,
+  "version": 9,
   "abi": 4,
   "statuses": {
     "ANSWERED": 0,
@@ -162,6 +162,176 @@
         }
       ],
       "answers": "string"
+    }
+  ],
+  "cases": [
+    {
+      "case": {
+        "kind": "primitive",
+        "name": "Int"
+      },
+      "make": {
+        "name": "souther_case_int_make",
+        "takes": [
+          {
+            "given": "int"
+          }
+        ],
+        "answers": "value"
+      },
+      "read": {
+        "name": "souther_case_int_read",
+        "takes": [
+          {
+            "given": "value"
+          }
+        ],
+        "answers": "int"
+      }
+    },
+    {
+      "case": {
+        "kind": "primitive",
+        "name": "String"
+      },
+      "make": {
+        "name": "souther_case_string_make",
+        "takes": [
+          {
+            "given": "string"
+          }
+        ],
+        "answers": "value"
+      },
+      "read": {
+        "name": "souther_case_string_read",
+        "takes": [
+          {
+            "given": "value"
+          }
+        ],
+        "answers": "string"
+      }
+    },
+    {
+      "case": {
+        "kind": "primitive",
+        "name": "Bool"
+      },
+      "make": {
+        "name": "souther_case_bool_make",
+        "takes": [
+          {
+            "given": "bool"
+          }
+        ],
+        "answers": "value"
+      },
+      "read": {
+        "name": "souther_case_bool_read",
+        "takes": [
+          {
+            "given": "value"
+          }
+        ],
+        "answers": "bool"
+      }
+    },
+    {
+      "case": {
+        "kind": "language",
+        "name": "Some"
+      },
+      "make": {
+        "name": "souther_case_some_make",
+        "takes": [],
+        "answers": "value"
+      },
+      "read": null
+    },
+    {
+      "case": {
+        "kind": "language",
+        "name": "None"
+      },
+      "make": {
+        "name": "souther_case_none_make",
+        "takes": [],
+        "answers": "value"
+      },
+      "read": null
+    },
+    {
+      "case": {
+        "kind": "language",
+        "name": "DivisionByZero"
+      },
+      "make": {
+        "name": "souther_case_division_by_zero_make",
+        "takes": [],
+        "answers": "value"
+      },
+      "read": null
+    },
+    {
+      "case": {
+        "kind": "language",
+        "name": "NotANumber"
+      },
+      "make": {
+        "name": "souther_case_not_a_number_make",
+        "takes": [],
+        "answers": "value"
+      },
+      "read": null
+    },
+    {
+      "case": {
+        "kind": "language",
+        "name": "NotADate"
+      },
+      "make": {
+        "name": "souther_case_not_a_date_make",
+        "takes": [],
+        "answers": "value"
+      },
+      "read": null
+    },
+    {
+      "case": {
+        "kind": "language",
+        "name": "NotATime"
+      },
+      "make": {
+        "name": "souther_case_not_a_time_make",
+        "takes": [],
+        "answers": "value"
+      },
+      "read": null
+    },
+    {
+      "case": {
+        "kind": "language",
+        "name": "NotWhole"
+      },
+      "make": {
+        "name": "souther_case_not_whole_make",
+        "takes": [],
+        "answers": "value"
+      },
+      "read": null
+    },
+    {
+      "case": {
+        "kind": "language",
+        "name": "NotAFiniteDecimal"
+      },
+      "make": {
+        "name": "souther_case_not_a_finite_decimal_make",
+        "takes": [],
+        "answers": "value"
+      },
+      "read": null
     }
   ],
   "modules": [
@@ -359,6 +529,73 @@
           },
           "call": {
             "name": "souther4_m_shop_b_charge",
+            "takes": [
+              {
+                "given": "requirements"
+              },
+              {
+                "given": "int"
+              },
+              {
+                "room": "value"
+              }
+            ],
+            "answers": "status"
+          }
+        },
+        {
+          "name": "quantityOf",
+          "parameters": {
+            "named": [
+              {
+                "name": "paid",
+                "type": {
+                  "kind": "primitive",
+                  "name": "Int"
+                }
+              }
+            ]
+          },
+          "answers": {
+            "type": {
+              "kind": "union",
+              "cases": [
+                {
+                  "kind": "declared",
+                  "module": "shop",
+                  "name": "Free"
+                },
+                {
+                  "kind": "primitive",
+                  "name": "Int"
+                }
+              ]
+            },
+            "union": {
+              "cases": [
+                {
+                  "kind": "declared",
+                  "module": "shop",
+                  "name": "Free"
+                },
+                {
+                  "kind": "primitive",
+                  "name": "Int"
+                }
+              ],
+              "case": {
+                "name": "souther4_m_shop_b_quantityOf_answer_case",
+                "takes": [
+                  {
+                    "given": "value"
+                  }
+                ],
+                "answers": "case"
+              }
+            }
+          },
+          "call": {
+            "name": "souther4_m_shop_b_quantityOf",
             "takes": [
               {
                 "given": "requirements"
