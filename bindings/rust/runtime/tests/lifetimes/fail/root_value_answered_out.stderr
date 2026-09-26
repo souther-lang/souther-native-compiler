@@ -1,0 +1,8 @@
+error: lifetime may not live long enough
+ --> tests/lifetimes/fail/root_value_answered_out.rs:7:34
+  |
+7 |     let made = runtime.run(|run| make(run)).unwrap();
+  |                             ---- ^^^^^^^^^ returning this value requires that `'1` must outlive `'2`
+  |                             |  |
+  |                             |  return type of closure is Value<'2>
+  |                             has type `&mut souther_binding_runtime::Scope<'1, '_>`

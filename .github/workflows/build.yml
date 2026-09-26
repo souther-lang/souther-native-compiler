@@ -57,7 +57,9 @@ jobs:
       # in the checkout. Nothing here names a version, so there is one place it is written.
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: native
+          workspaces: |
+            native
+            bindings/rust/runtime
 
       # --no-snapshot-updates: the pinned install above just wrote souther-compiler's own
       # 0.2.1-SNAPSHOT into this runner's local repository, and without this flag an online

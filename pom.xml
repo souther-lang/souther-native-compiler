@@ -203,6 +203,62 @@
                             </arguments>
                         </configuration>
                     </execution>
+                    <!-- The Rust runtime every Rust binding runs on: a crate of its own and not a
+                         member of native/, since a host builds it and not this project, with a
+                         rust-version and a licence of its own. Held to the same layout and lints,
+                         and to its Cargo.lock (locked), as Composer holds the PHP runtime to its. -->
+                    <execution>
+                        <id>rust-runtime-format</id>
+                        <phase>process-classes</phase>
+                        <goals>
+                            <goal>exec</goal>
+                        </goals>
+                        <configuration>
+                            <executable>cargo</executable>
+                            <workingDirectory>${project.basedir}/bindings/rust/runtime</workingDirectory>
+                            <arguments>
+                                <argument>fmt</argument>
+                                <argument>--check</argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>rust-runtime-lint</id>
+                        <phase>process-classes</phase>
+                        <goals>
+                            <goal>exec</goal>
+                        </goals>
+                        <configuration>
+                            <executable>cargo</executable>
+                            <workingDirectory>${project.basedir}/bindings/rust/runtime</workingDirectory>
+                            <arguments>
+                                <argument>clippy</argument>
+                                <argument>--locked</argument>
+                                <argument>--all-targets</argument>
+                                <argument>--</argument>
+                                <argument>-D</argument>
+                                <argument>warnings</argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
+                    <!-- What a run's lifetime refuses is checked here too: trybuild compiles each
+                         case under tests/lifetimes and compares what rustc says with the .stderr
+                         beside it, which the pinned toolchain wrote. -->
+                    <execution>
+                        <id>rust-runtime-test</id>
+                        <phase>test</phase>
+                        <goals>
+                            <goal>exec</goal>
+                        </goals>
+                        <configuration>
+                            <executable>cargo</executable>
+                            <workingDirectory>${project.basedir}/bindings/rust/runtime</workingDirectory>
+                            <arguments>
+                                <argument>test</argument>
+                                <argument>--locked</argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
                     <!-- The PHP runtime's dependencies, as its composer.lock fixes them, before the
                          Java tests: one of them runs a generated binding over that runtime, and the
                          entry point stays this one build, as it is for Cargo. Composer does nothing

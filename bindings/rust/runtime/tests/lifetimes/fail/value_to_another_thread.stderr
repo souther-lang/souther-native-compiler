@@ -1,0 +1,9 @@
+error[E0277]: `NonNull<u8>` cannot be sent between threads safely
+  --> tests/lifetimes/fail/value_to_another_thread.rs:11:25
+   |
+11 |                 threads.spawn(move || made.address());
+   |                         ^^^^^ `NonNull<u8>` cannot be sent between threads safely
+   |
+   = help: the trait `Send` is not implemented for `NonNull<u8>`
+note: required by a bound in `std::thread::Scope::<'scope, 'env>::spawn`
+  --> $RUST/std/src/thread/scoped.rs

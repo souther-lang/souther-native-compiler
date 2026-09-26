@@ -1,0 +1,20 @@
+[package]
+name = "souther-binding-runtime"
+version = "0.1.0"
+description = "What every Rust binding of a Souther library built by souther-native-compiler runs on: a run's arena, handles, and calls into the library and back"
+edition = "2024"
+# Raoh's, which every generated crate depends on beside this one: a host is held to the older of
+# the two, and this one asks nothing newer.
+rust-version = "1.87"
+license = "Apache-2.0"
+publish = false
+
+[dependencies]
+
+[dev-dependencies]
+trybuild = "1"
+
+# A function that cannot fail and says it can hands every caller a failure to answer for that never
+# comes, and a `?` at the call hides which calls can actually end the work.
+[lints.clippy]
+unnecessary_wraps = "deny"

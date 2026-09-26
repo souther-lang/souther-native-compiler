@@ -1,0 +1,9 @@
+error[E0521]: borrowed data escapes outside of closure
+  --> tests/lifetimes/fail/inner_value_escapes_to_outer.rs:11:17
+   |
+ 9 |             let mut kept = make(run);
+   |                 -------- `kept` declared here, outside of the closure body
+10 |             run.scope(|inner| {
+   |                        ----- `inner` is a reference that is only valid in the closure body
+11 |                 kept = make(inner);
+   |                 ^^^^^^^^^^^^^^^^^^ `inner` escapes the closure body here
