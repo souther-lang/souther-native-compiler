@@ -7,6 +7,12 @@
 //! as: the language has one order over each type, and a kernel ordering by another would be a
 //! second.
 //!
+//! A function that never runs ([`never_runs`]) is not called, and no call of it is emitted: what it
+//! takes is what the list or the optional beside it holds (the kernel's contract binds the two to
+//! one variable), which is the type of what has no value, so there is nothing to hand it. The
+//! kernel answers what it answers for nothing. The function is still worked out and made where it
+//! is handed over; that is the call's arguments, lowered before the kernel is.
+//!
 //! Every element is one slot, whatever it holds, so a walk that only moves elements (`reverse`, a
 //! sort's merge) moves slots and never asks what they hold. An `Option` holding a value is a pointer
 //! to a slot holding it, and a slot of a list is one ([`NOTHING`]'s doc says why that holds), so
@@ -18,11 +24,12 @@ use cranelift::frontend::FunctionBuilder;
 use cranelift::module::Module;
 use cranelift::object::ObjectModule;
 use souther_native_abi::{
-    HELD, LIST_LENGTH, MOST_ELEMENTS, NOTHING, SLOT, Status, list_at, room_for_held, room_for_list,
+    HELD, LIST_LENGTH, NOTHING, SLOT, Status, list_at, room_for_held, room_for_list,
 };
 
 use crate::ordering::ordered;
 use crate::transport::{FnSignature, Op, Prim, Ty};
+use crate::unrun::never_runs;
 use crate::{
     Held, Lowered, Lowering, POINTER, TRUSTED, abort_where, call_function, into_slot, machine_type,
     not_lowered, out_of_slot, product, sum,
@@ -39,6 +46,9 @@ pub(crate) fn find(
     list: ir::Value,
 ) -> Lowered<ir::Value> {
     let function = signature(predicate.ty);
+    if never_runs(function) {
+        return Ok(builder.ins().iconst(POINTER, NOTHING));
+    }
     let taken = machine_type(&function.takes[0])?;
     let count = length(builder, list);
 
@@ -97,6 +107,9 @@ pub(crate) fn mapped(
     optional: ir::Value,
 ) -> Lowered<ir::Value> {
     let signature = signature(function.ty);
+    if never_runs(signature) {
+        return Ok(optional);
+    }
     let taken = machine_type(&signature.takes[0])?;
 
     let holding = builder.create_block();
@@ -166,9 +179,19 @@ pub(crate) fn reversed(
     made
 }
 
+/// The longest span `List.rangeInclusive` makes a list of.
+///
+/// The language says a span longer than a list can hold aborts, and not how long that is
+/// (souther-lang/souther#1989). The JVM carrier aborts past the largest `int`, and this is that
+/// number, so that the two abort for the same spans. It is this kernel's and not a length every
+/// list here is held to: a list is laid out with a length of sixty-four bits, and nothing else that
+/// makes one asks this. Where the language comes to say how long a list can be, that is a fact of
+/// every list and belongs where every list is made.
+const RANGE_INCLUSIVE_MOST: i64 = i32::MAX as i64;
+
 /// Every `Int` from `from` to `to`, both included (`List.rangeInclusive`), and none where `from` is
-/// above `to`. A span longer than a list is made to hold ([`MOST_ELEMENTS`]) ends the run with
-/// `status` before anything is made.
+/// above `to`. A span longer than [`RANGE_INCLUSIVE_MOST`] ends the run with `status` before
+/// anything is made.
 ///
 /// The span is `to - from` read without a sign: where `from` is not above `to` that is exactly how
 /// far apart they are, however far that is, where `to - from` read with one would leave the range
@@ -184,9 +207,11 @@ pub(crate) fn range_inclusive(
 ) -> ir::Value {
     let above = builder.ins().icmp(IntCC::SignedGreaterThan, from, to);
     let span = builder.ins().isub(to, from);
-    let too_long = builder
-        .ins()
-        .icmp_imm_u(IntCC::UnsignedGreaterThanOrEqual, span, MOST_ELEMENTS);
+    let too_long = builder.ins().icmp_imm_u(
+        IntCC::UnsignedGreaterThanOrEqual,
+        span,
+        RANGE_INCLUSIVE_MOST,
+    );
     let spans = builder.ins().icmp(IntCC::SignedLessThanOrEqual, from, to);
     let past = builder.ins().band(spans, too_long);
     abort_where(builder, abort, status, past);
@@ -343,6 +368,9 @@ pub(crate) fn sorted_by(
     list: ir::Value,
 ) -> Lowered<ir::Value> {
     let function = signature(key.ty);
+    if never_runs(function) {
+        return Ok(list);
+    }
     let taken = machine_type(&function.takes[0])?;
     let count = length(builder, list);
     let keys = new_list(builder, lowering, module, count);

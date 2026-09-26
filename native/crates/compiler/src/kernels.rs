@@ -834,13 +834,13 @@ mod tests {
         }
     }
 
-    /// A function a kernel takes is applied to what the list or the optional beside it holds and
-    /// to nothing else: what each of its parameters is, is the element of one of those. That is
-    /// what lets a function over what has no value be left unlowered where it is handed over
-    /// (`unrun`), since nothing is there to apply it to. A kernel that applied its function to a
-    /// value of its own would have a contract this refuses.
+    /// A function a kernel takes takes what the list or the optional beside it holds: each of its
+    /// parameters is a variable that is the element of one of those. So a function that never runs,
+    /// one taking the type of what has no value, is handed beside a list or an optional that holds
+    /// nothing, and the lowering answers for nothing without calling it (`lists`). A kernel handing
+    /// its function a value of its own would have a contract this refuses.
     #[test]
-    fn a_function_a_kernel_takes_is_applied_only_to_what_it_is_handed_beside_it() {
+    fn a_function_a_kernel_takes_takes_what_it_is_handed_beside_it() {
         for (key, kernel) in LOWERED {
             let contract = kernel.contract();
             let held: Vec<&Shape> = contract
@@ -851,19 +851,9 @@ mod tests {
                     _ => None,
                 })
                 .collect();
-            let functions: Vec<&Shape> = contract
-                .takes
-                .iter()
-                .filter(|shape| matches!(shape, Shape::Fn { .. }))
-                .collect();
-            assert!(functions.len() <= 1, "{key}");
-            for function in functions {
-                assert!(
-                    matches!(contract.takes.first(), Some(Shape::Fn { .. })),
-                    "{key} takes its function first"
-                );
-                let Shape::Fn { takes, .. } = function else {
-                    unreachable!()
+            for shape in &contract.takes {
+                let Shape::Fn { takes, .. } = shape else {
+                    continue;
                 };
                 for taken in takes {
                     assert!(

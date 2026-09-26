@@ -740,13 +740,7 @@ impl<'a> Walk<'_, 'a> {
         if self.unrun.iter().any(|it| std::ptr::eq(*it, node)) {
             self.runs = false;
         }
-        let entered = match node {
-            Node::Call { arguments, .. } => crate::unrun::never_applied(node)
-                .into_iter()
-                .map(|at| &arguments[at])
-                .collect(),
-            _ => Vec::new(),
-        };
+        let entered = crate::unrun::never_lowered(node);
         let before = self.unrun.len();
         self.unrun.extend(entered);
         let read = self.relations(node).and_then(|()| self.hold_slots(node));
@@ -1509,11 +1503,10 @@ impl<'a> Walk<'_, 'a> {
                 for argument in arguments {
                     self.node(argument)?;
                 }
-                // A walk hands its step nothing in its place, and a kernel emitted here calls
-                // nothing where it would call it. Anything else would hand the function it never
-                // applies to a copy taking a function over what has no value, which nothing here
-                // lowers; none of the function is lowered either way.
-                if !matches!(reaches, Reaches::Emitted { .. } | Reaches::Kernel { .. }) {
+                // A walk hands its step nothing in its place. Anything else would hand the
+                // function it never applies to a copy taking a function over what has no value,
+                // which nothing here lowers; none of the function is lowered either way.
+                if !matches!(reaches, Reaches::Emitted { .. }) {
                     for at in crate::unrun::never_applied(node) {
                         self.not_lowered(format!(
                             "argument {at} of a call of {}, a function over {} it never applies",

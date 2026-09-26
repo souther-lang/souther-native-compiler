@@ -32,7 +32,10 @@
 //! in the frame the walk stands in, the way a `let`'s are, and what it reads outside itself is read
 //! there. A block inside such a step is a site like any other. A function a call never applies
 //! ([`crate::unrun`]) is not lowered at all, so nothing in it is planned either; its sites are still
-//! numbered, so a number two sites share is refused wherever they stand.
+//! numbered, so a number two sites share is refused wherever they stand. A block whose function
+//! never runs, handed to a kernel, is a site all the same, since the kernel is handed a value: one
+//! with no code and nothing carried, since nothing ever calls it. Its body is not lowered, so what
+//! the body reaches is reached by nothing and the sites in it are only numbered.
 
 use crate::growing::Step;
 use crate::index;
@@ -70,6 +73,10 @@ pub struct Site<'a> {
     /// way the JVM carries the dependency instance a lambda calls. None where it reaches none, and
     /// the closure carries nothing more.
     pub environment: Option<&'a [Requirement]>,
+    /// Whether a call can reach the function: false where it never runs ([`crate::unrun::never_runs`]),
+    /// and then the closure is made with no code, no function is lifted for it, and it carries
+    /// nothing.
+    pub runs: bool,
 }
 
 /// Every closure site the document holds, found once over the whole program.
@@ -104,8 +111,10 @@ impl<'a> ClosureSites<'a> {
         self.by_site.get(&site)
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (&usize, &Site<'a>)> {
-        self.by_site.iter()
+    /// Every site a function is lifted for: each one whose function runs. One that never runs is
+    /// made with no code, so nothing is lifted for it and nothing here can ask for it.
+    pub fn lifted(&self) -> impl Iterator<Item = (&usize, &Site<'a>)> {
+        self.by_site.iter().filter(|(_, site)| site.runs)
     }
 }
 
@@ -203,6 +212,13 @@ impl<'p, 'a> Planner<'p, 'a> {
                 ty,
                 ..
             } => {
+                let Ty::Fn { fn_ } = ty else {
+                    bail!(
+                        "closure site {site}'s own type is not a function type: the checker never \
+                         gives a `Core.Block` any other type, so this document and this reader \
+                         disagree about what a block is"
+                    );
+                };
                 // Its own parameters and nothing inherited from `bound`: what this site reaches is
                 // asked relative to its own lexical boundary alone, never its enclosing one's — see
                 // this module's own doc. A fresh set of its own and not a clone of the caller's,
@@ -211,14 +227,14 @@ impl<'p, 'a> Planner<'p, 'a> {
                 for parameter in parameters.iter() {
                     own.insert(parameter.binding);
                 }
-                let reached = self.free(body, &mut own)?;
-
-                let Ty::Fn { fn_ } = ty else {
-                    bail!(
-                        "closure site {site}'s own type is not a function type: the checker never \
-                         gives a `Core.Block` any other type, so this document and this reader \
-                         disagree about what a block is"
-                    );
+                // A body that never runs reaches nothing, and the sites in it are only numbered.
+                let runs = !crate::unrun::never_runs(fn_);
+                let reached = if runs {
+                    self.free(body, &mut own)?
+                } else {
+                    Planner::new(self.sites, self.carrier, self.environment, false)
+                        .free(body, &mut own)?;
+                    Reached::default()
                 };
 
                 let planned = Site {
@@ -235,6 +251,7 @@ impl<'p, 'a> Planner<'p, 'a> {
                         })
                         .collect(),
                     environment: reached.environment.then_some(self.environment),
+                    runs,
                 };
                 // `ProgramWriter` promises this number is unique across the whole document, and
                 // this reader does not take that on trust: a duplicate would let the first block's

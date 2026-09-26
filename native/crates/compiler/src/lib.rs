@@ -467,7 +467,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
     // another), so nothing about defining a body may assume every site it itself needs was already
     // declared by the time it runs; all of them are, because this runs before any of them does.
     let mut lifted: BTreeMap<usize, FuncId> = BTreeMap::new();
-    for (&site, plan) in closures.iter() {
+    for (&site, plan) in closures.lifted() {
         let fn_ = plan.signature;
         let signature = lifted_signature(&fn_.takes, &fn_.answers, call_conv)?;
         let symbol = format!("$closure${site}");
@@ -982,7 +982,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
     // a nested site, or reach one returned from elsewhere, and every one of them was declared
     // above regardless of which body it is nested under. A site stands where the body holding it
     // does.
-    for (&site, plan) in closures.iter() {
+    for (&site, plan) in closures.lifted() {
         let fn_ = plan.signature;
         let signature = lifted_signature(&fn_.takes, &fn_.answers, call_conv)?;
         let id = *lifted
@@ -5047,7 +5047,6 @@ fn lower(
                         arguments,
                         fact,
                         aborts,
-                        unrun: unrun::never_applied(node),
                     };
                     lower_kernel(builder, lowering, module, bindings, abort, call)?
                 }
@@ -5083,17 +5082,22 @@ fn lower(
                 .closures
                 .site(*site)
                 .expect("every closure site was planned before any body was lowered");
-            let code_id = *lowering
-                .lifted
-                .get(site)
-                .expect("every closure site was declared a lifted function before any was defined");
-
             let flags = TRUSTED;
             let carried = plan.captures.len() + usize::from(plan.environment.is_some());
             let value = lowering.room(builder, module, room_for_closure(carried));
 
-            let code_ref = module.declare_func_in_func(code_id, builder.func);
-            let code = builder.ins().func_addr(POINTER, code_ref);
+            // A function that never runs has no code, and a closure of it holds none: nothing calls
+            // it, and it carries nothing.
+            let code = if plan.runs {
+                let code_id = *lowering.lifted.get(site).expect(
+                    "every closure site that runs was declared a lifted function before any was \
+                     defined",
+                );
+                let code_ref = module.declare_func_in_func(code_id, builder.func);
+                builder.ins().func_addr(POINTER, code_ref)
+            } else {
+                builder.ins().iconst(POINTER, NOTHING)
+            };
             builder.ins().store(flags, code, value, CLOSURE_CODE as i32);
 
             for (position, capture) in plan.captures.iter().enumerate() {
@@ -5239,8 +5243,6 @@ struct KernelCall<'a> {
     arguments: &'a [Node],
     fact: &'a KernelFact,
     aborts: &'a [AbortKind],
-    /// Where among the arguments the functions it never applies stand ([`unrun::never_applied`]).
-    unrun: Vec<usize>,
 }
 
 /// A kernel applied.
@@ -5265,70 +5267,7 @@ fn lower_kernel(
         arguments,
         fact,
         aborts,
-        unrun,
     } = call;
-    // A function over what has no value is handed over beside a list or an optional of what has no
-    // value, which holds nothing to hand it: the function is not lowered, and the kernel answers
-    // what it answers for nothing, which is what it was handed beside the function or nothing.
-    if !unrun.is_empty() {
-        let [_, beside] = arguments else {
-            unreachable!("`Coherent` held {kernel:?} to the two arguments it takes");
-        };
-        assert_eq!(
-            unrun,
-            [0],
-            "a kernel lowered here takes one function, first"
-        );
-        let beside = lower(builder, lowering, module, bindings, abort, beside)?;
-        // Every kernel is named, so one added that takes a function says here what it answers
-        // for nothing.
-        return Ok(match kernel {
-            LoweredKernel::ListFind => builder.ins().iconst(POINTER, NOTHING),
-            LoweredKernel::ListSortBy | LoweredKernel::OptionMap => beside,
-            LoweredKernel::IntAdd
-            | LoweredKernel::IntSubtract
-            | LoweredKernel::IntMultiply
-            | LoweredKernel::IntCompare
-            | LoweredKernel::IntFloorMod
-            | LoweredKernel::ListLength
-            | LoweredKernel::ListGet
-            | LoweredKernel::ListSort
-            | LoweredKernel::ListMax
-            | LoweredKernel::ListMin
-            | LoweredKernel::ListReverse
-            | LoweredKernel::ListSum
-            | LoweredKernel::ListProduct
-            | LoweredKernel::ListRangeInclusive
-            | LoweredKernel::IntTruncatingDivide
-            | LoweredKernel::IntTruncatingRemainder
-            | LoweredKernel::StringLength
-            | LoweredKernel::StringToInt
-            | LoweredKernel::StringFromInt
-            | LoweredKernel::StringTrim
-            | LoweredKernel::StringLowercase
-            | LoweredKernel::StringUppercase
-            | LoweredKernel::StringContains
-            | LoweredKernel::StringStartsWith
-            | LoweredKernel::StringEndsWith
-            | LoweredKernel::StringMatches
-            | LoweredKernel::StringSlice
-            | LoweredKernel::StringAppend
-            | LoweredKernel::StringSplit
-            | LoweredKernel::StringJoin
-            | LoweredKernel::StringConcat
-            | LoweredKernel::StringReplace
-            | LoweredKernel::StringWords
-            | LoweredKernel::StringLines
-            | LoweredKernel::StringReverse
-            | LoweredKernel::StringRepeat
-            | LoweredKernel::StringPadLeft
-            | LoweredKernel::StringPadRight
-            | LoweredKernel::StringCharacters
-            | LoweredKernel::StringCodePoints => {
-                unreachable!("{kernel:?} takes no function")
-            }
-        });
-    }
     // What a pattern means is what the checker settled, so the argument it was written as is not
     // lowered: it is a string the checker folded at compile time, and nothing it would compute at
     // run time is read.

@@ -2154,6 +2154,65 @@ fn a_list_no_value_of_whose_element_is_made_is_ordered_without_a_comparison() {
     }
 }
 
+/// A function over what has no value is still handed to a kernel, as a block made with no code,
+/// and the kernel answers for the empty list or the absent value beside it without calling it.
+#[test]
+fn a_kernel_is_handed_a_function_that_never_runs_and_calls_none() {
+    let nothing = r#"{"nothing":{}}"#;
+    let never_run = |answers: &str, body: String| {
+        let ty = fn_of(&[nothing], answers);
+        let block = node(
+            "block",
+            &format!(r#""site":0,"parameters":[{{"binding":1,"name":"x"}}],"body":{body}"#),
+            &ty,
+        );
+        (ty, block)
+    };
+    let empty = (
+        list_of(nothing),
+        node("list", r#""elements":[]"#, &list_of(nothing)),
+    );
+    let absent = (
+        option_of(nothing),
+        format!(
+            r#"{{"core":"none","type":{},"aborts":[]}}"#,
+            option_of(nothing)
+        ),
+    );
+    for (key, (function, block), (beside, handed), answers, fact) in [
+        (
+            "list.find",
+            never_run(BOOL, truth(true)),
+            empty.clone(),
+            option_of(nothing),
+            NO_FACT.to_string(),
+        ),
+        (
+            "list.sortBy",
+            never_run(INT, int(1)),
+            empty,
+            list_of(nothing),
+            ordering_subject(INT),
+        ),
+        (
+            "option.map",
+            never_run(INT, int(1)),
+            absent,
+            option_of(INT),
+            NO_FACT.to_string(),
+        ),
+    ] {
+        reads_whole(&helpers(&[h(
+            &[],
+            &call(
+                &kernel(key, &[&function, &beside], &fact),
+                &[block, handed],
+                &answers,
+            ),
+        )]));
+    }
+}
+
 /// A kernel handed a function is held to one type for each of the contract's variables wherever
 /// it stands: `List.find`'s predicate takes the list's element, and `Option.map`'s function takes
 /// what the optional holds and answers what the answer holds. A predicate over another type than

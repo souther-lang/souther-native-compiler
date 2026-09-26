@@ -737,14 +737,6 @@ pub const fn room_for_list(elements: i64) -> i64 {
     list_at(elements)
 }
 
-/// The most elements a list is made to hold.
-///
-/// The language says a `List.rangeInclusive` span longer than a list can hold aborts, and not how
-/// long that is (souther-lang/souther#1989). The JVM carrier's list holds as many as the largest
-/// `int`, and this is that number, so that the two abort for the same spans. A string's longest
-/// count is the same question (souther-lang/souther#1986).
-pub const MOST_ELEMENTS: i64 = i32::MAX as i64;
-
 /// Where a capability holds its code: the function a call through it reaches, taking
 /// [`CAPABILITY_ENVIRONMENT`] first and then what the behavior takes, and answering `status + out`.
 ///
