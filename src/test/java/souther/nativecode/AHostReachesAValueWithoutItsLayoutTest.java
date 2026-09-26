@@ -144,23 +144,42 @@ class AHostReachesAValueWithoutItsLayoutTest {
                 extern const uint8_t *souther_string_bytes(Value);
 
                 extern uint32_t money(int64_t, Value *) __asm__("%1$s");
-                extern int64_t moneyValue(Value) __asm__("%2$s");
+                extern void moneyValueInto(Value, int64_t *) __asm__("%2$s");
                 extern uint32_t line(Value, int64_t, uint8_t, Value, uint8_t, uint8_t, Value *)
                         __asm__("%3$s");
-                extern Value linePrice(Value) __asm__("%4$s");
-                extern int64_t lineQuantity(Value) __asm__("%5$s");
-                extern uint8_t lineNote(Value, Value *) __asm__("%6$s");
-                extern uint8_t lineGift(Value, uint8_t *) __asm__("%7$s");
+                extern void linePriceInto(Value, Value *) __asm__("%4$s");
+                extern void lineQuantityInto(Value, int64_t *) __asm__("%5$s");
+                extern void lineNoteInto(Value, uint8_t *, Value *) __asm__("%6$s");
+                extern void lineGiftInto(Value, uint8_t *, uint8_t *) __asm__("%7$s");
                 extern uint32_t free_(Value *) __asm__("%8$s");
-                extern Value paidAmount(Value) __asm__("%9$s");
-                extern Value owedAmount(Value) __asm__("%10$s");
-                extern uint8_t owedOverdue(Value) __asm__("%11$s");
+                extern void paidAmountInto(Value, Value *) __asm__("%9$s");
+                extern void owedAmountInto(Value, Value *) __asm__("%10$s");
+                extern void owedOverdueInto(Value, uint8_t *) __asm__("%11$s");
                 extern uint32_t settledCase(Value) __asm__("%12$s");
                 extern uint32_t outcomeCase(Value) __asm__("%13$s");
                 extern uint32_t settle(const void *, Value, int64_t, Value *) __asm__("%14$s");
                 extern uint32_t owing(const void *, Value, int64_t *) __asm__("%15$s");
 
                 static Value untouched = (Value) &untouched;
+
+                /* A field is written through room: each of these reads one into its own. */
+                static int64_t moneyValue(Value of) { int64_t it = -1; moneyValueInto(of, &it); return it; }
+                static Value linePrice(Value of) { Value it = untouched; linePriceInto(of, &it); return it; }
+                static int64_t lineQuantity(Value of) { int64_t it = -1; lineQuantityInto(of, &it); return it; }
+                static Value paidAmount(Value of) { Value it = untouched; paidAmountInto(of, &it); return it; }
+                static Value owedAmount(Value of) { Value it = untouched; owedAmountInto(of, &it); return it; }
+                static uint8_t owedOverdue(Value of) { uint8_t it = 9; owedOverdueInto(of, &it); return it; }
+                /* An optional field: whether it holds a value, the value written only where it does. */
+                static uint8_t lineNote(Value of, Value *note) {
+                    uint8_t present = 9;
+                    lineNoteInto(of, &present, note);
+                    return present;
+                }
+                static uint8_t lineGift(Value of, uint8_t *gift) {
+                    uint8_t present = 9;
+                    lineGiftInto(of, &present, gift);
+                    return present;
+                }
 
                 static void settled(const char *said, Value bought, int64_t paid) {
                     Value outcome = untouched;

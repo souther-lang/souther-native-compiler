@@ -161,7 +161,10 @@ is its surface in the language, and an object that read that as its own answer w
 whatever surface suited the shape it happened to be built in.
 
 A behavior the object does not define is reached over numbers, truths, text, and values of a
-model's own types. A value of a declared type says which type it is with the address of a byte its declaration
+model's own types. A function value one object made is called by another through its header and
+nothing else: the code at its head, handed the value itself and then what the function takes. What
+the value captured is read by that code alone, which the object that made the value wrote, so two
+objects agree on a function value where they agree on what it takes and what it answers. A value of a declared type says which type it is with the address of a byte its declaration
 owns, under a name the linker resolves, so a fork in one object over a value built in another
 compares what the linker resolved for both. A type whose representation is still to be designed
 does not cross, and the signature is where that is said.
@@ -201,11 +204,12 @@ A host builds and reads a value of a type the module publishes through functions
 defines for it, and never through where the value keeps anything. A host holds a value as an
 address it does not look behind, good until the mark taken before it was made is reset, and hands
 it back to these and to the behaviors. For each published type with fields or none there is a
-constructor, `souther4_m_<module>_t_<Name>_construct`, taking the fields and answering `status +
+constructor, `souther5_m_<module>_t_<Name>_construct`, taking the fields and answering `status +
 out` the way the type's own constructor does, since it is that constructor it runs: a value whose
 clauses do not hold is answered `InvariantNotHeld` and nothing is written through `out`, and a type
 with no clause answers a status too, so a clause added later does not change how a host calls it.
-For each field there is a reader, `..._f_<field>`, answering the field itself. For a published
+For each field there is a reader, `..._f_<field>`, writing the field through room the host hands
+it and answering nothing, as every value a host is handed is written. For a published
 sum there is `..._case`, answering which of the cases the sum descends to the value is, as its place
 among them counted from nought; the address the value is tagged with never leaves the object. A
 declared case is the value itself. A primitive among the cases of a union is carried, and a host
@@ -217,32 +221,67 @@ manifest lists them under `cases`. A read is made only of a value `..._case` has
 and is not asked again. The case answered is the concrete one the value is, and
 whether a host can read that case further is its own publication's answer and not the sum's. A
 behavior answering a union no declaration names has the same reader beside its call,
-`souther4_m_<module>_b_<behavior>_answer_case`, counting the cases the union descends to: a member
+`souther5_m_<module>_b_<behavior>_answer_case`, counting the cases the union descends to: a member
 that is a sum counts as its own cases, since a value of it is one of them. It is the behavior's and
 not the union's, which has no name to be spelt under.
 
-An `Int` crosses as 64 bits, a `Bool` as a byte, and text and a value of a declared type as an
-address. An optional crosses as a presence beside the value: a constructor takes a byte and the
-value, which is ignored where the byte is nought, and a reader answers the byte and writes the value
-through a pointer only where there is one. How the generated code keeps an optional is not what a
-host is told. What a host is handed is decided apart from what another object built by this
-compiler reads the same way, because the two are different questions. A field of a type with no way
-across yet has no reader, and keeps its type from having a host constructor, and nothing else: its
+How a value crosses is decided once, as the shape it crosses in, and the manifest says that shape
+beside every function that hands one across. An `Int` crosses as 64 bits, a `Bool` as a byte, and
+text and a value of a declared type or of a union as an address. An optional crosses as a presence
+and then what it holds: a constructor takes a byte and the words of the value, which are ignored
+where the byte is nought, and a reader writes the byte, and the value only where there is one. Each
+optional says so of itself, so an optional of an optional is two presences, and absence at one depth
+is not absence at another. A tuple crosses as its members, one after another. How the generated code
+keeps an optional or a tuple is not what a host is told. Every value of the model a function hands a
+host is written through room, a room for each word, and none is answered as the function's return:
+what a function answers is a status, a count, whether an index is inside a list, or which case a
+value is. What a host is handed is decided apart from what another object built by this compiler
+reads the same way, because the two are different questions. A field of a type with no way across
+yet has no reader, and keeps its type from having a host constructor, and nothing else: its
 siblings are still read. A type the module keeps has none of these, whichever published sum it is a
 case of.
+
+Where a host has no way to a value, the manifest says why, and where in what the function would
+hand over or be handed it that stands: a type with no representation for a host yet
+(`no_representation`), a type with no value (`no_value`), or a union a host would be handed with
+nothing to say which case it is (`no_discriminator`). The last is every union a host would be handed
+but what a behavior answers, whose `..._answer_case` says.
 
 A list crosses as an address too, of type `souther_list`, wherever its element crosses: as a field,
 as what a behavior takes or answers, and as what a behavior a host implements takes or answers. A
 host builds one and reads one through functions the object defines for each way an element crosses,
-under the module: `souther4_m_<module>_l_<element>_construct`, taking a count and a column for each
+under the module: `souther5_m_<module>_l_<element>_construct`, taking a count and a column for each
 word an element crosses as and answering the list, `..._length`, and `..._at`, taking the list, an
 index and room for the element's words and answering one where the index is inside the list and
-nought, with nothing written, where it is not. `<element>` is the word, `value` or `int` and so on,
-with `present_` before it for an optional element, which is two columns, a presence and the value,
-as an optional field is. So a list of one declared type is built through the same functions as a
-list of another, a list of lists is a list of `list` elements, and none of it asks where the list
-keeps its length. A count below nought, or one no room can be taken for, is the host's mistake and
-ends the process.
+nought, with nothing written, where it is not. `<element>` is the shape the element crosses in: a
+word, `value` or `int` and so on, or a mark and what it is made of, each after a `_` — `o` for an
+optional, `t` and the count of members for a tuple, `l` for a list, `f` and the count of what it
+takes for a function value, its answer last. So an optional string element is `o_string`, two
+columns, a presence and the value, as an optional field is; a list of lists of `Int` is a list of
+`l_int` elements; and a list of pairs is `t2_int_string`, a column for each member. A list of one
+declared type is built through the same functions as a list of another, and none of it asks where
+the list keeps its length. A count below nought, or one no room can be taken for, is the host's
+mistake and ends the process. What builds a list is there where something takes one from a host, and
+what reads one where something hands one to a host, and not otherwise: a host hands over a list of
+a union no declaration names as the cases each element is, and has nothing to be told which case
+an element is where it would read one, so such a list is built by a host and read by none.
+
+A function value crosses as an address too, of type `souther_function`, wherever a value holding
+one is handed across: today a published value and what such a value takes and answers, since a
+behavior's boundary and a field have no function in them. A host calls one through
+`souther5_m_<module>_fn_<shape>_call`, taking the value, what it takes as a host hands each over,
+and room for what it answers, and answering the status the function answered. A host makes one of
+its own through `..._implement`, handing room laid out as `souther_hosted_function`, a pointer to a
+function of the type `..._implementation`, and what that function is handed first, and is answered
+the value, which is the room. Calling the value calls the host's function with what it was handed
+first, what the value was called with and room for its answer, and what it answers is held as an
+implementation of a behavior's is. Nothing is copied, so the room, the function and what it is
+handed stay the host's for as long as the value may be called. A function value of a shape is
+called by a host where one is handed to a host, and made by one where one is taken from a host, and
+the manifest says each only where it is there (`call`, `make`), for the reason a list's are. No
+source publishes a function value
+yet (souther-lang/souther#1974, #1990), so this is held by tests over a document written by hand,
+`native/crates/compiler/tests/functions.transport.json`.
 
 A clause of a type the module keeps and nothing here builds or reads, or one whose fields have no
 representation here, is read, and refused if the two halves disagree about it, and is not run: no
@@ -273,7 +312,7 @@ being JSON and where they stopped, or every issue found in the document — not 
 one of Raoh's codes, a JSON Pointer and its metadata as named entries. A clause that does not hold is
 `invariant_violation` at the value's path, naming the type's module and name and the clause where
 it has one. A value of a type another build declares is read by that build's object, under
-`souther4.<module>$read$<Name>`, whatever kind of type it is: how a declaration is read is the
+`souther5.<module>$read$<Name>`, whatever kind of type it is: how a declaration is read is the
 declaring build's, and for a type built from fields that build is also the only one that can say
 which clause did not hold. Text read is canonicalized to NFC. What JSON is, is `souther-json-syntax`, a crate that knows
 no Souther type, no arena and no runtime, written to be what both runtimes read once #17 moves it.
@@ -311,11 +350,11 @@ object defines, to one set, reading each of them as it is.
 
 A host calls a function by a C identifier. The symbols one object built here calls in another carry
 `.` and `$`, and no C compiler or FFI that reads C declarations can name those. So what a host
-calls is spelt apart: `souther4`, the ABI generation, then the module as `_m_<segment>` per segment
-of its dotted name, then `_b_<behavior>`, `_v_<value>`, `_t_<type>`, or `_l_` and how a list's
-element crosses, and what is done with it. A
+calls is spelt apart: `souther5`, the ABI generation, then the module as `_m_<segment>` per segment
+of its dotted name, then `_b_<behavior>`, `_v_<value>`, `_t_<type>`, or `_l_` and the shape a
+list's element crosses in, or `_fn_` and the shape of a function value, and what is done with it. A
 name is written as it is where it is ASCII letters and digits, with `_` doubled and any other
-character as `_u<hex>_`, its code point. So `shop.quote` is `souther4_m_shop_b_quote` and a
+character as `_u<hex>_`, its code point. So `shop.quote` is `souther5_m_shop_b_quote` and a
 behavior named `数量` is `..._b__u6570__u91cf_`, and inside a name `_` is only ever followed by `_`
 or `u`, which is what keeps every spelling readable back to the one set of names it was made from.
 
@@ -335,8 +374,10 @@ into C once, and the two readers are given what each can read.
 
 The manifest says the same functions in the model's terms, for a binding to be written from
 without reading the program: each module's behaviors with what they take and answer, its published
-values, and its published types with their fields and cases, each beside the function that reaches
-it, or `null` where a host has no way in yet. Apart from its behaviors, each module's `injections`
+values, and its published types with their fields and cases, each beside what reaches it: the
+function, and the shape each value it takes and answers crosses in (`signature`), or, where nothing
+does, why (`unavailable`, with a `reason` and a `path`). Apart from its behaviors, each module's
+`injections`
 are the behaviors a host implements, published or not, each with what it takes and answers, the
 function type a host implements it as, and what it makes a capability of one through (`implement`).
 The function type is not a function: every `name` of a function in the manifest is a symbol the library defines, and the
@@ -346,11 +387,14 @@ signature's and never those a `let` binds. What a behavior answers is its `type`
 which is `null` unless the type is a union no declaration names, and then lists the `cases` the
 union descends to and the `case` function answering which of them a value is. The type stays what
 the model says, members and all, the same as wherever else it is written. A type is said by its
-module and its name, never by the key the Java half hands this one. Each module's `lists` are the
-functions a list is built and read through, one entry for each way an element of a list crosses
-there (`{"whole": "value"}`, `{"present": "string"}`), apart from the type `{"kind": "list"}`, which
-says only what the model says: a binding works out how a position's element crosses and finds the
-entry for it. A parameter is `given`, `room`, or a `slice`, as many of a word as a count before it
+module and its name, never by the key the Java half hands this one, and every type the model has
+is said, a tuple, a function, `nothing` and `never` among them. Each module's `lists` are the
+functions a list is built and read through, one entry for each shape an element of a list crosses in
+there (`{"leaf": "value"}`, `{"option": {"leaf": "string"}}`), and its `functions` what a function
+value is called and made through, one for each shape one crosses in; both apart from the type
+`{"kind": "list"}` or `{"kind": "function"}`, which says only what the model says. A binding finds
+the entry for a position by the shape said beside it, and never works out again how a value
+crosses. A parameter is `given`, `room`, or a `slice`, as many of a word as a count before it
 says. Each module's `constructions` are what a host builds the capabilities a behavior is called
 with out of, apart from `behaviors`, which are what a host calls by name: every published behavior
 that requires something, and every behavior it requires, at any depth, published or kept, since a
@@ -364,8 +408,8 @@ behavior's `call` takes the capabilities of what it requires first, as `requirem
 names two readings of a value: `decode`, out of text in the external form, and `decodehost`, out of
 a value a host built of ordered maps and wrote with every container as an object, in which a map
 keyed by its indices is read as an array wherever the declaration holds one. What a manifest may say
-is Rust types, and version 9
-is `native/crates/compiler/tests/interface-v9.json`: a test holds a program's manifest to it, and
+is Rust types, and version 10
+is `native/crates/compiler/tests/interface-v10.json`: a test holds a program's manifest to it, and
 another reads it with those types and writes it back unchanged. The manifest carries its own
 `version`, moved when what it says is read differently, and the `abi` its functions answer to,
 which is the generation in every symbol.
@@ -375,7 +419,7 @@ through a capability of the host's implementation and nothing else, so nothing d
 symbol of its own. A capability is two words, laid out as the header's `souther_capability`: the
 code a call through it reaches, which takes what the code is handed first and then what the behavior
 takes, and what it is handed first. The host makes one through
-`souther4_m_<module>_b_<behavior>_implement`, handing room for the capability, room laid out as
+`souther5_m_<module>_b_<behavior>_implement`, handing room for the capability, room laid out as
 `souther_hosted`, a pointer to a function of the type `..._implementation`, and what that function
 is to be handed first. The function takes that, then what the behavior takes and room for its
 answer, in the words a host hands a published behavior, and answers a status. A behavior with a body
@@ -495,6 +539,21 @@ A module's classes build and read a list through that module's own functions and
 module's, every list a module's manifest entry says is held to what a list of its element is built
 and read through, and a module with a function handing a list across and nothing to build one
 through is refused rather than written without the function.
+A tuple is a PHP list of its members, typed `array` for PHP and `array{0: T0, 1: T1}` in the
+docblock. An optional is null where it holds nothing and what it holds where it holds something,
+except where what it holds may itself be null: an optional of an optional holds its value in a
+`Souther\Runtime\Some`, so `Int??` is null, `Some(null)` or `Some(1)`, and holding nothing is told
+apart at each depth. A function value is a `Closure`, typed `\Closure(T): R` in the docblock. One
+the library answered is called in the innermost run going when it is called, and is refused, as
+any value is, once the run it was answered in has ended. A closure PHP hands over where a function
+value is taken is made into one through a slot the binding keeps for each function type, made once
+for the binding for the reason an implementation's is, and the closure is kept for as long as the
+run it was handed over in: what it throws comes back out of the call into the library that reached
+it. How each of these crosses is the shape the manifest says beside it, and the binding decides only
+how PHP holds what crosses in that shape: an `Int`, a `Bool` or a `String` as PHP's own type where it
+crosses as that word, and a value of a declared type or of a union as an object where it crosses as
+a `value`. A pair of a type and a shape it has no way to hold is not written, and what it writes is
+held to cross in the shape the manifest says, or the generation stops as the binding's mistake.
 The FFI declarations are the build's own, copied beside the binding as `souther.ffi.h`, and
 `autoload.php` loads the binding's classes for a host that does not map the namespace itself. The
 directory is written beside where it goes and put there whole, so it is the binding of one manifest:
@@ -502,10 +561,11 @@ a class the model no longer declares does not survive a generation, a refused ge
 last one as it was, and a directory holding anything a generation did not write is refused rather
 than replaced. The driver writes a library's directory the same way.
 
-What a host has no way to reach is not written: a behavior with no `call`, a field with no `read`, a
-behavior taking or answering a type with no representation for a host, and a union no declaration
-names that PHP would be handed other than as a behavior's answer, since nothing else says which case
-a value of it is.
+What a host has no way to reach is not written: a behavior, a value or a field the manifest says
+nothing reaches, whatever the reason it gives, and what PHP has no way to hold in the shape it
+crosses in — a value of a declared type the binding has no class for, and a union no declaration
+names anywhere but a behavior's answer or what PHP hands over whole, including one inside a tuple,
+a list, an optional or a function value, whose members' words cross either way.
 A name the model gives that PHP will not take is refused with the name, rather than spelt some
 other way: a reserved word, `this` or a superglobal for a parameter, two parameters of one function
 under one name, a field named as a method the binding writes, and two names that are one where they

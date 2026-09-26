@@ -50,6 +50,16 @@
 /// ([`host_bind_symbol`], [`host_implement_symbol`]), and the runtime keeps nothing for it. And a
 /// row's stand-in answers [`FAKE_NO_OUTPUT`] where the row states nothing for what it was asked.
 ///
+/// `5` is `souther-native-compiler#95`, and is two contracts moving together. Between objects, a
+/// function value is one another object may call: what stands at [`FUNCTION_INVOKE`] and how it is
+/// called are stated here, so a behavior or a published value taking or answering one reaches
+/// across objects. Between the object and a host, every value of the model a function hands a host
+/// is written through room, in the words of its [`HostShape`], and none is answered as the
+/// function's return: a field's reader returns nothing, where it answered the field. A tuple, an
+/// optional at any depth and a function value cross to a host, and every function a host reaches a
+/// list or a function value through is spelt under the shape it crosses in ([`host_list_symbol`],
+/// [`host_function_symbol`]).
+///
 /// Not part of [`type_symbol`]: a declared type's token is data, not a call, and nothing about how
 /// a call is made or what its status means changes what a value of one looks like.
 ///
@@ -80,6 +90,12 @@ pub const GENERATIONS: &[(u32, &str)] = &[
         4,
         "a behavior called with the capabilities it was constructed with, and nothing registered \
          on a thread (souther-native-compiler#72)",
+    ),
+    (
+        5,
+        "a function value called across objects through its header, and every value of the model \
+         a host is handed written through room in the words of the shape it crosses in \
+         (souther-native-compiler#95)",
     ),
 ];
 
@@ -453,51 +469,92 @@ pub fn host_encode_symbol(module: &str, name: &str) -> String {
     format!("{}_encode", host_under(module, 't', name))
 }
 
-/// What a host does with a list, through a function the object defines for each way an element
-/// crosses ([`host_list_symbol`]).
+/// What a host does with a list, through a function the object defines for each shape an element
+/// crosses in ([`host_list_symbol`]).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum HostListOperation {
     /// `(count, the elements as columns) -> list`: a list of `count` elements, the one at an index
     /// being what each column holds at that index. A column is a [`HostParameter::Slice`] of one of
-    /// the words the element crosses as, so an element crossing as a presence and a value is two
-    /// columns. Building a list ends with the list whatever the elements are, so this answers no
-    /// status; a count below nought, or one no room could be taken for, is the host's mistake and
-    /// ends the process rather than being read as some other count.
+    /// the words the element crosses as ([`HostShape::words`]), so an element crossing as a presence
+    /// and a value is two columns. Building a list ends with the list whatever the elements are, so
+    /// this answers no status; a count below nought, or one no room could be taken for, is the
+    /// host's mistake and ends the process rather than being read as some other count.
     Construct,
     /// `(list) -> count`: how many elements the list holds.
     Length,
     /// `(list, index, room for each word the element crosses as) -> bool`: one where the index is
-    /// inside the list, with the element written through the room as a field of its type is
-    /// handed over, and nought where it is outside it, with nothing written.
+    /// inside the list, with the element written through the room as every value a host is handed
+    /// is, and nought where it is outside it, with nothing written.
     At,
 }
 
-/// Where a host builds or reads a list whose elements cross as `element`, and as a presence beside
-/// it where `present`: `_l_`, then `present_` where they do, the word as [`HostWord::spelt`] spells
-/// it, and the operation.
+/// Where a host builds or reads a list whose elements cross as `element`: `_l_`, the shape as
+/// [`HostShape::spelt`] spells it, and the operation.
 ///
-/// Under what an element crosses as and not under the element's type: a list of one declared type
-/// and a list of another are both a list of addresses to the functions here, which put an element
-/// in its slot and take one out without knowing what it is. Under a module all the same, for
-/// the reason every other function a host reaches is: two builds' objects linked into one library
-/// each define their own, and a symbol under no module would be defined twice. Which module's a
-/// host calls makes no difference to the list it is handed.
-pub fn host_list_symbol(
-    module: &str,
-    present: bool,
-    element: HostWord,
-    operation: HostListOperation,
-) -> String {
+/// Under the shape an element crosses in and not under the element's type: a list of one declared
+/// type and a list of another are both a list of addresses to the functions here, which put an
+/// element in its slot and take one out without knowing what it is. Under a module all the same,
+/// for the reason every other function a host reaches is: two builds' objects linked into one
+/// library each define their own, and a symbol under no module would be defined twice. Which
+/// module's a host calls makes no difference to the list it is handed.
+pub fn host_list_symbol(module: &str, element: &HostShape, operation: HostListOperation) -> String {
     let mut spelt = host_module(module);
     spelt.push_str("_l_");
-    if present {
-        spelt.push_str("present_");
-    }
-    spelt.push_str(element.spelt());
+    spelt.push_str(&element.spelt());
     spelt.push_str(match operation {
         HostListOperation::Construct => "_construct",
         HostListOperation::Length => "_length",
         HostListOperation::At => "_at",
+    });
+    spelt
+}
+
+/// What a host does with a function value, through what the object defines for each shape a
+/// function crosses in ([`host_function_symbol`]).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum HostFunctionOperation {
+    /// `(function, what it takes as a host hands each over, room for each word of its answer) ->
+    /// status`: the function called, its answer written through the room only where the status is
+    /// `ANSWERED`. The status is the function's own: a computation that ended without a value
+    /// answers why, as a behavior's call does.
+    Call,
+    /// `(room for a hosted function, the host's implementation, what it is handed first) ->
+    /// function`: a function value of the host's own, laid out in the room
+    /// ([`room_for_hosted_function`]) and answered as the address of it. Calling the value calls
+    /// the implementation, a function of the type [`HostFunctionOperation::Implementation`] names,
+    /// with what it was handed first, what the value was called with as a host is handed each, and
+    /// room for each word of its answer; what it answers is held to [`IMPLEMENTATION_ANSWERS`], as
+    /// an implementation of a behavior is. Nothing is copied out of the room, so a host keeps it,
+    /// and the function callable, for as long as the value may be called.
+    Implement,
+    /// The type of the function a host implements a function value as, which nothing defines: a
+    /// name in C, as [`host_implementation_type`] is for a behavior.
+    Implementation,
+}
+
+/// Where a host calls or makes a function value that crosses as `function`: `_fn_`, the shape as
+/// [`HostShape::spelt`] spells it, and the operation. Under what the function crosses as and a
+/// module, for the reasons [`host_list_symbol`] is.
+///
+/// # Panics
+///
+/// Where `function` is not the shape of a function value.
+pub fn host_function_symbol(
+    module: &str,
+    function: &HostShape,
+    operation: HostFunctionOperation,
+) -> String {
+    assert!(
+        matches!(function, HostShape::Function { .. }),
+        "{function:?} is not how a function value crosses"
+    );
+    let mut spelt = host_module(module);
+    spelt.push_str("_fn_");
+    spelt.push_str(&function.spelt());
+    spelt.push_str(match operation {
+        HostFunctionOperation::Call => "_call",
+        HostFunctionOperation::Implement => "_implement",
+        HostFunctionOperation::Implementation => "_implementation",
     });
     spelt
 }
@@ -785,6 +842,30 @@ pub const fn room_for_hosted() -> i64 {
     HOSTED_USERDATA + SLOT
 }
 
+/// Where a function value holds its code: the function a call of the value reaches, handed the
+/// value itself first, then what the function takes, each as the word the generated code holds it
+/// in, then room for one slot, and answering `status + out` the way every generated function does.
+///
+/// That, and nothing more, is what a function value is to anything but the code that made it. What
+/// stands after the code is the code's own to read — what a closure captured, the function a
+/// restated one wraps, what a host's implementation is — so a caller hands the value to its own
+/// code and never reads further into it. Two objects built by this compiler call one another's
+/// function values on that alone: the code at this slot came from the object that made the value,
+/// and it is the one thing that knows what stands beside it.
+pub const FUNCTION_INVOKE: i64 = 0;
+
+/// Where a function value a host made of an implementation of its own holds what its code reads
+/// the implementation out of: room laid out as [`HOSTED_IMPLEMENTATION`] and [`HOSTED_USERDATA`]
+/// say, as a host lays out room for an implementation of a behavior. After the code, as everything
+/// a function value holds but its code is.
+pub const HOSTED_FUNCTION_HOSTED: i64 = FUNCTION_INVOKE + SLOT;
+
+/// How much room a host lays out for a function value of its own
+/// ([`HostFunctionOperation::Implement`]).
+pub const fn room_for_hosted_function() -> i64 {
+    HOSTED_FUNCTION_HOSTED + room_for_hosted()
+}
+
 /// How much room an `Option` holding a value takes.
 pub const fn room_for_held() -> i64 {
     HELD + SLOT
@@ -814,6 +895,8 @@ const _: () = {
     assert!(HELD + SLOT <= room_for_held());
     assert!(LIST_LENGTH + SLOT <= room_for_list(0));
     assert!(TEXT_LENGTH + SLOT <= room_for_text(0));
+    assert!(FUNCTION_INVOKE + SLOT <= HOSTED_FUNCTION_HOSTED);
+    assert!(HOSTED_FUNCTION_HOSTED + HOSTED_USERDATA + SLOT <= room_for_hosted_function());
 };
 
 /// That a string's count of bytes is as wide as a slot.
@@ -1135,6 +1218,10 @@ pub enum HostWord {
     /// What a host's own implementation is handed first each time it is called, which nothing but
     /// the implementation reads ([`host_implement_symbol`]).
     Userdata,
+    /// The address of a function value, which a host never reads behind and calls through the
+    /// function the object defines for the shape it crosses in ([`host_function_symbol`]). A word
+    /// of its own for the reason [`HostWord::List`] is.
+    Function,
 }
 
 impl HostWord {
@@ -1157,6 +1244,134 @@ impl HostWord {
             HostWord::Requirements => "requirements",
             HostWord::Capability => "capability",
             HostWord::Userdata => "userdata",
+            HostWord::Function => "function",
+        }
+    }
+}
+
+/// One word a value of the model is itself handed over as: the leaves of a [`HostShape`].
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum HostLeaf {
+    /// An `Int`.
+    Int,
+    /// A `Bool`.
+    Bool,
+    /// A `String`, as the address of text of the runtime's layout.
+    String,
+    /// The address of a value of a declared type or of a union, which a host never reads behind.
+    Value,
+}
+
+impl HostLeaf {
+    /// The word it is handed over as.
+    pub const fn word(self) -> HostWord {
+        match self {
+            HostLeaf::Int => HostWord::Int,
+            HostLeaf::Bool => HostWord::Bool,
+            HostLeaf::String => HostWord::String,
+            HostLeaf::Value => HostWord::Value,
+        }
+    }
+}
+
+/// The shape a value of the model crosses between a host and the object in: the words it is handed
+/// over as, and what those words are made of.
+///
+/// Not a type of the model. A tuple and a pair of fields a type is written as elsewhere would both
+/// be a [`HostShape::Product`], and a value of a declared type and one of a union are both one
+/// [`HostLeaf::Value`]: what is said here is how a value is handed over and taken back, and what it
+/// is, is the model's to say. So one shape serves every type that crosses in it, and a function a
+/// host reaches a list or a function value through is one for each shape and not for each type.
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+pub enum HostShape {
+    /// One word that is the value itself.
+    Leaf(HostLeaf),
+    /// An optional: whether there is a value, as a [`HostWord::Bool`] that is nought or one, and
+    /// then the words of the value, which are read only where there is one and written only where
+    /// there is one. Each optional says so of itself, so an optional of an optional is two
+    /// presences, and absence at one depth is not absence at another.
+    Option(Box<HostShape>),
+    /// A value made of others, handed over as each of them in order, one after another. A tuple
+    /// crosses as one.
+    Product(Vec<HostShape>),
+    /// A list, as the address of it ([`HostWord::List`]), built and read through the functions for
+    /// the shape its element crosses in ([`host_list_symbol`]).
+    List(Box<HostShape>),
+    /// A function value, as the address of it ([`HostWord::Function`]), called and made through
+    /// the functions for its shape ([`host_function_symbol`]): what it takes, each as a host hands
+    /// it over, and what it answers, as a host is handed it.
+    Function {
+        /// What it takes, in order.
+        takes: Vec<HostShape>,
+        /// What it answers.
+        answers: Box<HostShape>,
+    },
+}
+
+impl HostShape {
+    /// The words a value of this is handed over as, in order.
+    pub fn words(&self) -> Vec<HostWord> {
+        let mut words = Vec::new();
+        self.words_into(&mut words);
+        words
+    }
+
+    fn words_into(&self, words: &mut Vec<HostWord>) {
+        match self {
+            HostShape::Leaf(leaf) => words.push(leaf.word()),
+            HostShape::Option(of) => {
+                words.push(HostWord::Bool);
+                of.words_into(words);
+            }
+            HostShape::Product(members) => {
+                for member in members {
+                    member.words_into(words);
+                }
+            }
+            HostShape::List(_) => words.push(HostWord::List),
+            HostShape::Function { .. } => words.push(HostWord::Function),
+        }
+    }
+
+    /// The shape as a symbol spells it: a leaf as its word ([`HostWord::spelt`]), and anything
+    /// else as a mark and then what it is made of, each after a `_` — `o` for an optional, `t` and
+    /// the count of members for a product, `l` for a list, `f` and the count of what it takes for a
+    /// function, its answer last. Read from the left each mark says how many shapes follow it, so
+    /// two shapes are never spelt alike, and every mark is a letter no word is spelt as.
+    pub fn spelt(&self) -> String {
+        let mut spelt = String::new();
+        self.spelt_into(&mut spelt);
+        spelt
+    }
+
+    fn spelt_into(&self, spelt: &mut String) {
+        let then = |spelt: &mut String, shape: &HostShape| {
+            spelt.push('_');
+            shape.spelt_into(spelt);
+        };
+        match self {
+            HostShape::Leaf(leaf) => spelt.push_str(leaf.word().spelt()),
+            HostShape::Option(of) => {
+                spelt.push('o');
+                then(spelt, of);
+            }
+            HostShape::Product(members) => {
+                spelt.push_str(&format!("t{}", members.len()));
+                for member in members {
+                    then(spelt, member);
+                }
+            }
+            HostShape::List(element) => {
+                spelt.push('l');
+                then(spelt, element);
+            }
+            HostShape::Function { takes, answers } => {
+                spelt.push_str(&format!("f{}", takes.len()));
+                for taken in takes {
+                    then(spelt, taken);
+                }
+                then(spelt, answers);
+            }
         }
     }
 }
@@ -1858,13 +2073,14 @@ pub const IMPLEMENTATION_ANSWERS: &[Status] = &[ANSWERED, HOST_EXCEPTION];
 mod tests {
     use super::{
         ABI_GENERATION, EXAMPLE_STATUSES, FAKE_NO_OUTPUT, FIRST_FIELD, HOST_STATUSES,
-        HostListOperation, HostWord, IMPLEMENTATION_ANSWERS, INJECTION_PROTOCOL_VIOLATION,
-        INJECTION_UNBOUND, SLOT, TOKEN, WHICH, behavior_symbol, boundary_symbol,
-        checked_constructor_symbol, constructor_symbol, example_symbol, field_at, held_symbol,
-        home_symbol, host_behavior_answer_case_symbol, host_behavior_symbol, host_bind_symbol,
-        host_case_symbol, host_constructor_symbol, host_decode_symbol, host_encode_symbol,
-        host_field_symbol, host_implement_symbol, host_implementation_type, host_list_symbol,
-        host_value_symbol, member_at, reader_symbol, type_symbol, value_symbol,
+        HostFunctionOperation, HostLeaf, HostListOperation, HostShape, IMPLEMENTATION_ANSWERS,
+        INJECTION_PROTOCOL_VIOLATION, INJECTION_UNBOUND, SLOT, TOKEN, WHICH, behavior_symbol,
+        boundary_symbol, checked_constructor_symbol, constructor_symbol, example_symbol, field_at,
+        held_symbol, home_symbol, host_behavior_answer_case_symbol, host_behavior_symbol,
+        host_bind_symbol, host_case_symbol, host_constructor_symbol, host_decode_symbol,
+        host_encode_symbol, host_field_symbol, host_function_symbol, host_implement_symbol,
+        host_implementation_type, host_list_symbol, host_value_symbol, member_at, reader_symbol,
+        type_symbol, value_symbol,
     };
 
     /// Each generation is under the number after the one before it.
@@ -1885,13 +2101,13 @@ mod tests {
     fn a_behavior_is_reached_by_its_module_and_its_name() {
         assert_eq!(
             behavior_symbol("calculation", "add"),
-            "souther4.calculation.add"
+            "souther5.calculation.add"
         );
     }
 
     #[test]
     fn a_dotted_module_keeps_its_dots() {
-        assert_eq!(behavior_symbol("lib.pub", "bill"), "souther4.lib.pub.bill");
+        assert_eq!(behavior_symbol("lib.pub", "bill"), "souther5.lib.pub.bill");
     }
 
     /// What the reading rests on. Were this admitted, `a.b` / `c` and `a` / `b.c` would be spelt
@@ -1931,7 +2147,7 @@ mod tests {
     fn each_row_of_a_behavior_is_its_own_symbol() {
         assert_eq!(
             example_symbol("calculation", "add", 0),
-            "souther4.calculation.add$example$0"
+            "souther5.calculation.add$example$0"
         );
         assert_ne!(
             example_symbol("calculation", "add", 0),
@@ -1946,7 +2162,7 @@ mod tests {
     #[test]
     fn an_entry_and_its_boundary_are_two_symbols() {
         let entry = behavior_symbol("shop", "quote");
-        assert_eq!(boundary_symbol(&entry), "souther4.shop.quote$boundary");
+        assert_eq!(boundary_symbol(&entry), "souther5.shop.quote$boundary");
         assert_ne!(boundary_symbol(&entry), entry);
         assert_ne!(
             boundary_symbol(&example_symbol("shop", "quote", 0)),
@@ -2017,7 +2233,7 @@ mod tests {
     fn a_published_value_is_reached_by_its_module_and_its_name() {
         assert_eq!(
             value_symbol("pricing", "standard"),
-            "souther4.pricing$value$standard"
+            "souther5.pricing$value$standard"
         );
     }
 
@@ -2055,7 +2271,7 @@ mod tests {
     fn a_type_is_built_through_its_module_and_its_name() {
         assert_eq!(
             constructor_symbol("pricing", "Amount"),
-            "souther4.pricing$construct$Amount"
+            "souther5.pricing$construct$Amount"
         );
     }
 
@@ -2075,7 +2291,7 @@ mod tests {
     fn what_decides_a_construction_is_reached_by_the_types_module_and_name() {
         assert_eq!(
             checked_constructor_symbol("pricing", "Amount"),
-            "souther4.pricing$checked$Amount"
+            "souther5.pricing$checked$Amount"
         );
     }
 
@@ -2105,23 +2321,23 @@ mod tests {
     fn a_host_reaches_a_type_under_its_module_and_its_name() {
         assert_eq!(
             host_constructor_symbol("pricing", "Amount"),
-            "souther4_m_pricing_t_Amount_construct"
+            "souther5_m_pricing_t_Amount_construct"
         );
         assert_eq!(
             host_field_symbol("pricing", "Amount", "value"),
-            "souther4_m_pricing_t_Amount_f_value"
+            "souther5_m_pricing_t_Amount_f_value"
         );
         assert_eq!(
             host_case_symbol("pricing", "Result"),
-            "souther4_m_pricing_t_Result_case"
+            "souther5_m_pricing_t_Result_case"
         );
         assert_eq!(
             host_decode_symbol("pricing", "Amount"),
-            "souther4_m_pricing_t_Amount_decode"
+            "souther5_m_pricing_t_Amount_decode"
         );
         assert_eq!(
             host_encode_symbol("pricing", "Amount"),
-            "souther4_m_pricing_t_Amount_encode"
+            "souther5_m_pricing_t_Amount_encode"
         );
     }
 
@@ -2129,43 +2345,150 @@ mod tests {
     fn a_host_reaches_a_behavior_and_a_value_under_their_module() {
         assert_eq!(
             host_behavior_symbol("lib.shop", "quote"),
-            "souther4_m_lib_m_shop_b_quote"
+            "souther5_m_lib_m_shop_b_quote"
         );
         assert_eq!(
             host_value_symbol("lib.shop", "standard"),
-            "souther4_m_lib_m_shop_v_standard"
+            "souther5_m_lib_m_shop_v_standard"
         );
         assert_eq!(
             host_behavior_answer_case_symbol("lib.shop", "find"),
-            "souther4_m_lib_m_shop_b_find_answer_case"
+            "souther5_m_lib_m_shop_b_find_answer_case"
         );
     }
 
     #[test]
-    fn a_host_reaches_a_list_under_its_module_and_what_an_element_crosses_as() {
+    fn a_host_reaches_a_list_under_its_module_and_the_shape_an_element_crosses_in() {
+        use HostLeaf::{Bool, Int, Value};
         assert_eq!(
-            host_list_symbol("shop", false, HostWord::Value, HostListOperation::Construct),
-            "souther4_m_shop_l_value_construct"
+            host_list_symbol(
+                "shop",
+                &HostShape::Leaf(Value),
+                HostListOperation::Construct
+            ),
+            "souther5_m_shop_l_value_construct"
         );
         assert_eq!(
-            host_list_symbol("lib.shop", true, HostWord::Int, HostListOperation::At),
-            "souther4_m_lib_m_shop_l_present_int_at"
+            host_list_symbol(
+                "lib.shop",
+                &HostShape::Option(Box::new(HostShape::Leaf(Int))),
+                HostListOperation::At
+            ),
+            "souther5_m_lib_m_shop_l_o_int_at"
         );
         assert_eq!(
-            host_list_symbol("shop", false, HostWord::List, HostListOperation::Length),
-            "souther4_m_shop_l_list_length"
+            host_list_symbol(
+                "shop",
+                &HostShape::List(Box::new(HostShape::Product(vec![
+                    HostShape::Leaf(Int),
+                    HostShape::Option(Box::new(HostShape::Leaf(Bool))),
+                ]))),
+                HostListOperation::Length
+            ),
+            "souther5_m_shop_l_l_t2_int_o_bool_length"
         );
+    }
+
+    #[test]
+    fn a_host_reaches_a_function_value_under_its_module_and_its_shape() {
+        use HostLeaf::{Int, String};
+        let function = HostShape::Function {
+            takes: vec![HostShape::Leaf(Int), HostShape::Leaf(String)],
+            answers: Box::new(HostShape::Option(Box::new(HostShape::Leaf(Int)))),
+        };
+        assert_eq!(
+            host_function_symbol("shop", &function, HostFunctionOperation::Call),
+            "souther5_m_shop_fn_f2_int_string_o_int_call"
+        );
+        assert_eq!(
+            host_function_symbol("shop", &function, HostFunctionOperation::Implement),
+            "souther5_m_shop_fn_f2_int_string_o_int_implement"
+        );
+    }
+
+    /// Every shape up to a depth, each spelt once: no two are spelt alike, and each is read back
+    /// from its spelling alone, by the count every mark says follows it.
+    #[test]
+    fn no_two_shapes_are_spelt_alike() {
+        fn every(depth: usize) -> Vec<HostShape> {
+            let mut shapes: Vec<HostShape> = [
+                HostLeaf::Int,
+                HostLeaf::Bool,
+                HostLeaf::String,
+                HostLeaf::Value,
+            ]
+            .into_iter()
+            .map(HostShape::Leaf)
+            .collect();
+            if depth == 0 {
+                return shapes;
+            }
+            let smaller = every(depth - 1);
+            for one in &smaller {
+                shapes.push(HostShape::Option(Box::new(one.clone())));
+                shapes.push(HostShape::List(Box::new(one.clone())));
+                shapes.push(HostShape::Function {
+                    takes: vec![],
+                    answers: Box::new(one.clone()),
+                });
+                for other in &smaller {
+                    shapes.push(HostShape::Product(vec![one.clone(), other.clone()]));
+                    shapes.push(HostShape::Function {
+                        takes: vec![one.clone()],
+                        answers: Box::new(other.clone()),
+                    });
+                }
+            }
+            shapes
+        }
+        fn read(tokens: &mut std::slice::Iter<&str>) -> Option<HostShape> {
+            let token = *tokens.next()?;
+            let count = |mark: char| token.strip_prefix(mark)?.parse::<usize>().ok();
+            Some(match token {
+                "int" => HostShape::Leaf(HostLeaf::Int),
+                "bool" => HostShape::Leaf(HostLeaf::Bool),
+                "string" => HostShape::Leaf(HostLeaf::String),
+                "value" => HostShape::Leaf(HostLeaf::Value),
+                "o" => HostShape::Option(Box::new(read(tokens)?)),
+                "l" => HostShape::List(Box::new(read(tokens)?)),
+                _ if count('t').is_some() => HostShape::Product(
+                    (0..count('t')?)
+                        .map(|_| read(tokens))
+                        .collect::<Option<_>>()?,
+                ),
+                _ if count('f').is_some() => HostShape::Function {
+                    takes: (0..count('f')?)
+                        .map(|_| read(tokens))
+                        .collect::<Option<_>>()?,
+                    answers: Box::new(read(tokens)?),
+                },
+                _ => return None,
+            })
+        }
+        let mut seen = std::collections::HashMap::new();
+        for shape in every(2) {
+            let spelt = shape.spelt();
+            let tokens: Vec<&str> = spelt.split('_').collect();
+            let mut tokens = tokens.iter();
+            assert_eq!(read(&mut tokens).as_ref(), Some(&shape), "{spelt}");
+            assert!(
+                tokens.next().is_none(),
+                "{spelt} spells more than one shape"
+            );
+            let before = seen.entry(spelt.clone()).or_insert_with(|| shape.clone());
+            assert_eq!(*before, shape, "{spelt} is two shapes");
+        }
     }
 
     #[test]
     fn a_name_that_is_not_ascii_letters_and_digits_is_escaped() {
         assert_eq!(
             host_behavior_symbol("shop", "foo_bar"),
-            "souther4_m_shop_b_foo__bar"
+            "souther5_m_shop_b_foo__bar"
         );
         assert_eq!(
             host_behavior_symbol("shop", "数量"),
-            "souther4_m_shop_b__u6570__u91cf_"
+            "souther5_m_shop_b__u6570__u91cf_"
         );
     }
 
@@ -2175,7 +2498,7 @@ mod tests {
     fn a_type_is_read_through_its_module_and_its_name() {
         assert_eq!(
             reader_symbol("pricing", "Amount"),
-            "souther4.pricing$read$Amount"
+            "souther5.pricing$read$Amount"
         );
     }
 
@@ -2334,27 +2657,37 @@ mod tests {
                     );
                 }
             }
-            for present in [false, true] {
-                for word in [
-                    HostWord::Int,
-                    HostWord::Bool,
-                    HostWord::String,
-                    HostWord::Value,
-                    HostWord::List,
+            let int = HostShape::Leaf(HostLeaf::Int);
+            for shape in [
+                HostShape::Leaf(HostLeaf::Value),
+                HostShape::Option(Box::new(int.clone())),
+                HostShape::Product(vec![int.clone(), HostShape::List(Box::new(int.clone()))]),
+                HostShape::Function {
+                    takes: vec![int.clone()],
+                    answers: Box::new(int.clone()),
+                },
+            ] {
+                for (done, word) in [
+                    (HostListOperation::Construct, "construct"),
+                    (HostListOperation::Length, "length"),
+                    (HostListOperation::At, "at"),
                 ] {
-                    for (done, spelt) in [
-                        (HostListOperation::Construct, "construct"),
-                        (HostListOperation::Length, "length"),
-                        (HostListOperation::At, "at"),
+                    let mut read = vec![operation("l")];
+                    read.extend(shape.spelt().split('_').map(operation));
+                    read.push(operation(word));
+                    hold(host_list_symbol(module, &shape, done), under(module, read));
+                }
+                if matches!(shape, HostShape::Function { .. }) {
+                    for (done, word) in [
+                        (HostFunctionOperation::Call, "call"),
+                        (HostFunctionOperation::Implement, "implement"),
+                        (HostFunctionOperation::Implementation, "implementation"),
                     ] {
-                        let mut read = vec![operation("l")];
-                        if present {
-                            read.push(operation("present"));
-                        }
-                        read.push(operation(word.spelt()));
-                        read.push(operation(spelt));
+                        let mut read = vec![operation("fn")];
+                        read.extend(shape.spelt().split('_').map(operation));
+                        read.push(operation(word));
                         hold(
-                            host_list_symbol(module, present, word, done),
+                            host_function_symbol(module, &shape, done),
                             under(module, read),
                         );
                     }

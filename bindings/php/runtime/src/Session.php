@@ -40,6 +40,18 @@ final class Session
     private array $constructed = [];
 
     /**
+     * @var list<object> what a value of this run reads that PHP laid out, kept until the run ends:
+     *      each function value made of a closure PHP handed over ({@see FunctionSlot})
+     */
+    private array $kept = [];
+
+    /**
+     * @var array<string, CData> each function value made in this run of a closure PHP handed over,
+     *      by the slot it was made through and the closure
+     */
+    private array $made = [];
+
+    /**
      * @internal
      * @param array<string, Implemented> $injected what the run was handed, by the declared name of
      *        the behavior each implements, each with the binding it was written against
@@ -73,6 +85,53 @@ final class Session
     public function expire(): void
     {
         $this->active = false;
+        $this->kept = [];
+        $this->made = [];
+    }
+
+    /**
+     * @internal The function value `$closure` is made into through `$slot` in this run, made by
+     * `$make` the first time it is asked for.
+     *
+     * One for each closure and not one for each time it is handed over: a function value made of a
+     * closure calls that closure whenever it is called, and lives as long as the run either way, so
+     * a second one would be the same value, and a closure handed over in a loop would hold room for
+     * every time it went round until the run ended. The closure is kept by the slot until the run
+     * ends, so no other closure is given its id before then.
+     *
+     * @param \Closure(): CData $make
+     */
+    public function functionOf(FunctionSlot $slot, \Closure $closure, \Closure $make): CData
+    {
+        return $this->made[spl_object_id($slot) . ' ' . spl_object_id($closure)] ??= $make();
+    }
+
+    /** @internal Keeps `$it` for as long as this run is going: a value of the run reads it. */
+    public function keep(object $it): void
+    {
+        $this->kept[] = $it;
+    }
+
+    /**
+     * @internal A function value the library answered, held for this session's run, as a closure:
+     * each call of it is made by `$calling` in the innermost run going when it is called, which
+     * `$binding` finds, handed that run's session, the function value, and what the closure was
+     * called with.
+     *
+     * The function value is held as any other value is ({@see held()}), so a closure called after
+     * the run it was answered in has ended is refused before anything reads memory the arena has
+     * handed out again.
+     *
+     * @param class-string<Binding> $binding
+     * @param \Closure(Session, CData, mixed...): mixed $calling
+     */
+    public function callable(string $binding, CData $value, \Closure $calling): \Closure
+    {
+        $held = $this->held($value);
+        return static function (mixed ...$arguments) use ($binding, $held, $calling): mixed {
+            $session = $binding::session();
+            return $calling($session, $held->borrow($session), ...$arguments);
+        };
     }
 
     /** @internal The library's functions, to read what a value of a run still going holds. */

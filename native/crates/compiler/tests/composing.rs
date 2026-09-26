@@ -20,7 +20,6 @@ use std::process::{Command, Output};
 use tempfile::{TempDir, tempdir};
 
 mod support;
-use support::PREFIX;
 
 /// The document the Java half wrote, and the one its own test holds it to.
 const COMPOSING: &str = include_str!("composing.transport.json");
@@ -39,7 +38,7 @@ const HARNESS: &str = r#"
 #include <stdio.h>
 #include <stdlib.h>
 
-extern uint32_t pipeline(const void *, int64_t, int64_t *) __asm__("PREFIXsouther4.routing.pipeline");
+extern uint32_t pipeline(const void *, int64_t, int64_t *) __asm__("PREFIXsouther@.routing.pipeline");
 extern uint8_t tokenOfB __asm__("PREFIXsouther$type$routing$B");
 extern uint8_t tokenOfC __asm__("PREFIXsouther$type$routing$C");
 
@@ -111,7 +110,7 @@ fn build() -> (TempDir, PathBuf) {
     fs::write(&object, object_for(COMPOSING).expect("an object")).expect("the object written");
 
     let harness = into_path.join("harness.c");
-    fs::write(&harness, HARNESS.replace("PREFIX", PREFIX)).expect("the harness written");
+    fs::write(&harness, support::harness(HARNESS)).expect("the harness written");
 
     let executable = into_path.join("routing");
     let linked = Command::new("cc")

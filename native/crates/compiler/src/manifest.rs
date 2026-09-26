@@ -2,8 +2,8 @@
 //!
 //! Written as types and not built as JSON, so that what a manifest of one version says is a thing
 //! the compiler holds this code to. A field renamed here is a change to these types, and the
-//! fixture `tests/interface-v8.json` is what version 8 is: every manifest this writes is read back
-//! by these same types, which refuse a member they do not name.
+//! fixture `tests/interface-v10.json` is what version 10 is: every manifest this writes is read
+//! back by these same types, which refuse a member they do not name.
 //!
 //! [`VERSION`] moves when what a manifest says is read differently. What the functions it names
 //! answer to is [`Manifest::abi`], the generation in every symbol, and the two move apart.
@@ -19,13 +19,20 @@
 //! what constructing it requires injected ([`Behavior::requires`]), which a binding takes as what
 //! it is bound to. No function changed, and the ABI generation did not move either.
 //!
-//! Where a function is `null`, the model has the thing and a host has no way to reach it yet: a
-//! behavior taking a type with no way across, a field of a type with no representation for a host,
-//! a type with no external form here. The thing is still described, so a binding can say what it
-//! is and that it cannot be reached, rather than not know it is there.
+//! Where what reaches a value is [`Reach::Unavailable`], the model has the thing and a host has no
+//! way to reach it yet, and the manifest says why, as a reason and the place in the type it stands
+//! at ([`Refusal`]): a behavior taking a type with no representation for a host, a field whose
+//! type has none, a union a host would be handed with nothing to say which case it is. The thing
+//! is still described, so a binding can say what it is and why it cannot be reached, rather than
+//! not know it is there. Version 10 says so; before it, such a function was `null`, which a type
+//! with no external form here still is ([`Declaration`]'s `decode` and `encode`).
+//!
+//! What a function reaching a value hands over and is handed is said beside it as the [`Shape`]
+//! each value crosses in, which is the compiler's decision and the one a binding reads: a binding
+//! does not work out again from the model how a value crosses.
 
 use serde::{Deserialize, Serialize};
-use souther_native_abi::{ABI_GENERATION, HostParameter, HostWord};
+use souther_native_abi::{ABI_GENERATION, HostLeaf, HostParameter, HostShape, HostWord};
 use std::collections::BTreeMap;
 
 /// What a manifest says it is.
@@ -68,6 +75,15 @@ pub(crate) const MOVES: &[(u32, &str)] = &[
         "a primitive and a case the language gives cross to a host as a case of a union: a host \
          makes and reads each through the runtime (`cases`), and a union's `case` answers for \
          every union and not only one of declared cases",
+    ),
+    (
+        10,
+        "what reaches a value says the shape each value crosses in (`signature`), or why it cannot \
+         be reached (`unavailable`); a tuple, an optional at any depth and a function value cross, \
+         a list is built and read through functions for the shape its element crosses in, and a \
+         function value called and made through functions for its own (`functions`), each only \
+         where something crossing that way needs it; a field's reader writes the field through \
+         room; every type the model has is named, `nothing` and `never` among them",
     ),
 ];
 
@@ -181,23 +197,85 @@ pub(crate) struct Module {
     pub values: Vec<PublishedValue>,
     /// Every type it declares and publishes.
     pub declarations: Vec<Declaration>,
-    /// What a host builds and reads a list through, one for each way an element of a list crosses
-    /// where a list crosses in anything above.
+    /// What a host builds and reads a list through, one for each shape an element of a list
+    /// crosses in, where a list crosses in anything above or in anything here.
     ///
     /// Apart from [`Type::List`], which is what the model says a position holds: a list of one
     /// declared type and a list of another cross through the same functions, and which those are
-    /// is a matter of how the element crosses, not of what the model says it is. A binding finds
-    /// the one for a position by working out how the position's element crosses.
+    /// is a matter of the shape the element crosses in, not of what the model says it is. A binding
+    /// finds the one for a position by the [`Shape::List`] said beside it.
     pub lists: Vec<ListCrossing>,
+    /// What a host calls and makes a function value through, one for each shape a function value
+    /// crosses in, where one crosses in anything above or in anything here. Apart from
+    /// [`Type::Function`] for the reason `lists` is apart from [`Type::List`].
+    pub functions: Vec<FunctionCrossing>,
 }
 
-/// What a host builds and reads a list whose elements cross as `element` through.
+/// What a host calls a function value that crosses in the shape `signature` says through, and makes
+/// one of its own through: each only where something crossing needs it, since which a host may do
+/// is decided by the way each function value crosses and not by its shape. A host handed a function
+/// taking a union no declaration names calls it, handing the union over, and has nothing to be
+/// told which case one is where it would be handed one by a function of its own, so no function of
+/// that shape is made by a host unless something takes one from a host. At least one of the two is
+/// there.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct FunctionCrossing {
+    /// What a function value of this shape takes and answers, as each crosses.
+    pub signature: Signature,
+    /// `(function, what it takes, room for each word of its answer) -> status`, where a host is
+    /// handed a function value of this shape.
+    pub call: Option<Function>,
+    /// What a host makes one of its own through, where one is taken from a host.
+    pub make: Option<FunctionMaking>,
+}
+
+/// What a host makes a function value of its own through.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct FunctionMaking {
+    /// The function a host writes to make a function value of its own: handed what it was handed
+    /// where the value was made, then what the value was called with, and room for each word of
+    /// its answer, answering a status as an implementation of a behavior does.
+    pub implementation: Implementation,
+    /// The symbol a host makes a function value of an implementation of its own through: `(room
+    /// for what the header calls `souther_hosted_function`, a function of `implementation`'s type,
+    /// what it is handed first) -> function`, the room laid out and answered as the value. The
+    /// room, the function and what it is handed are the host's, and stay as they are for as long as
+    /// the value may be called, as they are for a behavior a host implements
+    /// ([`Injection::implement`]).
+    pub implement: String,
+}
+
+/// What a function a host reaches takes and answers, as the shape each value crosses in: what it
+/// takes in order, and what it answers.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Signature {
+    pub takes: Vec<Shape>,
+    pub answers: Box<Shape>,
+}
+
+/// What a host builds a list whose elements cross in the shape `element` through, and reads one
+/// through: each only where something crossing needs it, for the reason a [`FunctionCrossing`]
+/// says each only where needed. A list of a union no declaration names may be built by a host,
+/// which hands each element over as the case it is, and is read by none. At least one of the two
+/// is there.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ListCrossing {
-    pub element: Element,
-    /// `(count, a slice for each word an element crosses as) -> list`.
-    pub construct: Function,
+    pub element: Shape,
+    /// `(count, a slice for each word an element crosses as) -> list`, where a host hands a list
+    /// of these over.
+    pub construct: Option<Function>,
+    /// What a host reads one through, where a host is handed one.
+    pub read: Option<ListRead>,
+}
+
+/// What a host reads a list through.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ListRead {
     /// `(list) -> count`.
     pub length: Function,
     /// `(list, index, room for each word an element crosses as) -> bool`: whether the index is
@@ -205,13 +283,166 @@ pub(crate) struct ListCrossing {
     pub at: Function,
 }
 
-/// How an element of a list crosses: one word, or a presence beside one for an optional, the way a
-/// field of the element's type is handed across.
+/// The shape a value of the model crosses between a host and the library in: the words it is
+/// handed over as, and what they are made of. The manifest's spelling of
+/// [`souther_native_abi::HostShape`], which is what decides it.
+///
+/// Not a type of the model: a value of a declared type and one of a union are both one `value`,
+/// and a tuple is a `product` of its members. What the value is, is said beside it by [`Type`].
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "lowercase", deny_unknown_fields)]
+pub(crate) enum Shape {
+    /// One word that is the value itself.
+    Leaf(Leaf),
+    /// A presence, one `bool`, then the words of what it holds, read and written only where it
+    /// holds something.
+    Option(Box<Shape>),
+    /// Each member's words, one member after another.
+    Product(Vec<Shape>),
+    /// One `list`, built and read through the [`ListCrossing`] for the element's shape.
+    List(Box<Shape>),
+    /// One `function`, called and made through the [`FunctionCrossing`] for this signature.
+    Function(Signature),
+}
+
+/// A word a value of the model is itself handed over as.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
-pub(crate) enum Element {
-    Whole(Word),
-    Present(Word),
+pub(crate) enum Leaf {
+    Int,
+    Bool,
+    String,
+    Value,
+}
+
+impl From<&HostShape> for Shape {
+    fn from(shape: &HostShape) -> Shape {
+        match shape {
+            HostShape::Leaf(leaf) => Shape::Leaf(match leaf {
+                HostLeaf::Int => Leaf::Int,
+                HostLeaf::Bool => Leaf::Bool,
+                HostLeaf::String => Leaf::String,
+                HostLeaf::Value => Leaf::Value,
+            }),
+            HostShape::Option(of) => Shape::Option(Box::new(of.as_ref().into())),
+            HostShape::Product(members) => {
+                Shape::Product(members.iter().map(|it| it.into()).collect())
+            }
+            HostShape::List(element) => Shape::List(Box::new(element.as_ref().into())),
+            HostShape::Function { takes, answers } => Shape::Function(Signature {
+                takes: takes.iter().map(|it| it.into()).collect(),
+                answers: Box::new(answers.as_ref().into()),
+            }),
+        }
+    }
+}
+
+/// What reaches a value, or why nothing does.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "lowercase", deny_unknown_fields)]
+pub(crate) enum Reach<T> {
+    Available(T),
+    Unavailable(Refusal),
+}
+
+/// Why a host has no way to a value: what stands in the way, and where in what the function would
+/// hand over or be handed it stands, from the outside in.
+///
+/// A reason a binding says in its own words, and not a message: a binding for another language
+/// says it the way that language says a thing is not there.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Refusal {
+    pub reason: Reason,
+    pub path: Vec<Step>,
+}
+
+impl std::fmt::Display for Refusal {
+    /// The reason in words, then where it stands, from the outside in: `no representation for a
+    /// host, at what is taken at 0, what an optional holds`.
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str(match self.reason {
+            Reason::NoRepresentation => "no representation for a host",
+            Reason::NoValue => "no value to hand over",
+            Reason::NoDiscriminator => "a union with nothing to say which case it is",
+        })?;
+        for (at, step) in self.path.iter().enumerate() {
+            f.write_str(if at == 0 { ", at " } else { ", " })?;
+            match step {
+                Step::Takes(place) => write!(f, "what is taken at {place}")?,
+                Step::Answers => f.write_str("what is answered")?,
+                Step::Field(name) => write!(f, "the field {name}")?,
+                Step::Option => f.write_str("what an optional holds")?,
+                Step::Member(place) => write!(f, "the member at {place}")?,
+                Step::Element => f.write_str("an element")?,
+            }
+        }
+        Ok(())
+    }
+}
+
+/// What stands in the way of a value crossing to a host.
+///
+/// Each says what the value has none of, which is how a binding reads it, so each starts alike.
+#[allow(clippy::enum_variant_names)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum Reason {
+    /// A type with no representation for a host yet: a `Decimal`, a date, a `Set`, a `Map`.
+    NoRepresentation,
+    /// A type with no value to hand over: what an empty list holds, and what does not answer.
+    NoValue,
+    /// A union no declaration names, which a host would be handed with nothing to say which case
+    /// it is: only a behavior's answer is told its case ([`Answer::union`]).
+    NoDiscriminator,
+}
+
+/// One step into what a function hands over or is handed.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub(crate) enum Step {
+    /// What is taken at this place, counted from nought: a behavior's parameter, or a function
+    /// value's.
+    Takes(usize),
+    /// What is answered.
+    Answers,
+    /// A field of a declared type, by its name.
+    Field(String),
+    /// What an optional holds.
+    Option,
+    /// A tuple's member at this place.
+    Member(usize),
+    /// A list's element.
+    Element,
+}
+
+/// A behavior's or a published value's call, and the shape each value it takes and answers
+/// crosses in.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Call {
+    /// What was constructed with first where it is a behavior that is, then what `signature` takes,
+    /// then room for each word of what it answers, answering a status.
+    pub function: Function,
+    pub signature: Signature,
+}
+
+/// A declared type's constructor, and the shape each field is handed over in.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Construct {
+    /// Each field, then room for the value, answering a status.
+    pub function: Function,
+    pub takes: Vec<Shape>,
+}
+
+/// A field's reader, and the shape the field is handed over in.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Read {
+    /// The value, then room for each word of the field, answering nothing.
+    pub function: Function,
+    pub answers: Shape,
 }
 
 /// A published behavior.
@@ -223,7 +454,7 @@ pub(crate) struct Behavior {
     pub parameters: Parameters,
     pub answers: Answer,
     /// What a host calls it through: what it was constructed with first, then what it takes.
-    pub call: Option<Function>,
+    pub call: Reach<Call>,
 }
 
 /// What a host constructs the capabilities a behavior is called with out of
@@ -294,7 +525,7 @@ pub(crate) struct UnionAnswer {
     /// sum is one of them and says which. Not the union's members, which are the type's.
     pub cases: Vec<Case>,
     /// Which of `cases` a value is, where a host can be handed a value of the union: `null` only
-    /// where the behavior has no way to be called. A declared case is then the value itself, and
+    /// where the behavior has no way to be called ([`Reach::Unavailable`]). A declared case is then the value itself, and
     /// one no declaration names is read through [`Manifest::cases`].
     pub case: Option<Function>,
 }
@@ -309,6 +540,8 @@ pub(crate) struct Injection {
     /// is declared, and a declaration names every parameter.
     pub parameters: Vec<NamedParameter>,
     pub answers: Type,
+    /// What it takes and answers, as each crosses: what a host is handed and what it hands back.
+    pub signature: Signature,
     /// The function a host writes to implement it.
     pub implementation: Implementation,
     /// The symbol a host makes a capability of an implementation through: `(room for a capability,
@@ -374,8 +607,8 @@ pub(crate) struct PublishedValue {
     pub name: String,
     #[serde(rename = "type")]
     pub ty: Type,
-    /// What a host reads it through.
-    pub read: Option<Function>,
+    /// What a host reads it through: nothing taken, and room for each word of the value.
+    pub read: Reach<Call>,
 }
 
 /// A published type, as its declaration says it, with what a host reaches it through.
@@ -385,7 +618,7 @@ pub(crate) enum Declaration {
     Product {
         name: String,
         fields: Vec<Field>,
-        construct: Option<Function>,
+        construct: Reach<Construct>,
         decode: Option<Function>,
         /// Reads a value a host built of ordered maps ([`souther_native_abi::host_decode_host_value_symbol`]).
         #[serde(rename = "decodehost")]
@@ -395,7 +628,7 @@ pub(crate) enum Declaration {
     Newtype {
         name: String,
         field: Field,
-        construct: Option<Function>,
+        construct: Reach<Construct>,
         decode: Option<Function>,
         /// Reads a value a host built of ordered maps ([`souther_native_abi::host_decode_host_value_symbol`]).
         #[serde(rename = "decodehost")]
@@ -404,7 +637,7 @@ pub(crate) enum Declaration {
     },
     Unit {
         name: String,
-        construct: Option<Function>,
+        construct: Reach<Construct>,
         decode: Option<Function>,
         /// Reads a value a host built of ordered maps ([`souther_native_abi::host_decode_host_value_symbol`]).
         #[serde(rename = "decodehost")]
@@ -435,7 +668,7 @@ pub(crate) struct Field {
     #[serde(rename = "type")]
     pub ty: Type,
     /// What a host reads it through.
-    pub read: Option<Function>,
+    pub read: Reach<Read>,
 }
 
 /// A type, as the model says it. A declared type is its module and its name, never a key of the
@@ -473,6 +706,10 @@ pub(crate) enum Type {
         key: Box<Type>,
         value: Box<Type>,
     },
+    /// What has no value: what an empty list holds, before anything says more of it.
+    Nothing,
+    /// What does not answer: an `unreachable`, standing where anything could.
+    Never,
 }
 
 /// One case of a sum or a union.
@@ -553,6 +790,7 @@ pub(crate) enum Word {
     Requirements,
     Capability,
     Userdata,
+    Function,
 }
 
 impl From<HostWord> for Word {
@@ -574,6 +812,7 @@ impl From<HostWord> for Word {
             HostWord::Requirements => Word::Requirements,
             HostWord::Capability => Word::Capability,
             HostWord::Userdata => Word::Userdata,
+            HostWord::Function => Word::Function,
         }
     }
 }
@@ -597,6 +836,7 @@ impl From<Word> for HostWord {
             Word::Requirements => HostWord::Requirements,
             Word::Capability => HostWord::Capability,
             Word::Userdata => HostWord::Userdata,
+            Word::Function => HostWord::Function,
         }
     }
 }
@@ -629,19 +869,19 @@ mod tests {
         }
     }
 
-    /// What version 9 is. Read by these types, which refuse a member they do not name, and
+    /// What version 10 is. Read by these types, which refuse a member they do not name, and
     /// written back the same: a field renamed or a kind reshaped here stops matching the fixture
     /// the Java half's test also holds a written manifest to.
-    const V9: &str = include_str!("../tests/interface-v9.json");
+    const V10: &str = include_str!("../tests/interface-v10.json");
 
     #[test]
-    fn version_nine_is_read_and_written_back_as_it_is() {
-        let read: Manifest = serde_json::from_str(V9).expect("version 9 reads");
+    fn version_ten_is_read_and_written_back_as_it_is() {
+        let read: Manifest = serde_json::from_str(V10).expect("version 10 reads");
         assert_eq!(read.format, FORMAT);
         assert_eq!(read.version, VERSION);
         let mut written = serde_json::to_string_pretty(&read).unwrap();
         written.push('\n');
-        assert_eq!(written, V9);
+        assert_eq!(written, V10);
     }
 
     /// A surface an object of an earlier release carries is refused as that, and not as whichever
