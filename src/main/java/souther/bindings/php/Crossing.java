@@ -353,6 +353,7 @@ sealed interface Crossing {
     record OneOf(CrossingShape.Whole shape, List<Whole> members) implements Given {
 
         public OneOf {
+            members = List.copyOf(members);
             if (!(shape.type() instanceof Manifest.Type.Union union)
                     || union.cases().size() != members.size()) {
                 throw new IllegalArgumentException(members + " are not the members of " + shape);
@@ -389,6 +390,7 @@ sealed interface Crossing {
             implements Received {
 
         public Told {
+            cases = List.copyOf(cases);
             if (cases.size() != shape.cases().size()) {
                 throw new IllegalArgumentException(cases + " are not the cases of " + shape);
             }

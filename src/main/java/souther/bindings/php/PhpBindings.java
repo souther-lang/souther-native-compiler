@@ -53,6 +53,10 @@ public final class PhpBindings {
 
     /** What a binding is written as: the directory its namespace stands in, and every file in it. */
     public record Generated(Path root, List<Path> files) {
+
+        public Generated {
+            files = List.copyOf(files);
+        }
     }
 
     /** Where the declarations are copied to, beside the binding that loads them. */

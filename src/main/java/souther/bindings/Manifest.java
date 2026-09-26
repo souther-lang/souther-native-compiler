@@ -69,12 +69,17 @@ public final class Manifest {
      */
     private Manifest(int abi, Map<String, Integer> statuses, Map<String, Integer> outcomes,
                      List<Function> runtime, List<Module> modules) {
+        this.abi = abi;
+        this.statuses = Collections.unmodifiableMap(new LinkedHashMap<>(statuses));
+        this.outcomes = Collections.unmodifiableMap(new LinkedHashMap<>(outcomes));
+        this.runtime = List.copyOf(runtime);
+        this.modules = List.copyOf(modules);
         Set<String> constructible = new HashSet<>();
-        for (Module module : modules) {
+        for (Module module : this.modules) {
             module.constructions().forEach(it -> constructible.add(module.name() + "." + it.name()));
             module.injections().forEach(it -> constructible.add(module.name() + "." + it.name()));
         }
-        for (Module module : modules) {
+        for (Module module : this.modules) {
             for (Construction construction : module.constructions()) {
                 for (Required required : construction.requires()) {
                     if (!constructible.contains(required.key())) {
@@ -85,11 +90,6 @@ public final class Manifest {
                 }
             }
         }
-        this.abi = abi;
-        this.statuses = Collections.unmodifiableMap(new LinkedHashMap<>(statuses));
-        this.outcomes = Collections.unmodifiableMap(new LinkedHashMap<>(outcomes));
-        this.runtime = List.copyOf(runtime);
-        this.modules = List.copyOf(modules);
     }
 
     /** The ABI generation every function named here answers to. */
@@ -149,6 +149,10 @@ public final class Manifest {
 
     /** A function the library defines, by its symbol. */
     public record Function(String name, List<Parameter> takes, @Nullable Word answers) {
+
+        public Function {
+            takes = List.copyOf(takes);
+        }
     }
 
     /**
@@ -230,6 +234,10 @@ public final class Manifest {
      * capability of it through where something may require it.
      */
     public record Construction(String name, List<Required> requires, @Nullable Function bind) {
+
+        public Construction {
+            requires = List.copyOf(requires);
+        }
     }
 
     /** A behavior another requires injected, by its module and its name. */
@@ -253,6 +261,10 @@ public final class Manifest {
      * and what says which of them a value is, in the order they are listed.
      */
     public record UnionAnswer(List<Case> cases, @Nullable Function which) {
+
+        public UnionAnswer {
+            cases = List.copyOf(cases);
+        }
     }
 
     /** What a behavior takes: named as its declaration names them, or in order for a composition. */
@@ -262,6 +274,11 @@ public final class Manifest {
         List<Type> types();
 
         record Named(List<NamedParameter> parameters) implements Parameters {
+
+            public Named {
+                parameters = List.copyOf(parameters);
+            }
+
             @Override
             public List<Type> types() {
                 return parameters.stream().map(NamedParameter::type).toList();
@@ -269,6 +286,10 @@ public final class Manifest {
         }
 
         record Positional(List<Type> types) implements Parameters {
+
+            public Positional {
+                types = List.copyOf(types);
+            }
         }
     }
 
@@ -281,11 +302,19 @@ public final class Manifest {
      * it is handed first)}.
      */
     public record Injection(String name, List<NamedParameter> parameters, Type answers,
-                     Implementation implementation, String implement) {
+                            Implementation implementation, String implement) {
+
+        public Injection {
+            parameters = List.copyOf(parameters);
+        }
     }
 
     /** The C type of the function a host implements a behavior as. */
     public record Implementation(String type, List<Parameter> takes, Word answers) {
+
+        public Implementation {
+            takes = List.copyOf(takes);
+        }
     }
 
     public record PublishedValue(String name, Type type, @Nullable Function read) {
@@ -311,6 +340,10 @@ public final class Manifest {
         record Product(String name, List<Field> fields, @Nullable Function construct,
                        @Nullable Function decode, @Nullable Function decodeHost,
                        @Nullable Function encode) implements Declaration {
+
+            public Product {
+                fields = List.copyOf(fields);
+            }
         }
 
         record Newtype(String name, Field field, @Nullable Function construct,
@@ -327,6 +360,10 @@ public final class Manifest {
         record Sum(String name, List<Case> cases, @Nullable Function which,
                    @Nullable Function decode, @Nullable Function decodeHost,
                    @Nullable Function encode) implements Declaration {
+
+            public Sum {
+                cases = List.copyOf(cases);
+            }
         }
     }
 
@@ -343,6 +380,10 @@ public final class Manifest {
         }
 
         record Union(List<Case> cases) implements Type {
+
+            public Union {
+                cases = List.copyOf(cases);
+            }
         }
 
         record Option(Type of) implements Type {
