@@ -1,4 +1,4 @@
-package souther.nativecode.php;
+package souther.bindings;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -15,13 +15,11 @@ import java.util.stream.Stream;
  * <p>Written beside where it goes and put in place whole once everything in it is written, so that
  * the directory is only ever the binding of one manifest: never a binding with a class the model no
  * longer declares left from the one before, and never half of one where a later name was refused.
- * What it replaces has to be a binding this wrote, which it says by {@link #MARK}; a directory
- * holding anything else is refused rather than deleted.
+ * What it replaces has to be a binding of the same host this wrote, which it says by the mark the
+ * host's generator names; a directory holding anything else, a binding of another host among it,
+ * is refused rather than deleted.
  */
-final class Output {
-
-    /** What says a directory is a binding this wrote, and may be replaced whole. */
-    static final String MARK = ".souther-php-binding";
+public final class Output {
 
     private final Path target;
     private final Path staging;
@@ -32,47 +30,49 @@ final class Output {
     }
 
     /**
-     * Where a binding bound for {@code target} is written before it is put there.
+     * Where a binding bound for {@code target} is written before it is put there, marked with
+     * {@code mark}: the name of the file that says a directory is a binding of one host's.
      *
-     * @throws PhpBindings.NotBindable where {@code target} holds something no generation wrote
+     * @throws NotBindable where {@code target} holds something no generation for that host wrote
      */
-    static Output replacing(Path target) throws IOException {
-        Path absolute = replaceable(target);
+    public static Output replacing(Path target, String mark) throws IOException {
+        Path absolute = replaceable(target, mark);
         Path parent = absolute.getParent();
         Files.createDirectories(parent);
         Path staging = Files.createTempDirectory(parent, absolute.getFileName() + ".writing-");
-        Files.writeString(staging.resolve(MARK), "Written by souther-native-compiler from"
+        Files.writeString(staging.resolve(mark), "Written by souther-native-compiler from"
                 + " souther.json, and replaced whole on every generation.\n",
                 StandardCharsets.UTF_8);
         return new Output(absolute, staging);
     }
 
     /**
-     * {@code target} as it is replaced, where it is empty, absent or a binding this wrote.
+     * {@code target} as it is replaced, where it is empty, absent or a binding marked with
+     * {@code mark}.
      *
-     * @throws PhpBindings.NotBindable where {@code target} holds something no generation wrote
+     * @throws NotBindable where {@code target} holds something no generation for that host wrote
      */
-    static Path replaceable(Path target) throws IOException {
+    public static Path replaceable(Path target, String mark) throws IOException {
         Path absolute = target.toAbsolutePath().normalize();
-        if (Files.exists(absolute) && !ours(absolute)) {
-            throw new PhpBindings.NotBindable(absolute + " holds files a binding did not write,"
+        if (Files.exists(absolute) && !ours(absolute, mark)) {
+            throw new NotBindable(absolute + " holds files a binding did not write,"
                     + " and a binding replaces the directory it is written to whole");
         }
         return absolute;
     }
 
     /** Where what is written goes until it is put in place. */
-    Path staging() {
+    public Path staging() {
         return staging;
     }
 
     /** Where {@code written}, a path under {@link #staging()}, stands once it is put in place. */
-    Path placed(Path written) {
+    public Path placed(Path written) {
         return target.resolve(staging.relativize(written));
     }
 
     /** Puts what was written in place of what was there. */
-    void commit() throws IOException {
+    public void commit() throws IOException {
         if (!Files.exists(target)) {
             Files.move(staging, target, StandardCopyOption.ATOMIC_MOVE);
             return;
@@ -91,18 +91,18 @@ final class Output {
     }
 
     /** Drops what was written, where it is not to be put in place. */
-    void abandon() throws IOException {
+    public void abandon() throws IOException {
         remove(staging);
     }
 
-    /** Whether {@code directory} is empty, or a binding this wrote. */
-    private static boolean ours(Path directory) throws IOException {
+    /** Whether {@code directory} is empty, or a binding marked with {@code mark}. */
+    private static boolean ours(Path directory, String mark) throws IOException {
         if (!Files.isDirectory(directory)) {
             return false;
         }
         try (Stream<Path> entries = Files.list(directory)) {
             List<Path> held = entries.toList();
-            return held.isEmpty() || held.contains(directory.resolve(MARK));
+            return held.isEmpty() || held.contains(directory.resolve(mark));
         }
     }
 

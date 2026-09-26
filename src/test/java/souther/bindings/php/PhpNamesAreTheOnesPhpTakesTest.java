@@ -1,6 +1,7 @@
-package souther.nativecode.php;
+package souther.bindings.php;
 
 import org.junit.jupiter.api.Test;
+import souther.bindings.NotBindable;
 import souther.nativecode.Php;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -142,7 +143,7 @@ class PhpNamesAreTheOnesPhpTakesTest {
         try {
             claimed.claim(other, "other");
             return false;
-        } catch (PhpBindings.NotBindable refused) {
+        } catch (NotBindable refused) {
             return true;
         }
     }
@@ -155,7 +156,7 @@ class PhpNamesAreTheOnesPhpTakesTest {
                 case PARAMETER -> PhpNames.parameterName(word, "a parameter");
             }
             return false;
-        } catch (PhpBindings.NotBindable refused) {
+        } catch (NotBindable refused) {
             return true;
         }
     }

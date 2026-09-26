@@ -1,27 +1,32 @@
-package souther.nativecode.php;
+package souther.bindings.php;
 
 import org.jspecify.annotations.Nullable;
-import souther.nativecode.php.Manifest.Word;
+import souther.bindings.CrossingShape;
+import souther.bindings.Manifest;
+import souther.bindings.Manifest.ListCrossing;
+import souther.bindings.Manifest.Word;
 
 import java.util.List;
 import java.util.stream.Collectors;
 
 /**
- * How a value of one model type crosses between PHP and the library: what PHP calls its type, the
- * words it is handed over as, and, for each way it crosses, what PHP does with those words.
+ * How a value of one model type crosses between PHP and the library: the shape the library's ABI
+ * gives it ({@link CrossingShape}), which says the words it is handed over as, and on it what PHP
+ * calls its type and, for each way it crosses, what PHP does with those words.
  *
- * <p>The two ways are apart ({@link Given}, {@link Received}) because a type may cross one way and
- * not the other. PHP handing over a value of a union no declaration names knows which class it
- * holds and hands over the value; PHP handed one has to be told which case it is before it can
- * make an object of it, and only a behavior's answer says.
+ * <p>The two ways are apart ({@link Given}, {@link Received}), as {@link CrossingShape} asks them
+ * apart, because a type may cross one way and not the other. PHP handing over a value of a union
+ * no declaration names knows which class it holds and hands over the value; PHP handed one has to
+ * be told which case it is before it can make an object of it, and only a behavior's answer says.
  *
- * <p>An optional crosses as whether it is there and then the value, which is how the library hands
- * one over both ways; everything else crosses as one word. A list is one word too, and a PHP list
- * of what its element crosses as: PHP hands one over as an array the library builds a list of, and
- * is handed one as an array read out of it, through the functions the library defines for a list
- * whose element crosses that way.
+ * <p>A list is a PHP list of what its element crosses as: PHP hands one over as an array the
+ * library builds a list of, and is handed one as an array read out of it, through the functions the
+ * library defines for a list whose element crosses that way.
  */
 sealed interface Crossing {
+
+    /** How the value crosses, as the library's ABI has it. */
+    CrossingShape shape();
 
     /** What PHP calls a value of this, as a parameter or an answer is typed. */
     String phpType();
@@ -35,10 +40,35 @@ sealed interface Crossing {
     }
 
     /** The words it is handed over as, in order. */
-    List<Word> words();
+    default List<Word> words() {
+        return shape().words();
+    }
+
+    /**
+     * What PHP's FFI makes ({@code FFI::new}) to hold one word the library writes or reads: room a
+     * function writes through, or a column of a list. The word's own C type, as the declarations
+     * the build wrote spell it, which is what room for it points at, and not how a parameter taking
+     * that room is declared. Only a word PHP holds room for has one here: another is a word no
+     * function writes into PHP's room, and room made of it would be a mistake found at a call.
+     */
+    static String storage(Word word) {
+        return switch (word) {
+            case INT -> "int64_t";
+            case BOOL -> "uint8_t";
+            case VALUE -> "souther_value";
+            case STRING -> "souther_string";
+            case LIST -> "souther_list";
+            case DECODED -> "souther_decoded";
+            case STATUS, CASE, OUTCOME, COUNT, MARK, BYTES, ISSUE, REQUIREMENTS, CAPABILITY,
+                 USERDATA -> throw new IllegalArgumentException("PHP holds no room for a " + word);
+        };
+    }
 
     /** A value PHP hands the library. */
     sealed interface Given extends Crossing {
+
+        @Override
+        CrossingShape.Plain shape();
 
         /** The PHP expressions handing {@code value} over, one for each of {@link #words()}. */
         List<String> given(String value, String session);
@@ -49,6 +79,9 @@ sealed interface Crossing {
 
     /** A value the library hands PHP. */
     sealed interface Received extends Crossing {
+
+        @Override
+        CrossingShape shape();
 
         /**
          * The PHP expression making a value of this out of what the library answered, one
@@ -61,8 +94,15 @@ sealed interface Crossing {
         List<String> fromRooms(List<String> rooms);
     }
 
-    /** A value that crosses both ways, and the same way each. */
+    /**
+     * A value PHP holds both ways, and the same way each: never a union no declaration names, which
+     * PHP holds only where it hands one over whole ({@link OneOf}) or is told its case
+     * ({@link Told}), so a {@link Whole} is never one.
+     */
     sealed interface Both extends Given, Received {
+
+        @Override
+        CrossingShape.Plain shape();
     }
 
     /**
@@ -71,7 +111,12 @@ sealed interface Crossing {
      */
     sealed interface Single extends Both {
 
-        Word word();
+        @Override
+        CrossingShape.Single shape();
+
+        default Word word() {
+            return shape().word();
+        }
 
         /** What handing over nothing is, where an optional holds no value. */
         String absent();
@@ -79,14 +124,9 @@ sealed interface Crossing {
         /** The word held in room {@code room} names, as {@link #of} takes it. */
         String fromRoom(String room);
 
-        /** What C calls room for this word. */
-        default String cType() {
-            return Whole.cType(word());
-        }
-
-        @Override
-        default List<Word> words() {
-            return List.of(word());
+        /** What PHP's FFI makes to hold this word ({@link Crossing#storage}). */
+        default String storage() {
+            return Crossing.storage(word());
         }
 
         @Override
@@ -95,35 +135,48 @@ sealed interface Crossing {
         }
     }
 
-    /** One word of the library's. */
-    record Whole(Word word, String phpType, Kind kind, @Nullable String declared)
+    /**
+     * One word of the library's that is the value itself: a primitive, or a value of a declared
+     * type, as {@code kind} says and as the shape is.
+     */
+    record Whole(CrossingShape.Whole shape, String phpType, Kind kind, @Nullable String declared)
             implements Single {
 
         enum Kind { INT, BOOL, STRING, PRODUCT, SUM }
 
-        static Whole integer() {
-            return new Whole(Word.INT, "int", Kind.INT, null);
+        public Whole {
+            boolean is = switch (kind) {
+                case INT -> shape.word() == Word.INT;
+                case BOOL -> shape.word() == Word.BOOL;
+                case STRING -> shape.word() == Word.STRING;
+                case PRODUCT, SUM -> shape.type() instanceof Manifest.Type.Declared;
+            };
+            if (!is) {
+                throw new IllegalArgumentException("a " + kind + " is not held as " + shape);
+            }
         }
 
-        static Whole truth() {
-            return new Whole(Word.BOOL, "bool", Kind.BOOL, null);
-        }
-
-        static Whole text() {
-            return new Whole(Word.STRING, "string", Kind.STRING, null);
+        /** A value of a primitive, as PHP's own type for it, or null where PHP has none. */
+        static @Nullable Whole primitive(CrossingShape.Whole shape) {
+            return switch (shape.word()) {
+                case INT -> new Whole(shape, "int", Kind.INT, null);
+                case BOOL -> new Whole(shape, "bool", Kind.BOOL, null);
+                case STRING -> new Whole(shape, "string", Kind.STRING, null);
+                default -> null;
+            };
         }
 
         /** A value of a declared type that is not a sum, as the class generated for it. */
-        static Whole product(String fqcn) {
-            return new Whole(Word.VALUE, fqcn, Kind.PRODUCT, fqcn);
+        static Whole product(CrossingShape.Whole shape, String fqcn) {
+            return new Whole(shape, fqcn, Kind.PRODUCT, fqcn);
         }
 
         /**
          * A value of a sum, as the interface generated for it, and made through what decides which
          * of its classes a value is.
          */
-        static Whole sum(String iface, String codec) {
-            return new Whole(Word.VALUE, iface, Kind.SUM, codec);
+        static Whole sum(CrossingShape.Whole shape, String iface, String codec) {
+            return new Whole(shape, iface, Kind.SUM, codec);
         }
 
         @Override
@@ -173,29 +226,15 @@ sealed interface Crossing {
                 case STRING, PRODUCT, SUM -> room;
             };
         }
-
-        static String cType(Word word) {
-            return switch (word) {
-                case STATUS -> "souther_status";
-                case INT, COUNT, MARK -> "int64_t";
-                case BOOL -> "uint8_t";
-                case CASE -> "uint32_t";
-                case OUTCOME -> "int32_t";
-                case BYTES -> "uint8_t *";
-                case VALUE -> "souther_value";
-                case STRING -> "souther_string";
-                case DECODED -> "souther_decoded";
-                case ISSUE -> "souther_issue";
-                case LIST -> "souther_list";
-                case REQUIREMENTS -> "const souther_capability *const *";
-                case CAPABILITY -> "souther_capability";
-                case USERDATA -> "void *";
-            };
-        }
     }
 
     /** An optional: whether it holds a value, then the value, or nothing where it holds none. */
     record Present(Single of) implements Both {
+
+        @Override
+        public CrossingShape.Present shape() {
+            return new CrossingShape.Present(of.shape());
+        }
 
         @Override
         public String phpType() {
@@ -205,11 +244,6 @@ sealed interface Crossing {
         @Override
         public String phpDocType() {
             return of.phpDocType().equals(of.phpType()) ? phpType() : of.phpDocType() + "|null";
-        }
-
-        @Override
-        public List<Word> words() {
-            return List.of(Word.BOOL, of.word());
         }
 
         @Override
@@ -237,20 +271,23 @@ sealed interface Crossing {
     }
 
     /**
-     * A list, as a PHP list of what its element crosses as: built by {@code construct} out of a
-     * column for each word the element crosses as, and read as {@code length} elements, each
-     * written by {@code at} into room for those words.
+     * A list, as a PHP list of what its element crosses as, through the functions the shape names.
      *
      * <p>An element is handed over as PHP hands over a value of its type anywhere else, through the
      * session the list is built in, so a value of an outer run may be one and a value of a run that
      * ended may not. An element read out is held for the session the list was read in, as a field's
      * value is.
      */
-    record Listed(Both element, String construct, String length, String at) implements Single {
+    record Listed(Both element, ListCrossing crossing) implements Single {
+
+        /** Refuses a list through another element's functions, which the shape it makes does. */
+        public Listed {
+            new CrossingShape.Listed(element.shape(), crossing);
+        }
 
         @Override
-        public Word word() {
-            return Word.LIST;
+        public CrossingShape.Listed shape() {
+            return new CrossingShape.Listed(element.shape(), crossing);
         }
 
         @Override
@@ -277,7 +314,8 @@ sealed interface Crossing {
         public List<String> given(String value, String session) {
             // Typed as the element, so an element of another type is refused by PHP before any of
             // it reaches the library.
-            return List.of(session + "->list('" + construct + "', " + columns() + ", " + value
+            return List.of(session + "->list('" + crossing.construct().name() + "', "
+                    + columns() + ", " + value
                     + ", static fn (" + element.phpType() + " $it): array => ["
                     + String.join(", ", element.given("$it", session)) + "])");
         }
@@ -293,7 +331,8 @@ sealed interface Crossing {
             for (int at = 0; at < element.words().size(); at++) {
                 rooms.add("$r" + at);
             }
-            return session + "->elements('" + length + "', '" + at + "', " + columns() + ", "
+            return session + "->elements('" + crossing.length().name() + "', '"
+                    + crossing.at().name() + "', " + columns() + ", "
                     + words.getFirst() + ", static fn ("
                     + rooms.stream().map(it -> "\\FFI\\CData " + it).collect(Collectors.joining(", "))
                     + "): " + element.phpType() + " => "
@@ -302,7 +341,7 @@ sealed interface Crossing {
 
         /** What C calls each word an element crosses as, as a PHP array. */
         private String columns() {
-            return element.words().stream().map(it -> "'" + Whole.cType(it) + "'")
+            return element.words().stream().map(it -> "'" + Crossing.storage(it) + "'")
                     .collect(Collectors.joining(", ", "[", "]"));
         }
     }
@@ -311,16 +350,19 @@ sealed interface Crossing {
      * A value of a union no declaration names, handed over by PHP: an object of the class of one
      * of its members, which already is the case it is, so the value is handed over as it is.
      */
-    record OneOf(List<Whole> members) implements Given {
+    record OneOf(CrossingShape.Whole shape, List<Whole> members) implements Given {
+
+        public OneOf {
+            members = List.copyOf(members);
+            if (!(shape.type() instanceof Manifest.Type.Union union)
+                    || union.cases().size() != members.size()) {
+                throw new IllegalArgumentException(members + " are not the members of " + shape);
+            }
+        }
 
         @Override
         public String phpType() {
             return members.stream().map(Whole::phpType).collect(Collectors.joining("|"));
-        }
-
-        @Override
-        public List<Word> words() {
-            return List.of(Word.VALUE);
         }
 
         @Override
@@ -337,26 +379,28 @@ sealed interface Crossing {
 
     /**
      * A value of a union no declaration names, handed to PHP as a behavior's answer: made as the
-     * class of the case {@code which} says it is, each of {@code cases} at the place the library
-     * counts it.
+     * class of the case the shape's {@code which} says it is, each of {@code cases} at the place the
+     * library counts it.
      *
      * @param phpType the union of what PHP calls each of its members
-     * @param which   the function the library answers which case a value is through
      * @param cases   how a value of each case is made, in the order {@code which} counts them
      * @param what    what the answer is of, for the exception a case past them throws
      */
-    record Told(String phpType, String which, List<Whole> cases, String what) implements Received {
+    record Told(CrossingShape.Told shape, String phpType, List<Whole> cases, String what)
+            implements Received {
 
-        @Override
-        public List<Word> words() {
-            return List.of(Word.VALUE);
+        public Told {
+            cases = List.copyOf(cases);
+            if (cases.size() != shape.cases().size()) {
+                throw new IllegalArgumentException(cases + " are not the cases of " + shape);
+            }
         }
 
         @Override
         public String of(List<String> words, String session) {
             String word = words.getFirst();
-            StringBuilder match = new StringBuilder("match (" + session + "->ffi()->" + which
-                    + "(" + word + ")) {\n");
+            StringBuilder match = new StringBuilder("match (" + session + "->ffi()->"
+                    + shape.which().name() + "(" + word + ")) {\n");
             for (int at = 0; at < cases.size(); at++) {
                 match.append("            ").append(at).append(" => ")
                         .append(cases.get(at).of(List.of(word), session)).append(",\n");

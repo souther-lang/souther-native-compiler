@@ -1,4 +1,4 @@
-package souther.nativecode.php;
+package souther.bindings;
 
 import net.unit8.raoh.Result;
 import net.unit8.raoh.decode.Decoder;
@@ -9,6 +9,10 @@ import tools.jackson.databind.json.JsonMapper;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -26,28 +30,98 @@ import static net.unit8.raoh.json.JsonDecoders.string;
 import static net.unit8.raoh.json.JsonDecoders.strict;
 
 /**
- * What a manifest says, as this generator reads it: version 7 of {@code souther-native-interface},
- * and nothing else.
+ * What a manifest says, as every host's generator reads it: version {@value #VERSION} of
+ * {@value #FORMAT}, and nothing else.
  *
  * <p>Read strictly, as the driver writes it. A member this does not name, or a version or ABI
  * generation it was not written for, is refused rather than read as much of as happens to parse:
  * a binding generated from a manifest that says more than was understood of it would call
  * functions as something they are not.
+ *
+ * <p>Made only by {@link #read}, so a manifest a generator holds is one read that way; what it is
+ * made of is plain records a generator takes apart as it needs. What the driver promises of a
+ * manifest is held by the part that holds it, wherever that part is made: a list by the shape of
+ * its functions ({@link ListCrossing}), a module by saying one list for each element
+ * ({@link Module}), and what constructing a behavior requires by being closed over the whole.
  */
-record Manifest(int abi, Map<String, Integer> statuses, Map<String, Integer> outcomes,
-                List<Module> modules) {
+public final class Manifest {
 
     /** What a manifest says it is. */
-    static final String FORMAT = "souther-native-interface";
+    public static final String FORMAT = "souther-native-interface";
 
     /** The version of what a manifest says that this reads. */
-    static final int VERSION = 8;
+    public static final int VERSION = 8;
 
     /** The ABI generation the functions this binds answer to. */
-    static final int ABI = 4;
+    public static final int ABI = 4;
+
+    private final int abi;
+    private final Map<String, Integer> statuses;
+    private final Map<String, Integer> outcomes;
+    private final List<Function> runtime;
+    private final List<Module> modules;
+
+    /**
+     * What constructing a behavior requires is closed, as the driver holds a library's surface to
+     * be: every behavior a construction requires is one a module here constructs or asks a host to
+     * implement. A construction naming what nothing constructs would be found out by a host, at a
+     * call, as something no binding can build.
+     */
+    private Manifest(int abi, Map<String, Integer> statuses, Map<String, Integer> outcomes,
+                     List<Function> runtime, List<Module> modules) {
+        this.abi = abi;
+        this.statuses = Collections.unmodifiableMap(new LinkedHashMap<>(statuses));
+        this.outcomes = Collections.unmodifiableMap(new LinkedHashMap<>(outcomes));
+        this.runtime = List.copyOf(runtime);
+        this.modules = List.copyOf(modules);
+        Set<String> constructible = new HashSet<>();
+        for (Module module : this.modules) {
+            module.constructions().forEach(it -> constructible.add(module.name() + "." + it.name()));
+            module.injections().forEach(it -> constructible.add(module.name() + "." + it.name()));
+        }
+        for (Module module : this.modules) {
+            for (Construction construction : module.constructions()) {
+                for (Required required : construction.requires()) {
+                    if (!constructible.contains(required.key())) {
+                        throw new IllegalArgumentException("it says " + module.name() + "."
+                                + construction.name() + " requires " + required.key()
+                                + ", which nothing in it constructs or asks a host to implement");
+                    }
+                }
+            }
+        }
+    }
+
+    /** The ABI generation every function named here answers to. */
+    public int abi() {
+        return abi;
+    }
+
+    /**
+     * Every status a function answering one answers, by name: the one saying it answered, each
+     * reason a computation ends without a value, and what a host's implementation brings about.
+     */
+    public Map<String, Integer> statuses() {
+        return statuses;
+    }
+
+    /** What a reading comes to, by name. */
+    public Map<String, Integer> outcomes() {
+        return outcomes;
+    }
+
+    /** The runtime's functions a host calls. */
+    public List<Function> runtime() {
+        return runtime;
+    }
+
+    /** What each module of the library offers a host. */
+    public List<Module> modules() {
+        return modules;
+    }
 
     /** One word a host hands over or is handed. */
-    enum Word {
+    public enum Word {
         STATUS, INT, BOOL, CASE, OUTCOME, COUNT, MARK, BYTES, VALUE, STRING, DECODED, ISSUE, LIST,
         REQUIREMENTS, CAPABILITY, USERDATA
     }
@@ -56,46 +130,102 @@ record Manifest(int abi, Map<String, Integer> statuses, Map<String, Integer> out
      * One parameter of a function: a word handed over, room the function writes one through, or as
      * many of a word as another parameter counts, which the function reads.
      */
-    record Parameter(Mode mode, Word word) {
+    public record Parameter(Mode mode, Word word) {
 
-        enum Mode { GIVEN, ROOM, SLICE }
+        public enum Mode { GIVEN, ROOM, SLICE }
 
-        static Parameter given(Word word) {
+        public static Parameter given(Word word) {
             return new Parameter(Mode.GIVEN, word);
         }
 
-        static Parameter room(Word word) {
+        public static Parameter room(Word word) {
             return new Parameter(Mode.ROOM, word);
         }
 
-        static Parameter slice(Word word) {
+        public static Parameter slice(Word word) {
             return new Parameter(Mode.SLICE, word);
         }
     }
 
     /** A function the library defines, by its symbol. */
-    record Function(String name, List<Parameter> takes, @Nullable Word answers) {
+    public record Function(String name, List<Parameter> takes, @Nullable Word answers) {
+
+        public Function {
+            takes = List.copyOf(takes);
+        }
     }
 
-    record Module(String name, List<Behavior> behaviors, List<Construction> constructions,
-                  List<Injection> injections,
-                  List<PublishedValue> values, List<Declaration> declarations,
-                  List<ListCrossing> lists) {
+    /**
+     * What one module offers a host. It says one list for each way an element crosses, since a
+     * list of one element built through two sets of functions is two things said of one list.
+     */
+    public record Module(String name, List<Behavior> behaviors, List<Construction> constructions,
+                         List<Injection> injections,
+                         List<PublishedValue> values, List<Declaration> declarations,
+                         List<ListCrossing> lists) {
+
+        public Module {
+            behaviors = List.copyOf(behaviors);
+            constructions = List.copyOf(constructions);
+            injections = List.copyOf(injections);
+            values = List.copyOf(values);
+            declarations = List.copyOf(declarations);
+            lists = List.copyOf(lists);
+            Set<Element> listed = new HashSet<>();
+            for (ListCrossing list : lists) {
+                if (!listed.add(list.element())) {
+                    throw new IllegalArgumentException("module `" + name + "` says two lists of "
+                            + list.element());
+                }
+            }
+        }
     }
 
     /**
      * What a list whose elements cross as {@code element} is built and read through: a list of one
-     * declared type through the same functions as a list of any other.
+     * declared type through the same functions as a list of any other. Each function is of the
+     * shape a list of that element is: {@code (count, a slice for each word an element crosses as)
+     * -> list}, {@code (list) -> count}, and {@code (list, index, room for each word) -> bool}.
      */
-    record ListCrossing(Element element, Function construct, Function length, Function at) {
+    public record ListCrossing(Element element, Function construct, Function length,
+                               Function at) {
+
+        public ListCrossing {
+            List<Word> words = element.words();
+            List<Parameter> built = new ArrayList<>();
+            built.add(Parameter.given(Word.COUNT));
+            words.forEach(word -> built.add(Parameter.slice(word)));
+            List<Parameter> read = new ArrayList<>(
+                    List.of(Parameter.given(Word.LIST), Parameter.given(Word.COUNT)));
+            words.forEach(word -> read.add(Parameter.room(word)));
+            shaped(element, construct, built, Word.LIST);
+            shaped(element, length, List.of(Parameter.given(Word.LIST)), Word.COUNT);
+            shaped(element, at, read, Word.BOOL);
+        }
+
+        private static void shaped(Element element, Function function, List<Parameter> takes,
+                                   Word answers) {
+            if (!takes.equals(function.takes()) || answers != function.answers()) {
+                throw new IllegalArgumentException("a list of " + element + " is built and read"
+                        + " through " + function.name() + ", which takes " + function.takes()
+                        + " and answers " + function.answers() + " rather than " + takes + " and "
+                        + answers);
+            }
+        }
     }
 
     /** How an element of a list crosses: one word, or a presence beside one for an optional. */
-    record Element(boolean present, Word word) {
+    public record Element(boolean present, Word word) {
+
+        /** The words an element is handed over as, in order. */
+        public List<Word> words() {
+            return present ? List.of(Word.BOOL, word) : List.of(word);
+        }
     }
 
     /** A published behavior, and what a host calls it through where it can. */
-    record Behavior(String name, Parameters parameters, Answer answers, @Nullable Function call) {
+    public record Behavior(String name, Parameters parameters, Answer answers,
+                           @Nullable Function call) {
     }
 
     /**
@@ -103,14 +233,18 @@ record Manifest(int abi, Map<String, Integer> statuses, Map<String, Integer> out
      * not it may call it by name: what constructing it requires injected, and what a host makes a
      * capability of it through where something may require it.
      */
-    record Construction(String name, List<Required> requires, @Nullable Function bind) {
+    public record Construction(String name, List<Required> requires, @Nullable Function bind) {
+
+        public Construction {
+            requires = List.copyOf(requires);
+        }
     }
 
     /** A behavior another requires injected, by its module and its name. */
-    record Required(String module, String name) {
+    public record Required(String module, String name) {
 
         /** The module and the name joined the one way, which no two behaviors share. */
-        String key() {
+        public String key() {
             return module + "." + name;
         }
     }
@@ -119,23 +253,32 @@ record Manifest(int abi, Map<String, Integer> statuses, Map<String, Integer> out
      * What a behavior answers, and where that is a union no declaration names, what a host tells
      * its cases apart by.
      */
-    record Answer(Type type, @Nullable UnionAnswer union) {
+    public record Answer(Type type, @Nullable UnionAnswer union) {
     }
 
     /**
      * The cases a union a behavior answers descends to, a member that is a sum as its own cases,
      * and what says which of them a value is, in the order they are listed.
      */
-    record UnionAnswer(List<Case> cases, @Nullable Function which) {
+    public record UnionAnswer(List<Case> cases, @Nullable Function which) {
+
+        public UnionAnswer {
+            cases = List.copyOf(cases);
+        }
     }
 
     /** What a behavior takes: named as its declaration names them, or in order for a composition. */
-    sealed interface Parameters {
+    public sealed interface Parameters {
 
         /** Each type a behavior takes, in order, with or without the name it is declared under. */
         List<Type> types();
 
         record Named(List<NamedParameter> parameters) implements Parameters {
+
+            public Named {
+                parameters = List.copyOf(parameters);
+            }
+
             @Override
             public List<Type> types() {
                 return parameters.stream().map(NamedParameter::type).toList();
@@ -143,10 +286,14 @@ record Manifest(int abi, Map<String, Integer> statuses, Map<String, Integer> out
         }
 
         record Positional(List<Type> types) implements Parameters {
+
+            public Positional {
+                types = List.copyOf(types);
+            }
         }
     }
 
-    record NamedParameter(String name, Type type) {
+    public record NamedParameter(String name, Type type) {
     }
 
     /**
@@ -154,19 +301,27 @@ record Manifest(int abi, Map<String, Integer> statuses, Map<String, Integer> out
      * through: {@code (room for a capability, room for a souther_hosted, the implementation, what
      * it is handed first)}.
      */
-    record Injection(String name, List<NamedParameter> parameters, Type answers,
-                     Implementation implementation, String implement) {
+    public record Injection(String name, List<NamedParameter> parameters, Type answers,
+                            Implementation implementation, String implement) {
+
+        public Injection {
+            parameters = List.copyOf(parameters);
+        }
     }
 
     /** The C type of the function a host implements a behavior as. */
-    record Implementation(String type, List<Parameter> takes, Word answers) {
+    public record Implementation(String type, List<Parameter> takes, Word answers) {
+
+        public Implementation {
+            takes = List.copyOf(takes);
+        }
     }
 
-    record PublishedValue(String name, Type type, @Nullable Function read) {
+    public record PublishedValue(String name, Type type, @Nullable Function read) {
     }
 
     /** A published type, with what a host reaches it through. */
-    sealed interface Declaration {
+    public sealed interface Declaration {
 
         String name();
 
@@ -185,6 +340,10 @@ record Manifest(int abi, Map<String, Integer> statuses, Map<String, Integer> out
         record Product(String name, List<Field> fields, @Nullable Function construct,
                        @Nullable Function decode, @Nullable Function decodeHost,
                        @Nullable Function encode) implements Declaration {
+
+            public Product {
+                fields = List.copyOf(fields);
+            }
         }
 
         record Newtype(String name, Field field, @Nullable Function construct,
@@ -201,14 +360,18 @@ record Manifest(int abi, Map<String, Integer> statuses, Map<String, Integer> out
         record Sum(String name, List<Case> cases, @Nullable Function which,
                    @Nullable Function decode, @Nullable Function decodeHost,
                    @Nullable Function encode) implements Declaration {
+
+            public Sum {
+                cases = List.copyOf(cases);
+            }
         }
     }
 
-    record Field(String name, Type type, @Nullable Function read) {
+    public record Field(String name, Type type, @Nullable Function read) {
     }
 
     /** A type as the model says it. */
-    sealed interface Type {
+    public sealed interface Type {
 
         record Primitive(String name) implements Type {
         }
@@ -217,6 +380,10 @@ record Manifest(int abi, Map<String, Integer> statuses, Map<String, Integer> out
         }
 
         record Union(List<Case> cases) implements Type {
+
+            public Union {
+                cases = List.copyOf(cases);
+            }
         }
 
         record Option(Type of) implements Type {
@@ -231,7 +398,7 @@ record Manifest(int abi, Map<String, Integer> statuses, Map<String, Integer> out
     }
 
     /** One case of a sum. */
-    sealed interface Case {
+    public sealed interface Case {
 
         record Declared(String module, String name) implements Case {
         }
@@ -246,7 +413,7 @@ record Manifest(int abi, Map<String, Integer> statuses, Map<String, Integer> out
      *
      * @throws IllegalArgumentException where it is not one this reads, saying where and why
      */
-    static Manifest read(Path path) throws IOException {
+    public static Manifest read(Path path) throws IOException {
         JsonNode read = JsonMapper.builder().build().readTree(Files.readString(path));
         // What it says it is, first and alone: a manifest of another version fails on whichever
         // member moved since, and would say that member is unknown rather than that it is another
@@ -258,7 +425,15 @@ record Manifest(int abi, Map<String, Integer> statuses, Map<String, Integer> out
                     + says.format() + " for ABI generation " + says.abi() + ", and this generator"
                     + " reads version " + VERSION + " of " + FORMAT + " for generation " + ABI);
         }
-        return MANIFEST.decode(read).orElseThrow(issues -> new IllegalArgumentException(
+        Result<Manifest> decoded;
+        try {
+            decoded = MANIFEST.decode(read);
+        } catch (IllegalArgumentException broken) {
+            // What a part of it holds of itself, refused where the part is made.
+            throw new IllegalArgumentException(path + " is not a manifest this generator reads: "
+                    + broken.getMessage(), broken);
+        }
+        return decoded.orElseThrow(issues -> new IllegalArgumentException(
                 path + " is not a manifest this generator reads: " + issues));
     }
 
@@ -436,5 +611,5 @@ record Manifest(int abi, Map<String, Integer> statuses, Map<String, Integer> out
             field("runtime", list(FUNCTION)),
             field("modules", list(MODULE)))
             .strict((format, version, abi, statuses, outcomes, runtime, modules) ->
-                    new Manifest(abi, statuses, outcomes, modules));
+                    new Manifest(abi, statuses, outcomes, runtime, modules));
 }

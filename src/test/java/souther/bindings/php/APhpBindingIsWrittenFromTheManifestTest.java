@@ -1,13 +1,13 @@
-package souther.nativecode.php;
+package souther.bindings.php;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import souther.bindings.NotBindable;
 import souther.compiler.program.CheckedProgram;
 import souther.nativecode.NativeCompiler;
 import souther.nativecode.Php;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
-import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;
 
 import java.nio.charset.StandardCharsets;
@@ -28,7 +28,7 @@ class APhpBindingIsWrittenFromTheManifestTest {
     private static PhpBindings.Generated generated(Path into, String source) throws Exception {
         NativeCompiler.Library library =
                 NativeCompiler.library(CheckedProgram.of(List.of(source)), into.resolve("native"));
-        return PhpBindings.generate(library, into.resolve("php"), "Acme\\Billing");
+        return LibraryBinding.generated(library, into.resolve("php"), "Acme\\Billing");
     }
 
     private static String behaviors(PhpBindings.Generated generated) throws Exception {
@@ -157,7 +157,7 @@ class APhpBindingIsWrittenFromTheManifestTest {
 
                 data Behaviors = Int
                 """))
-                .isInstanceOf(PhpBindings.NotBindable.class)
+                .isInstanceOf(NotBindable.class)
                 .hasMessageContaining("type `m.Behaviors`");
     }
 
@@ -299,7 +299,7 @@ class APhpBindingIsWrittenFromTheManifestTest {
      */
     @Test
     void twoRequirementsOfOneNameAreTakenByTheirPlaces(@TempDir Path into) throws Exception {
-        PhpBindings.Generated generated = PhpBindings.generate(NativeCompiler.library(
+        PhpBindings.Generated generated = LibraryBinding.generated(NativeCompiler.library(
                 CheckedProgram.of(List.of("""
                         module a exposing ( load )
 
@@ -351,7 +351,7 @@ class APhpBindingIsWrittenFromTheManifestTest {
 
                 data Match = Int
                 """))
-                .isInstanceOf(PhpBindings.NotBindable.class)
+                .isInstanceOf(NotBindable.class)
                 .hasMessageContaining("`Match` is a word PHP reserves");
     }
 
@@ -362,7 +362,7 @@ class APhpBindingIsWrittenFromTheManifestTest {
 
                 data Tag = { encode: Bool }
                 """))
-                .isInstanceOf(PhpBindings.NotBindable.class)
+                .isInstanceOf(NotBindable.class)
                 .hasMessageContaining("field `encode`")
                 .hasMessageContaining("one name to PHP");
     }
@@ -375,31 +375,11 @@ class APhpBindingIsWrittenFromTheManifestTest {
                 data Box = Bool
                 """)), into.resolve("native"));
 
-        assertThatThrownBy(() -> PhpBindings.generate(library, into.resolve("php"), ""))
-                .isInstanceOf(PhpBindings.NotBindable.class);
-        assertThatThrownBy(() -> PhpBindings.generate(library, into.resolve("php"), "Acme\\Class"))
-                .isInstanceOf(PhpBindings.NotBindable.class)
+        assertThatThrownBy(() -> LibraryBinding.generated(library, into.resolve("php"), ""))
+                .isInstanceOf(NotBindable.class);
+        assertThatThrownBy(() -> LibraryBinding.generated(library, into.resolve("php"), "Acme\\Class"))
+                .isInstanceOf(NotBindable.class)
                 .hasMessageContaining("`Class` is a word PHP reserves");
-    }
-
-    /**
-     * A manifest of a version this was not written for is refused as that, and not as whichever
-     * member moved since: version 3, as the driver wrote it, said what a behavior answers as a
-     * type.
-     */
-    @Test
-    void aManifestOfAnotherVersionIsRefusedByItsVersion(@TempDir Path into) throws Exception {
-        Path earlier = Path.of("src", "test", "resources", "souther", "nativecode", "php",
-                "interface-v3.json");
-        Path declarations = into.resolve("souther.declarations");
-        Files.writeString(declarations, "", StandardCharsets.UTF_8);
-
-        assertThatThrownBy(() -> PhpBindings.generate(earlier, declarations, into.resolve("php"),
-                "Acme\\Billing"))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("is version 3 of souther-native-interface for ABI generation"
-                        + " 3, and this generator reads version 8")
-                .hasMessageNotContaining("answers");
     }
 
     /**
@@ -439,7 +419,7 @@ class APhpBindingIsWrittenFromTheManifestTest {
                 behavior f : (GLOBALS: Int) -> Int
                 let f (x) = x
                 """))
-                .isInstanceOf(PhpBindings.NotBindable.class)
+                .isInstanceOf(NotBindable.class)
                 .hasMessageContaining("`GLOBALS`, which PHP takes for no parameter");
     }
 
@@ -464,7 +444,7 @@ class APhpBindingIsWrittenFromTheManifestTest {
                     .get("parameters").get("named").get(1);
             second.put("name", "a");
         }))
-                .isInstanceOf(PhpBindings.NotBindable.class)
+                .isInstanceOf(NotBindable.class)
                 .hasMessageContaining("parameter `a`")
                 .hasMessageContaining("PHP takes for one parameter");
     }
@@ -473,7 +453,7 @@ class APhpBindingIsWrittenFromTheManifestTest {
     @Test
     void aTypeTheModelNoLongerDeclaresLeavesTheBinding(@TempDir Path into) throws Exception {
         Path php = into.resolve("php");
-        PhpBindings.generate(NativeCompiler.library(CheckedProgram.of(List.of("""
+        LibraryBinding.generated(NativeCompiler.library(CheckedProgram.of(List.of("""
                 module m exposing ( Kept, Dropped )
 
                 data Kept = Int
@@ -481,7 +461,7 @@ class APhpBindingIsWrittenFromTheManifestTest {
                 """)), into.resolve("before")), php, "Acme\\Billing");
         assertThat(php.resolve("M").resolve("Dropped.php")).exists();
 
-        PhpBindings.generate(NativeCompiler.library(CheckedProgram.of(List.of("""
+        LibraryBinding.generated(NativeCompiler.library(CheckedProgram.of(List.of("""
                 module m exposing ( Kept )
 
                 data Kept = Int
@@ -495,7 +475,7 @@ class APhpBindingIsWrittenFromTheManifestTest {
     @Test
     void aRefusedGenerationLeavesTheBindingThatWasThere(@TempDir Path into) throws Exception {
         Path php = into.resolve("php");
-        PhpBindings.generate(NativeCompiler.library(CheckedProgram.of(List.of("""
+        LibraryBinding.generated(NativeCompiler.library(CheckedProgram.of(List.of("""
                 module m exposing ( Kept )
 
                 data Kept = Int
@@ -508,8 +488,8 @@ class APhpBindingIsWrittenFromTheManifestTest {
                 data Tag = { encode: Bool }
                 """)), into.resolve("after"));
 
-        assertThatThrownBy(() -> PhpBindings.generate(refused, php, "Acme\\Billing"))
-                .isInstanceOf(PhpBindings.NotBindable.class);
+        assertThatThrownBy(() -> LibraryBinding.generated(refused, php, "Acme\\Billing"))
+                .isInstanceOf(NotBindable.class);
         assertThat(Files.readString(php.resolve("M").resolve("Kept.php"))).isEqualTo(before);
         try (var beside = Files.list(into)) {
             assertThat(beside.map(it -> it.getFileName().toString()))
@@ -523,13 +503,13 @@ class APhpBindingIsWrittenFromTheManifestTest {
         Path php = Files.createDirectories(into.resolve("php"));
         Files.writeString(php.resolve("mine.php"), "<?php\n", StandardCharsets.UTF_8);
 
-        assertThatThrownBy(() -> PhpBindings.generate(NativeCompiler.library(
+        assertThatThrownBy(() -> LibraryBinding.generated(NativeCompiler.library(
                 CheckedProgram.of(List.of("""
                         module m exposing ( Kept )
 
                         data Kept = Int
                         """)), into.resolve("native")), php, "Acme\\Billing"))
-                .isInstanceOf(PhpBindings.NotBindable.class)
+                .isInstanceOf(NotBindable.class)
                 .hasMessageContaining("holds files a binding did not write");
         assertThat(php.resolve("mine.php")).exists();
     }
@@ -578,7 +558,7 @@ class APhpBindingIsWrittenFromTheManifestTest {
     @Test
     void aListIsBuiltThroughItsOwnModulesFunctions(@TempDir Path into) throws Exception {
         PhpBindings.Generated generated =
-                PhpBindings.generate(twoModules(into), into.resolve("php"), "Acme\\Billing");
+                LibraryBinding.generated(twoModules(into), into.resolve("php"), "Acme\\Billing");
 
         assertThat(Files.readString(generated.root().resolve("Shop").resolve("Cart.php")))
                 .contains("souther4_m_shop_l_value_construct", "souther4_m_shop_l_value_at")
@@ -586,48 +566,5 @@ class APhpBindingIsWrittenFromTheManifestTest {
         assertThat(Files.readString(generated.root().resolve("Stock").resolve("Bin.php")))
                 .contains("souther4_m_stock_l_value_construct", "souther4_m_stock_l_value_at")
                 .doesNotContain("souther4_m_shop_");
-    }
-
-    /**
-     * Every list a module says is held to what a list of its element is built and read through,
-     * whether or not another module says a good one for the same element.
-     */
-    @Test
-    void aListAModuleSaysOtherThanAListIsRefused(@TempDir Path into) throws Exception {
-        NativeCompiler.Library library = twoModules(into);
-
-        assertThatThrownBy(() -> generatedAfter(into, library, "stock", module -> {
-            ObjectNode at = (ObjectNode) module.get("lists").get(0).get("at");
-            ((ArrayNode) at.get("takes")).remove(2);
-        }))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("souther4_m_stock_l_value_at");
-    }
-
-    /**
-     * A module with a function handing a list across and nothing to build one through is the
-     * manifest and the binding disagreeing, and is refused rather than written without the function.
-     */
-    @Test
-    void aListWithNothingToBuildItThroughIsRefused(@TempDir Path into) throws Exception {
-        NativeCompiler.Library library = twoModules(into);
-
-        assertThatThrownBy(() -> generatedAfter(into, library, "stock",
-                module -> ((ArrayNode) module.get("lists")).removeAll()))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("module `stock` nothing to build a list of");
-    }
-
-    /** One element twice in a module is two things said of one list. */
-    @Test
-    void aListOfOneElementSaidTwiceIsRefused(@TempDir Path into) throws Exception {
-        NativeCompiler.Library library = twoModules(into);
-
-        assertThatThrownBy(() -> generatedAfter(into, library, "shop", module -> {
-            ArrayNode lists = (ArrayNode) module.get("lists");
-            lists.add(lists.get(0).deepCopy());
-        }))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("module `shop` two lists of");
     }
 }

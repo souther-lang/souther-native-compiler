@@ -1,4 +1,6 @@
-package souther.nativecode.php;
+package souther.bindings.php;
+
+import souther.bindings.NotBindable;
 
 import java.text.Normalizer;
 import java.util.ArrayList;
@@ -114,7 +116,7 @@ final class PhpNames {
     static String typeName(String name, String what) {
         identifier(name, what);
         if (RESERVED.contains(asciiLower(name))) {
-            throw new PhpBindings.NotBindable(what + " `" + name + "` is a word PHP reserves,"
+            throw new NotBindable(what + " `" + name + "` is a word PHP reserves,"
                     + " which no class, interface or namespace may be called");
         }
         return name;
@@ -124,7 +126,7 @@ final class PhpNames {
     static String memberName(String name, String what) {
         identifier(name, what);
         if (asciiLower(name).equals(HALT)) {
-            throw new PhpBindings.NotBindable(what + " `" + name + "` is a word PHP reserves even"
+            throw new NotBindable(what + " `" + name + "` is a word PHP reserves even"
                     + " for a method");
         }
         return name;
@@ -134,7 +136,7 @@ final class PhpNames {
     static String parameterName(String name, String what) {
         identifier(name, what);
         if (UNNAMEABLE_PARAMETERS.contains(name)) {
-            throw new PhpBindings.NotBindable(
+            throw new NotBindable(
                     what + " is called `" + name + "`, which PHP takes for no parameter");
         }
         return name;
@@ -164,7 +166,7 @@ final class PhpNames {
     /** Refused where {@code root} is not a namespace. */
     static String rootNamespace(String root) {
         if (root.isEmpty()) {
-            throw new PhpBindings.NotBindable(
+            throw new NotBindable(
                     "a binding is generated under a namespace of its own, and none was named");
         }
         for (String part : root.split("\\\\", -1)) {
@@ -228,7 +230,7 @@ final class PhpNames {
             };
             String before = held.putIfAbsent(key, what);
             if (before != null) {
-                throw new PhpBindings.NotBindable(before + " and " + what + " in " + where
+                throw new NotBindable(before + " and " + what + " in " + where
                         + switch (sameness) {
                             case FILE -> " are one name to PHP or to a file system that does not"
                                     + " tell case apart, and each is a file of its own";
@@ -285,10 +287,10 @@ final class PhpNames {
      */
     private static void identifier(String name, String what) {
         if (name.isEmpty()) {
-            throw new PhpBindings.NotBindable(what + " has an empty name");
+            throw new NotBindable(what + " has an empty name");
         }
         if (!isIdentifier(name)) {
-            throw new PhpBindings.NotBindable(what + " `" + name + "` is not a name PHP takes");
+            throw new NotBindable(what + " `" + name + "` is not a name PHP takes");
         }
     }
 

@@ -432,9 +432,10 @@ type and in order, and a binding names each by its place.
 
 ## A PHP binding
 
-`PhpBindings.generate(library, into, namespace)` writes the PHP a host calls a library through, from
-the manifest and nothing else, under a namespace the caller names: two libraries publishing a module
-of the same name can then stand in one application. A module is a namespace under it (`shop` is
+`PhpBindings.generate(manifest, declarations, into, namespace)` writes the PHP a host calls a
+library through, from the manifest a build wrote beside it and nothing else, beside a copy of the
+declarations the binding loads the library through. It is written under a namespace the caller
+names: two libraries publishing a module of the same name can then stand in one application. A module is a namespace under it (`shop` is
 `Acme\Billing\Shop`). A product, a newtype and a unit are each a `final readonly` class holding the
 value where the library made it, with a reader for each field, a static `of` building one and
 answering a raoh-php `Result`, a static `decode` reading one out of its external form, and `encode`.
