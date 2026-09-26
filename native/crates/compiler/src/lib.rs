@@ -2459,15 +2459,18 @@ fn means_the_same_elsewhere(ty: &Ty) -> bool {
         // question, and answering it here would be answering it with the wrong thing.
         Ty::Declared { .. } => true,
         // Written nowhere at run time: what holds a union holds one of its members, and each of
-        // those says which case it is by a token the linker resolves.
-        //
-        // Only a declared case, though a primitive or a case the language gives carries the
-        // runtime's token, which every object in a library reaches too. Nothing runs that yet: the
-        // two places objects meet are a published behavior and a published value, and the build
-        // publishing one also writes its answer's external form, which no such case has here
-        // (`codec`). A claim about what two objects agree on is made once two objects are run on
-        // it, the way a declared case's is (`ABehaviorAnotherBuildImplementsTest`).
-        Ty::Union { union } => union.iter().all(|it| matches!(it, Case::Declared { .. })),
+        // those says which case it is by a token the linker resolves — a declaration's, which the
+        // object of the build declaring it defines, or the runtime's for a primitive or a case the
+        // language gives, which every object in a library links. So a union means what its cases
+        // do: a declared case is its declared type, a primitive what that primitive means, and a
+        // case the language gives holds nothing but its token.
+        Ty::Union { union } => union.iter().all(|case| match case {
+            Case::Declared { declared } => means_the_same_elsewhere(&Ty::Declared {
+                declared: declared.clone(),
+            }),
+            Case::Primitive { prim } => means_the_same_elsewhere(&Ty::Prim { prim: *prim }),
+            Case::Language { .. } => true,
+        }),
         Ty::Option { option } => means_the_same_elsewhere(option),
         // A length and slots, laid out in the crate both halves read, so a list means what its
         // elements mean.

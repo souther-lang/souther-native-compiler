@@ -44,7 +44,7 @@ class ABehaviorAnotherBuildImplementsTest {
 
     private static final String BUILT_BEFORE = """
             module lib.rates exposing ( Rate, Shape, Round, Square, spin, tally, twice, rounded,
-                                        squared, shout )
+                                        squared, shout, Missing, sizeOf, heldOf )
 
             // `Round` first, so that this document carries it before anything else, in the order
             // the module declares it, and the one below, which carries what its bodies name in the
@@ -74,6 +74,14 @@ class ABehaviorAnotherBuildImplementsTest {
 
             behavior shout : (a: String) -> String
             let shout (a) = a ++ "!"
+
+            data Missing
+
+            behavior sizeOf : (a: Int) -> Int | Missing
+            let sizeOf (a) = if a > 0 then a else Missing
+
+            behavior heldOf : (a: Int) -> Bool | Missing
+            let heldOf (a) = if a > 0 then a > 1 else Missing
             """;
 
     private static final String REACHING_IT = """
@@ -282,6 +290,50 @@ class ABehaviorAnotherBuildImplementsTest {
         assertThat(running.answering(module, agrees,
                 List.of(new ObservedValue.Text("hi"))))
                 .isEqualTo(new ObservedValue.Bool(true));
+    }
+
+    /**
+     * A primitive carried as a case of a union in one object, and forked on and read back out in
+     * another.
+     *
+     * <p>What it carries at its front is the runtime's token for the primitive, which the runtime
+     * both objects link defines once, so the fork compares what it compares for a declared case: an
+     * address the linker settled. Every arm, since one taken by a comparison that held and one taken
+     * by one that did not are the two things a fork can do wrong.
+     */
+    @Test
+    void aPrimitiveCarriedInOneObjectIsForkedOnInAnother() throws Exception {
+        CheckedProgram program = compiled("""
+                module app.sizes exposing ( doubled, told )
+                import lib.rates ( Missing, sizeOf, heldOf )
+
+                behavior doubled : (a: Int) -> Int
+                let doubled (a) = match sizeOf(a) with
+                    | Int as n -> n * 2
+                    | Missing -> -1
+
+                behavior told : (a: Int) -> Int
+                let told (a) = match heldOf(a) with
+                    | Bool as b -> if b then 2 else 1
+                    | Missing -> 0
+                """);
+        byte[] before = NativeArtifacts.object(builtBefore());
+
+        Running running = Running.of(program, List.of(before));
+        CheckedModule module = program.modules().getFirst();
+        var doubled = module.behavior(new ValueName.Behavior("app.sizes", "doubled"));
+        var told = module.behavior(new ValueName.Behavior("app.sizes", "told"));
+
+        assertThat(running.answering(module, doubled, List.of(new ObservedValue.Integer(21))))
+                .isEqualTo(new ObservedValue.Integer(42));
+        assertThat(running.answering(module, doubled, List.of(new ObservedValue.Integer(0))))
+                .isEqualTo(new ObservedValue.Integer(-1));
+        assertThat(running.answering(module, told, List.of(new ObservedValue.Integer(2))))
+                .isEqualTo(new ObservedValue.Integer(2));
+        assertThat(running.answering(module, told, List.of(new ObservedValue.Integer(1))))
+                .isEqualTo(new ObservedValue.Integer(1));
+        assertThat(running.answering(module, told, List.of(new ObservedValue.Integer(0))))
+                .isEqualTo(new ObservedValue.Integer(0));
     }
 
     /**

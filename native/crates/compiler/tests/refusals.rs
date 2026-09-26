@@ -338,10 +338,9 @@ fn an_answer_that_is_a_set_is_read_and_not_lowered() {
 }
 
 /// A primitive standing as a member of an answer is a case the transport carries, and a value of
-/// the union has a representation here: the `Int` is carried with the runtime's token for it. What
-/// answers the behavior is the object of the build that declares it, reached from every other
-/// object, and a union with a case no declaration names is not yet one an object is run reading
-/// from another; nor is a host handed a way to make one. So the behavior is not lowered.
+/// the union has a representation here: the `Int` is carried with the runtime's token for it, and
+/// another object reads it by the same token. What answers the behavior is a host, and a host is
+/// not handed a way to make one yet. So the behavior is not lowered.
 #[test]
 fn an_answer_with_a_primitive_among_its_cases_is_read_and_not_lowered() {
     let document = concat!(
@@ -355,14 +354,14 @@ fn an_answer_with_a_primitive_among_its_cases_is_read_and_not_lowered() {
         r#""modules":[{"name":"m","publishes":[],"helpers":[],"values":[],"entries":[],"definitions":[],"examples":[]}]}"#,
     );
 
-    let refused = object_for(document).expect_err("no object reads a carried Int from another");
+    let refused = object_for(document).expect_err("no host makes a carried Int");
 
     assert!(
         refused.downcast_ref::<NotLowered>().is_some(),
-        "a union no object reads from another is the backend being behind: {refused}"
+        "a union no host makes is the backend being behind: {refused}"
     );
     assert!(
-        refused.to_string().contains("reached across objects"),
+        refused.to_string().contains("what a host cannot be handed"),
         "{refused}"
     );
 }
