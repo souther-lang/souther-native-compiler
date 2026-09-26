@@ -362,6 +362,8 @@ built_in_cases! {
     "Int" => CASE_INT,
     "Bool" => CASE_BOOL,
     "String" => CASE_STRING,
+    "Some" => CASE_SOME,
+    "None" => CASE_NONE,
     "DivisionByZero" => CASE_DIVISION_BY_ZERO,
     "NotANumber" => CASE_NOT_A_NUMBER,
     "NotADate" => CASE_NOT_A_DATE,

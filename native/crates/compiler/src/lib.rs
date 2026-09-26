@@ -24,6 +24,7 @@ mod link;
 mod literals;
 mod manifest;
 mod replaced;
+mod restating;
 mod specialize;
 pub mod transport;
 mod unrun;
@@ -45,6 +46,7 @@ use cranelift::object::{ObjectBuilder, ObjectModule};
 use interface::Surface;
 use kernels::LoweredKernel;
 use literals::Literals;
+use restating::restate;
 use souther_native_abi::{
     ALLOCATE, ANSWERED, CAPABILITY_ENVIRONMENT, CAPABILITY_INVOKE, CARRIED, EXAMPLE_STATUSES,
     FAKE_NO_OUTPUT, HELD, HOST_STATUSES, INJECTION_UNBOUND, LIST_LENGTH, NO_FAILED_CLAUSE, NOTHING,
@@ -720,9 +722,11 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
     }
 
     let comparators = equality::Comparators::default();
+    let restaters = restating::Restaters::default();
     let lowerings = Lowerings {
         declared: &declared,
         comparators: &comparators,
+        restaters: &restaters,
         reachable: &reachable,
         specializations: &specializations,
         allocate,
@@ -1016,21 +1020,39 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
         accepted(module.define_function(checked, &mut context));
     }
 
-    // Every comparator a body above asked for, and every one those ask for in turn. Written last
-    // because a comparison anywhere may be the first to reach a type, and a comparator reaches the
-    // types its own values are made of only as it is written.
-    while let Some(owed) = comparators.owed() {
-        context.clear();
-        context.func = Function::with_name_signature(UserFuncName::default(), owed.signature);
-        equality::define_comparator(
-            &mut context.func,
-            &mut shapes,
-            &owed.ty,
-            frontend,
-            &lowerings,
-            &mut module,
-        )?;
-        accepted(module.define_function(owed.id, &mut context));
+    // Every comparator and every restating function a body above asked for, and every one those
+    // ask for in turn. Written last because a comparison or a restatement anywhere may be the first
+    // to reach a pair of types, and each reaches the types its values are made of only as it is
+    // written.
+    loop {
+        if let Some(owed) = comparators.owed() {
+            context.clear();
+            context.func = Function::with_name_signature(UserFuncName::default(), owed.signature);
+            equality::define_comparator(
+                &mut context.func,
+                &mut shapes,
+                &owed.ty,
+                frontend,
+                &lowerings,
+                &mut module,
+            )?;
+            accepted(module.define_function(owed.id, &mut context));
+        } else if let Some(owed) = restaters.owed() {
+            context.clear();
+            context.func =
+                Function::with_name_signature(UserFuncName::default(), owed.signature.clone());
+            restating::define_restater(
+                &mut context.func,
+                &mut shapes,
+                &owed,
+                frontend,
+                &lowerings,
+                &mut module,
+            )?;
+            accepted(module.define_function(owed.id, &mut context));
+        } else {
+            break;
+        }
     }
 
     // Every behavior this object defines and publishes, which a host calls and whose answer a
@@ -1929,6 +1951,9 @@ struct Lowerings<'a> {
     declared: &'a Declared<'a>,
     /// The function comparing two values of each type a comparison here asked about.
     comparators: &'a equality::Comparators,
+    /// The function restating a value of each pair of types a site here asked to have one held as
+    /// the other, where that rebuilds it.
+    restaters: &'a restating::Restaters,
     reachable: &'a Reachable,
     /// Which copy of a helper each call reaching one reaches.
     specializations: &'a Specializations<'a>,
@@ -2162,9 +2187,8 @@ fn machine_type(ty: &Ty) -> Lowered<types::Type> {
 /// one.
 ///
 /// Every primitive and every case the language gives is named, for the reason `machine_type` names
-/// them. A primitive has a token where it has a representation to carry, and a case the language
-/// gives where it is a case a union can have: an optional's two are told apart by a null pointer
-/// and are never a member of one.
+/// them. A primitive has a token where it has a representation to carry, and every case the
+/// language gives has one, since it carries nothing.
 fn built_in_case(case: &Case) -> Lowered<&'static str> {
     let name = match case {
         Case::Declared { declared } => unreachable!(
@@ -2194,13 +2218,10 @@ fn built_in_case(case: &Case) -> Lowered<&'static str> {
             LanguageCase::NotATime => "NotATime",
             LanguageCase::NotWhole => "NotWhole",
             LanguageCase::NotAFiniteDecimal => "NotAFiniteDecimal",
-            LanguageCase::Some | LanguageCase::None => {
-                return Err(not_lowered(format!(
-                    "a union with {} among its cases, which an optional is told apart by \
-                     rather than carried as",
-                    case.spelt()
-                )));
-            }
+            // A union naming one of an optional's two cases carries its token like any other the
+            // language gives. An optional itself never does: it says which by a null pointer.
+            LanguageCase::Some => "Some",
+            LanguageCase::None => "None",
         },
     };
     Ok(name)
@@ -2255,113 +2276,6 @@ impl Tagged {
     /// The token the value carries.
     pub(crate) fn which(self, builder: &mut FunctionBuilder) -> ir::Value {
         builder.ins().load(POINTER, TRUSTED, self.0, WHICH as i32)
-    }
-}
-
-/// Whether a value of `from` standing as a value of `to` is the same value on the machine, so
-/// that standing there is no operation.
-///
-/// A direction and not a likeness: which way a value goes decides what has to be true of it. Two
-/// types that say their case are held alike, whichever cases they have: every value of either is
-/// the address of something with its token at the front. A primitive and a type that says its case
-/// are not. An optional, a tuple and a list are preserved where what they are made of is: a
-/// `List<A>` standing as a `List<S>` is the same list, and a `List<Int>` standing as a
-/// `List<Int | A>` would need every element carried. A function goes the other way in what it
-/// takes, since what the position hands it is a value of what the position takes.
-///
-/// The type of what has no value is preserved as anything: no value of it is ever made, so there
-/// is none to change. That is what lets the `[]` a walk is seeded with, a `List<Nothing>`, stand as
-/// the list the walk grows without being rebuilt. No other type stands as it, since no other type
-/// is without values.
-///
-/// Every type is named on the left, with no arm standing for the rest, so a type laid out later has
-/// to say here how its values are held before one stands as another.
-fn representation_is_preserved(from: &Ty, to: &Ty) -> bool {
-    if from == to || (says_its_case(from) && says_its_case(to)) {
-        return true;
-    }
-    match (from, to) {
-        (Ty::Nothing { .. }, _) => true,
-        (Ty::Option { option: from }, Ty::Option { option: to }) => {
-            representation_is_preserved(from, to)
-        }
-        (Ty::List { list: from }, Ty::List { list: to }) => representation_is_preserved(from, to),
-        (Ty::Tuple { tuple: from }, Ty::Tuple { tuple: to }) => {
-            from.len() == to.len()
-                && from
-                    .iter()
-                    .zip(to)
-                    .all(|(from, to)| representation_is_preserved(from, to))
-        }
-        (Ty::Fn { fn_: from }, Ty::Fn { fn_: to }) => {
-            from.takes.len() == to.takes.len()
-                && to
-                    .takes
-                    .iter()
-                    .zip(&from.takes)
-                    .all(|(handed, taken)| representation_is_preserved(handed, taken))
-                && representation_is_preserved(&from.answers, &to.answers)
-        }
-        // Equal types were answered above, and so were two that say their case; what is left of
-        // these is a primitive beside something else, or one of them beside another kind. A set
-        // and a map have no layout yet, and are asked of nothing until they do.
-        (
-            Ty::Prim { .. }
-            | Ty::Declared { .. }
-            | Ty::Union { .. }
-            | Ty::Option { .. }
-            | Ty::List { .. }
-            | Ty::Tuple { .. }
-            | Ty::Fn { .. }
-            | Ty::Set { .. }
-            | Ty::Map { .. },
-            _,
-        ) => false,
-        (Ty::Var { var }, _) => laid_out_nowhere(*var),
-    }
-}
-
-/// A value of `from`, held as a value of `to`.
-///
-/// The one place a value's representation changes because of where it stands, whatever made it
-/// stand there: a `Widen`, what an arm or a guard binds, what a composition hands a stage or
-/// answers. Where standing there changes nothing ([`representation_is_preserved`]) this is no
-/// operation. A primitive standing as a case of a type that says its case is carried with its
-/// token, and one read back out of such a type is read out of what carries it.
-///
-/// The second is only ever asked once a test has said the value is that primitive's case: the
-/// value is not asked again here. Anything else would need what a value is made of rebuilt — an
-/// optional of an `Int` standing as an optional of a union — and is refused as not lowered.
-fn restate(
-    builder: &mut FunctionBuilder,
-    lowering: &Lowerings,
-    module: &mut ObjectModule,
-    value: ir::Value,
-    from: &Ty,
-    to: &Ty,
-) -> Lowered<ir::Value> {
-    if representation_is_preserved(from, to) {
-        return Ok(value);
-    }
-    match (from, to) {
-        (Ty::Prim { prim }, _) if says_its_case(to) => carry(
-            builder,
-            lowering,
-            module,
-            &Case::Primitive { prim: *prim },
-            Some(value),
-        ),
-        (_, Ty::Prim { .. }) if says_its_case(from) => {
-            let held = builder
-                .ins()
-                .load(types::I64, TRUSTED, value, CARRIED as i32);
-            Ok(out_of_slot(builder, held, machine_type(to)?))
-        }
-        _ => Err(not_lowered(format!(
-            "a value of {} standing as {}, which holds what it is made of another way",
-            from.spelt(),
-            to.spelt()
-        ))),
     }
 }
 

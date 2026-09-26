@@ -1319,10 +1319,33 @@ fn a_primitive_stands_as_a_case_of_a_union() {
     reads_whole(&helpers(&[h(&[], &widen(&int(1), union))]));
 }
 
+/// A union naming one of an optional's two cases is held the way it holds any case the language
+/// gives, by the runtime's token and nothing more, and an arm tests for it by that token.
+#[test]
+fn a_union_with_an_optionals_case_among_its_cases_is_tested_by_its_token() {
+    for case in ["SOME", "NONE"] {
+        let atom = format!(r#"{{"is":"language","case":"{case}"}}"#);
+        let union = format!(r#"{{"union":[{atom},{{"is":"declared","declared":"m.A"}}]}}"#);
+        let fork = node(
+            "match",
+            &format!(
+                r#""subject":{},"arms":[{},{}]"#,
+                read(0, &union),
+                arm(
+                    &format!(r#"{{"tests":"which","atoms":[{atom}]}}"#),
+                    None,
+                    &int(1)
+                ),
+                arm(&which(&["m.A"]), None, &int(2)),
+            ),
+            INT,
+        );
+        reads_whole(&helpers(&[h(&[&union], &fork)]));
+    }
+}
+
 /// A value standing as a type this backend has no representation for is not lowered, which is a
-/// different answer from the two halves disagreeing: a `Decimal` has no representation to carry,
-/// and an optional of an `Int` standing as an optional of a union would have what it holds carried,
-/// which is rebuilding the optional and not standing it somewhere.
+/// different answer from the two halves disagreeing: a `Decimal` has no representation to carry.
 #[test]
 fn a_widen_to_a_type_with_no_representation_is_not_lowered() {
     let decimal =
@@ -1331,23 +1354,13 @@ fn a_widen_to_a_type_with_no_representation_is_not_lowered() {
         .expect_err("a union with a Decimal among its members has no representation");
     assert!(refused.downcast_ref::<NotLowered>().is_some(), "{refused}");
     assert!(refused.to_string().contains("Decimal"), "{refused}");
-
-    let union = r#"{"union":[{"is":"primitive","prim":"INT"},{"is":"declared","declared":"m.A"}]}"#;
-    let held = option_of(INT);
-    let refused = object_for(&helpers(&[h(
-        &[&held],
-        &widen(&read(0, &held), &option_of(union)),
-    )]))
-    .expect_err("what an optional holds is not carried where the optional stands");
-    assert!(refused.downcast_ref::<NotLowered>().is_some(), "{refused}");
-    assert!(refused.to_string().contains("another way"), "{refused}");
 }
 
-/// A list stands as a list of a wider element exactly where the elements are held alike: a list of
-/// a case standing as a list of its sum is the same list, and a list of `Int`s standing as a list
-/// of a union with `Int` among its cases would need every element carried, which is not lowered.
+/// What holds a value stands as what holds a wider one wherever what it holds does: a list of a
+/// case as a list of its sum, held alike, and an optional or a list of `Int`s as one of a union
+/// with `Int` among its cases, rebuilt with what it holds carried (`tests/restating.rs` runs it).
 #[test]
-fn a_list_stands_as_a_wider_list_only_where_its_elements_are_held_alike() {
+fn what_holds_a_value_stands_as_what_holds_a_wider_one() {
     let list_of = |element: &str| format!(r#"{{"list":{element}}}"#);
     let cases = list_of(A);
     reads_whole(&helpers(&[h(
@@ -1357,13 +1370,15 @@ fn a_list_stands_as_a_wider_list_only_where_its_elements_are_held_alike() {
 
     let union = r#"{"union":[{"is":"primitive","prim":"INT"},{"is":"declared","declared":"m.A"}]}"#;
     let numbers = list_of(INT);
-    let refused = object_for(&helpers(&[h(
+    reads_whole(&helpers(&[h(
         &[&numbers],
         &widen(&read(0, &numbers), &list_of(union)),
-    )]))
-    .expect_err("every element of the list would have to be carried");
-    assert!(refused.downcast_ref::<NotLowered>().is_some(), "{refused}");
-    assert!(refused.to_string().contains("another way"), "{refused}");
+    )]));
+    let held = option_of(INT);
+    reads_whole(&helpers(&[h(
+        &[&held],
+        &widen(&read(0, &held), &option_of(union)),
+    )]));
 }
 
 /// A function taking a sum stands as one taking a case of it, and one answering a case stands as

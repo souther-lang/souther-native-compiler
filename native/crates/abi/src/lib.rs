@@ -616,12 +616,16 @@ pub const TOKEN: &[u8] = &[0];
 /// library shares: two objects naming one of these reach one address for the reason two naming one
 /// declaration do, and no object is where a case the language gives is at home.
 ///
-/// Not `Some` and `None`. An optional says whether it holds something by whether it is a null
-/// pointer ([`NOTHING`]), and is never a member of a union.
+/// `Some` and `None` among them. An optional says whether it holds something by whether it is a
+/// null pointer ([`NOTHING`]) and never carries either token: which case a value is and how it is
+/// held are two questions, and an optional answers the second without a token. A union naming one
+/// of the two as a case is held the way it holds any case the language gives, by the token alone.
 pub const BUILT_IN_CASES: &[&str] = &[
     "Int",
     "Bool",
     "String",
+    "Some",
+    "None",
     "DivisionByZero",
     "NotANumber",
     "NotADate",
