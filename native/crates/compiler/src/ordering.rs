@@ -62,7 +62,13 @@ pub(crate) fn ordered(
         // one enumeration that places them (ADR-0069). That is the type itself where it is one, and
         // the sum listing it where it is a case: a case is not ordered on its own account, since
         // one unit may be a case of two sums that place it differently.
-        Ty::Declared { .. } | Ty::Union { .. } => {
+        Ty::Ref {
+            named: Case::Primitive { .. } | Case::Language { .. },
+        } => crate::named_as_a_type(ty),
+        Ty::Ref {
+            named: Case::Declared { .. },
+        }
+        | Ty::Union { .. } => {
             let Some(enumeration) = lowering
                 .declared
                 .enumeration_of(ty)
@@ -91,7 +97,8 @@ pub(crate) fn ordered(
         | Ty::Set { .. }
         | Ty::Map { .. }
         | Ty::Fn { .. }
-        | Ty::Nothing { .. } => Err(unordered(op, ty)),
+        | Ty::Nothing { .. }
+        | Ty::Never { .. } => Err(unordered(op, ty)),
         Ty::Var { var } => crate::laid_out_nowhere(*var),
     }
 }

@@ -312,7 +312,7 @@ fn behaviors() -> Vec<(&'static str, Value)> {
                     node(
                         "construct",
                         json!({"declared": "m.P", "values": [truth(true), a()]}),
-                        json!({"declared": "m.P"}),
+                        json!({"ref": {"is": "declared", "declared": "m.P"}}),
                     ),
                     q(),
                 )),
@@ -326,7 +326,7 @@ fn behaviors() -> Vec<(&'static str, Value)> {
                     node(
                         "construct",
                         json!({"declared": "m.R", "values": [unit_a()]}),
-                        json!({"declared": "m.R"}),
+                        json!({"ref": {"is": "declared", "declared": "m.R"}}),
                     ),
                     q(),
                 )),
@@ -343,14 +343,14 @@ fn truth(value: bool) -> Value {
 fn unit_a() -> Value {
     node(
         "unit",
-        json!({"declared": "m.A"}),
-        json!({"declared": "m.A"}),
+        json!({"unit": {"is": "declared", "declared": "m.A"}}),
+        json!({"ref": {"is": "declared", "declared": "m.A"}}),
     )
 }
 
 /// The sum `m.P | m.R`.
 fn q() -> Value {
-    json!({"declared": "m.Q"})
+    json!({"ref": {"is": "declared", "declared": "m.Q"}})
 }
 
 /// The field `v` of a value of `m.Q`, as the union it is `Int` in one case and `m.A` in the other.
@@ -369,7 +369,7 @@ fn declarations() -> Value {
                     field("v", 1, json!({"is": "scalar", "scalar": "INT"}))],
          "invariants": []},
         {"module": "m", "name": "R", "by": "amodule", "is": "product",
-         "fields": [field("v", 0, json!({"is": "named", "declared": "m.A"}))],
+         "fields": [field("v", 0, json!({"is": "named", "named": {"is": "declared", "declared": "m.A"}}))],
          "invariants": []},
         {"module": "m", "name": "Q", "by": "amodule", "is": "sum",
          "cases": [{"is": "declared", "declared": "m.P"}, {"is": "declared", "declared": "m.R"}],
@@ -396,7 +396,7 @@ fn document() -> String {
         })
         .collect();
     json!({
-        "transport": 23,
+        "transport": 24,
         "declarations": declarations(),
         "behaviors": targets,
         "modules": [{"name": "m", "publishes": ["m.A", "m.P", "m.R", "m.Q"], "helpers": [], "values": [],
