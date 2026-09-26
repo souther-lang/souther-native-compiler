@@ -1,0 +1,101 @@
+Souther\Runtime\Binding abstract extends - implements 
+Souther\Runtime\Binding::MOVES constant
+Souther\Runtime\Binding::PROTOCOL constant
+Souther\Runtime\Binding::hosting(string $type): Souther\Runtime\FunctionSlot 
+Souther\Runtime\Binding::in(Souther\Runtime\NativeLibrary $library): static static abstract
+Souther\Runtime\Binding::library(): Souther\Runtime\NativeLibrary 
+Souther\Runtime\Binding::requirementsOf(Souther\Runtime\Session $session, string $behavior): ?FFI\CData 
+Souther\Runtime\Binding::run(callable $body, Souther\Runtime\Injections ...$injections): mixed 
+Souther\Runtime\Binding::session(): Souther\Runtime\Session static abstract
+Souther\Runtime\Binding::slot(string $behavior): Souther\Runtime\InjectionSlot 
+Souther\Runtime\Bound final extends - implements Souther\Runtime\Requirement
+Souther\Runtime\Bound::capability(Souther\Runtime\Session $session): FFI\CData 
+Souther\Runtime\Bound::of(?string $bind, ?Souther\Runtime\Requirement ...$requires): Souther\Runtime\Bound static
+Souther\Runtime\Bound::requirements(Souther\Runtime\Session $session): ?FFI\CData 
+Souther\Runtime\Decimal final extends - implements 
+Souther\Runtime\Decimal::$scale int readonly
+Souther\Runtime\Decimal::$unscaled string readonly
+Souther\Runtime\Decimal::__construct(string $unscaled, int $scale): - 
+Souther\Runtime\Expired final extends LogicException implements Throwable,Stringable,Souther\Runtime\SoutherFailure
+Souther\Runtime\ForeignHandle final extends LogicException implements Throwable,Stringable,Souther\Runtime\SoutherFailure
+Souther\Runtime\FunctionSlot final extends - implements 
+Souther\Runtime\FunctionSlot::__construct(Souther\Runtime\NativeLibrary $library, string $type, string $implement, Closure $adapter): - 
+Souther\Runtime\FunctionSlot::implement(Souther\Runtime\Session $session, Closure $closure): FFI\CData 
+Souther\Runtime\FunctionSlot::release(int $token): void 
+Souther\Runtime\Hosted final extends - implements 
+Souther\Runtime\Hosted::__construct(Souther\Runtime\InjectionSlot $slot, int $token, FFI\CData $capability, FFI\CData $hosted, FFI\CData $userdata): - 
+Souther\Runtime\Hosted::__destruct(): - 
+Souther\Runtime\Hosted::capability(): FFI\CData 
+Souther\Runtime\HostedFunction final extends - implements 
+Souther\Runtime\HostedFunction::__construct(Souther\Runtime\FunctionSlot $slot, int $token, FFI\CData $room, FFI\CData $userdata): - 
+Souther\Runtime\HostedFunction::__destruct(): - 
+Souther\Runtime\Implemented final extends - implements Souther\Runtime\Requirement
+Souther\Runtime\Implemented::by(string $binding, string $behavior, Closure $implementation): Souther\Runtime\Implemented static
+Souther\Runtime\Implemented::capability(Souther\Runtime\Session $session): FFI\CData 
+Souther\Runtime\InjectionProtocolViolation final extends LogicException implements Throwable,Stringable,Souther\Runtime\SoutherFailure
+Souther\Runtime\InjectionSlot final extends - implements 
+Souther\Runtime\InjectionSlot::__construct(Souther\Runtime\NativeLibrary $library, string $type, string $implement, Closure $adapter): - 
+Souther\Runtime\InjectionSlot::implement(Closure $implementation): Souther\Runtime\Hosted 
+Souther\Runtime\InjectionSlot::release(int $token): void 
+Souther\Runtime\Injections abstract extends - implements 
+Souther\Runtime\Injections::implemented(): array 
+Souther\Runtime\NativeHandle final extends - implements 
+Souther\Runtime\NativeHandle::__construct(Souther\Runtime\Session $session, FFI\CData $pointer): - 
+Souther\Runtime\NativeHandle::borrow(Souther\Runtime\Session $into): FFI\CData 
+Souther\Runtime\NativeHandle::read(): FFI\CData 
+Souther\Runtime\NativeHandle::session(): Souther\Runtime\Session 
+Souther\Runtime\NativeLibrary final extends - implements 
+Souther\Runtime\NativeLibrary::close(Souther\Runtime\Session $session): void 
+Souther\Runtime\NativeLibrary::current(): Souther\Runtime\Session 
+Souther\Runtime\NativeLibrary::failure(int $status): Throwable 
+Souther\Runtime\NativeLibrary::ffi(): FFI 
+Souther\Runtime\NativeLibrary::innermostHere(): ?Souther\Runtime\Session 
+Souther\Runtime\NativeLibrary::load(string $declarations, string $library, array $statuses, array $outcomes): Souther\Runtime\NativeLibrary static
+Souther\Runtime\NativeLibrary::open(array $injected): Souther\Runtime\Session 
+Souther\Runtime\NativeLibrary::outcome(string $name): int 
+Souther\Runtime\NativeLibrary::preloadHeader(string $declarations, string $scope, string $library): string static
+Souther\Runtime\NativeLibrary::preloaded(string $scope, string $library, array $statuses, array $outcomes): Souther\Runtime\NativeLibrary static
+Souther\Runtime\NativeLibrary::status(string $name): int 
+Souther\Runtime\NativeValue interface extends - implements 
+Souther\Runtime\NativeValue::nativeHandle(): Souther\Runtime\NativeHandle abstract
+Souther\Runtime\NotTheInnermostRun final extends LogicException implements Throwable,Stringable,Souther\Runtime\SoutherFailure
+Souther\Runtime\OutsideAnyRun final extends LogicException implements Throwable,Stringable,Souther\Runtime\SoutherFailure
+Souther\Runtime\Pending final extends - implements 
+Souther\Runtime\Pending::keep(Throwable $thrown): void static
+Souther\Runtime\Pending::take(): ?Throwable static
+Souther\Runtime\Requirement interface extends - implements 
+Souther\Runtime\Requirement::capability(Souther\Runtime\Session $session): FFI\CData abstract
+Souther\Runtime\RunOnAnotherFiber final extends LogicException implements Throwable,Stringable,Souther\Runtime\SoutherFailure
+Souther\Runtime\Session final extends - implements 
+Souther\Runtime\Session::__construct(Souther\Runtime\NativeLibrary $library, ?Fiber $fiber, array $injected): - 
+Souther\Runtime\Session::amount(FFI\CData $decimal): Souther\Runtime\Decimal 
+Souther\Runtime\Session::answered(int $status): void 
+Souther\Runtime\Session::bytes(string $bytes): FFI\CData 
+Souther\Runtime\Session::call(): FFI 
+Souther\Runtime\Session::callable(string $binding, FFI\CData $value, Closure $calling): Closure 
+Souther\Runtime\Session::constructed(int $status, Closure $made): Raoh\Result 
+Souther\Runtime\Session::constructedAs(string $key, Closure $made): Souther\Runtime\Bound 
+Souther\Runtime\Session::decimal(Souther\Runtime\Decimal $decimal): FFI\CData 
+Souther\Runtime\Session::decoded(int $status, FFI\CData $reading, Closure $made): Raoh\Result 
+Souther\Runtime\Session::decoder(Closure $decode): Raoh\Decoder static
+Souther\Runtime\Session::elements(string $length, string $at, array $rooms, FFI\CData $list, Closure $made): array 
+Souther\Runtime\Session::expire(): void 
+Souther\Runtime\Session::ffi(): FFI 
+Souther\Runtime\Session::functionOf(Souther\Runtime\FunctionSlot $slot, Closure $closure, Closure $make): FFI\CData 
+Souther\Runtime\Session::held(FFI\CData $pointer): Souther\Runtime\NativeHandle 
+Souther\Runtime\Session::injected(string $behavior): ?Souther\Runtime\Implemented 
+Souther\Runtime\Session::isActive(): bool 
+Souther\Runtime\Session::keep(object $it): void 
+Souther\Runtime\Session::library(): Souther\Runtime\NativeLibrary 
+Souther\Runtime\Session::list(string $construct, array $columns, array $elements, Closure $words): FFI\CData 
+Souther\Runtime\Session::openedAfter(Souther\Runtime\Session $other): bool 
+Souther\Runtime\Session::string(string $text): FFI\CData 
+Souther\Runtime\Session::text(FFI\CData $string): string 
+Souther\Runtime\Some final readonly extends - implements 
+Souther\Runtime\Some::$value mixed readonly
+Souther\Runtime\Some::__construct(mixed $value): - 
+Souther\Runtime\SoutherAbort final extends RuntimeException implements Throwable,Stringable,Souther\Runtime\SoutherFailure
+Souther\Runtime\SoutherAbort::$status string readonly
+Souther\Runtime\SoutherAbort::__construct(string $status, int $number): - 
+Souther\Runtime\SoutherFailure interface extends - implements Throwable,Stringable
+Souther\Runtime\UnboundInjection final extends LogicException implements Throwable,Stringable,Souther\Runtime\SoutherFailure
