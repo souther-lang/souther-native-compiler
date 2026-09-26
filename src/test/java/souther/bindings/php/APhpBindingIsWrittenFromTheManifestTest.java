@@ -94,6 +94,42 @@ class APhpBindingIsWrittenFromTheManifestTest {
     }
 
     /**
+     * A {@code Date}, a {@code Time}, a {@code DateTime} and an {@code Instant} cross as words of
+     * their own, and this binding holds none of them yet: what takes or answers one is not written,
+     * where the rest of the module is, and generating is not refused for it.
+     */
+    @Test
+    void aTemporalThisBindingHoldsNoTypeForIsNotWritten(@TempDir Path into) throws Exception {
+        NativeCompiler.Library library = NativeCompiler.library(Checked.of(List.of("""
+                module m exposing ( twice, shifted, clockOf, seen, moment )
+
+                behavior twice : (n: Int) -> Int
+                let twice (n) = n * 2
+
+                behavior shifted : (day: Date, n: Int) -> Date
+                let shifted (day, n) = Date.addDays(n, day)
+
+                behavior clockOf : (at: DateTime) -> Time
+                let clockOf (at) = DateTime.toTime(at)
+
+                behavior seen : (at: Instant) -> Int
+                let seen (at) = 1
+
+                let moment: Instant = Instant("2026-07-25T00:00:00Z")
+                """)), into.resolve("native"));
+
+        LibraryBinding.generated(library, into.resolve("php"), "Acme\\Billing");
+        Path written = into.resolve("php");
+
+        assertThat(written.resolve("M").resolve("Twice.php")).exists();
+        String behaviors = Files.readString(written.resolve("M").resolve("Behaviors.php"));
+        assertThat(behaviors).contains("function twice(")
+                .doesNotContain("function shifted(", "function clockOf(", "function seen(");
+        // The one value is an `Instant`, so nothing of the module's values is written.
+        assertThat(written.resolve("M").resolve("Values.php")).doesNotExist();
+    }
+
+    /**
      * A leaf is held by this binding only where the type and the word are a pair it holds, which is
      * this binding's capability and not how the model crosses: an `Int` as an `int` crossing as an
      * `INT`, a value of a declared type or of a union as an object crossing as a `VALUE`, and a

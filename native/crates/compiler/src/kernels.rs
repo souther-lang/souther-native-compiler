@@ -1113,6 +1113,30 @@ mod tests {
         }
     }
 
+    /// The checker writes a union's members by name, so a contract naming the members of one in
+    /// another order would be read as a union the checker never wrote. Each answer of this kind was
+    /// written by hand, and `Time | NotATime` is `NotATime | Time` for that reason: held here for
+    /// every kernel and not remembered at each.
+    #[test]
+    fn a_union_a_kernel_answers_lists_its_members_by_name() {
+        for (key, kernel) in LOWERED {
+            let Shape::Cases(cases) = kernel.contract().answers else {
+                continue;
+            };
+            let names: Vec<String> = cases
+                .iter()
+                .map(|case| match case {
+                    Case::Primitive { prim } => prim.spelt().to_string(),
+                    Case::Language { case } => case.spelt().to_string(),
+                    Case::Declared { declared } => declared.to_string(),
+                })
+                .collect();
+            let mut by_name = names.clone();
+            by_name.sort();
+            assert_eq!(names, by_name, "{key}");
+        }
+    }
+
     /// What a kernel answers is settled by what it takes: a variable in its answer that nothing it
     /// takes binds would leave the answer unknown however a call is settled.
     #[test]

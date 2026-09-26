@@ -23,9 +23,7 @@
 use crate::amount::Amount;
 use crate::decimal::{Decimal, decimal_of};
 use crate::document::{Form, Node, parsed};
-use crate::temporal::{
-    Date, DateTime, Instant, Time, read_date_of, read_date_time_of, read_instant_of, read_time_of,
-};
+use crate::temporal::{Date, DateTime, Instant, Time, date_of, date_time_of, instant_of, time_of};
 use crate::{Count, Text, Value, souther_alloc, string_of, text};
 use souther_native_abi::{DECODED_ISSUES, DECODED_MALFORMED, DECODED_VALUE};
 use souther_text::temporal::{parse_date, parse_date_time, parse_instant, parse_time};
@@ -595,7 +593,7 @@ pub unsafe extern "C" fn souther_read_date(
         if day.is_none() {
             unsafe { refused(decoding, path) };
         }
-        day.map(read_date_of)
+        day.map(date_of)
     });
     unsafe { answered(out, read, ptr::null_mut()) }
 }
@@ -617,7 +615,7 @@ pub unsafe extern "C" fn souther_read_time(
         if second.is_err() {
             unsafe { refused(decoding, path) };
         }
-        second.ok().map(read_time_of)
+        second.ok().map(time_of)
     });
     unsafe { answered(out, read, ptr::null_mut()) }
 }
@@ -638,7 +636,7 @@ pub unsafe extern "C" fn souther_read_datetime(
         if second.is_err() {
             unsafe { refused(decoding, path) };
         }
-        second.ok().map(read_date_time_of)
+        second.ok().map(date_time_of)
     });
     unsafe { answered(out, read, ptr::null_mut()) }
 }
@@ -661,7 +659,7 @@ pub unsafe extern "C" fn souther_read_instant(
         if moment.is_none() {
             unsafe { refused(decoding, path) };
         }
-        moment.map(|(second, nano)| read_instant_of(second, nano))
+        moment.map(|(second, nano)| instant_of(second, nano))
     });
     unsafe { answered(out, read, ptr::null_mut()) }
 }

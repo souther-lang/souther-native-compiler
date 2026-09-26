@@ -81,19 +81,19 @@ unsafe fn number<T>(at: *const T, index: usize) -> i64 {
     }
 }
 
-fn date_of(day: i64) -> *mut Date {
+pub(crate) fn date_of(day: i64) -> *mut Date {
     stored(&[day])
 }
 
-fn time_of(second_of_day: i64) -> *mut Time {
+pub(crate) fn time_of(second_of_day: i64) -> *mut Time {
     stored(&[second_of_day])
 }
 
-fn date_time_of(second: i64) -> *mut DateTime {
+pub(crate) fn date_time_of(second: i64) -> *mut DateTime {
     stored(&[second])
 }
 
-fn instant_of(second: i64, nano: i64) -> *mut Instant {
+pub(crate) fn instant_of(second: i64, nano: i64) -> *mut Instant {
     stored(&[second, nano])
 }
 
@@ -637,26 +637,6 @@ pub unsafe extern "C" fn souther_external_datetime(at: *const DateTime) -> *mut 
 pub unsafe extern "C" fn souther_external_instant(at: *const Instant) -> *mut Form {
     let (second, nano) = unsafe { moment(at) };
     external(instant_text(second, nano))
-}
-
-/// A `Date` that a boundary read, made in the arena.
-pub(crate) fn read_date_of(day: i64) -> *mut Date {
-    date_of(day)
-}
-
-/// A `Time` that a boundary read, made in the arena.
-pub(crate) fn read_time_of(second_of_day: i64) -> *mut Time {
-    time_of(second_of_day)
-}
-
-/// A `DateTime` that a boundary read, made in the arena.
-pub(crate) fn read_date_time_of(second: i64) -> *mut DateTime {
-    date_time_of(second)
-}
-
-/// An `Instant` that a boundary read, made in the arena.
-pub(crate) fn read_instant_of(second: i64, nano: i64) -> *mut Instant {
-    instant_of(second, nano)
 }
 
 #[cfg(test)]
