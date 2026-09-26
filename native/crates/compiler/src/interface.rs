@@ -29,8 +29,8 @@ use cranelift::module::{DataDescription, Linkage, Module};
 use cranelift::object::ObjectModule;
 use object::{Object, ObjectSection};
 use souther_native_abi::{
-    ABI_GENERATION, ANSWERED, DECODED_ISSUES, DECODED_MALFORMED, DECODED_VALUE, HOST_RUNTIME,
-    HOST_STATUSES, HostParameter, HostWord,
+    ABI_GENERATION, ANSWERED, DECODED_ISSUES, DECODED_MALFORMED, DECODED_VALUE, HOST_CASES,
+    HOST_RUNTIME, HOST_STATUSES, HostParameter, HostWord,
 };
 use std::collections::BTreeMap;
 use target_lexicon::BinaryFormat;
@@ -597,19 +597,91 @@ pub(crate) fn manifest_of(modules: Vec<manifest::Module>) -> Result<Manifest> {
         abi: ABI_GENERATION,
         statuses: numbered(statuses()),
         outcomes: numbered(outcomes()),
-        runtime: HOST_RUNTIME
-            .iter()
-            .map(|function| {
-                HostFunction {
-                    symbol: function.name.to_string(),
-                    takes: function.takes.to_vec(),
-                    answers: function.answers,
-                }
-                .described()
-            })
-            .collect(),
+        runtime: HOST_RUNTIME.iter().map(runtime_function).collect(),
+        cases: case_crossings(),
         modules,
     })
+}
+
+/// A function of the runtime's, as the manifest says one.
+fn runtime_function(function: &souther_native_abi::RuntimeFunction) -> manifest::Function {
+    HostFunction {
+        symbol: function.name.to_string(),
+        takes: function.takes.to_vec(),
+        answers: function.answers,
+    }
+    .described()
+}
+
+/// Every case no declaration names that the runtime has a token for, as the manifest names it, with
+/// what a host makes and reads it through.
+///
+/// Walked from the cases themselves and found in [`HOST_CASES`] by the name the runtime's token is
+/// defined under, which is the one place a case is spelt ([`crate::built_in_case`]); a case with
+/// no token has no representation to carry and is left out.
+fn case_crossings() -> Vec<manifest::CaseCrossing> {
+    use transport::{LanguageCase as L, Prim as P};
+    let primitives = [
+        P::Int,
+        P::String,
+        P::Bool,
+        P::Decimal,
+        P::Rational,
+        P::Date,
+        P::Time,
+        P::DateTime,
+        P::Instant,
+        P::Raw,
+    ]
+    .map(|prim| transport::Case::Primitive { prim });
+    let language = [
+        L::Some,
+        L::None,
+        L::DivisionByZero,
+        L::NotANumber,
+        L::NotADate,
+        L::NotATime,
+        L::NotWhole,
+        L::NotAFiniteDecimal,
+    ]
+    .map(|case| transport::Case::Language { case });
+    let crossings: Vec<manifest::CaseCrossing> = primitives
+        .iter()
+        .chain(&language)
+        .filter_map(|case| {
+            let name = crate::built_in_case(case).ok()?;
+            let crossing = HOST_CASES
+                .iter()
+                .find(|it| it.case == name)
+                .expect("the runtime makes and reads every case it has a token for");
+            Some(manifest::CaseCrossing {
+                case: built_in(case),
+                make: runtime_function(&crossing.make),
+                read: crossing.read.as_ref().map(runtime_function),
+            })
+        })
+        .collect();
+    assert_eq!(
+        crossings.len(),
+        HOST_CASES.len(),
+        "every case the runtime makes is one a case of the language has a token for"
+    );
+    crossings
+}
+
+/// A case no declaration names, as the manifest names it.
+fn built_in(case: &transport::Case) -> manifest::Case {
+    match case {
+        transport::Case::Declared { declared } => {
+            unreachable!("{declared} is named by its declaration, and has no case of the runtime's")
+        }
+        transport::Case::Primitive { prim } => manifest::Case::Primitive {
+            name: primitive(*prim),
+        },
+        transport::Case::Language { case } => manifest::Case::Language {
+            name: language_case(*case),
+        },
+    }
 }
 
 /// That a host can construct everything a behavior it constructs requires: each requirement of each
@@ -673,7 +745,11 @@ fn functions(manifest: &Manifest) -> impl Iterator<Item = &manifest::Function> {
             .chain(declarations)
             .chain(lists)
     });
-    manifest.runtime.iter().chain(modules)
+    let cases = manifest
+        .cases
+        .iter()
+        .flat_map(|it| std::iter::once(&it.make).chain(&it.read));
+    manifest.runtime.iter().chain(cases).chain(modules)
 }
 
 /// Every function a behavior is reached through, in the order the header declares them: its call,
@@ -804,6 +880,13 @@ pub(crate) fn declarations(manifest: &Manifest) -> String {
     for function in &manifest.runtime {
         written.push_str(&declared(function));
         written.push('\n');
+    }
+    written.push_str("\n/* What a case no declaration names is made and read through. */\n");
+    for crossing in &manifest.cases {
+        for function in std::iter::once(&crossing.make).chain(&crossing.read) {
+            written.push_str(&declared(function));
+            written.push('\n');
+        }
     }
     for module in &manifest.modules {
         let name = &module.name;
@@ -984,18 +1067,20 @@ fn case_of(case: &transport::Case, declared: &Declared) -> manifest::Case {
             name: primitive(*prim),
         },
         transport::Case::Language { case } => manifest::Case::Language {
-            name: match case {
-                transport::LanguageCase::Some => manifest::LanguageCase::Some,
-                transport::LanguageCase::None => manifest::LanguageCase::None,
-                transport::LanguageCase::DivisionByZero => manifest::LanguageCase::DivisionByZero,
-                transport::LanguageCase::NotANumber => manifest::LanguageCase::NotANumber,
-                transport::LanguageCase::NotADate => manifest::LanguageCase::NotADate,
-                transport::LanguageCase::NotATime => manifest::LanguageCase::NotATime,
-                transport::LanguageCase::NotWhole => manifest::LanguageCase::NotWhole,
-                transport::LanguageCase::NotAFiniteDecimal => {
-                    manifest::LanguageCase::NotAFiniteDecimal
-                }
-            },
+            name: language_case(*case),
         },
+    }
+}
+
+fn language_case(case: transport::LanguageCase) -> manifest::LanguageCase {
+    match case {
+        transport::LanguageCase::Some => manifest::LanguageCase::Some,
+        transport::LanguageCase::None => manifest::LanguageCase::None,
+        transport::LanguageCase::DivisionByZero => manifest::LanguageCase::DivisionByZero,
+        transport::LanguageCase::NotANumber => manifest::LanguageCase::NotANumber,
+        transport::LanguageCase::NotADate => manifest::LanguageCase::NotADate,
+        transport::LanguageCase::NotATime => manifest::LanguageCase::NotATime,
+        transport::LanguageCase::NotWhole => manifest::LanguageCase::NotWhole,
+        transport::LanguageCase::NotAFiniteDecimal => manifest::LanguageCase::NotAFiniteDecimal,
     }
 }

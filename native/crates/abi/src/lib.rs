@@ -616,12 +616,16 @@ pub const TOKEN: &[u8] = &[0];
 /// library shares: two objects naming one of these reach one address for the reason two naming one
 /// declaration do, and no object is where a case the language gives is at home.
 ///
-/// Not `Some` and `None`. An optional says whether it holds something by whether it is a null
-/// pointer ([`NOTHING`]), and is never a member of a union.
+/// `Some` and `None` among them. An optional says whether it holds something by whether it is a
+/// null pointer ([`NOTHING`]) and never carries either token: which case a value is and how it is
+/// held are two questions, and an optional answers the second without a token. A union naming one
+/// of the two as a case is held the way it holds any case the language gives, by the token alone.
 pub const BUILT_IN_CASES: &[&str] = &[
     "Int",
     "Bool",
     "String",
+    "Some",
+    "None",
     "DivisionByZero",
     "NotANumber",
     "NotADate",
@@ -1214,6 +1218,98 @@ pub const HOST_RUNTIME: &[RuntimeFunction] = {
             takes: &[Given(Issue), Given(Count)],
             answers: Some(String),
         },
+    ]
+};
+
+/// How a host makes a value of one case in [`BUILT_IN_CASES`], as a union holds one, and reads back
+/// what it holds.
+///
+/// A property of the case and not of any union it stands in: an `Int` carried is laid out the same
+/// in every union that has it as a case, so there is one pair of functions for it and not one for
+/// each union. What tells a union's cases apart is the union's ([`host_behavior_answer_case_symbol`]);
+/// once that has said which case a value is, this is what a host reads it through, without being
+/// told where anything is kept.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct CaseCrossing {
+    /// The case, as [`BUILT_IN_CASES`] names it.
+    pub case: &'static str,
+    /// `(what the case holds, where it holds something) -> value`.
+    pub make: RuntimeFunction,
+    /// `(value) -> what it holds`, for a case that holds something. Called only on a value a test
+    /// of which case it is has said is this case, and nothing is asked of it again.
+    pub read: Option<RuntimeFunction>,
+}
+
+/// How a host makes and reads each case in [`BUILT_IN_CASES`], in the order that names them. The
+/// runtime's own tests hold each function to the one it names, and the cases to that table.
+pub const HOST_CASES: &[CaseCrossing] = {
+    use HostParameter::Given;
+    use HostWord::{Bool, Int, String, Value};
+    const fn holding(
+        case: &'static str,
+        make: &'static str,
+        read: &'static str,
+        held: &'static [HostParameter],
+        word: HostWord,
+    ) -> CaseCrossing {
+        CaseCrossing {
+            case,
+            make: RuntimeFunction {
+                name: make,
+                takes: held,
+                answers: Some(Value),
+            },
+            read: Some(RuntimeFunction {
+                name: read,
+                takes: &[Given(Value)],
+                answers: Some(word),
+            }),
+        }
+    }
+    const fn empty(case: &'static str, make: &'static str) -> CaseCrossing {
+        CaseCrossing {
+            case,
+            make: RuntimeFunction {
+                name: make,
+                takes: &[],
+                answers: Some(Value),
+            },
+            read: None,
+        }
+    }
+    &[
+        holding(
+            "Int",
+            "souther_case_int_make",
+            "souther_case_int_read",
+            &[Given(Int)],
+            Int,
+        ),
+        holding(
+            "Bool",
+            "souther_case_bool_make",
+            "souther_case_bool_read",
+            &[Given(Bool)],
+            Bool,
+        ),
+        holding(
+            "String",
+            "souther_case_string_make",
+            "souther_case_string_read",
+            &[Given(String)],
+            String,
+        ),
+        empty("Some", "souther_case_some_make"),
+        empty("None", "souther_case_none_make"),
+        empty("DivisionByZero", "souther_case_division_by_zero_make"),
+        empty("NotANumber", "souther_case_not_a_number_make"),
+        empty("NotADate", "souther_case_not_a_date_make"),
+        empty("NotATime", "souther_case_not_a_time_make"),
+        empty("NotWhole", "souther_case_not_whole_make"),
+        empty(
+            "NotAFiniteDecimal",
+            "souther_case_not_a_finite_decimal_make",
+        ),
     ]
 };
 

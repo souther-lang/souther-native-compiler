@@ -1596,6 +1596,13 @@ public final class ProgramWriter {
             for (ResolvedCase selected : arm.pattern().cases()) {
                 selects.add(selects(selected));
             }
+            // A binder over a test that leaves nothing to read, `None as n`, is admitted with no
+            // type for what it binds (souther-lang/souther#1984). Nothing it could be written as is
+            // one the checker settled, so it is refused until the checker says.
+            if (arm.binder() != null && arm.pattern().bindType() == null) {
+                throw notYet("an arm binding a name to what it tests holds nothing, which the "
+                        + "checker gives no type (souther-lang/souther#1984)", it);
+            }
             String binding = arm.binder() == null
                     ? "null"
                     : Integer.toString(bindings.number(arm.binder().binding()));

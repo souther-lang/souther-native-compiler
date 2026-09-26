@@ -44,9 +44,10 @@ use write::{Continuation, Driver, Element, Work};
 /// reference to it says.
 ///
 /// A scalar it holds is an `Int`, a `Bool` or a `String`; a declared type it holds is one of these
-/// again, and so is what a list it holds holds; a set of alternatives is made of declared cases,
-/// each one of these. What the language
-/// declares is none: no build defines its token, so no value of it is made here.
+/// again, and so is what a list it holds holds; a set of alternatives is made of cases that are
+/// each one of these, a primitive among those scalars, or a case the language gives, which is
+/// written as its name alone. What the language declares is none: no build defines its token, so
+/// no value of it is made here.
 ///
 /// The greatest set that holds, worked out by striking what fails and then what reaches something
 /// struck until nothing more is: a type that holds itself, through an optional, is one of these as
@@ -88,28 +89,39 @@ fn reaches(declaration: &Declaration) -> Vec<Option<&str>> {
             reached
         }
         Declaration::Unit { .. } => Vec::new(),
-        Declaration::Sum { cases, .. } => cases
-            .iter()
-            .map(|case| match case {
-                Case::Declared { declared } => Some(declared.as_str()),
-                Case::Primitive { .. } | Case::Language { .. } => None,
-            })
-            .collect(),
+        Declaration::Sum { cases, .. } => {
+            let mut reached = Vec::new();
+            for case in cases {
+                match case {
+                    Case::Declared { declared } => reached.push(Some(declared.as_str())),
+                    // Written under the set's contents key the way a field of it would be.
+                    Case::Primitive { prim } => primitive_reaches(*prim, &mut reached),
+                    // The tag alone.
+                    Case::Language { .. } => {}
+                }
+            }
+            reached
+        }
+    }
+}
+
+/// Nothing, for a primitive with an external form here, and something with none for the rest.
+fn primitive_reaches(prim: Prim, reached: &mut Vec<Option<&str>>) {
+    match prim {
+        Prim::Int | Prim::Bool | Prim::String => {}
+        Prim::Decimal
+        | Prim::Rational
+        | Prim::Date
+        | Prim::Time
+        | Prim::DateTime
+        | Prim::Instant
+        | Prim::Raw => reached.push(None),
     }
 }
 
 fn shape_reaches<'s>(shape: &'s CodecShape, reached: &mut Vec<Option<&'s str>>) {
     match shape {
-        CodecShape::Scalar { scalar } => match scalar.prim() {
-            Prim::Int | Prim::Bool | Prim::String => {}
-            Prim::Decimal
-            | Prim::Rational
-            | Prim::Date
-            | Prim::Time
-            | Prim::DateTime
-            | Prim::Instant
-            | Prim::Raw => reached.push(None),
-        },
+        CodecShape::Scalar { scalar } => primitive_reaches(scalar.prim(), reached),
         CodecShape::Named { declared } => reached.push(Some(declared)),
         CodecShape::OptionOf { present } => shape_reaches(present.shape(), reached),
         // An array of its elements, each written as one would be anywhere else.

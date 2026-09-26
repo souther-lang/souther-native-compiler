@@ -338,12 +338,12 @@ fn an_answer_that_is_a_set_is_read_and_not_lowered() {
 }
 
 /// A primitive standing as a member of an answer is a case the transport carries, and a value of
-/// the union has a representation here: the `Int` is carried with the runtime's token for it. What
-/// answers the behavior is the object of the build that declares it, reached from every other
-/// object, and a union with a case no declaration names is not yet one an object is run reading
-/// from another; nor is a host handed a way to make one. So the behavior is not lowered.
+/// the union has a representation here: the `Int` is carried with the runtime's token for it,
+/// another object reads it by the same token, and a host implementing the behavior makes one
+/// through the runtime (`souther_case_int_make`). So the behavior is lowered, and is not refused
+/// for its answer anywhere.
 #[test]
-fn an_answer_with_a_primitive_among_its_cases_is_read_and_not_lowered() {
+fn an_answer_with_a_primitive_among_its_cases_is_lowered() {
     let document = concat!(
         r#"{"transport":22,"declarations":["#,
         r#"{"module":"m","name":"NotFound","by":"amodule","is":"unit"}],"#,
@@ -355,16 +355,9 @@ fn an_answer_with_a_primitive_among_its_cases_is_read_and_not_lowered() {
         r#""modules":[{"name":"m","publishes":[],"helpers":[],"values":[],"entries":[],"definitions":[],"examples":[]}]}"#,
     );
 
-    let refused = object_for(document).expect_err("no object reads a carried Int from another");
-
-    assert!(
-        refused.downcast_ref::<NotLowered>().is_some(),
-        "a union no object reads from another is the backend being behind: {refused}"
-    );
-    assert!(
-        refused.to_string().contains("reached across objects"),
-        "{refused}"
-    );
+    if let Err(refused) = object_for(document) {
+        panic!("a union a host makes through the runtime is refused: {refused}");
+    }
 }
 
 /// Two calls reaching one published value at two different types is not a document this backend
@@ -854,4 +847,25 @@ fn two_local_definitions_written_the_same_are_the_halves_disagreeing() {
     let inner = r#"{"is":"body","declared":"m.inner","parameters":["a"],"publication":"kept","body":{"core":"read","binding":0,"type":{"prim":"INT"},"aborts":[]}}"#;
     let document = composed_document().replace(inner, &format!("{inner},{inner}"));
     is_the_halves_disagreeing(&document, "m.inner");
+}
+
+/// An answer written by no case is refused where it is read, as every set of alternatives naming
+/// none is (`coherence.rs` holds the rest).
+#[test]
+fn an_answer_written_by_no_case_is_refused_where_it_is_read() {
+    let document = concat!(
+        r#"{"transport":22,"declarations":["#,
+        r#"{"module":"m","name":"NotFound","by":"amodule","is":"unit"}],"#,
+        r#""behaviors":[{"module":"m","name":"lengthOf","is":"injected","parameters":{"named":[]},"#,
+        r#""output":{"is":"cases","type":{"union":[{"is":"primitive","prim":"INT"},"#,
+        r#"{"is":"declared","declared":"m.NotFound"}]},"#,
+        r#""cases":[],"#,
+        r#""form":{"is":"discriminated","tag":"type","contents":"value"}},"requirements":[],"ensures":{"at":"none"}}],"#,
+        r#""modules":[{"name":"m","publishes":[],"helpers":[],"values":[],"entries":[],"definitions":[],"examples":[]}]}"#,
+    );
+
+    let refused = object_for(document).expect_err("an answer written by no case");
+
+    assert!(refused.downcast_ref::<NotLowered>().is_none(), "{refused}");
+    assert!(refused.to_string().contains("no case in it"), "{refused}");
 }

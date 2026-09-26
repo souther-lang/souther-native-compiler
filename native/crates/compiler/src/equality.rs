@@ -268,7 +268,7 @@ impl Comparing<'_, '_, '_, '_> {
             // The last case is the one a value tagged by none of the others is, which the checker
             // settles every value of the sum to be one of.
             if at + 1 < leaves.len() {
-                let tag = token_of(self.builder, self.lowering, self.module, leaf)?;
+                let tag = token_of(self.builder, self.lowering.declared, self.module, leaf)?;
                 let is_it = self.builder.ins().icmp(IntCC::Equal, one, tag);
                 let taken = self.builder.create_block();
                 let next = self.builder.create_block();

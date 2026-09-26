@@ -230,6 +230,29 @@ class WhatThisBackendDoesNotWriteYetTest {
     }
 
     /**
+     * An arm binding a name where it tests that an optional holds nothing is admitted with no type
+     * for the name (souther-lang/souther#1984), and there is nothing to write it as. Refused as not
+     * lowered, naming that, rather than written with a type this side made up.
+     */
+    @Test
+    void anArmBindingANameToNothingIsNotLoweredYet() {
+        CheckedProgram program = CheckedProgram.of(List.of("""
+                module absent exposing ( counted, Held )
+
+                data Held = { o: Int? }
+
+                behavior counted : (h: Held) -> Int
+                let counted (h) = match h.o with
+                    | Some x -> x
+                    | None as n -> 0
+                """));
+
+        assertThatThrownBy(() -> ProgramWriter.written(program))
+                .isInstanceOf(NotLowered.class)
+                .hasMessageContaining("souther-lang/souther#1984");
+    }
+
+    /**
      * A value of a newtype compared with a bare literal, which is a comparison of what it wraps.
      *
      * <p>Both orders, and the order is the point. The checker reads the pair as values of the

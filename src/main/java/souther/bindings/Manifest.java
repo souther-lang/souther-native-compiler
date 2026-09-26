@@ -50,7 +50,7 @@ public final class Manifest {
     public static final String FORMAT = "souther-native-interface";
 
     /** The version of what a manifest says that this reads. */
-    public static final int VERSION = 8;
+    public static final int VERSION = 9;
 
     /** The ABI generation the functions this binds answer to. */
     public static final int ABI = 4;
@@ -59,6 +59,7 @@ public final class Manifest {
     private final Map<String, Integer> statuses;
     private final Map<String, Integer> outcomes;
     private final List<Function> runtime;
+    private final List<CaseCrossing> cases;
     private final List<Module> modules;
 
     /**
@@ -68,12 +69,35 @@ public final class Manifest {
      * call, as something no binding can build.
      */
     private Manifest(int abi, Map<String, Integer> statuses, Map<String, Integer> outcomes,
-                     List<Function> runtime, List<Module> modules) {
+                     List<Function> runtime, List<CaseCrossing> cases, List<Module> modules) {
         this.abi = abi;
         this.statuses = Collections.unmodifiableMap(new LinkedHashMap<>(statuses));
         this.outcomes = Collections.unmodifiableMap(new LinkedHashMap<>(outcomes));
         this.runtime = List.copyOf(runtime);
+        this.cases = List.copyOf(cases);
         this.modules = List.copyOf(modules);
+        // One way to make and read each case, and one for every case no declaration names that a
+        // host may be handed or hand over, wherever the manifest names it: a behavior's answer, what
+        // an injection answers, a parameter, a field, a published value, a sum. Asked of every
+        // case the manifest names and not of where a generator happens to need one, so a manifest
+        // leaving one out is refused here as incomplete rather than read by a generator as a
+        // union its language has no way to hold.
+        Set<Case> crossed = new HashSet<>();
+        for (CaseCrossing crossing : this.cases) {
+            if (!crossed.add(crossing.of())) {
+                throw new IllegalArgumentException("it says twice how " + crossing.of()
+                        + " is made and read");
+            }
+        }
+        for (Module module : this.modules) {
+            for (Case of : casesIn(module)) {
+                if (crossesCarried(of) && !crossed.contains(of)) {
+                    throw new IllegalArgumentException("it says module `" + module.name()
+                            + "` holds " + of + ", and nothing of how a value of it is made or"
+                            + " read");
+                }
+            }
+        }
         Set<String> constructible = new HashSet<>();
         for (Module module : this.modules) {
             module.constructions().forEach(it -> constructible.add(module.name() + "." + it.name()));
@@ -113,6 +137,80 @@ public final class Manifest {
     /** The runtime's functions a host calls. */
     public List<Function> runtime() {
         return runtime;
+    }
+
+    /**
+     * How a host makes and reads a value of each case no declaration names, as a union holds one:
+     * a property of the case, whatever union it stands in.
+     */
+    public List<CaseCrossing> cases() {
+        return cases;
+    }
+
+    /**
+     * How a value of {@code of} is made and read: said for every case a host crosses carried, which
+     * a manifest is refused where it leaves out.
+     *
+     * @throws IllegalArgumentException where {@code of} is not a case a host crosses carried
+     */
+    public CaseCrossing crossing(Case of) {
+        return cases.stream().filter(it -> it.of().equals(of)).findFirst()
+                .orElseThrow(() -> new IllegalArgumentException(of + " is not a case a host makes"
+                        + " or reads through the runtime"));
+    }
+
+    /**
+     * Whether a host crosses a value of {@code of} carried, through the runtime: a case the language
+     * gives, and a primitive a host is handed at all. A declared case is the value as it is, and a
+     * primitive no host is handed has no way across however it is held.
+     */
+    private static boolean crossesCarried(Case of) {
+        return switch (of) {
+            case Case.Declared d -> false;
+            case Case.Language l -> true;
+            case Case.Primitive p -> CrossingShape.heldAs(p) != null;
+        };
+    }
+
+    /** Every case {@code module} names anywhere: in a type, a union answer's cases, a sum's. */
+    private static List<Case> casesIn(Module module) {
+        List<Type> types = new ArrayList<>();
+        List<Case> named = new ArrayList<>();
+        for (Behavior behavior : module.behaviors()) {
+            types.addAll(behavior.parameters().types());
+            types.add(behavior.answers().type());
+            if (behavior.answers().union() != null) {
+                named.addAll(behavior.answers().union().cases());
+            }
+        }
+        for (Injection injection : module.injections()) {
+            injection.parameters().forEach(it -> types.add(it.type()));
+            types.add(injection.answers());
+        }
+        module.values().forEach(it -> types.add(it.type()));
+        for (Declaration declaration : module.declarations()) {
+            switch (declaration) {
+                case Declaration.Product it -> it.fields().forEach(field -> types.add(field.type()));
+                case Declaration.Newtype it -> types.add(it.field().type());
+                case Declaration.Unit it -> { }
+                case Declaration.Sum it -> named.addAll(it.cases());
+            }
+        }
+        for (Type type : types) {
+            casesOf(type, named);
+        }
+        return named;
+    }
+
+    private static void casesOf(Type type, List<Case> named) {
+        switch (type) {
+            case Type.Union it -> named.addAll(it.cases());
+            case Type.Option it -> casesOf(it.of(), named);
+            case Type.ListOf it -> casesOf(it.of(), named);
+            case Type.Primitive it -> { }
+            case Type.Declared it -> { }
+            case Type.Unrepresented it -> { }
+        }
     }
 
     /** What each module of the library offers a host. */
@@ -226,6 +324,22 @@ public final class Manifest {
     /** A published behavior, and what a host calls it through where it can. */
     public record Behavior(String name, Parameters parameters, Answer answers,
                            @Nullable Function call) {
+
+        /**
+         * What tells an answer's cases apart is there exactly where the behavior can be called: a
+         * host is handed the answer only by the call, and one told nothing of which case it was
+         * handed could name the union and not hold it.
+         */
+        public Behavior {
+            UnionAnswer union = answers.union();
+            if (union != null && (union.which() != null) != (call != null)) {
+                throw new IllegalArgumentException("it says " + name + " is called "
+                        + (call == null ? "no way" : "by " + call.name()) + " and its answer's case"
+                        + " is told " + (union.which() == null ? "no way" : "by "
+                        + union.which().name()) + ", where the one is there exactly where the"
+                        + " other is");
+            }
+        }
     }
 
     /**
@@ -254,6 +368,14 @@ public final class Manifest {
      * its cases apart by.
      */
     public record Answer(Type type, @Nullable UnionAnswer union) {
+
+        /** Said of every union no declaration names that a behavior answers, and of nothing else. */
+        public Answer {
+            if ((type instanceof Type.Union) != (union != null)) {
+                throw new IllegalArgumentException("an answer of " + type + " says "
+                        + (union == null ? "nothing of its cases" : "cases of a union it is not"));
+            }
+        }
     }
 
     /**
@@ -263,8 +385,20 @@ public final class Manifest {
     public record UnionAnswer(List<Case> cases, @Nullable Function which) {
 
         public UnionAnswer {
-            cases = List.copyOf(cases);
+            cases = oneOrMore(cases, "a union answer");
         }
+    }
+
+    /**
+     * {@code cases}, owned, where there is one: every set of alternatives a manifest names has a
+     * case in it, and a binding telling a value apart by which of none it is would have nothing to
+     * make of it.
+     */
+    private static List<Case> oneOrMore(List<Case> cases, String of) {
+        if (cases.isEmpty()) {
+            throw new IllegalArgumentException(of + " with no case in it");
+        }
+        return List.copyOf(cases);
     }
 
     /** What a behavior takes: named as its declaration names them, or in order for a composition. */
@@ -356,13 +490,13 @@ public final class Manifest {
                 implements Declaration {
         }
 
-        /** A sum, and the cases {@code which} counts, where every case is a declared type. */
+        /** A sum, and the cases {@code which} counts, where a host can be handed each of them. */
         record Sum(String name, List<Case> cases, @Nullable Function which,
                    @Nullable Function decode, @Nullable Function decodeHost,
                    @Nullable Function encode) implements Declaration {
 
             public Sum {
-                cases = List.copyOf(cases);
+                cases = oneOrMore(cases, "sum `" + name + "`");
             }
         }
     }
@@ -382,7 +516,7 @@ public final class Manifest {
         record Union(List<Case> cases) implements Type {
 
             public Union {
-                cases = List.copyOf(cases);
+                cases = oneOrMore(cases, "a union");
             }
         }
 
@@ -397,14 +531,47 @@ public final class Manifest {
         }
     }
 
-    /** One case of a sum. */
+    /** One case of a sum or of a union. */
     public sealed interface Case {
 
+        /** A declared type, whose value is the case's value as it is. */
         record Declared(String module, String name) implements Case {
         }
 
-        /** A primitive or a case the language gives, which a host reaches nothing of. */
-        record Other(String kind, String name) implements Case {
+        /** A primitive, carried: made and read through {@link Manifest#cases}. */
+        record Primitive(String name) implements Case {
+        }
+
+        /** A case the language gives, which holds nothing: made through {@link Manifest#cases}. */
+        record Language(String name) implements Case {
+        }
+    }
+
+    /**
+     * How a host makes a value of a case no declaration names and reads what it holds: {@code make}
+     * takes what the case holds, where it holds something, and answers the value; {@code read}
+     * takes a value that says it is the case and answers what it holds. A primitive holds itself
+     * and a case the language gives nothing, so one has a {@code read} and the other none.
+     */
+    public record CaseCrossing(Case of, Function make, @Nullable Function read) {
+
+        public CaseCrossing {
+            if (of instanceof Case.Declared) {
+                throw new IllegalArgumentException(of + " is a declared type, which a host holds as"
+                        + " it is and makes through its own constructor");
+            }
+            if ((of instanceof Case.Primitive) != (read != null)) {
+                throw new IllegalArgumentException(of + " is read " + (read == null ? "no way" : "by "
+                        + read.name()) + ", where a primitive holds itself and a case the language"
+                        + " gives nothing");
+            }
+            if (make.answers() != Word.VALUE || (read != null && (!read.takes().equals(
+                    List.of(Parameter.given(Word.VALUE))) || read.answers() == null
+                    || !make.takes().equals(List.of(Parameter.given(read.answers())))))
+                    || (read == null && !make.takes().isEmpty())) {
+                throw new IllegalArgumentException(of + " is made by " + make + " and read by " + read
+                        + ", which are not one value and what it holds, both ways");
+            }
         }
     }
 
@@ -469,9 +636,14 @@ public final class Manifest {
             combine(field("kind", literal("declared")), field("module", string()),
                     field("name", string())).strict((kind, module, name) -> new Case.Declared(module, name)),
             combine(field("kind", literal("primitive")), field("name", string()))
-                    .strict(Case.Other::new),
+                    .strict((kind, name) -> new Case.Primitive(name)),
             combine(field("kind", literal("language")), field("name", string()))
-                    .strict(Case.Other::new));
+                    .strict((kind, name) -> new Case.Language(name)));
+
+    private static final Decoder<JsonNode, CaseCrossing> CASE_CROSSING = combine(
+            field("case", CASE),
+            field("make", FUNCTION),
+            nullableField("read", FUNCTION)).strict(CaseCrossing::new);
 
     private static final Decoder<JsonNode, Type> TYPE = lazy(Manifest::type);
 
@@ -609,7 +781,8 @@ public final class Manifest {
             field("statuses", map(int_())),
             field("outcomes", map(int_())),
             field("runtime", list(FUNCTION)),
+            field("cases", list(CASE_CROSSING)),
             field("modules", list(MODULE)))
-            .strict((format, version, abi, statuses, outcomes, runtime, modules) ->
-                    new Manifest(abi, statuses, outcomes, runtime, modules));
+            .strict((format, version, abi, statuses, outcomes, runtime, cases, modules) ->
+                    new Manifest(abi, statuses, outcomes, runtime, cases, modules));
 }

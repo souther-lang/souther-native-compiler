@@ -22,10 +22,11 @@
 
 use super::{Codecs, Runtime};
 use crate::literals::Literals;
-use crate::transport::{AlternativesForm, Case, CodecShape, Declaration, Field, Prim};
+use crate::transport::{AlternativesForm, Case, CodecShape, Declaration, Field, LeafScalar, Prim};
 use crate::{
-    Construction, Constructors, Declared, Emitting, Lowered, POINTER, TRUSTED, construction,
-    decide, into_slot, lay_out, machine_type, not_lowered, out_slot,
+    CaseBody, Construction, Constructors, Declared, Emitting, Lowered, POINTER, TRUSTED,
+    carry_into, construction, decide, into_slot, lay_out, machine_type, not_lowered, out_slot,
+    room_to_carry,
 };
 use cranelift::codegen::ir::condcodes::IntCC;
 use cranelift::codegen::ir::{self, InstBuilder, types};
@@ -508,24 +509,28 @@ impl Reading<'_, '_> {
         node: ir::Value,
         path: ir::Value,
     ) -> Lowered<()> {
-        let mut declared = Vec::with_capacity(cases.len());
-        for case in cases {
-            let Case::Declared { declared: key } = case else {
-                return Err(not_lowered(format!(
-                    "the case {}, which this backend does not read as one of a set of \
-                     alternatives yet",
-                    case.spelt()
-                )));
-            };
-            declared.push((key.as_str(), self.declared.laid(key)));
-        }
+        let bodies: Vec<CaseBody> = cases
+            .iter()
+            .map(|case| self.declared.body_of(case))
+            .collect();
         match form {
             // The value is the case's name, and the case is a unit.
             AlternativesForm::Enumeration => {
                 let named = self.asked(Runtime::ReadCase, &[node, path, self.decoding]);
                 self.or_nothing(named);
-                for (key, case) in declared {
-                    self.when_named(node, case.name(), |reading| {
+                for body in &bodies {
+                    let CaseBody::Declared {
+                        key,
+                        declaration: Declaration::Unit { .. },
+                    } = body
+                    else {
+                        unreachable!(
+                            "`Declared::settled` refused {}, which is not a unit, in an \
+                             enumeration",
+                            body.name()
+                        )
+                    };
+                    self.when_named(node, body.name(), |reading| {
                         let value = reading.construct(key, &[], path)?;
                         reading.answer(value);
                         Ok(())
@@ -542,10 +547,9 @@ impl Reading<'_, '_> {
                 let named = self.asked(Runtime::ReadTag, &[node, tag, at_tag, self.decoding]);
                 let there = self.builder.ins().icmp_imm_s(IntCC::NotEqual, named, 0);
                 self.or_nothing(there);
-                for (key, case) in declared {
-                    self.when_named(named, case.name(), |reading| {
-                        reading.case(key, case, contents, node, path);
-                        Ok(())
+                for (case, body) in cases.iter().zip(&bodies) {
+                    self.when_named(named, body.name(), |reading| {
+                        reading.case(case, body, contents, node, path)
                     })?;
                 }
                 self.call(Runtime::ReadNotACase, &[named, at_tag, self.decoding]);
@@ -573,36 +577,89 @@ impl Reading<'_, '_> {
         Ok(())
     }
 
-    /// A case of a discriminated set, read where the writer put it: its fields in the object that
-    /// carries the tag, or wrapped under `contents` beside it.
+    /// A case of a discriminated set, read where the writer put it: a product's fields in the object
+    /// that carries the tag, and what a newtype or a primitive holds under `contents` beside it. A
+    /// case that holds nothing is the tag alone.
     fn case(
         &mut self,
-        key: &str,
-        case: &Declaration,
+        case: &Case,
+        body: &CaseBody,
         contents: &str,
         node: ir::Value,
         path: ir::Value,
-    ) {
-        match case {
-            Declaration::Sum { .. } => {
+    ) -> Lowered<()> {
+        match body {
+            CaseBody::Declared {
+                key,
+                declaration: Declaration::Sum { .. },
+            } => {
                 unreachable!("`Declared::settled` refused a sum standing as the case {key}")
             }
-            Declaration::Product { .. } | Declaration::Unit { .. } => {
+            CaseBody::Declared {
+                key,
+                declaration: Declaration::Product { .. } | Declaration::Unit { .. },
+            } => {
                 self.read_as(key, node, path);
             }
-            Declaration::Newtype { .. } => {
-                let contents = self.literal(contents);
-                let at = self.below(path, contents);
-                let member = self.asked(Runtime::ReadMember, &[node, contents]);
-                let there = self.builder.create_block();
-                let missing = self.builder.create_block();
-                self.builder.ins().brif(member, there, &[], missing, &[]);
-                self.builder.switch_to_block(missing);
-                self.call(Runtime::ReadMissing, &[at, self.decoding]);
-                self.builder.ins().jump(self.nothing, &[]);
-                self.builder.switch_to_block(there);
+            CaseBody::Declared {
+                key,
+                declaration: Declaration::Newtype { .. },
+            } => {
+                let (member, at) = self.contents(contents, node, path);
                 self.read_as(key, member, at);
             }
+            CaseBody::Primitive(prim) => {
+                let (member, at) = self.contents(contents, node, path);
+                let shape = CodecShape::Scalar {
+                    scalar: LeafScalar::of(*prim).ok_or_else(|| {
+                        not_lowered(format!("a {} read at a boundary", prim.spelt()))
+                    })?,
+                };
+                let held = self.value(member, at, &shape)?;
+                self.whole_or_nothing();
+                let value = self.carried(case, Some(held))?;
+                self.answer(value);
+            }
+            CaseBody::Empty(_) => {
+                let value = self.carried(case, None)?;
+                self.answer(value);
+            }
         }
+        Ok(())
+    }
+
+    /// What is under `contents` beside a tag, and the place it stands at, going to
+    /// [`Self::nothing`] where the member is not there.
+    fn contents(
+        &mut self,
+        contents: &str,
+        node: ir::Value,
+        path: ir::Value,
+    ) -> (ir::Value, ir::Value) {
+        let contents = self.literal(contents);
+        let at = self.below(path, contents);
+        let member = self.asked(Runtime::ReadMember, &[node, contents]);
+        let there = self.builder.create_block();
+        let missing = self.builder.create_block();
+        self.builder.ins().brif(member, there, &[], missing, &[]);
+        self.builder.switch_to_block(missing);
+        self.call(Runtime::ReadMissing, &[at, self.decoding]);
+        self.builder.ins().jump(self.nothing, &[]);
+        self.builder.switch_to_block(there);
+        (member, at)
+    }
+
+    /// A value of a case no declaration names, carried with its token.
+    fn carried(&mut self, case: &Case, holds: Option<ir::Value>) -> Lowered<ir::Value> {
+        let taking = self
+            .module
+            .declare_func_in_func(self.allocate, self.builder.func);
+        let size = self
+            .builder
+            .ins()
+            .iconst(types::I64, room_to_carry(holds.is_some()));
+        let taken = self.builder.ins().call(taking, &[size]);
+        let room = self.builder.inst_results(taken)[0];
+        carry_into(self.builder, self.declared, self.module, room, case, holds)
     }
 }

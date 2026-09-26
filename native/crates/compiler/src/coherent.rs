@@ -55,8 +55,8 @@ use crate::closures::ClosureSites;
 use crate::index;
 use crate::kernels::{Bound, LoweredKernel};
 use crate::transport::{
-    AbortKind, Answers, Carrier, Case, Declaration, Definition, Emitted, Ensures, Guard, Held,
-    Node, Op, Owner, Prim, Program, Reaches, Reaching, Reading, Reference, Routing, Selects,
+    AbortKind, Answers, Carrier, Case, Cases, Declaration, Definition, Emitted, Ensures, Guard,
+    Held, Node, Op, Owner, Prim, Program, Reaches, Reaching, Reading, Reference, Routing, Selects,
     Target, Ty, Value,
 };
 use crate::{Declared, Runs, Targets, departures_taken, not_lowered, says_its_case};
@@ -1323,8 +1323,37 @@ impl<'a> Walk<'_, 'a> {
                     );
                 };
                 let shape = self.declared.shape(declared)?;
+                // A sum has no fields of its own; the checker lets one be read off it where every
+                // case lays one of that name out (a field each takes in by spread), and the read is
+                // of the case's field, whichever case the value is. So every case is asked, and
+                // what each lays out stands as what the read answers.
                 if let crate::transport::Declaration::Sum { .. } = shape {
-                    self.not_lowered(format!("a field {field} read off the sum {declared}"));
+                    let cases = self.declared.leaves_of(&[Case::Declared {
+                        declared: declared.clone(),
+                    }])?;
+                    for case in &cases {
+                        let Case::Declared { declared: key } = case else {
+                            bail!(
+                                "{}: a field {field} read off {declared}, whose case {} holds no \
+                                 fields: the two halves disagree",
+                                self.owner,
+                                case.spelt()
+                            );
+                        };
+                        let laid = self.declared.shape(key)?;
+                        let at = laid.position_of(field).ok_or_else(|| {
+                            anyhow!(
+                                "{}: a field {field} read off {declared}, whose case {key} \
+                                 declares none: the two halves disagree",
+                                self.owner
+                            )
+                        })?;
+                        self.fits(
+                            &format!("{key}'s field {field}, read off {declared}"),
+                            &laid.fields()[at].codec.ty(),
+                            ty,
+                        );
+                    }
                     return Ok(());
                 }
                 let at = shape.position_of(field).ok_or_else(|| {
@@ -1564,10 +1593,10 @@ impl<'a> Walk<'_, 'a> {
         }
     }
 
-    /// Refuses a test naming no case, or a case that is a sum: what a value is tagged with is one
-    /// of the leaves a case resolved to, and the checker answers those, so a sum here would be a
-    /// test this side had to descend itself.
-    fn leaves(&self, what: &str, cases: &[Case]) -> Result<()> {
+    /// Refuses a test naming a case that is a sum: what a value is tagged with is one of the leaves
+    /// a case resolved to, and the checker answers those, so a sum here would be a test this side
+    /// had to descend itself. One naming no case is refused where it is read ([`Cases`]).
+    fn leaves(&self, what: &str, cases: &Cases) -> Result<()> {
         leaves(self.declared, &format!("{}: {what}", self.owner), cases)
     }
 
@@ -1771,12 +1800,44 @@ impl<'a> Walk<'_, 'a> {
     /// What an arm reads the value it forks on as, against what reaches the arm.
     ///
     /// The one place a read is narrower than what it reads from, and narrower only by what the
-    /// arm tested: every value that reaches the arm is a value of what it binds, and what it binds
-    /// is no wider than the subject. An optional's present value is read out of the optional, and
-    /// is what the optional holds.
+    /// arm tested. Each selector is asked what it leaves to be read: a test of which case a value is
+    /// leaves the value, as one of the cases it tests, and a test that an optional holds a value
+    /// leaves what it holds. Every value that reaches the arm is one of those, so what the arm binds
+    /// is no narrower than any of them and no wider than what it reads them from.
+    ///
+    /// A test that an optional holds nothing leaves nothing to read, so an arm binding a value
+    /// where one of its selectors is that test is not an arm the checker writes, whatever else it
+    /// tests; nor is one whose selectors read the value two ways, since nothing tells at run time
+    /// which of the two the arm was reached by. Neither is this backend being behind.
     fn arm_binds(&mut self, subject: &Ty, selects: &[Selects], binds: &Ty) -> Result<()> {
-        match selects {
-            [Selects::Held] => {
+        let mut read_out = None;
+        let mut tested = Vec::new();
+        for selector in selects {
+            let holds_it = match selector {
+                Selects::Nothing => bail!(
+                    "{}: an arm binds a value where it tests that {} holds nothing, which leaves \
+                     nothing to bind: the two halves disagree",
+                    self.owner,
+                    subject.spelt()
+                ),
+                Selects::Held => true,
+                Selects::Which { atoms } => {
+                    tested.extend(atoms.iter().cloned());
+                    false
+                }
+            };
+            if *read_out.get_or_insert(holds_it) != holds_it {
+                bail!(
+                    "{}: an arm binds {} as what it holds under one of its tests and as itself \
+                     under another: the two halves disagree",
+                    self.owner,
+                    subject.spelt()
+                );
+            }
+        }
+        match read_out {
+            None => bail!("{}: an arm binds a value and tests nothing", self.owner),
+            Some(true) => {
                 let Ty::Option { option } = subject else {
                     bail!(
                         "{}: an arm reads a present value out of {}, which is not optional",
@@ -1791,17 +1852,13 @@ impl<'a> Walk<'_, 'a> {
                     "what the optional holds",
                 )
             }
-            _ if selects.iter().all(|it| matches!(it, Selects::Which { .. })) => {
-                let tested: Vec<Case> = selects
-                    .iter()
-                    .flat_map(|it| match it {
-                        Selects::Which { atoms } => atoms.clone(),
-                        Selects::Held | Selects::Nothing => Vec::new(),
-                    })
-                    .collect();
+            Some(false) => {
                 self.fits(
                     "a case an arm tests is read as what it binds",
-                    &Ty::Union { union: tested },
+                    &Ty::Union {
+                        union: Cases::one_or_more(tested)
+                            .expect("an arm reading its value as itself tests a case or more"),
+                    },
                     binds,
                 );
                 self.fits(
@@ -1809,13 +1866,6 @@ impl<'a> Walk<'_, 'a> {
                     binds,
                     subject,
                 );
-                Ok(())
-            }
-            _ => {
-                self.not_lowered(format!(
-                    "an arm binding the value of {} it tests as more than a present value",
-                    subject.spelt()
-                ));
                 Ok(())
             }
         }
@@ -2341,20 +2391,6 @@ fn composes(
                     &format!("{name}'s stage {}", stage.behavior),
                     accepted,
                 )?;
-                // A stage accepting a case no declaration names is one the checker's own backend
-                // does not compile yet, so nothing has run one: it is not lowered until something
-                // can hold what it answers to what the language says.
-                if let Some(case) = accepted
-                    .iter()
-                    .find(|case| !matches!(case, Case::Declared { .. }))
-                {
-                    owed.not_lowered.push(format!(
-                        "{name}'s stage {}, routed the case {} of {}",
-                        stage.behavior,
-                        case.spelt(),
-                        running.spelt()
-                    ));
-                }
                 let running_cases = declared.cases_of(&running)?.ok_or_else(|| {
                     anyhow!(
                         "{name}'s stage {} is offered cases of {}, which has none",
@@ -2386,7 +2422,7 @@ fn composes(
                     .into_iter()
                     .filter(|case| !accepted.contains(case))
                     .collect();
-                if !leaving.is_empty() {
+                if let Some(leaving) = Cases::one_or_more(leaving) {
                     owed.fits(
                         format!(
                             "what leaves {name} at its stage {} is what it answers",
@@ -2524,12 +2560,9 @@ fn spelt_declaration(declaration: Reaching) -> String {
     }
 }
 
-/// Refuses a test naming no case, or naming a sum where the checker answers the leaves it descends
-/// to.
-fn leaves(declared: &Declared, what: &str, cases: &[Case]) -> Result<()> {
-    if cases.is_empty() {
-        bail!("{what} tests for no case");
-    }
+/// Refuses a test naming a sum where the checker answers the leaves it descends to. One naming no
+/// case is refused where it is read ([`Cases`]).
+fn leaves(declared: &Declared, what: &str, cases: &Cases) -> Result<()> {
     for case in cases {
         if let Case::Declared { declared: key } = case
             && let crate::transport::Declaration::Sum { .. } = declared.shape(key)?

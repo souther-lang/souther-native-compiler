@@ -15,7 +15,10 @@ use crate::decoding::*;
 use crate::document::Node;
 use crate::external::*;
 use crate::*;
-use souther_native_abi::{GENERATED_RUNTIME, HOST_RUNTIME, HostWord, Parameter, Word};
+use souther_native_abi::{
+    BUILT_IN_CASES, GENERATED_RUNTIME, HOST_CASES, HOST_RUNTIME, HostWord, Parameter,
+    RuntimeFunction, Word,
+};
 use std::collections::BTreeSet;
 
 /// A type a function here takes, as the parameter it is.
@@ -328,6 +331,62 @@ fn functions() -> Vec<(&'static str, Shape)> {
             shape_of(souther_decoded_issue as unsafe extern "C" fn(C, Count) -> *const Issue),
         ),
         (
+            "souther_case_int_make",
+            shape_of(souther_case_int_make as extern "C" fn(i64) -> *const Value),
+        ),
+        (
+            "souther_case_int_read",
+            shape_of(souther_case_int_read as unsafe extern "C" fn(*const Value) -> i64),
+        ),
+        (
+            "souther_case_bool_make",
+            shape_of(souther_case_bool_make as extern "C" fn(i8) -> *const Value),
+        ),
+        (
+            "souther_case_bool_read",
+            shape_of(souther_case_bool_read as unsafe extern "C" fn(*const Value) -> i8),
+        ),
+        (
+            "souther_case_string_make",
+            shape_of(souther_case_string_make as extern "C" fn(T) -> *const Value),
+        ),
+        (
+            "souther_case_string_read",
+            shape_of(souther_case_string_read as unsafe extern "C" fn(*const Value) -> T),
+        ),
+        (
+            "souther_case_some_make",
+            shape_of(souther_case_some_make as extern "C" fn() -> *const Value),
+        ),
+        (
+            "souther_case_none_make",
+            shape_of(souther_case_none_make as extern "C" fn() -> *const Value),
+        ),
+        (
+            "souther_case_division_by_zero_make",
+            shape_of(souther_case_division_by_zero_make as extern "C" fn() -> *const Value),
+        ),
+        (
+            "souther_case_not_a_number_make",
+            shape_of(souther_case_not_a_number_make as extern "C" fn() -> *const Value),
+        ),
+        (
+            "souther_case_not_a_date_make",
+            shape_of(souther_case_not_a_date_make as extern "C" fn() -> *const Value),
+        ),
+        (
+            "souther_case_not_a_time_make",
+            shape_of(souther_case_not_a_time_make as extern "C" fn() -> *const Value),
+        ),
+        (
+            "souther_case_not_whole_make",
+            shape_of(souther_case_not_whole_make as extern "C" fn() -> *const Value),
+        ),
+        (
+            "souther_case_not_a_finite_decimal_make",
+            shape_of(souther_case_not_a_finite_decimal_make as extern "C" fn() -> *const Value),
+        ),
+        (
             "souther_issue_code",
             shape_of(souther_issue_code as unsafe extern "C" fn(*const Issue) -> T),
         ),
@@ -350,9 +409,22 @@ fn functions() -> Vec<(&'static str, Shape)> {
     ]
 }
 
-/// What the two tables say of every function, by its name.
+/// Every function a host calls: the runtime's own, and what it makes and reads each case no
+/// declaration names through.
+fn host_functions() -> Vec<&'static RuntimeFunction> {
+    HOST_RUNTIME
+        .iter()
+        .chain(
+            HOST_CASES
+                .iter()
+                .flat_map(|it| std::iter::once(&it.make).chain(&it.read)),
+        )
+        .collect()
+}
+
+/// What the tables say of every function, by its name.
 fn said() -> Vec<(&'static str, Shape)> {
-    let host = HOST_RUNTIME.iter().map(|function| {
+    let host = host_functions().into_iter().map(|function| {
         (
             function.name,
             (
@@ -408,7 +480,7 @@ fn every_function_the_runtime_defines_is_in_one_table() {
             }
         }
     }
-    let host: Vec<&str> = HOST_RUNTIME.iter().map(|it| it.name).collect();
+    let host: Vec<&str> = host_functions().iter().map(|it| it.name).collect();
     let generated: Vec<&str> = GENERATED_RUNTIME.iter().map(|it| it.name).collect();
     for name in &host {
         assert!(!generated.contains(name), "{name} is in both tables");
@@ -424,4 +496,38 @@ fn every_function_the_runtime_defines_is_in_one_table() {
         .map(|(name, _)| name.to_string())
         .collect();
     assert_eq!(written, defined);
+}
+
+/// A case a host makes a value of is a case the runtime defines a token for, and every one is:
+/// the two tables name the same cases in the same order.
+#[test]
+fn a_host_makes_every_case_the_runtime_has_a_token_for() {
+    let crossed: Vec<&str> = HOST_CASES.iter().map(|it| it.case).collect();
+    assert_eq!(crossed, BUILT_IN_CASES);
+}
+
+/// What a host makes of a case and what it reads back are what went in, and the value says it is
+/// the case: the token at its front is the one the runtime defines for it.
+#[test]
+fn a_case_a_host_makes_reads_back_as_what_it_holds() {
+    let mark = souther_mark();
+    let which = |value: *const Value| unsafe { value.cast::<*const u8>().read() };
+    let int = souther_case_int_make(-42);
+    assert_eq!(which(int), CASE_INT.as_ptr());
+    assert_eq!(unsafe { souther_case_int_read(int) }, -42);
+    for truth in [0, 1] {
+        let bool = souther_case_bool_make(truth);
+        assert_eq!(which(bool), CASE_BOOL.as_ptr());
+        assert_eq!(unsafe { souther_case_bool_read(bool) }, truth);
+    }
+    // SAFETY: three bytes of UTF-8 at the address handed over.
+    let text = unsafe { souther_string_of_utf8("hé".as_ptr(), Count(3)) };
+    let string = souther_case_string_make(text);
+    assert_eq!(which(string), CASE_STRING.as_ptr());
+    assert_eq!(
+        unsafe { souther_case_string_read(string) },
+        text.cast_const()
+    );
+    assert_eq!(which(souther_case_none_make()), CASE_NONE.as_ptr());
+    souther_reset(mark);
 }

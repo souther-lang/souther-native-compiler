@@ -198,10 +198,15 @@ out` the way the type's own constructor does, since it is that constructor it ru
 clauses do not hold is answered `InvariantNotHeld` and nothing is written through `out`, and a type
 with no clause answers a status too, so a clause added later does not change how a host calls it.
 For each field there is a reader, `..._f_<field>`, answering the field itself. For a published
-sum whose every case is a declared type there is `..._case`, answering which of the cases the sum
-descends to the value is, as its place among them counted from nought; the address the value is
-tagged with never leaves the object. A union with a primitive among its cases has no reader, since what
-carries the primitive is not something a host is handed. The case answered is the concrete one the value is, and
+sum there is `..._case`, answering which of the cases the sum descends to the value is, as its place
+among them counted from nought; the address the value is tagged with never leaves the object. A
+declared case is the value itself. A primitive among the cases of a union is carried, and a host
+makes one and reads back what it holds through the runtime, `souther_case_int_make` and
+`souther_case_int_read` for an `Int` and the same for a `Bool` and a `String`; a case the language
+gives holds nothing and is only made (`souther_case_division_by_zero_make`). Those are the case's
+and not the union's, since a carried `Int` is laid out alike in every union it stands in, and the
+manifest lists them under `cases`. A read is made only of a value `..._case` has said is that case,
+and is not asked again. The case answered is the concrete one the value is, and
 whether a host can read that case further is its own publication's answer and not the sum's. A
 behavior answering a union no declaration names has the same reader beside its call,
 `souther4_m_<module>_b_<behavior>_answer_case`, counting the cases the union descends to: a member
@@ -351,8 +356,8 @@ behavior's `call` takes the capabilities of what it requires first, as `requirem
 names two readings of a value: `decode`, out of text in the external form, and `decodehost`, out of
 a value a host built of ordered maps and wrote with every container as an object, in which a map
 keyed by its indices is read as an array wherever the declaration holds one. What a manifest may say
-is Rust types, and version 8
-is `native/crates/compiler/tests/interface-v8.json`: a test holds a program's manifest to it, and
+is Rust types, and version 9
+is `native/crates/compiler/tests/interface-v9.json`: a test holds a program's manifest to it, and
 another reads it with those types and writes it back unchanged. The manifest carries its own
 `version`, moved when what it says is read differently, and the `abi` its functions answer to,
 which is the generation in every symbol.

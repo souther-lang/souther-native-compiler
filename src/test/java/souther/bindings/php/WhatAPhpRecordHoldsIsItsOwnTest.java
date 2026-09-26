@@ -35,10 +35,10 @@ class WhatAPhpRecordHoldsIsItsOwnTest {
                         """)), into.resolve("native")), into.resolve("php"), "Acme");
         Type.Union either = new Type.Union(List.of(
                 new Case.Declared("m", "Found"), new Case.Declared("m", "Missing")));
-        Crossing.Whole found = Crossing.Whole.product(CrossingShape.declared("m", "Found"),
-                "\\Acme\\M\\Found");
-        Crossing.Whole missing = Crossing.Whole.product(CrossingShape.declared("m", "Missing"),
-                "\\Acme\\M\\Missing");
+        Crossing.Member found = new Crossing.Member(Crossing.Whole.product(
+                CrossingShape.declared("m", "Found"), "\\Acme\\M\\Found"), null);
+        Crossing.Member missing = new Crossing.Member(Crossing.Whole.product(
+                CrossingShape.declared("m", "Missing"), "\\Acme\\M\\Missing"), null);
         Function which = new Function("which", List.of(Parameter.given(Word.VALUE)), Word.CASE);
 
         Owning owning = new Owning();

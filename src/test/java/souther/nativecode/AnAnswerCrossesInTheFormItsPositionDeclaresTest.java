@@ -27,10 +27,11 @@ class AnAnswerCrossesInTheFormItsPositionDeclaresTest {
     private static final String DOORS = """
             module doors exposing ( closedAlone, holding, doorOf, phaseOf, porchOf, customer,
                                     placeOrder, noteOf, flagOf, chainOf, rankOf, bill, lookUp, echoInt, echoBool,
-                                    echoText, doorsOf, linksOf,
+                                    echoText, doorsOf, linksOf, lengthOf, flaggedOf, namedOf,
+                                    doubledLength : Int | NotFound,
                                     Closed, Open, Door, Phase, Pending, Holder, Porch, CustomerId,
                                     Order, Noted, Flagged, Chain, Links, Manager, Staff, Rank, Issued,
-                                    UnknownSku, Missing )
+                                    UnknownSku, Missing, NotFound )
 
             data Closed
             data Open = { since: Int }
@@ -126,6 +127,22 @@ class AnAnswerCrossesInTheFormItsPositionDeclaresTest {
                 constructs Open
 
             let lookUp (n) = if n > 1 then Open { since = n } else if n > 0 then Closed else Missing
+
+            data NotFound
+
+            behavior lengthOf : (n: Int) -> Int | NotFound
+            let lengthOf (n) = if n > 0 then n else NotFound
+
+            behavior doubled : (n: Int) -> Int
+            let doubled (n) = n * 2
+
+            behavior doubledLength = lengthOf >-> doubled
+
+            behavior flaggedOf : (n: Int) -> Bool | NotFound
+            let flaggedOf (n) = if n > 0 then n > 1 else NotFound
+
+            behavior namedOf : (s: String) -> String | NotFound
+            let namedOf (s) = if s == "" then NotFound else s
 
             behavior echoInt : (n: Int) -> Int
             let echoInt (n) = n
@@ -303,6 +320,44 @@ class AnAnswerCrossesInTheFormItsPositionDeclaresTest {
                 .isEqualTo(json("{\"type\":\"Closed\"}"));
         assertThat(answer(running, program, "lookUp", integer(0)))
                 .isEqualTo(json("{\"type\":\"Missing\"}"));
+    }
+
+    /**
+     * A primitive standing as a member of an answer has no object of its own to take the tag into,
+     * so it stands under the contents key beside it, the way a newtype case does, and is written as
+     * the primitive it is.
+     */
+    @Test
+    void aPrimitiveMemberIsWrittenUnderTheContentsKeyBesideItsName() throws Exception {
+        CheckedProgram program = CheckedProgram.of(List.of(DOORS));
+        Running running = Running.of(program);
+        assertThat(answer(running, program, "lengthOf", integer(4)))
+                .isEqualTo(json("{\"type\":\"Int\",\"value\":4}"));
+        assertThat(answer(running, program, "lengthOf", integer(0)))
+                .isEqualTo(json("{\"type\":\"NotFound\"}"));
+        assertThat(answer(running, program, "flaggedOf", integer(1)))
+                .isEqualTo(json("{\"type\":\"Bool\",\"value\":false}"));
+        assertThat(answer(running, program, "flaggedOf", integer(2)))
+                .isEqualTo(json("{\"type\":\"Bool\",\"value\":true}"));
+        assertThat(answer(running, program, "namedOf", text("n")))
+                .isEqualTo(json("{\"type\":\"String\",\"value\":\"n\"}"));
+        assertThat(answer(running, program, "namedOf", text("")))
+                .isEqualTo(json("{\"type\":\"NotFound\"}"));
+    }
+
+    /**
+     * A stage accepting the primitive case of what runs is handed it read back out of what carries
+     * it, and what it answers is carried again as the composition's answer; the case it does not
+     * accept leaves as it came.
+     */
+    @Test
+    void aStageAcceptingAPrimitiveCaseIsHandedThePrimitive() throws Exception {
+        CheckedProgram program = CheckedProgram.of(List.of(DOORS));
+        Running running = Running.of(program);
+        assertThat(answer(running, program, "doubledLength", integer(21)))
+                .isEqualTo(json("{\"type\":\"Int\",\"value\":42}"));
+        assertThat(answer(running, program, "doubledLength", integer(0)))
+                .isEqualTo(json("{\"type\":\"NotFound\"}"));
     }
 
     @Test

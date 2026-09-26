@@ -3,6 +3,7 @@ package souther.bindings;
 import org.jspecify.annotations.Nullable;
 import souther.bindings.Manifest.Answer;
 import souther.bindings.Manifest.Case;
+import souther.bindings.Manifest.CaseCrossing;
 import souther.bindings.Manifest.Element;
 import souther.bindings.Manifest.Function;
 import souther.bindings.Manifest.Implementation;
@@ -67,8 +68,7 @@ public sealed interface CrossingShape {
 
     /**
      * The value itself: an {@code Int}, a {@code Bool} or a {@code String}, or the address of a
-     * value of a declared type or of a union every member of which is one, which a host holds and
-     * never reads behind.
+     * value of a declared type or of a union, which a host holds and never reads behind.
      *
      * @param type what the model says it is: a {@link Type.Primitive}, a {@link Type.Declared} or
      *             a {@link Type.Union}, whose word {@code word} is
@@ -131,7 +131,7 @@ public sealed interface CrossingShape {
         public Told {
             if (wordOf(union) == null) {
                 throw new IllegalArgumentException(union + " is handed to a host no way, as a"
-                        + " member of it is not a declared type");
+                        + " member of it is a primitive no host is handed");
             }
             agreesAsWhich(which);
             cases = List.copyOf(cases);
@@ -183,8 +183,10 @@ public sealed interface CrossingShape {
         if (!(answer.type() instanceof Type.Union union)) {
             return received(module, answer.type());
         }
-        UnionAnswer cases = answer.union();
-        if (wordOf(union) == null || cases == null || cases.which() == null) {
+        // Said of every answer that is a union ({@link Answer}), and told where the behavior can be
+        // called ({@link Manifest.Behavior}); no call, nothing handed.
+        UnionAnswer cases = java.util.Objects.requireNonNull(answer.union());
+        if (wordOf(union) == null || cases.which() == null) {
             return null;
         }
         return new Told(union, cases.cases(), cases.which());
@@ -237,6 +239,23 @@ public sealed interface CrossingShape {
     /** Holds a sum's or a behavior's {@code which} to taking a value and answering its case. */
     static void agreesAsWhich(Function which) {
         agrees(which, List.of(Word.VALUE), List.of(), Word.CASE);
+    }
+
+    /**
+     * Holds how a value of the primitive case {@code crossing} names is made and read to crossing as
+     * the word the primitive crosses as: made from one, and read back as one.
+     */
+    static void agreesAsCarried(CaseCrossing crossing) {
+        if (!(crossing.of() instanceof Case.Primitive primitive) || crossing.read() == null) {
+            throw new IllegalStateException(crossing.of() + " holds nothing to read");
+        }
+        Word word = heldAs(primitive);
+        if (word == null) {
+            throw new IllegalStateException("the manifest says how " + primitive + " is made and"
+                    + " read, and a primitive of it is handed over no way");
+        }
+        agrees(crossing.make(), List.of(word), List.of(), Word.VALUE);
+        agrees(crossing.read(), List.of(Word.VALUE), List.of(), word);
     }
 
     /** Holds a declared type's {@code encode} to taking a value and answering its text. */
@@ -307,14 +326,26 @@ public sealed interface CrossingShape {
                 default -> null;
             };
             case Type.Declared it -> Word.VALUE;
-            // What holds a union holds one of its members, each of which says which it is, where
-            // every member is a declared type.
-            case Type.Union it -> it.cases().stream().allMatch(Case.Declared.class::isInstance)
-                    ? Word.VALUE : null;
+            // What holds a union holds one of its members, each of which says which it is: a
+            // declared type as it is, a primitive carried where the primitive is handed over at
+            // all, and a case the language gives, which holds nothing.
+            case Type.Union it -> it.cases().stream().allMatch(member -> switch (member) {
+                case Case.Declared d -> true;
+                case Case.Language l -> true;
+                case Case.Primitive p -> heldAs(p) != null;
+            }) ? Word.VALUE : null;
             case Type.ListOf it -> null;
             case Type.Option it -> null;
             case Type.Unrepresented it -> null;
         };
+    }
+
+    /**
+     * The word what a value of the primitive case {@code of} holds is handed over as, or null
+     * where a primitive of it is handed over no way.
+     */
+    static @Nullable Word heldAs(Case.Primitive of) {
+        return wordOf(new Type.Primitive(of.name()));
     }
 
     /** How a value of {@code type} crosses as one word, or null where it does not. */

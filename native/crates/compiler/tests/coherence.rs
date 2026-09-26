@@ -451,6 +451,54 @@ fn an_arm_reads_a_present_value_as_what_the_optional_holds() {
     is_the_halves_disagreeing(&helpers(&[h(&[&optional], &fork(A))]), "m.h");
 }
 
+/// An arm binds what each of its tests leaves to read. A test that an optional holds nothing
+/// leaves nothing, so an arm binding a value there is the two halves disagreeing, and not this
+/// backend being behind; and an arm testing for `None` among the cases of a union binds the value
+/// as one of those cases, the way an arm testing for declared cases does.
+#[test]
+fn an_arm_binds_what_each_of_its_tests_leaves_to_read() {
+    let optional = option_of(S);
+    let binding_nothing = node(
+        "match",
+        &format!(
+            r#""subject":{},"arms":[{},{}]"#,
+            read(0, &optional),
+            arm(r#"{"tests":"held"}"#, Some((1, S)), &read(1, S)),
+            arm(
+                r#"{"tests":"nothing"}"#,
+                Some((2, &optional)),
+                &widen(&unit("m.A"), S)
+            )
+        ),
+        S,
+    );
+    is_the_halves_disagreeing(
+        &helpers(&[h(&[&optional], &binding_nothing)]),
+        "leaves nothing to bind",
+    );
+
+    let none = r#"{"is":"language","case":"NONE"}"#;
+    let a_case = r#"{"is":"declared","declared":"m.A"}"#;
+    let b_case = r#"{"is":"declared","declared":"m.B"}"#;
+    let union = format!(r#"{{"union":[{none},{a_case},{b_case}]}}"#);
+    let tested = format!(r#"{{"union":[{none},{a_case}]}}"#);
+    let with_cases = node(
+        "match",
+        &format!(
+            r#""subject":{},"arms":[{},{}]"#,
+            read(0, &union),
+            arm(
+                &format!(r#"{{"tests":"which","atoms":[{none},{a_case}]}}"#),
+                Some((1, &tested)),
+                &int(1)
+            ),
+            arm(&which(&["m.B"]), None, &int(2)),
+        ),
+        INT,
+    );
+    reads_whole(&helpers(&[h(&[&union], &with_cases)]));
+}
+
 /// What a present value holds is what the optional holds.
 #[test]
 fn a_present_value_holds_a_value_of_what_its_optional_holds() {
@@ -627,8 +675,8 @@ fn routed(first: &str, made: &str, taken: &str, routing: &str, flows: &str) -> S
 /// What runs is offered to a stage by its cases exactly where it is a declared type or a union,
 /// which is the checker's rule, and it is tested by the token at its front. A plain `Int` routed on
 /// its cases would be a token read from a number, and a sum handed whole to a stage that takes it
-/// is not what the checker writes either; both are the two halves disagreeing. A stage accepting a
-/// case no declaration names is one nothing has run yet, and is not lowered.
+/// is not what the checker writes either; both are the two halves disagreeing. A stage may accept a
+/// case no declaration names, and is handed it the way an arm reads one.
 #[test]
 fn what_runs_is_routed_on_its_cases_only_where_it_says_them() {
     let scalar = r#"{"is":"scalar","scalar":"INT"}"#;
@@ -653,24 +701,19 @@ fn what_runs_is_routed_on_its_cases_only_where_it_says_them() {
         "offered by its cases",
     );
 
-    // A union with an `Int` among its cases, routed on the `Int`.
+    // A union with an `Int` among its cases, routed on the `Int`, which the stage is handed read
+    // back out of what carries it.
     let union = format!(r#"{{"union":[{int_case},{a_case}]}}"#);
     let cases = format!(
         r#"{{"is":"cases","type":{union},"cases":[{int_case},{a_case}],"form":{{"is":"discriminated","tag":"type","contents":"value"}}}}"#
     );
-    let refused = object_for(&routed(
+    reads_whole(&routed(
         &cases,
         &widen(&int(1), &union),
         scalar,
         &on(&[int_case]),
         &cases,
-    ))
-    .expect_err("a stage routed a case no declaration names");
-    assert!(refused.downcast_ref::<NotLowered>().is_some(), "{refused}");
-    assert!(
-        refused.to_string().contains("routed the case Int"),
-        "{refused}"
-    );
+    ));
 }
 
 /// A stage after the first is handed what the stage before answered.
@@ -1319,10 +1362,33 @@ fn a_primitive_stands_as_a_case_of_a_union() {
     reads_whole(&helpers(&[h(&[], &widen(&int(1), union))]));
 }
 
+/// A union naming one of an optional's two cases is held the way it holds any case the language
+/// gives, by the runtime's token and nothing more, and an arm tests for it by that token.
+#[test]
+fn a_union_with_an_optionals_case_among_its_cases_is_tested_by_its_token() {
+    for case in ["SOME", "NONE"] {
+        let atom = format!(r#"{{"is":"language","case":"{case}"}}"#);
+        let union = format!(r#"{{"union":[{atom},{{"is":"declared","declared":"m.A"}}]}}"#);
+        let fork = node(
+            "match",
+            &format!(
+                r#""subject":{},"arms":[{},{}]"#,
+                read(0, &union),
+                arm(
+                    &format!(r#"{{"tests":"which","atoms":[{atom}]}}"#),
+                    None,
+                    &int(1)
+                ),
+                arm(&which(&["m.A"]), None, &int(2)),
+            ),
+            INT,
+        );
+        reads_whole(&helpers(&[h(&[&union], &fork)]));
+    }
+}
+
 /// A value standing as a type this backend has no representation for is not lowered, which is a
-/// different answer from the two halves disagreeing: a `Decimal` has no representation to carry,
-/// and an optional of an `Int` standing as an optional of a union would have what it holds carried,
-/// which is rebuilding the optional and not standing it somewhere.
+/// different answer from the two halves disagreeing: a `Decimal` has no representation to carry.
 #[test]
 fn a_widen_to_a_type_with_no_representation_is_not_lowered() {
     let decimal =
@@ -1331,23 +1397,13 @@ fn a_widen_to_a_type_with_no_representation_is_not_lowered() {
         .expect_err("a union with a Decimal among its members has no representation");
     assert!(refused.downcast_ref::<NotLowered>().is_some(), "{refused}");
     assert!(refused.to_string().contains("Decimal"), "{refused}");
-
-    let union = r#"{"union":[{"is":"primitive","prim":"INT"},{"is":"declared","declared":"m.A"}]}"#;
-    let held = option_of(INT);
-    let refused = object_for(&helpers(&[h(
-        &[&held],
-        &widen(&read(0, &held), &option_of(union)),
-    )]))
-    .expect_err("what an optional holds is not carried where the optional stands");
-    assert!(refused.downcast_ref::<NotLowered>().is_some(), "{refused}");
-    assert!(refused.to_string().contains("another way"), "{refused}");
 }
 
-/// A list stands as a list of a wider element exactly where the elements are held alike: a list of
-/// a case standing as a list of its sum is the same list, and a list of `Int`s standing as a list
-/// of a union with `Int` among its cases would need every element carried, which is not lowered.
+/// What holds a value stands as what holds a wider one wherever what it holds does: a list of a
+/// case as a list of its sum, held alike, and an optional or a list of `Int`s as one of a union
+/// with `Int` among its cases, rebuilt with what it holds carried (`tests/restating.rs` runs it).
 #[test]
-fn a_list_stands_as_a_wider_list_only_where_its_elements_are_held_alike() {
+fn what_holds_a_value_stands_as_what_holds_a_wider_one() {
     let list_of = |element: &str| format!(r#"{{"list":{element}}}"#);
     let cases = list_of(A);
     reads_whole(&helpers(&[h(
@@ -1357,13 +1413,15 @@ fn a_list_stands_as_a_wider_list_only_where_its_elements_are_held_alike() {
 
     let union = r#"{"union":[{"is":"primitive","prim":"INT"},{"is":"declared","declared":"m.A"}]}"#;
     let numbers = list_of(INT);
-    let refused = object_for(&helpers(&[h(
+    reads_whole(&helpers(&[h(
         &[&numbers],
         &widen(&read(0, &numbers), &list_of(union)),
-    )]))
-    .expect_err("every element of the list would have to be carried");
-    assert!(refused.downcast_ref::<NotLowered>().is_some(), "{refused}");
-    assert!(refused.to_string().contains("another way"), "{refused}");
+    )]));
+    let held = option_of(INT);
+    reads_whole(&helpers(&[h(
+        &[&held],
+        &widen(&read(0, &held), &option_of(union)),
+    )]));
 }
 
 /// A function taking a sum stands as one taking a case of it, and one answering a case stands as
@@ -2756,5 +2814,65 @@ fn a_behavior_requires_behaviors_the_document_names_once_each() {
             std::slice::from_ref(&definition),
         ),
         "a host's is not constructed",
+    );
+}
+
+/// A field is read off a sum where every case of it lays one of that name out, which is the only
+/// read of one the checker writes: `m.S`'s cases are units, and a field read off it is the two
+/// halves disagreeing, not something this backend is behind on.
+#[test]
+fn a_field_is_read_off_a_sum_only_where_every_case_lays_it_out() {
+    let read_off = node(
+        "field",
+        &format!(r#""target":{},"field":"v""#, read(0, S)),
+        INT,
+    );
+    is_the_halves_disagreeing(&helpers(&[h(&[S], &read_off)]), "declares none");
+}
+
+/// A set of alternatives naming no case is refused where it is read, wherever it stands: a sum's
+/// cases, a union's members, the atoms an arm tests and the cases a stage accepts. Every reader of
+/// one tells a value apart by its token and takes the last case for what is tagged by none of the
+/// others, which a set with nothing in it gives no last case for: a field read off a sum with no
+/// case would branch to nowhere. So it is not a document the checker writes, and not something
+/// this backend is behind on.
+#[test]
+fn a_set_of_alternatives_naming_no_case_is_refused_where_it_is_read() {
+    let both = r#""cases":[{"is":"declared","declared":"m.A"},{"is":"declared","declared":"m.B"}],"form":{"is":"enumeration"}"#;
+    let none = r#""cases":[],"form":{"is":"discriminated","tag":"type","contents":"value"}"#;
+    let read_off = node(
+        "field",
+        &format!(r#""target":{},"field":"v""#, read(0, S)),
+        INT,
+    );
+    let sum = helpers(&[h(&[S], &read_off)]);
+    assert!(sum.contains(both));
+    is_the_halves_disagreeing(&sum.replacen(both, none, 1), "no case in it");
+
+    let empty_union = r#"{"union":[]}"#;
+    is_the_halves_disagreeing(&helpers(&[h(&[empty_union], &int(1))]), "Ty");
+
+    let testing_nothing = node(
+        "match",
+        &format!(
+            r#""subject":{},"arms":[{}]"#,
+            read(0, S),
+            arm(r#"{"tests":"which","atoms":[]}"#, None, &int(1))
+        ),
+        INT,
+    );
+    is_the_halves_disagreeing(&helpers(&[h(&[S], &testing_nothing)]), "no case in it");
+
+    let scalar = r#"{"is":"scalar","scalar":"INT"}"#;
+    let sum_answer = r#"{"is":"nominal","declared":"m.S"}"#;
+    is_the_halves_disagreeing(
+        &routed(
+            sum_answer,
+            &widen(&unit("m.A"), S),
+            sum_answer,
+            r#"{"is":"oncases","accepted":[]}"#,
+            scalar,
+        ),
+        "no case in it",
     );
 }

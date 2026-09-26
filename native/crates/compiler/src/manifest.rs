@@ -63,6 +63,12 @@ pub(crate) const MOVES: &[(u32, &str)] = &[
          (`bind`) and of an implementation of its own (`implement`), and nothing is registered on a \
          thread",
     ),
+    (
+        9,
+        "a primitive and a case the language gives cross to a host as a case of a union: a host \
+         makes and reads each through the runtime (`cases`), and a union's `case` answers for \
+         every union and not only one of declared cases",
+    ),
 ];
 
 /// Everything a host can call in one shared library, and the model it reaches.
@@ -83,6 +89,11 @@ pub(crate) struct Manifest {
     pub outcomes: BTreeMap<String, i32>,
     /// The runtime's functions a host calls.
     pub runtime: Vec<Function>,
+    /// How a host makes and reads a value of each case no declaration names, as a union holds one:
+    /// a primitive and a case the language gives. The runtime's too, and apart from `runtime`,
+    /// because each is said of a case: a binding finds the functions for a case of a union here, by
+    /// the case, whatever union it stands in.
+    pub cases: Vec<CaseCrossing>,
     /// What each module a library holds publishes.
     pub modules: Vec<Module>,
 }
@@ -259,6 +270,21 @@ pub(crate) struct Answer {
     pub union: Option<UnionAnswer>,
 }
 
+/// How a host makes a value of a case no declaration names and reads what it holds.
+///
+/// Said of the case and not of any union: a value of the case is laid out alike in every union it
+/// stands in. Which case a value of a union is, is the union's to say ([`UnionAnswer::case`]);
+/// `read` is called only on a value that says it is this case.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct CaseCrossing {
+    pub case: Case,
+    /// `(what the case holds, where it holds something) -> value`.
+    pub make: Function,
+    /// `(value) -> what it holds`, where the case holds something.
+    pub read: Option<Function>,
+}
+
 /// The cases of a union a behavior answers, as a value of it is one of them.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -267,7 +293,9 @@ pub(crate) struct UnionAnswer {
     /// its cases here, the way a sum's own `cases` are ([`Declaration::Sum`]), since a value of the
     /// sum is one of them and says which. Not the union's members, which are the type's.
     pub cases: Vec<Case>,
-    /// Which of `cases` a value is, where every case is a declared type.
+    /// Which of `cases` a value is, where a host can be handed a value of the union: `null` only
+    /// where the behavior has no way to be called. A declared case is then the value itself, and
+    /// one no declaration names is read through [`Manifest::cases`].
     pub case: Option<Function>,
 }
 
@@ -389,7 +417,7 @@ pub(crate) enum Declaration {
         /// keeps is named here and has no declaration of its own in the manifest: a host is told
         /// a value is one, and reaches nothing of it.
         cases: Vec<Case>,
-        /// Which of `cases` a value is, where every case is a declared type.
+        /// Which of `cases` a value is, where a host can be handed a value of every case.
         case: Option<Function>,
         decode: Option<Function>,
         /// Reads a value a host built of ordered maps ([`souther_native_abi::host_decode_host_value_symbol`]).
@@ -601,19 +629,19 @@ mod tests {
         }
     }
 
-    /// What version 8 is. Read by these types, which refuse a member they do not name, and
+    /// What version 9 is. Read by these types, which refuse a member they do not name, and
     /// written back the same: a field renamed or a kind reshaped here stops matching the fixture
     /// the Java half's test also holds a written manifest to.
-    const V8: &str = include_str!("../tests/interface-v8.json");
+    const V9: &str = include_str!("../tests/interface-v9.json");
 
     #[test]
-    fn version_eight_is_read_and_written_back_as_it_is() {
-        let read: Manifest = serde_json::from_str(V8).expect("version 8 reads");
+    fn version_nine_is_read_and_written_back_as_it_is() {
+        let read: Manifest = serde_json::from_str(V9).expect("version 9 reads");
         assert_eq!(read.format, FORMAT);
         assert_eq!(read.version, VERSION);
         let mut written = serde_json::to_string_pretty(&read).unwrap();
         written.push('\n');
-        assert_eq!(written, V8);
+        assert_eq!(written, V9);
     }
 
     /// A surface an object of an earlier release carries is refused as that, and not as whichever

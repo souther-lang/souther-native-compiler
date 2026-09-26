@@ -21,7 +21,7 @@
 //! arguments stand in: what it takes, and which fact it carries, are its own kernel's, and the
 //! two halves disagreeing about them is refused as this backend not lowering the kernel.
 
-use crate::transport::{AbortKind, Case, KernelFact, LanguageCase, Prim, Ty};
+use crate::transport::{AbortKind, Case, Cases, KernelFact, LanguageCase, Prim, Ty};
 
 /// What this backend knows of a kernel it lowers.
 pub(crate) struct Contract {
@@ -80,7 +80,7 @@ impl Shape {
             }
             (Shape::List(element), Ty::List { list }) => element.binds(list, bound),
             (Shape::Option(held), Ty::Option { option }) => held.binds(option, bound),
-            (Shape::Cases(cases), Ty::Union { union }) => cases == union,
+            (Shape::Cases(cases), Ty::Union { union }) => cases[..] == union[..],
             (Shape::Prim(_) | Shape::List(_) | Shape::Option(_) | Shape::Cases(_), _) => false,
         }
     }
@@ -97,7 +97,8 @@ impl Shape {
                 option: Box::new(held.settled(bound)?),
             },
             Shape::Cases(cases) => Ty::Union {
-                union: cases.clone(),
+                union: Cases::one_or_more(cases.clone())
+                    .expect("a kernel answering cases answers one or more"),
             },
         })
     }
@@ -343,12 +344,13 @@ mod tests {
     #[test]
     fn a_zero_divisor_is_a_case_of_the_answer_and_not_an_abort() {
         let answer = Ty::Union {
-            union: vec![
+            union: Cases::one_or_more(vec![
                 Case::Language {
                     case: LanguageCase::DivisionByZero,
                 },
                 Case::Primitive { prim: Prim::Int },
-            ],
+            ])
+            .unwrap(),
         };
         for kernel in [
             LoweredKernel::IntTruncatingDivide,
@@ -362,12 +364,13 @@ mod tests {
             );
             assert!(contract.answers.binds(&answer, &mut Bound::default()));
             let reordered = Ty::Union {
-                union: vec![
+                union: Cases::one_or_more(vec![
                     Case::Primitive { prim: Prim::Int },
                     Case::Language {
                         case: LanguageCase::DivisionByZero,
                     },
-                ],
+                ])
+                .unwrap(),
             };
             assert!(!contract.answers.binds(&reordered, &mut Bound::default()));
         }

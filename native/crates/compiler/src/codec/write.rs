@@ -38,8 +38,8 @@ use crate::transport::{
     AlternativesForm, BoundaryOutput, Case, CodecShape, Declaration, Field, LeafScalar, Prim, Ty,
 };
 use crate::{
-    A_WALK_OUT_OF_ORDER, Declared, Emitting, Lowered, NO_ARM, POINTER, TRUSTED, Tagged, accepted,
-    machine_type, not_lowered, out_of_slot,
+    A_WALK_OUT_OF_ORDER, CaseBody, Declared, Emitting, Lowered, NO_ARM, POINTER, TRUSTED, Tagged,
+    accepted, machine_type, not_lowered, out_of_slot, token_of,
 };
 use cranelift::codegen::ir::condcodes::IntCC;
 use cranelift::codegen::ir::{self, AbiParam, InstBuilder, TrapCode, types};
@@ -47,7 +47,7 @@ use cranelift::codegen::isa::CallConv;
 use cranelift::frontend::FunctionBuilder;
 use cranelift::module::{FuncId, Linkage, Module};
 use cranelift::object::ObjectModule;
-use souther_native_abi::{HELD, LIST_ELEMENTS, LIST_LENGTH, NOTHING, SLOT, field_at};
+use souther_native_abi::{CARRIED, HELD, LIST_ELEMENTS, LIST_LENGTH, NOTHING, SLOT, field_at};
 
 /// Where a walk keeps the first record of what is left to do, the first record it can use again,
 /// and the form the last piece of work left: three words in a stack slot of the function that
@@ -495,7 +495,13 @@ impl<'w, 'f> Writing<'w, 'f> {
     }
 
     fn scalar(&mut self, scalar: LeafScalar, value: ir::Value) -> Lowered<ir::Value> {
-        match scalar.prim() {
+        self.primitive(scalar.prim(), value)
+    }
+
+    /// A primitive, written as the language writes one: where it is a field, and where it stands
+    /// as a case of a set of alternatives.
+    fn primitive(&mut self, prim: Prim, value: ir::Value) -> Lowered<ir::Value> {
+        match prim {
             Prim::Int => Ok(self.call(Runtime::ExternalInt, &[value])),
             Prim::Bool => Ok(self.call(Runtime::ExternalBool, &[value])),
             Prim::String => Ok(self.call(Runtime::ExternalString, &[value])),
@@ -890,19 +896,12 @@ impl<'w, 'f> Scheduling<'_, 'w, 'f> {
         let written = self.writing.builder.create_block();
 
         for case in cases {
-            let Case::Declared { declared: key } = case else {
-                return Err(not_lowered(format!(
-                    "the case {}, which this backend does not write as one of a set of \
-                     alternatives yet",
-                    case.spelt()
-                )));
-            };
-            let token = self.writing.declared.tag(self.writing.module, key)?;
-            let token = self
-                .writing
-                .module
-                .declare_data_in_func(token, self.writing.builder.func);
-            let expected = self.writing.builder.ins().symbol_value(POINTER, token);
+            let expected = token_of(
+                self.writing.builder,
+                self.writing.declared,
+                self.writing.module,
+                case,
+            )?;
             let same = self
                 .writing
                 .builder
@@ -913,8 +912,8 @@ impl<'w, 'f> Scheduling<'_, 'w, 'f> {
             self.writing.builder.ins().brif(same, this, &[], next, &[]);
 
             self.writing.builder.switch_to_block(this);
-            let shape = self.writing.declared.laid(key);
-            self.case(key, shape, form, tagged.value())?;
+            let body = self.writing.declared.body_of(case);
+            self.case(&body, form, tagged.value())?;
             self.writing.builder.ins().jump(written, &[]);
             self.writing.builder.switch_to_block(next);
         }
@@ -928,8 +927,9 @@ impl<'w, 'f> Scheduling<'_, 'w, 'f> {
     }
 
     /// A case, written with what membership adds. Whether the case takes the tag into its own
-    /// object or is wrapped beside it is read off its declaration's arm, never off what its own
-    /// form turns out to be: a newtype over a product writes an object and is still wrapped.
+    /// object or is wrapped beside it is read off what the case holds ([`CaseBody`]), never off
+    /// what its own form turns out to be: a newtype over a product writes an object and is still
+    /// wrapped, and so is a primitive, whose form is no object at all.
     ///
     /// Every object a member is put into is one made here. A case's own fields are laid into the
     /// object that carries its tag, rather than the tag put into whatever the case's step left, so
@@ -937,42 +937,90 @@ impl<'w, 'f> Scheduling<'_, 'w, 'f> {
     /// first, before any field.
     ///
     /// [`read`](super::read) reads each arm here back, and the two are held arm for arm.
-    fn case(
-        &mut self,
-        key: &str,
-        shape: &Declaration,
-        form: &AlternativesForm,
-        value: ir::Value,
-    ) -> Lowered<()> {
-        match (form, shape) {
-            (_, Declaration::Sum { .. }) => {
-                unreachable!("`Declared::settled` refused a sum standing as a case of {key}")
+    fn case(&mut self, body: &CaseBody, form: &AlternativesForm, value: ir::Value) -> Lowered<()> {
+        let name = body.name();
+        match (form, body) {
+            (
+                _,
+                CaseBody::Declared {
+                    key,
+                    declaration: Declaration::Sum { .. },
+                },
+            ) => {
+                unreachable!("`Declared::settled` refused a sum standing as the case {key}")
             }
-            (AlternativesForm::Enumeration, Declaration::Unit { .. }) => {
-                let name = self.writing.name(shape.name());
+            (
+                AlternativesForm::Enumeration,
+                CaseBody::Declared {
+                    declaration: Declaration::Unit { .. },
+                    ..
+                },
+            ) => {
+                let name = self.writing.name(name);
                 self.give(name);
                 Ok(())
             }
             (
                 AlternativesForm::Enumeration,
-                Declaration::Product { .. } | Declaration::Newtype { .. },
+                CaseBody::Declared {
+                    declaration: Declaration::Product { .. } | Declaration::Newtype { .. },
+                    ..
+                }
+                | CaseBody::Primitive(_)
+                | CaseBody::Empty(_),
             ) => unreachable!(
-                "`Declared::settled` refused {key}, which has fields, in an enumeration"
+                "`Declared::settled` refused {name}, which is not a unit, in an enumeration"
             ),
-            (AlternativesForm::Discriminated { tag, .. }, Declaration::Product { fields, .. }) => {
-                let object = self.tagged_object(tag, shape.name());
+            (
+                AlternativesForm::Discriminated { tag, .. },
+                CaseBody::Declared {
+                    declaration: Declaration::Product { fields, .. },
+                    ..
+                },
+            ) => {
+                let object = self.tagged_object(tag, name);
                 self.fields(object, fields, value)
             }
-            (AlternativesForm::Discriminated { tag, .. }, Declaration::Unit { .. }) => {
-                let object = self.tagged_object(tag, shape.name());
+            (
+                AlternativesForm::Discriminated { tag, .. },
+                CaseBody::Declared {
+                    declaration: Declaration::Unit { .. },
+                    ..
+                }
+                | CaseBody::Empty(_),
+            ) => {
+                let object = self.tagged_object(tag, name);
                 self.give(object);
                 Ok(())
             }
-            (AlternativesForm::Discriminated { tag, contents }, Declaration::Newtype { .. }) => {
-                let object = self.tagged_object(tag, shape.name());
+            (
+                AlternativesForm::Discriminated { tag, contents },
+                CaseBody::Declared {
+                    key,
+                    declaration: Declaration::Newtype { .. },
+                },
+            ) => {
+                let object = self.tagged_object(tag, name);
                 self.give(object);
                 self.put_later(object, contents);
                 self.step(key, value);
+                Ok(())
+            }
+            (AlternativesForm::Discriminated { tag, contents }, CaseBody::Primitive(prim)) => {
+                let object = self.tagged_object(tag, name);
+                let slot =
+                    self.writing
+                        .builder
+                        .ins()
+                        .load(types::I64, TRUSTED, value, CARRIED as i32);
+                let held = out_of_slot(
+                    self.writing.builder,
+                    slot,
+                    machine_type(&Ty::Prim { prim: *prim })?,
+                );
+                let written = self.writing.primitive(*prim, held)?;
+                self.writing.put(object, contents, written);
+                self.give(object);
                 Ok(())
             }
         }

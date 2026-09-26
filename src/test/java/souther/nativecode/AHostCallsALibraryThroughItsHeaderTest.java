@@ -32,7 +32,7 @@ class AHostCallsALibraryThroughItsHeaderTest {
 
     private static final String SHOP = """
             module shop exposing ( Money, Line, Free, Paid, Owed, Settled, Outcome, settle, owing, stillOwing : Int,
-                                   charge, Basket, counted, doubled, discounted )
+                                   charge, quantityOf, Basket, counted, doubled, discounted )
 
             data Money = Int
                 invariant notNegative = value >= 0
@@ -64,6 +64,9 @@ class AHostCallsALibraryThroughItsHeaderTest {
 
             behavior charge : (paid: Int) -> Owed | Settled
             let charge (paid) = if paid > 0 then Free else Owed { amount = Money(1), overdue = true }
+
+            behavior quantityOf : (paid: Int) -> Int | Free
+            let quantityOf (paid) = if paid > 0 then paid else Free
 
             behavior twice : (n: Int) -> Int
             let twice (n) = n * 2
@@ -162,6 +165,18 @@ class AHostCallsALibraryThroughItsHeaderTest {
                 printf("charged: status %u, case %u, status %u, case %u\\n", status,
                        souther4_m_shop_b_charge_answer_case(owes), freed,
                        souther4_m_shop_b_charge_answer_case(free));
+
+                souther_value counted_five = NULL;
+                status = souther4_m_shop_b_quantityOf(NULL, 5, &counted_five);
+                souther_value none_counted = NULL;
+                souther_status nothing = souther4_m_shop_b_quantityOf(NULL, 0, &none_counted);
+                souther_value made = souther_case_int_make(7);
+                printf("counted: status %u, case %u, quantity %" PRId64 ", status %u, case %u,"
+                       " made case %u quantity %" PRId64 "\\n", status,
+                       souther4_m_shop_b_quantityOf_answer_case(counted_five),
+                       souther_case_int_read(counted_five), nothing,
+                       souther4_m_shop_b_quantityOf_answer_case(none_counted),
+                       souther4_m_shop_b_quantityOf_answer_case(made), souther_case_int_read(made));
 
                 const souther_value both[2] = {line, line};
                 souther_list lines = souther4_m_shop_l_value_construct(2, both);
@@ -295,6 +310,17 @@ class AHostCallsALibraryThroughItsHeaderTest {
             echo "charged: status $status, case ", $ffi->souther4_m_shop_b_charge_answer_case($owes),
                     ", status $freed, case ", $ffi->souther4_m_shop_b_charge_answer_case($free), "\n";
 
+            $countedFive = $ffi->new("souther_value");
+            $status = $ffi->souther4_m_shop_b_quantityOf(null, 5, FFI::addr($countedFive));
+            $noneCounted = $ffi->new("souther_value");
+            $nothing = $ffi->souther4_m_shop_b_quantityOf(null, 0, FFI::addr($noneCounted));
+            $made = $ffi->souther_case_int_make(7);
+            echo "counted: status $status, case ", $ffi->souther4_m_shop_b_quantityOf_answer_case($countedFive),
+                    ", quantity ", $ffi->souther_case_int_read($countedFive), ", status $nothing, case ",
+                    $ffi->souther4_m_shop_b_quantityOf_answer_case($noneCounted), ", made case ",
+                    $ffi->souther4_m_shop_b_quantityOf_answer_case($made), " quantity ",
+                    $ffi->souther_case_int_read($made), "\n";
+
             $both = $ffi->new("souther_value[2]");
             $both[0] = $line;
             $both[1] = $line;
@@ -361,6 +387,7 @@ class AHostCallsALibraryThroughItsHeaderTest {
             line: status 0, note 1 gift wrap
             settled: status 0, case 3, amount 4, owing 0 4
             charged: status 0, case 0, status 0, case 1
+            counted: status 0, case 1, quantity 5, status 0, case 0, made case 1 quantity 7
             lines: length 2, at 1 1 quantity 2, at 2 0, at -1 0, untouched 1, counted 0 2, doubled 0 2
             basket: status 0, notes 0 1 1 gift wrap, group 1 1, written {"lines":[{"price":3,"quantity":2,"note":"gift wrap"},{"price":3,"quantity":2,"note":"gift wrap"}],"notes":[null,"gift wrap"],"groups":[[1],[]]}
             written: {"price":3,"quantity":2,"note":"gift wrap"}
@@ -369,9 +396,9 @@ class AHostCallsALibraryThroughItsHeaderTest {
             not json: status 0, malformed at 8
             """;
 
-    /** What version 8 of the manifest is, for the program above. */
-    private static final Path INTERFACE_V8 =
-            Path.of("native", "crates", "compiler", "tests", "interface-v8.json");
+    /** What version 9 of the manifest is, for the program above. */
+    private static final Path INTERFACE_V9 =
+            Path.of("native", "crates", "compiler", "tests", "interface-v9.json");
 
     private static final JsonMapper JSON = JsonMapper.builder().build();
 
@@ -405,21 +432,21 @@ class AHostCallsALibraryThroughItsHeaderTest {
     }
 
     /**
-     * The manifest a binding is written against, as version 8 says it for this program. A change
+     * The manifest a binding is written against, as version 9 says it for this program. A change
      * to what the manifest says is a change here, and whether it moves the version is decided
      * looking at it.
      */
     @Test
-    void theManifestIsWhatVersionEightSays(@TempDir Path into) throws Exception {
+    void theManifestIsWhatVersionNineSays(@TempDir Path into) throws Exception {
         NativeCompiler.Library library =
                 NativeCompiler.library(CheckedProgram.of(List.of(SHOP)), into);
 
         String written = Files.readString(library.manifest(), StandardCharsets.UTF_8);
-        String fixed = Files.exists(INTERFACE_V8)
-                ? Files.readString(INTERFACE_V8, StandardCharsets.UTF_8) : "";
+        String fixed = Files.exists(INTERFACE_V9)
+                ? Files.readString(INTERFACE_V9, StandardCharsets.UTF_8) : "";
         if (!written.equals(fixed)) {
             // Kept where it can be compared with the fixture, and copied over it once it is read.
-            Files.writeString(Path.of("target", "interface-v8.written.json"), written,
+            Files.writeString(Path.of("target", "interface-v9.written.json"), written,
                     StandardCharsets.UTF_8);
         }
         assertThat(written).isEqualTo(fixed);

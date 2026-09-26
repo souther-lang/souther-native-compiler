@@ -13,6 +13,7 @@ import souther.bindings.Output;
 import souther.bindings.php.Crossing.Both;
 import souther.bindings.php.Crossing.Given;
 import souther.bindings.php.Crossing.Listed;
+import souther.bindings.php.Crossing.Member;
 import souther.bindings.php.Crossing.OneOf;
 import souther.bindings.php.Crossing.Present;
 import souther.bindings.php.Crossing.Received;
@@ -338,7 +339,7 @@ public final class PhpBindings {
         @Nullable Given given(Type type) {
             CrossingShape.Plain shape = CrossingShape.given(module, type);
             if (shape instanceof CrossingShape.Whole whole && whole.type() instanceof Type.Union union) {
-                List<Whole> members = members(union);
+                List<Member> members = members(union);
                 return members == null ? null : new OneOf(whole, members);
             }
             return shape == null ? null : both(shape);
@@ -365,22 +366,29 @@ public final class PhpBindings {
                 case null -> null;
                 case CrossingShape.Plain plain -> both(plain);
                 case CrossingShape.Told told -> {
-                    List<Whole> members = members(told.union());
+                    List<Member> members = members(told.union());
                     if (members == null) {
                         yield null;
                     }
-                    List<Whole> made = new ArrayList<>();
+                    List<Member> made = new ArrayList<>();
                     for (Case of : told.cases()) {
-                        Whole it = caseClass(of);
-                        if (it == null) {
-                            it = memberHolding(told.union(), of);
-                        }
+                        Member it = switch (of) {
+                            case Case.Declared d -> {
+                                Whole whole = caseClass(of);
+                                if (whole == null) {
+                                    whole = memberHolding(told.union(), of);
+                                }
+                                yield whole == null ? null : new Member(whole, null);
+                            }
+                            case Case.Primitive p -> carried(p);
+                            case Case.Language l -> null;
+                        };
                         if (it == null) {
                             yield null;
                         }
                         made.add(it);
                     }
-                    yield new Told(told, members.stream().map(Whole::phpType)
+                    yield new Told(told, members.stream().map(it -> it.whole().phpType())
                             .collect(Collectors.joining("|")), made, quotedInSingle("`" + what + "`"));
                 }
             };
@@ -456,16 +464,43 @@ public final class PhpBindings {
         };
     }
 
-    /** What each member of {@code union} crosses as, or null where any has no class. */
-    private @Nullable List<Whole> members(Type.Union union) {
-        List<Whole> members = new ArrayList<>();
+    /**
+     * What each member of {@code union} crosses as, or null where PHP has no way to hold one: a
+     * declared type as its class, a primitive as PHP's own type carried into the union, and a case
+     * the language gives no way, since no class of this binding's is one.
+     */
+    private @Nullable List<Member> members(Type.Union union) {
+        List<Member> members = new ArrayList<>();
         for (Case member : union.cases()) {
-            if (!(member instanceof Case.Declared d) || !(whole(d.module(), d.name()) instanceof Whole w)) {
+            Member it = switch (member) {
+                case Case.Declared d -> whole(d.module(), d.name()) instanceof Whole w
+                        ? new Member(w, null) : null;
+                case Case.Primitive p -> carried(p);
+                case Case.Language l -> null;
+            };
+            if (it == null) {
                 return null;
             }
-            members.add(w);
+            members.add(it);
         }
         return members;
+    }
+
+    /**
+     * A primitive case as PHP's own type for it, made and read through what the manifest names
+     * for it, or null where PHP has none.
+     */
+    private @Nullable Member carried(Case.Primitive of) {
+        Word word = CrossingShape.heldAs(of);
+        if (word == null) {
+            return null;
+        }
+        // Said for every primitive a host is handed, which the manifest was refused for leaving
+        // out, so a missing one is never read here as PHP having no way to hold it.
+        Manifest.CaseCrossing crossing = manifest.crossing(of);
+        CrossingShape.agreesAsCarried(crossing);
+        Whole whole = Whole.primitive(new CrossingShape.Whole(word, new Type.Primitive(of.name())));
+        return whole == null ? null : new Member(whole, crossing);
     }
 
     /** The first member of {@code union} that is a sum {@code of} is a case of. */
@@ -563,7 +598,8 @@ public final class PhpBindings {
     private static Set<String> cases(Declaration.Sum sum) {
         return sum.cases().stream().map(it -> switch (it) {
             case Case.Declared d -> d.module() + "." + d.name();
-            case Case.Other o -> o.kind() + ":" + o.name();
+            case Case.Primitive p -> "primitive:" + p.name();
+            case Case.Language l -> "language:" + l.name();
         }).collect(Collectors.toCollection(LinkedHashSet::new));
     }
 

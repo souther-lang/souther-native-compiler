@@ -24,7 +24,8 @@ class APhpHostCallsALibraryThroughItsBindingTest {
     private static final String SHOP = """
             module shop exposing ( Money, Line, Order, Free, Paid, Owed, Settled, Outcome,
                                    settle, owing, stillOwing : Int, charge, chargedFree, discounted,
-                                   squared, standardPrice )
+                                   squared, standardPrice, quantityOf, flaggedOf, labelOf,
+                                   doubledQuantity )
 
             data Money = Int
                 invariant notNegative = value >= 0
@@ -82,6 +83,23 @@ class APhpHostCallsALibraryThroughItsBindingTest {
             let squared (n) = n * n
 
             let standardPrice = Money(3)
+
+            behavior quantityOf : (paid: Int) -> Int | Free
+            let quantityOf (paid) = if paid > 0 then paid else Free
+
+            behavior flaggedOf : (paid: Int) -> Bool | Free
+            let flaggedOf (paid) = if paid > 0 then paid > 1 else Free
+
+            behavior labelOf : (paid: Int) -> String | Free
+            let labelOf (paid) = if paid > 0 then "paid" else Free
+
+            behavior chooseQuantity : (paid: Int) -> Int | Free
+
+            behavior doubledQuantity : (paid: Int) -> Int
+                depends on chooseQuantity
+            let doubledQuantity (paid, chooseQuantity) = match chooseQuantity(paid) with
+                | Int as n -> n * 2
+                | Free -> -1
             """;
 
     private static final String HOST = """
@@ -164,6 +182,12 @@ class APhpHostCallsALibraryThroughItsBindingTest {
                 $composed = Line::of($money, 1, "cafe\\u{0301}")->getOrThrow()->note();
                 echo "normalized: ", bin2hex($composed), "\\n";
 
+                $none = Behaviors::quantityOf(0);
+                echo "quantity: ", var_export(Behaviors::quantityOf(5), true), ", ", $none::class,
+                    ", ", var_export(Behaviors::flaggedOf(2), true), " ",
+                    var_export(Behaviors::flaggedOf(1), true), ", ",
+                    var_export(Behaviors::labelOf(1), true), ", ", Behaviors::labelOf(0)::class, "\\n";
+
                 try {
                     Behaviors::squared(4000000000);
                 } catch (SoutherAbort $abort) {
@@ -188,6 +212,12 @@ class APhpHostCallsALibraryThroughItsBindingTest {
                 fn (): bool => Behaviors::chargedFree(1), $charging), true),
                 " and ", var_export($binding->run(
                 fn (): bool => Behaviors::chargedFree(0), $charging), true), "\\n";
+
+            $quantities = Injections::of(chooseQuantity: fn (int $paid): int|Free =>
+                $paid > 0 ? $paid + 1 : Free::of()->getOrThrow());
+            echo "doubled quantity: ", $binding->run(
+                fn (): int => Behaviors::doubledQuantity(3), $quantities), " and ", $binding->run(
+                fn (): int => Behaviors::doubledQuantity(0), $quantities), "\\n";
 
             $down = new LogicException('the price list is down');
             try {
@@ -290,10 +320,12 @@ class APhpHostCallsALibraryThroughItsBindingTest {
             nested: [/line/price invariant_violation]
             not json: [/ invalid_format]
             normalized: 636166c3a9
+            quantity: 5, Acme\\Billing\\Shop\\Free, true false, 'paid', Acme\\Billing\\Shop\\Free
             aborted: REQUIRED_FORM_HAS_NO_PLACE
             unbound: Souther\\Runtime\\UnboundInjection
             discounted: 4
             charged free: true and false
+            doubled quantity: 8 and -1
             thrown: the same one
             nested runs: 4
             second fiber: Souther\\Runtime\\RunOnAnotherFiber

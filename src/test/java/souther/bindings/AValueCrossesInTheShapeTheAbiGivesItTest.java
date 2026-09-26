@@ -76,7 +76,20 @@ class AValueCrossesInTheShapeTheAbiGivesItTest {
         assertThat(CrossingShape.given(module, new Type.Option(new Type.Option(INT)))).isNull();
         assertThat(CrossingShape.given(module, new Type.Unrepresented("tuple"))).isNull();
         assertThat(CrossingShape.given(module, new Type.Union(List.of(
-                new Case.Declared("m", "Item"), new Case.Other("primitive", "Int"))))).isNull();
+                new Case.Declared("m", "Item"), new Case.Primitive("Decimal"))))).isNull();
+    }
+
+    /**
+     * A union crosses as one word where each of its cases could: a declared case as it is, a
+     * primitive carried where the primitive is handed over at all, and a case the language gives,
+     * which holds nothing.
+     */
+    @Test
+    void aUnionCrossesWhereEachOfItsCasesCould() {
+        Type.Union union = new Type.Union(List.of(new Case.Declared("m", "Item"),
+                new Case.Primitive("Int"), new Case.Language("DivisionByZero")));
+
+        assertThat(CrossingShape.given(module(), union)).isEqualTo(new Whole(Word.VALUE, union));
     }
 
     /** A list crosses as one word, through the functions the module says for its element. */
@@ -138,7 +151,9 @@ class AValueCrossesInTheShapeTheAbiGivesItTest {
         assertThat(told.words()).containsExactly(Word.VALUE);
         assertThat(CrossingShape.received(module,
                 new Answer(EITHER, new UnionAnswer(EITHER.cases(), null)))).isNull();
-        assertThat(CrossingShape.received(module, new Answer(EITHER, null))).isNull();
+        assertThatThrownBy(() -> new Answer(EITHER, null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("says nothing of its cases");
     }
 
     /** A {@code which} that is not what tells cases apart is two readings of one thing disagreeing. */
@@ -173,13 +188,13 @@ class AValueCrossesInTheShapeTheAbiGivesItTest {
 
     /**
      * A shape holds what the ABI gives one however it is made: a word its type does not cross as,
-     * a list through another element's functions, and a union told its case where a member is not
-     * a declared type are refused where they would be made.
+     * a list through another element's functions, and a union told its case where a member is a
+     * primitive no host is handed are refused where they would be made.
      */
     @Test
     void aShapeIsNotMadeOtherThanTheAbiGivesIt() {
         Type.Union withAnInt = new Type.Union(List.of(
-                new Case.Declared("m", "Item"), new Case.Other("primitive", "Int")));
+                new Case.Declared("m", "Item"), new Case.Primitive("Decimal")));
         Function which = new Function("which", List.of(Parameter.given(Word.VALUE)), Word.CASE);
         ListCrossing values = module(new Element(false, Word.VALUE)).lists().getFirst();
 
