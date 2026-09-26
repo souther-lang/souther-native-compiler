@@ -2,6 +2,7 @@ package souther.nativecode;
 
 import souther.bindings.NotBindable;
 import souther.bindings.php.PhpBindings;
+import souther.bindings.rust.RustBindings;
 import souther.compiler.diag.CompileException;
 import souther.compiler.meta.ModulePath;
 import souther.compiler.program.CheckedProgram;
@@ -15,21 +16,22 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
 import java.util.stream.Stream;
 
 /**
  * Compiles the sources named on the command line into one object file, or builds them into a
- * library for a host and, if asked, the PHP binding of it.
+ * library for a host and, if asked, the PHP and the Rust binding of it.
  *
  * <p>Nothing here decides what a library or a binding is. The program is checked once, the driver
- * writes the library from it ({@link NativeCompiler#library}), and the binding is generated from the
- * manifest the driver wrote ({@link PhpBindings#generate}), never from the program a second time.
+ * writes the library from it ({@link NativeCompiler#library}), and each binding is generated from
+ * the manifest the driver wrote ({@link PhpBindings#generate}, {@link RustBindings#generate}), never
+ * from the program a second time.
  *
- * <p>Each directory is replaced whole by what writes it, and the two are two directories: a binding
- * refused after its library was written leaves the new library and the binding that was there
- * before. What a binding would be refused for whatever the manifest says, a namespace PHP will not
- * take or a directory holding what no generation wrote, is refused before the library is built.
+ * <p>Each directory is replaced whole by what writes it, and each is a directory of its own: a
+ * binding refused after its library was written leaves the new library and the binding that was
+ * there before. What a binding would be refused for whatever the manifest says, a name its language
+ * will not take or a directory holding what no generation wrote, is refused before the library is
+ * built.
  */
 public final class Main {
 
@@ -40,7 +42,8 @@ public final class Main {
     private static final String USAGE = """
             usage: souther-native [-cp <path>] -o <object> <source>...
                    souther-native [-cp <path>] --library <dir> [--with <object>]...
-                                  [--php <dir> --namespace <ns>] <source>...
+                                  [--php <dir> --namespace <ns>] [--rust <dir> --crate <name>]
+                                  <source>...
 
               -cp <path>         the class path of other builds the program imports, as the souther
                                  command takes it (also --class-path)
@@ -49,6 +52,8 @@ public final class Main {
               --with <object>    the object another build the program reaches was compiled to
               --php <dir>        where to write the PHP binding of the library
               --namespace <ns>   the PHP namespace the binding is written under
+              --rust <dir>       where to write the Rust binding of the library, as a crate
+              --crate <name>     the name of the crate the Rust binding is written as
               <source>           a .sou file, or a directory holding some
             """;
 
@@ -59,14 +64,34 @@ public final class Main {
         record ObjectFile(Path into) implements Output {
         }
 
-        /** A library, reaching {@code alongside}, and the PHP binding of it where one is asked for. */
-        record Library(Path into, List<Path> alongside, Optional<PhpBinding> php)
+        /** A library, reaching {@code alongside}, and each binding of it asked for. */
+        record Library(Path into, List<Path> alongside, List<HostBinding> bindings)
                 implements Output {
+
+            public Library {
+                alongside = List.copyOf(alongside);
+                bindings = List.copyOf(bindings);
+            }
         }
     }
 
-    /** Where a PHP binding is written, and under which namespace. */
-    record PhpBinding(Path into, String namespace) {
+    /**
+     * A binding of the library for one host's language, and where it is written. Each is generated
+     * by its own generator from the manifest; nothing here is shared between them but where each
+     * goes.
+     */
+    sealed interface HostBinding {
+
+        /** The directory the binding is written into, replaced whole. */
+        Path into();
+
+        /** A PHP binding, under a namespace. */
+        record Php(Path into, String namespace) implements HostBinding {
+        }
+
+        /** A Rust binding, as a crate of a name. */
+        record Rust(Path into, String crate) implements HostBinding {
+        }
     }
 
     /**
@@ -134,10 +159,14 @@ public final class Main {
                     out.println("wrote " + object.into() + " from " + sources(files));
                 }
                 case Output.Library library -> {
-                    if (library.php().isPresent()) {
-                        PhpBinding php = library.php().get();
+                    for (HostBinding binding : library.bindings()) {
                         try {
-                            PhpBindings.refuseAhead(php.into(), php.namespace());
+                            switch (binding) {
+                                case HostBinding.Php php ->
+                                        PhpBindings.refuseAhead(php.into(), php.namespace());
+                                case HostBinding.Rust rust ->
+                                        RustBindings.refuseAhead(rust.into(), rust.crate());
+                            }
                         } catch (NotBindable e) {
                             problems.println(e.getMessage());
                             return WRONG_COMMAND;
@@ -150,17 +179,33 @@ public final class Main {
                     NativeCompiler.Library built = NativeCompiler.library(
                             command.checked(read), alongside, library.into());
                     out.println("wrote the library " + library.into() + " from " + sources(files));
-                    if (library.php().isPresent()) {
-                        PhpBinding php = library.php().get();
-                        try {
-                            PhpBindings.generate(built.manifest(), built.declarations(), php.into(),
-                                    php.namespace());
-                        } catch (NotBindable e) {
-                            problems.println("the PHP binding is not written: " + e.getMessage());
-                            return REFUSED;
+                    for (HostBinding binding : library.bindings()) {
+                        switch (binding) {
+                            case HostBinding.Php php -> {
+                                try {
+                                    PhpBindings.generate(built.manifest(), built.declarations(),
+                                            php.into(), php.namespace());
+                                } catch (NotBindable e) {
+                                    problems.println("the PHP binding is not written: "
+                                            + e.getMessage());
+                                    return REFUSED;
+                                }
+                                out.println("wrote the PHP binding " + php.into() + " under "
+                                        + php.namespace());
+                            }
+                            case HostBinding.Rust rust -> {
+                                try {
+                                    RustBindings.generate(built.manifest(), rust.into(),
+                                            rust.crate());
+                                } catch (NotBindable e) {
+                                    problems.println("the Rust binding is not written: "
+                                            + e.getMessage());
+                                    return REFUSED;
+                                }
+                                out.println("wrote the Rust binding " + rust.into() + " as the"
+                                        + " crate " + rust.crate());
+                            }
                         }
-                        out.println("wrote the PHP binding " + php.into() + " under "
-                                + php.namespace());
                     }
                 }
             }
@@ -194,6 +239,8 @@ public final class Main {
         List<Path> alongside = new ArrayList<>();
         Path php = null;
         String namespace = null;
+        Path rust = null;
+        String crate = null;
         List<Path> sources = new ArrayList<>();
         List<Path> classPath = new ArrayList<>();
         for (int at = 0; at < args.length; at++) {
@@ -211,6 +258,8 @@ public final class Main {
                 case "--with" -> alongside.add(Path.of(valueOf(args, ++at, held)));
                 case "--php" -> php = once(held, php, Path.of(valueOf(args, ++at, held)));
                 case "--namespace" -> namespace = once(held, namespace, valueOf(args, ++at, held));
+                case "--rust" -> rust = once(held, rust, Path.of(valueOf(args, ++at, held)));
+                case "--crate" -> crate = once(held, crate, valueOf(args, ++at, held));
                 default -> {
                     if (held.startsWith("-")) {
                         throw new NotACommand("no such option: " + held);
@@ -227,7 +276,8 @@ public final class Main {
         }
         if (library == null) {
             for (var named : List.of(new Named("--with", !alongside.isEmpty()),
-                    new Named("--php", php != null), new Named("--namespace", namespace != null))) {
+                    new Named("--php", php != null), new Named("--namespace", namespace != null),
+                    new Named("--rust", rust != null), new Named("--crate", crate != null))) {
                 if (named.given()) {
                     throw new NotACommand(named.option() + " goes with --library");
                 }
@@ -244,13 +294,36 @@ public final class Main {
         if (namespace != null && php == null) {
             throw new NotACommand("--namespace goes with --php");
         }
-        if (php != null && (within(php, library) || within(library, php))) {
-            throw new NotACommand("--php and --library are each replaced whole, so neither can"
-                    + " hold the other");
+        if (rust != null && crate == null) {
+            throw new NotACommand("--rust wants --crate, the name of the crate the binding is");
         }
-        Optional<PhpBinding> binding =
-                php == null ? Optional.empty() : Optional.of(new PhpBinding(php, namespace));
-        return new Command(new Output.Library(library, List.copyOf(alongside), binding),
+        if (crate != null && rust == null) {
+            throw new NotACommand("--crate goes with --rust");
+        }
+        List<Named> directories = new ArrayList<>(List.of(new Named("--library", true)));
+        List<Path> placed = new ArrayList<>(List.of(library));
+        List<HostBinding> bindings = new ArrayList<>();
+        if (php != null) {
+            bindings.add(new HostBinding.Php(php, namespace));
+            directories.add(new Named("--php", true));
+            placed.add(php);
+        }
+        if (rust != null) {
+            bindings.add(new HostBinding.Rust(rust, crate));
+            directories.add(new Named("--rust", true));
+            placed.add(rust);
+        }
+        for (int one = 0; one < placed.size(); one++) {
+            for (int other = one + 1; other < placed.size(); other++) {
+                if (within(placed.get(one), placed.get(other))
+                        || within(placed.get(other), placed.get(one))) {
+                    throw new NotACommand(directories.get(other).option() + " and "
+                            + directories.get(one).option() + " are each replaced whole, so"
+                            + " neither can hold the other");
+                }
+            }
+        }
+        return new Command(new Output.Library(library, alongside, bindings),
                 List.copyOf(sources), List.copyOf(classPath));
     }
 

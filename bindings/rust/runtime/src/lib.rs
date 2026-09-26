@@ -23,17 +23,19 @@
 //! A library is loaded by path at run time ([`NativeLibrary`]) and every function is looked up
 //! through its handle, since every Souther library exports the same runtime functions.
 
+mod bound;
 mod decimal;
 mod failure;
 mod native;
 mod run;
 
+pub use bound::{BindFn, Bound, Capability, Hosted, ImplementFn, Implemented, Made, Requirement};
 pub use decimal::{Decimal, NotADecimal};
 pub use failure::{Abort, Failure, HostError, Status, Statuses, UnnamedStatus};
 pub use native::{Construction, LoadError, NativeLibrary, Reading, Word, Words};
 pub use run::{
     AlreadyRunning, HostFailure, Loaded, MarkFn, RawMark, ResetFn, Run, Runtime, Scope, Value,
-    host, run,
+    host, implemented, run,
 };
 
 /// Raoh, whose issues a reading answers, as this runtime was built against it.

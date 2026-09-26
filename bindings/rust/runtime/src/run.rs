@@ -48,7 +48,7 @@ impl Runtime {
         }
     }
 
-    fn identity(&self) -> usize {
+    pub(crate) fn identity(&self) -> usize {
         self.mark as usize
     }
 
@@ -162,6 +162,19 @@ pub fn host<'lib, L: Loaded, R>(
     Err(HostFailure::Failed)
 }
 
+/// What a generated implementation's function answers the library: [`host`] run over `f`, and
+/// the status saying it answered, or the one saying it failed, whichever it came to.
+pub fn implemented<'lib, L: Loaded>(
+    library: &'lib L,
+    f: impl for<'run> FnOnce(&mut Scope<'run, 'lib, L>) -> Result<(), HostError>,
+) -> Status {
+    let statuses = *library.runtime().statuses();
+    match host(library, f) {
+        Ok(()) => statuses.answered_status(),
+        Err(_) => statuses.host_exception(),
+    }
+}
+
 /// A run: what a computation is made in, taken mutably by whatever makes something.
 ///
 /// `'run` is invariant, so a run is never taken for one that ends sooner or later than it does.
@@ -266,6 +279,21 @@ impl<'run, L> DerefMut for Scope<'run, '_, L> {
 pub struct Value<'run> {
     at: NonNull<u8>,
     _made_in: PhantomData<&'run ()>,
+}
+
+impl<'run> Value<'run> {
+    /// The value at `at`, good for as long as `'run`.
+    ///
+    /// # Safety
+    ///
+    /// `at` is an address the library answered that stays good for as long as `'run`: made in
+    /// a run open for that long, or read out of a value that is good for that long.
+    pub unsafe fn from_address(at: NonNull<u8>) -> Self {
+        Value {
+            at,
+            _made_in: PhantomData,
+        }
+    }
 }
 
 impl Value<'_> {

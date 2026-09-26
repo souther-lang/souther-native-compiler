@@ -139,6 +139,14 @@ class TheCommandLineBuildsALibraryAndItsBindingTest {
                 "--namespace", "N", "m.sou");
         refused("the library inside the binding", "--library", "php/out", "--php", "php",
                 "--namespace", "N", "m.sou");
+        refused("--rust without a library", "-o", "a.o", "--rust", "rust", "--crate", "c",
+                "m.sou");
+        refused("--rust without a crate", "--library", "out", "--rust", "rust", "m.sou");
+        refused("--crate without --rust", "--library", "out", "--crate", "c", "m.sou");
+        refused("the Rust binding inside the library", "--library", "out", "--rust", "out/rust",
+                "--crate", "c", "m.sou");
+        refused("the PHP binding inside the Rust one", "--library", "out", "--rust", "b",
+                "--crate", "c", "--php", "b/php", "--namespace", "N", "m.sou");
         refused("one output named twice", "--library", "a", "--library", "b", "m.sou");
         refused("an option wanting a value", "m.sou", "--library");
         refused("no output", "m.sou");
@@ -154,7 +162,17 @@ class TheCommandLineBuildsALibraryAndItsBindingTest {
         assertThat(command.classPath()).containsExactly(Path.of("a"), Path.of("b"));
         assertThat(command.output()).isEqualTo(new Main.Output.Library(Path.of("out"),
                 List.of(Path.of("x.o"), Path.of("y.o")),
-                java.util.Optional.of(new Main.PhpBinding(Path.of("php"), "N"))));
+                List.of(new Main.HostBinding.Php(Path.of("php"), "N"))));
+    }
+
+    @Test
+    void aCommandAsksForEachBindingItNames() throws Exception {
+        Main.Command command = Main.read(new String[]{"--library", "out", "--rust", "rust",
+                "--crate", "acme", "--php", "php", "--namespace", "N", "m.sou"});
+
+        assertThat(command.output()).isEqualTo(new Main.Output.Library(Path.of("out"), List.of(),
+                List.of(new Main.HostBinding.Php(Path.of("php"), "N"),
+                        new Main.HostBinding.Rust(Path.of("rust"), "acme"))));
     }
 
     private static void refused(String what, String... args) {

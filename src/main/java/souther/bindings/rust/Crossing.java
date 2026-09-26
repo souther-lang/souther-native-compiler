@@ -1,0 +1,388 @@
+package souther.bindings.rust;
+
+import souther.bindings.Manifest;
+import souther.bindings.Manifest.ListCrossing;
+import souther.bindings.Manifest.Shape;
+import souther.bindings.Manifest.Word;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
+
+/**
+ * How a value of one model type crosses between Rust and the library: the shape the manifest says
+ * it crosses in ({@link Shape}), which says the words it is handed over as, and on it the Rust types
+ * a value of it is and the Rust that turns one into the other.
+ *
+ * <p>The shape is the library's decision, read off the manifest; what is decided here is only how
+ * Rust holds what crosses in it. Every value has two Rust types: the one it is {@link #owned} as,
+ * which is what the library hands Rust, and the one it is taken as where Rust hands one over, its
+ * {@link #view}, which borrows what it can ({@code &str} for a {@code String}, a slice for a list).
+ * Every view is {@code Copy}, so what hands one over can read it as often as it has words to write.
+ *
+ * <p>Generated code names three things this writes against: {@code run}, the run a value is handed
+ * over in, taken mutably; {@code library}, the {@code &'run Library} it is a run of; and the
+ * {@code rt} alias of the runtime crate. What is handed to Rust is made in an {@code unsafe}
+ * context the caller opens, since every word it reads is one the library answered.
+ */
+sealed interface Crossing {
+
+    /** How the value crosses, as the manifest says. */
+    Shape shape();
+
+    /** The type Rust is handed a value of this as, and keeps. */
+    String owned();
+
+    /** The type Rust hands a value of this over as. */
+    String view();
+
+    /** The words it is handed over as, in order. */
+    default List<Word> words() {
+        return shape().words();
+    }
+
+    /**
+     * The Rust expressions handing {@code value}, an expression of {@link #view}, over, one for
+     * each of {@link #words()}.
+     */
+    List<String> given(String value);
+
+    /**
+     * The Rust expression of this crossing's {@link #owned} value made of {@code words}, one
+     * expression of each word the library answered.
+     */
+    String of(List<String> words);
+
+    /** The Rust expression of {@link #view} of {@code owned}, an expression of {@code &owned()}. */
+    String viewOf(String owned);
+
+    /** What Rust calls one word, as it stands in a function's parameters and in room. */
+    static String word(Word word) {
+        return switch (word) {
+            case STATUS -> "u32";
+            case INT, COUNT, MARK -> "i64";
+            case BOOL -> "u8";
+            case CASE -> "u32";
+            case OUTCOME -> "i32";
+            case BYTES -> "*const u8";
+            case VALUE, STRING, DECIMAL, DATE, TIME, DATETIME, INSTANT, DECODED, ISSUE, LIST,
+                 FUNCTION -> "rt::Word";
+            case REQUIREMENTS -> "*const *const rt::Capability";
+            case CAPABILITY -> "rt::Capability";
+            case USERDATA -> "*mut std::ffi::c_void";
+        };
+    }
+
+    /**
+     * What room for {@code word} starts as, before the library writes it: a word it writes only
+     * where there is something to write, so what an optional holding nothing leaves is this.
+     */
+    static String nothing(Word word) {
+        return switch (word) {
+            case INT, COUNT, MARK, STATUS, CASE, OUTCOME, BOOL -> "0";
+            case BYTES, VALUE, STRING, DECIMAL, DATE, TIME, DATETIME, INSTANT, DECODED, ISSUE,
+                 LIST, FUNCTION, REQUIREMENTS -> "std::ptr::null()";
+            case USERDATA -> "std::ptr::null_mut()";
+            case CAPABILITY -> throw new IllegalArgumentException("a capability is no room of a value");
+        };
+    }
+
+    /**
+     * One word of the library's that is the value itself: a primitive, or a value of a declared
+     * type as the handle generated for it. Held the same way both ways.
+     *
+     * @param type the handle's type, where it is one, as {@code crate::m::Name}
+     */
+    record Whole(Shape.Leaf shape, Kind kind, String type) implements Crossing {
+
+        enum Kind { INT, BOOL, STRING, DECIMAL, HANDLE }
+
+        public Whole {
+            Word is = switch (kind) {
+                case INT -> Word.INT;
+                case BOOL -> Word.BOOL;
+                case STRING -> Word.STRING;
+                case DECIMAL -> Word.DECIMAL;
+                case HANDLE -> Word.VALUE;
+            };
+            if (shape.word() != is) {
+                throw new IllegalArgumentException("a " + kind + " is not held as " + shape);
+            }
+        }
+
+        /**
+         * A value of the primitive {@code name} crossing as {@code word}, as Rust's own type for it,
+         * or null where this binding has no way to hold that pair: an {@code Int} as an {@code i64}
+         * crossing as an {@code INT}, a {@code Bool} as a {@code bool} crossing as a {@code BOOL}, a
+         * {@code String} as a {@code String} crossing as a {@code STRING}, and a {@code Decimal} as
+         * the runtime's {@code Decimal} crossing as a {@code DECIMAL}. Both are asked, the name and
+         * the word, as the PHP binding asks them.
+         */
+        static Whole primitive(String name, Word word) {
+            return switch (name) {
+                case "Int" -> word == Word.INT ? new Whole(new Shape.Leaf(word), Kind.INT, "i64") : null;
+                case "Bool" -> word == Word.BOOL
+                        ? new Whole(new Shape.Leaf(word), Kind.BOOL, "bool") : null;
+                case "String" -> word == Word.STRING
+                        ? new Whole(new Shape.Leaf(word), Kind.STRING, "String") : null;
+                case "Decimal" -> word == Word.DECIMAL
+                        ? new Whole(new Shape.Leaf(word), Kind.DECIMAL, "rt::Decimal") : null;
+                default -> null;
+            };
+        }
+
+        /** A value of a declared type, as the handle generated for it. */
+        static Whole handle(String type) {
+            return new Whole(new Shape.Leaf(Word.VALUE), Kind.HANDLE, type);
+        }
+
+        @Override
+        public String owned() {
+            return kind == Kind.HANDLE ? type + "<'run>" : type;
+        }
+
+        @Override
+        public String view() {
+            return switch (kind) {
+                case INT, BOOL -> type;
+                case STRING -> "&str";
+                case DECIMAL -> "&rt::Decimal";
+                case HANDLE -> owned();
+            };
+        }
+
+        @Override
+        public List<String> given(String value) {
+            return List.of(switch (kind) {
+                case INT -> value;
+                case BOOL -> "u8::from(" + value + ")";
+                case STRING -> "library.words.string(run, " + value + ")";
+                case DECIMAL -> "library.words.decimal(run, " + value + ")";
+                case HANDLE -> value + ".__word()";
+            });
+        }
+
+        @Override
+        public String of(List<String> words) {
+            String word = words.getFirst();
+            return switch (kind) {
+                case INT -> word;
+                case BOOL -> "(" + word + " != 0)";
+                case STRING -> "library.words.text(" + word + ")";
+                case DECIMAL -> "library.words.amount(" + word + ")";
+                case HANDLE -> type + "::__held(library, " + word + ")";
+            };
+        }
+
+        @Override
+        public String viewOf(String owned) {
+            return switch (kind) {
+                case INT, BOOL, HANDLE -> "*" + owned;
+                case STRING -> owned + ".as_str()";
+                case DECIMAL -> owned;
+            };
+        }
+    }
+
+    /** An optional: {@code Option} of what it holds, both ways. */
+    record Optional(Crossing of) implements Crossing {
+
+        @Override
+        public Shape shape() {
+            return new Shape.Option(of.shape());
+        }
+
+        @Override
+        public String owned() {
+            return "Option<" + of.owned() + ">";
+        }
+
+        @Override
+        public String view() {
+            return "Option<" + of.view() + ">";
+        }
+
+        @Override
+        public List<String> given(String value) {
+            List<String> words = new ArrayList<>(List.of("u8::from(" + value + ".is_some())"));
+            List<String> inner = of.given("held");
+            List<Word> innerWords = of.words();
+            for (int at = 0; at < inner.size(); at++) {
+                words.add("match " + value + " { Some(held) => " + inner.get(at) + ", None => "
+                        + Crossing.nothing(innerWords.get(at)) + " }");
+            }
+            return words;
+        }
+
+        @Override
+        public String of(List<String> words) {
+            return "if " + words.getFirst() + " != 0 { Some(" + of.of(words.subList(1, words.size()))
+                    + ") } else { None }";
+        }
+
+        @Override
+        public String viewOf(String owned) {
+            return owned + ".as_ref().map(|held| " + of.viewOf("held") + ")";
+        }
+    }
+
+    /** A tuple, as a Rust tuple of its members. */
+    record Tuple(List<Crossing> members) implements Crossing {
+
+        public Tuple {
+            members = List.copyOf(members);
+        }
+
+        @Override
+        public Shape shape() {
+            return new Shape.Product(members.stream().map(Crossing::shape).toList());
+        }
+
+        @Override
+        public String owned() {
+            return tuple(members.stream().map(Crossing::owned).toList());
+        }
+
+        @Override
+        public String view() {
+            return tuple(members.stream().map(Crossing::view).toList());
+        }
+
+        @Override
+        public List<String> given(String value) {
+            List<String> words = new ArrayList<>();
+            for (int at = 0; at < members.size(); at++) {
+                words.addAll(members.get(at).given(value + "." + at));
+            }
+            return words;
+        }
+
+        @Override
+        public String of(List<String> words) {
+            List<String> made = new ArrayList<>();
+            int at = 0;
+            for (Crossing member : members) {
+                int wide = member.words().size();
+                made.add(member.of(words.subList(at, at + wide)));
+                at += wide;
+            }
+            return tuple(made);
+        }
+
+        @Override
+        public String viewOf(String owned) {
+            return tuple(IntStream.range(0, members.size())
+                    .mapToObj(at -> members.get(at).viewOf("(&" + owned + "." + at + ")")).toList());
+        }
+
+        /** A Rust tuple of {@code of}: a one-member tuple keeps its comma. */
+        private static String tuple(List<String> of) {
+            return of.size() == 1 ? "(" + of.getFirst() + ",)" : "(" + String.join(", ", of) + ")";
+        }
+    }
+
+    /**
+     * A list: handed over as a slice of what its element is owned as, and handed to Rust as a
+     * {@code Vec} of it, built and read through the functions the manifest names for a list of its
+     * element's shape.
+     *
+     * @param construct the field of the symbol table building one, or null where nothing does
+     * @param length    the field reading how many elements one holds, or null where nothing does
+     * @param at        the field reading one element, or null where nothing does
+     */
+    record Listed(Crossing element, ListCrossing crossing, String construct, String length,
+                  String at) implements Crossing {
+
+        public Listed {
+            if (!crossing.element().equals(element.shape())) {
+                throw new IllegalArgumentException("a list of " + element.shape() + " is not reached"
+                        + " through the functions of a list of " + crossing.element());
+            }
+        }
+
+        @Override
+        public Shape shape() {
+            return new Shape.ListOf(element.shape());
+        }
+
+        @Override
+        public String owned() {
+            return "Vec<" + element.owned() + ">";
+        }
+
+        @Override
+        public String view() {
+            return "&[" + element.owned() + "]";
+        }
+
+        /**
+         * The list, built of a column of each word its element crosses as, every element's at its
+         * index. The columns are read for the length of the call and not kept.
+         */
+        @Override
+        public List<String> given(String value) {
+            Objects.requireNonNull(construct, "a list handed over is built by something");
+            List<Word> words = element.words();
+            StringBuilder block = new StringBuilder("{ let elements = ").append(value).append(";");
+            for (int column = 0; column < words.size(); column++) {
+                block.append(" let mut column").append(column).append(": Vec<")
+                        .append(Crossing.word(words.get(column)))
+                        .append("> = Vec::with_capacity(elements.len());");
+            }
+            block.append(" for element in elements { let element = ")
+                    .append(element.viewOf("element")).append(";");
+            List<String> handed = element.given("element");
+            for (int column = 0; column < handed.size(); column++) {
+                block.append(" column").append(column).append(".push(").append(handed.get(column))
+                        .append(");");
+            }
+            block.append(" } let count = i64::try_from(elements.len()).expect(\"a list's length is a"
+                    + " 64-bit count\"); unsafe { (library.symbols.").append(construct)
+                    .append(")(count");
+            for (int column = 0; column < words.size(); column++) {
+                block.append(", column").append(column).append(".as_ptr()");
+            }
+            block.append(") } }");
+            return List.of(block.toString());
+        }
+
+        /** Each element read into room of its own, in order. */
+        @Override
+        public String of(List<String> words) {
+            Objects.requireNonNull(at, "a list handed over is read by something");
+            List<Word> rooms = element.words();
+            StringBuilder block = new StringBuilder("{ let list = ").append(words.getFirst())
+                    .append("; let count = (library.symbols.").append(length)
+                    .append(")(list); let mut elements = Vec::with_capacity(usize::try_from(count)"
+                            + ".expect(\"a list's length is never below nought\")); for index in"
+                            + " 0..count {");
+            List<String> held = new ArrayList<>();
+            for (int room = 0; room < rooms.size(); room++) {
+                block.append(" let mut room").append(room).append(": ")
+                        .append(Crossing.word(rooms.get(room))).append(" = ")
+                        .append(Crossing.nothing(rooms.get(room))).append(";");
+                held.add("room" + room);
+            }
+            block.append(" let inside = (library.symbols.").append(at).append(")(list, index");
+            for (String room : held) {
+                block.append(", &mut ").append(room);
+            }
+            block.append("); assert!(inside != 0, \"the library answers every element of a list"
+                    + " below its length\"); elements.push(").append(element.of(held))
+                    .append("); } elements }");
+            return block.toString();
+        }
+
+        @Override
+        public String viewOf(String owned) {
+            return owned + ".as_slice()";
+        }
+    }
+
+    /** What the view of each of {@code crossings} is, joined as the parameters of a signature say. */
+    static String views(List<? extends Crossing> crossings) {
+        return crossings.stream().map(Crossing::view).collect(Collectors.joining(", "));
+    }
+}
