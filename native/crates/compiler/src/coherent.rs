@@ -59,7 +59,7 @@ use crate::transport::{
     Held, Node, Op, Owner, Prim, Program, Reaches, Reaching, Reading, Reference, Routing, Selects,
     Target, Ty, Value,
 };
-use crate::{Declared, Runs, Targets, departures_taken, not_lowered, says_its_case};
+use crate::{Declared, PairIn, Runs, Targets, departures_taken, not_lowered, says_its_case};
 use anyhow::{Result, anyhow, bail};
 use souther_native_abi::{spells_a_module, spells_a_name};
 use std::collections::HashMap;
@@ -1606,7 +1606,7 @@ impl<'a> Walk<'_, 'a> {
     /// in a type, that type is one the document carries. Which pairs an operator is written over,
     /// and which reading the checker gives each, is the checker's rule and is not answered again
     /// here: this holds only what a reading, once given, says.
-    fn reading(&self, op: Op, reading: &Reading, left: &Ty, right: &Ty) -> Result<()> {
+    fn reading(&mut self, op: Op, reading: &Reading, left: &Ty, right: &Ty) -> Result<()> {
         // Which readings an operator can have. The checker reads a truth operator and a join as
         // their operands stand, always, and arithmetic as they stand or at their exact values:
         // only a comparison is read in a type. A document saying otherwise is one the lowering,
@@ -1645,8 +1645,21 @@ impl<'a> Walk<'_, 'a> {
                 )
             }
             // The type it is read in is one the document declares, which `Node::types` holds of
-            // every type a node writes.
-            Reading::In { .. } => Ok(()),
+            // every type a node writes. What it says of the two sides is how the lowering takes
+            // them apart, which `pair_in` answers for both: a newtype beside what it wraps all the
+            // way down is opened, and needs nothing more; any other pair is held as the reading,
+            // so each side has to be a value of it.
+            Reading::In { ty } => {
+                match self.declared.pair_in(ty, left, right)? {
+                    PairIn::Opened(_) => {}
+                    PairIn::Held => {
+                        let what = format!("a side of {} read as {}", op.spelt(), ty.spelt());
+                        self.fits(&what, left, ty);
+                        self.fits(&what, right, ty);
+                    }
+                }
+                Ok(())
+            }
         }
     }
 

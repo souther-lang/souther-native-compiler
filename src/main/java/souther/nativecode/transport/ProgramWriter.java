@@ -301,7 +301,7 @@ public final class ProgramWriter {
             // be writing a place for them.
             case CheckedData.Unit it -> identity + ",\"is\":\"unit\"}";
             // A sum is never built, so it has no fields of its own; what it says is which types
-            // stand as its cases, and a case may be a sum again.
+            // stand as its cases, which the checker has already descended to their leaves.
             case CheckedData.Sum it -> {
                 StringJoiner cases = new StringJoiner(",", "[", "]");
                 for (TypeSymbol held : it.cases()) {

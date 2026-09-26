@@ -16,8 +16,9 @@ const A: &str = r#"{"declared":"m.A"}"#;
 const S: &str = r#"{"declared":"m.S"}"#;
 const P: &str = r#"{"declared":"m.P"}"#;
 
-/// The units `m.A` and `m.B`, the sum `m.S = m.A | m.B`, and the product `m.P` with one field `f`
-/// of `m.S`; the behaviors, helpers and local definitions given; one module `m`.
+/// The units `m.A` and `m.B`, the sum `m.S = m.A | m.B`, the product `m.P` with one field `f` of
+/// `m.S`, and the newtype `m.N` over an `Int`; the behaviors, helpers and local definitions given;
+/// one module `m`.
 fn document(behaviors: &[String], helpers: &[String], definitions: &[String]) -> String {
     format!(
         concat!(
@@ -28,7 +29,9 @@ fn document(behaviors: &[String], helpers: &[String], definitions: &[String]) ->
             r#""cases":[{{"is":"declared","declared":"m.A"}},{{"is":"declared","declared":"m.B"}}],"#,
             r#""form":{{"is":"enumeration"}}}},"#,
             r#"{{"module":"m","name":"P","by":"amodule","is":"product","#,
-            r#""fields":[{{"name":"f","binding":0,"codec":{{"is":"named","declared":"m.S"}}}}],"invariants":[]}}],"#,
+            r#""fields":[{{"name":"f","binding":0,"codec":{{"is":"named","declared":"m.S"}}}}],"invariants":[]}},"#,
+            r#"{{"module":"m","name":"N","by":"amodule","is":"newtype","#,
+            r#""field":{{"name":"v","binding":0,"codec":{{"is":"scalar","scalar":"INT"}}}},"invariants":[]}}],"#,
             r#""behaviors":[{}],"#,
             r#""modules":[{{"name":"m","publishes":[],"helpers":[{}],"values":[],"entries":[],"definitions":[{}],"#,
             r#""examples":[]}}]}}"#
@@ -1826,6 +1829,91 @@ fn an_operator_is_read_only_as_the_checker_reads_it() {
         &documents(over("ADD", in_amount, INT), INT),
         "never reads it as",
     );
+}
+
+/// A pair read in a type is one the lowering can take apart as that type. A newtype beside what it
+/// wraps is read by opening the side that is one; any other pair, a newtype beside a value that
+/// states nothing about its own type included, is read by holding both sides as a value of the
+/// reading, so each is one. A pair that is neither would have the
+/// lowering read a field out of an `Int`, or a token out of a value that carries none.
+#[test]
+fn a_pair_read_in_a_type_is_one_the_type_takes_apart() {
+    let n = r#"{"declared":"m.N"}"#;
+    let compared = |reading: &str, left: &str, right: &str| {
+        helpers(&[h(
+            &[left, right],
+            &node(
+                "binary",
+                &format!(
+                    r#""op":"EQ","reading":{{"is":"in","type":{reading}}},"left":{},"right":{}"#,
+                    read(0, left),
+                    read(1, right)
+                ),
+                BOOL,
+            ),
+        )])
+    };
+
+    reads_whole(&compared(n, n, INT));
+    reads_whole(&compared(n, INT, n));
+    reads_whole(&compared(S, S, A));
+    reads_whole(&compared(S, A, S));
+
+    // A value that states nothing about its own type is read as the other side's type whatever
+    // that is, a newtype included, and is held as it rather than opened. No value of it is ever
+    // laid out, so the document is not lowered, and for that value and not for the pair.
+    let nothing = r#"{"nothing":{}}"#;
+    for reading in [n, S] {
+        for (left, right) in [(nothing, reading), (reading, nothing)] {
+            let refused = object_for(&compared(reading, left, right))
+                .expect_err("no value of Nothing is laid out");
+            assert!(refused.downcast_ref::<NotLowered>().is_some(), "{refused}");
+            assert!(
+                refused.to_string().contains("a value of type Nothing"),
+                "{refused}"
+            );
+        }
+    }
+
+    is_the_halves_disagreeing(&compared(n, INT, INT), "is not a value of");
+    is_the_halves_disagreeing(&compared(n, n, STRING), "is not a value of");
+    is_the_halves_disagreeing(&compared(S, INT, S), "is not a value of");
+    is_the_halves_disagreeing(&compared(A, S, A), "is not a value of");
+}
+
+/// A newtype that wraps itself, directly or through another, has no value, and the checker refuses
+/// it where it is written. Every walk that opens a newtype would go round it for ever, so it is
+/// refused when the document is read, before a comparison over it asks how far it opens.
+#[test]
+fn a_newtype_that_wraps_itself_is_the_halves_disagreeing() {
+    let newtype = |name: &str, wraps: &str| {
+        format!(
+            r#"{{"module":"m","name":"{name}","by":"amodule","is":"newtype","field":{{"name":"v","binding":0,"codec":{{"is":"named","declared":"m.{wraps}"}}}},"invariants":[]}}"#
+        )
+    };
+    let compared = |declarations: &[String], reading: &str| {
+        let n = r#"{"declared":"m.N"}"#;
+        let body = format!(
+            r#"{{"core":"binary","op":"LE","reading":{reading},"left":{},"right":{},"type":{BOOL},"aborts":[]}}"#,
+            read(0, n),
+            read(1, n)
+        );
+        format!(
+            r#"{{"transport":22,"declarations":[{}],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[{}],"values":[],"entries":[],"definitions":[],"examples":[]}}]}}"#,
+            declarations.join(","),
+            h(&[n, n], &body)
+        )
+    };
+    let in_n = r#"{"is":"in","type":{"declared":"m.N"}}"#;
+    let stands = r#"{"is":"astheystand"}"#;
+    for declarations in [
+        vec![newtype("N", "N")],
+        vec![newtype("N", "M"), newtype("M", "N")],
+    ] {
+        for reading in [in_n, stands] {
+            is_the_halves_disagreeing(&compared(&declarations, reading), "wraps itself");
+        }
+    }
 }
 
 /// Every type a node writes is one the document declares, the ones it carries beside its own

@@ -23,6 +23,7 @@ mod kernels;
 mod link;
 mod literals;
 mod manifest;
+mod ordering;
 mod replaced;
 mod restating;
 mod specialize;
@@ -1582,6 +1583,14 @@ impl<'a> Declared<'a> {
                 declared.settled(&key, cases, form)?;
             }
         }
+        // Once every field is known to name a declaration, so the walk reaches only ones that are.
+        for declaration in declarations {
+            if let Declaration::Newtype { .. } = declaration {
+                declared.newtype_spine(&Ty::Declared {
+                    declared: declaration.key(),
+                })?;
+            }
+        }
         Ok(declared)
     }
 
@@ -1740,6 +1749,13 @@ impl<'a> Declared<'a> {
 
     /// The cases a value of any of `members` can be, a sum walked into and each case kept at the
     /// place it was first reached, which is the order the checker gives a sum's own.
+    ///
+    /// One step is all the way down. A sum's cases are the leaves it descends to already: the
+    /// checker descends a case that is a sum before the declaration crosses, and [`settled`] refuses
+    /// a sum standing as a case of another. So a sum among `members` gives way to its cases, and
+    /// none of those is a sum.
+    ///
+    /// [`settled`]: Declared::settled
     fn leaves_of(&self, members: &[Case]) -> Result<Vec<Case>> {
         let mut leaves: Vec<Case> = Vec::new();
         for member in members {
@@ -1860,6 +1876,133 @@ impl<'a> Declared<'a> {
             Ty::Union { union } => Some(self.leaves_of(union)?),
             Ty::Prim { prim } => Some(vec![Case::Primitive { prim: *prim }]),
             _ => None,
+        })
+    }
+
+    /// The newtypes worn round a value of `ty` and what is left once they are off: each type a
+    /// value read out of the one before it has, in turn, and the last of them.
+    ///
+    /// The one walk. How far a newtype reaches is a fact about the declarations, and a comparison
+    /// that opened a value one way while the check of the pair stopped another would be two answers
+    /// to it. A newtype that comes back to itself is refused: it has no value, the checker refuses
+    /// it where it is written, and [`Declared::of`] asks this of every newtype, so every other asker
+    /// is handed a walk that ends.
+    fn newtype_spine(&self, ty: &Ty) -> Result<NewtypeSpine> {
+        let mut worn: Vec<String> = Vec::new();
+        let mut opens: Vec<Ty> = Vec::new();
+        let mut at = ty.clone();
+        while let Ty::Declared { declared } = &at
+            && let Declaration::Newtype { field, .. } = self.shape(declared)?
+        {
+            let comes_back = worn.contains(declared);
+            worn.push(declared.clone());
+            if comes_back {
+                bail!(
+                    "{} wraps itself ({}), which the checker refuses: the two halves disagree",
+                    ty.spelt(),
+                    worn.join(" = ")
+                );
+            }
+            at = field.codec.ty();
+            opens.push(at.clone());
+        }
+        Ok(NewtypeSpine { opens })
+    }
+
+    /// How a pair read in `reading` is taken apart, told by the pair and not by the reading alone.
+    ///
+    /// The reading does not say which of the checker's rules gave it. A newtype is the reading of
+    /// a newtype beside a bare literal of what it wraps, and it is also the reading of a newtype
+    /// beside a value that states nothing about its own type: the one is compared by opening the
+    /// newtype, and the other by holding both as the newtype. So the operands decide, and this is
+    /// the one place that decides it — Coherent holds the pair to what this answers, and the
+    /// lowering takes it apart by the same answer.
+    fn pair_in(&self, reading: &Ty, left: &Ty, right: &Ty) -> Result<PairIn> {
+        if let Some(inner) = self.newtype_spine(reading)?.opens.last()
+            && ((left == reading && right == inner) || (right == reading && left == inner))
+        {
+            return Ok(PairIn::Opened(inner.clone()));
+        }
+        Ok(PairIn::Held)
+    }
+
+    /// The enumeration whose declaration orders a value of `ty`, where exactly one does: `ty`
+    /// itself where it is one, the one sum that lists it where it is a unit, and the one every
+    /// member lists where it is a union. As the checker answers it (ADR-0069): a unit may be a case
+    /// of two enumerations that place it differently, and then no order is its own.
+    ///
+    /// Asked of the declarations this document carries. Every sum listing a unit is declared in
+    /// the unit's own module, and a module of this compile has every declaration carried; a module
+    /// off the path has only the ones something reaches, so an enumeration nothing else names may
+    /// be missing, and then this answers none rather than a wrong one — it never finds two where
+    /// the checker found one. The checker's own answer is not on the node (souther-lang/souther#1987).
+    fn enumeration_of(&self, ty: &Ty) -> Result<Option<String>> {
+        let candidates = match ty {
+            Ty::Declared { declared } => self.enumerations_listing(declared)?,
+            Ty::Union { union } => {
+                let mut shared: Option<Vec<String>> = None;
+                for member in union.iter() {
+                    let Case::Declared { declared } = member else {
+                        return Ok(None);
+                    };
+                    let listing = self.enumerations_listing(declared)?;
+                    shared = Some(match shared {
+                        None => listing,
+                        Some(so_far) => so_far
+                            .into_iter()
+                            .filter(|it| listing.contains(it))
+                            .collect(),
+                    });
+                }
+                shared.unwrap_or_default()
+            }
+            _ => return Ok(None),
+        };
+        Ok(match candidates.as_slice() {
+            [one] => Some(one.clone()),
+            _ => None,
+        })
+    }
+
+    /// Every enumeration that could order a value of the declaration `declared`: itself where it is
+    /// one, and every one listing it among its leaves where it is a unit.
+    fn enumerations_listing(&self, declared: &str) -> Result<Vec<String>> {
+        let is_enumeration = |declaration: &Declaration| {
+            matches!(
+                declaration,
+                Declaration::Sum {
+                    form: AlternativesForm::Enumeration,
+                    ..
+                }
+            )
+        };
+        Ok(match self.shape(declared)? {
+            declaration @ Declaration::Sum { .. } => {
+                if is_enumeration(declaration) {
+                    vec![declared.to_string()]
+                } else {
+                    Vec::new()
+                }
+            }
+            Declaration::Unit { .. } => {
+                let case = Case::Declared {
+                    declared: declared.to_string(),
+                };
+                let mut listing = Vec::new();
+                for (key, declaration) in &self.shapes {
+                    if is_enumeration(declaration)
+                        && self
+                            .leaves_of(std::slice::from_ref(&Case::Declared {
+                                declared: key.clone(),
+                            }))?
+                            .contains(&case)
+                    {
+                        listing.push(key.clone());
+                    }
+                }
+                listing
+            }
+            Declaration::Product { .. } | Declaration::Newtype { .. } => Vec::new(),
         })
     }
 
@@ -5296,20 +5439,13 @@ fn binary(
 ) -> Lowered<ir::Value> {
     // What the operator reads its operands as decides what it does with them, so it is asked
     // before the operator is: an operator with a case of its own would otherwise be lowered as
-    // the operands stand whatever the document says they are read as. Only operands read as they
-    // stand are lowered, from their one type; a pair read in a type for this operator only, or at
-    // their exact values, would first have to be taken as that, and nothing here does so yet.
+    // the operands stand whatever the document says they are read as. A pair read at their exact
+    // values would first have to be taken as a `Rational`, which has no representation here yet.
     match operands.reading {
         Reading::AsTheyStand => {
             binary_as_they_stand(builder, lowering, module, bindings, abort, op, operands)
         }
-        Reading::In { ty } => Err(not_lowered(format!(
-            "{} over {} and {}, read as {}",
-            op.spelt(),
-            operands.left.ty().spelt(),
-            operands.right.ty().spelt(),
-            ty.spelt()
-        ))),
+        Reading::In { ty } => read_in(builder, lowering, module, bindings, abort, op, ty, operands),
         Reading::ExactNumbers => Err(not_lowered(format!(
             "{} over {} and {}, read at their exact values",
             op.spelt(),
@@ -5317,6 +5453,87 @@ fn binary(
             operands.right.ty().spelt()
         ))),
     }
+}
+
+/// A comparison over two operands the checker reads as values of `reading`, for this operator only.
+///
+/// What arrives is one of the few pairs the checker reads this way, and each is taken as the
+/// reading for what it is and not by one rule over any two types. A newtype beside a bare literal
+/// of what it wraps is compared by the value it wraps (ADR-0047): the newtype is opened, and the
+/// literal is not made into a value of it, which it never is. A sum beside one of its cases, two
+/// sums over one set of cases, an enumeration beside one of its cases, and a value beside one that
+/// states nothing about its own type are all values of the reading already, which is what each is
+/// restated to before the two are compared as it. Which of the two a pair is, is
+/// [`Declared::pair_in`]'s answer, and Coherent held the pair to it.
+#[allow(clippy::too_many_arguments)]
+fn read_in(
+    builder: &mut FunctionBuilder,
+    lowering: &Lowering,
+    module: &mut ObjectModule,
+    bindings: &mut Bindings,
+    abort: ir::Block,
+    op: Op,
+    reading: &Ty,
+    operands: Operands,
+) -> Lowered<ir::Value> {
+    let Operands { left, right, .. } = operands;
+    let a = lower(builder, lowering, module, bindings, abort, left)?;
+    let b = lower(builder, lowering, module, bindings, abort, right)?;
+    let pair = lowering
+        .declared
+        .pair_in(reading, left.ty(), right.ty())
+        .expect("`Coherent` held every type an operator is read in to be one that crossed");
+    match pair {
+        PairIn::Opened(inner) => {
+            let (_, a) = opened(builder, lowering.declared, left.ty(), a)?;
+            let (_, b) = opened(builder, lowering.declared, right.ty(), b)?;
+            compare(builder, lowering, module, op, &inner, a, b)
+        }
+        PairIn::Held => {
+            let a = restate(builder, lowering, module, a, left.ty(), reading)?;
+            let b = restate(builder, lowering, module, b, right.ty(), reading)?;
+            compare(builder, lowering, module, op, reading, a, b)
+        }
+    }
+}
+
+/// How a pair read in a type is taken apart ([`Declared::pair_in`]).
+enum PairIn {
+    /// A newtype beside what it wraps all the way down: the newtype is opened, and the two are
+    /// compared as what it wraps, which is this.
+    Opened(Ty),
+    /// Two values of the reading, each held as it and compared as it.
+    Held,
+}
+
+/// `value`, of type `ty`, opened to the value its newtypes wrap, and the type that value has: the
+/// value itself where `ty` is no newtype, and the innermost value where it is one over another.
+///
+/// This is what a comparison observes of a newtype, and nothing else is: the value is read, not
+/// restated, and no value of any type is made.
+fn opened(
+    builder: &mut FunctionBuilder,
+    declared: &Declared,
+    ty: &Ty,
+    value: ir::Value,
+) -> Lowered<(Ty, ir::Value)> {
+    let spine = declared
+        .newtype_spine(ty)
+        .expect("`Declared::of` held every newtype to reach something other than itself");
+    let mut value = value;
+    for wrapped in &spine.opens {
+        let held = builder
+            .ins()
+            .load(types::I64, TRUSTED, value, field_at(0) as i32);
+        value = out_of_slot(builder, held, machine_type(wrapped)?);
+    }
+    Ok((spine.opens.last().unwrap_or(ty).clone(), value))
+}
+
+/// The newtypes worn round a value ([`Declared::newtype_spine`]): the type of each value read out
+/// of the one before, from the outermost newtype in. Empty where the type is no newtype.
+struct NewtypeSpine {
+    opens: Vec<Ty>,
 }
 
 /// A binary operator over operands read as they stand.
@@ -5367,7 +5584,7 @@ fn binary_as_they_stand(
             match op {
                 Op::Add | Op::Sub | Op::Mul => arithmetic(builder, abort, op, a, b, aborts),
                 Op::Eq | Op::Ne | Op::Lt | Op::Le | Op::Gt | Op::Ge => {
-                    compare(builder, lowering, module, op, a, b)
+                    compare(builder, lowering, module, op, a.ty, a.value, b.value)
                 }
                 // `/` answers the exact quotient, which is not a whole number and has no
                 // representation here yet.
@@ -5381,107 +5598,42 @@ fn binary_as_they_stand(
     }
 }
 
-/// What a comparison compares.
+/// Two values of `ty` compared by `op`.
 ///
-/// Decided by the types the operands have in Souther and not by the widths they are held in. The
-/// two agree for an `Int` and for a `Bool`, and that agreement is the whole reason every comparison
-/// could be one `icmp` until now. It does not hold past them. A value of a declared type is held as
-/// the address of what it is made of, and Souther's `==` over one of those is its fields compared
-/// one by one — so an `icmp` over the two addresses answers whether they are the same value rather
-/// than whether they are equal, and says false of two that were built separately.
+/// Decided by the type the two have in Souther and not by the widths they are held in. The two
+/// agree for an `Int` and for a `Bool`, and not past them: a value of a declared type is held as
+/// the address of what it is made of, so an `icmp` over two of those answers whether they are the
+/// same value rather than whether they are equal.
 ///
-/// Both types and not the left one, because an operator here is not given two values of one type.
-/// A bare literal takes the newtype of the operand it is compared with, and a case value is a value
-/// of its sum, so a legitimate comparison arrives with `Int` on one side and a declared type on the
-/// other, or with two declared types that are not the same one. Read off the left alone, `0 ==
-/// amount` would be compared as two `Int`s — one of which is an address — while `amount == 0`
-/// was refused, and which of the two a program got would be the order its author wrote them in.
+/// One type for both, which is what the reading has already made of the pair: operands read as
+/// they stand are of one type, which Coherent held, and a pair read in a type was taken as that
+/// type before it reached here ([`read_in`]). So this never asks what the other side is.
 ///
-/// So what is refused here was being answered wrongly before, which is why it is refused rather
-/// than left. An object that links and answers is what a wrong answer comes out of.
+/// Equality and order are two questions with their own answers: whether two values are equal is
+/// asked of every type the checker compares, and `equality` answers it per type; an order is had
+/// by a number, text and an enumeration, and by a newtype over one of those, and `ordering`
+/// answers it.
 fn compare(
     builder: &mut FunctionBuilder,
     lowering: &Lowering,
     module: &mut ObjectModule,
     op: Op,
-    left: Held,
-    right: Held,
+    ty: &Ty,
+    a: ir::Value,
+    b: ir::Value,
 ) -> Lowered<ir::Value> {
-    let (a, b) = (left.value, right.value);
-    match (left.ty, right.ty) {
-        // Every primitive is named, for the reason `machine_type` names them: one added to the
-        // language would otherwise arrive here and be compared as whatever it is held as.
-        (Ty::Prim { prim }, Ty::Prim { prim: also }) if prim == also => match prim {
-            Prim::Int => Ok(builder.ins().icmp(as_a_whole_number(op), a, b)),
-            // Two truths are equal or they are not, and nothing orders them. `<` over a `Bool` is
-            // one the checker never writes, and without its decision on the node it is refused the
-            // way every other pair this has no lowering for is (`unlowered_operator`).
-            Prim::Bool => match op {
-                Op::Eq => Ok(builder.ins().icmp(IntCC::Equal, a, b)),
-                Op::Ne => Ok(builder.ins().icmp(IntCC::NotEqual, a, b)),
-                _ => Err(unlowered_operator(op, &left, &right)),
-            },
-            // One call and then the six operators over what it answered. What text is ordered by
-            // is the runtime's to say and it is a walk, not a comparison of the two addresses and
-            // not a comparison of the bytes either.
-            Prim::String => {
-                let comparing = module.declare_func_in_func(lowering.compare_text, builder.func);
-                let compared = builder.ins().call(comparing, &[a, b]);
-                let answered = builder.inst_results(compared)[0];
-                Ok(builder.ins().icmp_imm_s(as_a_whole_number(op), answered, 0))
-            }
-            Prim::Decimal
-            | Prim::Rational
-            | Prim::Date
-            | Prim::Time
-            | Prim::DateTime
-            | Prim::Instant
-            | Prim::Raw => Err(not_lowered(format!(
-                "a comparison of two values of type {}",
-                prim.spelt()
-            ))),
-        },
-        // Two values of one type that is not a primitive: equal where what they are made of is,
-        // which `equality` answers per type.
-        (one, other) if one == other && matches!(op, Op::Eq | Op::Ne) => {
-            let same = equality::equal(builder, lowering, module, one, a, b)?;
-            Ok(match op {
-                Op::Eq => same,
-                _ => builder.ins().icmp_imm_s(IntCC::Equal, same, 0),
-            })
+    match op {
+        Op::Eq => equality::equal(builder, lowering, module, ty, a, b),
+        Op::Ne => {
+            let same = equality::equal(builder, lowering, module, ty, a, b)?;
+            Ok(builder.ins().icmp_imm_s(IntCC::Equal, same, 0))
         }
-        // A declared type on either side, which covers every legitimate comparison whose operands
-        // are not two values of one primitive: two values of one declared type, a value against a
-        // bare literal of what its newtype wraps, and a sum against one of its cases. What each of
-        // them comes to is the fields compared one by one, the wrapped value compared, or which
-        // case the value is — and none of those is written here, while the address a value is held
-        // as answers none of them.
-        //
-        // Named together rather than told apart, because what tells them apart is not in the
-        // document: a newtype says what it is called and what its field is called, and not what it
-        // wraps. A reading that guessed would be this side deciding a question the checker has
-        // already answered.
-        (Ty::Declared { .. } | Ty::Union { .. }, _)
-        | (_, Ty::Declared { .. } | Ty::Union { .. }) => Err(not_lowered(format!(
-            "a comparison of {} against {}, which is what they are made of compared rather \
-                 than where they are",
-            left.ty.spelt(),
-            right.ty.spelt()
-        ))),
-        // An optional and a tuple have equality and no order: what the language orders is a number,
-        // text, an amount, a moment, an enumeration, and a newtype over one of those. So `==` here
-        // is a comparison still to be written, and `<` is one the checker never writes, refused
-        // as a `Bool`'s is.
-        (Ty::Option { .. }, Ty::Option { .. }) | (Ty::Tuple { .. }, Ty::Tuple { .. }) => match op {
-            Op::Eq | Op::Ne => Err(not_lowered(format!(
-                "a comparison of {} against {}, which is what they hold compared rather than \
-                 where they are",
-                left.ty.spelt(),
-                right.ty.spelt()
-            ))),
-            _ => Err(unlowered_operator(op, &left, &right)),
-        },
-        _ => Err(unlowered_operator(op, &left, &right)),
+        Op::Lt | Op::Le | Op::Gt | Op::Ge => {
+            ordering::ordered(builder, lowering, module, op, ty, a, b)
+        }
+        Op::Add | Op::Sub | Op::Mul | Op::Div | Op::Concat | Op::And | Op::Or => {
+            unreachable!("{} is not a comparison", op.spelt())
+        }
     }
 }
 

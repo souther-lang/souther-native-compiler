@@ -417,8 +417,9 @@ pub enum Declaration {
         name: String,
         by: DeclaredBy,
     },
-    /// A sum is never built. What it says is which types stand as its cases, and a case may be a
-    /// sum again — which is why an arm tests the leaves it resolved to rather than this list.
+    /// A sum is never built. What it says is which types stand as its cases, and those are the
+    /// leaves it descends to: the checker descends a case that is a sum before the declaration
+    /// crosses, and a sum standing as a case of another is refused when the document is read.
     ///
     /// No value is ever one, so nothing is ever tagged with a sum and no object defines a token
     /// for one. Which is not to say a sum has no identity: it has the one every declaration has,
