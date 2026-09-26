@@ -32,11 +32,12 @@ use cranelift::module::{FuncId, Linkage, Module};
 use cranelift::object::ObjectModule;
 use souther_native_abi::{
     DECODE_ABANDON, DECODE_BEGIN, DECODE_END, DECODE_HOST_BEGIN, DECODE_ROOT, EXTERNAL_APPEND,
-    EXTERNAL_ARRAY, EXTERNAL_BOOL, EXTERNAL_DECIMAL, EXTERNAL_INT, EXTERNAL_JSON, EXTERNAL_NULL,
-    EXTERNAL_OBJECT, EXTERNAL_PUT, EXTERNAL_STRING, PATH_AT, PATH_BELOW, READ_ARRAY,
-    READ_ARRAY_LENGTH, READ_BOOL, READ_CASE, READ_DECIMAL, READ_ELEMENT, READ_INT, READ_INVARIANT,
-    READ_IS, READ_MEMBER, READ_MISSING, READ_NOT_A_CASE, READ_NULL, READ_OBJECT, READ_STRING,
-    READ_TAG, reader_symbol,
+    EXTERNAL_ARRAY, EXTERNAL_BOOL, EXTERNAL_DATE, EXTERNAL_DATETIME, EXTERNAL_DECIMAL,
+    EXTERNAL_INSTANT, EXTERNAL_INT, EXTERNAL_JSON, EXTERNAL_NULL, EXTERNAL_OBJECT, EXTERNAL_PUT,
+    EXTERNAL_STRING, EXTERNAL_TIME, PATH_AT, PATH_BELOW, READ_ARRAY, READ_ARRAY_LENGTH, READ_BOOL,
+    READ_CASE, READ_DATE, READ_DATETIME, READ_DECIMAL, READ_ELEMENT, READ_INSTANT, READ_INT,
+    READ_INVARIANT, READ_IS, READ_MEMBER, READ_MISSING, READ_NOT_A_CASE, READ_NULL, READ_OBJECT,
+    READ_STRING, READ_TAG, READ_TIME, reader_symbol,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use write::{Continuation, Driver, Element, Work};
@@ -109,10 +110,15 @@ fn reaches(declaration: &Declaration) -> Vec<Option<&str>> {
 /// Nothing, for a primitive with an external form here, and something with none for the rest.
 fn primitive_reaches(prim: Prim, reached: &mut Vec<Option<&str>>) {
     match prim {
-        Prim::Int | Prim::Bool | Prim::String | Prim::Decimal => {}
-        Prim::Rational | Prim::Date | Prim::Time | Prim::DateTime | Prim::Instant | Prim::Raw => {
-            reached.push(None)
-        }
+        Prim::Int
+        | Prim::Bool
+        | Prim::String
+        | Prim::Decimal
+        | Prim::Date
+        | Prim::Time
+        | Prim::DateTime
+        | Prim::Instant => {}
+        Prim::Rational | Prim::Raw => reached.push(None),
     }
 }
 
@@ -156,6 +162,10 @@ pub(crate) enum Runtime {
     ExternalInt,
     ExternalString,
     ExternalDecimal,
+    ExternalDate,
+    ExternalTime,
+    ExternalDateTime,
+    ExternalInstant,
     ExternalArray,
     ExternalAppend,
     ExternalObject,
@@ -179,6 +189,10 @@ pub(crate) enum Runtime {
     ReadBool,
     ReadString,
     ReadDecimal,
+    ReadDate,
+    ReadTime,
+    ReadDateTime,
+    ReadInstant,
     ReadCase,
     ReadTag,
     ReadIs,
@@ -194,6 +208,10 @@ impl Runtime {
             Runtime::ExternalInt => EXTERNAL_INT,
             Runtime::ExternalString => EXTERNAL_STRING,
             Runtime::ExternalDecimal => EXTERNAL_DECIMAL,
+            Runtime::ExternalDate => EXTERNAL_DATE,
+            Runtime::ExternalTime => EXTERNAL_TIME,
+            Runtime::ExternalDateTime => EXTERNAL_DATETIME,
+            Runtime::ExternalInstant => EXTERNAL_INSTANT,
             Runtime::ExternalArray => EXTERNAL_ARRAY,
             Runtime::ExternalAppend => EXTERNAL_APPEND,
             Runtime::ExternalObject => EXTERNAL_OBJECT,
@@ -217,6 +235,10 @@ impl Runtime {
             Runtime::ReadBool => READ_BOOL,
             Runtime::ReadString => READ_STRING,
             Runtime::ReadDecimal => READ_DECIMAL,
+            Runtime::ReadDate => READ_DATE,
+            Runtime::ReadTime => READ_TIME,
+            Runtime::ReadDateTime => READ_DATETIME,
+            Runtime::ReadInstant => READ_INSTANT,
             Runtime::ReadCase => READ_CASE,
             Runtime::ReadTag => READ_TAG,
             Runtime::ReadIs => READ_IS,

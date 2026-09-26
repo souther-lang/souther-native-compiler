@@ -108,12 +108,19 @@ pub(crate) fn equal(
                     crate::runtime_call(builder, lowering, module, DECIMAL_COMPARE, &[a, b]);
                 Ok(builder.ins().icmp_imm_s(IntCC::Equal, compared, 0))
             }
-            Prim::Rational
-            | Prim::Date
-            | Prim::Time
-            | Prim::DateTime
-            | Prim::Instant
-            | Prim::Raw => Err(not_lowered(format!(
+            // By the day, the time of day or the moment they name, which the runtime compares: two
+            // made apart are equal where they name one, and their addresses say nothing of it.
+            Prim::Date | Prim::Time | Prim::DateTime | Prim::Instant => {
+                let compared = crate::runtime_call(
+                    builder,
+                    lowering,
+                    module,
+                    crate::temporal_compare(*prim),
+                    &[a, b],
+                );
+                Ok(builder.ins().icmp_imm_s(IntCC::Equal, compared, 0))
+            }
+            Prim::Rational | Prim::Raw => Err(not_lowered(format!(
                 "a comparison of two values of type {}",
                 prim.spelt()
             ))),

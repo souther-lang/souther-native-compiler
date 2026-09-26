@@ -1,6 +1,6 @@
 {
   "format": "souther-native-interface",
-  "version": 11,
+  "version": 12,
   "abi": 5,
   "statuses": {
     "ANSWERED": 0,
@@ -93,6 +93,78 @@
         }
       ],
       "answers": "int"
+    },
+    {
+      "name": "souther_date_of_iso",
+      "takes": [
+        {
+          "given": "string"
+        }
+      ],
+      "answers": "date"
+    },
+    {
+      "name": "souther_date_iso",
+      "takes": [
+        {
+          "given": "date"
+        }
+      ],
+      "answers": "string"
+    },
+    {
+      "name": "souther_time_of_iso",
+      "takes": [
+        {
+          "given": "string"
+        }
+      ],
+      "answers": "time"
+    },
+    {
+      "name": "souther_time_iso",
+      "takes": [
+        {
+          "given": "time"
+        }
+      ],
+      "answers": "string"
+    },
+    {
+      "name": "souther_datetime_of_iso",
+      "takes": [
+        {
+          "given": "string"
+        }
+      ],
+      "answers": "datetime"
+    },
+    {
+      "name": "souther_datetime_iso",
+      "takes": [
+        {
+          "given": "datetime"
+        }
+      ],
+      "answers": "string"
+    },
+    {
+      "name": "souther_instant_of_iso",
+      "takes": [
+        {
+          "given": "string"
+        }
+      ],
+      "answers": "instant"
+    },
+    {
+      "name": "souther_instant_iso",
+      "takes": [
+        {
+          "given": "instant"
+        }
+      ],
+      "answers": "string"
     },
     {
       "name": "souther_decoded_outcome",
@@ -289,6 +361,102 @@
           }
         ],
         "answers": "decimal"
+      }
+    },
+    {
+      "case": {
+        "kind": "primitive",
+        "name": "Date"
+      },
+      "make": {
+        "name": "souther_case_date_make",
+        "takes": [
+          {
+            "given": "date"
+          }
+        ],
+        "answers": "value"
+      },
+      "read": {
+        "name": "souther_case_date_read",
+        "takes": [
+          {
+            "given": "value"
+          }
+        ],
+        "answers": "date"
+      }
+    },
+    {
+      "case": {
+        "kind": "primitive",
+        "name": "Time"
+      },
+      "make": {
+        "name": "souther_case_time_make",
+        "takes": [
+          {
+            "given": "time"
+          }
+        ],
+        "answers": "value"
+      },
+      "read": {
+        "name": "souther_case_time_read",
+        "takes": [
+          {
+            "given": "value"
+          }
+        ],
+        "answers": "time"
+      }
+    },
+    {
+      "case": {
+        "kind": "primitive",
+        "name": "DateTime"
+      },
+      "make": {
+        "name": "souther_case_datetime_make",
+        "takes": [
+          {
+            "given": "datetime"
+          }
+        ],
+        "answers": "value"
+      },
+      "read": {
+        "name": "souther_case_datetime_read",
+        "takes": [
+          {
+            "given": "value"
+          }
+        ],
+        "answers": "datetime"
+      }
+    },
+    {
+      "case": {
+        "kind": "primitive",
+        "name": "Instant"
+      },
+      "make": {
+        "name": "souther_case_instant_make",
+        "takes": [
+          {
+            "given": "instant"
+          }
+        ],
+        "answers": "value"
+      },
+      "read": {
+        "name": "souther_case_instant_read",
+        "takes": [
+          {
+            "given": "value"
+          }
+        ],
+        "answers": "instant"
       }
     },
     {
@@ -2136,26 +2304,92 @@
                 "name": "Date"
               },
               "read": {
-                "unavailable": {
-                  "reason": "no_representation",
-                  "path": []
+                "available": {
+                  "function": {
+                    "name": "souther5_m_shop_t_Partial_f_opened",
+                    "takes": [
+                      {
+                        "given": "value"
+                      },
+                      {
+                        "room": "date"
+                      }
+                    ],
+                    "answers": null
+                  },
+                  "answers": {
+                    "leaf": "date"
+                  }
                 }
               }
             }
           ],
           "construct": {
-            "unavailable": {
-              "reason": "no_representation",
-              "path": [
+            "available": {
+              "function": {
+                "name": "souther5_m_shop_t_Partial_construct",
+                "takes": [
+                  {
+                    "given": "int"
+                  },
+                  {
+                    "given": "date"
+                  },
+                  {
+                    "room": "value"
+                  }
+                ],
+                "answers": "status"
+              },
+              "takes": [
                 {
-                  "field": "opened"
+                  "leaf": "int"
+                },
+                {
+                  "leaf": "date"
                 }
               ]
             }
           },
-          "decode": null,
-          "decodehost": null,
-          "encode": null
+          "decode": {
+            "name": "souther5_m_shop_t_Partial_decode",
+            "takes": [
+              {
+                "given": "bytes"
+              },
+              {
+                "given": "count"
+              },
+              {
+                "room": "decoded"
+              }
+            ],
+            "answers": "status"
+          },
+          "decodehost": {
+            "name": "souther5_m_shop_t_Partial_decode_host",
+            "takes": [
+              {
+                "given": "bytes"
+              },
+              {
+                "given": "count"
+              },
+              {
+                "room": "decoded"
+              }
+            ],
+            "answers": "status"
+          },
+          "encode": {
+            "name": "souther5_m_shop_t_Partial_encode",
+            "takes": [
+              {
+                "given": "value"
+              }
+            ],
+            "answers": "string"
+          }
         }
       ],
       "lists": [

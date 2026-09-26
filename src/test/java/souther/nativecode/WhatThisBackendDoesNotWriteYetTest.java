@@ -25,10 +25,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 class WhatThisBackendDoesNotWriteYetTest {
 
-    private static final String OVER_A_DATE = """
+    private static final String OVER_A_SET = """
             module calculation
 
-            behavior widen : (a: Date) -> Date
+            behavior widen : (a: Set<Int>) -> Set<Int>
 
             let widen (a) = a
             """;
@@ -47,9 +47,9 @@ class WhatThisBackendDoesNotWriteYetTest {
      */
     @Test
     void aTypeWithNoRepresentationStillCrosses() {
-        String written = ProgramWriter.written(Checked.of(List.of(OVER_A_DATE)));
+        String written = ProgramWriter.written(Checked.of(List.of(OVER_A_SET)));
 
-        assertThat(written).contains("\"prim\":\"DATE\"");
+        assertThat(written).contains("\"set\":");
     }
 
     /**
@@ -130,37 +130,29 @@ class WhatThisBackendDoesNotWriteYetTest {
 
     /**
      * A value only passing through is not written, so a behavior handing one back compiles; what
-     * is refused is the boundary that would have to write a {@code Date} out, which is where its
+     * is refused is the boundary that would have to write a {@code Set} out, which is where its
      * external form would be decided.
      */
     @Test
-    void anAnswerWithADateFieldIsRefusedWhereItWouldBeWrittenOut() {
+    void anAnswerWithASetFieldIsRefusedWhereItWouldBeWrittenOut() {
         assertThatThrownBy(() -> NativeCompiler.compile(Checked.of(List.of("""
-                module dated exposing ( same, Dated )
+                module listed exposing ( same, Listed )
 
-                data Dated = { on: Date }
+                data Listed = { on: Set<Int> }
 
-                behavior same : (p: Dated) -> Dated
+                behavior same : (p: Listed) -> Listed
                 let same (p) = p
                 """))))
                 .isInstanceOf(NotLowered.class)
-                .hasMessageContaining("Date");
+                .hasMessageContaining("Set");
     }
 
     /**
-     * A row's entry calls what computes each of its inputs, so an input whose operand has no
-     * expression here is a row the object cannot run.
-     *
-     * <p>Refused rather than left out. An object missing an entry would still link and still
-     * answer every row it did carry, so what a check of the rows compared would shrink by however
-     * many rows had values like this one — and it would go on being green over the ones that were
-     * left.
-     *
-     * <p>A date is the value here. What refuses it is the definition computing the input, which
-     * the module holds and which is written like any other of its helpers.
+     * A row's entry calls what computes each of its inputs, so a row stating a temporal is a row
+     * the object runs: its input is made from the text the checker read the literal as.
      */
     @Test
-    void aRowStatingAValueWithNoExpressionToMakeItIsRefusedRatherThanLeftOut() {
+    void aRowStatingADateIsWrittenWithTheTextItStatesItAs() {
         CheckedProgram program = Checked.of(List.of("""
                 module owing
 
@@ -173,9 +165,8 @@ class WhatThisBackendDoesNotWriteYetTest {
                     | "a date" : (Due { on = Date("2026-07-25"), label = "rent" }) -> "rent"
                 """));
 
-        assertThatThrownBy(() -> ProgramWriter.written(program))
-                .isInstanceOf(NotLowered.class)
-                .hasMessageContaining("a temporal literal");
+        assertThat(ProgramWriter.written(program))
+                .contains("\"core\":\"temporal\",\"text\":\"2026-07-25\"");
     }
 
     /**
@@ -203,15 +194,15 @@ class WhatThisBackendDoesNotWriteYetTest {
 
     @Test
     void theDriverSaysItIsOneThisBackendHasNotGotRoundTo() {
-        assertThatThrownBy(() -> NativeCompiler.compile(Checked.of(List.of(OVER_A_DATE))))
+        assertThatThrownBy(() -> NativeCompiler.compile(Checked.of(List.of(OVER_A_SET))))
                 .isInstanceOf(NotLowered.class)
-                .hasMessageContaining("Date");
+                .hasMessageContaining("Set");
     }
 
     @Test
     void theCommandLineSaysTheBackendIsBehindAndNotThatTheCommandWasWrong() throws Exception {
         Path source = Files.createTempDirectory("souther-native-test").resolve("calculation.sou");
-        Files.writeString(source, OVER_A_DATE, StandardCharsets.UTF_8);
+        Files.writeString(source, OVER_A_SET, StandardCharsets.UTF_8);
         ByteArrayOutputStream problems = new ByteArrayOutputStream();
 
         int ended = Main.run(

@@ -58,7 +58,7 @@ public final class Manifest {
     public static final String FORMAT = "souther-native-interface";
 
     /** The version of what a manifest says that this reads. */
-    public static final int VERSION = 11;
+    public static final int VERSION = 12;
 
     /** The ABI generation the functions this binds answer to. */
     public static final int ABI = 5;
@@ -273,8 +273,8 @@ public final class Manifest {
 
     /** One word a host hands over or is handed. */
     public enum Word {
-        STATUS, INT, BOOL, CASE, OUTCOME, COUNT, MARK, BYTES, VALUE, STRING, DECIMAL, DECODED,
-        ISSUE, LIST, REQUIREMENTS, CAPABILITY, USERDATA, FUNCTION
+        STATUS, INT, BOOL, CASE, OUTCOME, COUNT, MARK, BYTES, VALUE, STRING, DECIMAL, DATE, TIME,
+        DATETIME, INSTANT, DECODED, ISSUE, LIST, REQUIREMENTS, CAPABILITY, USERDATA, FUNCTION
     }
 
     /**
@@ -341,13 +341,15 @@ public final class Manifest {
 
         /**
          * One word that is the value itself: an {@code INT}, a {@code BOOL}, a {@code STRING}, a
-         * {@code DECIMAL} or a {@code VALUE}.
+         * {@code DECIMAL}, a {@code DATE}, a {@code TIME}, a {@code DATETIME}, an {@code INSTANT}
+         * or a {@code VALUE}.
          */
         record Leaf(Word word) implements Shape {
 
             /** Every word a value is handed over whole as, which a manifest's leaf is read against. */
             public static final List<Word> WORDS =
-                    List.of(Word.INT, Word.BOOL, Word.STRING, Word.DECIMAL, Word.VALUE);
+                    List.of(Word.INT, Word.BOOL, Word.STRING, Word.DECIMAL, Word.DATE, Word.TIME,
+                            Word.DATETIME, Word.INSTANT, Word.VALUE);
 
             public Leaf {
                 if (!WORDS.contains(word)) {

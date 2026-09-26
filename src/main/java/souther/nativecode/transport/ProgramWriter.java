@@ -88,7 +88,7 @@ public final class ProgramWriter {
      * written moves, so that a driver and a writer that disagree say so rather than producing an
      * object that is wrong quietly.
      */
-    public static final int TRANSPORT_VERSION = 25;
+    public static final int TRANSPORT_VERSION = 26;
 
     private final CheckedProgram program;
 
@@ -1233,6 +1233,17 @@ public final class ProgramWriter {
                 + ",\"type\":" + type(type) + ",\"aborts\":" + spelled(aborts) + "}";
     }
 
+    /**
+     * A {@code Date}, {@code Time}, {@code DateTime} or {@code Instant} literal as the checker read
+     * it: the ISO 8601 text it was written as, which the checker has already held to what the type
+     * writes ({@code Core.Temporal#text}). The type is the one {@code Core.Temporal#kind} names, so
+     * it is written once, as the node's own.
+     */
+    private String temporalNode(String text, Type type, AbortSet aborts) {
+        return "{\"core\":\"temporal\",\"text\":" + quoted(text)
+                + ",\"type\":" + type(type) + ",\"aborts\":" + spelled(aborts) + "}";
+    }
+
     private String unitNode(String identity, Type type, AbortSet aborts) {
         return "{\"core\":\"unit\",\"unit\":" + identity
                 + ",\"type\":" + type(type) + ",\"aborts\":" + spelled(aborts) + "}";
@@ -1335,7 +1346,7 @@ public final class ProgramWriter {
                     + ",\"type\":" + type(it.type()) + ",\"aborts\":" + aborts(it) + "}";
 
             case Core.Decimal it -> decimalNode(it.value(), it.type(), program.abortsAt(it));
-            case Core.Temporal it -> throw notYet("a temporal literal", it);
+            case Core.Temporal it -> temporalNode(it.text(), it.type(), program.abortsAt(it));
             // What the checker builds for an analysis to read, and not for a backend to run: a
             // value's build standing as its template, and a call kept standing for what it says.
             // The tree a checked program hands a backend keeps neither — the checker's own emitter

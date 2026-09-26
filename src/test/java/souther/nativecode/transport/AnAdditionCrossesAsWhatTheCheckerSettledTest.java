@@ -37,7 +37,7 @@ class AnAdditionCrossesAsWhatTheCheckerSettledTest {
         String written = ProgramWriter.written(Checked.of(List.of(ADDING)));
 
         assertThat(written).isEqualTo("""
-                {"transport":25,"declarations":[],\
+                {"transport":26,"declarations":[],\
                 "behaviors":[{"module":"calculation","name":"add","is":"body",\
                 "parameters":{"named":[{"name":"a","input":{"is":"scalar","scalar":"INT"}},\
                 {"name":"b","input":{"is":"scalar","scalar":"INT"}}]},\
@@ -128,21 +128,28 @@ class AnAdditionCrossesAsWhatTheCheckerSettledTest {
     }
 
     /**
-     * A body this backend does not write yet says so. It is not a refusal of the program: the
-     * language admits this one and will compile it on another backend today.
+     * A temporal literal crosses as the ISO text the checker read it as, under the type it is:
+     * {@code kind} and {@code type} of a {@code Core.Temporal} are one value, so it is written once.
      */
     @Test
-    void aBodyThisBackendDoesNotWriteYetSaysWhichItWas() {
+    void aTemporalLiteralCrossesAsTheTextTheCheckerReadItAs() {
         CheckedProgram program = Checked.of(List.of("""
                 module calculation
 
                 behavior opening : (a: Int) -> Date
 
                 let opening (a) = Date("2026-04-01")
+
+                behavior closing : (a: Int) -> Instant
+
+                let closing (a) = Instant("2026-04-01T09:30:00.5Z")
                 """));
 
-        assertThatThrownBy(() -> ProgramWriter.written(program))
-                .isInstanceOf(NotLowered.class)
-                .hasMessageContaining("a temporal literal");
+        String written = ProgramWriter.written(program);
+
+        assertThat(written).contains(
+                "{\"core\":\"temporal\",\"text\":\"2026-04-01\",\"type\":{\"prim\":\"DATE\"},");
+        assertThat(written).contains(
+                "{\"core\":\"temporal\",\"text\":\"2026-04-01T09:30:00.5Z\",\"type\":{\"prim\":\"INSTANT\"},");
     }
 }

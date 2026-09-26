@@ -112,7 +112,7 @@ class AHostReachesAValueWithoutItsLayoutTest {
         Set<String> defined = NativeArtifacts.built(Checked.of(List.of("""
                 module shop exposing ( Partial )
 
-                data Partial = { count: Int, opened: Date }
+                data Partial = { count: Int, opened: Set<Int> }
                 """))).defined();
 
         assertThat(defined).contains(host("Partial$field$count"));

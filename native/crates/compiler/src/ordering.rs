@@ -55,12 +55,22 @@ pub(crate) fn ordered(
                     crate::runtime_call(builder, lowering, module, DECIMAL_COMPARE, &[a, b]);
                 Ok(builder.ins().icmp_imm_s(condition, compared, 0))
             }
-            Prim::Rational | Prim::Date | Prim::Time | Prim::DateTime | Prim::Instant => {
-                Err(not_lowered(format!(
-                    "a comparison of two values of type {}",
-                    prim.spelt()
-                )))
+            // Chronological, which the runtime compares: to the second for the three a clock reads,
+            // and to the nanosecond for an `Instant`.
+            Prim::Date | Prim::Time | Prim::DateTime | Prim::Instant => {
+                let compared = crate::runtime_call(
+                    builder,
+                    lowering,
+                    module,
+                    crate::temporal_compare(*prim),
+                    &[a, b],
+                );
+                Ok(builder.ins().icmp_imm_s(condition, compared, 0))
             }
+            Prim::Rational => Err(not_lowered(format!(
+                "a comparison of two values of type {}",
+                prim.spelt()
+            ))),
         },
         // A value of an enumeration, of one of its cases, or of a union of them, ordered by the
         // one enumeration that places them (ADR-0069). That is the type itself where it is one, and

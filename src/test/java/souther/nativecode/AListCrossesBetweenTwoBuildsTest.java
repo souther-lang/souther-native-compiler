@@ -102,7 +102,7 @@ class AListCrossesBetweenTwoBuildsTest {
         Map<String, ClassFileImage> published = Compiler.compile("""
                 module lib.steps exposing ( steps )
 
-                let steps: List<Date> = [Date("2026-04-01")]
+                let steps: List<Set<Int>> = [Set.singleton(1)]
                 """);
         CheckedProgram program = Checked.of(List.of("""
                 module app.steps exposing ( counted )

@@ -147,8 +147,30 @@ written `100`, an exponent spelt out into at most a thousand digits — and read
 number was spelt at. The cases of `RoundingMode` are declared by the language and at home in no
 module's object: the runtime defines their tokens, and every object naming one imports it.
 
+A `Date`, a `Time`, a `DateTime` and an `Instant` are addresses in the same way, and what they point
+at is the runtime's alone. Each holds what its `java.time` counterpart holds and nothing past it: a
+`Date` the years -999999999 to 999999999, a `Time` and a `DateTime` whole seconds, an `Instant`
+nanoseconds from -1000000000-01-01T00:00:00Z to +1000000000-12-31T23:59:59.999999999Z. What a
+temporal is as text, and the calendar that says which day a count of days is, are `souther-text`'s
+`temporal` module, which the driver reads a literal by too: a literal is carried as the ISO 8601 text
+the checker read it as, held here to the grammar of its type, and made by the runtime where it is
+reached. Every operation is a call into the runtime, and equality and order are by the day, the
+second or the moment a value names, so two made apart are equal where they name one. A shift
+(`Date.addDays`, `addMonths` and `addYears`, `DateTime.addMinutes`, `addHours` and `addDays`) that
+leaves what a type holds ends the run, the one reason for a count too large to add and for a day
+past the end; `Date.fromParts` and `Time.fromParts` name a case for parts that name none and
+normalise nothing. A boundary writes a temporal as `toString` of its `java.time` class does — a time
+without its seconds where they are nought, an instant in UTC — and reads it by Raoh's grammar,
+which is not what the JVM this build is tested against reads: that one hands the text to
+`java.time`, whose parsers accept more. An instant is read from an offset spelling as the moment it
+names, a fraction of a second in a `Time` or a `DateTime` is a decode issue and never dropped, and a
+leap second is refused. `ATemporalAnswersWhatTheJvmAnswersTest` holds every kernel and comparison
+to what `java.time` answers over the ends of every range and a seeded run of the rest.
+`Raw`, the external form itself, is not laid out: the runtime builds one to write a value and
+consumes it when it is written, and no program holds one as a value yet.
+
 A value of a union says which case it is by the token at the front of it. A declared case's token is
-its declaration's; an `Int`, a `Bool`, a `String` or a `Decimal` standing as a case, and a case the language
+its declaration's; an `Int`, a `Bool`, a `String`, a `Decimal` or a temporal standing as a case, and a case the language
 gives such as `DivisionByZero`, is carried with a token the runtime defines for it, so a value of
 `Int | DivisionByZero` is told apart the way a value of a sum is, and a case keeps its token when
 the union it stands in widens. Such a union stays in the object that made it for now: no program
@@ -236,7 +258,8 @@ sum there is `..._case`, answering which of the cases the sum descends to the va
 among them counted from nought; the address the value is tagged with never leaves the object. A
 declared case is the value itself. A primitive among the cases of a union is carried, and a host
 makes one and reads back what it holds through the runtime, `souther_case_int_make` and
-`souther_case_int_read` for an `Int` and the same for a `Bool`, a `String` and a `Decimal`; a case the language
+`souther_case_int_read` for an `Int` and the same for a `Bool`, a `String`, a `Decimal`, a `Date`, a `Time`,
+a `DateTime` and an `Instant`; a case the language
 gives holds nothing and is only made (`souther_case_division_by_zero_make`). Those are the case's
 and not the union's, since a carried `Int` is laid out alike in every union it stands in, and the
 manifest lists them under `cases`. A read is made only of a value `..._case` has said is that case,
@@ -253,7 +276,16 @@ text and a value of a declared type or of a union as an address. A `Decimal` cro
 of type `souther_decimal`, which a host makes through `souther_decimal_of_parts`, handing its
 integer as integer text in a string and its scale, and reads back through `souther_decimal_unscaled`
 and `souther_decimal_scale`: the two numbers the language says a `Decimal` is, and not its text,
-which would be one spelling among several. An optional crosses as a presence
+which would be one spelling among several. A `Date`, a `Time`, a `DateTime` and an `Instant` cross
+each as an address of a type of its own (`souther_date`, `souther_time`, `souther_datetime` and
+`souther_instant`), which a host makes of the ISO 8601 text that names the value
+(`souther_date_of_iso`, and the same for the others) and reads back as the text a boundary writes
+(`souther_date_iso`). A word of their own and not a `souther_string`, so that a host handed one where
+the other was meant has been handed something else; what a binding makes of it, text or a type of
+its own language's, is the binding's. The text a host hands over is one that names a value of the
+type, and one that does not ends the process as a `Decimal`'s integer that is no integer does: it is
+a boundary's decoder alone that reports outside text as an issue. The PHP binding holds none of the
+four yet. An optional crosses as a presence
 and then what it holds: a constructor takes a byte and the words of the value, which are ignored
 where the byte is nought, and a reader writes the byte, and the value only where there is one. Each
 optional says so of itself, so an optional of an optional is two presences, and absence at one depth
@@ -433,8 +465,8 @@ behavior's `call` takes the capabilities of what it requires first, as `requirem
 names two readings of a value: `decode`, out of text in the external form, and `decodehost`, out of
 a value a host built of ordered maps and wrote with every container as an object, in which a map
 keyed by its indices is read as an array wherever the declaration holds one. What a manifest may say
-is Rust types, and version 11
-is `native/crates/compiler/tests/interface-v11.json`: a test holds a program's manifest to it, and
+is Rust types, and version 12
+is `native/crates/compiler/tests/interface-v12.json`: a test holds a program's manifest to it, and
 another reads it with those types and writes it back unchanged. The manifest carries its own
 `version`, moved when what it says is read differently, and the `abi` its functions answer to,
 which is the generation in every symbol.

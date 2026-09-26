@@ -291,12 +291,32 @@ final class Running {
         if (written.isBoolean()) {
             return new ObservedValue.Bool(written.booleanValue());
         }
+        if (written.isString() && answers instanceof Type.Prim it && temporal(it)) {
+            return new ObservedValue.Temporal(observedTemporal(it, written.stringValue()));
+        }
         if (written.isString()) {
             return new ObservedValue.Text(written.stringValue());
         }
         throw new AssertionError("the boundary wrote " + written
                 + ", which is neither a scalar nor a list of them; compare external forms with"
                 + " externalAnswer");
+    }
+
+    /**
+     * A temporal the boundary wrote, as the checker's own observation of the same value writes it,
+     * which is what a row's answer is compared against. The two agree on what a value is and part
+     * on how a clock is spelt: a boundary writes a time of day as {@code LocalTime.toString} does,
+     * without its seconds where they are nought, and an observation always writes them
+     * ({@code Times.written}, {@code DateTimes.written}). A date and an instant are written alike
+     * by both.
+     */
+    private static String observedTemporal(Type.Prim prim, String written) {
+        return switch (prim) {
+            case TIME -> souther.compiler.numeric.Times.written(java.time.LocalTime.parse(written));
+            case DATETIME -> souther.compiler.numeric.DateTimes.written(
+                    java.time.LocalDateTime.parse(written));
+            default -> written;
+        };
     }
 
     /** Numbers read as they were written: a fraction as the decimal it spells and not a double. */
@@ -545,7 +565,7 @@ final class Running {
         for (Type taken : takes) {
             if (!(taken instanceof Type.Prim prim) || (prim != Type.Prim.INT
                     && prim != Type.Prim.BOOL && prim != Type.Prim.STRING
-                    && prim != Type.Prim.DECIMAL)) {
+                    && prim != Type.Prim.DECIMAL && !temporal(prim))) {
                 return false;
             }
         }
@@ -871,10 +891,17 @@ final class Running {
         case LINUX -> "";
     };
 
+    /** Whether a primitive is one of the four temporals, each made of the text that names it. */
+    private static boolean temporal(Type.Prim prim) {
+        return prim == Type.Prim.DATE || prim == Type.Prim.TIME
+                || prim == Type.Prim.DATETIME || prim == Type.Prim.INSTANT;
+    }
+
     /** Whether this harness has a string to make, which a `Decimal` is made of too. */
     private static boolean textCrossesHere(List<Type> takes) {
         for (Type taken : takes) {
-            if (prim(taken) == Type.Prim.STRING || prim(taken) == Type.Prim.DECIMAL) {
+            if (prim(taken) == Type.Prim.STRING || prim(taken) == Type.Prim.DECIMAL
+                    || temporal(prim(taken))) {
                 return true;
             }
         }
@@ -919,6 +946,29 @@ final class Running {
                 return souther_decimal_of_parts(unscaled, strtoll(colon + 1, NULL, 10));
             }
 
+            extern const void *souther_date_of_iso(const uint8_t *);
+            extern const void *souther_time_of_iso(const uint8_t *);
+            extern const void *souther_datetime_of_iso(const uint8_t *);
+            extern const void *souther_instant_of_iso(const uint8_t *);
+
+            /* A temporal handed over as the text that names it, made through the runtime as a host
+               makes one. */
+            static const void *readDate(const char *hex) {
+                return souther_date_of_iso(readText(hex));
+            }
+
+            static const void *readTime(const char *hex) {
+                return souther_time_of_iso(readText(hex));
+            }
+
+            static const void *readDateTime(const char *hex) {
+                return souther_datetime_of_iso(readText(hex));
+            }
+
+            static const void *readInstant(const char *hex) {
+                return souther_instant_of_iso(readText(hex));
+            }
+
             """;
 
     private static String cType(Type type) {
@@ -932,7 +982,7 @@ final class Running {
             case INT -> "int64_t";
             case BOOL -> "int8_t";
             case STRING -> "const uint8_t *";
-            case DECIMAL -> "const void *";
+            case DECIMAL, DATE, TIME, DATETIME, INSTANT -> "const void *";
             default -> throw new AssertionError("no harness writes a " + type + " yet");
         };
     }
@@ -943,6 +993,10 @@ final class Running {
             case BOOL -> "(int8_t) (strtoll(argv[" + at + "], NULL, 10) != 0)";
             case STRING -> "readText(argv[" + at + "])";
             case DECIMAL -> "readDecimal(argv[" + at + "])";
+            case DATE -> "readDate(argv[" + at + "])";
+            case TIME -> "readTime(argv[" + at + "])";
+            case DATETIME -> "readDateTime(argv[" + at + "])";
+            case INSTANT -> "readInstant(argv[" + at + "])";
             default -> throw new AssertionError("no harness reads a " + type + " yet");
         };
     }
@@ -955,6 +1009,8 @@ final class Running {
             case ObservedValue.Text it -> hex(it.value().getBytes(StandardCharsets.UTF_8));
             // Its integer and its scale, which is what a host makes one of.
             case ObservedValue.Decimal it -> it.value().unscaledValue() + ":" + it.value().scale();
+            // The text that names it, which is what a host makes one of.
+            case ObservedValue.Temporal it -> hex(it.iso().getBytes(StandardCharsets.UTF_8));
             default -> throw new AssertionError("no harness hands over a " + given + " yet");
         };
     }

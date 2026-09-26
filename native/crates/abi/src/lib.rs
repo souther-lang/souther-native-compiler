@@ -682,6 +682,10 @@ pub const BUILT_IN_CASES: &[&str] = &[
     "Bool",
     "String",
     "Decimal",
+    "Date",
+    "Time",
+    "DateTime",
+    "Instant",
     "Some",
     "None",
     "DivisionByZero",
@@ -1112,6 +1116,100 @@ pub const STRING_TO_DECIMAL: &str = "souther_string_to_decimal";
 /// `String.fromDecimal`.
 pub const STRING_FROM_DECIMAL: &str = "souther_string_from_decimal";
 
+/// The symbols a caller outside a Souther program makes a temporal with, and reads one back
+/// through: the ISO 8601 text that names it, as a string.
+///
+/// A temporal is an address and nothing a host reads behind, for the reason a `Decimal` is: how the
+/// runtime keeps one is the runtime's alone, so a host hands over and reads back the text the
+/// language writes it as. What the text is, for each, is what a boundary reads and writes
+/// (spec §primitives): `2026-07-25`, `09:30`, `2026-07-25T09:30`, `2026-07-25T00:00:00Z`. Making
+/// one is asking for a value the text names, so text that names none is a violation of what the
+/// binding promised and ends the process as a `Decimal`'s integer that is no integer does, and it
+/// is a boundary's decoder alone that reports outside text as an issue.
+pub const DATE_OF_ISO: &str = "souther_date_of_iso";
+/// The text a `Date` is written as.
+pub const DATE_ISO: &str = "souther_date_iso";
+/// As [`DATE_OF_ISO`], for a `Time`.
+pub const TIME_OF_ISO: &str = "souther_time_of_iso";
+/// The text a `Time` is written as.
+pub const TIME_ISO: &str = "souther_time_iso";
+/// As [`DATE_OF_ISO`], for a `DateTime`.
+pub const DATETIME_OF_ISO: &str = "souther_datetime_of_iso";
+/// The text a `DateTime` is written as.
+pub const DATETIME_ISO: &str = "souther_datetime_iso";
+/// As [`DATE_OF_ISO`], for an `Instant`, which may be written with an offset and is read as the
+/// moment it names.
+pub const INSTANT_OF_ISO: &str = "souther_instant_of_iso";
+/// The text an `Instant` is written as: in UTC.
+pub const INSTANT_ISO: &str = "souther_instant_iso";
+
+/// The symbols a temporal literal is made through, from the ISO text the checker read it as, which
+/// the object carries as a string. The checker has already held the text to what the type writes,
+/// so the runtime reads it as the value it names.
+pub const DATE_LITERAL: &str = "souther_date_literal";
+/// A `Time` literal.
+pub const TIME_LITERAL: &str = "souther_time_literal";
+/// A `DateTime` literal.
+pub const DATETIME_LITERAL: &str = "souther_datetime_literal";
+/// An `Instant` literal.
+pub const INSTANT_LITERAL: &str = "souther_instant_literal";
+
+/// The symbols two temporals of a type are compared through, in order: `==`, `<` and the rest
+/// are read off one answer below, at or above nought, as [`STRING_COMPARE`] does. Two temporals
+/// are equal where they name one moment or one day, which is not where their addresses are.
+pub const DATE_COMPARE: &str = "souther_date_compare";
+/// Two `Time`s, in order.
+pub const TIME_COMPARE: &str = "souther_time_compare";
+/// Two `DateTime`s, in order.
+pub const DATETIME_COMPARE: &str = "souther_datetime_compare";
+/// Two `Instant`s, in order, to the nanosecond.
+pub const INSTANT_COMPARE: &str = "souther_instant_compare";
+
+/// The symbols the `Date`, `Time` and `DateTime` modules' kernels are computed through (spec
+/// §stdlib-date), taking what each takes in the order it takes it.
+///
+/// A shift, which ends the run where what it shifts to is off the end of what the type holds,
+/// answers whether it wrote its value through room it is handed last, as [`DECIMAL_ADD`] does, and
+/// the reason the run ends for is the caller's. A construction from parts answers whether they
+/// name one in the same way, and the caller answers the case the language names for none.
+pub const DATE_ADD_DAYS: &str = "souther_date_add_days";
+/// `Date.addMonths`, as [`DATE_ADD_DAYS`].
+pub const DATE_ADD_MONTHS: &str = "souther_date_add_months";
+/// `Date.addYears`, as [`DATE_ADD_DAYS`].
+pub const DATE_ADD_YEARS: &str = "souther_date_add_years";
+/// `Date.daysBetween`.
+pub const DATE_DAYS_BETWEEN: &str = "souther_date_days_between";
+/// `Date.year`.
+pub const DATE_YEAR: &str = "souther_date_year";
+/// `Date.month`.
+pub const DATE_MONTH: &str = "souther_date_month";
+/// `Date.day`.
+pub const DATE_DAY: &str = "souther_date_day";
+/// `Date.fromParts`, into room for the `Date` where the parts name one.
+pub const DATE_FROM_PARTS: &str = "souther_date_from_parts";
+/// `Time.fromParts`, into room for the `Time` where the parts name one.
+pub const TIME_FROM_PARTS: &str = "souther_time_from_parts";
+/// `Time.hour`.
+pub const TIME_HOUR: &str = "souther_time_hour";
+/// `Time.minute`.
+pub const TIME_MINUTE: &str = "souther_time_minute";
+/// `Time.second`.
+pub const TIME_SECOND: &str = "souther_time_second";
+/// `DateTime.addMinutes`, as [`DATE_ADD_DAYS`].
+pub const DATETIME_ADD_MINUTES: &str = "souther_datetime_add_minutes";
+/// `DateTime.addHours`, as [`DATE_ADD_DAYS`].
+pub const DATETIME_ADD_HOURS: &str = "souther_datetime_add_hours";
+/// `DateTime.addDays`, as [`DATE_ADD_DAYS`].
+pub const DATETIME_ADD_DAYS: &str = "souther_datetime_add_days";
+/// `DateTime.minutesBetween`.
+pub const DATETIME_MINUTES_BETWEEN: &str = "souther_datetime_minutes_between";
+/// `DateTime.toDate`.
+pub const DATETIME_TO_DATE: &str = "souther_datetime_to_date";
+/// `DateTime.toTime`.
+pub const DATETIME_TO_TIME: &str = "souther_datetime_to_time";
+/// `DateTime.fromDateAndTime`.
+pub const DATETIME_FROM_DATE_AND_TIME: &str = "souther_datetime_from_date_and_time";
+
 /// The symbol generated code takes room from.
 ///
 /// It answers a pointer to `size` bytes that stay valid until the mark below them is reset. A
@@ -1147,6 +1245,15 @@ pub const EXTERNAL_STRING: &str = "souther_external_string";
 /// `(decimal) -> form`: the amount, written with as few digits as it is written with and not at
 /// the scale it carries (spec §primitives).
 pub const EXTERNAL_DECIMAL: &str = "souther_external_decimal";
+/// `(date) -> form`: the text the temporal is written as at a boundary, which is what a `Date`
+/// reads as (spec §primitives).
+pub const EXTERNAL_DATE: &str = "souther_external_date";
+/// `(time) -> form`, as [`EXTERNAL_DATE`].
+pub const EXTERNAL_TIME: &str = "souther_external_time";
+/// `(datetime) -> form`, as [`EXTERNAL_DATE`].
+pub const EXTERNAL_DATETIME: &str = "souther_external_datetime";
+/// `(instant) -> form`, as [`EXTERNAL_DATE`], in UTC.
+pub const EXTERNAL_INSTANT: &str = "souther_external_instant";
 /// `() -> form`, an array with nothing in it.
 pub const EXTERNAL_ARRAY: &str = "souther_external_array";
 /// `(array, item)`: the item is appended and owned by the array from then on.
@@ -1215,6 +1322,16 @@ pub const READ_STRING: &str = "souther_read_string";
 /// `(node, path, reading, out) -> i8`: a `Decimal` written through `out`, at the scale the number
 /// was spelt at.
 pub const READ_DECIMAL: &str = "souther_read_decimal";
+/// `(node, path, reading, out) -> i8`: a `Date` written through `out`, where the node is text that
+/// names one.
+pub const READ_DATE: &str = "souther_read_date";
+/// `(node, path, reading, out) -> i8`: a `Time`, as [`READ_DATE`].
+pub const READ_TIME: &str = "souther_read_time";
+/// `(node, path, reading, out) -> i8`: a `DateTime`, as [`READ_DATE`].
+pub const READ_DATETIME: &str = "souther_read_datetime";
+/// `(node, path, reading, out) -> i8`: an `Instant`, as [`READ_DATE`], from text written in UTC or
+/// with an offset, as the moment it names.
+pub const READ_INSTANT: &str = "souther_read_instant";
 /// `(node, path, reading) -> i8`: whether it is text naming a case.
 pub const READ_CASE: &str = "souther_read_case";
 /// `(node, key string, path, reading) -> node`: the text an object names its case with under a
@@ -1296,6 +1413,17 @@ pub enum HostWord {
     /// The address of a `Decimal`, which a host never reads behind: made through
     /// [`DECIMAL_OF_PARTS`], and read through [`DECIMAL_UNSCALED`] and [`DECIMAL_SCALE`].
     Decimal,
+    /// The address of a `Date`, which a host never reads behind: made through [`DATE_OF_ISO`] and
+    /// read through [`DATE_ISO`].
+    Date,
+    /// The address of a `Time`: made through [`TIME_OF_ISO`] and read through [`TIME_ISO`].
+    Time,
+    /// The address of a `DateTime`: made through [`DATETIME_OF_ISO`] and read through
+    /// [`DATETIME_ISO`].
+    DateTime,
+    /// The address of an `Instant`: made through [`INSTANT_OF_ISO`] and read through
+    /// [`INSTANT_ISO`].
+    Instant,
     /// A reading a decoder answered, asked through the `DECODED_*` functions.
     Decoded,
     /// One issue a reading found, asked through the `ISSUE_*` functions.
@@ -1337,6 +1465,10 @@ impl HostWord {
             HostWord::Value => "value",
             HostWord::String => "string",
             HostWord::Decimal => "decimal",
+            HostWord::Date => "date",
+            HostWord::Time => "time",
+            HostWord::DateTime => "datetime",
+            HostWord::Instant => "instant",
             HostWord::Decoded => "decoded",
             HostWord::Issue => "issue",
             HostWord::List => "list",
@@ -1360,6 +1492,14 @@ pub enum HostLeaf {
     /// A `Decimal`, as the address of what the runtime keeps one as, which a host never reads
     /// behind ([`HostWord::Decimal`]).
     Decimal,
+    /// A `Date`, as the address of what the runtime keeps one as ([`HostWord::Date`]).
+    Date,
+    /// A `Time` ([`HostWord::Time`]).
+    Time,
+    /// A `DateTime` ([`HostWord::DateTime`]).
+    DateTime,
+    /// An `Instant` ([`HostWord::Instant`]).
+    Instant,
     /// The address of a value of a declared type or of a union, which a host never reads behind.
     Value,
 }
@@ -1372,6 +1512,10 @@ impl HostLeaf {
             HostLeaf::Bool => HostWord::Bool,
             HostLeaf::String => HostWord::String,
             HostLeaf::Decimal => HostWord::Decimal,
+            HostLeaf::Date => HostWord::Date,
+            HostLeaf::Time => HostWord::Time,
+            HostLeaf::DateTime => HostWord::DateTime,
+            HostLeaf::Instant => HostWord::Instant,
             HostLeaf::Value => HostWord::Value,
         }
     }
@@ -1512,7 +1656,10 @@ pub struct RuntimeFunction {
 /// function it names.
 pub const HOST_RUNTIME: &[RuntimeFunction] = {
     use HostParameter::Given;
-    use HostWord::{Bytes, Count, Decimal, Decoded, Int, Issue, Mark, Outcome, String, Value};
+    use HostWord::{
+        Bytes, Count, Date, DateTime, Decimal, Decoded, Instant, Int, Issue, Mark, Outcome, String,
+        Time, Value,
+    };
     &[
         RuntimeFunction {
             name: MARK,
@@ -1553,6 +1700,46 @@ pub const HOST_RUNTIME: &[RuntimeFunction] = {
             name: DECIMAL_SCALE,
             takes: &[Given(Decimal)],
             answers: Some(Int),
+        },
+        RuntimeFunction {
+            name: DATE_OF_ISO,
+            takes: &[Given(String)],
+            answers: Some(Date),
+        },
+        RuntimeFunction {
+            name: DATE_ISO,
+            takes: &[Given(Date)],
+            answers: Some(String),
+        },
+        RuntimeFunction {
+            name: TIME_OF_ISO,
+            takes: &[Given(String)],
+            answers: Some(Time),
+        },
+        RuntimeFunction {
+            name: TIME_ISO,
+            takes: &[Given(Time)],
+            answers: Some(String),
+        },
+        RuntimeFunction {
+            name: DATETIME_OF_ISO,
+            takes: &[Given(String)],
+            answers: Some(DateTime),
+        },
+        RuntimeFunction {
+            name: DATETIME_ISO,
+            takes: &[Given(DateTime)],
+            answers: Some(String),
+        },
+        RuntimeFunction {
+            name: INSTANT_OF_ISO,
+            takes: &[Given(String)],
+            answers: Some(Instant),
+        },
+        RuntimeFunction {
+            name: INSTANT_ISO,
+            takes: &[Given(Instant)],
+            answers: Some(String),
         },
         RuntimeFunction {
             name: DECODED_OUTCOME,
@@ -1630,7 +1817,7 @@ pub struct CaseCrossing {
 /// runtime's own tests hold each function to the one it names, and the cases to that table.
 pub const HOST_CASES: &[CaseCrossing] = {
     use HostParameter::Given;
-    use HostWord::{Bool, Decimal, Int, String, Value};
+    use HostWord::{Bool, Date, DateTime, Decimal, Instant, Int, String, Time, Value};
     const fn holding(
         case: &'static str,
         make: &'static str,
@@ -1691,6 +1878,34 @@ pub const HOST_CASES: &[CaseCrossing] = {
             "souther_case_decimal_read",
             &[Given(Decimal)],
             Decimal,
+        ),
+        holding(
+            "Date",
+            "souther_case_date_make",
+            "souther_case_date_read",
+            &[Given(Date)],
+            Date,
+        ),
+        holding(
+            "Time",
+            "souther_case_time_make",
+            "souther_case_time_read",
+            &[Given(Time)],
+            Time,
+        ),
+        holding(
+            "DateTime",
+            "souther_case_datetime_make",
+            "souther_case_datetime_read",
+            &[Given(DateTime)],
+            DateTime,
+        ),
+        holding(
+            "Instant",
+            "souther_case_instant_make",
+            "souther_case_instant_read",
+            &[Given(Instant)],
+            Instant,
         ),
         empty("Some", "souther_case_some_make"),
         empty("None", "souther_case_none_make"),
@@ -1769,7 +1984,10 @@ pub struct GeneratedCall {
 /// hold each of these to the function it names, as they hold [`HOST_RUNTIME`]. Between the two
 /// tables is every function the runtime defines, which those tests hold too.
 pub const GENERATED_RUNTIME: &[GeneratedCall] = {
-    use HostWord::{Bool, Bytes, Count, Decimal, Decoded, Int, List, String, Value};
+    use HostWord::{
+        Bool, Bytes, Count, Date, DateTime, Decimal, Decoded, Instant, Int, List, String, Time,
+        Value,
+    };
     use Parameter::{Given, Room};
     use Word::{Comparison, Form, Host, Machine, Memory, Node, Path};
     &[
@@ -2011,6 +2229,163 @@ pub const GENERATED_RUNTIME: &[GeneratedCall] = {
             answers: Some(Host(Bool)),
         },
         GeneratedCall {
+            name: DATE_LITERAL,
+            takes: &[Given(Host(String))],
+            answers: Some(Host(Date)),
+        },
+        GeneratedCall {
+            name: DATE_COMPARE,
+            takes: &[Given(Host(Date)), Given(Host(Date))],
+            answers: Some(Comparison),
+        },
+        GeneratedCall {
+            name: TIME_LITERAL,
+            takes: &[Given(Host(String))],
+            answers: Some(Host(Time)),
+        },
+        GeneratedCall {
+            name: TIME_COMPARE,
+            takes: &[Given(Host(Time)), Given(Host(Time))],
+            answers: Some(Comparison),
+        },
+        GeneratedCall {
+            name: DATETIME_LITERAL,
+            takes: &[Given(Host(String))],
+            answers: Some(Host(DateTime)),
+        },
+        GeneratedCall {
+            name: DATETIME_COMPARE,
+            takes: &[Given(Host(DateTime)), Given(Host(DateTime))],
+            answers: Some(Comparison),
+        },
+        GeneratedCall {
+            name: INSTANT_LITERAL,
+            takes: &[Given(Host(String))],
+            answers: Some(Host(Instant)),
+        },
+        GeneratedCall {
+            name: INSTANT_COMPARE,
+            takes: &[Given(Host(Instant)), Given(Host(Instant))],
+            answers: Some(Comparison),
+        },
+        GeneratedCall {
+            name: DATE_ADD_DAYS,
+            takes: &[Given(Host(Int)), Given(Host(Date)), Room(Host(Date))],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: DATE_ADD_MONTHS,
+            takes: &[Given(Host(Int)), Given(Host(Date)), Room(Host(Date))],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: DATE_ADD_YEARS,
+            takes: &[Given(Host(Int)), Given(Host(Date)), Room(Host(Date))],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: DATETIME_ADD_MINUTES,
+            takes: &[
+                Given(Host(Int)),
+                Given(Host(DateTime)),
+                Room(Host(DateTime)),
+            ],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: DATETIME_ADD_HOURS,
+            takes: &[
+                Given(Host(Int)),
+                Given(Host(DateTime)),
+                Room(Host(DateTime)),
+            ],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: DATETIME_ADD_DAYS,
+            takes: &[
+                Given(Host(Int)),
+                Given(Host(DateTime)),
+                Room(Host(DateTime)),
+            ],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: DATE_DAYS_BETWEEN,
+            takes: &[Given(Host(Date)), Given(Host(Date))],
+            answers: Some(Host(Int)),
+        },
+        GeneratedCall {
+            name: DATE_YEAR,
+            takes: &[Given(Host(Date))],
+            answers: Some(Host(Int)),
+        },
+        GeneratedCall {
+            name: DATE_MONTH,
+            takes: &[Given(Host(Date))],
+            answers: Some(Host(Int)),
+        },
+        GeneratedCall {
+            name: DATE_DAY,
+            takes: &[Given(Host(Date))],
+            answers: Some(Host(Int)),
+        },
+        GeneratedCall {
+            name: DATE_FROM_PARTS,
+            takes: &[
+                Given(Host(Int)),
+                Given(Host(Int)),
+                Given(Host(Int)),
+                Room(Host(Date)),
+            ],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: TIME_FROM_PARTS,
+            takes: &[
+                Given(Host(Int)),
+                Given(Host(Int)),
+                Given(Host(Int)),
+                Room(Host(Time)),
+            ],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: TIME_HOUR,
+            takes: &[Given(Host(Time))],
+            answers: Some(Host(Int)),
+        },
+        GeneratedCall {
+            name: TIME_MINUTE,
+            takes: &[Given(Host(Time))],
+            answers: Some(Host(Int)),
+        },
+        GeneratedCall {
+            name: TIME_SECOND,
+            takes: &[Given(Host(Time))],
+            answers: Some(Host(Int)),
+        },
+        GeneratedCall {
+            name: DATETIME_MINUTES_BETWEEN,
+            takes: &[Given(Host(DateTime)), Given(Host(DateTime))],
+            answers: Some(Host(Int)),
+        },
+        GeneratedCall {
+            name: DATETIME_TO_DATE,
+            takes: &[Given(Host(DateTime))],
+            answers: Some(Host(Date)),
+        },
+        GeneratedCall {
+            name: DATETIME_TO_TIME,
+            takes: &[Given(Host(DateTime))],
+            answers: Some(Host(Time)),
+        },
+        GeneratedCall {
+            name: DATETIME_FROM_DATE_AND_TIME,
+            takes: &[Given(Host(Date)), Given(Host(Time))],
+            answers: Some(Host(DateTime)),
+        },
+        GeneratedCall {
             name: EXTERNAL_NULL,
             takes: &[],
             answers: Some(Form),
@@ -2033,6 +2408,26 @@ pub const GENERATED_RUNTIME: &[GeneratedCall] = {
         GeneratedCall {
             name: EXTERNAL_DECIMAL,
             takes: &[Given(Host(Decimal))],
+            answers: Some(Form),
+        },
+        GeneratedCall {
+            name: EXTERNAL_DATE,
+            takes: &[Given(Host(Date))],
+            answers: Some(Form),
+        },
+        GeneratedCall {
+            name: EXTERNAL_TIME,
+            takes: &[Given(Host(Time))],
+            answers: Some(Form),
+        },
+        GeneratedCall {
+            name: EXTERNAL_DATETIME,
+            takes: &[Given(Host(DateTime))],
+            answers: Some(Form),
+        },
+        GeneratedCall {
+            name: EXTERNAL_INSTANT,
+            takes: &[Given(Host(Instant))],
             answers: Some(Form),
         },
         GeneratedCall {
@@ -2167,6 +2562,46 @@ pub const GENERATED_RUNTIME: &[GeneratedCall] = {
                 Given(Path),
                 Given(Host(Decoded)),
                 Room(Host(Decimal)),
+            ],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: READ_DATE,
+            takes: &[
+                Given(Node),
+                Given(Path),
+                Given(Host(Decoded)),
+                Room(Host(Date)),
+            ],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: READ_TIME,
+            takes: &[
+                Given(Node),
+                Given(Path),
+                Given(Host(Decoded)),
+                Room(Host(Time)),
+            ],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: READ_DATETIME,
+            takes: &[
+                Given(Node),
+                Given(Path),
+                Given(Host(Decoded)),
+                Room(Host(DateTime)),
+            ],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: READ_INSTANT,
+            takes: &[
+                Given(Node),
+                Given(Path),
+                Given(Host(Decoded)),
+                Room(Host(Instant)),
             ],
             answers: Some(Host(Bool)),
         },

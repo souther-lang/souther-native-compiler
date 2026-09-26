@@ -53,21 +53,26 @@ use literals::Literals;
 use patterns::Machines;
 use restating::restate;
 use souther_native_abi::{
-    ALLOCATE, ANSWERED, CAPABILITY_ENVIRONMENT, CAPABILITY_INVOKE, CARRIED, DECIMAL_ADD,
-    DECIMAL_COMPARE, DECIMAL_DIVIDE, DECIMAL_FROM_INT, DECIMAL_IS_ZERO, DECIMAL_LITERAL,
-    DECIMAL_MULTIPLY, DECIMAL_NEGATE, DECIMAL_ROUND, DECIMAL_SUBTRACT, DECIMAL_TO_INT,
-    EXAMPLE_STATUSES, FAKE_NO_OUTPUT, HELD, HOST_STATUSES, INJECTION_UNBOUND, LANGUAGE_UNITS,
-    LIST_LENGTH, NO_FAILED_CLAUSE, NOTHING, Parameter, SLOT, STRING_CHARACTERS,
+    ALLOCATE, ANSWERED, CAPABILITY_ENVIRONMENT, CAPABILITY_INVOKE, CARRIED, DATE_ADD_DAYS,
+    DATE_ADD_MONTHS, DATE_ADD_YEARS, DATE_COMPARE, DATE_DAY, DATE_DAYS_BETWEEN, DATE_FROM_PARTS,
+    DATE_LITERAL, DATE_MONTH, DATE_YEAR, DATETIME_ADD_DAYS, DATETIME_ADD_HOURS,
+    DATETIME_ADD_MINUTES, DATETIME_COMPARE, DATETIME_FROM_DATE_AND_TIME, DATETIME_LITERAL,
+    DATETIME_MINUTES_BETWEEN, DATETIME_TO_DATE, DATETIME_TO_TIME, DECIMAL_ADD, DECIMAL_COMPARE,
+    DECIMAL_DIVIDE, DECIMAL_FROM_INT, DECIMAL_IS_ZERO, DECIMAL_LITERAL, DECIMAL_MULTIPLY,
+    DECIMAL_NEGATE, DECIMAL_ROUND, DECIMAL_SUBTRACT, DECIMAL_TO_INT, EXAMPLE_STATUSES,
+    FAKE_NO_OUTPUT, HELD, HOST_STATUSES, INJECTION_UNBOUND, INSTANT_COMPARE, INSTANT_LITERAL,
+    LANGUAGE_UNITS, LIST_LENGTH, NO_FAILED_CLAUSE, NOTHING, Parameter, SLOT, STRING_CHARACTERS,
     STRING_CODE_POINT_VALUES, STRING_CODE_POINTS, STRING_COMPARE, STRING_CONCAT, STRING_CONCAT_ALL,
     STRING_CONTAINS, STRING_ENDS_WITH, STRING_FROM_DECIMAL, STRING_FROM_INT, STRING_JOIN,
     STRING_LINES, STRING_LOWERCASE, STRING_MATCHES, STRING_PAD_LEFT, STRING_PAD_RIGHT,
     STRING_REPEAT, STRING_REPLACE, STRING_REVERSE, STRING_SLICE, STRING_SPLIT, STRING_STARTS_WITH,
-    STRING_TO_DECIMAL, STRING_TO_INT, STRING_TRIM, STRING_UPPERCASE, STRING_WORDS, Status, TOKEN,
-    WHICH, Word, behavior_symbol, boundary_symbol, built_in_case_symbol,
-    checked_constructor_symbol, constructor_symbol, example_symbol, field_at, generated_call,
-    held_symbol, home_symbol, list_at, member_at, requirement_at, room_for_capability,
-    room_for_carried, room_for_fields, room_for_list, room_for_members, room_for_requirements,
-    spells_a_module, spells_a_name, type_symbol, value_symbol,
+    STRING_TO_DECIMAL, STRING_TO_INT, STRING_TRIM, STRING_UPPERCASE, STRING_WORDS, Status,
+    TIME_COMPARE, TIME_FROM_PARTS, TIME_HOUR, TIME_LITERAL, TIME_MINUTE, TIME_SECOND, TOKEN, WHICH,
+    Word, behavior_symbol, boundary_symbol, built_in_case_symbol, checked_constructor_symbol,
+    constructor_symbol, example_symbol, field_at, generated_call, held_symbol, home_symbol,
+    list_at, member_at, requirement_at, room_for_capability, room_for_carried, room_for_fields,
+    room_for_list, room_for_members, room_for_requirements, spells_a_module, spells_a_name,
+    type_symbol, value_symbol,
 };
 use specialize::{Instance, InstanceId, Specializations};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -2433,12 +2438,14 @@ fn machine_type(ty: &Ty) -> Lowered<types::Type> {
             // field, what a union carries — and how its integer is kept is not a fact any of those
             // has to agree on.
             Prim::Decimal => Ok(POINTER),
-            Prim::Rational
-            | Prim::Date
-            | Prim::Time
-            | Prim::DateTime
-            | Prim::Instant
-            | Prim::Raw => Err(not_lowered(format!("a value of type {}", prim.spelt()))),
+            // The address of what the runtime keeps a `Date`, a `Time`, a `DateTime` or an
+            // `Instant` as, for the reason a `Decimal` is one word: nothing here reads behind it,
+            // and every operation, comparison and crossing is a call into the runtime, which alone
+            // knows the layout.
+            Prim::Date | Prim::Time | Prim::DateTime | Prim::Instant => Ok(POINTER),
+            Prim::Rational | Prim::Raw => {
+                Err(not_lowered(format!("a value of type {}", prim.spelt())))
+            }
         },
     }
 }
@@ -2459,12 +2466,11 @@ fn built_in_case(case: &Case) -> Lowered<&'static str> {
             Prim::Bool => "Bool",
             Prim::String => "String",
             Prim::Decimal => "Decimal",
-            Prim::Rational
-            | Prim::Date
-            | Prim::Time
-            | Prim::DateTime
-            | Prim::Instant
-            | Prim::Raw => {
+            Prim::Date => "Date",
+            Prim::Time => "Time",
+            Prim::DateTime => "DateTime",
+            Prim::Instant => "Instant",
+            Prim::Rational | Prim::Raw => {
                 return Err(not_lowered(format!(
                     "a value of the case {}, which has no representation to carry",
                     prim.spelt()
@@ -2689,12 +2695,9 @@ fn means_the_same_elsewhere(ty: &Ty) -> bool {
             // object in a library links: two objects agree about a `Decimal` because neither of them
             // reads one, and not because each lays one out the same way.
             Prim::Decimal => true,
-            Prim::Rational
-            | Prim::Date
-            | Prim::Time
-            | Prim::DateTime
-            | Prim::Instant
-            | Prim::Raw => false,
+            // Addresses only the runtime reads behind, for the same reason.
+            Prim::Date | Prim::Time | Prim::DateTime | Prim::Instant => true,
+            Prim::Rational | Prim::Raw => false,
         },
         Ty::Ref { named } => case_means_the_same_elsewhere(named),
         // Written nowhere at run time: what holds a union holds one of its members, and each of
@@ -4761,6 +4764,7 @@ fn end(
         | Node::Bool { ty, .. }
         | Node::Str { ty, .. }
         | Node::Decimal { ty, .. }
+        | Node::Temporal { ty, .. }
         | Node::Binary { ty, .. }
         | Node::Neg { ty, .. }
         | Node::Unit { ty, .. }
@@ -4885,6 +4889,28 @@ fn lower(
             let digits = lowering.literals.address(builder, module, unscaled);
             let scale = builder.ins().iconst(types::I64, i64::from(*scale));
             runtime_call(builder, lowering, module, DECIMAL_LITERAL, &[digits, scale])
+        }
+        // Made by the runtime from the text the checker read it as, each time the literal is
+        // reached, for the reason a `Decimal` is: the runtime's layout is its own, so the object
+        // carries the text and never a value of the type. The text is a string the object carries
+        // like any other literal.
+        Node::Temporal { text, ty, .. } => {
+            let name = match ty {
+                Ty::Prim { prim: Prim::Date } => DATE_LITERAL,
+                Ty::Prim { prim: Prim::Time } => TIME_LITERAL,
+                Ty::Prim {
+                    prim: Prim::DateTime,
+                } => DATETIME_LITERAL,
+                Ty::Prim {
+                    prim: Prim::Instant,
+                } => INSTANT_LITERAL,
+                other => unreachable!(
+                    "`Coherent` held a temporal literal to one of the four temporals, and it is \
+                     {other:?}"
+                ),
+            };
+            let text = lowering.literals.address(builder, module, text);
+            runtime_call(builder, lowering, module, name, &[text])
         }
         Node::Binary {
             op,
@@ -5301,6 +5327,33 @@ const RUNTIME_KERNELS: &[&str] = &[
     DECIMAL_TO_INT,
     DECIMAL_ROUND,
     DECIMAL_DIVIDE,
+    DATE_LITERAL,
+    TIME_LITERAL,
+    DATETIME_LITERAL,
+    INSTANT_LITERAL,
+    DATE_COMPARE,
+    TIME_COMPARE,
+    DATETIME_COMPARE,
+    INSTANT_COMPARE,
+    DATE_ADD_DAYS,
+    DATE_ADD_MONTHS,
+    DATE_ADD_YEARS,
+    DATE_DAYS_BETWEEN,
+    DATE_YEAR,
+    DATE_MONTH,
+    DATE_DAY,
+    DATE_FROM_PARTS,
+    TIME_FROM_PARTS,
+    TIME_HOUR,
+    TIME_MINUTE,
+    TIME_SECOND,
+    DATETIME_ADD_MINUTES,
+    DATETIME_ADD_HOURS,
+    DATETIME_ADD_DAYS,
+    DATETIME_MINUTES_BETWEEN,
+    DATETIME_TO_DATE,
+    DATETIME_TO_TIME,
+    DATETIME_FROM_DATE_AND_TIME,
 ];
 
 /// A call of a kernel this backend lowers, as the node calling it holds it.
@@ -5690,6 +5743,74 @@ fn lower_kernel(
                 carry(builder, lowering, module, &decimal, Some(quotient))
             })?
         }
+        // A shift off the end of what a temporal holds answers nothing, and the run ends there as
+        // an `Int` overflow does; one that lands is written through room, as `Decimal.round` is.
+        LoweredKernel::DateAddDays
+        | LoweredKernel::DateAddMonths
+        | LoweredKernel::DateAddYears
+        | LoweredKernel::DateTimeAddMinutes
+        | LoweredKernel::DateTimeAddHours
+        | LoweredKernel::DateTimeAddDays => {
+            let name = match kernel {
+                LoweredKernel::DateAddDays => DATE_ADD_DAYS,
+                LoweredKernel::DateAddMonths => DATE_ADD_MONTHS,
+                LoweredKernel::DateAddYears => DATE_ADD_YEARS,
+                LoweredKernel::DateTimeAddMinutes => DATETIME_ADD_MINUTES,
+                LoweredKernel::DateTimeAddHours => DATETIME_ADD_HOURS,
+                _ => DATETIME_ADD_DAYS,
+            };
+            written_or_ended(
+                builder, lowering, module, abort, name, &values, POINTER, aborts,
+            )
+        }
+        // Parts that name a day, or a time of day, are the union's case for it, and any other are
+        // the case the language names for none, as text that is no number is `NotANumber`.
+        LoweredKernel::DateFromParts | LoweredKernel::TimeFromParts => {
+            let (name, made, none) = match kernel {
+                LoweredKernel::DateFromParts => {
+                    (DATE_FROM_PARTS, Prim::Date, LanguageCase::NotADate)
+                }
+                _ => (TIME_FROM_PARTS, Prim::Time, LanguageCase::NotATime),
+            };
+            let room = out_slot(builder);
+            let mut handed = values.clone();
+            handed.push(room);
+            let read = runtime_call(builder, lowering, module, name, &handed);
+            fork(builder, read, POINTER, |builder, taken| {
+                if taken {
+                    let value = builder.ins().load(POINTER, TRUSTED, room, 0);
+                    let named = Case::Primitive { prim: made };
+                    return carry(builder, lowering, module, &named, Some(value));
+                }
+                let none = Case::Language { case: none };
+                carry(builder, lowering, module, &none, None)
+            })?
+        }
+        LoweredKernel::DateDaysBetween => {
+            runtime_call(builder, lowering, module, DATE_DAYS_BETWEEN, &values)
+        }
+        LoweredKernel::DateYear => runtime_call(builder, lowering, module, DATE_YEAR, &values),
+        LoweredKernel::DateMonth => runtime_call(builder, lowering, module, DATE_MONTH, &values),
+        LoweredKernel::DateDay => runtime_call(builder, lowering, module, DATE_DAY, &values),
+        LoweredKernel::TimeHour => runtime_call(builder, lowering, module, TIME_HOUR, &values),
+        LoweredKernel::TimeMinute => runtime_call(builder, lowering, module, TIME_MINUTE, &values),
+        LoweredKernel::TimeSecond => runtime_call(builder, lowering, module, TIME_SECOND, &values),
+        LoweredKernel::DateTimeMinutesBetween => {
+            runtime_call(builder, lowering, module, DATETIME_MINUTES_BETWEEN, &values)
+        }
+        LoweredKernel::DateTimeToDate => {
+            runtime_call(builder, lowering, module, DATETIME_TO_DATE, &values)
+        }
+        LoweredKernel::DateTimeToTime => {
+            runtime_call(builder, lowering, module, DATETIME_TO_TIME, &values)
+        }
+        LoweredKernel::DateTimeFromDateAndTime => runtime_call(
+            builder,
+            lowering,
+            module,
+            DATETIME_FROM_DATE_AND_TIME,
+            &values,
+        ),
         LoweredKernel::StringMatches => unreachable!("answered above"),
     })
 }
@@ -5701,6 +5822,22 @@ fn ordering_subject(kernel: LoweredKernel, fact: &KernelFact) -> &Ty {
         unreachable!("`Coherent` held {kernel:?} to the ordering subject it settles");
     };
     ty
+}
+
+/// The function two values of a temporal type are compared through, which answers below, at or
+/// above nought.
+///
+/// # Panics
+///
+/// Where `prim` is not one of the four temporals, which the callers have matched on.
+pub(crate) fn temporal_compare(prim: Prim) -> &'static str {
+    match prim {
+        Prim::Date => DATE_COMPARE,
+        Prim::Time => TIME_COMPARE,
+        Prim::DateTime => DATETIME_COMPARE,
+        Prim::Instant => INSTANT_COMPARE,
+        other => unreachable!("{other:?} is no temporal"),
+    }
 }
 
 /// A call of one of the functions a kernel or a `Decimal` operator is computed through, and what it
@@ -5894,6 +6031,7 @@ fn branched(
         | Node::Bool { .. }
         | Node::Str { .. }
         | Node::Decimal { .. }
+        | Node::Temporal { .. }
         | Node::Binary { .. }
         | Node::Neg { .. }
         | Node::Unit { .. }

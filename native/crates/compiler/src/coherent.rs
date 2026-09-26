@@ -62,6 +62,7 @@ use crate::transport::{
 use crate::{Declared, PairIn, Runs, Targets, departures_taken, not_lowered, says_its_case};
 use anyhow::{Result, anyhow, bail};
 use souther_native_abi::{spells_a_module, spells_a_name};
+use souther_text::temporal;
 use std::collections::HashMap;
 
 /// A document every relation of which holds, and what reading it built.
@@ -791,6 +792,7 @@ impl<'a> Walk<'_, 'a> {
             | Node::Bool { .. }
             | Node::Str { .. }
             | Node::Decimal { .. }
+            | Node::Temporal { .. }
             | Node::Unit { .. }
             | Node::Unreachable { .. }
             | Node::None { .. } => Vec::new(),
@@ -1168,6 +1170,35 @@ impl<'a> Walk<'_, 'a> {
                     },
                     "its kind",
                 )
+            }
+            Node::Temporal { text, ty, .. } => {
+                // The text is what the runtime reads the value from, by the grammar of the type
+                // the node says it is, so a text that grammar does not read is a literal whose
+                // two halves disagree, and one the run would end on where it is reached.
+                let held = souther_text::Text::held(text);
+                let (spelt, read) = match ty {
+                    Ty::Prim { prim: Prim::Date } => ("Date", temporal::parse_date(held).is_some()),
+                    Ty::Prim { prim: Prim::Time } => ("Time", temporal::parse_time(held).is_ok()),
+                    Ty::Prim {
+                        prim: Prim::DateTime,
+                    } => ("DateTime", temporal::parse_date_time(held).is_ok()),
+                    Ty::Prim {
+                        prim: Prim::Instant,
+                    } => ("Instant", temporal::parse_instant(held).is_some()),
+                    other => bail!(
+                        "{}: a temporal literal typed {other:?}, which is none of Date, Time, \
+                         DateTime and Instant: the two halves disagree",
+                        self.owner
+                    ),
+                };
+                if !read {
+                    bail!(
+                        "{}: a {spelt} literal written {text:?}, which is no {spelt}: the two \
+                         halves disagree",
+                        self.owner
+                    );
+                }
+                Ok(())
             }
             Node::Read { binding, ty, .. } => {
                 let bound = self.bound.get(binding).ok_or_else(|| {

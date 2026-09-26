@@ -56,7 +56,7 @@ fn binary(op: &str, left: Value, right: Value, ty: Value, aborts: Value) -> Valu
 
 fn program(declarations: Value, helpers: Value, publishes: Value) -> Value {
     json!({
-        "transport": 25,
+        "transport": 26,
         "declarations": declarations,
         "behaviors": [],
         "modules": [{
