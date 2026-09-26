@@ -21,7 +21,7 @@
 //! arguments stand in: what it takes, and which fact it carries, are its own kernel's, and the
 //! two halves disagreeing about them is refused as this backend not lowering the kernel.
 
-use crate::transport::{AbortKind, Case, Cases, KernelFact, LanguageCase, Prim, Ty};
+use crate::transport::{AbortKind, Case, Cases, FnSignature, KernelFact, LanguageCase, Prim, Ty};
 
 /// What this backend knows of a kernel it lowers.
 pub(crate) struct Contract {
@@ -40,10 +40,14 @@ pub(crate) struct Contract {
 /// A type a kernel is known to take or answer, where some part of it may be any type.
 ///
 /// As much of a type as a kernel's contract has needed, and no more: a primitive, a list, an
-/// optional and a fixed union of cases, and a variable standing for whatever one call settles it
-/// as. It is not the language's
-/// type and does not check one; it is matched against the types the checker settled, which are
-/// concrete. A kernel taking a function or a tuple adds its shape here when it is lowered.
+/// optional, a function and a fixed union of cases, and a variable standing for whatever one call
+/// settles it as. It is not the language's type and does not check one; it is matched against the
+/// types the checker settled, which are concrete. A kernel answering a tuple adds its shape here
+/// when it is lowered.
+///
+/// A function is matched as the checker settled it and not as one that could stand where it is
+/// asked for: what an application takes is what each argument stands at exactly, so the parameter
+/// of `List.find`'s predicate is the list's element and nothing wider or narrower.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub(crate) enum Shape {
     Prim(Prim),
@@ -51,6 +55,11 @@ pub(crate) enum Shape {
     Var(usize),
     List(Box<Shape>),
     Option(Box<Shape>),
+    /// A function taking these, in order, and answering that.
+    Fn {
+        takes: Vec<Shape>,
+        answers: Box<Shape>,
+    },
     /// A union of exactly these cases, in the order the checker writes them: what a truncating
     /// division answers, which has no variable in it.
     Cases(Vec<Case>),
@@ -80,8 +89,23 @@ impl Shape {
             }
             (Shape::List(element), Ty::List { list }) => element.binds(list, bound),
             (Shape::Option(held), Ty::Option { option }) => held.binds(option, bound),
+            (Shape::Fn { takes, answers }, Ty::Fn { fn_ }) => {
+                takes.len() == fn_.takes.len()
+                    && takes
+                        .iter()
+                        .zip(&fn_.takes)
+                        .all(|(shape, taken)| shape.binds(taken, bound))
+                    && answers.binds(&fn_.answers, bound)
+            }
             (Shape::Cases(cases), Ty::Union { union }) => cases[..] == union[..],
-            (Shape::Prim(_) | Shape::List(_) | Shape::Option(_) | Shape::Cases(_), _) => false,
+            (
+                Shape::Prim(_)
+                | Shape::List(_)
+                | Shape::Option(_)
+                | Shape::Fn { .. }
+                | Shape::Cases(_),
+                _,
+            ) => false,
         }
     }
 
@@ -95,6 +119,15 @@ impl Shape {
             },
             Shape::Option(held) => Ty::Option {
                 option: Box::new(held.settled(bound)?),
+            },
+            Shape::Fn { takes, answers } => Ty::Fn {
+                fn_: FnSignature {
+                    takes: takes
+                        .iter()
+                        .map(|taken| taken.settled(bound))
+                        .collect::<Option<_>>()?,
+                    answers: Box::new(answers.settled(bound)?),
+                },
             },
             Shape::Cases(cases) => Ty::Union {
                 union: Cases::one_or_more(cases.clone())
@@ -110,6 +143,15 @@ impl Shape {
             Shape::Var(at) => format!("'{}", (b'a' + *at as u8) as char),
             Shape::List(element) => format!("a List of {}", element.spelt()),
             Shape::Option(held) => format!("an optional {}", held.spelt()),
+            Shape::Fn { takes, answers } => format!(
+                "a function from ({}) to {}",
+                takes
+                    .iter()
+                    .map(Shape::spelt)
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                answers.spelt()
+            ),
             Shape::Cases(cases) => cases
                 .iter()
                 .map(Case::spelt)
@@ -128,28 +170,53 @@ impl Shape {
 /// both or one it does not read. So a contract holds the kind, and the value crosses as the
 /// checker's, resolved like any other type the document writes.
 ///
+/// Where the kind carries a type, the contract says which of the types the kernel takes it is, as
+/// a [`Shape`] over the variables what it takes binds. An ordering subject is what the lowering
+/// compares by, so a subject that is not the element a sort orders, or not what a key answers, is
+/// the two halves disagreeing about what is compared, and is refused as that rather than lowered
+/// as a comparison of one type over values of another. The shape binds nothing: what the kernel
+/// takes is the one place its variables are bound, and the fact is held to what they were bound
+/// to.
+///
 /// A kind added to [`KernelFact`] is one [`FactContract::accepts`] stops compiling over until it
 /// says which contract takes it.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub(crate) enum FactContract {
     /// Nothing beside what it takes.
     None,
     /// The pattern a text is matched against.
     StringMatches,
-    /// The type an ordering was checked against.
-    OrderingSubject,
+    /// The type an ordering was checked against, which is this shape once what the kernel takes
+    /// has bound it.
+    OrderingSubject(Shape),
 }
 
 impl FactContract {
-    /// Whether an application settling `fact` is one a kernel of this contract can carry.
-    pub(crate) fn accepts(self, fact: &KernelFact) -> bool {
+    /// Whether an application settling `fact` is one a kernel of this contract can carry: the kind
+    /// alone, and not what a fact of it holds.
+    pub(crate) fn accepts(&self, fact: &KernelFact) -> bool {
         match fact {
-            KernelFact::None => self == FactContract::None,
+            KernelFact::None => *self == FactContract::None,
             KernelFact::StringMatches {
                 written: _,
                 meaning: _,
-            } => self == FactContract::StringMatches,
-            KernelFact::OrderingSubject { ty: _ } => self == FactContract::OrderingSubject,
+            } => *self == FactContract::StringMatches,
+            KernelFact::OrderingSubject { ty: _ } => {
+                matches!(self, FactContract::OrderingSubject(_))
+            }
+        }
+    }
+
+    /// The type a fact of this contract has to hold once what the kernel takes bound `bound`,
+    /// where the kind carries one.
+    pub(crate) fn holds(&self, bound: &Bound) -> Option<Ty> {
+        match self {
+            FactContract::None | FactContract::StringMatches => None,
+            FactContract::OrderingSubject(subject) => Some(
+                subject
+                    .settled(bound)
+                    .expect("what a kernel takes binds every variable its ordering subject names"),
+            ),
         }
     }
 }
@@ -172,6 +239,34 @@ pub(crate) enum LoweredKernel {
     ListLength,
     /// `list.get`: an index and a list, and the element at the index where there is one.
     ListGet,
+    /// `list.find`: a predicate and a list, and the first element it holds for, where one does.
+    ListFind,
+    /// `list.sortBy`: a key and a list, and the list ordered by what the key answers for each
+    /// element, elements of equal keys in the order they came in. The key is worked out once for
+    /// each element.
+    ListSortBy,
+    /// `list.sort`: a list of what the language orders, ordered, equal elements in the order they
+    /// came in.
+    ListSort,
+    /// `list.max`: a list of what the language orders, and the first of its greatest elements,
+    /// where it has one.
+    ListMax,
+    /// `list.min`: the same, and the first of its least.
+    ListMin,
+    /// `list.reverse`: a list, the other way round.
+    ListReverse,
+    /// `list.sum`: a list of numbers, and their sum, nought for none. A sum no number of the
+    /// element's type holds ends the run.
+    ListSum,
+    /// `list.product`: a list of numbers, and their product, one for none. A product no number of
+    /// the element's type holds ends the run.
+    ListProduct,
+    /// `list.rangeInclusive`: two `Int`s, and every `Int` from the first to the second, both
+    /// included. A span no list could hold ends the run.
+    ListRangeInclusive,
+    /// `option.map`: a function and an optional, and what the function answers for the value it
+    /// holds, where it holds one.
+    OptionMap,
     /// `int.truncatingDivide`: a dividend and a divisor, and the quotient truncated toward zero,
     /// or `DivisionByZero`.
     IntTruncatingDivide,
@@ -244,6 +339,16 @@ impl LoweredKernel {
             "int.floorMod" => LoweredKernel::IntFloorMod,
             "list.length" => LoweredKernel::ListLength,
             "list.get" => LoweredKernel::ListGet,
+            "list.find" => LoweredKernel::ListFind,
+            "list.sortBy" => LoweredKernel::ListSortBy,
+            "list.sort" => LoweredKernel::ListSort,
+            "list.max" => LoweredKernel::ListMax,
+            "list.min" => LoweredKernel::ListMin,
+            "list.reverse" => LoweredKernel::ListReverse,
+            "list.sum" => LoweredKernel::ListSum,
+            "list.product" => LoweredKernel::ListProduct,
+            "list.rangeInclusive" => LoweredKernel::ListRangeInclusive,
+            "option.map" => LoweredKernel::OptionMap,
             "int.truncatingDivide" => LoweredKernel::IntTruncatingDivide,
             "int.truncatingRemainder" => LoweredKernel::IntTruncatingRemainder,
             "string.length" => LoweredKernel::StringLength,
@@ -280,6 +385,14 @@ impl LoweredKernel {
         let string = || Shape::Prim(Prim::String);
         let bool = || Shape::Prim(Prim::Bool);
         let strings = || Shape::List(Box::new(string()));
+        let a = || Shape::Var(0);
+        let b = || Shape::Var(1);
+        let list = |element: Shape| Shape::List(Box::new(element));
+        let optional = |held: Shape| Shape::Option(Box::new(held));
+        let function = |taken: Shape, answers: Shape| Shape::Fn {
+            takes: vec![taken],
+            answers: Box::new(answers),
+        };
         let known = |takes: Vec<Shape>, answers: Shape, aborts: Vec<AbortKind>| Contract {
             takes,
             answers,
@@ -311,6 +424,50 @@ impl LoweredKernel {
             LoweredKernel::ListGet => known(
                 vec![int(), Shape::List(Box::new(Shape::Var(0)))],
                 Shape::Option(Box::new(Shape::Var(0))),
+                Vec::new(),
+            ),
+            LoweredKernel::ListFind => known(
+                vec![function(a(), bool()), list(a())],
+                optional(a()),
+                Vec::new(),
+            ),
+            // What is ordered is what the key answers, which is the one type the checker checked
+            // the ordering against.
+            LoweredKernel::ListSortBy => Contract {
+                takes: vec![function(a(), b()), list(a())],
+                answers: list(a()),
+                fact: FactContract::OrderingSubject(b()),
+                aborts: Vec::new(),
+            },
+            LoweredKernel::ListSort => Contract {
+                takes: vec![list(a())],
+                answers: list(a()),
+                fact: FactContract::OrderingSubject(a()),
+                aborts: Vec::new(),
+            },
+            // An empty list has no greatest element, which is what the `Option` is for.
+            LoweredKernel::ListMax | LoweredKernel::ListMin => Contract {
+                takes: vec![list(a())],
+                answers: optional(a()),
+                fact: FactContract::OrderingSubject(a()),
+                aborts: Vec::new(),
+            },
+            LoweredKernel::ListReverse => known(vec![list(a())], list(a()), Vec::new()),
+            // Which numbers are summed is the checker's to decide: the signature states no
+            // constraint, and what this backend has a lowering for is asked where it is lowered.
+            LoweredKernel::ListSum | LoweredKernel::ListProduct => known(
+                vec![list(a())],
+                a(),
+                vec![AbortKind::RequiredFormHasNoPlace],
+            ),
+            LoweredKernel::ListRangeInclusive => known(
+                vec![int(), int()],
+                list(int()),
+                vec![AbortKind::RequiredFormHasNoPlace],
+            ),
+            LoweredKernel::OptionMap => known(
+                vec![function(a(), b()), optional(a())],
+                optional(b()),
                 Vec::new(),
             ),
             // A zero divisor is a case of the answer and not a reason to end: that is what the
@@ -426,13 +583,13 @@ mod tests {
             let fact = KernelFact::OrderingSubject {
                 ty: Ty::Prim { prim: ty },
             };
-            assert!(FactContract::OrderingSubject.accepts(&fact));
+            assert!(FactContract::OrderingSubject(Shape::Var(0)).accepts(&fact));
             assert!(!FactContract::StringMatches.accepts(&fact));
             assert!(!FactContract::None.accepts(&fact));
         }
     }
 
-    const LOWERED: [(&str, LoweredKernel); 33] = [
+    const LOWERED: [(&str, LoweredKernel); 43] = [
         ("int.add", LoweredKernel::IntAdd),
         ("int.subtract", LoweredKernel::IntSubtract),
         ("int.multiply", LoweredKernel::IntMultiply),
@@ -445,6 +602,16 @@ mod tests {
         ),
         ("list.length", LoweredKernel::ListLength),
         ("list.get", LoweredKernel::ListGet),
+        ("list.find", LoweredKernel::ListFind),
+        ("list.sortBy", LoweredKernel::ListSortBy),
+        ("list.sort", LoweredKernel::ListSort),
+        ("list.max", LoweredKernel::ListMax),
+        ("list.min", LoweredKernel::ListMin),
+        ("list.reverse", LoweredKernel::ListReverse),
+        ("list.sum", LoweredKernel::ListSum),
+        ("list.product", LoweredKernel::ListProduct),
+        ("list.rangeInclusive", LoweredKernel::ListRangeInclusive),
+        ("option.map", LoweredKernel::OptionMap),
         ("string.length", LoweredKernel::StringLength),
         ("string.toInt", LoweredKernel::StringToInt),
         ("string.fromInt", LoweredKernel::StringFromInt),
@@ -471,17 +638,80 @@ mod tests {
         ("string.codePoints", LoweredKernel::StringCodePoints),
     ];
 
-    /// `String.matches` settles what its pattern means, and no other kernel lowered here settles
-    /// anything beside what it takes.
+    /// `String.matches` settles what its pattern means, and the kernels that order settle what
+    /// they order by: the element of the list for `sort`, `max` and `min`, and what the key answers
+    /// for `sortBy`. No other kernel lowered here settles anything beside what it takes.
     #[test]
-    fn only_string_matches_settles_a_fact() {
+    fn a_kernel_that_orders_settles_what_it_orders_by_and_no_other_does() {
         for (key, kernel) in LOWERED {
             let settled = match kernel {
                 LoweredKernel::StringMatches => FactContract::StringMatches,
+                LoweredKernel::ListSort | LoweredKernel::ListMax | LoweredKernel::ListMin => {
+                    FactContract::OrderingSubject(Shape::Var(0))
+                }
+                LoweredKernel::ListSortBy => FactContract::OrderingSubject(Shape::Var(1)),
                 _ => FactContract::None,
             };
             assert_eq!(kernel.contract().fact, settled, "{key}");
         }
+    }
+
+    /// What a sort orders by is what what it takes bound: the key's answer for `sortBy`, and not
+    /// the element it hands the key.
+    #[test]
+    fn an_ordering_subject_is_what_the_kernel_takes_bound_it_to() {
+        let int = Ty::Prim { prim: Prim::Int };
+        let string = Ty::Prim { prim: Prim::String };
+        let contract = LoweredKernel::ListSortBy.contract();
+        let mut bound = Bound::default();
+        let key = Ty::Fn {
+            fn_: FnSignature {
+                takes: vec![int.clone()],
+                answers: Box::new(string.clone()),
+            },
+        };
+        let ints = Ty::List {
+            list: Box::new(int),
+        };
+        assert!(contract.takes[0].binds(&key, &mut bound));
+        assert!(contract.takes[1].binds(&ints, &mut bound));
+        assert_eq!(contract.fact.holds(&bound), Some(string));
+        assert_eq!(FactContract::None.holds(&bound), None);
+    }
+
+    /// A function is of a function's shape where it takes as many as the shape does, each of the
+    /// shape it is taken at, and answers what the shape answers; its variables are the ones the
+    /// rest of what a kernel takes is held to.
+    #[test]
+    fn a_function_binds_what_it_takes_and_answers() {
+        let int = Ty::Prim { prim: Prim::Int };
+        let bool = Ty::Prim { prim: Prim::Bool };
+        let function = |takes: Vec<Ty>, answers: &Ty| Ty::Fn {
+            fn_: FnSignature {
+                takes,
+                answers: Box::new(answers.clone()),
+            },
+        };
+        let predicate = Shape::Fn {
+            takes: vec![Shape::Var(0)],
+            answers: Box::new(Shape::Prim(Prim::Bool)),
+        };
+        let mut bound = Bound::default();
+        assert!(predicate.binds(&function(vec![int.clone()], &bool), &mut bound));
+        assert!(!Shape::List(Box::new(Shape::Var(0))).binds(
+            &Ty::List {
+                list: Box::new(bool.clone())
+            },
+            &mut bound
+        ));
+        assert_eq!(
+            predicate.settled(&bound),
+            Some(function(vec![int.clone()], &bool))
+        );
+        let mut bound = Bound::default();
+        assert!(!predicate.binds(&function(vec![int.clone()], &int), &mut bound));
+        assert!(!predicate.binds(&function(vec![int.clone(), int.clone()], &bool), &mut bound));
+        assert!(!predicate.binds(&int, &mut Bound::default()));
     }
 
     /// Each key reaches its own kernel, and a key the language does not write reaches none: this
@@ -523,8 +753,39 @@ mod tests {
             | LoweredKernel::IntFloorMod
             | LoweredKernel::IntTruncatingDivide
             | LoweredKernel::IntTruncatingRemainder => vec![int.clone(), int],
-            LoweredKernel::ListLength => vec![bools],
+            LoweredKernel::ListLength
+            | LoweredKernel::ListSort
+            | LoweredKernel::ListMax
+            | LoweredKernel::ListMin
+            | LoweredKernel::ListReverse => vec![bools],
+            LoweredKernel::ListSum | LoweredKernel::ListProduct => vec![Ty::List {
+                list: Box::new(int),
+            }],
             LoweredKernel::ListGet => vec![int, bools],
+            LoweredKernel::ListRangeInclusive => vec![int.clone(), int],
+            LoweredKernel::ListFind | LoweredKernel::ListSortBy => {
+                let key = Ty::Fn {
+                    fn_: FnSignature {
+                        takes: vec![Ty::Prim { prim: Prim::Bool }],
+                        answers: Box::new(Ty::Prim { prim: Prim::Bool }),
+                    },
+                };
+                vec![key, bools]
+            }
+            LoweredKernel::OptionMap => {
+                let function = Ty::Fn {
+                    fn_: FnSignature {
+                        takes: vec![int.clone()],
+                        answers: Box::new(string),
+                    },
+                };
+                vec![
+                    function,
+                    Ty::Option {
+                        option: Box::new(int),
+                    },
+                ]
+            }
             LoweredKernel::StringLength
             | LoweredKernel::StringToInt
             | LoweredKernel::StringTrim
@@ -564,6 +825,43 @@ mod tests {
                 assert!(shape.binds(&ty, &mut bound), "{key}");
             }
             assert!(contract.answers.settled(&bound).is_some(), "{key}");
+            // So is the type a fact of it has to hold, where the kind carries one.
+            assert_eq!(
+                contract.fact.holds(&bound).is_some(),
+                matches!(contract.fact, FactContract::OrderingSubject(_)),
+                "{key}"
+            );
+        }
+    }
+
+    /// A function a kernel takes takes what the list or the optional beside it holds: each of its
+    /// parameters is a variable that is the element of one of those. So a function that never runs,
+    /// one taking the type of what has no value, is handed beside a list or an optional that holds
+    /// nothing, and the lowering answers for nothing without calling it (`lists`). A kernel handing
+    /// its function a value of its own would have a contract this refuses.
+    #[test]
+    fn a_function_a_kernel_takes_takes_what_it_is_handed_beside_it() {
+        for (key, kernel) in LOWERED {
+            let contract = kernel.contract();
+            let held: Vec<&Shape> = contract
+                .takes
+                .iter()
+                .filter_map(|shape| match shape {
+                    Shape::List(element) | Shape::Option(element) => Some(&**element),
+                    _ => None,
+                })
+                .collect();
+            for shape in &contract.takes {
+                let Shape::Fn { takes, .. } = shape else {
+                    continue;
+                };
+                for taken in takes {
+                    assert!(
+                        matches!(taken, Shape::Var(_)) && held.contains(&taken),
+                        "{key}"
+                    );
+                }
+            }
         }
     }
 

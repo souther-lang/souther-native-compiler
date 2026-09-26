@@ -21,6 +21,7 @@ mod index;
 mod interface;
 mod kernels;
 mod link;
+mod lists;
 mod literals;
 mod manifest;
 mod ordering;
@@ -61,8 +62,8 @@ use souther_native_abi::{
     WHICH, Word, behavior_symbol, boundary_symbol, built_in_case_symbol,
     checked_constructor_symbol, constructor_symbol, example_symbol, field_at, generated_call,
     held_symbol, home_symbol, list_at, member_at, requirement_at, room_for_capability,
-    room_for_carried, room_for_fields, room_for_held, room_for_list, room_for_members,
-    room_for_requirements, spells_a_module, spells_a_name, type_symbol, value_symbol,
+    room_for_carried, room_for_fields, room_for_list, room_for_members, room_for_requirements,
+    spells_a_module, spells_a_name, type_symbol, value_symbol,
 };
 use specialize::{Instance, InstanceId, Specializations};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -71,8 +72,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use transport::{
     AbortKind, AlternativesForm, Arm, Carrier, Case, Declaration, DeclaredBy, Definition,
-    Departures, Emitted, Ensures, Guard, KernelFact, LanguageCase, Node, Op, Owner, Prim, Program,
-    Publication, Reaches, Reading, Requirement, Routing, Selects, Target, Ty,
+    Departures, Emitted, Ensures, FnSignature, Guard, KernelFact, LanguageCase, Node, Op, Owner,
+    Prim, Program, Publication, Reaches, Reading, Requirement, Routing, Selects, Target, Ty,
 };
 
 /// A fork that ran out of arms, which is this compiler having emitted the wrong test rather than
@@ -466,7 +467,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
     // another), so nothing about defining a body may assume every site it itself needs was already
     // declared by the time it runs; all of them are, because this runs before any of them does.
     let mut lifted: BTreeMap<usize, FuncId> = BTreeMap::new();
-    for (&site, plan) in closures.iter() {
+    for (&site, plan) in closures.lifted() {
         let fn_ = plan.signature;
         let signature = lifted_signature(&fn_.takes, &fn_.answers, call_conv)?;
         let symbol = format!("$closure${site}");
@@ -981,7 +982,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
     // a nested site, or reach one returned from elsewhere, and every one of them was declared
     // above regardless of which body it is nested under. A site stands where the body holding it
     // does.
-    for (&site, plan) in closures.iter() {
+    for (&site, plan) in closures.lifted() {
         let fn_ = plan.signature;
         let signature = lifted_signature(&fn_.takes, &fn_.answers, call_conv)?;
         let id = *lifted
@@ -4459,26 +4460,31 @@ fn define_rules(
     Ok(())
 }
 
-/// A closure applied: `Core.Apply`, lowered as an indirect call through the code pointer its own
-/// slot 0 holds, with the closure itself handed over as the hidden environment argument every
+/// A function value applied, lowered as an indirect call through the code pointer its closure's
+/// own slot 0 holds, with the closure itself handed over as the hidden environment argument every
 /// lifted function's own signature reserves ([`lifted_signature`]).
+///
+/// The one way a function value is called here: by `Core.Apply`, and by a kernel handed one, such
+/// as `List.find`'s predicate. How a closure is laid out and called is this object's own and
+/// crosses to nothing else (`means_the_same_elsewhere`), so a kernel calls what it is handed the
+/// way the body calls it, and never through a convention of its own that could stop agreeing.
 ///
 /// Shares [`status_or_answer`] with [`call_reached`] rather than repeating it, so an indirect call
 /// forwards a callee's abort exactly the way a direct one does — the two calling conventions differ
 /// only in what is called and what the first argument is, not in how a status that is not
 /// `ANSWERED` reaches this function's own `abort` block.
-fn call_indirect_reached(
+fn call_function(
     builder: &mut FunctionBuilder,
     abort: ir::Block,
     closure: ir::Value,
     call_conv: CallConv,
-    takes: &[Ty],
-    answers: types::Type,
+    function: &FnSignature,
     arguments: &[ir::Value],
 ) -> Lowered<ir::Value> {
+    let answers = machine_type(&function.answers)?;
     let mut signature = ir::Signature::new(call_conv);
     signature.params.push(AbiParam::new(POINTER));
-    for taken in takes {
+    for taken in &function.takes {
         signature.params.push(AbiParam::new(machine_type(taken)?));
     }
     signature.params.push(AbiParam::new(POINTER));
@@ -4907,11 +4913,7 @@ fn lower(
         }
         Node::Some { value, .. } => {
             let held = lower(builder, lowering, module, bindings, abort, value)?;
-            let held = into_slot(builder, held);
-            let flags = TRUSTED;
-            let holding = lowering.room(builder, module, room_for_held());
-            builder.ins().store(flags, held, holding, HELD as i32);
-            holding
+            lists::some(builder, lowering, module, held)
         }
         Node::None { .. } => builder.ins().iconst(POINTER, NOTHING),
         Node::Tuple { members, .. } => {
@@ -5080,17 +5082,22 @@ fn lower(
                 .closures
                 .site(*site)
                 .expect("every closure site was planned before any body was lowered");
-            let code_id = *lowering
-                .lifted
-                .get(site)
-                .expect("every closure site was declared a lifted function before any was defined");
-
             let flags = TRUSTED;
             let carried = plan.captures.len() + usize::from(plan.environment.is_some());
             let value = lowering.room(builder, module, room_for_closure(carried));
 
-            let code_ref = module.declare_func_in_func(code_id, builder.func);
-            let code = builder.ins().func_addr(POINTER, code_ref);
+            // A function that never runs has no code, and a closure of it holds none: nothing calls
+            // it, and it carries nothing.
+            let code = if plan.runs {
+                let code_id = *lowering.lifted.get(site).expect(
+                    "every closure site that runs was declared a lifted function before any was \
+                     defined",
+                );
+                let code_ref = module.declare_func_in_func(code_id, builder.func);
+                builder.ins().func_addr(POINTER, code_ref)
+            } else {
+                builder.ins().iconst(POINTER, NOTHING)
+            };
             builder.ins().store(flags, code, value, CLOSURE_CODE as i32);
 
             for (position, capture) in plan.captures.iter().enumerate() {
@@ -5115,10 +5122,10 @@ fn lower(
             }
             value
         }
+        // What the application answers is what its function answers, which `Coherent` held it to.
         Node::Apply {
             function,
             arguments,
-            ty,
             ..
         } => {
             let Ty::Fn { fn_ } = function.ty() else {
@@ -5130,15 +5137,7 @@ fn lower(
                 given.push(lower(builder, lowering, module, bindings, abort, argument)?);
             }
             let call_conv = module.isa().default_call_conv();
-            call_indirect_reached(
-                builder,
-                abort,
-                closure,
-                call_conv,
-                &fn_.takes,
-                machine_type(ty)?,
-                &given,
-            )?
+            call_function(builder, abort, closure, call_conv, fn_, &given)?
         }
     })
 }
@@ -5369,6 +5368,70 @@ fn lower_kernel(
             let nothing = builder.ins().iconst(POINTER, NOTHING);
             builder.ins().select(inside, slot, nothing)
         }
+        LoweredKernel::ListFind => {
+            let [predicate, list] = given[..] else {
+                unreachable!("`Coherent` held list.find to the two arguments it takes");
+            };
+            lists::find(builder, module, abort, predicate, list.value)?
+        }
+        LoweredKernel::ListSortBy => {
+            let [key, list] = given[..] else {
+                unreachable!("`Coherent` held list.sortBy to the two arguments it takes");
+            };
+            let subject = ordering_subject(kernel, fact);
+            lists::sorted_by(builder, lowering, module, abort, key, subject, list.value)?
+        }
+        LoweredKernel::ListSort => {
+            let [list] = values[..] else {
+                unreachable!("`Coherent` held list.sort to the one argument it takes");
+            };
+            let subject = ordering_subject(kernel, fact);
+            lists::sorted(builder, lowering, module, subject, list)?
+        }
+        LoweredKernel::ListMax | LoweredKernel::ListMin => {
+            let [list] = values[..] else {
+                unreachable!("`Coherent` held {kernel:?} to the one argument it takes");
+            };
+            let op = match kernel {
+                LoweredKernel::ListMax => Op::Gt,
+                _ => Op::Lt,
+            };
+            let subject = ordering_subject(kernel, fact);
+            lists::extreme(builder, lowering, module, op, subject, list)?
+        }
+        LoweredKernel::ListReverse => {
+            let [list] = values[..] else {
+                unreachable!("`Coherent` held list.reverse to the one argument it takes");
+            };
+            lists::reversed(builder, lowering, module, list)
+        }
+        LoweredKernel::ListSum | LoweredKernel::ListProduct => {
+            let [list] = given[..] else {
+                unreachable!("`Coherent` held {kernel:?} to the one argument it takes");
+            };
+            let Ty::List { list: element } = list.ty else {
+                unreachable!("`Coherent` held {kernel:?} to taking a list");
+            };
+            let op = match kernel {
+                LoweredKernel::ListSum => Op::Add,
+                _ => Op::Mul,
+            };
+            let status = one_reason_status(aborts);
+            lists::total(builder, abort, status, op, element, list.value)?
+        }
+        LoweredKernel::ListRangeInclusive => {
+            let [from, to] = values[..] else {
+                unreachable!("`Coherent` held list.rangeInclusive to the two arguments it takes");
+            };
+            let status = one_reason_status(aborts);
+            lists::range_inclusive(builder, lowering, module, abort, status, from, to)
+        }
+        LoweredKernel::OptionMap => {
+            let [function, optional] = given[..] else {
+                unreachable!("`Coherent` held option.map to the two arguments it takes");
+            };
+            lists::mapped(builder, lowering, module, abort, function, optional.value)?
+        }
         LoweredKernel::IntTruncatingDivide | LoweredKernel::IntTruncatingRemainder => {
             let [dividend, divisor] = values[..] else {
                 unreachable!("`Coherent` held {kernel:?} to the two arguments it takes");
@@ -5479,6 +5542,15 @@ fn lower_kernel(
         }
         LoweredKernel::StringMatches => unreachable!("answered above"),
     })
+}
+
+/// What a kernel that orders was settled as ordering by, which `Coherent` held to be the one type
+/// its contract says it orders.
+fn ordering_subject(kernel: LoweredKernel, fact: &KernelFact) -> &Ty {
+    let KernelFact::OrderingSubject { ty } = fact else {
+        unreachable!("`Coherent` held {kernel:?} to the ordering subject it settles");
+    };
+    ty
 }
 
 /// A call of one of the `String` kernels' functions, and what it answers.
@@ -6084,19 +6156,7 @@ fn arithmetic(
     match (left.ty, right.ty) {
         (Ty::Prim { prim }, Ty::Prim { prim: also }) if prim == also => match prim {
             Prim::Int => match op {
-                Op::Add => {
-                    let sum = builder.ins().iadd(a, b);
-                    let past = builder.ins().bxor(a, sum);
-                    let also = builder.ins().bxor(b, sum);
-                    abort_where_the_sign_bit_is_set(
-                        builder,
-                        abort,
-                        one_reason_status(aborts),
-                        past,
-                        also,
-                    );
-                    Ok(sum)
-                }
+                Op::Add => Ok(sum(builder, abort, one_reason_status(aborts), a, b)),
                 Op::Sub => Ok(difference(builder, abort, one_reason_status(aborts), a, b)),
                 Op::Mul => Ok(product(builder, abort, one_reason_status(aborts), a, b)),
                 _ => unreachable!("reached from a sum, a difference or a product and nothing else"),
@@ -6182,12 +6242,7 @@ fn joined_lists(
         .ins()
         .load(types::I64, TRUSTED, b, LIST_LENGTH as i32);
     let length = builder.ins().iadd(first, second);
-    let slots = builder.ins().imul_imm_s(length, SLOT);
-    let bytes = builder.ins().iadd_imm_s(slots, room_for_list(0));
-    let joined = lowering.room_of(builder, module, bytes);
-    builder
-        .ins()
-        .store(TRUSTED, length, joined, LIST_LENGTH as i32);
+    let joined = lists::new_list(builder, lowering, module, length);
 
     let into = builder.ins().iadd_imm_s(joined, list_at(0));
     let from = builder.ins().iadd_imm_s(a, list_at(0));
@@ -6495,6 +6550,24 @@ fn as_a_whole_number(op: Op) -> IntCC {
             unreachable!("reached from a comparison and nothing else")
         }
     }
+}
+
+/// An addition that left the range an `Int` holds ends the computation.
+///
+/// The answer disagreeing in sign with both operands is what that is: two operands of one sign
+/// whose sum wrapped round.
+fn sum(
+    builder: &mut FunctionBuilder,
+    abort: ir::Block,
+    status: Status,
+    a: ir::Value,
+    b: ir::Value,
+) -> ir::Value {
+    let sum = builder.ins().iadd(a, b);
+    let past = builder.ins().bxor(a, sum);
+    let also = builder.ins().bxor(b, sum);
+    abort_where_the_sign_bit_is_set(builder, abort, status, past, also);
+    sum
 }
 
 /// A subtraction that left the range an `Int` holds ends the computation.

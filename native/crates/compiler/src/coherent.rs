@@ -740,13 +740,7 @@ impl<'a> Walk<'_, 'a> {
         if self.unrun.iter().any(|it| std::ptr::eq(*it, node)) {
             self.runs = false;
         }
-        let entered = match node {
-            Node::Call { arguments, .. } => crate::unrun::never_applied(node)
-                .into_iter()
-                .map(|at| &arguments[at])
-                .collect(),
-            _ => Vec::new(),
-        };
+        let entered = crate::unrun::never_lowered(node);
         let before = self.unrun.len();
         self.unrun.extend(entered);
         let read = self.relations(node).and_then(|()| self.hold_slots(node));
@@ -2057,6 +2051,19 @@ impl<'a> Walk<'_, 'a> {
                                 known_to_take.spelt()
                             );
                         }
+                    }
+                    // What an ordering was checked against is what the lowering compares by, so it
+                    // is held to the one type the kernel orders: the element of the list a sort
+                    // takes, and what the key a `sortBy` takes answers.
+                    if let (Some(known_to_hold), KernelFact::OrderingSubject { ty: subject }) =
+                        (contract.fact.holds(&bound), fact)
+                    {
+                        self.same(
+                            &format!("what an application of {kernel} orders by"),
+                            subject,
+                            &known_to_hold,
+                            "what it takes orders",
+                        )?;
                     }
                     self.ends_for(&format!("a call of {kernel}"), aborts, &contract.aborts)?;
                     let Some(answers) = contract.answers.settled(&bound) else {

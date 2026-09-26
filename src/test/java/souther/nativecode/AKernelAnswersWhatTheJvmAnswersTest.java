@@ -12,8 +12,8 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Every kernel of {@code Int} and {@code String}, held to what the JVM answers for the same
- * program.
+ * Every kernel of {@code Int} and {@code String}, and those of {@code List} and {@code Option}
+ * this backend lowers, held to what the JVM answers for the same program.
  *
  * <p>The rows are the oracle. A row that ran and whose answer kept it is one the JVM answered, so a
  * native run put to the same row is held to the JVM's answer without this file writing down what
@@ -337,6 +337,212 @@ class AKernelAnswersWhatTheJvmAnswersTest {
                 | "too many" : ("abcd") -> false
             """.formatted("ab".repeat(150), "ab".repeat(150).substring(1));
 
+    private static final String LISTS = """
+            module lists
+
+            data Lost
+            data Won
+            data Qualified
+            data Prospecting
+            data Open = Prospecting | Qualified
+            data Stage = Open | Won | Lost
+            data Sku = String
+
+            let stage (n: Int): Stage =
+                if n == 0 then Lost
+                else if n == 1 then Won
+                else if n == 2 then Qualified
+                else Prospecting
+
+            let named (s: Stage): Int = match s with
+                | Lost -> 0
+                | Won -> 1
+                | Qualified -> 2
+                | Prospecting -> 3
+
+            behavior firstAbove : (xs: List<Int>, floor: Int) -> Int
+            let firstAbove (xs, floor) = match List.find(x -> x > floor, xs) with
+                | Some x -> x
+                | None -> -1
+
+            behavior sorted : (xs: List<Int>) -> List<Int>
+            let sorted (xs) = List.sort(xs)
+
+            behavior sortedTexts : (xs: List<String>) -> List<String>
+            let sortedTexts (xs) = List.sort(xs)
+
+            behavior sortedStages : (ns: List<Int>) -> List<Int>
+            let sortedStages (ns) = List.map(s -> named(s), List.sort(List.map(n -> stage(n), ns)))
+
+            behavior byLength : (xs: List<String>) -> List<String>
+            let byLength (xs) = List.sortBy(s -> String.length(s), xs)
+
+            behavior bySku : (xs: List<Int>) -> List<Int>
+            let bySku (xs) = List.sortBy(x -> Sku(String.fromInt(x)), xs)
+
+            behavior greatest : (xs: List<Int>) -> Int
+            let greatest (xs) = match List.max(xs) with
+                | Some x -> x
+                | None -> -1
+
+            behavior least : (xs: List<Int>) -> Int
+            let least (xs) = match List.min(xs) with
+                | Some x -> x
+                | None -> -1
+
+            behavior leastText : (xs: List<String>) -> String
+            let leastText (xs) = match List.min(xs) with
+                | Some x -> x
+                | None -> "none"
+
+            behavior greatestStage : (ns: List<Int>) -> Int
+            let greatestStage (ns) = match List.max(List.map(n -> stage(n), ns)) with
+                | Some s -> named(s)
+                | None -> -1
+
+            behavior reversed : (xs: List<Int>) -> List<Int>
+            let reversed (xs) = List.reverse(xs)
+
+            behavior total : (xs: List<Int>) -> Int
+            let total (xs) = List.sum(xs)
+
+            behavior multiplied : (xs: List<Int>) -> Int
+            let multiplied (xs) = List.product(xs)
+
+            behavior ranged : (from: Int, to: Int) -> List<Int>
+            let ranged (from, to) = List.rangeInclusive(from, to)
+
+            behavior foldedRight : (xs: List<Int>) -> Int
+            let foldedRight (xs) = List.foldRight((x, acc) -> x - acc, 0, xs)
+
+            behavior doubled : (a: Int, at: Int) -> Int
+            let doubled (a, at) = match Option.map(x -> x * 2, List.get(at, [a])) with
+                | Some x -> x
+                | None -> -1
+
+            behavior written : (a: Int, at: Int) -> String
+            let written (a, at) = match Option.map(x -> String.fromInt(x), List.get(at, [a])) with
+                | Some x -> x
+                | None -> "none"
+
+            behavior ofNothing : (a: Int) -> Int
+            let ofNothing (a) =
+                List.length(List.sort([])) + List.length(List.sortBy(x -> x, []))
+                    + List.length(List.reverse([])) + a
+
+            behavior summedNothing : (a: Int) -> Int
+            let summedNothing (a) = List.sum([])
+
+            behavior mappedNothing : (a: Int) -> Int
+            let mappedNothing (a) = match Option.map(x -> 1, List.get(0, [])) with
+                | Some x -> x
+                | None -> a
+
+            behavior totalPast : (a: Int) -> Int
+            let totalPast (a) = List.sum([a, 1])
+
+            behavior multipliedPast : (a: Int) -> Int
+            let multipliedPast (a) = List.product([a, 2])
+
+            behavior foundPast : (a: Int) -> Int
+            let foundPast (a) = match List.find(x -> x * 2 > 0, [a, 1]) with
+                | Some x -> x
+                | None -> -1
+
+            behavior foundBefore : (a: Int) -> Int
+            let foundBefore (a) = match List.find(x -> x * 2 > 0, [1, a]) with
+                | Some x -> x
+                | None -> -1
+
+            behavior sortedPast : (a: Int) -> List<Int>
+            let sortedPast (a) = List.sortBy(x -> x * 2, [1, a])
+
+            example firstAbove
+                | "the first of two" : ([3, 12, 9, 20], 10) -> 12
+                | "none above" : ([1, 2], 5) -> -1
+                | "nothing to look at" : ([], 0) -> -1
+
+            example sorted
+                | "equal and below nought" : ([5, -3, 9, -3, 0]) -> [-3, -3, 0, 5, 9]
+                | "the ends of the range" : ([9223372036854775807, -9223372036854775807, 0]) -> [-9223372036854775807, 0, 9223372036854775807]
+                | "one" : ([4]) -> [4]
+                | "none" : ([]) -> []
+
+            example sortedTexts
+                | "by code point" : (["b", "𠮷", "a", "ｚ", "B"]) -> ["B", "a", "b", "ｚ", "𠮷"]
+
+            example sortedStages
+                | "as the enumeration lists them" : ([0, 3, 1, 2, 3]) -> [3, 3, 2, 1, 0]
+
+            example byLength
+                | "equal keys in the order they came" : (["dd", "a", "ccc", "b", "ee", "c", "ff", "gg", "h", "iii", "j"]) -> ["a", "b", "c", "h", "j", "dd", "ee", "ff", "gg", "ccc", "iii"]
+                | "none" : ([]) -> []
+
+            example bySku
+                | "by the text a newtype wraps" : ([10, 9, 100, 1]) -> [1, 10, 100, 9]
+
+            example greatest
+                | "among three" : ([3, 9, 2]) -> 9
+                | "none" : ([]) -> -1
+
+            example least
+                | "below nought" : ([3, -9, 2]) -> -9
+                | "none" : ([]) -> -1
+
+            example leastText
+                | "by code point" : (["b", "a", "c"]) -> "a"
+                | "none" : ([]) -> "none"
+
+            example greatestStage
+                | "as the enumeration lists them" : ([1, 3, 2]) -> 1
+                | "the last it lists" : ([1, 0, 2]) -> 0
+                | "none" : ([]) -> -1
+
+            example reversed
+                | "three" : ([1, 2, 3]) -> [3, 2, 1]
+                | "none" : ([]) -> []
+
+            example total
+                | "three" : ([1, 2, 3]) -> 6
+                | "to the largest but one" : ([9223372036854775807, -1]) -> 9223372036854775806
+                | "none" : ([]) -> 0
+
+            example multiplied
+                | "three" : ([2, 3, 4]) -> 24
+                | "none" : ([]) -> 1
+
+            example ranged
+                | "four" : (1, 4) -> [1, 2, 3, 4]
+                | "one" : (3, 3) -> [3]
+                | "backwards" : (4, 1) -> []
+                | "at the top of the range" : (9223372036854775806, 9223372036854775807) -> [9223372036854775806, 9223372036854775807]
+                | "at the bottom of the range" : (-9223372036854775807, -9223372036854775806) -> [-9223372036854775807, -9223372036854775806]
+                | "furthest backwards" : (9223372036854775807, -9223372036854775807) -> []
+
+            example foldedRight
+                | "from the end" : ([1, 2, 3]) -> 2
+
+            example doubled
+                | "held" : (21, 0) -> 42
+                | "not held" : (21, 1) -> -1
+
+            example ofNothing
+                | "an empty list of what has no value" : (7) -> 7
+
+            example summedNothing
+                | "the seed the position states" : (7) -> 0
+
+            example mappedNothing
+                | "an optional of what has no value" : (7) -> 7
+
+            example foundBefore
+                | "asks nothing past the first it holds for" : (4611686018427387904) -> 1
+
+            example written
+                | "held" : (21, 0) -> "21"
+                | "not held" : (21, 1) -> "none"
+            """;
+
     @Test
     void everyIntKernelRowHolds() throws Exception {
         ARowHoldsWhereverItIsRunTest.assertEveryRowHolds(INT);
@@ -354,6 +560,37 @@ class AKernelAnswersWhatTheJvmAnswersTest {
     @Test
     void everyPatternRowHolds() throws Exception {
         ARowHoldsWhereverItIsRunTest.assertEveryRowHolds(MATCHING);
+    }
+
+    @Test
+    void everyListAndOptionKernelRowHolds() throws Exception {
+        ARowHoldsWhereverItIsRunTest.assertEveryRowHolds(LISTS);
+    }
+
+    /**
+     * A sum or a product no {@code Int} holds ends the run as {@code +} and {@code *} do, and so
+     * does a span longer than a list holds, which is the JVM's longest list. A function a kernel
+     * calls that ends the run ends the call with it, as it would where a body applied it.
+     */
+    @Test
+    void aListOrOptionKernelEndsTheRunWhereItsContractOrItsFunctionSays() throws Exception {
+        Asked lists = new Asked(LISTS);
+        ObservedValue largest = integer(9223372036854775807L);
+        ObservedValue past = integer(4611686018427387904L);
+        assertThat(lists.outcome("totalPast", largest))
+                .isEqualTo(ended(AbortKind.REQUIRED_FORM_HAS_NO_PLACE));
+        assertThat(lists.outcome("multipliedPast", past))
+                .isEqualTo(ended(AbortKind.REQUIRED_FORM_HAS_NO_PLACE));
+        assertThat(lists.outcome("ranged", integer(0), integer(2147483647L)))
+                .isEqualTo(ended(AbortKind.REQUIRED_FORM_HAS_NO_PLACE));
+        assertThat(lists.outcome("ranged", integer(-9223372036854775808L), largest))
+                .isEqualTo(ended(AbortKind.REQUIRED_FORM_HAS_NO_PLACE));
+        assertThat(lists.outcome("doubled", past, integer(0)))
+                .isEqualTo(ended(AbortKind.REQUIRED_FORM_HAS_NO_PLACE));
+        assertThat(lists.outcome("foundPast", past))
+                .isEqualTo(ended(AbortKind.REQUIRED_FORM_HAS_NO_PLACE));
+        assertThat(lists.outcome("sortedPast", past))
+                .isEqualTo(ended(AbortKind.REQUIRED_FORM_HAS_NO_PLACE));
     }
 
     /** A difference or a product no {@code Int} holds ends the run, and so does a zero divisor. */

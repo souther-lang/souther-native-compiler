@@ -2093,19 +2093,219 @@ fn a_kernel_settles_what_this_backend_knows_it_settles() {
         "settles",
     );
 
-    // A kernel this backend does not lower is refused as not lowered, whatever it settles.
+    // A kernel this backend does not lower is refused as not lowered, whatever it settles. Every
+    // kernel over types this backend lays out is lowered, so the one here is a key the standard
+    // library does not declare, over a list of `Int`s: what refuses it is the kernel and not a
+    // type it takes or answers.
     let ints = list_of(INT);
-    let sorting = node(
+    let shuffling = node(
         "call",
         &format!(
-            r#""reaches":{{"is":"kernel","kernel":"list.sort","takes":[{ints}],"fact":{{"is":"orderingsubject","type":{INT}}}}},"arguments":[{}]"#,
+            r#""reaches":{{"is":"kernel","kernel":"list.shuffle","takes":[{ints}],"fact":{{"is":"orderingsubject","type":{INT}}}}},"arguments":[{}]"#,
             read(0, &ints)
         ),
         &ints,
     );
     let refused =
-        object_for(&helpers(&[h(&[&ints], &sorting)])).expect_err("a kernel nothing here lowers");
+        object_for(&helpers(&[h(&[&ints], &shuffling)])).expect_err("a kernel nothing here lowers");
     assert!(refused.downcast_ref::<NotLowered>().is_some(), "{refused}");
+    assert!(
+        refused
+            .to_string()
+            .contains("a call to the kernel list.shuffle"),
+        "{refused}"
+    );
+}
+
+/// A kernel's call on the wire: the kernel it reaches, what the application takes, and what else
+/// it settled.
+fn kernel(key: &str, takes: &[&str], fact: &str) -> String {
+    format!(
+        r#"{{"is":"kernel","kernel":"{key}","takes":[{}],"fact":{fact}}}"#,
+        takes.join(",")
+    )
+}
+
+fn ordering_subject(ty: &str) -> String {
+    format!(r#"{{"is":"orderingsubject","type":{ty}}}"#)
+}
+
+const NO_FACT: &str = r#"{"is":"none"}"#;
+
+/// A list of a type no value of which is made is empty, so a kernel ordering one compares nothing
+/// and is lowered whatever that type is, where comparing two of it would be refused.
+#[test]
+fn a_list_no_value_of_whose_element_is_made_is_ordered_without_a_comparison() {
+    for element in [r#"{"nothing":{}}"#, r#"{"never":{}}"#] {
+        let listed = list_of(element);
+        for (key, answers) in [
+            ("list.sort", listed.clone()),
+            ("list.max", option_of(element)),
+        ] {
+            reads_whole(&helpers(&[h(
+                &[&listed],
+                &call(
+                    &kernel(key, &[&listed], &ordering_subject(element)),
+                    &[read(0, &listed)],
+                    &answers,
+                ),
+            )]));
+        }
+    }
+}
+
+/// A function over what has no value is still handed to a kernel, as a block made with no code,
+/// and the kernel answers for the empty list or the absent value beside it without calling it.
+#[test]
+fn a_kernel_is_handed_a_function_that_never_runs_and_calls_none() {
+    let nothing = r#"{"nothing":{}}"#;
+    let never_run = |answers: &str, body: String| {
+        let ty = fn_of(&[nothing], answers);
+        let block = node(
+            "block",
+            &format!(r#""site":0,"parameters":[{{"binding":1,"name":"x"}}],"body":{body}"#),
+            &ty,
+        );
+        (ty, block)
+    };
+    let empty = (
+        list_of(nothing),
+        node("list", r#""elements":[]"#, &list_of(nothing)),
+    );
+    let absent = (
+        option_of(nothing),
+        format!(
+            r#"{{"core":"none","type":{},"aborts":[]}}"#,
+            option_of(nothing)
+        ),
+    );
+    for (key, (function, block), (beside, handed), answers, fact) in [
+        (
+            "list.find",
+            never_run(BOOL, truth(true)),
+            empty.clone(),
+            option_of(nothing),
+            NO_FACT.to_string(),
+        ),
+        (
+            "list.sortBy",
+            never_run(INT, int(1)),
+            empty,
+            list_of(nothing),
+            ordering_subject(INT),
+        ),
+        (
+            "option.map",
+            never_run(INT, int(1)),
+            absent,
+            option_of(INT),
+            NO_FACT.to_string(),
+        ),
+    ] {
+        reads_whole(&helpers(&[h(
+            &[],
+            &call(
+                &kernel(key, &[&function, &beside], &fact),
+                &[block, handed],
+                &answers,
+            ),
+        )]));
+    }
+}
+
+/// A kernel handed a function is held to one type for each of the contract's variables wherever
+/// it stands: `List.find`'s predicate takes the list's element, and `Option.map`'s function takes
+/// what the optional holds and answers what the answer holds. A predicate over another type than
+/// the list holds would be handed each element as what it is not.
+#[test]
+fn a_function_a_kernel_takes_is_held_to_what_the_rest_of_the_call_binds() {
+    let ints = list_of(INT);
+    let find = |element: &str| {
+        let predicate = fn_of(&[element], BOOL);
+        h(
+            &[&predicate, &ints],
+            &call(
+                &kernel("list.find", &[&predicate, &ints], NO_FACT),
+                &[read(0, &predicate), read(1, &ints)],
+                &option_of(INT),
+            ),
+        )
+    };
+    reads_whole(&helpers(&[find(INT)]));
+    is_the_halves_disagreeing(
+        &helpers(&[find(STRING)]),
+        "what an application of list.find takes",
+    );
+
+    let optional = option_of(INT);
+    let map = |answers: &str| {
+        let function = fn_of(&[INT], STRING);
+        h(
+            &[&function, &optional],
+            &call(
+                &kernel("option.map", &[&function, &optional], NO_FACT),
+                &[read(0, &function), read(1, &optional)],
+                &option_of(answers),
+            ),
+        )
+    };
+    reads_whole(&helpers(&[map(STRING)]));
+    is_the_halves_disagreeing(&helpers(&[map(INT)]), "a call of option.map");
+}
+
+/// What an ordering was checked against is what a sort compares by, so it is the one type the
+/// kernel orders: what `sortBy`'s key answers, and the element of the list `sort`, `max` and `min`
+/// take. One that is another type is the two halves disagreeing, and is not lowered as a
+/// comparison of that type over values of this one.
+#[test]
+fn what_a_kernel_orders_by_is_what_it_takes_orders() {
+    let ints = list_of(INT);
+    let sort_by = |subject: &str| {
+        let key = fn_of(&[INT], STRING);
+        h(
+            &[&key, &ints],
+            &call(
+                &kernel("list.sortBy", &[&key, &ints], &ordering_subject(subject)),
+                &[read(0, &key), read(1, &ints)],
+                &ints,
+            ),
+        )
+    };
+    reads_whole(&helpers(&[sort_by(STRING)]));
+    is_the_halves_disagreeing(
+        &helpers(&[sort_by(INT)]),
+        "what an application of list.sortBy orders by",
+    );
+
+    for (key, answers) in [
+        ("list.sort", ints.clone()),
+        ("list.max", option_of(INT)),
+        ("list.min", option_of(INT)),
+    ] {
+        let ordering = |subject: &str| {
+            h(
+                &[&ints],
+                &call(
+                    &kernel(key, &[&ints], &ordering_subject(subject)),
+                    &[read(0, &ints)],
+                    &answers,
+                ),
+            )
+        };
+        reads_whole(&helpers(&[ordering(INT)]));
+        is_the_halves_disagreeing(
+            &helpers(&[ordering(STRING)]),
+            &format!("what an application of {key} orders by"),
+        );
+        // What orders is a fact the kernel settles, and one settling none is not this kernel's.
+        is_the_halves_disagreeing(
+            &helpers(&[h(
+                &[&ints],
+                &call(&kernel(key, &[&ints], NO_FACT), &[read(0, &ints)], &answers),
+            )]),
+            "settles",
+        );
+    }
 }
 
 /// What a pattern is said to mean is what some pattern reads as: parts naming only parts written
