@@ -247,8 +247,8 @@ fn declared_injection(injection: &manifest::Injection) -> String {
 
 /// What a host implements a function value of one shape as, and makes one through, as the header
 /// declares them, with what a host owes what it hands over.
-fn declared_function(function: &manifest::FunctionCrossing) -> String {
-    let implementation = &function.implementation;
+fn declared_function(making: &manifest::FunctionMaking) -> String {
+    let implementation = &making.implementation;
     let answers = c_word(implementation.answers);
     let pointer = &implementation.type_name;
     format!(
@@ -256,7 +256,7 @@ fn declared_function(function: &manifest::FunctionCrossing) -> String {
          /* The room, the function and what it is handed stay as they are while the value may be called. */\n\
          souther_function {}(souther_hosted_function *, {pointer}, void *);",
         parameters(&implementation.takes),
-        function.implement
+        making.implement
     )
 }
 
@@ -576,44 +576,54 @@ impl Surface {
         self.module(module).values.push(value);
     }
 
-    /// What a host builds and reads a list of `module`'s through, where its elements cross in
-    /// `element`.
+    /// What a host builds a list of `module`'s through, where its elements cross in `element`, and
+    /// reads one through, each where something crossing needs it.
     pub(crate) fn list(
         &mut self,
         module: &str,
         element: &HostShape,
-        construct: &HostFunction,
-        length: &HostFunction,
-        at: &HostFunction,
+        construct: Option<&HostFunction>,
+        read: Option<&(HostFunction, HostFunction)>,
     ) {
+        assert!(
+            construct.is_some() || read.is_some(),
+            "a list of {element:?} is built or read, or it has no functions"
+        );
         self.module(module).lists.push(manifest::ListCrossing {
             element: element.into(),
-            construct: construct.described(),
-            length: length.described(),
-            at: at.described(),
+            construct: construct.map(HostFunction::described),
+            read: read.map(|(length, at)| manifest::ListRead {
+                length: length.described(),
+                at: at.described(),
+            }),
         });
     }
 
     /// What a host calls a function value of `module`'s crossing in `function` through, and makes
-    /// one of its own through.
+    /// one of its own through, each where something crossing needs it.
     pub(crate) fn function(
         &mut self,
         module: &str,
         function: &HostShape,
-        call: &HostFunction,
-        implementation: &HostImplementation,
-        implement: &str,
+        call: Option<&HostFunction>,
+        make: Option<(&HostImplementation, &str)>,
     ) {
         let HostShape::Function { takes, answers } = function else {
             unreachable!("{function:?} is not how a function value crosses");
         };
+        assert!(
+            call.is_some() || make.is_some(),
+            "a function of {function:?} is called or made, or it has no functions"
+        );
         self.module(module)
             .functions
             .push(manifest::FunctionCrossing {
                 signature: signature(takes, answers),
-                call: call.described(),
-                implementation: implementation.described(),
-                implement: implement.to_string(),
+                call: call.map(HostFunction::described),
+                make: make.map(|(implementation, implement)| manifest::FunctionMaking {
+                    implementation: implementation.described(),
+                    implement: implement.to_string(),
+                }),
             });
     }
 
@@ -849,7 +859,7 @@ fn functions(manifest: &Manifest) -> impl Iterator<Item = &manifest::Function> {
         let values = module.values.iter().filter_map(|it| available(&it.read));
         let declarations = module.declarations.iter().flat_map(declaration_functions);
         let lists = module.lists.iter().flat_map(list_functions);
-        let functions = module.functions.iter().map(|it| &it.call);
+        let functions = module.functions.iter().filter_map(|it| it.call.as_ref());
         behaviors
             .chain(constructions)
             .chain(values)
@@ -884,8 +894,9 @@ fn behavior_functions(behavior: &manifest::Behavior) -> impl Iterator<Item = &ma
 }
 
 /// Every function a list is reached through, in the order the header declares them.
-fn list_functions(list: &manifest::ListCrossing) -> [&manifest::Function; 3] {
-    [&list.construct, &list.length, &list.at]
+fn list_functions(list: &manifest::ListCrossing) -> impl Iterator<Item = &manifest::Function> {
+    let read = list.read.iter().flat_map(|it| [&it.length, &it.at]);
+    list.construct.iter().chain(read)
 }
 
 /// Every function a declaration is reached through, in the order the header declares them.
@@ -962,7 +973,10 @@ fn built_by(construct: &Reach<manifest::Construct>) -> Option<&manifest::Functio
 pub(crate) fn exported(manifest: &Manifest) -> Vec<String> {
     let implements = manifest.modules.iter().flat_map(|module| {
         let injections = module.injections.iter().map(|it| &it.implement);
-        let functions = module.functions.iter().map(|it| &it.implement);
+        let functions = module
+            .functions
+            .iter()
+            .filter_map(|it| it.make.as_ref().map(|make| &make.implement));
         injections.chain(functions)
     });
     functions(manifest)
@@ -1093,10 +1107,14 @@ pub(crate) fn declarations(manifest: &Manifest) -> String {
                 "/* a function value crossing as {} */\n",
                 spelt(&Shape::Function(function.signature.clone()))
             ));
-            written.push_str(&declared(&function.call));
-            written.push('\n');
-            written.push_str(&declared_function(function));
-            written.push('\n');
+            if let Some(call) = &function.call {
+                written.push_str(&declared(call));
+                written.push('\n');
+            }
+            if let Some(make) = &function.make {
+                written.push_str(&declared_function(make));
+                written.push('\n');
+            }
         }
     }
     written

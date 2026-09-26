@@ -288,78 +288,78 @@ int main(void) {
     int64_t mark = souther_mark();
 
     souther_function bump = NULL;
-    souther_status status = souther5_m_m_v_bump(&bump);
+    souther_status status = souther@_m_m_v_bump(&bump);
     int64_t out = -1;
-    souther_status called = souther5_m_m_fn_f1_int_int_call(bump, 3, &out);
+    souther_status called = souther@_m_m_fn_f1_int_int_call(bump, 3, &out);
     printf("bump %u %u %" PRId64 "\n", status, called, out);
 
     souther_function overflow = NULL;
-    souther5_m_m_v_overflow(&overflow);
+    souther@_m_m_v_overflow(&overflow);
     out = -1;
-    called = souther5_m_m_fn_f1_int_int_call(overflow, 1, &out);
+    called = souther@_m_m_fn_f1_int_int_call(overflow, 1, &out);
     printf("overflow %d %" PRId64 "\n", called == SOUTHER_REQUIRED_FORM_HAS_NO_PLACE, out);
 
     souther_function twice = NULL;
-    souther5_m_m_v_twice(&twice);
-    called = souther5_m_m_fn_f2_f1_int_int_int_int_call(twice, bump, 1, &out);
+    souther@_m_m_v_twice(&twice);
+    called = souther@_m_m_fn_f2_f1_int_int_int_int_call(twice, bump, 1, &out);
     printf("twice bump %u %" PRId64 "\n", called, out);
 
     int64_t three = 3;
     souther_hosted_function tripling;
-    souther_function tripled = souther5_m_m_fn_f1_int_int_implement(&tripling, times, &three);
-    called = souther5_m_m_fn_f2_f1_int_int_int_int_call(twice, tripled, 2, &out);
+    souther_function tripled = souther@_m_m_fn_f1_int_int_implement(&tripling, times, &three);
+    called = souther@_m_m_fn_f2_f1_int_int_int_int_call(twice, tripled, 2, &out);
     printf("twice hosted %u %" PRId64 "\n", called, out);
-    called = souther5_m_m_fn_f1_int_int_call(tripled, 5, &out);
+    called = souther@_m_m_fn_f1_int_int_call(tripled, 5, &out);
     printf("hosted %u %" PRId64 "\n", called, out);
 
     souther_hosted_function throwing;
     out = -1;
-    called = souther5_m_m_fn_f2_f1_int_int_int_int_call(
-            twice, souther5_m_m_fn_f1_int_int_implement(&throwing, thrown, NULL), 2, &out);
+    called = souther@_m_m_fn_f2_f1_int_int_int_int_call(
+            twice, souther@_m_m_fn_f1_int_int_implement(&throwing, thrown, NULL), 2, &out);
     printf("thrown %d %" PRId64 "\n", called == SOUTHER_HOST_EXCEPTION, out);
     souther_hosted_function aborting;
-    called = souther5_m_m_fn_f2_f1_int_int_int_int_call(
-            twice, souther5_m_m_fn_f1_int_int_implement(&aborting, aborted, NULL), 2, &out);
+    called = souther@_m_m_fn_f2_f1_int_int_int_int_call(
+            twice, souther@_m_m_fn_f1_int_int_implement(&aborting, aborted, NULL), 2, &out);
     printf("aborted %d\n", called == SOUTHER_INJECTION_PROTOCOL_VIOLATION);
     souther_hosted_function empty;
-    called = souther5_m_m_fn_f2_f1_int_int_int_int_call(
-            twice, souther5_m_m_fn_f1_int_int_implement(&empty, NULL, NULL), 2, &out);
+    called = souther@_m_m_fn_f2_f1_int_int_int_int_call(
+            twice, souther@_m_m_fn_f1_int_int_implement(&empty, NULL, NULL), 2, &out);
     printf("unbound %d\n", called == SOUTHER_INJECTION_UNBOUND);
 
     souther_function pairing = NULL;
-    souther5_m_m_v_pairing(&pairing);
+    souther@_m_m_v_pairing(&pairing);
     int64_t first = 0;
     uint8_t second = 9;
-    called = souther5_m_m_fn_f1_int_t2_int_bool_call(pairing, -4, &first, &second);
+    called = souther@_m_m_fn_f1_int_t2_int_bool_call(pairing, -4, &first, &second);
     printf("pairing %u %" PRId64 " %u", called, first, second);
-    souther5_m_m_fn_f1_int_t2_int_bool_call(pairing, 4, &first, &second);
+    souther@_m_m_fn_f1_int_t2_int_bool_call(pairing, 4, &first, &second);
     printf(" %" PRId64 " %u\n", first, second);
 
     souther_function deep = NULL;
-    souther5_m_m_v_deep(&deep);
+    souther@_m_m_v_deep(&deep);
     for (int64_t x = 1; x >= -1; x--) {
         uint8_t outer = 9, inner = 9;
         int64_t held = -9;
-        called = souther5_m_m_fn_f1_int_o_o_int_call(deep, x, &outer, &inner, &held);
+        called = souther@_m_m_fn_f1_int_o_o_int_call(deep, x, &outer, &inner, &held);
         printf("deep %" PRId64 ": %u %u %u %" PRId64 "\n", x, called, outer, inner, held);
     }
 
     souther_function meet = NULL;
-    souther5_m_m_v_meet(&meet);
+    souther@_m_m_v_meet(&meet);
     uint8_t there = 9;
     int64_t met = -9;
-    souther5_m_m_fn_f1_t2_int_o_int_o_int_call(meet, 4, 1, 7, &there, &met);
+    souther@_m_m_fn_f1_t2_int_o_int_o_int_call(meet, 4, 1, 7, &there, &met);
     printf("meet %u %" PRId64, there, met);
     there = 9;
     met = -9;
-    souther5_m_m_fn_f1_t2_int_o_int_o_int_call(meet, 4, 0, 99, &there, &met);
+    souther@_m_m_fn_f1_t2_int_o_int_o_int_call(meet, 4, 0, 99, &there, &met);
     printf(" %u %" PRId64 "\n", there, met);
 
     souther_function lifted = NULL;
-    souther5_m_m_v_lifted(&lifted);
+    souther@_m_m_v_lifted(&lifted);
     souther_function plus_ten = NULL;
-    called = souther5_m_m_fn_f1_int_f1_int_int_call(lifted, 10, &plus_ten);
-    souther5_m_m_fn_f1_int_int_call(plus_ten, 1, &out);
+    called = souther@_m_m_fn_f1_int_f1_int_int_call(lifted, 10, &plus_ten);
+    souther@_m_m_fn_f1_int_int_call(plus_ten, 1, &out);
     printf("lifted %u %" PRId64 "\n", called, out);
 
     souther_reset(mark);
@@ -375,7 +375,7 @@ const REACHING: &str = r#"
 
 int main(void) {
     int64_t out = -1;
-    souther_status status = souther5_m_r_b_g(NULL, 4, &out);
+    souther_status status = souther@_m_r_b_g(NULL, 4, &out);
     printf("%u %" PRId64 "\n", status, out);
     return 0;
 }
@@ -391,7 +391,7 @@ fn linking(builds: Vec<PathBuf>) -> Linking {
 fn ran(document: &Value, builds: Vec<PathBuf>, program: &str, into: &Path) -> String {
     let built = library_for(&document.to_string(), &linking(builds), &into.join("built")).unwrap();
     let source = into.join("host.c");
-    fs::write(&source, program).unwrap();
+    fs::write(&source, support::harness(program)).unwrap();
     let executable = into.join("host");
     let compiled = Command::new("cc")
         .args(["-Wall", "-Werror", "-o"])
@@ -488,21 +488,38 @@ fn the_manifest_says_the_shape_each_function_value_crosses_in() {
             "answers": {"option": {"option": {"leaf": "int"}}}
         }}})
     );
+    // Each way a function value crosses is offered where something crossing that way needs it:
+    // `bump` is handed to a host and `twice` takes one from a host, so a function of `bump`'s
+    // shape is called and made, and one of `twice`'s is only called.
+    let way = |name: &str| {
+        let crossing = module["functions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|it| it["call"]["name"] == support::harness(name).as_str())
+            .unwrap();
+        (crossing["call"].is_object(), crossing["make"].is_object())
+    };
+    assert_eq!(way("souther@_m_m_fn_f1_int_int_call"), (true, true));
+    assert_eq!(
+        way("souther@_m_m_fn_f2_f1_int_int_int_int_call"),
+        (true, false)
+    );
     let crossed: Vec<&str> = module["functions"]
         .as_array()
         .unwrap()
         .iter()
         .map(|it| it["call"]["name"].as_str().unwrap())
         .collect();
-    assert_eq!(
-        crossed,
-        [
-            "souther5_m_m_fn_f1_int_int_call",
-            "souther5_m_m_fn_f2_f1_int_int_int_int_call",
-            "souther5_m_m_fn_f1_int_t2_int_bool_call",
-            "souther5_m_m_fn_f1_int_o_o_int_call",
-            "souther5_m_m_fn_f1_t2_int_o_int_o_int_call",
-            "souther5_m_m_fn_f1_int_f1_int_int_call",
-        ]
-    );
+    let spelt: Vec<String> = [
+        "souther@_m_m_fn_f1_int_int_call",
+        "souther@_m_m_fn_f2_f1_int_int_int_int_call",
+        "souther@_m_m_fn_f1_int_t2_int_bool_call",
+        "souther@_m_m_fn_f1_int_o_o_int_call",
+        "souther@_m_m_fn_f1_t2_int_o_int_o_int_call",
+        "souther@_m_m_fn_f1_int_f1_int_int_call",
+    ]
+    .map(support::harness)
+    .to_vec();
+    assert_eq!(crossed, spelt);
 }

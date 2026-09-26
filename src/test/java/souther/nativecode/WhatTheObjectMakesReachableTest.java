@@ -56,8 +56,8 @@ class WhatTheObjectMakesReachableTest {
 
         assertThat(table)
                 .as("what the object carries: %s", table)
-                .containsEntry("souther5.surfaced.shown", "T")
-                .containsEntry("souther5.surfaced.hidden", "t");
+                .containsEntry("souther" + Running.ABI + ".surfaced.shown", "T")
+                .containsEntry("souther" + Running.ABI + ".surfaced.hidden", "t");
     }
 
     /**
@@ -91,10 +91,10 @@ class WhatTheObjectMakesReachableTest {
 
         assertThat(table)
                 .as("what the object carries: %s", table)
-                .containsEntry("souther5.shaped$construct$Open", "T")
-                .containsEntry("souther5.shaped$construct$Closed", "t")
-                .doesNotContainKey("souther5.shaped$construct$Plain")
-                .doesNotContainKey("souther5.shaped$construct$Secret");
+                .containsEntry("souther" + Running.ABI + ".shaped$construct$Open", "T")
+                .containsEntry("souther" + Running.ABI + ".shaped$construct$Closed", "t")
+                .doesNotContainKey("souther" + Running.ABI + ".shaped$construct$Plain")
+                .doesNotContainKey("souther" + Running.ABI + ".shaped$construct$Secret");
     }
 
     /**
@@ -148,8 +148,8 @@ class WhatTheObjectMakesReachableTest {
         Map<String, String> table = named(Checked.of(List.of(SURFACE)));
 
         assertThat(table)
-                .containsEntry("souther5.surfaced.hidden$example$0", "T")
-                .containsEntry("souther5.surfaced.hidden$example$1", "T");
+                .containsEntry("souther" + Running.ABI + ".surfaced.hidden$example$0", "T")
+                .containsEntry("souther" + Running.ABI + ".surfaced.hidden$example$1", "T");
     }
 
     /**
@@ -163,10 +163,10 @@ class WhatTheObjectMakesReachableTest {
 
         assertThat(table)
                 .as("what the object carries: %s", table)
-                .containsEntry("souther5.surfaced.shown$boundary", "T")
-                .containsEntry("souther5.surfaced.hidden$example$0$boundary", "T")
-                .containsEntry("souther5.surfaced.hidden$example$1$boundary", "T")
-                .doesNotContainKey("souther5.surfaced.hidden$boundary");
+                .containsEntry("souther" + Running.ABI + ".surfaced.shown$boundary", "T")
+                .containsEntry("souther" + Running.ABI + ".surfaced.hidden$example$0$boundary", "T")
+                .containsEntry("souther" + Running.ABI + ".surfaced.hidden$example$1$boundary", "T")
+                .doesNotContainKey("souther" + Running.ABI + ".surfaced.hidden$boundary");
     }
 
     private static CheckedBehavior behaviorOf(CheckedModule module, String name) {

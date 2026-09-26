@@ -169,11 +169,11 @@ class AManifestIsReadAsTheDriverPromisesItTest {
         NativeCompiler.Library library = built(into, TWO_MODULES_OF_LISTS, SECOND_MODULE_OF_LISTS);
 
         assertThatThrownBy(() -> readAfter(into, library, "stock", module -> {
-            ObjectNode at = (ObjectNode) module.get("lists").get(0).get("at");
+            ObjectNode at = (ObjectNode) module.get("lists").get(0).get("read").get("at");
             ((ArrayNode) at.get("takes")).remove(2);
         }))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("souther5_m_stock_l_value_at");
+                .hasMessageContaining("souther" + Manifest.ABI + "_m_stock_l_value_at");
     }
 
     /**
@@ -232,6 +232,25 @@ class AManifestIsReadAsTheDriverPromisesItTest {
                 .hasMessageContaining("with no case in it");
     }
 
+    /**
+     * A list is reached the way it crosses: a cart's items are handed over to its constructor and
+     * handed back by its reader, so the manifest has to say what builds such a list as well as what
+     * reads one, and saying only the one is refused.
+     */
+    @Test
+    void aListHandedOverWithNothingToBuildItThroughIsRefused(@TempDir Path into) throws Exception {
+        NativeCompiler.Library library = built(into, TWO_MODULES_OF_LISTS, SECOND_MODULE_OF_LISTS);
+
+        assertThatThrownBy(() -> readAfter(into, library, "shop",
+                module -> ((ObjectNode) module.get("lists").get(0)).putNull("construct")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("says nothing to build one through");
+        assertThatThrownBy(() -> readAfter(into, library, "shop",
+                module -> ((ObjectNode) module.get("lists").get(0)).putNull("read")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("says nothing to read one through");
+    }
+
     /** One element twice in a module is two things said of one list. */
     @Test
     void aListOfOneElementSaidTwiceIsRefused(@TempDir Path into) throws Exception {
@@ -257,9 +276,9 @@ class AManifestIsReadAsTheDriverPromisesItTest {
         element.words().forEach(word -> at.add(Manifest.Parameter.room(word)));
         return new Manifest.ListCrossing(element,
                 new Manifest.Function(name + "_construct", built, Manifest.Word.LIST),
-                new Manifest.Function(name + "_length",
+                new Manifest.ListRead(new Manifest.Function(name + "_length",
                         List.of(Manifest.Parameter.given(Manifest.Word.LIST)), Manifest.Word.COUNT),
-                new Manifest.Function(name + "_at", at, Manifest.Word.BOOL));
+                        new Manifest.Function(name + "_at", at, Manifest.Word.BOOL)));
     }
 
     private static Manifest.Module moduleOf(List<Manifest.ListCrossing> lists) {
@@ -277,7 +296,7 @@ class AManifestIsReadAsTheDriverPromisesItTest {
 
         assertThatThrownBy(() -> new Manifest.ListCrossing(
                 new Manifest.Shape.Option(new Manifest.Shape.Leaf(Manifest.Word.INT)),
-                values.construct(), values.length(), values.at()))
+                values.construct(), values.read()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("values_construct");
         assertThatThrownBy(() -> moduleOf(List.of(values, listOf(VALUES, "again"))))
@@ -286,20 +305,23 @@ class AManifestIsReadAsTheDriverPromisesItTest {
     }
 
     /**
-     * What reaches a value says the shape each value crosses in, and that shape is the one the
-     * type is made of: a published value of an `Int` said to cross as the members of a tuple is
-     * the manifest disagreeing with itself, however well the function agrees with the shape.
+     * Which shape a type crosses in is the driver's to say, and is read as it says it, whatever the
+     * type: a `Decimal` said to cross as two words, as a later driver may say, is read, and not held
+     * to how any type crosses today. What is held is that each function takes and answers the words
+     * of the shapes said beside it.
      */
     @Test
-    void aShapeThatIsNotHowItsTypeCrossesIsRefused(@TempDir Path into) throws Exception {
+    void aShapeIsReadAsTheDriverSaysItWhateverTheType(@TempDir Path into) throws Exception {
         NativeCompiler.Library library = built(into, SHAPED);
 
-        assertThatThrownBy(() -> readAfter(into, library, "shaped", module -> {
+        Manifest read = readAfter(into, library, "shaped", module -> {
             ObjectNode pair = (ObjectNode) module.get("values").get(0);
-            pair.set("type", JSON.readTree("{\"kind\": \"primitive\", \"name\": \"Int\"}"));
-        }))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("the value pair is said to cross as");
+            pair.set("type", JSON.readTree("{\"kind\": \"primitive\", \"name\": \"Decimal\"}"));
+        });
+
+        Manifest.PublishedValue pair = read.modules().getFirst().values().getFirst();
+        assertThat(pair.type()).isEqualTo(new Manifest.Type.Primitive("Decimal"));
+        assertThat(pair.read().available()).isNotNull();
     }
 
     /**

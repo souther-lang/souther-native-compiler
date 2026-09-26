@@ -24,10 +24,14 @@ import java.util.stream.IntStream;
  * except where what it holds may be null itself: there a value it holds is a
  * {@code \Souther\Runtime\Some}, so an optional of an optional holding nothing is not null.
  *
- * <p>The two ways are apart ({@link Given}, {@link Received}), because a type may cross one way and
- * not the other. PHP handing over a value of a union no declaration names knows which class it holds
- * and hands over the value; PHP handed one has to be told which case it is before it can make an
- * object of it, and only a behavior's answer says.
+ * <p>The two ways are apart ({@link Given}, {@link Received}), and so is every kind made of others,
+ * because a type may cross one way and not the other, and what it is made of crosses the way it
+ * does. PHP handing over a value of a union no declaration names knows which class it holds and
+ * hands over the value; PHP handed one has to be told which case it is before it can make an object
+ * of it, and only a behavior's answer says. So a list of one is built by PHP and never read, and a
+ * function taking one is called by PHP and never made, and a list or a function value is reached
+ * through what the manifest offers for the way it crosses and nothing else. Only a leaf is held the
+ * same way both ways ({@link Whole}).
  */
 sealed interface Crossing {
 
@@ -124,19 +128,11 @@ sealed interface Crossing {
     }
 
     /**
-     * A value PHP holds both ways, and the same way each: never a union no declaration names, which
-     * PHP holds only where it hands one over whole ({@link OneOf}) or is told its case
-     * ({@link Told}).
-     */
-    sealed interface Both extends Given, Received {
-    }
-
-    /**
      * One word of the library's that is the value itself: a primitive, or a value of a declared
-     * type, as {@code kind} says and as the shape is.
+     * type, as {@code kind} says and as the shape is. Held the same way both ways.
      */
     record Whole(Shape.Leaf shape, String phpType, Kind kind, @Nullable String declared)
-            implements Both {
+            implements Given, Received {
 
         enum Kind { INT, BOOL, STRING, PRODUCT, SUM }
 
@@ -209,13 +205,36 @@ sealed interface Crossing {
     }
 
     /**
-     * An optional: whether it holds a value, then the value, or nothing where it holds none. Null
-     * to PHP where it holds nothing; where what it holds may be null itself, a value it holds is a
-     * {@code \Souther\Runtime\Some} of it, so each depth of absence is its own.
+     * What an optional holding a value of {@code of} holds it in: {@code \\Souther\\Runtime\\Some}
+     * where what it holds may be null itself, so each depth of absence is its own, and the value as
+     * it is otherwise.
      */
-    record Optional(Both of) implements Both {
+    private static boolean wraps(Crossing of) {
+        return of.nullable();
+    }
 
-        private static final String SOME = "\\Souther\\Runtime\\Some";
+    /** What PHP calls an optional of {@code of}. */
+    private static String optionalType(Crossing of) {
+        return "?" + (wraps(of) ? SOME : of.phpType());
+    }
+
+    /** What a docblock calls an optional of {@code of}. */
+    private static String optionalDocType(Crossing of) {
+        if (wraps(of)) {
+            return SOME + "<" + of.phpDocType() + ">|null";
+        }
+        return of.phpDocType().equals(of.phpType()) ? optionalType(of)
+                : of.phpDocType() + "|null";
+    }
+
+    /** What PHP holds a value an optional holds in, where it wraps it. */
+    String SOME = "\\Souther\\Runtime\\Some";
+
+    /**
+     * An optional PHP hands over: null where it holds nothing, and what it holds, or a {@code Some}
+     * of it where that may be null itself.
+     */
+    record GivenOptional(Given of) implements Given {
 
         @Override
         public Shape shape() {
@@ -227,33 +246,21 @@ sealed interface Crossing {
             return true;
         }
 
-        /** Whether a value it holds is wrapped, as what it holds may be null. */
-        private boolean wraps() {
-            return of.nullable();
-        }
-
         @Override
         public String phpType() {
-            return "?" + (wraps() ? SOME : of.phpType());
+            return optionalType(of);
         }
 
         @Override
         public String phpDocType() {
-            if (wraps()) {
-                return SOME + "<" + of.phpDocType() + ">|null";
-            }
-            return of.phpDocType().equals(of.phpType()) ? phpType() : of.phpDocType() + "|null";
-        }
-
-        /** What it holds, where {@code value} holds something. */
-        private String held(String value) {
-            return wraps() ? value + "->value" : value;
+            return optionalDocType(of);
         }
 
         @Override
         public List<String> given(String value, String session) {
+            String held = wraps(of) ? value + "->value" : value;
             List<String> words = new ArrayList<>(List.of("(" + value + " !== null ? 1 : 0)"));
-            List<String> inner = of.given(held(value), session);
+            List<String> inner = of.given(held, session);
             List<Word> innerWords = of.words();
             for (int at = 0; at < inner.size(); at++) {
                 words.add("(" + value + " !== null ? " + inner.get(at) + " : "
@@ -264,23 +271,54 @@ sealed interface Crossing {
 
         @Override
         public String holds(String value) {
-            String held = wraps() ? "(" + value + " instanceof " + SOME + " && "
-                    + of.holds(held(value)) + ")" : of.holds(value);
+            String held = wraps(of) ? "(" + value + " instanceof " + SOME + " && "
+                    + of.holds(value + "->value") + ")" : of.holds(value);
             return "(" + value + " === null || " + held + ")";
+        }
+    }
+
+    /** An optional the library hands PHP, held as {@link GivenOptional} says. */
+    record ReceivedOptional(Received of) implements Received {
+
+        @Override
+        public Shape shape() {
+            return new Shape.Option(of.shape());
+        }
+
+        @Override
+        public boolean nullable() {
+            return true;
+        }
+
+        @Override
+        public String phpType() {
+            return optionalType(of);
+        }
+
+        @Override
+        public String phpDocType() {
+            return optionalDocType(of);
         }
 
         @Override
         public String of(List<String> words, String session) {
             String made = of.of(words.subList(1, words.size()), session);
             return "(" + words.getFirst() + " !== 0 ? "
-                    + (wraps() ? "new " + SOME + "(" + made + ")" : made) + " : null)";
+                    + (wraps(of) ? "new " + SOME + "(" + made + ")" : made) + " : null)";
         }
     }
 
-    /** A tuple, as a PHP list of its members, each held as a value of its type is. */
-    record Tuple(List<Both> members) implements Both {
+    /** What a docblock calls a tuple of {@code members}: an array of each at its place. */
+    private static String tupleDocType(List<? extends Crossing> members) {
+        return IntStream.range(0, members.size())
+                .mapToObj(at -> at + ": " + members.get(at).phpDocType())
+                .collect(Collectors.joining(", ", "array{", "}"));
+    }
 
-        public Tuple {
+    /** A tuple PHP hands over, as a PHP list of its members. */
+    record GivenTuple(List<Given> members) implements Given {
+
+        public GivenTuple {
             members = List.copyOf(members);
         }
 
@@ -296,9 +334,7 @@ sealed interface Crossing {
 
         @Override
         public String phpDocType() {
-            return IntStream.range(0, members.size())
-                    .mapToObj(at -> at + ": " + members.get(at).phpDocType())
-                    .collect(Collectors.joining(", ", "array{", "}"));
+            return tupleDocType(members);
         }
 
         @Override
@@ -319,12 +355,35 @@ sealed interface Crossing {
             }
             return "(" + String.join(" && ", held) + ")";
         }
+    }
+
+    /** A tuple the library hands PHP, as a PHP list of its members. */
+    record ReceivedTuple(List<Received> members) implements Received {
+
+        public ReceivedTuple {
+            members = List.copyOf(members);
+        }
+
+        @Override
+        public Shape shape() {
+            return new Shape.Product(members.stream().map(Crossing::shape).toList());
+        }
+
+        @Override
+        public String phpType() {
+            return "array";
+        }
+
+        @Override
+        public String phpDocType() {
+            return tupleDocType(members);
+        }
 
         @Override
         public String of(List<String> words, String session) {
             List<String> made = new ArrayList<>();
             int at = 0;
-            for (Both member : members) {
+            for (Received member : members) {
                 int wide = member.words().size();
                 made.add(member.of(words.subList(at, at + wide), session));
                 at += wide;
@@ -333,23 +392,33 @@ sealed interface Crossing {
         }
     }
 
-    /**
-     * A list, as a PHP list of what its element crosses as, through the functions the manifest
-     * says for a list of its element's shape.
-     *
-     * <p>An element is handed over as PHP hands over a value of its type anywhere else, through the
-     * session the list is built in, so a value of an outer run may be one and a value of a run that
-     * ended may not. An element read out is held for the session the list was read in, as a field's
-     * value is.
-     */
-    record Listed(Both element, ListCrossing crossing) implements Both {
+    /** What C calls each word an element of {@code element} crosses as, as a PHP array. */
+    private static String columns(Crossing element) {
+        return element.words().stream().map(it -> "'" + Crossing.storage(it) + "'")
+                .collect(Collectors.joining(", ", "[", "]"));
+    }
 
-        /** Refuses a list through another element's functions. */
-        public Listed {
-            if (!crossing.element().equals(element.shape())) {
-                throw new IllegalArgumentException("a list of " + element.shape() + " is not built"
-                        + " through " + crossing.construct().name() + ", which builds a list of "
-                        + crossing.element());
+    /** Refuses a list through another element's functions. */
+    private static void listing(Crossing element, ListCrossing crossing) {
+        if (!crossing.element().equals(element.shape())) {
+            throw new IllegalArgumentException("a list of " + element.shape() + " is not reached"
+                    + " through the functions of a list of " + crossing.element());
+        }
+    }
+
+    /**
+     * A list PHP hands over, as a PHP list of what its element crosses as, built through what the
+     * manifest says builds a list of its element's shape. An element is handed over as PHP hands
+     * over a value of its type anywhere else, through the session the list is built in, so a value
+     * of an outer run may be one and a value of a run that ended may not.
+     */
+    record GivenList(Given element, ListCrossing crossing) implements Given {
+
+        public GivenList {
+            listing(element, crossing);
+            if (crossing.construct() == null) {
+                throw new IllegalArgumentException("a list of " + crossing.element() + " is built"
+                        + " by nothing");
             }
         }
 
@@ -372,61 +441,100 @@ sealed interface Crossing {
         public List<String> given(String value, String session) {
             // Typed as the element, so an element of another type is refused by PHP before any of
             // it reaches the library.
-            return List.of(session + "->list('" + crossing.construct().name() + "', "
-                    + columns() + ", " + value
-                    + ", static fn (" + element.phpType() + " $it): array => ["
-                    + String.join(", ", element.given("$it", session)) + "])");
+            return List.of(session + "->list('"
+                    + java.util.Objects.requireNonNull(crossing.construct()).name() + "', "
+                    + columns(element) + ", " + value + ", static fn (" + element.phpType()
+                    + " $it): array => [" + String.join(", ", element.given("$it", session)) + "])");
         }
 
         @Override
         public String holds(String value) {
             return "\\is_array(" + value + ")";
         }
+    }
+
+    /**
+     * A list the library hands PHP, as a PHP list of what its element crosses as, read through
+     * what the manifest says reads a list of its element's shape. An element read out is held for
+     * the session the list was read in, as a field's value is.
+     */
+    record ReceivedList(Received element, ListCrossing crossing) implements Received {
+
+        public ReceivedList {
+            listing(element, crossing);
+            if (crossing.read() == null) {
+                throw new IllegalArgumentException("a list of " + crossing.element() + " is read"
+                        + " by nothing");
+            }
+        }
+
+        @Override
+        public Shape shape() {
+            return new Shape.ListOf(element.shape());
+        }
+
+        @Override
+        public String phpType() {
+            return "array";
+        }
+
+        @Override
+        public String phpDocType() {
+            return "list<" + element.phpDocType() + ">";
+        }
 
         @Override
         public String of(List<String> words, String session) {
+            Manifest.ListRead read = java.util.Objects.requireNonNull(crossing.read());
             List<String> rooms = new ArrayList<>();
             for (int at = 0; at < element.words().size(); at++) {
                 rooms.add("$r" + at);
             }
-            return session + "->elements('" + crossing.length().name() + "', '"
-                    + crossing.at().name() + "', " + columns() + ", "
-                    + words.getFirst() + ", static fn ("
+            return session + "->elements('" + read.length().name() + "', '" + read.at().name()
+                    + "', " + columns(element) + ", " + words.getFirst() + ", static fn ("
                     + rooms.stream().map(it -> "\\FFI\\CData " + it).collect(Collectors.joining(", "))
                     + "): " + element.phpType() + " => "
                     + element.of(element.fromRooms(rooms), session) + ")";
         }
+    }
 
-        /** What C calls each word an element crosses as, as a PHP array. */
-        private String columns() {
-            return element.words().stream().map(it -> "'" + Crossing.storage(it) + "'")
-                    .collect(Collectors.joining(", ", "[", "]"));
+    /** What a docblock calls a function value taking {@code takes} and answering {@code answers}. */
+    private static String functionDocType(List<? extends Crossing> takes, Crossing answers) {
+        return "\\Closure(" + takes.stream().map(Crossing::phpDocType)
+                .collect(Collectors.joining(", ")) + "): " + answers.phpDocType();
+    }
+
+    /** Refuses a function value called or made through another shape's functions. */
+    private static void signing(List<? extends Crossing> takes, Crossing answers,
+                                FunctionCrossing crossing) {
+        Manifest.Signature signature = new Manifest.Signature(
+                takes.stream().map(Crossing::shape).toList(), answers.shape());
+        if (!crossing.signature().equals(signature)) {
+            throw new IllegalArgumentException("a function of " + signature + " is not reached"
+                    + " through the functions of one of " + crossing.signature());
         }
     }
 
     /**
-     * A function value, as a {@code \Closure}. PHP handed one calls it through the manifest's
-     * {@code call} for its shape, in the innermost run going when it is called; PHP handing one
-     * over hands a closure of its own, which the library calls through the slot the binding keeps
-     * for the shape ({@code \Souther\Runtime\FunctionSlot}), for as long as the run it was handed
-     * over in.
+     * A function value PHP hands over, as a {@code \\Closure} of its own: made into one through
+     * the slot the binding keeps for its type ({@code \\Souther\\Runtime\\FunctionSlot}), which
+     * the library calls it through with what it takes, as PHP is handed each, for as long as the
+     * run it was handed over in.
      *
      * @param binding the generated binding's class, as PHP names it
      * @param slot    what the binding keeps the slot a closure of this type is called through
      *                under: one for each function type as PHP holds it, and not for each shape,
      *                since two types crossing in one shape are made into two sets of classes
      */
-    record Callable(List<Both> takes, Both answers, FunctionCrossing crossing, String binding,
-                    String slot) implements Both {
+    record GivenFunction(List<Received> takes, Given answers, FunctionCrossing crossing,
+                         String binding, String slot) implements Given {
 
-        public Callable {
+        public GivenFunction {
             takes = List.copyOf(takes);
-            Manifest.Signature signature = new Manifest.Signature(
-                    takes.stream().map(Crossing::shape).toList(), answers.shape());
-            if (!crossing.signature().equals(signature)) {
-                throw new IllegalArgumentException("a function of " + signature + " is not called"
-                        + " through " + crossing.call().name() + ", which calls one of "
-                        + crossing.signature());
+            signing(takes, answers, crossing);
+            if (crossing.make() == null) {
+                throw new IllegalArgumentException("a function of " + crossing.signature()
+                        + " is made by nothing");
             }
         }
 
@@ -442,8 +550,7 @@ sealed interface Crossing {
 
         @Override
         public String phpDocType() {
-            return "\\Closure(" + takes.stream().map(Crossing::phpDocType)
-                    .collect(Collectors.joining(", ")) + "): " + answers.phpDocType();
+            return functionDocType(takes, answers);
         }
 
         @Override
@@ -456,12 +563,43 @@ sealed interface Crossing {
         public String holds(String value) {
             return value + " instanceof \\Closure";
         }
+    }
 
-        /**
-         * A closure calling the function value in {@code words}, held for {@code session}'s run:
-         * called with what the function takes, in the innermost run going when it is called, and
-         * answering what the function answered, or throwing where it ended without an answer.
-         */
+    /**
+     * A function value the library hands PHP, as a {@code \\Closure} calling it through the
+     * manifest's {@code call} for its shape: called with what the function takes, as PHP hands each
+     * over, in the innermost run going when it is called, and answering what the function answered,
+     * or throwing where it ended without an answer.
+     *
+     * @param binding the generated binding's class, as PHP names it
+     */
+    record ReceivedFunction(List<Given> takes, Received answers, FunctionCrossing crossing,
+                            String binding) implements Received {
+
+        public ReceivedFunction {
+            takes = List.copyOf(takes);
+            signing(takes, answers, crossing);
+            if (crossing.call() == null) {
+                throw new IllegalArgumentException("a function of " + crossing.signature()
+                        + " is called by nothing");
+            }
+        }
+
+        @Override
+        public Shape shape() {
+            return new Shape.FunctionOf(crossing.signature());
+        }
+
+        @Override
+        public String phpType() {
+            return "\\Closure";
+        }
+
+        @Override
+        public String phpDocType() {
+            return functionDocType(takes, answers);
+        }
+
         @Override
         public String of(List<String> words, String session) {
             List<String> parameters = new ArrayList<>(
@@ -483,7 +621,8 @@ sealed interface Crossing {
             return session + "->callable(" + binding + "::class, " + words.getFirst()
                     + ", static function (" + String.join(", ", parameters) + "): "
                     + answers.phpType() + " { $ffi = $session->call(); " + rooms
-                    + "$session->answered($ffi->" + crossing.call().name() + "("
+                    + "$session->answered($ffi->"
+                    + java.util.Objects.requireNonNull(crossing.call()).name() + "("
                     + String.join(", ", given) + ")); return "
                     + answers.of(answers.fromRooms(held), "$session") + "; })";
         }

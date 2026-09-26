@@ -48,11 +48,14 @@ class WhatAPhpRecordHoldsIsItsOwnTest {
         owning.walk(new Crossing.OneOf(either, List.of(found, missing)));
         owning.walk(new Crossing.Told(which, "\\Acme\\M\\Found|\\Acme\\M\\Missing",
                 List.of(found, missing), "`m.find`"));
-        owning.walk(new Crossing.Tuple(List.of(count, count)));
+        owning.walk(new Crossing.GivenTuple(List.of(count, count)));
+        owning.walk(new Crossing.ReceivedTuple(List.of(count, count)));
         Manifest.FunctionCrossing crossing = Manifest.read(Documents.library(Documents.FUNCTIONS,
                 into.resolve("functions")).manifest()).modules().getFirst().functions().getFirst();
-        owning.walk(new Crossing.Callable(List.of(count), count, crossing, "\\Acme\\Binding",
-                crossing.implement() + "#0"));
+        owning.walk(new Crossing.GivenFunction(List.of(count), count, crossing, "\\Acme\\Binding",
+                java.util.Objects.requireNonNull(crossing.make()).implement() + "#0"));
+        owning.walk(new Crossing.ReceivedFunction(List.of(count), count, crossing,
+                "\\Acme\\Binding"));
 
         assertThat(owning.wrong).isEmpty();
         assertThat(Owning.collectionsIn("souther.bindings.php")).contains(

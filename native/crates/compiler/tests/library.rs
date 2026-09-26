@@ -156,10 +156,10 @@ const CALLING: &str = r#"
 int main(void) {
     int64_t mark = souther_mark();
     int64_t answer = -1;
-    souther_status status = souther5_m_calculation_b_add(NULL, 2, 3, &answer);
+    souther_status status = souther@_m_calculation_b_add(NULL, 2, 3, &answer);
     printf("%u %" PRId64 "\n", status, answer);
     answer = -1;
-    status = souther5_m_calculation_b_add(NULL, INT64_MAX, 1, &answer);
+    status = souther@_m_calculation_b_add(NULL, INT64_MAX, 1, &answer);
     printf("%d %" PRId64 "\n", status == SOUTHER_REQUIRED_FORM_HAS_NO_PLACE, answer);
     souther_reset(mark);
     return 0;
@@ -181,29 +181,29 @@ static void said(souther_string text) {
 int main(void) {
     int64_t mark = souther_mark();
     souther_value built = NULL;
-    souther_status status = souther5_m_m_t_P_construct(7, &built);
+    souther_status status = souther@_m_m_t_P_construct(7, &built);
     int64_t n = 0;
-    souther5_m_m_t_P_f_n(built, &n);
+    souther@_m_m_t_P_f_n(built, &n);
     printf("%u %" PRId64 "\n", status, n);
-    said(souther5_m_m_t_P_encode(built));
+    said(souther@_m_m_t_P_encode(built));
 
     const char *json = "{\"n\": 9}";
     souther_decoded reading = NULL;
-    status = souther5_m_m_t_P_decode((const uint8_t *) json, (int64_t) strlen(json), &reading);
-    souther5_m_m_t_P_f_n(souther_decoded_value(reading), &n);
+    status = souther@_m_m_t_P_decode((const uint8_t *) json, (int64_t) strlen(json), &reading);
+    souther@_m_m_t_P_f_n(souther_decoded_value(reading), &n);
     printf("%u %d %" PRId64 "\n", status, souther_decoded_outcome(reading) == SOUTHER_DECODED_VALUE,
            n);
 
     json = "{}";
-    status = souther5_m_m_t_P_decode((const uint8_t *) json, (int64_t) strlen(json), &reading);
+    status = souther@_m_m_t_P_decode((const uint8_t *) json, (int64_t) strlen(json), &reading);
     souther_issue issue = souther_decoded_issue(reading, 0);
     printf("%u %d %" PRId64 " ", status, souther_decoded_outcome(reading) == SOUTHER_DECODED_ISSUES,
            souther_decoded_issue_count(reading));
     said(souther_issue_code(issue));
 
     souther_value published = NULL;
-    status = souther5_m_m_v_ys(&published);
-    souther5_m_m_t_P_f_n(published, &n);
+    status = souther@_m_m_v_ys(&published);
+    souther@_m_m_t_P_f_n(published, &n);
     printf("%u %" PRId64 "\n", status, n);
     souther_reset(mark);
     return 0;
@@ -217,7 +217,7 @@ const CALLING_FROM_CPP: &str = r#"
 
 int main() {
     int64_t answer = -1;
-    souther_status status = souther5_m_calculation_b_add(NULL, 2, 3, &answer);
+    souther_status status = souther@_m_calculation_b_add(NULL, 2, 3, &answer);
     std::printf("%u %lld\n", status, static_cast<long long>(answer));
     return 0;
 }
@@ -231,7 +231,7 @@ fn ran_as(document: &str, program: &str, compiler: &str, named: &str) -> String 
     let into = tempdir().unwrap();
     let built = library_for(document, &linking(vec![]), into.path()).unwrap();
     let source = into.path().join(named);
-    fs::write(&source, program).unwrap();
+    fs::write(&source, support::harness(program)).unwrap();
     let executable = into.path().join("host");
     let compiled = Command::new(compiler)
         .args(["-Wall", "-Werror", "-o"])
@@ -309,7 +309,7 @@ static souther_status unbound(void *by, int64_t a, int64_t *out) {
 static souther_status nesting(void *by, int64_t a, int64_t *out) {
     int64_t inner = -1;
     souther_status status =
-        souther5_m_m_b_twice((const souther_capability *const *) by, a, &inner);
+        souther@_m_m_b_twice((const souther_capability *const *) by, a, &inner);
     printf("inner %u %lld\n", status, (long long) inner);
     *out = a;
     return SOUTHER_ANSWERED;
@@ -321,14 +321,14 @@ typedef struct {
     const souther_capability *requirements[1];
 } implemented;
 
-static void implement(implemented *into, souther5_m_m_b_lookUp_implementation by, void *userdata) {
-    souther5_m_m_b_lookUp_implement(&into->capability, &into->hosted, by, userdata);
+static void implement(implemented *into, souther@_m_m_b_lookUp_implementation by, void *userdata) {
+    souther@_m_m_b_lookUp_implement(&into->capability, &into->hosted, by, userdata);
     into->requirements[0] = &into->capability;
 }
 
 static void twice(const char *what, implemented *with) {
     int64_t answer = -1;
-    souther_status status = souther5_m_m_b_twice(with->requirements, 1, &answer);
+    souther_status status = souther@_m_m_b_twice(with->requirements, 1, &answer);
     printf("%s %u %lld\n", what, status, (long long) answer);
 }
 
@@ -340,10 +340,10 @@ static void *elsewhere(void *with) {
 int main(void) {
     int64_t mark = souther_mark();
     int64_t answer = -1;
-    souther_status status = souther5_m_m_b_twice(NULL, 1, &answer);
+    souther_status status = souther@_m_m_b_twice(NULL, 1, &answer);
     printf("nothing %d %lld\n", status == SOUTHER_INJECTION_UNBOUND, (long long) answer);
     const souther_capability *none[1] = {NULL};
-    status = souther5_m_m_b_twice(none, 1, &answer);
+    status = souther@_m_m_b_twice(none, 1, &answer);
     printf("none %d %lld\n", status == SOUTHER_INJECTION_UNBOUND, (long long) answer);
 
     int64_t twenty = 20, thirty = 30;
@@ -354,7 +354,7 @@ int main(void) {
     twice("other", &by_thirty);
     twice("again", &by_twenty);
     answer = -1;
-    status = souther5_m_m_b_looked(by_twenty.requirements, 1, &answer);
+    status = souther@_m_m_b_looked(by_twenty.requirements, 1, &answer);
     printf("looked %u %lld\n", status, (long long) answer);
 
     pthread_t thread;
@@ -364,19 +364,19 @@ int main(void) {
     implemented by_below, by_thrown, by_aborted, by_unbound, by_nesting;
     implement(&by_below, below, NULL);
     answer = -1;
-    status = souther5_m_m_b_twice(by_below.requirements, 1, &answer);
+    status = souther@_m_m_b_twice(by_below.requirements, 1, &answer);
     printf("below %d %lld\n", status == SOUTHER_ENSURES_NOT_HELD, (long long) answer);
 
     implement(&by_thrown, thrown, NULL);
-    status = souther5_m_m_b_twice(by_thrown.requirements, 1, &answer);
+    status = souther@_m_m_b_twice(by_thrown.requirements, 1, &answer);
     printf("thrown %d %lld\n", status == SOUTHER_HOST_EXCEPTION, (long long) answer);
 
     implement(&by_aborted, aborted, NULL);
-    status = souther5_m_m_b_twice(by_aborted.requirements, 1, &answer);
+    status = souther@_m_m_b_twice(by_aborted.requirements, 1, &answer);
     printf("aborted %d\n", status == SOUTHER_INJECTION_PROTOCOL_VIOLATION);
 
     implement(&by_unbound, unbound, NULL);
-    status = souther5_m_m_b_twice(by_unbound.requirements, 1, &answer);
+    status = souther@_m_m_b_twice(by_unbound.requirements, 1, &answer);
     printf("claimed %d\n", status == SOUTHER_INJECTION_PROTOCOL_VIOLATION);
 
     implement(&by_nesting, nesting, (void *) by_twenty.requirements);
@@ -533,7 +533,7 @@ static void said(souther_string text) {
 
 static void read(const char *json) {
     souther_decoded reading = NULL;
-    souther_status status = souther5_m_m_t_Q_decode((const uint8_t *) json, (int64_t) strlen(json),
+    souther_status status = souther@_m_m_t_Q_decode((const uint8_t *) json, (int64_t) strlen(json),
                                                    &reading);
     if (souther_decoded_outcome(reading) != SOUTHER_DECODED_VALUE) {
         printf("%u issues %" PRId64 " ", status, souther_decoded_issue_count(reading));
@@ -541,13 +541,13 @@ static void read(const char *json) {
         return;
     }
     souther_value value = souther_decoded_value(reading);
-    uint32_t which = souther5_m_m_t_Q_case(value);
+    uint32_t which = souther@_m_m_t_Q_case(value);
     printf("%u case %u", status, which);
     if (which == 0) {
         printf(" holds %" PRId64, souther_case_int_read(value));
     }
     printf(" ");
-    said(souther5_m_m_t_Q_encode(value));
+    said(souther@_m_m_t_Q_encode(value));
 }
 
 int main(void) {
@@ -557,8 +557,8 @@ int main(void) {
     read("{\"type\": \"A\"}");
     read("{\"type\": \"Int\"}");
     read("{\"type\": \"Int\", \"value\": true}");
-    said(souther5_m_m_t_Q_encode(souther_case_int_make(9)));
-    said(souther5_m_m_t_Q_encode(souther_case_division_by_zero_make()));
+    said(souther@_m_m_t_Q_encode(souther_case_int_make(9)));
+    said(souther@_m_m_t_Q_encode(souther_case_division_by_zero_make()));
     souther_reset(mark);
     return 0;
 }

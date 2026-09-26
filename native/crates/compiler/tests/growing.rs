@@ -19,7 +19,6 @@ use std::process::Command;
 use tempfile::{TempDir, tempdir};
 
 mod support;
-use support::PREFIX;
 
 /// The document the Java half wrote, and the one its own test holds it to.
 const GROWING: &str = include_str!("growing.transport.json");
@@ -32,7 +31,7 @@ const HARNESS: &str = r#"
 #include <stdio.h>
 #include <stdlib.h>
 
-extern uint32_t grown(const void *, int64_t, int64_t *) __asm__("PREFIXsouther5.growing.grown");
+extern uint32_t grown(const void *, int64_t, int64_t *) __asm__("PREFIXsouther@.growing.grown");
 extern int64_t souther_mark(void);
 extern void souther_reset(int64_t);
 
@@ -63,7 +62,7 @@ fn build() -> (TempDir, PathBuf) {
     let object = into.path().join("growing.o");
     fs::write(&object, object_for(GROWING).expect("an object")).expect("the object written");
     let harness = into.path().join("harness.c");
-    fs::write(&harness, HARNESS.replace("PREFIX", PREFIX)).expect("the harness written");
+    fs::write(&harness, support::harness(HARNESS)).expect("the harness written");
     let executable = into.path().join("growing");
     let linked = Command::new("cc")
         .arg("-o")

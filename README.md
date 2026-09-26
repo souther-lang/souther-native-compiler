@@ -261,7 +261,10 @@ columns, a presence and the value, as an optional field is; a list of lists of `
 `l_int` elements; and a list of pairs is `t2_int_string`, a column for each member. A list of one
 declared type is built through the same functions as a list of another, and none of it asks where
 the list keeps its length. A count below nought, or one no room can be taken for, is the host's
-mistake and ends the process.
+mistake and ends the process. What builds a list is there where something takes one from a host, and
+what reads one where something hands one to a host, and not otherwise: a host hands over a list of
+a union no declaration names as the cases each element is, and has nothing to be told which case
+an element is where it would read one, so such a list is built by a host and read by none.
 
 A function value crosses as an address too, of type `souther_function`, wherever a value holding
 one is handed across: today a published value and what such a value takes and answers, since a
@@ -273,7 +276,10 @@ function of the type `..._implementation`, and what that function is handed firs
 the value, which is the room. Calling the value calls the host's function with what it was handed
 first, what the value was called with and room for its answer, and what it answers is held as an
 implementation of a behavior's is. Nothing is copied, so the room, the function and what it is
-handed stay the host's for as long as the value may be called. No source publishes a function value
+handed stay the host's for as long as the value may be called. A function value of a shape is
+called by a host where one is handed to a host, and made by one where one is taken from a host, and
+the manifest says each only where it is there (`call`, `make`), for the reason a list's are. No
+source publishes a function value
 yet (souther-lang/souther#1974, #1990), so this is held by tests over a document written by hand,
 `native/crates/compiler/tests/functions.transport.json`.
 

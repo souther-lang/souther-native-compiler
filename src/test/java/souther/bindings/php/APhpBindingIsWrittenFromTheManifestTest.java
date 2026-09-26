@@ -1,5 +1,6 @@
 package souther.bindings.php;
 
+import souther.bindings.Manifest;
 import souther.nativecode.Checked;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -70,6 +71,28 @@ class APhpBindingIsWrittenFromTheManifestTest {
                 .doesNotContain("M/LookupValue.php");
     }
 
+    /**
+     * A type crossing in a shape this binding knows no way to hold it in is not written, and the
+     * manifest saying so is not refused: which shape a type crosses in is the driver's, and what
+     * PHP can hold of it is this binding's own.
+     */
+    @Test
+    void aTypeInAShapeThisBindingCannotHoldIsNotWritten(@TempDir Path into) throws Exception {
+        NativeCompiler.Library library = NativeCompiler.library(Checked.of(List.of("""
+                module m exposing ( pair, other )
+
+                let pair: (Int, Bool) = (3, true)
+
+                let other: (Int, Bool) = (4, false)
+                """)), into.resolve("native"));
+
+        generatedAfter(into, library, "m", module -> ((ObjectNode) module.get("values").get(0))
+                .set("type", JSON.readTree("{\"kind\":\"primitive\",\"name\":\"Decimal\"}")));
+
+        assertThat(Files.readString(into.resolve("php").resolve("M").resolve("Values.php")))
+                .contains("function other(").doesNotContain("function pair(");
+    }
+
     /** Where the manifest gives a behavior no way in, nothing is written that a caller could call. */
     @Test
     void aBehaviorTheManifestGivesNoCallIsNotWritten(@TempDir Path into) throws Exception {
@@ -118,7 +141,7 @@ class APhpBindingIsWrittenFromTheManifestTest {
         assertThat(written).contains(
                 "find(int $id):"
                         + " \\Acme\\Billing\\M\\Found|\\Acme\\Billing\\M\\Missing",
-                "$session->ffi()->souther5_m_m_b_find_answer_case($answer)",
+                "$session->ffi()->souther" + Manifest.ABI + "_m_m_b_find_answer_case($answer)",
                 "0 => new \\Acme\\Billing\\M\\Found($session->held($answer))",
                 "1 => new \\Acme\\Billing\\M\\Missing($session->held($answer))");
         assertThat(generated.files()).extracting(it -> generated.root().relativize(it).toString())
@@ -569,10 +592,10 @@ class APhpBindingIsWrittenFromTheManifestTest {
                 LibraryBinding.generated(twoModules(into), into.resolve("php"), "Acme\\Billing");
 
         assertThat(Files.readString(generated.root().resolve("Shop").resolve("Cart.php")))
-                .contains("souther5_m_shop_l_value_construct", "souther5_m_shop_l_value_at")
-                .doesNotContain("souther5_m_stock_");
+                .contains("souther" + Manifest.ABI + "_m_shop_l_value_construct", "souther" + Manifest.ABI + "_m_shop_l_value_at")
+                .doesNotContain("souther" + Manifest.ABI + "_m_stock_");
         assertThat(Files.readString(generated.root().resolve("Stock").resolve("Bin.php")))
-                .contains("souther5_m_stock_l_value_construct", "souther5_m_stock_l_value_at")
-                .doesNotContain("souther5_m_shop_");
+                .contains("souther" + Manifest.ABI + "_m_stock_l_value_construct", "souther" + Manifest.ABI + "_m_stock_l_value_at")
+                .doesNotContain("souther" + Manifest.ABI + "_m_shop_");
     }
 }

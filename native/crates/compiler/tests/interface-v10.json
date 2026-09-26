@@ -2027,29 +2027,31 @@
             ],
             "answers": "list"
           },
-          "length": {
-            "name": "souther5_m_shop_l_value_length",
-            "takes": [
-              {
-                "given": "list"
-              }
-            ],
-            "answers": "count"
-          },
-          "at": {
-            "name": "souther5_m_shop_l_value_at",
-            "takes": [
-              {
-                "given": "list"
-              },
-              {
-                "given": "count"
-              },
-              {
-                "room": "value"
-              }
-            ],
-            "answers": "bool"
+          "read": {
+            "length": {
+              "name": "souther5_m_shop_l_value_length",
+              "takes": [
+                {
+                  "given": "list"
+                }
+              ],
+              "answers": "count"
+            },
+            "at": {
+              "name": "souther5_m_shop_l_value_at",
+              "takes": [
+                {
+                  "given": "list"
+                },
+                {
+                  "given": "count"
+                },
+                {
+                  "room": "value"
+                }
+              ],
+              "answers": "bool"
+            }
           }
         },
         {
@@ -2073,32 +2075,77 @@
             ],
             "answers": "list"
           },
-          "length": {
-            "name": "souther5_m_shop_l_o_string_length",
-            "takes": [
-              {
-                "given": "list"
-              }
-            ],
-            "answers": "count"
+          "read": {
+            "length": {
+              "name": "souther5_m_shop_l_o_string_length",
+              "takes": [
+                {
+                  "given": "list"
+                }
+              ],
+              "answers": "count"
+            },
+            "at": {
+              "name": "souther5_m_shop_l_o_string_at",
+              "takes": [
+                {
+                  "given": "list"
+                },
+                {
+                  "given": "count"
+                },
+                {
+                  "room": "bool"
+                },
+                {
+                  "room": "string"
+                }
+              ],
+              "answers": "bool"
+            }
+          }
+        },
+        {
+          "element": {
+            "leaf": "int"
           },
-          "at": {
-            "name": "souther5_m_shop_l_o_string_at",
+          "construct": {
+            "name": "souther5_m_shop_l_int_construct",
             "takes": [
-              {
-                "given": "list"
-              },
               {
                 "given": "count"
               },
               {
-                "room": "bool"
-              },
-              {
-                "room": "string"
+                "slice": "int"
               }
             ],
-            "answers": "bool"
+            "answers": "list"
+          },
+          "read": {
+            "length": {
+              "name": "souther5_m_shop_l_int_length",
+              "takes": [
+                {
+                  "given": "list"
+                }
+              ],
+              "answers": "count"
+            },
+            "at": {
+              "name": "souther5_m_shop_l_int_at",
+              "takes": [
+                {
+                  "given": "list"
+                },
+                {
+                  "given": "count"
+                },
+                {
+                  "room": "int"
+                }
+              ],
+              "answers": "bool"
+            }
           }
         },
         {
@@ -2119,70 +2166,31 @@
             ],
             "answers": "list"
           },
-          "length": {
-            "name": "souther5_m_shop_l_l_int_length",
-            "takes": [
-              {
-                "given": "list"
-              }
-            ],
-            "answers": "count"
-          },
-          "at": {
-            "name": "souther5_m_shop_l_l_int_at",
-            "takes": [
-              {
-                "given": "list"
-              },
-              {
-                "given": "count"
-              },
-              {
-                "room": "list"
-              }
-            ],
-            "answers": "bool"
-          }
-        },
-        {
-          "element": {
-            "leaf": "int"
-          },
-          "construct": {
-            "name": "souther5_m_shop_l_int_construct",
-            "takes": [
-              {
-                "given": "count"
-              },
-              {
-                "slice": "int"
-              }
-            ],
-            "answers": "list"
-          },
-          "length": {
-            "name": "souther5_m_shop_l_int_length",
-            "takes": [
-              {
-                "given": "list"
-              }
-            ],
-            "answers": "count"
-          },
-          "at": {
-            "name": "souther5_m_shop_l_int_at",
-            "takes": [
-              {
-                "given": "list"
-              },
-              {
-                "given": "count"
-              },
-              {
-                "room": "int"
-              }
-            ],
-            "answers": "bool"
+          "read": {
+            "length": {
+              "name": "souther5_m_shop_l_l_int_length",
+              "takes": [
+                {
+                  "given": "list"
+                }
+              ],
+              "answers": "count"
+            },
+            "at": {
+              "name": "souther5_m_shop_l_l_int_at",
+              "takes": [
+                {
+                  "given": "list"
+                },
+                {
+                  "given": "count"
+                },
+                {
+                  "room": "list"
+                }
+              ],
+              "answers": "bool"
+            }
           }
         },
         {
@@ -2196,47 +2204,35 @@
               }
             ]
           },
-          "construct": {
-            "name": "souther5_m_shop_l_t2_int_string_construct",
-            "takes": [
-              {
-                "given": "count"
-              },
-              {
-                "slice": "int"
-              },
-              {
-                "slice": "string"
-              }
-            ],
-            "answers": "list"
-          },
-          "length": {
-            "name": "souther5_m_shop_l_t2_int_string_length",
-            "takes": [
-              {
-                "given": "list"
-              }
-            ],
-            "answers": "count"
-          },
-          "at": {
-            "name": "souther5_m_shop_l_t2_int_string_at",
-            "takes": [
-              {
-                "given": "list"
-              },
-              {
-                "given": "count"
-              },
-              {
-                "room": "int"
-              },
-              {
-                "room": "string"
-              }
-            ],
-            "answers": "bool"
+          "construct": null,
+          "read": {
+            "length": {
+              "name": "souther5_m_shop_l_t2_int_string_length",
+              "takes": [
+                {
+                  "given": "list"
+                }
+              ],
+              "answers": "count"
+            },
+            "at": {
+              "name": "souther5_m_shop_l_t2_int_string_at",
+              "takes": [
+                {
+                  "given": "list"
+                },
+                {
+                  "given": "count"
+                },
+                {
+                  "room": "int"
+                },
+                {
+                  "room": "string"
+                }
+              ],
+              "answers": "bool"
+            }
           }
         }
       ],

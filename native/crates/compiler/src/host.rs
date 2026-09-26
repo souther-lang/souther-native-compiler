@@ -113,7 +113,53 @@ impl Direction {
 /// A union handed to a host is refused here wherever it stands. A behavior's answer is the one
 /// place it is not, since the behavior says which case it is ([`host_behavior_answer_case_symbol`]),
 /// and that is the behavior's to decide and not this.
-pub(crate) fn crossing(ty: &Ty, direction: Direction) -> Result<HostShape, Refusal> {
+///
+/// What it answers is the shape and, beside it, every function the object has to define for a
+/// value of the type to cross the way it does ([`Service`]): which way it crosses is decided here,
+/// and nothing after this works it out again from the shape, which does not say.
+pub(crate) fn crossing(ty: &Ty, direction: Direction) -> Result<Crossed, Refusal> {
+    let mut services = Vec::new();
+    let shape = planned(ty, direction, &mut services)?;
+    Ok(Crossed { shape, services })
+}
+
+/// A value's crossing as [`crossing`] decides it.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub(crate) struct Crossed {
+    /// The shape it crosses in, the same whichever way it crosses.
+    pub shape: HostShape,
+    /// Each function a host reaches a list or a function value in it through, for the way each
+    /// crosses.
+    pub services: Vec<Service>,
+}
+
+/// A function the object defines for a host for a list or a function value of one shape, as the
+/// way it crosses needs it.
+///
+/// Of the way it crosses and not of the shape: a union a host hands over says which case it is,
+/// and one it is handed does not, so a list of one may be built by a host and not read, and a
+/// function taking one may be called by a host and not made. A function the object offered for the
+/// other way would be one the manifest says a host can call and that answers what the host cannot
+/// read.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub(crate) enum Service {
+    /// A host builds a list whose element crosses in this shape.
+    ListBuilt(HostShape),
+    /// A host reads one.
+    ListRead(HostShape),
+    /// A host calls a function value of this shape.
+    FunctionCalled(HostShape),
+    /// A host makes one of its own.
+    FunctionMade(HostShape),
+}
+
+/// The shape a value of `ty` crosses in, crossing the way `direction` says, adding to `services`
+/// what each list and function value in it needs.
+fn planned(
+    ty: &Ty,
+    direction: Direction,
+    services: &mut Vec<Service>,
+) -> Result<HostShape, Refusal> {
     let refused = |reason| Refusal {
         reason,
         path: Vec::new(),
@@ -152,43 +198,60 @@ pub(crate) fn crossing(ty: &Ty, direction: Direction) -> Result<HostShape, Refus
             Direction::Given => {
                 for case in union.iter() {
                     if let Case::Primitive { prim } = case {
-                        crossing(&Ty::Prim { prim: *prim }, direction)?;
+                        planned(&Ty::Prim { prim: *prim }, direction, services)?;
                     }
                 }
                 Ok(HostShape::Leaf(HostLeaf::Value))
             }
         },
         Ty::Option { option } => Ok(HostShape::Option(Box::new(
-            crossing(option, direction).map_err(|it| under(Step::Option, it))?,
+            planned(option, direction, services).map_err(|it| under(Step::Option, it))?,
         ))),
         Ty::Tuple { tuple } => Ok(HostShape::Product(
             tuple
                 .iter()
                 .enumerate()
                 .map(|(at, member)| {
-                    crossing(member, direction).map_err(|it| under(Step::Member(at), it))
+                    planned(member, direction, services).map_err(|it| under(Step::Member(at), it))
                 })
                 .collect::<Result<_, _>>()?,
         )),
-        // A list crosses as its address, and its elements through the functions for their shape,
-        // so a list whose element does not cross is one a host could hold and do nothing with.
-        Ty::List { list } => Ok(HostShape::List(Box::new(
-            crossing(list, direction).map_err(|it| under(Step::Element, it))?,
-        ))),
-        // Called by whoever holds it: what it takes is handed the other way from it.
-        Ty::Fn { fn_ } => Ok(HostShape::Function {
-            takes: fn_
+        // A list crosses as its address, and its elements through the functions for their shape:
+        // built by a host where it hands one over, read where it is handed one. A list whose
+        // element does not cross is one a host could hold and do nothing with.
+        Ty::List { list } => {
+            let element =
+                planned(list, direction, services).map_err(|it| under(Step::Element, it))?;
+            services.push(match direction {
+                Direction::Given => Service::ListBuilt(element.clone()),
+                Direction::Handed => Service::ListRead(element.clone()),
+            });
+            Ok(HostShape::List(Box::new(element)))
+        }
+        // Called by whoever holds it: what it takes is handed the other way from it. A host handed
+        // one calls it, and one handing one over has made it.
+        Ty::Fn { fn_ } => {
+            let takes = fn_
                 .takes
                 .iter()
                 .enumerate()
                 .map(|(at, taken)| {
-                    crossing(taken, direction.turned()).map_err(|it| under(Step::Takes(at), it))
+                    planned(taken, direction.turned(), services)
+                        .map_err(|it| under(Step::Takes(at), it))
                 })
-                .collect::<Result<_, _>>()?,
-            answers: Box::new(
-                crossing(&fn_.answers, direction).map_err(|it| under(Step::Answers, it))?,
-            ),
-        }),
+                .collect::<Result<_, _>>()?;
+            let answers = planned(&fn_.answers, direction, services)
+                .map_err(|it| under(Step::Answers, it))?;
+            let shape = HostShape::Function {
+                takes,
+                answers: Box::new(answers),
+            };
+            services.push(match direction {
+                Direction::Handed => Service::FunctionCalled(shape.clone()),
+                Direction::Given => Service::FunctionMade(shape.clone()),
+            });
+            Ok(shape)
+        }
         // No layout yet, and when there is one a host reaches it through operations of its own.
         Ty::Set { .. } | Ty::Map { .. } => Err(refused(Reason::NoRepresentation)),
         Ty::Var { var } => crate::laid_out_nowhere(*var),
@@ -397,48 +460,25 @@ fn words_of(builder: &mut FunctionBuilder, shape: &HostShape, value: ir::Value) 
     }
 }
 
-/// Each list and each function value a host is handed or hands over, by the shape it crosses in,
-/// by the module whose functions it crosses in, in the order they were first needed.
+/// Every function a host reaches a list or a function value through, as each crossing needs it
+/// ([`Service`]), by the module whose functions it crosses in, in the order they were first needed.
 ///
-/// Worked out from the shapes that cross and nothing else, so a list or a function no host is
-/// handed or hands over has no functions defined for it. The shape is all a function here needs:
-/// the functions for a list of one declared type are the ones for a list of any other.
+/// What [`crossing`] said and nothing else, so a list or a function no host is handed or hands
+/// over has no functions defined for it, and one crossing one way has none for the other. The shape
+/// is all a function here needs: the functions for a list of one declared type are the ones for a
+/// list of any other.
 #[derive(Default)]
 pub(crate) struct Crossings {
-    lists: BTreeMap<String, Vec<HostShape>>,
-    functions: BTreeMap<String, Vec<HostShape>>,
+    needed: BTreeMap<String, Vec<Service>>,
 }
 
 impl Crossings {
-    /// Every list and every function value `shape` is or holds, where it crosses in a function of
-    /// `module`'s: a list of lists needs the functions for the outer one and for the inner one, a
-    /// function taking a list those for the list, and an optional tuple those for what its members
-    /// need.
-    fn need(&mut self, module: &str, shape: &HostShape) {
-        let once = |needed: &mut BTreeMap<String, Vec<HostShape>>, shape: &HostShape| {
-            let needed = needed.entry(module.to_string()).or_default();
-            if !needed.contains(shape) {
-                needed.push(shape.clone());
-            }
-        };
-        match shape {
-            HostShape::Leaf(_) => {}
-            HostShape::Option(of) => self.need(module, of),
-            HostShape::Product(members) => {
-                for member in members {
-                    self.need(module, member);
-                }
-            }
-            HostShape::List(element) => {
-                once(&mut self.lists, element);
-                self.need(module, element);
-            }
-            HostShape::Function { takes, answers } => {
-                once(&mut self.functions, shape);
-                for taken in takes {
-                    self.need(module, taken);
-                }
-                self.need(module, answers);
+    /// What `crossed` needs, where it crosses in a function of `module`'s.
+    fn need(&mut self, module: &str, crossed: &Crossed) {
+        let needed = self.needed.entry(module.to_string()).or_default();
+        for service in &crossed.services {
+            if !needed.contains(service) {
+                needed.push(service.clone());
             }
         }
     }
@@ -598,7 +638,7 @@ pub(crate) fn define(
             continue;
         }
         let fields = declaration.fields();
-        let handed: Result<Vec<HostShape>, Refusal> = fields
+        let handed: Result<Vec<Crossed>, Refusal> = fields
             .iter()
             .map(|field| {
                 crossing(&field.codec.ty(), Direction::Given)
@@ -606,10 +646,12 @@ pub(crate) fn define(
             })
             .collect();
         match handed {
-            Ok(handed) => {
-                for (shape, field) in handed.iter().zip(fields) {
-                    holds(shape, &field.codec.ty())?;
-                    crossings.need(module_name, shape);
+            Ok(crossed) => {
+                let mut handed = Vec::with_capacity(crossed.len());
+                for (it, field) in crossed.iter().zip(fields) {
+                    holds(&it.shape, &field.codec.ty())?;
+                    crossings.need(module_name, it);
+                    handed.push(it.shape.clone());
                 }
                 let constructor = emitting.constructors.of(&key)?;
                 let mut takes = parameters(&handed, HostParameter::Given);
@@ -628,15 +670,16 @@ pub(crate) fn define(
             Err(refusal) => described.not_constructed(refusal),
         }
         for (at, field) in fields.iter().enumerate() {
-            let shape = match crossing(&field.codec.ty(), Direction::Handed) {
-                Ok(shape) => shape,
+            let crossed = match crossing(&field.codec.ty(), Direction::Handed) {
+                Ok(crossed) => crossed,
                 Err(refusal) => {
                     described.field_not_read(at, refusal);
                     continue;
                 }
             };
-            holds(&shape, &field.codec.ty())?;
-            crossings.need(module_name, &shape);
+            holds(&crossed.shape, &field.codec.ty())?;
+            crossings.need(module_name, &crossed);
+            let shape = crossed.shape;
             let mut takes = vec![HostParameter::Given(HostWord::Value)];
             takes.extend(parameters(
                 std::slice::from_ref(&shape),
@@ -851,32 +894,40 @@ fn forward(
     symbol: String,
     entry: &Entry,
 ) -> Lowered<Result<HostCall, Refusal>> {
-    let answers = machine_type(&entry.answers)?;
     let takes: Vec<Ty> = entry.inputs.iter().map(BoundaryInput::ty).collect();
-    let handed: Result<Vec<HostShape>, Refusal> = takes
+    let crossed: Result<Vec<Crossed>, Refusal> = takes
         .iter()
         .enumerate()
         .map(|(at, ty)| crossing(ty, Direction::Given).map_err(|it| under(Step::Takes(at), it)))
         .collect();
-    let handed = match handed {
-        Ok(handed) => handed,
+    let crossed = match crossed {
+        Ok(crossed) => crossed,
         Err(refusal) => return Ok(Err(refusal)),
     };
     // A union a behavior answers is told its case by the behavior ([`expose_case`]), and crosses
-    // as the value it is. Nothing else answered is told anything.
-    let answered = match entry.cases {
-        Some(_) => HostShape::Leaf(HostLeaf::Value),
+    // as the value it is, needing nothing more. Nothing else answered is told anything.
+    let answering = match entry.cases {
+        Some(_) => Crossed {
+            shape: HostShape::Leaf(HostLeaf::Value),
+            services: Vec::new(),
+        },
         None => match crossing(&entry.answers, Direction::Handed) {
-            Ok(shape) => shape,
+            Ok(crossed) => crossed,
             Err(refusal) => return Ok(Err(under(Step::Answers, refusal))),
         },
     };
-    for (shape, ty) in handed.iter().zip(&takes) {
-        holds(shape, ty)?;
-        crossings.need(entry.module, shape);
+    let mut handed = Vec::with_capacity(crossed.len());
+    for (it, ty) in crossed.iter().zip(&takes) {
+        holds(&it.shape, ty)?;
+        crossings.need(entry.module, it);
+        handed.push(it.shape.clone());
     }
-    holds(&answered, &entry.answers)?;
-    crossings.need(entry.module, &answered);
+    holds(&answering.shape, &entry.answers)?;
+    // Asked only of what crosses: a type with no value is refused by `crossing` above, with why,
+    // and this would have refused it first, as something the object cannot lay out.
+    let answers = machine_type(&entry.answers)?;
+    crossings.need(entry.module, &answering);
+    let answered = answering.shape;
     // What a behavior was constructed with, which a host hands first, as the behavior's symbol
     // takes it.
     let mut parameters_taken: Vec<HostParameter> = Vec::new();
@@ -989,7 +1040,7 @@ pub(crate) fn define_injections(
                 "the injected behavior {spelt}, which a host cannot answer: {refusal}"
             ))
         };
-        let handed = takes
+        let crossed = takes
             .iter()
             .enumerate()
             .map(|(at, ty)| {
@@ -997,14 +1048,17 @@ pub(crate) fn define_injections(
             })
             .collect::<Result<Vec<_>, _>>()
             .map_err(refused)?;
-        let answered =
+        let answering =
             crossing(&answers, Direction::Given).map_err(|it| refused(under(Step::Answers, it)))?;
-        for (shape, ty) in handed.iter().zip(&takes) {
-            holds(shape, ty)?;
-            crossings.need(behavior.module, shape);
+        let mut handed = Vec::with_capacity(crossed.len());
+        for (it, ty) in crossed.iter().zip(&takes) {
+            holds(&it.shape, ty)?;
+            crossings.need(behavior.module, it);
+            handed.push(it.shape.clone());
         }
-        holds(&answered, &answers)?;
-        crossings.need(behavior.module, &answered);
+        holds(&answering.shape, &answers)?;
+        crossings.need(behavior.module, &answering);
+        let answered = answering.shape;
         let implementation = hosted(
             host_implementation_type(behavior.module, behavior.name),
             &handed,
@@ -1226,26 +1280,46 @@ pub(crate) fn define_crossings(
     surface: &mut Surface,
     crossings: &Crossings,
 ) -> Lowered<()> {
-    for (module_name, elements) in &crossings.lists {
-        for element in elements {
-            define_list(emitting, surface, module_name, element)?;
+    for (module_name, services) in &crossings.needed {
+        // Each shape once, with which of its two ways anything crossing needs, in the order each
+        // shape was first needed: a host building a list, and reading one; calling a function
+        // value, and making one.
+        let mut lists: Vec<(&HostShape, bool, bool)> = Vec::new();
+        let mut functions: Vec<(&HostShape, bool, bool)> = Vec::new();
+        for service in services {
+            let (needed, shape, first) = match service {
+                Service::ListBuilt(it) => (&mut lists, it, true),
+                Service::ListRead(it) => (&mut lists, it, false),
+                Service::FunctionCalled(it) => (&mut functions, it, true),
+                Service::FunctionMade(it) => (&mut functions, it, false),
+            };
+            match needed.iter_mut().find(|(it, _, _)| *it == shape) {
+                Some((_, one, other)) => {
+                    *one |= first;
+                    *other |= !first;
+                }
+                None => needed.push((shape, first, !first)),
+            }
         }
-    }
-    for (module_name, functions) in &crossings.functions {
-        for function in functions {
-            define_function(emitting, surface, module_name, function)?;
+        for (element, built, read) in lists {
+            define_list(emitting, surface, module_name, element, built, read)?;
+        }
+        for (function, called, made) in functions {
+            define_function(emitting, surface, module_name, function, called, made)?;
         }
     }
     Ok(())
 }
 
-/// What a host builds and reads a list of `module_name`'s whose elements cross as `element`
-/// through.
+/// What a host builds a list of `module_name`'s whose elements cross as `element` through, where
+/// `built`, and reads one through, where `read`.
 fn define_list(
     emitting: &mut Emitting,
     surface: &mut Surface,
     module_name: &str,
     element: &HostShape,
+    built: bool,
+    read: bool,
 ) -> Lowered<()> {
     let allocate = emitting.allocate;
     let symbol = |operation| host_list_symbol(module_name, element, operation);
@@ -1259,10 +1333,35 @@ fn define_list(
         takes,
         answers: Some(HostWord::List),
     };
-    let construct = expose(emitting, constructing, &mut |builder, module, given| {
-        construct(builder, &mut Making { module, allocate }, element, given);
-        Ok(())
-    })?;
+    let construct = if built {
+        Some(expose(
+            emitting,
+            constructing,
+            &mut |builder, module, given| {
+                construct(builder, &mut Making { module, allocate }, element, given);
+                Ok(())
+            },
+        )?)
+    } else {
+        None
+    };
+    let reading = if read {
+        Some(list_reading(emitting, module_name, element)?)
+    } else {
+        None
+    };
+    surface.list(module_name, element, construct.as_ref(), reading.as_ref());
+    Ok(())
+}
+
+/// What a host reads a list whose elements cross as `element` through: its length, and its element
+/// at an index.
+fn list_reading(
+    emitting: &mut Emitting,
+    module_name: &str,
+    element: &HostShape,
+) -> Lowered<(HostFunction, HostFunction)> {
+    let symbol = |operation| host_list_symbol(module_name, element, operation);
     let measuring = HostFunction {
         symbol: symbol(HostListOperation::Length),
         takes: vec![HostParameter::Given(HostWord::List)],
@@ -1292,12 +1391,11 @@ fn define_list(
         element_at(builder, element, given);
         Ok(())
     })?;
-    surface.list(module_name, element, &construct, &length, &at);
-    Ok(())
+    Ok((length, at))
 }
 
-/// What a host calls a function value of `module_name`'s crossing in `function` through, and makes
-/// one of its own through, with the code a value it makes holds.
+/// What a host calls a function value of `module_name`'s crossing in `function` through, where
+/// `called`, and makes one of its own through, with the code a value it makes holds, where `made`.
 ///
 /// The call takes the value and what it takes, as a host hands each over, calls the value's code
 /// ([`FUNCTION_INVOKE`]) as any caller of one does, and writes what it answered through the host's
@@ -1309,10 +1407,47 @@ fn define_function(
     surface: &mut Surface,
     module_name: &str,
     function: &HostShape,
+    called: bool,
+    made: bool,
 ) -> Lowered<()> {
+    let call = if called {
+        Some(function_call(emitting, module_name, function)?)
+    } else {
+        None
+    };
+    let making = if made {
+        Some(function_making(emitting, module_name, function)?)
+    } else {
+        None
+    };
+    surface.function(
+        module_name,
+        function,
+        call.as_ref(),
+        making
+            .as_ref()
+            .map(|(implementation, implement)| (implementation, implement.as_str())),
+    );
+    Ok(())
+}
+
+/// The takes and answers of `function`, a function value's shape.
+fn signed(function: &HostShape) -> (&[HostShape], &HostShape) {
     let HostShape::Function { takes, answers } = function else {
         unreachable!("{function:?} is not how a function value crosses");
     };
+    (takes, answers)
+}
+
+/// What a host calls a function value crossing in `function` through: the value and what it takes,
+/// as a host hands each over, the value's code called as any caller of one calls it
+/// ([`FUNCTION_INVOKE`]), and what it answered written through the host's room.
+fn function_call(
+    emitting: &mut Emitting,
+    module_name: &str,
+    function: &HostShape,
+) -> Lowered<HostFunction> {
+    let (takes, answers) = signed(function);
     let allocate = emitting.allocate;
     let held: Vec<types::Type> = takes.iter().map(held_as).collect();
     let invocation = invocation_signature(&held, emitting.call_conv);
@@ -1328,8 +1463,7 @@ fn define_function(
         takes: given,
         answers: Some(HostWord::Status),
     };
-    let signature = invocation.clone();
-    let call = expose(emitting, calling, &mut |builder, module, params| {
+    expose(emitting, calling, &mut |builder, module, params| {
         let (value, rest) = params.split_first().expect("the function value first");
         let mut given = rest.iter().copied();
         let mut making = Making { module, allocate };
@@ -1338,7 +1472,7 @@ fn define_function(
             arguments.push(take(builder, &mut making, shape, &mut given));
         }
         let rooms: Vec<ir::Value> = given.collect();
-        let calling = builder.import_signature(signature.clone());
+        let calling = builder.import_signature(invocation.clone());
         let code = builder
             .ins()
             .load(POINTER, TRUSTED, *value, FUNCTION_INVOKE as i32);
@@ -1355,8 +1489,20 @@ fn define_function(
         );
         builder.ins().return_(&[status]);
         Ok(())
-    })?;
+    })
+}
 
+/// What a host makes a function value of its own crossing in `function` through: the type of the
+/// function it writes, and the symbol laying one out, beside the code the value holds.
+fn function_making(
+    emitting: &mut Emitting,
+    module_name: &str,
+    function: &HostShape,
+) -> Lowered<(HostImplementation, String)> {
+    let (takes, answers) = signed(function);
+    let allocate = emitting.allocate;
+    let held: Vec<types::Type> = takes.iter().map(held_as).collect();
+    let invocation = invocation_signature(&held, emitting.call_conv);
     let implementation = hosted(
         host_function_symbol(module_name, function, HostFunctionOperation::Implementation),
         takes,
@@ -1413,9 +1559,7 @@ fn define_function(
         builder.ins().return_(&[*into]);
         Ok(())
     })?;
-
-    surface.function(module_name, function, &call, &implementation, &implement);
-    Ok(())
+    Ok((implementation, implement))
 }
 
 /// The most elements a list can be built with: the most whose room a count of bytes can say.
@@ -1683,7 +1827,7 @@ fn which_case(
 
 #[cfg(test)]
 mod tests {
-    use super::{Direction, crossing};
+    use super::{Direction, Service, crossing};
     use crate::manifest::{Reason, Refusal, Step};
     use crate::transport::{Bottom, Case, Cases, FnSignature, LanguageCase, MapTy, Prim, Ty};
     use souther_native_abi::{HostLeaf, HostShape};
@@ -1725,10 +1869,15 @@ mod tests {
         Err(Refusal { reason, path })
     }
 
+    /// The shape `ty` crosses in, crossing the way `direction` says, or why it does not.
+    fn shape(ty: &Ty, direction: Direction) -> Result<HostShape, Refusal> {
+        crossing(ty, direction).map(|it| it.shape)
+    }
+
     /// A refusal says its reason and where it stands in words, as a refused build is told.
     #[test]
     fn a_refusal_says_why_and_where_in_words() {
-        let refusal = crossing(
+        let refusal = shape(
             &Ty::Tuple {
                 tuple: vec![
                     int(),
@@ -1752,7 +1901,7 @@ mod tests {
     #[test]
     fn an_optional_at_any_depth_and_a_tuple_cross_as_what_they_hold() {
         let whole = HostShape::Leaf(HostLeaf::Int);
-        let shape = crossing(
+        let shape = shape(
             &optional(Ty::Tuple {
                 tuple: vec![optional(optional(Ty::Prim { prim: Prim::Bool })), int()],
             }),
@@ -1779,16 +1928,16 @@ mod tests {
     #[test]
     fn a_union_crosses_only_where_a_host_hands_it_over() {
         assert_eq!(
-            crossing(&union(), Direction::Given),
+            shape(&union(), Direction::Given),
             Ok(HostShape::Leaf(HostLeaf::Value))
         );
         assert_eq!(
-            crossing(&union(), Direction::Handed),
+            shape(&union(), Direction::Handed),
             refused(Reason::NoDiscriminator, vec![])
         );
-        assert!(crossing(&function(vec![union()], int()), Direction::Handed).is_ok());
+        assert!(shape(&function(vec![union()], int()), Direction::Handed).is_ok());
         assert_eq!(
-            crossing(
+            shape(
                 &Ty::List {
                     list: Box::new(function(vec![int()], optional(union())))
                 },
@@ -1800,8 +1949,50 @@ mod tests {
             )
         );
         assert_eq!(
-            crossing(&function(vec![int(), union()], int()), Direction::Given),
+            shape(&function(vec![int(), union()], int()), Direction::Given),
             refused(Reason::NoDiscriminator, vec![Step::Takes(1)])
+        );
+    }
+
+    /// What a crossing needs is decided with its shape, and is of the way it crosses: a function
+    /// taking a union a host is handed is one a host calls and never makes, since a function of
+    /// its own would be handed the union with nothing to say which case it is; a list of one a
+    /// host hands over is built and never read; and what a function takes needs what crossing the
+    /// other way needs.
+    #[test]
+    fn what_a_crossing_needs_is_of_the_way_it_crosses() {
+        let value = HostShape::Leaf(HostLeaf::Value);
+        let taking = function(vec![union()], int());
+        let taking_shape = HostShape::Function {
+            takes: vec![value.clone()],
+            answers: Box::new(HostShape::Leaf(HostLeaf::Int)),
+        };
+        assert_eq!(
+            crossing(&taking, Direction::Handed).unwrap().services,
+            vec![Service::FunctionCalled(taking_shape)]
+        );
+        assert_eq!(
+            crossing(
+                &Ty::List {
+                    list: Box::new(union())
+                },
+                Direction::Given
+            )
+            .unwrap()
+            .services,
+            vec![Service::ListBuilt(value)]
+        );
+        let lists = Ty::List {
+            list: Box::new(int()),
+        };
+        assert_eq!(
+            crossing(&function(vec![lists.clone()], lists), Direction::Given)
+                .unwrap()
+                .services[..2],
+            [
+                Service::ListRead(HostShape::Leaf(HostLeaf::Int)),
+                Service::ListBuilt(HostShape::Leaf(HostLeaf::Int)),
+            ]
         );
     }
 
@@ -1810,7 +2001,7 @@ mod tests {
     #[test]
     fn what_does_not_cross_is_refused_where_it_stands() {
         assert_eq!(
-            crossing(
+            shape(
                 &Ty::Tuple {
                     tuple: vec![
                         int(),
@@ -1824,7 +2015,7 @@ mod tests {
             refused(Reason::NoRepresentation, vec![Step::Member(1)])
         );
         assert_eq!(
-            crossing(
+            shape(
                 &Ty::Map {
                     map: MapTy {
                         key: Box::new(int()),
@@ -1836,7 +2027,7 @@ mod tests {
             refused(Reason::NoRepresentation, vec![])
         );
         assert_eq!(
-            crossing(
+            shape(
                 &Ty::List {
                     list: Box::new(Ty::Nothing { nothing: Bottom {} })
                 },

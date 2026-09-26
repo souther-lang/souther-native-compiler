@@ -18,7 +18,6 @@ use std::process::Command;
 use tempfile::{TempDir, tempdir};
 
 mod support;
-use support::PREFIX;
 
 /// The document the Java half wrote, and the one its own test holds it to.
 const UNRAN: &str = include_str!("unran.transport.json");
@@ -32,9 +31,9 @@ const HARNESS: &str = r#"
 #include <stdlib.h>
 #include <string.h>
 
-extern uint32_t sorted(const void *, int64_t, int64_t *) __asm__("PREFIXsouther4.unran.sorted");
-extern uint32_t mapped(const void *, int64_t, int64_t *) __asm__("PREFIXsouther4.unran.mapped");
-extern uint32_t by_fold(const void *, int64_t, int64_t *) __asm__("PREFIXsouther4.unran.byFold");
+extern uint32_t sorted(const void *, int64_t, int64_t *) __asm__("PREFIXsouther@.unran.sorted");
+extern uint32_t mapped(const void *, int64_t, int64_t *) __asm__("PREFIXsouther@.unran.mapped");
+extern uint32_t by_fold(const void *, int64_t, int64_t *) __asm__("PREFIXsouther@.unran.byFold");
 
 int main(int argc, char **argv) {
     if (argc != 3) {
@@ -58,7 +57,7 @@ fn build(document: &str) -> (TempDir, PathBuf) {
     let object = into.path().join("unran.o");
     fs::write(&object, object_for(document).expect("an object")).expect("the object written");
     let harness = into.path().join("harness.c");
-    fs::write(&harness, HARNESS.replace("PREFIX", PREFIX)).expect("the harness written");
+    fs::write(&harness, support::harness(HARNESS)).expect("the harness written");
     let executable = into.path().join("unran");
     let linked = Command::new("cc")
         .arg("-o")

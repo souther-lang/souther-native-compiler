@@ -13,7 +13,6 @@ use std::process::{Command, Output};
 use tempfile::{TempDir, tempdir};
 
 mod support;
-use support::PREFIX;
 
 /// The document the Java half wrote, and the one its own test holds it to.
 const ADDING: &str = include_str!("adding.transport.json");
@@ -39,7 +38,7 @@ const HARNESS: &str = r#"
 #include <stdio.h>
 #include <stdlib.h>
 
-extern uint32_t adding(const void *, int64_t, int64_t, int64_t *) __asm__("PREFIXsouther5.calculation.add");
+extern uint32_t adding(const void *, int64_t, int64_t, int64_t *) __asm__("PREFIXsouther@.calculation.add");
 
 int main(int argc, char **argv) {
     if (argc != 3) {
@@ -63,7 +62,7 @@ const BOUNDARY_HARNESS: &str = r#"
 #include <stdio.h>
 #include <stdlib.h>
 
-extern uint32_t adding(const void *, int64_t, int64_t, const uint8_t **) __asm__("PREFIXsouther5.calculation.add$boundary");
+extern uint32_t adding(const void *, int64_t, int64_t, const uint8_t **) __asm__("PREFIXsouther@.calculation.add$boundary");
 extern int64_t souther_string_length(const uint8_t *);
 extern const uint8_t *souther_string_bytes(const uint8_t *);
 
@@ -166,7 +165,7 @@ fn build_with(harness_source: &str) -> (TempDir, PathBuf) {
     fs::write(&object, object_for(ADDING).expect("an object")).expect("the object written");
 
     let harness = into_path.join("harness.c");
-    fs::write(&harness, harness_source.replace("PREFIX", PREFIX)).expect("the harness written");
+    fs::write(&harness, support::harness(harness_source)).expect("the harness written");
 
     let executable = into_path.join("adding");
     let linked = Command::new("cc")

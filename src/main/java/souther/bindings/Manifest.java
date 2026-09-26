@@ -42,14 +42,15 @@ import static net.unit8.raoh.json.JsonDecoders.strict;
  * <p>Made only by {@link #read}, so a manifest a generator holds is one read that way; what it is
  * made of is plain records a generator takes apart as it needs. What the driver promises of a
  * manifest is held by the part that holds it, wherever that part is made: a function by the words
- * of the shapes said beside it ({@link Call}, {@link Construct}, {@link Read}), a shape by fitting
- * the type the model says ({@link Shape#fits}), a module by saying the functions for every list and
- * every function value it hands across ({@link Module}), and what constructing a behavior requires
- * by being closed over the whole.
+ * of the shapes said beside it ({@link Call}, {@link Construct}, {@link Read}), a module by saying
+ * the functions for every list and every function value it hands across, each the way it crosses
+ * ({@link Module}), and what constructing a behavior requires by being closed over the whole.
  *
  * <p>How a value crosses is what the driver decided and the manifest says ({@link Shape}); nothing
- * here works it out again from the model. What a generator adds is whether its own language has a
- * way to hold what crosses.
+ * here works it out again from the model, and nothing holds a shape to the type it is said beside:
+ * which shape a type crosses in is the driver's to choose, and a shape it chooses later for a type
+ * is read the day it is written. What a generator adds is whether its own language has a way to
+ * hold what crosses, and a pair of a type and a shape it has none for is one it does not bind.
  */
 public final class Manifest {
 
@@ -223,25 +224,43 @@ public final class Manifest {
             return crossed;
         }
 
-        /** Every case no declaration names of a union that crosses here, into {@code carried}. */
+        /**
+         * Every case no declaration names of a union that crosses here as one value, into {@code
+         * carried}: where the manifest says a union crosses as a {@code VALUE}, a value of such a
+         * case is made and read through the runtime ({@link Manifest#cases}). Followed only where
+         * the type and the shape are made alike; how else a type crosses is the driver's to say, and
+         * nothing here holds it to one way.
+         */
         private void carried(List<Case> carried) {
             switch (shape) {
                 case Shape.Leaf leaf -> {
-                    if (type instanceof Type.Union union) {
+                    if (type instanceof Type.Union union && leaf.word() == Word.VALUE) {
                         union.cases().stream().filter(it -> !(it instanceof Case.Declared))
                                 .forEach(carried::add);
                     }
                 }
-                case Shape.Option option ->
-                        new Crossed(((Type.Option) type).of(), option.of()).carried(carried);
-                case Shape.Product product -> of(((Type.Tuple) type).of(), product.of())
-                        .forEach(it -> it.carried(carried));
-                case Shape.ListOf list ->
-                        new Crossed(((Type.ListOf) type).of(), list.element()).carried(carried);
+                case Shape.Option option -> {
+                    if (type instanceof Type.Option it) {
+                        new Crossed(it.of(), option.of()).carried(carried);
+                    }
+                }
+                case Shape.Product product -> {
+                    if (type instanceof Type.Tuple it && it.of().size() == product.of().size()) {
+                        of(it.of(), product.of()).forEach(member -> member.carried(carried));
+                    }
+                }
+                case Shape.ListOf list -> {
+                    if (type instanceof Type.ListOf it) {
+                        new Crossed(it.of(), list.element()).carried(carried);
+                    }
+                }
                 case Shape.FunctionOf function -> {
-                    Type.Function fn = (Type.Function) type;
-                    of(fn.takes(), function.signature().takes()).forEach(it -> it.carried(carried));
-                    new Crossed(fn.answers(), function.signature().answers()).carried(carried);
+                    if (type instanceof Type.Function it
+                            && it.takes().size() == function.signature().takes().size()) {
+                        of(it.takes(), function.signature().takes())
+                                .forEach(taken -> taken.carried(carried));
+                        new Crossed(it.answers(), function.signature().answers()).carried(carried);
+                    }
                 }
             }
         }
@@ -379,72 +398,6 @@ public final class Manifest {
                 return List.of(Word.FUNCTION);
             }
         }
-
-        /**
-         * Whether {@code shape} is how a value of {@code type} crosses: a leaf of the word its
-         * primitive, declared type or union is handed over as, and anything else made the way the
-         * type is made. A shape said beside a type it does not fit is the manifest disagreeing
-         * with itself.
-         */
-        static boolean fits(Shape shape, Type type) {
-            return switch (shape) {
-                case Leaf leaf -> switch (type) {
-                    case Type.Primitive it -> switch (it.name()) {
-                        case "Int" -> leaf.word() == Word.INT;
-                        case "Bool" -> leaf.word() == Word.BOOL;
-                        case "String" -> leaf.word() == Word.STRING;
-                        default -> false;
-                    };
-                    case Type.Declared it -> leaf.word() == Word.VALUE;
-                    case Type.Union it -> leaf.word() == Word.VALUE;
-                    default -> false;
-                };
-                case Option option -> type instanceof Type.Option it && fits(option.of(), it.of());
-                case Product product -> type instanceof Type.Tuple it
-                        && fitEach(product.of(), it.of());
-                case ListOf list -> type instanceof Type.ListOf it && fits(list.element(), it.of());
-                case FunctionOf function -> type instanceof Type.Function it
-                        && fitEach(function.signature().takes(), it.takes())
-                        && fits(function.signature().answers(), it.answers());
-            };
-        }
-
-        /** Whether each of {@code shapes} fits the type at its place in {@code types}. */
-        private static boolean fitEach(List<Shape> shapes, List<Type> types) {
-            if (shapes.size() != types.size()) {
-                return false;
-            }
-            for (int at = 0; at < shapes.size(); at++) {
-                if (!fits(shapes.get(at), types.get(at))) {
-                    return false;
-                }
-            }
-            return true;
-        }
-
-        /** Refuses {@code shapes} where one does not fit the type at its place in {@code types}. */
-        private static void fitting(List<Shape> shapes, List<Type> types, String what) {
-            if (!fitEach(shapes, types)) {
-                throw new IllegalArgumentException(what + " is said to cross as " + shapes
-                        + ", which is not how " + types + " crosses");
-            }
-        }
-
-        /** Every shape {@code shape} is or holds, itself first. */
-        private static List<Shape> within(Shape shape) {
-            List<Shape> within = new ArrayList<>(List.of(shape));
-            switch (shape) {
-                case Leaf leaf -> { }
-                case Option option -> within.addAll(within(option.of()));
-                case Product product -> product.of().forEach(it -> within.addAll(within(it)));
-                case ListOf list -> within.addAll(within(list.element()));
-                case FunctionOf function -> {
-                    function.signature().takes().forEach(it -> within.addAll(within(it)));
-                    within.addAll(within(function.signature().answers()));
-                }
-            }
-            return within;
-        }
     }
 
     /** What something takes and answers, as the shape each value crosses in. */
@@ -573,114 +526,210 @@ public final class Manifest {
             declarations = List.copyOf(declarations);
             lists = List.copyOf(lists);
             functions = List.copyOf(functions);
-            Set<Shape> listed = new HashSet<>();
+            Map<Shape, ListCrossing> listed = new LinkedHashMap<>();
             for (ListCrossing list : lists) {
-                if (!listed.add(list.element())) {
+                if (listed.put(list.element(), list) != null) {
                     throw new IllegalArgumentException("module `" + name + "` says two lists of "
                             + list.element());
                 }
             }
-            Set<Signature> called = new HashSet<>();
+            Map<Signature, FunctionCrossing> called = new LinkedHashMap<>();
             for (FunctionCrossing function : functions) {
-                if (!called.add(function.signature())) {
+                if (called.put(function.signature(), function) != null) {
                     throw new IllegalArgumentException("module `" + name + "` says two function"
                             + " crossings of " + function.signature());
                 }
             }
-            for (Shape shape : shapesIn(behaviors, injections, values, declarations, lists,
+            for (Crossing crossing : crossingsIn(behaviors, injections, values, declarations, lists,
                     functions)) {
-                for (Shape within : Shape.within(shape)) {
-                    if (within instanceof Shape.ListOf list && !listed.contains(list.element())) {
-                        throw new IllegalArgumentException("module `" + name + "` hands a list of "
-                                + list.element() + " across and says nothing to build one through");
+                offered(name, crossing.shape(), crossing.way(), listed, called);
+            }
+        }
+
+        /**
+         * Refuses {@code shape}, crossing the way {@code way} says, where anything in it is a list
+         * or a function value this module says nothing to reach that way through: a list a host
+         * hands over with nothing to build it, one it is handed with nothing to read it, a function
+         * value it is handed with nothing to call it, and one it hands over with nothing to make
+         * it. What a function value takes crosses the other way from the value.
+         */
+        private static void offered(String module, Shape shape, Way way,
+                                    Map<Shape, ListCrossing> lists,
+                                    Map<Signature, FunctionCrossing> functions) {
+            switch (shape) {
+                case Shape.Leaf leaf -> { }
+                case Shape.Option option -> offered(module, option.of(), way, lists, functions);
+                case Shape.Product product -> product.of()
+                        .forEach(member -> offered(module, member, way, lists, functions));
+                case Shape.ListOf list -> {
+                    ListCrossing crossing = lists.get(list.element());
+                    boolean there = crossing != null && (way == Way.GIVEN
+                            ? crossing.construct() != null : crossing.read() != null);
+                    if (!there) {
+                        throw new IllegalArgumentException("module `" + module + "` hands a list"
+                                + " of " + list.element() + " across and says nothing to "
+                                + (way == Way.GIVEN ? "build" : "read") + " one through");
                     }
-                    if (within instanceof Shape.FunctionOf function
-                            && !called.contains(function.signature())) {
-                        throw new IllegalArgumentException("module `" + name + "` hands a"
+                    offered(module, list.element(), way, lists, functions);
+                }
+                case Shape.FunctionOf function -> {
+                    FunctionCrossing crossing = functions.get(function.signature());
+                    boolean there = crossing != null && (way == Way.HANDED
+                            ? crossing.call() != null : crossing.make() != null);
+                    if (!there) {
+                        throw new IllegalArgumentException("module `" + module + "` hands a"
                                 + " function of " + function.signature() + " across and says"
-                                + " nothing to call one through");
+                                + " nothing to " + (way == Way.HANDED ? "call" : "make")
+                                + " one through");
                     }
+                    function.signature().takes().forEach(
+                            taken -> offered(module, taken, way.turned(), lists, functions));
+                    offered(module, function.signature().answers(), way, lists, functions);
                 }
             }
         }
 
-        /** Every shape said anywhere in a module made of these. */
-        private static List<Shape> shapesIn(List<Behavior> behaviors, List<Injection> injections,
-                                            List<PublishedValue> values,
-                                            List<Declaration> declarations,
-                                            List<ListCrossing> lists,
-                                            List<FunctionCrossing> functions) {
-            List<Shape> shapes = new ArrayList<>();
-            java.util.function.Consumer<Signature> signed = signature -> {
-                shapes.addAll(signature.takes());
-                shapes.add(signature.answers());
+        /** A shape said somewhere in a module, and the way a value crossing in it crosses there. */
+        private record Crossing(Shape shape, Way way) {
+        }
+
+        /**
+         * Every shape said anywhere in a module made of these, with the way it crosses there, which
+         * is the way its words go: what a function takes is handed over by a host, and what it
+         * writes through room is handed to one. A function a host writes is called the other way
+         * round.
+         */
+        private static List<Crossing> crossingsIn(List<Behavior> behaviors,
+                                                  List<Injection> injections,
+                                                  List<PublishedValue> values,
+                                                  List<Declaration> declarations,
+                                                  List<ListCrossing> lists,
+                                                  List<FunctionCrossing> functions) {
+            List<Crossing> crossings = new ArrayList<>();
+            java.util.function.BiConsumer<Signature, Way> signed = (signature, way) -> {
+                signature.takes().forEach(it -> crossings.add(new Crossing(it, way)));
+                crossings.add(new Crossing(signature.answers(), way.turned()));
             };
             behaviors.forEach(it -> {
                 if (it.call().available() instanceof Call call) {
-                    signed.accept(call.signature());
+                    signed.accept(call.signature(), Way.GIVEN);
                 }
             });
-            injections.forEach(it -> signed.accept(it.signature()));
+            injections.forEach(it -> signed.accept(it.signature(), Way.HANDED));
             values.forEach(it -> {
                 if (it.read().available() instanceof Call call) {
-                    signed.accept(call.signature());
+                    signed.accept(call.signature(), Way.GIVEN);
                 }
             });
             for (Declaration declaration : declarations) {
                 if (Declaration.built(declaration) instanceof Construct construct) {
-                    shapes.addAll(construct.takes());
+                    construct.takes().forEach(it -> crossings.add(new Crossing(it, Way.GIVEN)));
                 }
                 for (Field field : declaration.fields()) {
                     if (field.read().available() instanceof Read read) {
-                        shapes.add(read.answers());
+                        crossings.add(new Crossing(read.answers(), Way.HANDED));
                     }
                 }
             }
-            lists.forEach(it -> shapes.add(it.element()));
-            functions.forEach(it -> signed.accept(it.signature()));
-            return shapes;
+            for (ListCrossing list : lists) {
+                if (list.construct() != null) {
+                    crossings.add(new Crossing(list.element(), Way.GIVEN));
+                }
+                if (list.read() != null) {
+                    crossings.add(new Crossing(list.element(), Way.HANDED));
+                }
+            }
+            for (FunctionCrossing function : functions) {
+                if (function.call() != null) {
+                    signed.accept(function.signature(), Way.GIVEN);
+                }
+                if (function.make() != null) {
+                    signed.accept(function.signature(), Way.HANDED);
+                }
+            }
+            return crossings;
+        }
+    }
+
+    /** Which way a value crosses: handed over by a host, or handed to one. */
+    public enum Way {
+        GIVEN, HANDED;
+
+        /** The other way, which is the way what a function value takes crosses. */
+        public Way turned() {
+            return this == GIVEN ? HANDED : GIVEN;
         }
     }
 
     /**
-     * What a list whose elements cross in the shape {@code element} is built and read through: a
-     * list of one declared type through the same functions as a list of any other. Each function
-     * is of the shape a list of that element is: {@code (count, a slice for each word an element
-     * crosses as) -> list}, {@code (list) -> count}, and {@code (list, index, room for each word)
-     * -> bool}.
+     * What a list whose elements cross in the shape {@code element} is built through, where a host
+     * hands one over, and read through, where it is handed one: a list of one declared type
+     * through the same functions as a list of any other. Each function is of the shape a list of
+     * that element is: {@code (count, a slice for each word an element crosses as) -> list}, and
+     * {@code (list) -> count} and {@code (list, index, room for each word) -> bool}. At least one
+     * of the two is there.
      */
-    public record ListCrossing(Shape element, Function construct, Function length,
-                               Function at) {
+    public record ListCrossing(Shape element, @Nullable Function construct,
+                               @Nullable ListRead read) {
 
         public ListCrossing {
-            List<Parameter> built = new ArrayList<>(List.of(Parameter.given(Word.COUNT)));
-            element.words().forEach(word -> built.add(Parameter.slice(word)));
-            if (!built.equals(construct.takes()) || construct.answers() != Word.LIST) {
-                throw new IllegalArgumentException("a list of " + element + " is built through "
-                        + construct.name() + ", which takes " + construct.takes() + " and answers "
-                        + construct.answers());
+            if (construct == null && read == null) {
+                throw new IllegalArgumentException("a list of " + element + " is neither built nor"
+                        + " read");
             }
-            length.takes(List.of(Parameter.given(Word.LIST)), List.of(), List.of(), Word.COUNT);
-            at.takes(List.of(Parameter.given(Word.LIST), Parameter.given(Word.COUNT)), List.of(),
-                    List.of(element), Word.BOOL);
+            if (construct != null) {
+                List<Parameter> built = new ArrayList<>(List.of(Parameter.given(Word.COUNT)));
+                element.words().forEach(word -> built.add(Parameter.slice(word)));
+                if (!built.equals(construct.takes()) || construct.answers() != Word.LIST) {
+                    throw new IllegalArgumentException("a list of " + element + " is built through "
+                            + construct.name() + ", which takes " + construct.takes()
+                            + " and answers " + construct.answers());
+                }
+            }
+            if (read != null) {
+                read.length().takes(List.of(Parameter.given(Word.LIST)), List.of(), List.of(),
+                        Word.COUNT);
+                read.at().takes(List.of(Parameter.given(Word.LIST), Parameter.given(Word.COUNT)),
+                        List.of(), List.of(element), Word.BOOL);
+            }
+        }
+    }
+
+    /** What a host reads a list through: its length, and its element at an index. */
+    public record ListRead(Function length, Function at) {
+    }
+
+    /**
+     * What a function value crossing as {@code signature} is called through, where a host is
+     * handed one, {@code (function, what it takes, room for its answer) -> status}; and what a host
+     * makes one of its own through, where one is taken from a host. At least one of the two is
+     * there.
+     */
+    public record FunctionCrossing(Signature signature, @Nullable Function call,
+                                   @Nullable FunctionMaking make) {
+
+        public FunctionCrossing {
+            if (call == null && make == null) {
+                throw new IllegalArgumentException("a function of " + signature + " is neither"
+                        + " called nor made");
+            }
+            if (call != null) {
+                call.takes(List.of(Parameter.given(Word.FUNCTION)), signature.takes(),
+                        List.of(signature.answers()), Word.STATUS);
+            }
+            if (make != null) {
+                make.implementation().answering(signature);
+            }
         }
     }
 
     /**
-     * What a function value crossing as {@code signature} says is called through, and what a host
-     * makes one of its own through: {@code call}, {@code (function, what it takes, room for its
-     * answer) -> status}; the {@code implementation} a host writes, handed what it was handed first
-     * where the value was made, then what the value was called with, and room for its answer; and
-     * {@code implement}, which makes a value of an implementation out of room a host laid out.
+     * What a host makes a function value of its own through: the {@code implementation} it writes,
+     * handed what it was handed first where the value was made, then what the value was called
+     * with, and room for its answer; and {@code implement}, which makes a value of an
+     * implementation out of room a host laid out.
      */
-    public record FunctionCrossing(Signature signature, Function call,
-                                   Implementation implementation, String implement) {
-
-        public FunctionCrossing {
-            call.takes(List.of(Parameter.given(Word.FUNCTION)), signature.takes(),
-                    List.of(signature.answers()), Word.STATUS);
-            implementation.answering(signature);
-        }
+    public record FunctionMaking(Implementation implementation, String implement) {
     }
 
     /** A published behavior, and what a host calls it through, or why nothing does. */
@@ -696,9 +745,6 @@ public final class Manifest {
         public Behavior {
             if (call.available() instanceof Call it) {
                 it.calls(true);
-                Shape.fitting(it.signature().takes(), parameters.types(), "what " + name + " takes");
-                Shape.fitting(List.of(it.signature().answers()), List.of(answers.type()),
-                        "what " + name + " answers");
             }
             UnionAnswer union = answers.union();
             if (union != null && (union.which() != null) != (call.available() != null)) {
@@ -812,10 +858,6 @@ public final class Manifest {
 
         public Injection {
             parameters = List.copyOf(parameters);
-            Shape.fitting(signature.takes(), parameters.stream().map(NamedParameter::type).toList(),
-                    "what " + name + " takes");
-            Shape.fitting(List.of(signature.answers()), List.of(answers),
-                    "what " + name + " answers");
             implementation.answering(signature);
         }
     }
@@ -847,8 +889,6 @@ public final class Manifest {
                     throw new IllegalArgumentException("the value " + name + " is read by a"
                             + " function taking " + call.signature().takes());
                 }
-                Shape.fitting(List.of(call.signature().answers()), List.of(type),
-                        "the value " + name);
             }
         }
     }
@@ -892,17 +932,12 @@ public final class Manifest {
 
             public Product {
                 fields = List.copyOf(fields);
-                built(name, fields, construct);
             }
         }
 
         record Newtype(String name, Field field, Reach<Construct> construct,
                        @Nullable Function decode, @Nullable Function decodeHost,
                        @Nullable Function encode) implements Declaration {
-
-            public Newtype {
-                built(name, List.of(field), construct);
-            }
 
             @Override
             public List<Field> fields() {
@@ -913,10 +948,6 @@ public final class Manifest {
         record Unit(String name, Reach<Construct> construct, @Nullable Function decode,
                     @Nullable Function decodeHost, @Nullable Function encode)
                 implements Declaration {
-
-            public Unit {
-                built(name, List.of(), construct);
-            }
 
             @Override
             public List<Field> fields() {
@@ -943,23 +974,10 @@ public final class Manifest {
             }
         }
 
-        /** Refuses a constructor taking each of {@code fields} in a shape that does not fit it. */
-        private static void built(String name, List<Field> fields, Reach<Construct> construct) {
-            if (construct.available() instanceof Construct it) {
-                Shape.fitting(it.takes(), fields.stream().map(Field::type).toList(),
-                        "what builds " + name);
-            }
-        }
     }
 
     /** A field, and what a host reads it through, or why nothing does. */
     public record Field(String name, Type type, Reach<Read> read) {
-
-        public Field {
-            if (read.available() instanceof Read it) {
-                Shape.fitting(List.of(it.answers()), List.of(type), "the field " + name);
-            }
-        }
     }
 
     /** A type as the model says it, every one it has. */
@@ -1314,17 +1332,23 @@ public final class Manifest {
                             new Declaration.Sum(name, cases, which, decode, decodeHost,
                                     encode)));
 
+    private static final Decoder<JsonNode, ListRead> LIST_READ = combine(
+            field("length", FUNCTION),
+            field("at", FUNCTION)).strict(ListRead::new);
+
     private static final Decoder<JsonNode, ListCrossing> LIST_CROSSING = combine(
             field("element", SHAPE),
-            field("construct", FUNCTION),
-            field("length", FUNCTION),
-            field("at", FUNCTION)).strict(ListCrossing::new);
+            nullableField("construct", FUNCTION),
+            nullableField("read", LIST_READ)).strict(ListCrossing::new);
+
+    private static final Decoder<JsonNode, FunctionMaking> FUNCTION_MAKING = combine(
+            field("implementation", IMPLEMENTATION),
+            field("implement", string())).strict(FunctionMaking::new);
 
     private static final Decoder<JsonNode, FunctionCrossing> FUNCTION_CROSSING = combine(
             field("signature", SIGNATURE),
-            field("call", FUNCTION),
-            field("implementation", IMPLEMENTATION),
-            field("implement", string())).strict(FunctionCrossing::new);
+            nullableField("call", FUNCTION),
+            nullableField("make", FUNCTION_MAKING)).strict(FunctionCrossing::new);
 
     private static final Decoder<JsonNode, Module> MODULE = combine(
             field("name", string()),

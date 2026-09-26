@@ -11,7 +11,6 @@ use std::process::{Command, Output};
 use tempfile::{TempDir, tempdir};
 
 mod support;
-use support::PREFIX;
 
 /// A value that names another value at its root: `ks`, kept and handed nothing, and `ys`,
 /// published and handed one `ks`.
@@ -61,7 +60,7 @@ fn a_published_values_entry_answers_with_what_it_names() {
         #include <stdint.h>
         #include <stdio.h>
 
-        extern uint32_t entry(int64_t *) __asm__("PREFIXsouther5.m$value$ys");
+        extern uint32_t entry(int64_t *) __asm__("PREFIXsouther@.m$value$ys");
 
         int main(void) {
             int64_t out;
@@ -136,7 +135,7 @@ fn a_local_value_reach_and_a_published_one_read_as_different_variants() {
 
 /// `reader.g` reaches `publisher.ys` across the two objects' shared boundary — here, one object
 /// holding both modules, but the call is emitted exactly as it would be split across two: `g`
-/// calls `souther5.publisher$value$ys`, the same exported entry `reader` would import from a
+/// calls `souther<generation>.publisher$value$ys`, the same exported entry `reader` would import from a
 /// separate build of `publisher`, never a copy of `ys`'s own body inlined into `reader`'s object.
 #[test]
 fn a_behavior_answering_with_another_modules_published_value_runs_it_there() {
@@ -145,7 +144,7 @@ fn a_behavior_answering_with_another_modules_published_value_runs_it_there() {
         #include <stdint.h>
         #include <stdio.h>
 
-        extern uint32_t g(const void *, int64_t *) __asm__("PREFIXsouther5.reader.g");
+        extern uint32_t g(const void *, int64_t *) __asm__("PREFIXsouther@.reader.g");
 
         int main(void) {
             int64_t out;
@@ -174,7 +173,7 @@ fn build(object_name: &str, document: &str, harness: &str) -> (TempDir, PathBuf)
     fs::write(&object, object_for(document).expect("an object")).expect("the object written");
 
     let harness_file = into_path.join("harness.c");
-    fs::write(&harness_file, harness.replace("PREFIX", PREFIX)).expect("the harness written");
+    fs::write(&harness_file, support::harness(harness)).expect("the harness written");
 
     let executable = into_path.join("run");
     let linked = Command::new("cc")

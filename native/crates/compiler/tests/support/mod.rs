@@ -19,6 +19,18 @@ pub const PREFIX: &str = if cfg!(target_os = "macos") {
     panic!("these tests link on macOS and Linux, and have not been run anywhere else")
 };
 
+/// `text`, a harness these tests compile, with what it cannot know written out: `PREFIX` as
+/// [`PREFIX`], and `souther@` as `souther` and the ABI generation the `abi` crate says, so no
+/// harness spells a generation and none has to change when one moves. A harness handed on without
+/// this keeps an `@` in a name, which no C compiler takes.
+#[allow(dead_code)]
+pub fn harness(text: &str) -> String {
+    text.replace("PREFIX", PREFIX).replace(
+        "souther@",
+        &format!("souther{}", souther_native_abi::ABI_GENERATION),
+    )
+}
+
 /// The runtime's static archive, built for these tests by these tests.
 ///
 /// Not a path into whatever `target/` last held. The archive is the output of a different build

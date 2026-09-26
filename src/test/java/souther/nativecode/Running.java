@@ -1,5 +1,7 @@
 package souther.nativecode;
 
+import souther.bindings.Manifest;
+
 import souther.compiler.abort.AbortKind;
 import souther.compiler.observe.ObservedValue;
 import souther.compiler.observe.StoodIn;
@@ -45,15 +47,23 @@ import java.util.StringJoiner;
 final class Running {
 
     /**
-     * The generation of calling convention a function symbol answers to, held to {@code
-     * souther_native_abi::ABI} the way every other spelling written here a second time is: this
-     * harness declares and calls symbols in C, which cannot reach a Rust crate constant, so this
-     * is the one place it is written by hand instead. Bumped beside that constant, not on its
-     * own — a harness compiled against a generation the object it links does not answer to is
-     * exactly the silent ABI mismatch embedding this in the symbol exists to turn into a linker
-     * error instead.
+     * The generation of calling convention a function symbol answers to: the one the manifest
+     * reader reads, which refuses a manifest of any other and is held to one the driver wrote. Not
+     * written here a second time: a harness compiled against a generation the object it links does
+     * not answer to is exactly the silent ABI mismatch embedding this in the symbol exists to turn
+     * into a linker error instead.
      */
-    static final String ABI = "5";
+    static final String ABI = String.valueOf(Manifest.ABI);
+
+    /**
+     * {@code text}, a harness or a symbol a test writes, with every {@code souther@} spelt as
+     * {@code souther} and the generation {@link #ABI} is, so no test spells a generation and none has
+     * to change when one moves. A harness handed on without this keeps an {@code @} in a name, which
+     * neither a C compiler nor PHP takes.
+     */
+    static String spelt(String text) {
+        return text.replace("souther@", "souther" + ABI);
+    }
 
     /**
      * One thing a run can reach in the object: a behavior by its own symbol, or a row by the entry

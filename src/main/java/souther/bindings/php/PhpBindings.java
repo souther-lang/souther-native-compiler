@@ -10,16 +10,19 @@ import souther.bindings.Manifest.Type;
 import souther.bindings.Manifest.Word;
 import souther.bindings.NotBindable;
 import souther.bindings.Output;
-import souther.bindings.php.Crossing.Both;
-import souther.bindings.php.Crossing.Callable;
 import souther.bindings.php.Crossing.Given;
-import souther.bindings.php.Crossing.Listed;
+import souther.bindings.php.Crossing.GivenFunction;
+import souther.bindings.php.Crossing.GivenList;
+import souther.bindings.php.Crossing.GivenOptional;
+import souther.bindings.php.Crossing.GivenTuple;
 import souther.bindings.php.Crossing.Member;
 import souther.bindings.php.Crossing.OneOf;
-import souther.bindings.php.Crossing.Optional;
 import souther.bindings.php.Crossing.Received;
+import souther.bindings.php.Crossing.ReceivedFunction;
+import souther.bindings.php.Crossing.ReceivedList;
+import souther.bindings.php.Crossing.ReceivedOptional;
+import souther.bindings.php.Crossing.ReceivedTuple;
 import souther.bindings.php.Crossing.Told;
-import souther.bindings.php.Crossing.Tuple;
 import souther.bindings.php.Crossing.Whole;
 
 import java.io.IOException;
@@ -105,7 +108,7 @@ public final class PhpBindings {
      * closure is handed is made into the classes its type names, and two types crossing in one
      * shape are two sets of classes.
      */
-    private final Map<List<Object>, Callable> hosting = new LinkedHashMap<>();
+    private final Map<List<Object>, GivenFunction> hosting = new LinkedHashMap<>();
 
     private PhpBindings(Manifest manifest, String root, Path into) {
         this.manifest = manifest;
@@ -350,18 +353,103 @@ public final class PhpBindings {
             this.module = module;
         }
 
-        /** How PHP hands the library a value of {@code type} in {@code shape}, or null where it has no way to. */
+        /**
+         * How PHP hands the library a value of {@code type} in {@code shape}, or null where it has
+         * no way to: a pair of a type and a shape this binding knows no way to hold, as well as
+         * one it knows is beyond PHP. Which shape a type crosses in is the manifest's to say, and
+         * a pair made otherwise than this binding knows is one it does not bind rather than one it
+         * refuses the manifest over.
+         */
         @Nullable Given given(Type type, Shape shape) {
-            if (shape instanceof Shape.Leaf && type instanceof Type.Union union) {
-                List<Member> members = members(union);
-                return members == null ? null : new OneOf(union, members);
-            }
-            return both(type, shape);
+            return switch (shape) {
+                case Shape.Leaf leaf -> switch (type) {
+                    case Type.Primitive it -> Whole.primitive(leaf.word());
+                    case Type.Declared it -> whole(it.module(), it.name());
+                    case Type.Union union -> {
+                        List<Member> members = members(union);
+                        yield members == null ? null : new OneOf(union, members);
+                    }
+                    default -> null;
+                };
+                case Shape.Option option -> type instanceof Type.Option it
+                        && given(it.of(), option.of()) instanceof Given of
+                        ? new GivenOptional(of) : null;
+                case Shape.Product product -> type instanceof Type.Tuple it
+                        && givens(it.of(), product.of()) instanceof List<Given> members
+                        ? new GivenTuple(members) : null;
+                case Shape.ListOf list -> {
+                    if (!(type instanceof Type.ListOf it)
+                            || !(given(it.of(), list.element()) instanceof Given element)) {
+                        yield null;
+                    }
+                    Manifest.ListCrossing crossing = listOf(list.element());
+                    yield crossing.construct() == null ? null : new GivenList(element, crossing);
+                }
+                case Shape.FunctionOf function -> {
+                    if (!(type instanceof Type.Function it)
+                            || !(receiveds(it.takes(), function.signature().takes())
+                            instanceof List<Received> takes)
+                            || !(given(it.answers(), function.signature().answers())
+                            instanceof Given answers)) {
+                        yield null;
+                    }
+                    Manifest.FunctionCrossing crossing = functionOf(function.signature());
+                    yield crossing.make() == null ? null : hosted(takes, answers, crossing);
+                }
+            };
         }
 
-        /** How the library hands PHP a value of {@code type} in {@code shape}, or null where it has no way to. */
+        /**
+         * How the library hands PHP a value of {@code type} in {@code shape}, or null where it has
+         * no way to, for the reasons {@link #given} has none. A union no declaration names is
+         * handed to PHP only as a behavior's answer, which says which case it is.
+         */
         @Nullable Received received(Type type, Shape shape) {
-            return both(type, shape);
+            return switch (shape) {
+                case Shape.Leaf leaf -> switch (type) {
+                    case Type.Primitive it -> Whole.primitive(leaf.word());
+                    case Type.Declared it -> whole(it.module(), it.name());
+                    default -> null;
+                };
+                case Shape.Option option -> type instanceof Type.Option it
+                        && received(it.of(), option.of()) instanceof Received of
+                        ? new ReceivedOptional(of) : null;
+                case Shape.Product product -> type instanceof Type.Tuple it
+                        && receiveds(it.of(), product.of()) instanceof List<Received> members
+                        ? new ReceivedTuple(members) : null;
+                case Shape.ListOf list -> {
+                    if (!(type instanceof Type.ListOf it)
+                            || !(received(it.of(), list.element()) instanceof Received element)) {
+                        yield null;
+                    }
+                    Manifest.ListCrossing crossing = listOf(list.element());
+                    yield crossing.read() == null ? null : new ReceivedList(element, crossing);
+                }
+                case Shape.FunctionOf function -> {
+                    if (!(type instanceof Type.Function it)
+                            || !(givens(it.takes(), function.signature().takes())
+                            instanceof List<Given> takes)
+                            || !(received(it.answers(), function.signature().answers())
+                            instanceof Received answers)) {
+                        yield null;
+                    }
+                    Manifest.FunctionCrossing crossing = functionOf(function.signature());
+                    yield crossing.call() == null ? null
+                            : new ReceivedFunction(takes, answers, crossing, bindingClass());
+                }
+            };
+        }
+
+        /** What this module says a list of {@code element} is reached through. */
+        private Manifest.ListCrossing listOf(Shape element) {
+            return module.lists().stream().filter(it -> it.element().equals(element)).findFirst()
+                    .orElseThrow();
+        }
+
+        /** What this module says a function value of {@code signature} is reached through. */
+        private Manifest.FunctionCrossing functionOf(Manifest.Signature signature) {
+            return module.functions().stream().filter(it -> it.signature().equals(signature))
+                    .findFirst().orElseThrow();
         }
 
         /**
@@ -405,8 +493,14 @@ public final class PhpBindings {
                     .collect(Collectors.joining("|")), made, quotedInSingle("`" + what + "`"));
         }
 
-        /** How PHP hands over each of {@code types} in its shape, or null where any of them has no way. */
+        /**
+         * How PHP hands over each of {@code types} in its shape, or null where any of them has no
+         * way, or the two say different counts.
+         */
         @Nullable List<Given> givens(List<Type> types, List<Shape> shapes) {
+            if (types.size() != shapes.size()) {
+                return null;
+            }
             List<Given> crossings = new ArrayList<>();
             for (int at = 0; at < types.size(); at++) {
                 Given crossing = given(types.get(at), shapes.get(at));
@@ -418,8 +512,14 @@ public final class PhpBindings {
             return crossings;
         }
 
-        /** How PHP is handed each of {@code types} in its shape, or null where any of them has no way. */
+        /**
+         * How PHP is handed each of {@code types} in its shape, or null where any of them has no
+         * way, or the two say different counts.
+         */
         @Nullable List<Received> receiveds(List<Type> types, List<Shape> shapes) {
+            if (types.size() != shapes.size()) {
+                return null;
+            }
             List<Received> crossings = new ArrayList<>();
             for (int at = 0; at < types.size(); at++) {
                 Received crossing = received(types.get(at), shapes.get(at));
@@ -430,62 +530,6 @@ public final class PhpBindings {
             }
             return crossings;
         }
-
-        /**
-         * How PHP holds a value of {@code type} crossing both ways in {@code shape}, or null where
-         * it has no way. What a list holds, what a tuple is made of, what an optional holds and
-         * what a function value takes and answers are each held both ways, even where the value
-         * crosses one way, since what they are made of crosses either way inside it: a union no
-         * declaration names is refused inside any of them, having no way to say which case a
-         * value read out of one is.
-         */
-        private @Nullable Both both(Type type, Shape shape) {
-            return switch (shape) {
-                case Shape.Leaf leaf -> switch (type) {
-                    case Type.Primitive it -> Whole.primitive(leaf.word());
-                    case Type.Declared it -> whole(it.module(), it.name());
-                    default -> null;
-                };
-                case Shape.Option option -> {
-                    Both of = both(((Type.Option) type).of(), option.of());
-                    yield of == null ? null : new Optional(of);
-                }
-                case Shape.Product product -> {
-                    List<Type> types = ((Type.Tuple) type).of();
-                    List<Both> members = new ArrayList<>();
-                    for (int at = 0; at < types.size(); at++) {
-                        Both member = both(types.get(at), product.of().get(at));
-                        if (member == null) {
-                            yield null;
-                        }
-                        members.add(member);
-                    }
-                    yield new Tuple(members);
-                }
-                case Shape.ListOf list -> {
-                    Both element = both(((Type.ListOf) type).of(), list.element());
-                    yield element == null ? null : new Listed(element, module.lists().stream()
-                            .filter(it -> it.element().equals(list.element())).findFirst()
-                            .orElseThrow());
-                }
-                case Shape.FunctionOf function -> {
-                    Type.Function fn = (Type.Function) type;
-                    List<Both> takes = new ArrayList<>();
-                    for (int at = 0; at < fn.takes().size(); at++) {
-                        Both taken = both(fn.takes().get(at), function.signature().takes().get(at));
-                        if (taken == null) {
-                            yield null;
-                        }
-                        takes.add(taken);
-                    }
-                    Both answers = both(fn.answers(), function.signature().answers());
-                    yield answers == null ? null : hosted(takes, answers,
-                            module.functions().stream()
-                                    .filter(it -> it.signature().equals(function.signature()))
-                                    .findFirst().orElseThrow());
-                }
-            };
-        }
     }
 
     /**
@@ -495,15 +539,16 @@ public final class PhpBindings {
      * as it is written out, and otherwise a new one, named after the function making a value of the
      * shape and its place among the types crossing in that shape.
      */
-    private Callable hosted(List<Both> takes, Both answers, Manifest.FunctionCrossing crossing) {
+    private GivenFunction hosted(List<Received> takes, Given answers,
+                                 Manifest.FunctionCrossing crossing) {
         List<Object> type = List.of(takes, answers, crossing);
-        Callable kept = hosting.get(type);
+        GivenFunction kept = hosting.get(type);
         if (kept != null) {
             return kept;
         }
         long before = hosting.values().stream().filter(it -> it.crossing().equals(crossing)).count();
-        Callable made = new Callable(takes, answers, crossing, bindingClass(),
-                crossing.implement() + "#" + before);
+        GivenFunction made = new GivenFunction(takes, answers, crossing, bindingClass(),
+                java.util.Objects.requireNonNull(crossing.make()).implement() + "#" + before);
         hosting.put(type, made);
         return made;
     }
@@ -1531,11 +1576,13 @@ public final class PhpBindings {
      */
     private String functionSlots() {
         StringBuilder slots = new StringBuilder();
-        for (Callable callable : hosting.values()) {
+        for (GivenFunction callable : hosting.values()) {
             slots.append("            '").append(callable.slot())
                     .append("' => new \\Souther\\Runtime\\FunctionSlot($library, '")
-                    .append(callable.crossing().implementation().type()).append("', '")
-                    .append(callable.crossing().implement()).append("',\n                ")
+                    .append(Objects.requireNonNull(callable.crossing().make()).implementation().type())
+                    .append("', '")
+                    .append(Objects.requireNonNull(callable.crossing().make()).implement())
+                    .append("',\n                ")
                     .append(adapting(List.copyOf(callable.takes()), callable.answers(),
                             "a function value of " + callable.phpDocType()))
                     .append("),\n");

@@ -78,11 +78,12 @@ pub(crate) const MOVES: &[(u32, &str)] = &[
     ),
     (
         10,
-        "what reaches a value says the shape each value crosses in (`shape`), or why it cannot be \
-         reached (`unavailable`); a tuple, an optional at any depth and a function value cross, a \
-         list is built and read through functions for the shape its element crosses in, and a \
-         function value through functions for its own (`functions`); a field's reader writes the \
-         field through room; every type the model has is named, `nothing` and `never` among them",
+        "what reaches a value says the shape each value crosses in (`signature`), or why it cannot \
+         be reached (`unavailable`); a tuple, an optional at any depth and a function value cross, \
+         a list is built and read through functions for the shape its element crosses in, and a \
+         function value called and made through functions for its own (`functions`), each only \
+         where something crossing that way needs it; a field's reader writes the field through \
+         room; every type the model has is named, `nothing` and `never` among them",
     ),
 ];
 
@@ -211,14 +212,28 @@ pub(crate) struct Module {
 }
 
 /// What a host calls a function value that crosses in the shape `signature` says through, and makes
-/// one of its own through.
+/// one of its own through: each only where something crossing needs it, since which a host may do
+/// is decided by the way each function value crosses and not by its shape. A host handed a function
+/// taking a union no declaration names calls it, handing the union over, and has nothing to be
+/// told which case one is where it would be handed one by a function of its own, so no function of
+/// that shape is made by a host unless something takes one from a host. At least one of the two is
+/// there.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct FunctionCrossing {
     /// What a function value of this shape takes and answers, as each crosses.
     pub signature: Signature,
-    /// `(function, what it takes, room for each word of its answer) -> status`.
-    pub call: Function,
+    /// `(function, what it takes, room for each word of its answer) -> status`, where a host is
+    /// handed a function value of this shape.
+    pub call: Option<Function>,
+    /// What a host makes one of its own through, where one is taken from a host.
+    pub make: Option<FunctionMaking>,
+}
+
+/// What a host makes a function value of its own through.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct FunctionMaking {
     /// The function a host writes to make a function value of its own: handed what it was handed
     /// where the value was made, then what the value was called with, and room for each word of
     /// its answer, answering a status as an implementation of a behavior does.
@@ -241,13 +256,26 @@ pub(crate) struct Signature {
     pub answers: Box<Shape>,
 }
 
-/// What a host builds and reads a list whose elements cross in the shape `element` through.
+/// What a host builds a list whose elements cross in the shape `element` through, and reads one
+/// through: each only where something crossing needs it, for the reason a [`FunctionCrossing`]
+/// says each only where needed. A list of a union no declaration names may be built by a host,
+/// which hands each element over as the case it is, and is read by none. At least one of the two
+/// is there.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ListCrossing {
     pub element: Shape,
-    /// `(count, a slice for each word an element crosses as) -> list`.
-    pub construct: Function,
+    /// `(count, a slice for each word an element crosses as) -> list`, where a host hands a list
+    /// of these over.
+    pub construct: Option<Function>,
+    /// What a host reads one through, where a host is handed one.
+    pub read: Option<ListRead>,
+}
+
+/// What a host reads a list through.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ListRead {
     /// `(list) -> count`.
     pub length: Function,
     /// `(list, index, room for each word an element crosses as) -> bool`: whether the index is
