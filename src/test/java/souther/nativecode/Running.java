@@ -247,12 +247,19 @@ final class Running {
     }
 
     /**
-     * A scalar the boundary wrote, as the value a row states. Decided by what the JSON value is and
-     * not by the type the answer was declared at, so a boundary that wrote the wrong kind of value
-     * is seen as having written it. Anything but a scalar is compared as the external form it is,
-     * through {@link #externalAnswer}.
+     * A scalar the boundary wrote, or a list of them, as the value a row states. Decided by what
+     * the JSON value is and not by the type the answer was declared at, so a boundary that wrote the
+     * wrong kind of value is seen as having written it. Anything else is compared as the external
+     * form it is, through {@link #externalAnswer}.
      */
     private static ObservedValue observed(JsonNode written) {
+        if (written.isArray()) {
+            List<ObservedValue> elements = new ArrayList<>();
+            for (JsonNode element : written) {
+                elements.add(observed(element));
+            }
+            return new ObservedValue.Sequence(elements);
+        }
         if (written.isIntegralNumber() && written.canConvertToLong()) {
             return new ObservedValue.Integer(written.longValue());
         }
@@ -263,7 +270,8 @@ final class Running {
             return new ObservedValue.Text(written.stringValue());
         }
         throw new AssertionError("the boundary wrote " + written
-                + ", which is not a scalar; compare external forms with externalAnswer");
+                + ", which is neither a scalar nor a list of them; compare external forms with"
+                + " externalAnswer");
     }
 
     private static final JsonMapper JSON = JsonMapper.builder().build();

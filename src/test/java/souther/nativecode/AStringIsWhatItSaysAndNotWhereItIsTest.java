@@ -54,6 +54,7 @@ class AStringIsWhatItSaysAndNotWhereItIsTest {
                 | "nothing after it" : ("ab", "") -> "ab"
                 | "nothing at all" : ("", "") -> ""
                 | "a newline and a quote" : ("a\\n", "\\"b") -> "a\\n\\"b"
+                | "a mark after a letter composes with it" : ("e", "\u0301") -> "\u00E9"
 
             example same
                 | "one text twice" : ("abc", "abc") -> true

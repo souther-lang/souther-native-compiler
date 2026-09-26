@@ -24,7 +24,6 @@ use crate::document::{Form, Node, parsed};
 use crate::{Count, Text, Value, room_for_a_string, souther_alloc, text};
 use souther_native_abi::{DECODED_ISSUES, DECODED_MALFORMED, DECODED_VALUE, TEXT_BYTES};
 use std::ptr;
-use unicode_normalization::{UnicodeNormalization, is_nfc};
 
 /// One reading of one document, from when its bytes are handed over to what a host is answered.
 #[repr(C)]
@@ -157,13 +156,13 @@ unsafe fn mismatched(decoding: *mut Decoding, path: *const Path, node: &Node, wa
 }
 
 /// Text arriving from outside, canonicalized to NFC where it arrives, which is at its string leaf
-/// (spec §string-canonical). What most documents write is already NFC and is taken as it is.
+/// (spec §string-canonical). What most documents write is ASCII, which is NFC already and is taken
+/// as it is.
 fn canonical(written: &[u8]) -> std::borrow::Cow<'_, [u8]> {
-    let text = std::str::from_utf8(written).expect("the parser holds a string to be UTF-8");
-    if is_nfc(text) {
+    if written.is_ascii() {
         std::borrow::Cow::Borrowed(written)
     } else {
-        std::borrow::Cow::Owned(text.nfc().collect::<String>().into_bytes())
+        std::borrow::Cow::Owned(souther_text::nfc(written))
     }
 }
 

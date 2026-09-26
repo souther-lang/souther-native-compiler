@@ -144,6 +144,10 @@ fn option_of(ty: &str) -> String {
     format!(r#"{{"option":{ty}}}"#)
 }
 
+fn list_of(ty: &str) -> String {
+    format!(r#"{{"list":{ty}}}"#)
+}
+
 fn fn_of(takes: &[&str], answers: &str) -> String {
     format!(
         r#"{{"fn":{{"takes":[{}],"answers":{answers}}}}}"#,
@@ -1407,7 +1411,6 @@ fn a_widen_to_a_type_with_no_representation_is_not_lowered() {
 /// with `Int` among its cases, rebuilt with what it holds carried (`tests/restating.rs` runs it).
 #[test]
 fn what_holds_a_value_stands_as_what_holds_a_wider_one() {
-    let list_of = |element: &str| format!(r#"{{"list":{element}}}"#);
     let cases = list_of(A);
     reads_whole(&helpers(&[h(
         &[&cases],
@@ -1446,7 +1449,6 @@ fn a_function_stands_as_one_taking_less_and_answering_more() {
 /// the checker does not write, and it is refused as that.
 #[test]
 fn a_concat_operand_narrower_than_its_slot_without_a_widen_is_the_halves_disagreeing() {
-    let listed = |of: &str| format!(r#"{{"list":{of}}}"#);
     let b = r#"{"declared":"m.B"}"#;
     let joined = |left: &str, right: &str| {
         node(
@@ -1454,20 +1456,20 @@ fn a_concat_operand_narrower_than_its_slot_without_a_widen_is_the_halves_disagre
             &format!(
                 r#""op":"CONCAT","reading":{{"is":"astheystand"}},"left":{left},"right":{right}"#
             ),
-            &listed(S),
+            &list_of(S),
         )
     };
-    let takes = [listed(A), listed(b)];
+    let takes = [list_of(A), list_of(b)];
     let takes: Vec<&str> = takes.iter().map(String::as_str).collect();
     let both = joined(
-        &widen(&read(0, &listed(A)), &listed(S)),
-        &widen(&read(1, &listed(b)), &listed(S)),
+        &widen(&read(0, &list_of(A)), &list_of(S)),
+        &widen(&read(1, &list_of(b)), &list_of(S)),
     );
     object_for(&helpers(&[h(&takes, &both)])).expect("two lists standing as one type are joined");
 
     let bare = joined(
-        &read(0, &listed(A)),
-        &widen(&read(1, &listed(b)), &listed(S)),
+        &read(0, &list_of(A)),
+        &widen(&read(1, &list_of(b)), &list_of(S)),
     );
     is_the_halves_disagreeing(&helpers(&[h(&takes, &bare)]), "the left side of ++");
 }
@@ -1669,11 +1671,10 @@ fn a_clause_of_a_declaration_nothing_here_builds_is_not_run() {
 /// widened to a list of its sum is one it takes, at the sum.
 #[test]
 fn a_kernel_argument_stands_at_what_the_application_takes() {
-    let listed = |of: &str| format!(r#"{{"list":{of}}}"#);
     let length = |argument: &str| {
         let reaches = format!(
             r#"{{"is":"kernel","kernel":"list.length","takes":[{}],"fact":{{"is":"none"}}}}"#,
-            listed(S)
+            list_of(S)
         );
         node(
             "call",
@@ -1682,12 +1683,12 @@ fn a_kernel_argument_stands_at_what_the_application_takes() {
         )
     };
     reads_whole(&helpers(&[h(
-        &[&listed(A)],
-        &length(&widen(&read(0, &listed(A)), &listed(S))),
+        &[&list_of(A)],
+        &length(&widen(&read(0, &list_of(A)), &list_of(S))),
     )]));
 
     is_the_halves_disagreeing(
-        &helpers(&[h(&[&listed(A)], &length(&read(0, &listed(A))))]),
+        &helpers(&[h(&[&list_of(A)], &length(&read(0, &list_of(A))))]),
         "argument 0 handed to list.length",
     );
 }
@@ -2007,17 +2008,63 @@ fn a_kernel_settles_what_this_backend_knows_it_settles() {
     );
 
     // A kernel this backend does not lower is refused as not lowered, whatever it settles.
-    let matching = node(
+    let ints = list_of(INT);
+    let sorting = node(
         "call",
         &format!(
-            r#""reaches":{{"is":"kernel","kernel":"string.matches","takes":[{STRING},{STRING}],"fact":{{"is":"stringmatches","written":"a","meaning":[{{"is":"nothing"}}]}}}},"arguments":[{},{}]"#,
-            read(0, STRING),
-            read(1, STRING)
+            r#""reaches":{{"is":"kernel","kernel":"list.sort","takes":[{ints}],"fact":{{"is":"orderingsubject","type":{INT}}}}},"arguments":[{}]"#,
+            read(0, &ints)
         ),
-        BOOL,
+        &ints,
     );
-    let refused = object_for(&helpers(&[h(&[STRING, STRING], &matching)]))
-        .expect_err("a kernel nothing here lowers");
+    let refused =
+        object_for(&helpers(&[h(&[&ints], &sorting)])).expect_err("a kernel nothing here lowers");
+    assert!(refused.downcast_ref::<NotLowered>().is_some(), "{refused}");
+}
+
+/// What a pattern is said to mean is what some pattern reads as: parts naming only parts written
+/// before them, and runs of scalar values in order and apart. Anything else is not a reading the
+/// checker makes, and is refused as the two halves disagreeing. One that reads but makes a machine
+/// larger than this backend builds is this backend's limit, and is refused as not lowered.
+#[test]
+fn a_pattern_is_said_to_mean_what_a_pattern_reads_as() {
+    let document = |meaning: &str| {
+        let matching = node(
+            "call",
+            &format!(
+                r#""reaches":{{"is":"kernel","kernel":"string.matches","takes":[{STRING},{STRING}],"fact":{{"is":"stringmatches","written":"p","meaning":{meaning}}}}},"arguments":[{},{}]"#,
+                read(0, STRING),
+                read(1, STRING)
+            ),
+            BOOL,
+        );
+        helpers(&[h(&[STRING, STRING], &matching)])
+    };
+
+    reads_whole(&document(r#"[{"is":"symbols","ranges":[[48,57]]}]"#));
+    reads_whole(&document(
+        r#"[{"is":"symbols","ranges":[[97,97]]},{"is":"repeated","what":0,"least":0,"most":null}]"#,
+    ));
+    for unread in [
+        r#"[]"#,
+        r#"[{"is":"inturn","parts":[0]}]"#,
+        r#"[{"is":"symbols","ranges":[[55296,57343]]}]"#,
+        r#"[{"is":"symbols","ranges":[[5,9],[10,12]]}]"#,
+        r#"[{"is":"nothing"},{"is":"eitherof","arms":[0]}]"#,
+        r#"[{"is":"nothing"},{"is":"repeated","what":0,"least":3,"most":2}]"#,
+    ] {
+        is_the_halves_disagreeing(&document(unread), "no reading of a pattern");
+    }
+
+    let counted =
+        |what: usize| format!(r#"{{"is":"repeated","what":{what},"least":1000,"most":1000}}"#);
+    let too_large = format!(
+        r#"[{{"is":"symbols","ranges":[[97,97]]}},{},{},{}]"#,
+        counted(0),
+        counted(1),
+        counted(2)
+    );
+    let refused = object_for(&document(&too_large)).expect_err("a machine past the bound");
     assert!(refused.downcast_ref::<NotLowered>().is_some(), "{refused}");
 }
 

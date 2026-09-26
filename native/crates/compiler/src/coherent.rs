@@ -56,12 +56,13 @@ use crate::index;
 use crate::kernels::{Bound, LoweredKernel};
 use crate::transport::{
     AbortKind, Answers, Carrier, Case, Cases, Declaration, Definition, Emitted, Ensures, Guard,
-    Held, Node, Op, Owner, Prim, Program, Reaches, Reaching, Reading, Reference, Routing, Selects,
-    Target, Ty, Value,
+    Held, KernelFact, Node, Op, Owner, Prim, Program, Reaches, Reaching, Reading, Reference,
+    Routing, Selects, Target, Ty, Value,
 };
 use crate::{Declared, PairIn, Runs, Targets, departures_taken, not_lowered, says_its_case};
 use anyhow::{Result, anyhow, bail};
 use souther_native_abi::{spells_a_module, spells_a_name};
+use souther_text::pattern::Refused;
 use std::collections::HashMap;
 
 /// A document every relation of which holds, and what reading it built.
@@ -2018,6 +2019,18 @@ impl<'a> Walk<'_, 'a> {
                              settles {:?}: the two halves disagree",
                             self.owner,
                             contract.fact
+                        );
+                    }
+                    // What a pattern is said to mean is a reading of some pattern: parts naming
+                    // parts before them, runs of scalar values in order. One too large for a
+                    // machine is refused where it is lowered, as this backend's limit.
+                    if let KernelFact::StringMatches { written, meaning } = fact
+                        && crate::patterns::machine(meaning) == Err(Refused::NotAReading)
+                    {
+                        bail!(
+                            "{}: an application of {kernel} says the pattern {written:?} means \
+                             what no reading of a pattern is: the two halves disagree",
+                            self.owner
                         );
                     }
                     // What it takes binds the contract's variables, once each, and what it

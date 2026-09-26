@@ -875,6 +875,59 @@ pub const STRING_CONCAT: &str = "souther_string_concat";
 /// a Souther program reads the text back by. The two agree only on ASCII.
 pub const STRING_CODE_POINTS: &str = "souther_string_code_points";
 
+/// The symbols the `String` module's kernels are computed through (spec §stdlib-string), one for
+/// each, taking what the kernel takes in the order it takes it.
+///
+/// The text is walked in the runtime rather than in code emitted at every call, for the reason
+/// [`STRING_COMPARE`] is. A kernel that answers a value for everything it is handed answers it. One
+/// that answers nothing for some of what it is handed — a slice the string has no room for, a count
+/// no string could hold, text that is no integer — answers whether it wrote its value through room
+/// it is handed last, and says nothing of why: which reason a run ends for, or which case stands
+/// in for the value, is the kernel's contract and the caller's to read, never the runtime's.
+pub const STRING_TRIM: &str = "souther_string_trim";
+/// `String.lowercase`.
+pub const STRING_LOWERCASE: &str = "souther_string_lowercase";
+/// `String.uppercase`.
+pub const STRING_UPPERCASE: &str = "souther_string_uppercase";
+/// `String.contains`.
+pub const STRING_CONTAINS: &str = "souther_string_contains";
+/// `String.startsWith`.
+pub const STRING_STARTS_WITH: &str = "souther_string_starts_with";
+/// `String.endsWith`.
+pub const STRING_ENDS_WITH: &str = "souther_string_ends_with";
+/// `String.matches`, handed the machine the pattern was compiled to in place of the pattern.
+pub const STRING_MATCHES: &str = "souther_string_matches";
+/// `String.slice`, into room for the string.
+pub const STRING_SLICE: &str = "souther_string_slice";
+/// `String.split`.
+pub const STRING_SPLIT: &str = "souther_string_split";
+/// `String.join`.
+pub const STRING_JOIN: &str = "souther_string_join";
+/// `String.concat`.
+pub const STRING_CONCAT_ALL: &str = "souther_string_concat_all";
+/// `String.replace`.
+pub const STRING_REPLACE: &str = "souther_string_replace";
+/// `String.words`.
+pub const STRING_WORDS: &str = "souther_string_words";
+/// `String.lines`.
+pub const STRING_LINES: &str = "souther_string_lines";
+/// `String.fromInt`.
+pub const STRING_FROM_INT: &str = "souther_string_from_int";
+/// `String.toInt`, into room for the `Int`.
+pub const STRING_TO_INT: &str = "souther_string_to_int";
+/// `String.reverse`.
+pub const STRING_REVERSE: &str = "souther_string_reverse";
+/// `String.repeat`, into room for the string.
+pub const STRING_REPEAT: &str = "souther_string_repeat";
+/// `String.padLeft`, into room for the string.
+pub const STRING_PAD_LEFT: &str = "souther_string_pad_left";
+/// `String.padRight`, into room for the string.
+pub const STRING_PAD_RIGHT: &str = "souther_string_pad_right";
+/// `String.characters`.
+pub const STRING_CHARACTERS: &str = "souther_string_characters";
+/// `String.codePoints`: the code points as a list, where [`STRING_CODE_POINTS`] counts them.
+pub const STRING_CODE_POINT_VALUES: &str = "souther_string_code_point_values";
+
 /// The symbol a caller outside a Souther program makes a string with, from bytes it holds.
 ///
 /// Here rather than left to whoever writes such a caller, for the reason [`MARK`] is: the layout
@@ -1326,6 +1379,9 @@ pub enum Word {
     Memory,
     /// Which of two strings comes first: below, at or above nought.
     Comparison,
+    /// A pattern's machine: the words `souther_text::pattern` compiled it to, which the object
+    /// carries and the runtime runs, the first of them saying how many there are.
+    Machine,
     /// A piece of the external form being built, owned by whoever [`EXTERNAL_NULL`] and the rest
     /// say.
     Form,
@@ -1373,9 +1429,9 @@ pub struct GeneratedCall {
 /// hold each of these to the function it names, as they hold [`HOST_RUNTIME`]. Between the two
 /// tables is every function the runtime defines, which those tests hold too.
 pub const GENERATED_RUNTIME: &[GeneratedCall] = {
-    use HostWord::{Bool, Bytes, Count, Decoded, Int, String, Value};
+    use HostWord::{Bool, Bytes, Count, Decoded, Int, List, String, Value};
     use Parameter::{Given, Room};
-    use Word::{Comparison, Form, Host, Memory, Node, Path};
+    use Word::{Comparison, Form, Host, Machine, Memory, Node, Path};
     &[
         GeneratedCall {
             name: ALLOCATE,
@@ -1396,6 +1452,135 @@ pub const GENERATED_RUNTIME: &[GeneratedCall] = {
             name: STRING_CODE_POINTS,
             takes: &[Given(Host(String))],
             answers: Some(Host(Int)),
+        },
+        GeneratedCall {
+            name: STRING_TRIM,
+            takes: &[Given(Host(String))],
+            answers: Some(Host(String)),
+        },
+        GeneratedCall {
+            name: STRING_LOWERCASE,
+            takes: &[Given(Host(String))],
+            answers: Some(Host(String)),
+        },
+        GeneratedCall {
+            name: STRING_UPPERCASE,
+            takes: &[Given(Host(String))],
+            answers: Some(Host(String)),
+        },
+        GeneratedCall {
+            name: STRING_CONTAINS,
+            takes: &[Given(Host(String)), Given(Host(String))],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: STRING_STARTS_WITH,
+            takes: &[Given(Host(String)), Given(Host(String))],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: STRING_ENDS_WITH,
+            takes: &[Given(Host(String)), Given(Host(String))],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: STRING_MATCHES,
+            takes: &[Given(Machine), Given(Host(String))],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: STRING_SLICE,
+            takes: &[
+                Given(Host(Int)),
+                Given(Host(Int)),
+                Given(Host(String)),
+                Room(Host(String)),
+            ],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: STRING_SPLIT,
+            takes: &[Given(Host(String)), Given(Host(String))],
+            answers: Some(Host(List)),
+        },
+        GeneratedCall {
+            name: STRING_JOIN,
+            takes: &[Given(Host(String)), Given(Host(List))],
+            answers: Some(Host(String)),
+        },
+        GeneratedCall {
+            name: STRING_CONCAT_ALL,
+            takes: &[Given(Host(List))],
+            answers: Some(Host(String)),
+        },
+        GeneratedCall {
+            name: STRING_REPLACE,
+            takes: &[
+                Given(Host(String)),
+                Given(Host(String)),
+                Given(Host(String)),
+            ],
+            answers: Some(Host(String)),
+        },
+        GeneratedCall {
+            name: STRING_WORDS,
+            takes: &[Given(Host(String))],
+            answers: Some(Host(List)),
+        },
+        GeneratedCall {
+            name: STRING_LINES,
+            takes: &[Given(Host(String))],
+            answers: Some(Host(List)),
+        },
+        GeneratedCall {
+            name: STRING_FROM_INT,
+            takes: &[Given(Host(Int))],
+            answers: Some(Host(String)),
+        },
+        GeneratedCall {
+            name: STRING_TO_INT,
+            takes: &[Given(Host(String)), Room(Host(Int))],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: STRING_REVERSE,
+            takes: &[Given(Host(String))],
+            answers: Some(Host(String)),
+        },
+        GeneratedCall {
+            name: STRING_REPEAT,
+            takes: &[Given(Host(Int)), Given(Host(String)), Room(Host(String))],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: STRING_PAD_LEFT,
+            takes: &[
+                Given(Host(Int)),
+                Given(Host(String)),
+                Given(Host(String)),
+                Room(Host(String)),
+            ],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: STRING_PAD_RIGHT,
+            takes: &[
+                Given(Host(Int)),
+                Given(Host(String)),
+                Given(Host(String)),
+                Room(Host(String)),
+            ],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: STRING_CHARACTERS,
+            takes: &[Given(Host(String))],
+            answers: Some(Host(List)),
+        },
+        GeneratedCall {
+            name: STRING_CODE_POINT_VALUES,
+            takes: &[Given(Host(String))],
+            answers: Some(Host(List)),
         },
         GeneratedCall {
             name: EXTERNAL_NULL,

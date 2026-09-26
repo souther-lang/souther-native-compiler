@@ -11,10 +11,11 @@
 //! Where a computation here turns out to be the one the wasm runtime already does — a calendar, a
 //! regular expression — it is lifted into something both read. That is done when the second copy
 //! exists and not before: until then there is nothing to tell a shared meaning from a shared
-//! spelling. What the language says text means — its order, its length — already has a second copy,
-//! so it is not written here: it is `souther_text`, over bytes alone, and this reads the text out
-//! of a string and hands it over. A function of that kind added here instead would be a third copy
-//! (#17).
+//! spelling. What the language says text means — its order, its length, its canonical form, what
+//! each of the `String` module's kernels answers — is not written here: it is `souther_text`, over
+//! bytes alone, and this reads the text out of a string, hands it over, and keeps what comes back
+//! in the arena (`kernels`). A function of that kind added here instead would be a second copy of
+//! what the wasm runtime is to read from there too (#17).
 
 // Everything here is one half of a contract the other half reads by name, so an item whose doc has
 // slid off it onto a neighbour is a contract nobody states. Refused rather than warned about.
@@ -29,7 +30,9 @@ mod contract;
 mod decoding;
 mod document;
 mod external;
-use souther_text::{code_points, compare};
+mod kernels;
+pub use kernels::*;
+use souther_text::{append, code_points, compare};
 use std::cell::RefCell;
 use std::cmp::Ordering;
 
@@ -128,6 +131,14 @@ pub struct Text {
     _opaque: [u8; 0],
 }
 
+/// A list of the layout `souther_native_abi` states, as the functions here take and answer one: an
+/// address the runtime reads through that layout alone, a type of its own for the reason [`Text`]
+/// is.
+#[repr(C)]
+pub struct List {
+    _opaque: [u8; 0],
+}
+
 /// A value of a declared type or of a union, as the functions here take and answer one: an address,
 /// a type of its own for the reason [`Text`] is. The runtime reads behind one only where it made
 /// what is there: a case no declaration names, carried with the token defined here
@@ -204,7 +215,7 @@ unsafe fn length(at: *const u8) -> usize {
 /// # Safety
 ///
 /// As [`length`], and for as long as the mark below the string stands.
-unsafe fn text<'a>(at: *const u8) -> &'a [u8] {
+pub(crate) unsafe fn text<'a>(at: *const u8) -> &'a [u8] {
     unsafe { std::slice::from_raw_parts(at.offset(TEXT_BYTES as isize), length(at)) }
 }
 
@@ -219,6 +230,16 @@ fn room_for_a_string(bytes: usize) -> *mut u8 {
     let at = souther_alloc(Count(wanted));
     unsafe { at.offset(TEXT_LENGTH as isize).cast::<i64>().write(bytes) };
     at
+}
+
+/// A string holding this text, in room the arena answered.
+pub(crate) fn string_of(bytes: &[u8]) -> *mut Text {
+    let at = room_for_a_string(bytes.len());
+    unsafe {
+        at.offset(TEXT_BYTES as isize)
+            .copy_from_nonoverlapping(bytes.as_ptr(), bytes.len())
+    };
+    at.cast()
 }
 
 /// Two strings, in the order Souther gives text.
@@ -244,7 +265,11 @@ pub unsafe extern "C" fn souther_string_compare(
     })
 }
 
-/// The two strings' text, one after the other, as a string of its own.
+/// The two strings' text, one after the other, as a string of its own: `++` over two strings, and
+/// `String.append`.
+///
+/// In NFC, which each of the two is and the join need not be: a letter ending the one and a mark
+/// beginning the other compose into one code point (spec §string-canonical).
 ///
 /// Neither operand is touched. A Souther value is immutable and nothing frees one on its own, so
 /// joining two of them is a third value and never a longer first one.
@@ -254,15 +279,8 @@ pub unsafe extern "C" fn souther_string_compare(
 /// As [`souther_string_compare`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_string_concat(left: *const Text, right: *const Text) -> *mut Text {
-    let (before, after) = unsafe { (text(left.cast()), text(right.cast())) };
-    let at = room_for_a_string(before.len() + after.len());
-    unsafe {
-        let text = at.offset(TEXT_BYTES as isize);
-        text.copy_from_nonoverlapping(before.as_ptr(), before.len());
-        text.add(before.len())
-            .copy_from_nonoverlapping(after.as_ptr(), after.len());
-    }
-    at.cast()
+    let joined = unsafe { append(text(left.cast()), text(right.cast())) };
+    string_of(&joined)
 }
 
 /// A string holding these bytes, for a caller outside a Souther program.
@@ -298,12 +316,10 @@ pub unsafe extern "C" fn souther_string_concat(left: *const Text, right: *const 
 pub unsafe extern "C" fn souther_string_of_utf8(bytes: *const u8, length: Count) -> *mut Text {
     let held =
         usize::try_from(length.0).expect("text is handed over as bytes, and never fewer than 0");
-    let at = room_for_a_string(held);
-    unsafe {
-        at.offset(TEXT_BYTES as isize)
-            .copy_from_nonoverlapping(bytes, held)
-    };
-    at.cast()
+    if held == 0 {
+        return string_of(&[]);
+    }
+    string_of(unsafe { std::slice::from_raw_parts(bytes, held) })
 }
 
 /// How many bytes of text the string carries, for the same caller.

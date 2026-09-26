@@ -1,19 +1,43 @@
 //! What the language says text means, over the bytes it is kept in and nothing else.
 //!
-//! A Souther string is UTF-8 in NFC wherever it is kept, and what the language asks of it — how
-//! long it is, which of two comes first — is a question about the text and not about where it
-//! stands. So everything here takes a slice and answers a number or an ordering: no arena, no
-//! address of either runtime's width, no layout. That is what lets this move, as it is, into what
-//! the native and the wasm runtimes both read (#17), the way `souther-json-syntax` is shaped to.
+//! A Souther string is a sequence of Unicode scalar values, kept as UTF-8 in NFC, and what the
+//! language asks of it — how long it is, which of two comes first, what `trim` or `lowercase` or
+//! `matches` answers — is a question about the text and not about where it stands. So everything
+//! here takes slices and answers numbers, orderings, pieces of what it was handed, or the bytes of
+//! text it built: no arena, no address of either runtime's width, no layout. That is what lets
+//! this move, as it is, into what the native and the wasm runtimes both read (#17), the way
+//! `souther-json-syntax` is shaped to. What the runtime adds is where the answer is kept.
 //!
-//! The text is read one code point at a time by [`decoded`], and every operation here is written
-//! over it and not over a reading of its own. Two readings agree on well-formed text and part on
-//! the rest — one counts the bytes that start a code point, another steps by what a first byte says
-//! — and the difference is found by nobody, since a Souther string is never ill-formed. One reading
-//! means that where they would part, they cannot.
+//! The text is read one code point at a time by [`decoded`], and every operation here that reads
+//! code points is written over it and not over a reading of its own. Two readings agree on
+//! well-formed text and part on the rest — one counts the bytes that start a code point, another
+//! steps by what a first byte says — and the difference is found by nobody, since a Souther string
+//! is never ill-formed. One reading means that where they would part, they cannot.
+//!
+//! Where the language names a Unicode version — for NFC, for case — it is the one [`tables`] was
+//! generated from, and not whichever a dependency was last released at.
 
 #![no_std]
 
+extern crate alloc;
+
+mod canonical;
+mod case;
+mod integer;
+mod operations;
+pub mod pattern;
+mod tables;
+
+pub use canonical::nfc;
+pub use case::{lowercase, uppercase};
+pub use integer::{integer, written};
+pub use operations::{
+    MOST, append, characters, code_points_of, contains, ends_with, is_whitespace, join, lines,
+    pad_left, pad_right, repeat, replace, reverse, slice, split, starts_with, trim, words,
+};
+pub use tables::UNICODE_VERSION;
+
+use alloc::vec::Vec;
 use core::cmp::Ordering;
 
 /// The code point that starts at `at`, and how many bytes it takes, or nothing past the end.
@@ -37,6 +61,30 @@ fn decoded(text: &[u8], at: usize) -> Option<(u32, usize)> {
             4,
         )
     })
+}
+
+/// The scalar values the text writes, in order.
+///
+/// A code point [`decoded`] reads out of bytes that are not UTF-8 may be none, and is answered as
+/// U+FFFD: what such bytes mean is nothing, and this answers without reading past them.
+pub(crate) fn scalar_values(text: &[u8]) -> impl Iterator<Item = u32> + '_ {
+    let mut at = 0;
+    core::iter::from_fn(move || {
+        let (point, width) = decoded(text, at)?;
+        at += width;
+        Some(char::from_u32(point).map_or(0xfffd, u32::from))
+    })
+}
+
+/// These scalar values as UTF-8.
+pub(crate) fn encoded(points: &[u32]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(points.len());
+    let mut written = [0u8; 4];
+    for point in points {
+        let character = char::from_u32(*point).unwrap_or(char::REPLACEMENT_CHARACTER);
+        out.extend_from_slice(character.encode_utf8(&mut written).as_bytes());
+    }
+    out
 }
 
 /// How long the text is as the language counts it, in code points (`String.length`).
