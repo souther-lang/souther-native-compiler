@@ -627,8 +627,8 @@ fn routed(first: &str, made: &str, taken: &str, routing: &str, flows: &str) -> S
 /// What runs is offered to a stage by its cases exactly where it is a declared type or a union,
 /// which is the checker's rule, and it is tested by the token at its front. A plain `Int` routed on
 /// its cases would be a token read from a number, and a sum handed whole to a stage that takes it
-/// is not what the checker writes either; both are the two halves disagreeing. A stage accepting a
-/// case no declaration names is one nothing has run yet, and is not lowered.
+/// is not what the checker writes either; both are the two halves disagreeing. A stage may accept a
+/// case no declaration names, and is handed it the way an arm reads one.
 #[test]
 fn what_runs_is_routed_on_its_cases_only_where_it_says_them() {
     let scalar = r#"{"is":"scalar","scalar":"INT"}"#;
@@ -653,24 +653,19 @@ fn what_runs_is_routed_on_its_cases_only_where_it_says_them() {
         "offered by its cases",
     );
 
-    // A union with an `Int` among its cases, routed on the `Int`.
+    // A union with an `Int` among its cases, routed on the `Int`, which the stage is handed read
+    // back out of what carries it.
     let union = format!(r#"{{"union":[{int_case},{a_case}]}}"#);
     let cases = format!(
         r#"{{"is":"cases","type":{union},"cases":[{int_case},{a_case}],"form":{{"is":"discriminated","tag":"type","contents":"value"}}}}"#
     );
-    let refused = object_for(&routed(
+    reads_whole(&routed(
         &cases,
         &widen(&int(1), &union),
         scalar,
         &on(&[int_case]),
         &cases,
-    ))
-    .expect_err("a stage routed a case no declaration names");
-    assert!(refused.downcast_ref::<NotLowered>().is_some(), "{refused}");
-    assert!(
-        refused.to_string().contains("routed the case Int"),
-        "{refused}"
-    );
+    ));
 }
 
 /// A stage after the first is handed what the stage before answered.

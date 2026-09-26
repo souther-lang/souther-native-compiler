@@ -28,6 +28,7 @@ class AnAnswerCrossesInTheFormItsPositionDeclaresTest {
             module doors exposing ( closedAlone, holding, doorOf, phaseOf, porchOf, customer,
                                     placeOrder, noteOf, flagOf, chainOf, rankOf, bill, lookUp, echoInt, echoBool,
                                     echoText, doorsOf, linksOf, lengthOf, flaggedOf, namedOf,
+                                    doubledLength : Int | NotFound,
                                     Closed, Open, Door, Phase, Pending, Holder, Porch, CustomerId,
                                     Order, Noted, Flagged, Chain, Links, Manager, Staff, Rank, Issued,
                                     UnknownSku, Missing, NotFound )
@@ -131,6 +132,11 @@ class AnAnswerCrossesInTheFormItsPositionDeclaresTest {
 
             behavior lengthOf : (n: Int) -> Int | NotFound
             let lengthOf (n) = if n > 0 then n else NotFound
+
+            behavior doubled : (n: Int) -> Int
+            let doubled (n) = n * 2
+
+            behavior doubledLength = lengthOf >-> doubled
 
             behavior flaggedOf : (n: Int) -> Bool | NotFound
             let flaggedOf (n) = if n > 0 then n > 1 else NotFound
@@ -336,6 +342,21 @@ class AnAnswerCrossesInTheFormItsPositionDeclaresTest {
         assertThat(answer(running, program, "namedOf", text("n")))
                 .isEqualTo(json("{\"type\":\"String\",\"value\":\"n\"}"));
         assertThat(answer(running, program, "namedOf", text("")))
+                .isEqualTo(json("{\"type\":\"NotFound\"}"));
+    }
+
+    /**
+     * A stage accepting the primitive case of what runs is handed it read back out of what carries
+     * it, and what it answers is carried again as the composition's answer; the case it does not
+     * accept leaves as it came.
+     */
+    @Test
+    void aStageAcceptingAPrimitiveCaseIsHandedThePrimitive() throws Exception {
+        CheckedProgram program = CheckedProgram.of(List.of(DOORS));
+        Running running = Running.of(program);
+        assertThat(answer(running, program, "doubledLength", integer(21)))
+                .isEqualTo(json("{\"type\":\"Int\",\"value\":42}"));
+        assertThat(answer(running, program, "doubledLength", integer(0)))
                 .isEqualTo(json("{\"type\":\"NotFound\"}"));
     }
 

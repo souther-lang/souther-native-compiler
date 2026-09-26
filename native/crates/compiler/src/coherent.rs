@@ -2341,20 +2341,6 @@ fn composes(
                     &format!("{name}'s stage {}", stage.behavior),
                     accepted,
                 )?;
-                // A stage accepting a case no declaration names is one the checker's own backend
-                // does not compile yet, so nothing has run one: it is not lowered until something
-                // can hold what it answers to what the language says.
-                if let Some(case) = accepted
-                    .iter()
-                    .find(|case| !matches!(case, Case::Declared { .. }))
-                {
-                    owed.not_lowered.push(format!(
-                        "{name}'s stage {}, routed the case {} of {}",
-                        stage.behavior,
-                        case.spelt(),
-                        running.spelt()
-                    ));
-                }
                 let running_cases = declared.cases_of(&running)?.ok_or_else(|| {
                     anyhow!(
                         "{name}'s stage {} is offered cases of {}, which has none",
