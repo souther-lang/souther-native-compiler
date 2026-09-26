@@ -1881,6 +1881,41 @@ fn a_pair_read_in_a_type_is_one_the_type_takes_apart() {
     is_the_halves_disagreeing(&compared(A, S, A), "is not a value of");
 }
 
+/// A newtype that wraps itself, directly or through another, has no value, and the checker refuses
+/// it where it is written. Every walk that opens a newtype would go round it for ever, so it is
+/// refused when the document is read, before a comparison over it asks how far it opens.
+#[test]
+fn a_newtype_that_wraps_itself_is_the_halves_disagreeing() {
+    let newtype = |name: &str, wraps: &str| {
+        format!(
+            r#"{{"module":"m","name":"{name}","by":"amodule","is":"newtype","field":{{"name":"v","binding":0,"codec":{{"is":"named","declared":"m.{wraps}"}}}},"invariants":[]}}"#
+        )
+    };
+    let compared = |declarations: &[String], reading: &str| {
+        let n = r#"{"declared":"m.N"}"#;
+        let body = format!(
+            r#"{{"core":"binary","op":"LE","reading":{reading},"left":{},"right":{},"type":{BOOL},"aborts":[]}}"#,
+            read(0, n),
+            read(1, n)
+        );
+        format!(
+            r#"{{"transport":22,"declarations":[{}],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[{}],"values":[],"entries":[],"definitions":[],"examples":[]}}]}}"#,
+            declarations.join(","),
+            h(&[n, n], &body)
+        )
+    };
+    let in_n = r#"{"is":"in","type":{"declared":"m.N"}}"#;
+    let stands = r#"{"is":"astheystand"}"#;
+    for declarations in [
+        vec![newtype("N", "N")],
+        vec![newtype("N", "M"), newtype("M", "N")],
+    ] {
+        for reading in [in_n, stands] {
+            is_the_halves_disagreeing(&compared(&declarations, reading), "wraps itself");
+        }
+    }
+}
+
 /// Every type a node writes is one the document declares, the ones it carries beside its own
 /// included: what a let binds, what an arm reads a value as, what an operator reads its operands in,
 /// and what a kernel's application takes and was settled against.

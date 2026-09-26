@@ -1583,6 +1583,14 @@ impl<'a> Declared<'a> {
                 declared.settled(&key, cases, form)?;
             }
         }
+        // Once every field is known to name a declaration, so the walk reaches only ones that are.
+        for declaration in declarations {
+            if let Declaration::Newtype { .. } = declaration {
+                declared.newtype_spine(&Ty::Declared {
+                    declared: declaration.key(),
+                })?;
+            }
+        }
         Ok(declared)
     }
 
@@ -1742,39 +1750,29 @@ impl<'a> Declared<'a> {
     /// The cases a value of any of `members` can be, a sum walked into and each case kept at the
     /// place it was first reached, which is the order the checker gives a sum's own.
     ///
-    /// Walked all the way down: a case of a sum may be a sum again, and so may a case of that one,
-    /// and a sum is never a leaf, since nothing is ever tagged with one. A sum reached a second
-    /// time is not walked again, which is what keeps one reached through two cases from being
-    /// counted twice and one the checker refused for reaching itself from never coming back.
+    /// One step is all the way down. A sum's cases are the leaves it descends to already: the
+    /// checker descends a case that is a sum before the declaration crosses, and [`settled`] refuses
+    /// a sum standing as a case of another. So a sum among `members` gives way to its cases, and
+    /// none of those is a sum.
+    ///
+    /// [`settled`]: Declared::settled
     fn leaves_of(&self, members: &[Case]) -> Result<Vec<Case>> {
         let mut leaves: Vec<Case> = Vec::new();
-        let mut walked: Vec<&str> = Vec::new();
-        self.walk_into(members, &mut leaves, &mut walked)?;
-        Ok(leaves)
-    }
-
-    fn walk_into<'m>(
-        &self,
-        members: &'m [Case],
-        leaves: &mut Vec<Case>,
-        walked: &mut Vec<&'m str>,
-    ) -> Result<()>
-    where
-        'a: 'm,
-    {
         for member in members {
-            if let Case::Declared { declared } = member
-                && let Declaration::Sum { cases, .. } = self.shape(declared)?
-            {
-                if !walked.contains(&declared.as_str()) {
-                    walked.push(declared);
-                    self.walk_into(cases, leaves, walked)?;
+            let reached = match member {
+                Case::Declared { declared } => match self.shape(declared)? {
+                    Declaration::Sum { cases, .. } => cases.to_vec(),
+                    _ => vec![member.clone()],
+                },
+                _ => vec![member.clone()],
+            };
+            for leaf in reached {
+                if !leaves.contains(&leaf) {
+                    leaves.push(leaf);
                 }
-            } else if !leaves.contains(member) {
-                leaves.push(member.clone());
             }
         }
-        Ok(())
+        Ok(leaves)
     }
 
     /// Whether every value of `actual` is a value of `expected`, as the checker lets one stand as
@@ -1881,25 +1879,34 @@ impl<'a> Declared<'a> {
         })
     }
 
-    /// What a value of `ty` wraps, where `ty` is a newtype: the type of its one field.
-    fn wraps(&self, ty: &Ty) -> Result<Option<Ty>> {
-        let Ty::Declared { declared } = ty else {
-            return Ok(None);
-        };
-        Ok(match self.shape(declared)? {
-            Declaration::Newtype { field, .. } => Some(field.codec.ty()),
-            _ => None,
-        })
-    }
-
-    /// What a value of `ty` wraps all the way down, where `ty` is a newtype: what is left once a
-    /// newtype over a newtype is opened too.
-    fn innermost(&self, ty: &Ty) -> Result<Option<Ty>> {
-        let mut inner = None;
-        while let Some(wrapped) = self.wraps(inner.as_ref().unwrap_or(ty))? {
-            inner = Some(wrapped);
+    /// The newtypes worn round a value of `ty` and what is left once they are off: each type a
+    /// value read out of the one before it has, in turn, and the last of them.
+    ///
+    /// The one walk. How far a newtype reaches is a fact about the declarations, and a comparison
+    /// that opened a value one way while the check of the pair stopped another would be two answers
+    /// to it. A newtype that comes back to itself is refused: it has no value, the checker refuses
+    /// it where it is written, and [`Declared::of`] asks this of every newtype, so every other asker
+    /// is handed a walk that ends.
+    fn newtype_spine(&self, ty: &Ty) -> Result<NewtypeSpine> {
+        let mut worn: Vec<String> = Vec::new();
+        let mut opens: Vec<Ty> = Vec::new();
+        let mut at = ty.clone();
+        while let Ty::Declared { declared } = &at
+            && let Declaration::Newtype { field, .. } = self.shape(declared)?
+        {
+            let comes_back = worn.contains(declared);
+            worn.push(declared.clone());
+            if comes_back {
+                bail!(
+                    "{} wraps itself ({}), which the checker refuses: the two halves disagree",
+                    ty.spelt(),
+                    worn.join(" = ")
+                );
+            }
+            at = field.codec.ty();
+            opens.push(at.clone());
         }
-        Ok(inner)
+        Ok(NewtypeSpine { opens })
     }
 
     /// How a pair read in `reading` is taken apart, told by the pair and not by the reading alone.
@@ -1911,10 +1918,10 @@ impl<'a> Declared<'a> {
     /// the one place that decides it — Coherent holds the pair to what this answers, and the
     /// lowering takes it apart by the same answer.
     fn pair_in(&self, reading: &Ty, left: &Ty, right: &Ty) -> Result<PairIn> {
-        if let Some(inner) = self.innermost(reading)?
-            && ((left == reading && *right == inner) || (right == reading && *left == inner))
+        if let Some(inner) = self.newtype_spine(reading)?.opens.last()
+            && ((left == reading && right == inner) || (right == reading && left == inner))
         {
-            return Ok(PairIn::Opened(inner));
+            return Ok(PairIn::Opened(inner.clone()));
         }
         Ok(PairIn::Held)
     }
@@ -5510,18 +5517,23 @@ fn opened(
     ty: &Ty,
     value: ir::Value,
 ) -> Lowered<(Ty, ir::Value)> {
-    let (mut ty, mut value) = (ty.clone(), value);
-    while let Some(wrapped) = declared
-        .wraps(&ty)
-        .expect("`Coherent` held every declaration named to be one that crossed")
-    {
+    let spine = declared
+        .newtype_spine(ty)
+        .expect("`Declared::of` held every newtype to reach something other than itself");
+    let mut value = value;
+    for wrapped in &spine.opens {
         let held = builder
             .ins()
             .load(types::I64, TRUSTED, value, field_at(0) as i32);
-        value = out_of_slot(builder, held, machine_type(&wrapped)?);
-        ty = wrapped;
+        value = out_of_slot(builder, held, machine_type(wrapped)?);
     }
-    Ok((ty, value))
+    Ok((spine.opens.last().unwrap_or(ty).clone(), value))
+}
+
+/// The newtypes worn round a value ([`Declared::newtype_spine`]): the type of each value read out
+/// of the one before, from the outermost newtype in. Empty where the type is no newtype.
+struct NewtypeSpine {
+    opens: Vec<Ty>,
 }
 
 /// A binary operator over operands read as they stand.
