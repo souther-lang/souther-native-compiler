@@ -59,7 +59,7 @@ use crate::transport::{
     Held, Node, Op, Owner, Prim, Program, Reaches, Reaching, Reading, Reference, Routing, Selects,
     Target, Ty, Value,
 };
-use crate::{Declared, Runs, Targets, departures_taken, not_lowered, says_its_case};
+use crate::{Declared, PairIn, Runs, Targets, departures_taken, not_lowered, says_its_case};
 use anyhow::{Result, anyhow, bail};
 use souther_native_abi::{spells_a_module, spells_a_name};
 use std::collections::HashMap;
@@ -1646,26 +1646,14 @@ impl<'a> Walk<'_, 'a> {
             }
             // The type it is read in is one the document declares, which `Node::types` holds of
             // every type a node writes. What it says of the two sides is how the lowering takes
-            // them apart: a newtype is read by opening the side that is one and comparing what it
-            // wraps with the other, so the other has to be what it wraps all the way down; any
-            // other type is read by holding both sides as a value of it, so each has to be one.
+            // them apart, which `pair_in` answers for both: a newtype beside what it wraps all the
+            // way down is opened, and needs nothing more; any other pair is held as the reading,
+            // so each side has to be a value of it.
             Reading::In { ty } => {
-                let what = format!("a side of {} read as {}", op.spelt(), ty.spelt());
-                match self.declared.innermost(ty)? {
-                    Some(inner) => {
-                        let opens =
-                            (left == ty && *right == inner) || (right == ty && *left == inner);
-                        if !opens {
-                            bail!(
-                                "{}: {what} is {} and the other {}, which is not a newtype beside \
-                                 what it wraps: the two halves disagree",
-                                self.owner,
-                                left.spelt(),
-                                right.spelt()
-                            );
-                        }
-                    }
-                    None => {
+                match self.declared.pair_in(ty, left, right)? {
+                    PairIn::Opened(_) => {}
+                    PairIn::Held => {
+                        let what = format!("a side of {} read as {}", op.spelt(), ty.spelt());
                         self.fits(&what, left, ty);
                         self.fits(&what, right, ty);
                     }

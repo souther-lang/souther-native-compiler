@@ -31,7 +31,7 @@ class APairIsComparedAsTheCheckerReadsItTest {
     private static final String SOURCE = """
             module comparing exposing ( atHundred, hundredAt, notHundred, under, atLeast, over, atMost,
                 managerAtMost, skuUnder, amounts, stages, stagesNamed, isWon, wonIs, beforeWon,
-                qualifiedBefore, openIs, sameStage )
+                qualifiedBefore, openIs, sameStage, wonAtMost, closedBefore )
 
             data Lost
             data Won
@@ -106,6 +106,19 @@ class APairIsComparedAsTheCheckerReadsItTest {
 
             behavior sameStage : (a: Int) -> Bool
             let sameStage (a) = stage(a) == Qualified
+
+            behavior wonAtMost : (a: Int) -> Bool
+            let wonAtMost (a) = {
+                let w: Won = Won
+                w <= w && w >= w
+            }
+
+            behavior closedBefore : (a: Int, b: Int) -> Bool
+            let closedBefore (a, b) = {
+                let one: Won | Lost = if a == 0 then Won else Lost
+                let other: Won | Lost = if b == 0 then Won else Lost
+                one < other
+            }
             """;
 
     private static CheckedProgram program;
@@ -210,6 +223,21 @@ class APairIsComparedAsTheCheckerReadsItTest {
         for (int a = 0; a < 4; a++) {
             assertThat(run("beforeWon", a)).as("%d", a).isEqualTo(answered(a < 2));
             assertThat(run("qualifiedBefore", a)).as("%d", a).isEqualTo(answered(1 < a));
+        }
+    }
+
+    /**
+     * A case is ordered by the one enumeration listing it, and so is a union of cases: Won and
+     * Lost are listed by Stage and by nothing else, which places Won before Lost.
+     */
+    @Test
+    void aCaseAndAUnionOfCasesAreOrderedByTheEnumerationListingThem() throws Exception {
+        assertThat(run("wonAtMost", 0)).isEqualTo(answered(true));
+        for (int a = 0; a < 2; a++) {
+            for (int b = 0; b < 2; b++) {
+                assertThat(run("closedBefore", a, b)).as("%d < %d", a, b)
+                        .isEqualTo(answered(a == 0 && b == 1));
+            }
         }
     }
 

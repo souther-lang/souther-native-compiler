@@ -1831,9 +1831,10 @@ fn an_operator_is_read_only_as_the_checker_reads_it() {
     );
 }
 
-/// A pair read in a type is one the lowering can take apart as that type. A newtype is read by
-/// opening the side that is one, so the other side is what it wraps; any other type is read by
-/// holding both sides as a value of it, so each is one. A pair that is neither would have the
+/// A pair read in a type is one the lowering can take apart as that type. A newtype beside what it
+/// wraps is read by opening the side that is one; any other pair, a newtype beside a value that
+/// states nothing about its own type included, is read by holding both sides as a value of the
+/// reading, so each is one. A pair that is neither would have the
 /// lowering read a field out of an `Int`, or a token out of a value that carries none.
 #[test]
 fn a_pair_read_in_a_type_is_one_the_type_takes_apart() {
@@ -1858,9 +1859,24 @@ fn a_pair_read_in_a_type_is_one_the_type_takes_apart() {
     reads_whole(&compared(S, S, A));
     reads_whole(&compared(S, A, S));
 
-    is_the_halves_disagreeing(&compared(n, INT, INT), "not a newtype beside");
-    is_the_halves_disagreeing(&compared(n, n, n), "not a newtype beside");
-    is_the_halves_disagreeing(&compared(n, n, STRING), "not a newtype beside");
+    // A value that states nothing about its own type is read as the other side's type whatever
+    // that is, a newtype included, and is held as it rather than opened. No value of it is ever
+    // laid out, so the document is not lowered, and for that value and not for the pair.
+    let nothing = r#"{"nothing":{}}"#;
+    for reading in [n, S] {
+        for (left, right) in [(nothing, reading), (reading, nothing)] {
+            let refused = object_for(&compared(reading, left, right))
+                .expect_err("no value of Nothing is laid out");
+            assert!(refused.downcast_ref::<NotLowered>().is_some(), "{refused}");
+            assert!(
+                refused.to_string().contains("a value of type Nothing"),
+                "{refused}"
+            );
+        }
+    }
+
+    is_the_halves_disagreeing(&compared(n, INT, INT), "is not a value of");
+    is_the_halves_disagreeing(&compared(n, n, STRING), "is not a value of");
     is_the_halves_disagreeing(&compared(S, INT, S), "is not a value of");
     is_the_halves_disagreeing(&compared(A, S, A), "is not a value of");
 }

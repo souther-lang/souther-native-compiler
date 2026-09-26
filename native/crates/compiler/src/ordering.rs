@@ -5,7 +5,8 @@
 //! left is one of the three.
 //!
 //! An enumeration is ordered by where each case stands in its declaration (ADR-0069): the leaves a
-//! sum walks into, each at the place it was first reached. The token a value carries says which
+//! sum walks into, each at the place it was first reached. So is a value of one of its cases, and
+//! of a union of them, where one enumeration and no other places them. The token a value carries says which
 //! case it is and nothing about where that case stands, so it is looked up among the leaves and
 //! never compared as an address. Where two tokens were put is the linker's to decide.
 
@@ -15,7 +16,7 @@ use cranelift::frontend::FunctionBuilder;
 use cranelift::module::Module;
 use cranelift::object::ObjectModule;
 
-use crate::transport::{AlternativesForm, Case, Declaration, Op, Prim, Ty};
+use crate::transport::{Case, Op, Prim, Ty};
 use crate::{Lowered, Lowerings, Tagged, as_a_whole_number, not_lowered, opened, token_of};
 
 /// Whether `a` and `b`, two values of `ty`, stand as `op` asks: a truth, as `<` answers one.
@@ -57,31 +58,33 @@ pub(crate) fn ordered(
                 prim.spelt()
             ))),
         },
-        Ty::Declared { declared } => match lowering.declared.laid(declared) {
-            Declaration::Sum {
-                form: AlternativesForm::Enumeration,
-                ..
-            } => {
-                let leaves = lowering
-                    .declared
-                    .leaves_of(&[Case::Declared {
-                        declared: declared.clone(),
-                    }])
-                    .expect("`Coherent` held every case named to be one a declaration crossed for");
-                let one = place(builder, lowering, module, &leaves, Tagged::of(a, ty))?;
-                let other = place(builder, lowering, module, &leaves, Tagged::of(b, ty))?;
-                Ok(builder.ins().icmp(condition, one, other))
-            }
-            _ => Err(unordered(op, ty)),
-        },
-        // A union of the cases of an enumeration is ordered by that enumeration, and which one it
-        // is is the checker's to say: a case may stand in two sums that place it differently. It
-        // does not say it here, so there is no place to count from.
-        Ty::Union { .. } => Err(not_lowered(format!(
-            "{} over two values of {}, whose enumeration the document does not name",
-            op.spelt(),
-            ty.spelt()
-        ))),
+        // A value of an enumeration, of one of its cases, or of a union of them, ordered by the
+        // one enumeration that places them (ADR-0069). That is the type itself where it is one, and
+        // the sum listing it where it is a case: a case is not ordered on its own account, since
+        // one unit may be a case of two sums that place it differently.
+        Ty::Declared { .. } | Ty::Union { .. } => {
+            let Some(enumeration) = lowering
+                .declared
+                .enumeration_of(ty)
+                .expect("`Coherent` held every case named to be one a declaration crossed for")
+            else {
+                return Err(not_lowered(format!(
+                    "{} over two values of {}, which no one enumeration this document carries \
+                     places",
+                    op.spelt(),
+                    ty.spelt()
+                )));
+            };
+            let leaves = lowering
+                .declared
+                .leaves_of(&[Case::Declared {
+                    declared: enumeration,
+                }])
+                .expect("`Coherent` held every case named to be one a declaration crossed for");
+            let one = place(builder, lowering, module, &leaves, Tagged::of(a, ty))?;
+            let other = place(builder, lowering, module, &leaves, Tagged::of(b, ty))?;
+            Ok(builder.ins().icmp(condition, one, other))
+        }
         Ty::Option { .. }
         | Ty::Tuple { .. }
         | Ty::List { .. }

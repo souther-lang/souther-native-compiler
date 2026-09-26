@@ -1902,6 +1902,103 @@ impl<'a> Declared<'a> {
         Ok(inner)
     }
 
+    /// How a pair read in `reading` is taken apart, told by the pair and not by the reading alone.
+    ///
+    /// The reading does not say which of the checker's rules gave it. A newtype is the reading of
+    /// a newtype beside a bare literal of what it wraps, and it is also the reading of a newtype
+    /// beside a value that states nothing about its own type: the one is compared by opening the
+    /// newtype, and the other by holding both as the newtype. So the operands decide, and this is
+    /// the one place that decides it — Coherent holds the pair to what this answers, and the
+    /// lowering takes it apart by the same answer.
+    fn pair_in(&self, reading: &Ty, left: &Ty, right: &Ty) -> Result<PairIn> {
+        if let Some(inner) = self.innermost(reading)?
+            && ((left == reading && *right == inner) || (right == reading && *left == inner))
+        {
+            return Ok(PairIn::Opened(inner));
+        }
+        Ok(PairIn::Held)
+    }
+
+    /// The enumeration whose declaration orders a value of `ty`, where exactly one does: `ty`
+    /// itself where it is one, the one sum that lists it where it is a unit, and the one every
+    /// member lists where it is a union. As the checker answers it (ADR-0069): a unit may be a case
+    /// of two enumerations that place it differently, and then no order is its own.
+    ///
+    /// Asked of the declarations this document carries. Every sum listing a unit is declared in
+    /// the unit's own module, and a module of this compile has every declaration carried; a module
+    /// off the path has only the ones something reaches, so an enumeration nothing else names may
+    /// be missing, and then this answers none rather than a wrong one — it never finds two where
+    /// the checker found one. The checker's own answer is not on the node (souther-lang/souther#1987).
+    fn enumeration_of(&self, ty: &Ty) -> Result<Option<String>> {
+        let candidates = match ty {
+            Ty::Declared { declared } => self.enumerations_listing(declared)?,
+            Ty::Union { union } => {
+                let mut shared: Option<Vec<String>> = None;
+                for member in union.iter() {
+                    let Case::Declared { declared } = member else {
+                        return Ok(None);
+                    };
+                    let listing = self.enumerations_listing(declared)?;
+                    shared = Some(match shared {
+                        None => listing,
+                        Some(so_far) => so_far
+                            .into_iter()
+                            .filter(|it| listing.contains(it))
+                            .collect(),
+                    });
+                }
+                shared.unwrap_or_default()
+            }
+            _ => return Ok(None),
+        };
+        Ok(match candidates.as_slice() {
+            [one] => Some(one.clone()),
+            _ => None,
+        })
+    }
+
+    /// Every enumeration that could order a value of the declaration `declared`: itself where it is
+    /// one, and every one listing it among its leaves where it is a unit.
+    fn enumerations_listing(&self, declared: &str) -> Result<Vec<String>> {
+        let is_enumeration = |declaration: &Declaration| {
+            matches!(
+                declaration,
+                Declaration::Sum {
+                    form: AlternativesForm::Enumeration,
+                    ..
+                }
+            )
+        };
+        Ok(match self.shape(declared)? {
+            declaration @ Declaration::Sum { .. } => {
+                if is_enumeration(declaration) {
+                    vec![declared.to_string()]
+                } else {
+                    Vec::new()
+                }
+            }
+            Declaration::Unit { .. } => {
+                let case = Case::Declared {
+                    declared: declared.to_string(),
+                };
+                let mut listing = Vec::new();
+                for (key, declaration) in &self.shapes {
+                    if is_enumeration(declaration)
+                        && self
+                            .leaves_of(std::slice::from_ref(&Case::Declared {
+                                declared: key.clone(),
+                            }))?
+                            .contains(&case)
+                    {
+                        listing.push(key.clone());
+                    }
+                }
+                listing
+            }
+            Declaration::Product { .. } | Declaration::Newtype { .. } => Vec::new(),
+        })
+    }
+
     /// What a declaration a document was read whole with says, where [`Coherent`] held the key to
     /// be one a declaration crossed for.
     fn laid(&self, declared: &str) -> &'a Declaration {
@@ -5359,9 +5456,8 @@ fn binary(
 /// literal is not made into a value of it, which it never is. A sum beside one of its cases, two
 /// sums over one set of cases, an enumeration beside one of its cases, and a value beside one that
 /// states nothing about its own type are all values of the reading already, which is what each is
-/// restated to before the two are compared as it. Coherent held the operator to be a comparison and
-/// the pair to be one of the two: a newtype beside what it wraps all the way down, or two values
-/// of the reading.
+/// restated to before the two are compared as it. Which of the two a pair is, is
+/// [`Declared::pair_in`]'s answer, and Coherent held the pair to it.
 #[allow(clippy::too_many_arguments)]
 fn read_in(
     builder: &mut FunctionBuilder,
@@ -5376,19 +5472,31 @@ fn read_in(
     let Operands { left, right, .. } = operands;
     let a = lower(builder, lowering, module, bindings, abort, left)?;
     let b = lower(builder, lowering, module, bindings, abort, right)?;
-    let newtype = lowering
+    let pair = lowering
         .declared
-        .wraps(reading)
+        .pair_in(reading, left.ty(), right.ty())
         .expect("`Coherent` held every type an operator is read in to be one that crossed");
-    if newtype.is_some() {
-        // The literal is of what the newtype wraps all the way down, which Coherent held.
-        let (inner, a) = opened(builder, lowering.declared, left.ty(), a)?;
-        let (_, b) = opened(builder, lowering.declared, right.ty(), b)?;
-        return compare(builder, lowering, module, op, &inner, a, b);
+    match pair {
+        PairIn::Opened(inner) => {
+            let (_, a) = opened(builder, lowering.declared, left.ty(), a)?;
+            let (_, b) = opened(builder, lowering.declared, right.ty(), b)?;
+            compare(builder, lowering, module, op, &inner, a, b)
+        }
+        PairIn::Held => {
+            let a = restate(builder, lowering, module, a, left.ty(), reading)?;
+            let b = restate(builder, lowering, module, b, right.ty(), reading)?;
+            compare(builder, lowering, module, op, reading, a, b)
+        }
     }
-    let a = restate(builder, lowering, module, a, left.ty(), reading)?;
-    let b = restate(builder, lowering, module, b, right.ty(), reading)?;
-    compare(builder, lowering, module, op, reading, a, b)
+}
+
+/// How a pair read in a type is taken apart ([`Declared::pair_in`]).
+enum PairIn {
+    /// A newtype beside what it wraps all the way down: the newtype is opened, and the two are
+    /// compared as what it wraps, which is this.
+    Opened(Ty),
+    /// Two values of the reading, each held as it and compared as it.
+    Held,
 }
 
 /// `value`, of type `ty`, opened to the value its newtypes wrap, and the type that value has: the
