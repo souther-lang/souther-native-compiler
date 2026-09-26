@@ -41,18 +41,19 @@ const MAGNITUDE: usize = 2 * SLOT as usize;
 
 /// A `Decimal` holding this value, in room the arena answered: the one way one is written.
 pub(crate) fn decimal_of(amount: &Amount) -> *mut Decimal {
-    let (negative, magnitude, scale) = amount.parts();
-    let length = i64::try_from(magnitude.len()).expect("a magnitude is shorter than an Int");
-    let at = souther_alloc(Count(MAGNITUDE as i64 + length));
-    unsafe {
-        at.add(SCALE).cast::<i64>().write(i64::from(scale));
-        at.add(SIGNED_LENGTH)
-            .cast::<i64>()
-            .write(if negative { -length } else { length });
-        at.add(MAGNITUDE)
-            .copy_from_nonoverlapping(magnitude.as_ptr(), magnitude.len());
-    }
-    at.cast()
+    amount.with_parts(|negative, magnitude, scale| {
+        let length = i64::try_from(magnitude.len()).expect("a magnitude is shorter than an Int");
+        let at = souther_alloc(Count(MAGNITUDE as i64 + length));
+        unsafe {
+            at.add(SCALE).cast::<i64>().write(i64::from(scale));
+            at.add(SIGNED_LENGTH)
+                .cast::<i64>()
+                .write(if negative { -length } else { length });
+            at.add(MAGNITUDE)
+                .copy_from_nonoverlapping(magnitude.as_ptr(), magnitude.len());
+        }
+        at.cast()
+    })
 }
 
 /// The value a `Decimal` holds.

@@ -134,8 +134,10 @@ difference and a product answer at, each of `RoundingMode`'s seven cases, `Decim
 answering `DivisionByZero` before it looks at the scale, `String.toDecimal` reading decimal text by
 the grammar the language states (souther-lang/souther f391aa62a; the JVM this build is tested
 against still reads it as `new BigDecimal`) and `String.fromDecimal` writing plain notation at the
-value's scale. Equality and order are by amount, so `1.0` and `1.00` are equal. `num-bigint` does
-the integer arithmetic inside that module and nowhere else. A result whose scale leaves the 32-bit
+value's scale. Equality and order are by amount, so `1.0` and `1.00` are equal. The integer is
+held in a `u128` where it fits, which is nearly every amount, and every operation on it is machine
+arithmetic there; `num-bigint` works it out only past that, inside the runtime's `magnitude` module,
+and a test holds every `u128` path to what `num-bigint` answers for the same operands. A result whose scale leaves the 32-bit
 range, or whose integer is wider than a JVM `BigInteger` holds, ends the run where it is computed; a
 value a long way below the unit it is rounded to is rounded from how many digits it has, without the
 power of ten its scale names. A plain notation longer than a string holds ends the process, since

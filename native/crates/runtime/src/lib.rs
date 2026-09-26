@@ -33,6 +33,7 @@ mod decoding;
 mod document;
 mod external;
 mod kernels;
+mod magnitude;
 pub use decimal::*;
 pub use kernels::*;
 use souther_text::{Text as Held, append, code_points, compare};

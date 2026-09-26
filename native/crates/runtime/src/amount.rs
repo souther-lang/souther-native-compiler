@@ -7,11 +7,12 @@
 //! answers what the language states for it, which is what the JVM's `DecimalMath` answers, and says
 //! where it answers nothing so that its caller can end the run for the reason its contract names.
 //!
-//! The integer is worked on with `num_bigint`, and nowhere outside this file. What that crate is
-//! asked for is integer arithmetic and nothing else: which scale a result has, how it is rounded,
-//! what a value is written as and where an operation refuses are all written here. So the crate
-//! could be swapped for another without a single answer moving, and nothing that reads a `Decimal`
-//! — the arena, generated code, a host — ever sees one of its types.
+//! The integer is a [`Magnitude`], which does integer arithmetic and nothing else: in a `u128`
+//! where the value fits, which is nearly every amount, and with `num_bigint` only past that. Which
+//! scale a result has, how it is rounded, what a value is written as and where an operation
+//! refuses are all written here. So how the integer is worked out could change without a single
+//! answer moving, and nothing that reads a `Decimal` — the arena, generated code, a host — ever
+//! sees one of `num_bigint`'s types.
 //!
 //! No operation here builds a power of ten from a scale it was handed. A scale is a 32-bit number,
 //! and `10^2147483647` is a number no memory holds, so an operation whose answer is small but whose
@@ -19,9 +20,7 @@
 //! answer from how many digits there are, and one whose answer is itself that wide refuses before
 //! building it ([`WIDEST`]).
 
-use num_bigint::BigUint;
-use num_integer::Integer;
-use num_traits::{ToPrimitive, Zero};
+use crate::magnitude::{Magnitude, TENS};
 use souther_text::DecimalText;
 use std::cmp::Ordering;
 
@@ -44,7 +43,7 @@ const SPELT_OUT: i64 = 1000;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Amount {
     negative: bool,
-    magnitude: BigUint,
+    magnitude: Magnitude,
     scale: i32,
 }
 
@@ -105,36 +104,15 @@ impl Ord for Dropped {
 /// `log2(10)`, for how many bits a power of ten is wide.
 const LOG2_10: f64 = std::f64::consts::LOG2_10;
 
-/// Ten to each power a `u128` holds, from nought to 38: what most amounts are measured and brought
-/// to one scale against, read here rather than worked out by `pow` each time.
-const TENS: [u128; 39] = {
-    let mut tens = [1u128; 39];
-    let mut at = 1;
-    while at < tens.len() {
-        tens[at] = tens[at - 1] * 10;
-        at += 1;
-    }
-    tens
-};
-
-/// Ten to `n`, for an `n` the caller has already held to a width a value may have.
-fn ten_to(n: u64) -> BigUint {
-    if let Some(small) = TENS.get(n as usize) {
-        return BigUint::from(*small);
-    }
-    let n = u32::try_from(n).expect("a power of ten built here is one a value may be as wide as");
-    BigUint::from(10u8).pow(n)
-}
-
 /// The magnitude, where it is no wider than a `Decimal` holds.
-fn held(magnitude: BigUint) -> Option<BigUint> {
+fn held(magnitude: Magnitude) -> Option<Magnitude> {
     (magnitude.bits() <= WIDEST).then_some(magnitude)
 }
 
 /// The magnitude times ten to `by`, where that is no wider than a `Decimal` holds. Refused before
 /// it is built where it could not be: the product is at least as wide as its factors' widths less
 /// one, and a power of ten is `by · log2 10` bits wide.
-fn scaled_up(magnitude: &BigUint, by: u64) -> Option<BigUint> {
+fn scaled_up(magnitude: &Magnitude, by: u64) -> Option<Magnitude> {
     if magnitude.is_zero() || by == 0 {
         return Some(magnitude.clone());
     }
@@ -142,34 +120,16 @@ fn scaled_up(magnitude: &BigUint, by: u64) -> Option<BigUint> {
     if narrowest > WIDEST as f64 {
         return None;
     }
-    held(magnitude * ten_to(by))
+    held(magnitude.times_ten_to(by))
 }
 
-/// How many decimal digits the magnitude has; one for nought, as the JVM counts it.
-///
-/// Read off how many bits it has, which gives it to within one, and settled against a power of ten
-/// no wider than the magnitude itself.
-fn precision(magnitude: &BigUint) -> u64 {
-    if let Some(small) = magnitude.to_u128() {
-        // How many of the powers are no greater than it, which is its digits; nought has one.
-        return TENS.partition_point(|&ten| ten <= small).max(1) as u64;
-    }
-    let mut digits = ((magnitude.bits() - 1) as f64 * std::f64::consts::LOG10_2) as u64 + 1;
-    while digits > 1 && *magnitude < ten_to(digits - 1) {
-        digits -= 1;
-    }
-    while *magnitude >= ten_to(digits) {
-        digits += 1;
-    }
-    digits
-}
-
-/// What a remainder is, against half the divisor it was left by.
-fn dropped(remainder: &BigUint, divisor: &BigUint) -> Dropped {
+/// What a remainder is, against half the divisor it was left by: twice the remainder against the
+/// divisor is the remainder against what the divisor leaves above it.
+fn dropped(remainder: &Magnitude, divisor: &Magnitude) -> Dropped {
     if remainder.is_zero() {
         return Dropped::Nothing;
     }
-    match (remainder << 1u8).cmp(divisor) {
+    match remainder.cmp(&divisor.sub(remainder)) {
         Ordering::Less => Dropped::BelowHalf,
         Ordering::Equal => Dropped::Half,
         Ordering::Greater => Dropped::AboveHalf,
@@ -177,22 +137,16 @@ fn dropped(remainder: &BigUint, divisor: &BigUint) -> Dropped {
 }
 
 /// The quotient, rounded by `mode` from what the division dropped.
-fn rounded(quotient: BigUint, negative: bool, dropped: Dropped, mode: Rounding) -> BigUint {
-    let odd = quotient.is_odd();
-    if mode.away(negative, odd, dropped) {
-        quotient + 1u8
+fn rounded(quotient: Magnitude, negative: bool, dropped: Dropped, mode: Rounding) -> Magnitude {
+    if mode.away(negative, quotient.is_odd(), dropped) {
+        quotient.increment()
     } else {
         quotient
     }
 }
 
-/// The digits the magnitude is written in, in decimal.
-fn digits(magnitude: &BigUint) -> String {
-    magnitude.to_str_radix(10)
-}
-
 impl Amount {
-    fn new(negative: bool, magnitude: BigUint, scale: i32) -> Amount {
+    fn new(negative: bool, magnitude: Magnitude, scale: i32) -> Amount {
         Amount {
             negative: negative && !magnitude.is_zero(),
             magnitude,
@@ -202,33 +156,28 @@ impl Amount {
 
     /// The value these parts are: a sign, the magnitude as little-endian bytes, and the scale.
     pub(crate) fn of_parts(negative: bool, magnitude: &[u8], scale: i32) -> Amount {
-        Amount::new(negative, BigUint::from_bytes_le(magnitude), scale)
+        Amount::new(negative, Magnitude::of_le_bytes(magnitude), scale)
     }
 
-    /// The parts [`Amount::of_parts`] takes: the magnitude as little-endian bytes, with no zero
-    /// byte at the top and none at all for nought.
-    pub(crate) fn parts(&self) -> (bool, Vec<u8>, i32) {
-        let bytes = if self.magnitude.is_zero() {
-            Vec::new()
-        } else {
-            self.magnitude.to_bytes_le()
-        };
-        (self.negative, bytes, self.scale)
+    /// The parts [`Amount::of_parts`] takes, handed to `with` for as long as it runs: the
+    /// magnitude as little-endian bytes, with no zero byte at the top and none at all for nought.
+    pub(crate) fn with_parts<T>(&self, with: impl FnOnce(bool, &[u8], i32) -> T) -> T {
+        self.magnitude
+            .with_le_bytes(|bytes| with(self.negative, bytes, self.scale))
     }
 
     /// `Decimal.fromInt`: the same number, at scale nought. Every `Int` is one exactly.
     pub(crate) fn of_int(value: i64) -> Amount {
-        Amount::new(value < 0, BigUint::from(value.unsigned_abs()), 0)
+        Amount::new(
+            value < 0,
+            Magnitude::Small(u128::from(value.unsigned_abs())),
+            0,
+        )
     }
 
     /// The whole number these ASCII digits write in decimal, at `scale`.
     fn of_digits(negative: bool, digits: &[u8], scale: i32) -> Amount {
-        let magnitude = if digits.is_empty() {
-            BigUint::zero()
-        } else {
-            BigUint::parse_bytes(digits, 10).expect("the digits read are ASCII digits")
-        };
-        Amount::new(negative, magnitude, scale)
+        Amount::new(negative, Magnitude::of_digits(digits), scale)
     }
 
     /// The value decimal text writes, at the scale its fractional digits give it
@@ -305,7 +254,7 @@ impl Amount {
 
     /// The integer, in decimal: a `-` where it is below nought, and no leading zero.
     pub(crate) fn unscaled_text(&self) -> String {
-        let digits = digits(&self.magnitude);
+        let digits = self.magnitude.digits();
         if self.negative {
             format!("-{digits}")
         } else {
@@ -342,8 +291,8 @@ impl Amount {
         }
         let by_magnitude = if self.scale == other.scale {
             self.magnitude.cmp(&other.magnitude)
-        } else if let (Some(mine), Some(theirs)) =
-            (self.magnitude.to_u128(), other.magnitude.to_u128())
+        } else if let (Magnitude::Small(mine), Magnitude::Small(theirs)) =
+            (&self.magnitude, &other.magnitude)
         {
             // The one at the smaller scale raised to the other's. Neither is nought here, so one
             // raised past what a `u128` holds is the greater.
@@ -353,9 +302,9 @@ impl Amount {
                     .and_then(|ten| magnitude.checked_mul(*ten))
             };
             if apart < 0 {
-                raised(mine, -apart).map_or(Ordering::Greater, |it| it.cmp(&theirs))
+                raised(*mine, -apart).map_or(Ordering::Greater, |it| it.cmp(theirs))
             } else {
-                raised(theirs, apart).map_or(Ordering::Less, |it| mine.cmp(&it))
+                raised(*theirs, apart).map_or(Ordering::Less, |it| mine.cmp(&it))
             }
         } else {
             self.compare_wide(other)
@@ -371,11 +320,11 @@ impl Amount {
     /// `u128`: by where each value's leading digit stands, and brought to one scale only where
     /// those stand at one place.
     fn compare_wide(&self, other: &Amount) -> Ordering {
-        let leading = |it: &Amount| precision(&it.magnitude) as i64 - i64::from(it.scale);
+        let leading = |it: &Amount| it.magnitude.precision() as i64 - i64::from(it.scale);
         match leading(self).cmp(&leading(other)) {
             Ordering::Equal => {
                 let apart = i64::from(self.scale) - i64::from(other.scale);
-                let raised = |magnitude: &BigUint, by: i64| magnitude * ten_to(by as u64);
+                let raised = |magnitude: &Magnitude, by: i64| magnitude.times_ten_to(by as u64);
                 match apart.cmp(&0) {
                     Ordering::Less => raised(&self.magnitude, -apart).cmp(&other.magnitude),
                     Ordering::Equal => self.magnitude.cmp(&other.magnitude),
@@ -398,11 +347,11 @@ impl Amount {
         };
         let (mine, theirs) = (raised(self)?, raised(other)?);
         let (negative, magnitude) = if self.negative == other.negative {
-            (self.negative, mine + theirs)
+            (self.negative, mine.add(&theirs))
         } else if mine >= theirs {
-            (self.negative, mine - theirs)
+            (self.negative, mine.sub(&theirs))
         } else {
-            (other.negative, theirs - mine)
+            (other.negative, theirs.sub(&mine))
         };
         Some(Amount::new(negative, held(magnitude)?, scale))
     }
@@ -419,7 +368,7 @@ impl Amount {
         if self.magnitude.bits() + other.magnitude.bits() > WIDEST + 1 {
             return None;
         }
-        let magnitude = held(&self.magnitude * &other.magnitude)?;
+        let magnitude = held(self.magnitude.mul(&other.magnitude))?;
         Some(Amount::new(
             self.negative != other.negative,
             magnitude,
@@ -451,14 +400,14 @@ impl Amount {
     /// A magnitude with fewer digits than `places` less one is below a tenth of the unit it is
     /// rounded to, so the answer is nought and what was dropped is below half, without the power
     /// of ten the division would have wanted.
-    fn dropping(&self, places: u64) -> (BigUint, Dropped) {
+    fn dropping(&self, places: u64) -> (Magnitude, Dropped) {
         if self.magnitude.is_zero() {
-            return (BigUint::zero(), Dropped::Nothing);
+            return (Magnitude::ZERO, Dropped::Nothing);
         }
-        if places > precision(&self.magnitude) {
-            return (BigUint::zero(), Dropped::BelowHalf);
+        if places > self.magnitude.precision() {
+            return (Magnitude::ZERO, Dropped::BelowHalf);
         }
-        let unit = ten_to(places);
+        let unit = Magnitude::ten_to(places);
         let (quotient, remainder) = self.magnitude.div_rem(&unit);
         let dropped = dropped(&remainder, &unit);
         (quotient, dropped)
@@ -473,15 +422,18 @@ impl Amount {
         let whole = if self.scale <= 0 {
             // A whole number already, and one with more than nineteen digits is past every `Int`.
             let by = -i64::from(self.scale) as u64;
-            if precision(&self.magnitude) + by > 19 {
+            if self.magnitude.precision() + by > 19 {
                 return None;
             }
-            &self.magnitude * ten_to(by)
+            self.magnitude.times_ten_to(by)
         } else {
             let (quotient, dropped) = self.dropping(self.scale as u64);
             rounded(quotient, self.negative, dropped, mode)
         };
-        let magnitude = whole.to_u64()?;
+        let Magnitude::Small(whole) = whole else {
+            return None;
+        };
+        let magnitude = u64::try_from(whole).ok()?;
         if self.negative {
             0i64.checked_sub_unsigned(magnitude)
         } else {
@@ -504,7 +456,7 @@ impl Amount {
         let scale = i32::try_from(scale).ok()?;
         let negative = self.negative != divisor.negative;
         if self.is_zero() {
-            return Some(Amount::new(false, BigUint::zero(), scale));
+            return Some(Amount::new(false, Magnitude::ZERO, scale));
         }
         // The quotient at `scale` is `self · 10^raise / divisor`, the power of ten on whichever
         // side keeps it whole.
@@ -518,17 +470,17 @@ impl Amount {
             if narrowest > WIDEST as f64 {
                 return None;
             }
-            let dividend = &self.magnitude * ten_to(raise as u64);
+            let dividend = self.magnitude.times_ten_to(raise as u64);
             let (quotient, remainder) = dividend.div_rem(&divisor.magnitude);
             (quotient, dropped(&remainder, &divisor.magnitude))
         } else {
             let lowered = (-raise) as u64;
             // Below a tenth where the divisor, raised, has two more digits than the dividend.
-            let apart = precision(&self.magnitude) as i64 - precision(&divisor.magnitude) as i64;
+            let apart = self.magnitude.precision() as i64 - divisor.magnitude.precision() as i64;
             if lowered as i64 >= apart + 2 {
-                (BigUint::zero(), Dropped::BelowHalf)
+                (Magnitude::ZERO, Dropped::BelowHalf)
             } else {
-                let by = &divisor.magnitude * ten_to(lowered);
+                let by = divisor.magnitude.times_ten_to(lowered);
                 let (quotient, remainder) = self.magnitude.div_rem(&by);
                 (quotient, dropped(&remainder, &by))
             }
@@ -543,7 +495,7 @@ impl Amount {
     /// nought.
     fn plain_length(&self) -> i64 {
         let sign = i64::from(self.negative);
-        let precision = precision(&self.magnitude) as i64;
+        let precision = self.magnitude.precision() as i64;
         let scale = i64::from(self.scale);
         if scale <= 0 {
             if self.is_zero() {
@@ -566,7 +518,7 @@ impl Amount {
         if self.plain_length() > souther_text::MOST {
             return None;
         }
-        let digits = digits(&self.magnitude);
+        let digits = self.magnitude.digits();
         let sign = if self.negative { "-" } else { "" };
         let scale = i64::from(self.scale);
         Some(if scale <= 0 {
@@ -589,30 +541,10 @@ impl Amount {
     /// answers it. The scale stops at its smallest, and fixing the scale fixes the digits.
     fn least_digits(&self) -> Amount {
         if self.is_zero() {
-            return Amount::new(false, BigUint::zero(), 0);
+            return Amount::new(false, Magnitude::ZERO, 0);
         }
         let room = (i64::from(self.scale) - i64::from(i32::MIN)) as u64;
-        let mut magnitude = self.magnitude.clone();
-        let mut dropped = 0u64;
-        // Nineteen at a time while they are there, then one at a time.
-        let chunk = BigUint::from(10_000_000_000_000_000_000u64);
-        while dropped + 19 <= room {
-            let (quotient, remainder) = magnitude.div_rem(&chunk);
-            if !remainder.is_zero() {
-                break;
-            }
-            magnitude = quotient;
-            dropped += 19;
-        }
-        let ten = BigUint::from(10u8);
-        while dropped < room {
-            let (quotient, remainder) = magnitude.div_rem(&ten);
-            if !remainder.is_zero() {
-                break;
-            }
-            magnitude = quotient;
-            dropped += 1;
-        }
+        let (magnitude, dropped) = self.magnitude.without_trailing_zeros(room);
         let scale = (i64::from(self.scale) - dropped as i64) as i32;
         Amount::new(self.negative, magnitude, scale)
     }
@@ -627,10 +559,10 @@ impl Amount {
     pub(crate) fn external_text(&self) -> String {
         let least = self.least_digits();
         let spelt = if least.scale < 0
-            && precision(&least.magnitude) as i64 - i64::from(least.scale) <= SPELT_OUT
+            && least.magnitude.precision() as i64 - i64::from(least.scale) <= SPELT_OUT
         {
             let by = (-i64::from(least.scale)) as u64;
-            Amount::new(least.negative, &least.magnitude * ten_to(by), 0)
+            Amount::new(least.negative, least.magnitude.times_ten_to(by), 0)
         } else {
             least
         };
@@ -641,7 +573,7 @@ impl Amount {
     /// nought and the leading digit stands no more than six places after the point, and otherwise
     /// one digit, the rest after a point, and the exponent.
     fn scientific_text(&self) -> String {
-        let digits = digits(&self.magnitude);
+        let digits = self.magnitude.digits();
         let sign = if self.negative { "-" } else { "" };
         if self.scale == 0 {
             return format!("{sign}{digits}");
@@ -1005,33 +937,15 @@ mod tests {
             "256",
             "-123456789012345678901.5",
         ] {
-            let (negative, magnitude, scale) = d(value).parts();
-            assert_eq!(
-                Amount::of_parts(negative, &magnitude, scale),
-                d(value),
-                "{value}"
-            );
-            assert_ne!(magnitude.last(), Some(&0), "{value}");
+            d(value).with_parts(|negative, magnitude, scale| {
+                assert_eq!(
+                    Amount::of_parts(negative, magnitude, scale),
+                    d(value),
+                    "{value}"
+                );
+                assert_ne!(magnitude.last(), Some(&0), "{value}");
+            });
         }
         assert_eq!(shown(&Amount::of_int(i64::MIN)), (i64::MIN.to_string(), 0));
-    }
-
-    #[test]
-    fn precision_counts_decimal_digits() {
-        for (value, digits) in [
-            (BigUint::zero(), 1),
-            (BigUint::from(9u8), 1),
-            (BigUint::from(10u8), 2),
-            (BigUint::from(99u8), 2),
-            (BigUint::from(u64::MAX), 20),
-            (BigUint::from(u128::MAX), 39),
-            (ten_to(38), 39),
-            (ten_to(38) - 1u8, 38),
-            (ten_to(39), 40),
-            (ten_to(100), 101),
-            (ten_to(100) - 1u8, 100),
-        ] {
-            assert_eq!(precision(&value), digits, "{value}");
-        }
     }
 }
