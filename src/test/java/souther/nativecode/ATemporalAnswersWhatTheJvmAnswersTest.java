@@ -154,6 +154,17 @@ class ATemporalAnswersWhatTheJvmAnswersTest {
             behavior launch : (a: Int) -> Instant
             let launch (a) = Instant("2026-07-25T00:00:00.5Z")
 
+            behavior spelledOtherwise : (a: Int) -> Bool
+            let spelledOtherwise (a) =
+                Date("+010000-01-01") == Date("+10000-01-01")
+                    && Time("09:30:00.") == Time("09:30")
+                    && DateTime("2026-07-01t09:30") == DateTime("2026-07-01T09:30")
+                    && DateTime("2026-07-01T09:30:00.") == DateTime("2026-07-01T09:30")
+                    && Instant("2026-07-01T00:00:00.Z") == Instant("2026-07-01T00:00:00Z")
+
+            example spelledOtherwise
+                | "spellings java.time reads and a boundary does not" : (0) -> true
+
             example rentDay
                 | "a literal" : (0) -> Date("2026-07-25")
 

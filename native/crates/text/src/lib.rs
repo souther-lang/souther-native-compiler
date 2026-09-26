@@ -28,7 +28,6 @@ mod integer;
 mod operations;
 pub mod pattern;
 mod tables;
-pub mod temporal;
 
 pub use case::{lowercase, uppercase};
 pub use decimal::{DecimalText, decimal_text};

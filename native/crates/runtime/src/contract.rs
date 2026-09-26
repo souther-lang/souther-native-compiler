@@ -613,7 +613,7 @@ fn functions() -> Vec<(&'static str, Shape)> {
         ),
         (
             "souther_date_literal",
-            shape_of(souther_date_literal as unsafe extern "C" fn(T) -> *mut Date),
+            shape_of(souther_date_literal as extern "C" fn(i64) -> *mut Date),
         ),
         (
             "souther_date_iso",
@@ -651,7 +651,7 @@ fn functions() -> Vec<(&'static str, Shape)> {
         ),
         (
             "souther_time_literal",
-            shape_of(souther_time_literal as unsafe extern "C" fn(T) -> *mut Time),
+            shape_of(souther_time_literal as extern "C" fn(i64) -> *mut Time),
         ),
         (
             "souther_time_iso",
@@ -691,7 +691,7 @@ fn functions() -> Vec<(&'static str, Shape)> {
         ),
         (
             "souther_datetime_literal",
-            shape_of(souther_datetime_literal as unsafe extern "C" fn(T) -> *mut DateTime),
+            shape_of(souther_datetime_literal as extern "C" fn(i64) -> *mut DateTime),
         ),
         (
             "souther_datetime_iso",
@@ -733,7 +733,7 @@ fn functions() -> Vec<(&'static str, Shape)> {
         ),
         (
             "souther_instant_literal",
-            shape_of(souther_instant_literal as unsafe extern "C" fn(T) -> *mut Instant),
+            shape_of(souther_instant_literal as extern "C" fn(i64, i64) -> *mut Instant),
         ),
         (
             "souther_instant_iso",

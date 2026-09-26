@@ -9,6 +9,10 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -128,11 +132,15 @@ class AnAdditionCrossesAsWhatTheCheckerSettledTest {
     }
 
     /**
-     * A temporal literal crosses as the ISO text the checker read it as, under the type it is:
-     * {@code kind} and {@code type} of a {@code Core.Temporal} are one value, so it is written once.
+     * A temporal literal crosses as the count the checker's own parse read it as, and not as the
+     * text it was written as: {@code java.time} admits spellings it does not write back
+     * ({@code DateTime("2026-04-01t09:30")}, {@code Time("09:30:00.")}, {@code Date("+010000-01-01")}),
+     * and text handed over would be read again on the other side by a grammar of its own, whose
+     * refusals would be programs the checker passed. Two spellings of one value cross as one
+     * document.
      */
     @Test
-    void aTemporalLiteralCrossesAsTheTextTheCheckerReadItAs() {
+    void aTemporalLiteralCrossesAsTheCountTheCheckerReadItAs() {
         CheckedProgram program = Checked.of(List.of("""
                 module calculation
 
@@ -143,13 +151,60 @@ class AnAdditionCrossesAsWhatTheCheckerSettledTest {
                 behavior closing : (a: Int) -> Instant
 
                 let closing (a) = Instant("2026-04-01T09:30:00.5Z")
+
+                behavior clock : (a: Int) -> Time
+
+                let clock (a) = Time("09:30:15")
+
+                behavior meeting : (a: Int) -> DateTime
+
+                let meeting (a) = DateTime("2026-04-01T09:30")
                 """));
 
         String written = ProgramWriter.written(program);
 
-        assertThat(written).contains(
-                "{\"core\":\"temporal\",\"text\":\"2026-04-01\",\"type\":{\"prim\":\"DATE\"},");
-        assertThat(written).contains(
-                "{\"core\":\"temporal\",\"text\":\"2026-04-01T09:30:00.5Z\",\"type\":{\"prim\":\"INSTANT\"},");
+        long day = LocalDate.parse("2026-04-01").toEpochDay();
+        long second = LocalDateTime.parse("2026-04-01T09:30").toEpochSecond(ZoneOffset.UTC);
+        assertThat(written).contains("{\"core\":\"temporal\",\"count\":" + day
+                + ",\"nano\":0,\"type\":{\"prim\":\"DATE\"},");
+        assertThat(written).contains("{\"core\":\"temporal\",\"count\":"
+                + Instant.parse("2026-04-01T09:30:00.5Z").getEpochSecond()
+                + ",\"nano\":500000000,\"type\":{\"prim\":\"INSTANT\"},");
+        assertThat(written).contains("{\"core\":\"temporal\",\"count\":" + (9 * 3600 + 30 * 60 + 15)
+                + ",\"nano\":0,\"type\":{\"prim\":\"TIME\"},");
+        assertThat(written).contains("{\"core\":\"temporal\",\"count\":" + second
+                + ",\"nano\":0,\"type\":{\"prim\":\"DATETIME\"},");
+    }
+
+    /** What the checker admits of a spelling is the checker's, so a spelling and the one it names
+     * are one literal by the time they cross. */
+    @Test
+    void twoSpellingsOfOneTemporalCrossAsOne() {
+        String canonical = literalsOver("""
+                let a (n) = Date("+10000-01-01")
+                let b (n) = Time("09:30")
+                let c (n) = DateTime("2026-07-01T09:30")
+                let d (n) = Instant("2026-07-01T00:00:00Z")
+                """);
+        String spelt = literalsOver("""
+                let a (n) = Date("+010000-01-01")
+                let b (n) = Time("09:30:00.")
+                let c (n) = DateTime("2026-07-01t09:30")
+                let d (n) = Instant("2026-07-01T00:00:00.Z")
+                """);
+
+        assertThat(spelt).isEqualTo(canonical);
+    }
+
+    private static String literalsOver(String definitions) {
+        return ProgramWriter.written(Checked.of(List.of("""
+                module spelling
+
+                behavior a : (n: Int) -> Date
+                behavior b : (n: Int) -> Time
+                behavior c : (n: Int) -> DateTime
+                behavior d : (n: Int) -> Instant
+
+                """ + definitions)));
     }
 }

@@ -150,10 +150,13 @@ module's object: the runtime defines their tokens, and every object naming one i
 A `Date`, a `Time`, a `DateTime` and an `Instant` are addresses in the same way, and what they point
 at is the runtime's alone. Each holds what its `java.time` counterpart holds and nothing past it: a
 `Date` the years -999999999 to 999999999, a `Time` and a `DateTime` whole seconds, an `Instant`
-nanoseconds from -1000000000-01-01T00:00:00Z to +1000000000-12-31T23:59:59.999999999Z. What a
-temporal is as text, and the calendar that says which day a count of days is, are `souther-text`'s
-`temporal` module, which the driver reads a literal by too: a literal is carried as the ISO 8601 text
-the checker read it as, held here to the grammar of its type, and made by the runtime where it is
+nanoseconds from -1000000000-01-01T00:00:00Z to +1000000000-12-31T23:59:59.999999999Z. The calendar,
+and what a temporal is as text, are the runtime's (`runtime/src/temporal.rs`) and nothing else's. A
+literal is carried as the count the checker's own parse read it as — a `Date`'s day, a `Time`'s
+second of the day, a `DateTime`'s second, an `Instant`'s second and nanosecond — and not as the
+text it was written as: `java.time` admits spellings it does not write back (`DateTime("2026-07-01t09:30")`),
+that parse is what decides what a program may say, and text handed over would be read again here by
+a grammar of its own. The driver holds the count to what the type holds, and the runtime makes the value from it where it is
 reached. Every operation is a call into the runtime, and equality and order are by the day, the
 second or the moment a value names, so two made apart are equal where they name one. A shift
 (`Date.addDays`, `addMonths` and `addYears`, `DateTime.addMinutes`, `addHours` and `addDays`) that
@@ -162,7 +165,9 @@ past the end; `Date.fromParts` and `Time.fromParts` name a case for parts that n
 normalise nothing. A boundary writes a temporal as `toString` of its `java.time` class does — a time
 without its seconds where they are nought, an instant in UTC — and reads it by Raoh's grammar,
 which is not what the JVM this build is tested against reads: that one hands the text to
-`java.time`, whose parsers accept more. An instant is read from an offset spelling as the moment it
+`java.time`, whose parsers accept more (a lower case `t`, a point with nothing after it). Nothing
+of the language says which is right (souther-lang/souther#2007), so this follows Raoh's current
+grammar, and only a boundary reads text by it. An instant is read from an offset spelling as the moment it
 names, a fraction of a second in a `Time` or a `DateTime` is a decode issue and never dropped, and a
 leap second is refused. `ATemporalAnswersWhatTheJvmAnswersTest` holds every kernel and comparison
 to what `java.time` answers over the ends of every range and a seeded run of the rest.

@@ -61,8 +61,9 @@ use crate::transport::{
 };
 use crate::{Declared, PairIn, Runs, Targets, departures_taken, not_lowered, says_its_case};
 use anyhow::{Result, anyhow, bail};
-use souther_native_abi::{spells_a_module, spells_a_name};
-use souther_text::temporal;
+use souther_native_abi::{
+    DATE_DAYS, DATE_TIME_SECONDS, INSTANT_SECONDS, SECONDS_PER_DAY, spells_a_module, spells_a_name,
+};
 use std::collections::HashMap;
 
 /// A document every relation of which holds, and what reading it built.
@@ -1171,30 +1172,43 @@ impl<'a> Walk<'_, 'a> {
                     "its kind",
                 )
             }
-            Node::Temporal { text, ty, .. } => {
-                // The text is what the runtime reads the value from, by the grammar of the type
-                // the node says it is, so a text that grammar does not read is a literal whose
-                // two halves disagree, and one the run would end on where it is reached.
-                let held = souther_text::Text::held(text);
-                let (spelt, read) = match ty {
-                    Ty::Prim { prim: Prim::Date } => ("Date", temporal::parse_date(held).is_some()),
-                    Ty::Prim { prim: Prim::Time } => ("Time", temporal::parse_time(held).is_ok()),
+            Node::Temporal {
+                count, nano, ty, ..
+            } => {
+                // What the checker read crosses as a count, and the runtime makes the value from
+                // it, so a count outside what the type holds is a literal no run could make: the
+                // halves disagreeing. What the checker admits as spelling is not asked here, since
+                // nothing here reads spelling.
+                let (spelt, held) = match ty {
+                    Ty::Prim { prim: Prim::Date } => ("Date", DATE_DAYS.contains(count)),
+                    Ty::Prim { prim: Prim::Time } => ("Time", (0..SECONDS_PER_DAY).contains(count)),
                     Ty::Prim {
                         prim: Prim::DateTime,
-                    } => ("DateTime", temporal::parse_date_time(held).is_ok()),
+                    } => ("DateTime", DATE_TIME_SECONDS.contains(count)),
                     Ty::Prim {
                         prim: Prim::Instant,
-                    } => ("Instant", temporal::parse_instant(held).is_some()),
+                    } => ("Instant", INSTANT_SECONDS.contains(count)),
                     other => bail!(
                         "{}: a temporal literal typed {other:?}, which is none of Date, Time, \
                          DateTime and Instant: the two halves disagree",
                         self.owner
                     ),
                 };
-                if !read {
+                // Only an `Instant` holds a fraction of a second.
+                let fraction = if matches!(
+                    ty,
+                    Ty::Prim {
+                        prim: Prim::Instant
+                    }
+                ) {
+                    (0..1_000_000_000).contains(nano)
+                } else {
+                    *nano == 0
+                };
+                if !held || !fraction {
                     bail!(
-                        "{}: a {spelt} literal written {text:?}, which is no {spelt}: the two \
-                         halves disagree",
+                        "{}: a {spelt} literal of count {count} and nanosecond {nano}, which is \
+                         none a {spelt} holds: the two halves disagree",
                         self.owner
                     );
                 }

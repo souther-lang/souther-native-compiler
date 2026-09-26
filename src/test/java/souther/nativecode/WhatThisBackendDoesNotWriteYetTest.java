@@ -152,7 +152,7 @@ class WhatThisBackendDoesNotWriteYetTest {
      * the object runs: its input is made from the text the checker read the literal as.
      */
     @Test
-    void aRowStatingADateIsWrittenWithTheTextItStatesItAs() {
+    void aRowStatingADateIsWrittenWithTheDayItStates() {
         CheckedProgram program = Checked.of(List.of("""
                 module owing
 
@@ -166,7 +166,8 @@ class WhatThisBackendDoesNotWriteYetTest {
                 """));
 
         assertThat(ProgramWriter.written(program))
-                .contains("\"core\":\"temporal\",\"text\":\"2026-07-25\"");
+                .contains("\"core\":\"temporal\",\"count\":"
+                        + java.time.LocalDate.parse("2026-07-25").toEpochDay() + ",\"nano\":0");
     }
 
     /**

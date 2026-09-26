@@ -2,11 +2,13 @@ package souther.nativecode.transport;
 
 import souther.compiler.abort.AbortKind;
 import souther.compiler.abort.AbortSet;
+import souther.compiler.check.CallElaborator;
 import souther.compiler.core.Composition;
 import souther.compiler.core.Contract;
 import souther.compiler.core.Core;
 import souther.compiler.core.EnsuresEnforcement;
 import souther.compiler.core.Kernel;
+import souther.compiler.diag.Region;
 import souther.compiler.core.ValueShape;
 import souther.compiler.program.BehaviorTarget;
 import souther.compiler.program.CheckedAlternativesForm;
@@ -42,6 +44,11 @@ import souther.compiler.types.TypeSymbol;
 import souther.compiler.types.ValueName;
 import souther.nativecode.NotLowered;
 
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -1235,13 +1242,38 @@ public final class ProgramWriter {
 
     /**
      * A {@code Date}, {@code Time}, {@code DateTime} or {@code Instant} literal as the checker read
-     * it: the ISO 8601 text it was written as, which the checker has already held to what the type
-     * writes ({@code Core.Temporal#text}). The type is the one {@code Core.Temporal#kind} names, so
-     * it is written once, as the node's own.
+     * it: the count the value it parsed to is, and not the text it was written as.
+     *
+     * <p>Read by the checker's own parse ({@code CallElaborator#parseTemporal}, which is public for
+     * a backend to share the one reading of the text): {@code java.time}'s, whose spellings are more
+     * than the ones it writes back ({@code DateTime("2026-07-01t09:30")} is admitted), and which
+     * decides what a program may say. The text handed over as it stands would be read a second time
+     * on the other side by a grammar of its own, and whatever that one refused of what this one
+     * admitted would be a program the checker passed and the backend did not; so what crosses is
+     * what was read, as a {@code Decimal}'s integer and scale are. A {@code Date} crosses as its
+     * day, a {@code Time} as its second of the day, a {@code DateTime} as its second counted from
+     * 1970-01-01T00:00:00 as though it were in UTC, and an {@code Instant} as its second and its
+     * nanosecond; the last two are the checker's own carriers ({@code numeric.DateTimes}, {@code
+     * numeric.Instants}), and no zone is a claim of either.
      */
-    private String temporalNode(String text, Type type, AbortSet aborts) {
-        return "{\"core\":\"temporal\",\"text\":" + quoted(text)
-                + ",\"type\":" + type(type) + ",\"aborts\":" + spelled(aborts) + "}";
+    private String temporalNode(Core.Temporal it, AbortSet aborts) {
+        Object read = CallElaborator.parseTemporal(it.kind(), it.kind().toString(), it.text(),
+                Region.point(it.pos()));
+        long count;
+        int nano = 0;
+        switch (read) {
+            case LocalDate day -> count = day.toEpochDay();
+            case LocalTime time -> count = time.toSecondOfDay();
+            case LocalDateTime dateTime -> count = dateTime.toEpochSecond(ZoneOffset.UTC);
+            case Instant moment -> {
+                count = moment.getEpochSecond();
+                nano = moment.getNano();
+            }
+            default -> throw new IllegalStateException(
+                    "a temporal literal reads as a temporal: " + read);
+        }
+        return "{\"core\":\"temporal\",\"count\":" + count + ",\"nano\":" + nano
+                + ",\"type\":" + type(it.type()) + ",\"aborts\":" + spelled(aborts) + "}";
     }
 
     private String unitNode(String identity, Type type, AbortSet aborts) {
@@ -1346,7 +1378,7 @@ public final class ProgramWriter {
                     + ",\"type\":" + type(it.type()) + ",\"aborts\":" + aborts(it) + "}";
 
             case Core.Decimal it -> decimalNode(it.value(), it.type(), program.abortsAt(it));
-            case Core.Temporal it -> temporalNode(it.text(), it.type(), program.abortsAt(it));
+            case Core.Temporal it -> temporalNode(it, program.abortsAt(it));
             // What the checker builds for an analysis to read, and not for a backend to run: a
             // value's build standing as its template, and a call kept standing for what it says.
             // The tree a checked program hands a backend keeps neither — the checker's own emitter

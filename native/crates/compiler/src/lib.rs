@@ -4890,27 +4890,34 @@ fn lower(
             let scale = builder.ins().iconst(types::I64, i64::from(*scale));
             runtime_call(builder, lowering, module, DECIMAL_LITERAL, &[digits, scale])
         }
-        // Made by the runtime from the text the checker read it as, each time the literal is
+        // Made by the runtime from the count the checker read it as, each time the literal is
         // reached, for the reason a `Decimal` is: the runtime's layout is its own, so the object
-        // carries the text and never a value of the type. The text is a string the object carries
-        // like any other literal.
-        Node::Temporal { text, ty, .. } => {
-            let name = match ty {
-                Ty::Prim { prim: Prim::Date } => DATE_LITERAL,
-                Ty::Prim { prim: Prim::Time } => TIME_LITERAL,
+        // carries the count and never a value of the type.
+        Node::Temporal {
+            count, nano, ty, ..
+        } => {
+            let count = builder.ins().iconst(types::I64, *count);
+            match ty {
+                Ty::Prim { prim: Prim::Date } => {
+                    runtime_call(builder, lowering, module, DATE_LITERAL, &[count])
+                }
+                Ty::Prim { prim: Prim::Time } => {
+                    runtime_call(builder, lowering, module, TIME_LITERAL, &[count])
+                }
                 Ty::Prim {
                     prim: Prim::DateTime,
-                } => DATETIME_LITERAL,
+                } => runtime_call(builder, lowering, module, DATETIME_LITERAL, &[count]),
                 Ty::Prim {
                     prim: Prim::Instant,
-                } => INSTANT_LITERAL,
+                } => {
+                    let nano = builder.ins().iconst(types::I64, *nano);
+                    runtime_call(builder, lowering, module, INSTANT_LITERAL, &[count, nano])
+                }
                 other => unreachable!(
                     "`Coherent` held a temporal literal to one of the four temporals, and it is \
                      {other:?}"
                 ),
-            };
-            let text = lowering.literals.address(builder, module, text);
-            runtime_call(builder, lowering, module, name, &[text])
+            }
         }
         Node::Binary {
             op,

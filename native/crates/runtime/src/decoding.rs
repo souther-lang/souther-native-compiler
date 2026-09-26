@@ -23,10 +23,12 @@
 use crate::amount::Amount;
 use crate::decimal::{Decimal, decimal_of};
 use crate::document::{Form, Node, parsed};
-use crate::temporal::{Date, DateTime, Instant, Time, date_of, date_time_of, instant_of, time_of};
+use crate::temporal::{
+    Date, DateTime, Instant, Time, date_of, date_time_of, instant_of, parse_date, parse_date_time,
+    parse_instant, parse_time, time_of,
+};
 use crate::{Count, Text, Value, souther_alloc, string_of, text};
 use souther_native_abi::{DECODED_ISSUES, DECODED_MALFORMED, DECODED_VALUE};
-use souther_text::temporal::{parse_date, parse_date_time, parse_instant, parse_time};
 use std::ptr;
 
 /// One reading of one document, from when its bytes are handed over to what a host is answered.
@@ -589,7 +591,7 @@ pub unsafe extern "C" fn souther_read_date(
     out: *mut *mut Date,
 ) -> i8 {
     let read = unsafe { temporal_text(&*node, path, decoding) }.and_then(|written| {
-        let day = parse_date(souther_text::Text::held(&written));
+        let day = parse_date(written.as_bytes());
         if day.is_none() {
             unsafe { refused(decoding, path) };
         }
@@ -611,7 +613,7 @@ pub unsafe extern "C" fn souther_read_time(
     out: *mut *mut Time,
 ) -> i8 {
     let read = unsafe { temporal_text(&*node, path, decoding) }.and_then(|written| {
-        let second = parse_time(souther_text::Text::held(&written));
+        let second = parse_time(written.as_bytes());
         if second.is_err() {
             unsafe { refused(decoding, path) };
         }
@@ -632,7 +634,7 @@ pub unsafe extern "C" fn souther_read_datetime(
     out: *mut *mut DateTime,
 ) -> i8 {
     let read = unsafe { temporal_text(&*node, path, decoding) }.and_then(|written| {
-        let second = parse_date_time(souther_text::Text::held(&written));
+        let second = parse_date_time(written.as_bytes());
         if second.is_err() {
             unsafe { refused(decoding, path) };
         }
@@ -655,7 +657,7 @@ pub unsafe extern "C" fn souther_read_instant(
     out: *mut *mut Instant,
 ) -> i8 {
     let read = unsafe { temporal_text(&*node, path, decoding) }.and_then(|written| {
-        let moment = parse_instant(souther_text::Text::held(&written));
+        let moment = parse_instant(written.as_bytes());
         if moment.is_none() {
             unsafe { refused(decoding, path) };
         }

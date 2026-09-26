@@ -1143,9 +1143,27 @@ pub const INSTANT_OF_ISO: &str = "souther_instant_of_iso";
 /// The text an `Instant` is written as: in UTC.
 pub const INSTANT_ISO: &str = "souther_instant_iso";
 
-/// The symbols a temporal literal is made through, from the ISO text the checker read it as, which
-/// the object carries as a string. The checker has already held the text to what the type writes,
-/// so the runtime reads it as the value it names.
+/// What each temporal holds, as the counts a transport document and the runtime's literal functions
+/// speak in: the days from 1970-01-01 that a `Date` holds, and the seconds from 1970-01-01T00:00:00
+/// that a `DateTime` and an `Instant` hold, the first as though it were in UTC.
+///
+/// The bounds `java.time` states for `LocalDate`, `LocalDateTime` and `Instant` (spec §primitives),
+/// and numbers, not a calendar: both halves of this backend hold a literal to them, and the
+/// runtime's own tests hold its calendar to them, so no side takes them on trust from the other.
+pub const DATE_DAYS: std::ops::RangeInclusive<i64> = -365_243_219_162..=365_241_780_471;
+/// See [`DATE_DAYS`]: `LocalDateTime.MIN` to the last whole second of `LocalDateTime.MAX`.
+pub const DATE_TIME_SECONDS: std::ops::RangeInclusive<i64> =
+    -365_243_219_162 * 86_400..=365_241_780_471 * 86_400 + 86_399;
+/// See [`DATE_DAYS`]: `Instant.MIN` to the second `Instant.MAX` falls in.
+pub const INSTANT_SECONDS: std::ops::RangeInclusive<i64> =
+    -31_557_014_167_219_200..=31_556_889_864_403_199;
+/// The seconds in a day, which a `Time` holds fewer than.
+pub const SECONDS_PER_DAY: i64 = 86_400;
+
+/// The symbols a temporal literal is made through, from the count the checker read it as: the day
+/// of a `Date` ([`DATE_DAYS`]), the second of the day of a `Time`, the second of a `DateTime`, and
+/// the second and then the nanosecond of an `Instant`. Not text: the checker's parse decides what a
+/// program may spell, and what it read is what crosses.
 pub const DATE_LITERAL: &str = "souther_date_literal";
 /// A `Time` literal.
 pub const TIME_LITERAL: &str = "souther_time_literal";
@@ -2230,7 +2248,7 @@ pub const GENERATED_RUNTIME: &[GeneratedCall] = {
         },
         GeneratedCall {
             name: DATE_LITERAL,
-            takes: &[Given(Host(String))],
+            takes: &[Given(Host(Int))],
             answers: Some(Host(Date)),
         },
         GeneratedCall {
@@ -2240,7 +2258,7 @@ pub const GENERATED_RUNTIME: &[GeneratedCall] = {
         },
         GeneratedCall {
             name: TIME_LITERAL,
-            takes: &[Given(Host(String))],
+            takes: &[Given(Host(Int))],
             answers: Some(Host(Time)),
         },
         GeneratedCall {
@@ -2250,7 +2268,7 @@ pub const GENERATED_RUNTIME: &[GeneratedCall] = {
         },
         GeneratedCall {
             name: DATETIME_LITERAL,
-            takes: &[Given(Host(String))],
+            takes: &[Given(Host(Int))],
             answers: Some(Host(DateTime)),
         },
         GeneratedCall {
@@ -2260,7 +2278,7 @@ pub const GENERATED_RUNTIME: &[GeneratedCall] = {
         },
         GeneratedCall {
             name: INSTANT_LITERAL,
-            takes: &[Given(Host(String))],
+            takes: &[Given(Host(Int)), Given(Host(Int))],
             answers: Some(Host(Instant)),
         },
         GeneratedCall {

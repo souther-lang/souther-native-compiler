@@ -80,8 +80,8 @@ pub const MOVES: &[(u32, &str)] = &[
     ),
     (
         26,
-        "a `Date`, `Time`, `DateTime` or `Instant` literal (`temporal`), as the ISO 8601 text the \
-         checker read it as",
+        "a `Date`, `Time`, `DateTime` or `Instant` literal (`temporal`), as the count the checker \
+         read it as (`count`, and `nano` for an `Instant`)",
     ),
 ];
 
@@ -1943,15 +1943,19 @@ pub enum Node {
         ty: Ty,
         aborts: Vec<AbortKind>,
     },
-    /// A `Date`, `Time`, `DateTime` or `Instant` literal, as the checker read it: the ISO 8601 text
-    /// it was written as, which the checker has already held to what the type writes. The type is
-    /// which of the four it is; the text says nothing of that, since `09:30` is a `Time` here and
-    /// nothing else.
+    /// A `Date`, `Time`, `DateTime` or `Instant` literal, as the checker read it, and not the text
+    /// it was written as.
     ///
-    /// The text and not its parts: it is what the runtime reads a temporal from at a boundary as
-    /// well, so a literal is read by the one reader and no part of the grammar is written twice.
+    /// What the checker's parse answered is what crosses, for the reason a `Decimal`'s integer and
+    /// scale do: the spellings `java.time` admits are the source's grammar, which the checker has
+    /// already read, and text handed over would be read a second time here by a grammar of its own.
+    /// `count` is the day, counted from 1970-01-01, of a `Date`; the second of the day of a `Time`;
+    /// the second, counted from 1970-01-01T00:00:00 as though it were in UTC, of a `DateTime`; and
+    /// the second, counted from the epoch, of an `Instant`, whose nanosecond within it is `nano`.
+    /// `nano` is nought for the other three, which hold none.
     Temporal {
-        text: String,
+        count: i64,
+        nano: i64,
         #[serde(rename = "type")]
         ty: Ty,
         aborts: Vec<AbortKind>,
@@ -2554,7 +2558,8 @@ impl Node {
                 aborts: _,
             }
             | Node::Temporal {
-                text: _,
+                count: _,
+                nano: _,
                 ty,
                 aborts: _,
             }
