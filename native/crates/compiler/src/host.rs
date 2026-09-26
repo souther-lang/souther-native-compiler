@@ -986,7 +986,7 @@ pub(crate) fn define_injections(
         let answers = behavior.output.ty();
         let refused = |refusal: Refusal| {
             not_lowered(format!(
-                "the injected behavior {spelt}, which a host cannot answer: {refusal:?}"
+                "the injected behavior {spelt}, which a host cannot answer: {refusal}"
             ))
         };
         let handed = takes
@@ -1723,6 +1723,28 @@ mod tests {
 
     fn refused(reason: Reason, path: Vec<Step>) -> Result<HostShape, Refusal> {
         Err(Refusal { reason, path })
+    }
+
+    /// A refusal says its reason and where it stands in words, as a refused build is told.
+    #[test]
+    fn a_refusal_says_why_and_where_in_words() {
+        let refusal = crossing(
+            &Ty::Tuple {
+                tuple: vec![
+                    int(),
+                    optional(Ty::Prim {
+                        prim: Prim::Decimal,
+                    }),
+                ],
+            },
+            Direction::Given,
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            refusal.to_string(),
+            "no representation for a host, at the member at 1, what an optional holds"
+        );
     }
 
     /// An optional is a presence for each depth, and a tuple its members' words one after another,

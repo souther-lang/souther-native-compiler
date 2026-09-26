@@ -329,6 +329,30 @@ pub(crate) struct Refusal {
     pub path: Vec<Step>,
 }
 
+impl std::fmt::Display for Refusal {
+    /// The reason in words, then where it stands, from the outside in: `no representation for a
+    /// host, at what is taken at 0, what an optional holds`.
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str(match self.reason {
+            Reason::NoRepresentation => "no representation for a host",
+            Reason::NoValue => "no value to hand over",
+            Reason::NoDiscriminator => "a union with nothing to say which case it is",
+        })?;
+        for (at, step) in self.path.iter().enumerate() {
+            f.write_str(if at == 0 { ", at " } else { ", " })?;
+            match step {
+                Step::Takes(place) => write!(f, "what is taken at {place}")?,
+                Step::Answers => f.write_str("what is answered")?,
+                Step::Field(name) => write!(f, "the field {name}")?,
+                Step::Option => f.write_str("what an optional holds")?,
+                Step::Member(place) => write!(f, "the member at {place}")?,
+                Step::Element => f.write_str("an element")?,
+            }
+        }
+        Ok(())
+    }
+}
+
 /// What stands in the way of a value crossing to a host.
 ///
 /// Each says what the value has none of, which is how a binding reads it, so each starts alike.

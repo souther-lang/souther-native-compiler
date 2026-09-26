@@ -105,7 +105,7 @@ public final class PhpBindings {
      * closure is handed is made into the classes its type names, and two types crossing in one
      * shape are two sets of classes.
      */
-    private final Map<String, Callable> hosting = new LinkedHashMap<>();
+    private final Map<List<Object>, Callable> hosting = new LinkedHashMap<>();
 
     private PhpBindings(Manifest manifest, String root, Path into) {
         this.manifest = manifest;
@@ -479,22 +479,33 @@ public final class PhpBindings {
                         takes.add(taken);
                     }
                     Both answers = both(fn.answers(), function.signature().answers());
-                    yield answers == null ? null : hosted(new Callable(takes, answers,
+                    yield answers == null ? null : hosted(takes, answers,
                             module.functions().stream()
                                     .filter(it -> it.signature().equals(function.signature()))
-                                    .findFirst().orElseThrow(), bindingClass()));
+                                    .findFirst().orElseThrow());
                 }
             };
         }
     }
 
     /**
-     * {@code callable}, with the slot the binding keeps for a closure of its type, which it is
-     * written the first time it is asked for.
+     * A function value taking {@code takes} and answering {@code answers} as PHP holds each, called
+     * and made through {@code crossing}, with the slot the binding keeps for a closure of its type:
+     * the one already kept where the type is one asked for before, compared as what it is and not
+     * as it is written out, and otherwise a new one, named after the function making a value of the
+     * shape and its place among the types crossing in that shape.
      */
-    private Callable hosted(Callable callable) {
-        hosting.putIfAbsent(callable.slot(), callable);
-        return callable;
+    private Callable hosted(List<Both> takes, Both answers, Manifest.FunctionCrossing crossing) {
+        List<Object> type = List.of(takes, answers, crossing);
+        Callable kept = hosting.get(type);
+        if (kept != null) {
+            return kept;
+        }
+        long before = hosting.values().stream().filter(it -> it.crossing().equals(crossing)).count();
+        Callable made = new Callable(takes, answers, crossing, bindingClass(),
+                crossing.implement() + "#" + before);
+        hosting.put(type, made);
+        return made;
     }
 
     /**
@@ -1521,7 +1532,7 @@ public final class PhpBindings {
     private String functionSlots() {
         StringBuilder slots = new StringBuilder();
         for (Callable callable : hosting.values()) {
-            slots.append("            '").append(quotedInSingle(callable.slot()))
+            slots.append("            '").append(callable.slot())
                     .append("' => new \\Souther\\Runtime\\FunctionSlot($library, '")
                     .append(callable.crossing().implementation().type()).append("', '")
                     .append(callable.crossing().implement()).append("',\n                ")

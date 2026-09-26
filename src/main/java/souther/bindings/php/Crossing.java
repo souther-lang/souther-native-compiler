@@ -412,9 +412,12 @@ sealed interface Crossing {
      * over in.
      *
      * @param binding the generated binding's class, as PHP names it
+     * @param slot    what the binding keeps the slot a closure of this type is called through
+     *                under: one for each function type as PHP holds it, and not for each shape,
+     *                since two types crossing in one shape are made into two sets of classes
      */
-    record Callable(List<Both> takes, Both answers, FunctionCrossing crossing, String binding)
-            implements Both {
+    record Callable(List<Both> takes, Both answers, FunctionCrossing crossing, String binding,
+                    String slot) implements Both {
 
         public Callable {
             takes = List.copyOf(takes);
@@ -443,20 +446,10 @@ sealed interface Crossing {
                     .collect(Collectors.joining(", ")) + "): " + answers.phpDocType();
         }
 
-        /**
-         * What the binding keeps the slot a closure of this type is called through under: the
-         * shape's function, and the type as PHP holds it, since two types crossing in one shape
-         * are made into two sets of classes.
-         */
-        String slot() {
-            return crossing.implement() + " " + phpDocType();
-        }
-
         @Override
         public List<String> given(String value, String session) {
-            return List.of(binding + "::in(" + session + "->library())->hosting('"
-                    + slot().replace("\\", "\\\\").replace("'", "\\'") + "')->implement("
-                    + session + ", " + value + ")");
+            return List.of(binding + "::in(" + session + "->library())->hosting('" + slot
+                    + "')->implement(" + session + ", " + value + ")");
         }
 
         @Override
