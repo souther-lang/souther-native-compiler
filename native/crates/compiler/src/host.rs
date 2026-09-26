@@ -651,9 +651,10 @@ pub(crate) fn define_values(
 ) -> Lowered<()> {
     for value in values {
         // The manifest names a type by what it is in the model, and the model has no name for the
-        // type of what has no value: the checker gives it to an empty list literal and no source
-        // writes it. Refused rather than described as something it is not.
-        if value.answers.writes_nothing() {
+        // type of what has no value or of what does not answer: the checker gives them to an empty
+        // list literal and to an `unreachable`, and no source writes either. Refused rather than
+        // described as something it is not.
+        if value.answers.writes_what_no_source_writes() {
             return Err(not_lowered(format!(
                 "the published value {}.{} of {}, which a manifest has no name for",
                 value.module,

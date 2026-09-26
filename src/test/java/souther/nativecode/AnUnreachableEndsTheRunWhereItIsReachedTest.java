@@ -23,7 +23,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class AnUnreachableEndsTheRunWhereItIsReachedTest {
 
     private static final String SOURCE = """
-            module ending exposing ( positive, never, kept, joined, forked )
+            module ending exposing ( positive, never, kept, joined, forked, helped )
 
             behavior positive : (a: Int) -> Int
             let positive (a) = if a > 0 then a else unreachable "not positive"
@@ -41,6 +41,14 @@ class AnUnreachableEndsTheRunWhereItIsReachedTest {
             let forked (a) = {
                 let n = if a > 0 then a else if a < -5 then unreachable "far" else unreachable "near"
                 n + 1
+            }
+
+            let stop (a: Int) = unreachable "stopped"
+
+            behavior helped : (a: Int) -> Int
+            let helped (a) = {
+                let n = if a > 0 then a else stop(a)
+                n
             }
 
             let keep (e: DivisionByZero): Int = 424242
@@ -77,6 +85,19 @@ class AnUnreachableEndsTheRunWhereItIsReachedTest {
                 .isEqualTo(new RunOutcome.Aborted(AbortKind.UNREACHABLE_REACHED));
         assertThat(run("forked", 7L))
                 .isEqualTo(new RunOutcome.Answered(new ObservedValue.Integer(8)));
+    }
+
+    /**
+     * A helper that does not answer is expanded where it is called into a {@code let} of what does
+     * not answer, which the fork around it stands at its own type as it does a bare
+     * {@code unreachable}.
+     */
+    @Test
+    void aHelperThatDoesNotAnswerEndsTheRunWhereItIsCalled() throws Exception {
+        assertThat(run("helped", 0L))
+                .isEqualTo(new RunOutcome.Aborted(AbortKind.UNREACHABLE_REACHED));
+        assertThat(run("helped", 7L))
+                .isEqualTo(new RunOutcome.Answered(new ObservedValue.Integer(7)));
     }
 
     @Test

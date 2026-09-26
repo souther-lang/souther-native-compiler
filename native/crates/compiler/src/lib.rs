@@ -4652,14 +4652,17 @@ impl Bindings {
     }
 }
 
-/// `node` lowered where it stands as `stands`: a fork's branch at what the fork answers, or a value
-/// at what it is widened to.
+/// `node` lowered where a `Widen` stands it as `stands`.
 ///
-/// What it answers, or, where its own type is `Never`, the run ended and nothing answered. The
-/// checker leaves an `unreachable` typed `Never` where the position it stands in states no type and
-/// a branch beside it, joined with it, gives the fork one; that is what `Type.Never` fitting every
-/// type is. So the width is the position's, as the checker's own emitter takes it (`shapeAt`), and
-/// a value of it is put where nothing reaches, for the block the fork joins at to be handed one.
+/// What it answers, or, where its own type is `Never`, the run ended and nothing answered. No value
+/// of `Never` is made, so it has no width of its own (`machine_type`), and the one place the
+/// document gives it one is here. The checker joins a branch that does not answer with its
+/// siblings by dropping it (`TypeOps.join`) and stands every branch at the join
+/// (`Core.standingAs`), which for one of `Never` is a `Widen`: so wherever a value of `Never` is
+/// asked for, a `Widen` says what it is asked for as, and a branch standing directly in a fork is
+/// of the fork's type exactly (`Coherent` holds it). The width is the `Widen`'s, as the checker's
+/// own emitter takes it from where the node stands (`shapeAt`), and a value of it is put where
+/// nothing reaches, for the code around to be handed one.
 fn lower_standing(
     builder: &mut FunctionBuilder,
     lowering: &Lowering,
@@ -4680,9 +4683,10 @@ fn lower_standing(
 /// `node`, of the type of what does not answer, lowered as where the run ends: every block it is
 /// lowered into is left ended.
 ///
-/// An `unreachable`, and a fork whose branches each are one, which the checker joins at `Never`.
-/// Nothing else is typed so with a way to end the run this side knows, and a value of it is refused
-/// as `machine_type` refuses one.
+/// An `unreachable`, and a fork whose branches are each of `Never` — which is what the checker
+/// joins at `Never`, `standingAs` leaving each as it is — including the `let` a helper that does
+/// not answer is expanded into. Anything else of `Never`, such as a call of a helper answering it,
+/// is refused as `machine_type` refuses a value of it.
 fn end(
     builder: &mut FunctionBuilder,
     lowering: &Lowering,
@@ -4811,8 +4815,7 @@ fn lower(
                 abort,
                 node,
                 &mut |builder, module, bindings, branch| {
-                    let answered =
-                        lower_standing(builder, lowering, module, bindings, abort, branch, ty)?;
+                    let answered = lower(builder, lowering, module, bindings, abort, branch)?;
                     builder.ins().jump(after, &[answered.into()]);
                     Ok(())
                 },

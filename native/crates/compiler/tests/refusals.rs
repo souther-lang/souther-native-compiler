@@ -883,3 +883,38 @@ fn an_answer_written_by_no_case_is_refused_where_it_is_read() {
     assert!(refused.downcast_ref::<NotLowered>().is_none(), "{refused}");
     assert!(refused.to_string().contains("no case in it"), "{refused}");
 }
+
+/// A published value is described to a host in the model's terms, and the model has no name for
+/// the type of what has no value or of what does not answer. One whose answer writes either,
+/// anywhere in it, is refused as not lowered before it is described, and not described as
+/// something it is not.
+#[test]
+fn a_published_value_writing_a_type_no_source_writes_is_not_lowered() {
+    for bottom in [r#"{"nothing":{}}"#, r#"{"never":{}}"#] {
+        let listed = format!(r#"{{"list":{bottom}}}"#);
+        let document = format!(
+            concat!(
+                r#"{{"transport":{version},"declarations":[],"behaviors":[],"modules":[{{"#,
+                r#""name":"m","publishes":[],"helpers":[],"#,
+                r#""values":[{{"module":"m","name":"v","handovers":[],"#,
+                r#""body":{{"core":"list","elements":[],"type":{listed},"aborts":[]}}}}],"#,
+                r#""entries":[{{"value":{{"module":"m","name":"v"}},"#,
+                r#""body":{{"core":"call","reaches":{{"is":"value","module":"m","name":"v"}},"#,
+                r#""arguments":[],"type":{listed},"aborts":[]}}}}],"#,
+                r#""definitions":[],"examples":[]}}]}}"#
+            ),
+            version = TRANSPORT_VERSION,
+            listed = listed,
+        );
+
+        let refused = object_for(&document).expect_err("a value the manifest has no name for");
+
+        assert!(refused.downcast_ref::<NotLowered>().is_some(), "{refused}");
+        assert!(
+            refused
+                .to_string()
+                .contains("which a manifest has no name for"),
+            "{refused}"
+        );
+    }
+}

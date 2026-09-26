@@ -1031,13 +1031,10 @@ fn type_of(ty: &Ty, declared: &Declared) -> manifest::Type {
             value: boxed(&map.value),
         },
         Ty::Var { var } => crate::laid_out_nowhere(*var),
-        Ty::Nothing { .. } => unreachable!(
-            "no source writes the type of what has no value, so a boundary is never read as one, \
-             and a published value of one is refused before it is described (`define_values`)"
-        ),
-        Ty::Never { .. } => unreachable!(
-            "no source writes the type of what does not answer, so a boundary is never read as \
-             one, and a value of one is laid out nowhere (`machine_type`)"
+        Ty::Nothing { .. } | Ty::Never { .. } => unreachable!(
+            "no source writes {}, so a boundary is never read as one, and a published value \
+             writing one is refused before it is described (`define_values`)",
+            ty.spelt()
         ),
         Ty::Ref {
             named: Case::Primitive { .. } | Case::Language { .. },

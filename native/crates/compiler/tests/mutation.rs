@@ -119,17 +119,24 @@ fn by_hand() -> Vec<(&'static str, Value)> {
         "core": "if",
         "cond": binary("GT", read(0, prim(INT)), int(0), prim("BOOL"), json!([])),
         "then": read(0, prim(INT)),
-        "else": { "core": "unreachable", "reason": "not positive", "type": prim(INT),
-                  "aborts": ["UNREACHABLE_REACHED"] },
+        "else": { "core": "widen", "value": {
+                      "core": "unreachable", "reason": "not positive", "type": { "never": {} },
+                      "aborts": ["UNREACHABLE_REACHED"] },
+                  "type": prim(INT), "aborts": [] },
         "type": prim(INT), "aborts": []
     });
     let given = json!({
         "core": "unit", "unit": division, "type": { "ref": division }, "aborts": []
     });
+    let stated = json!({
+        "core": "unreachable", "reason": "stated", "type": prim(INT),
+        "aborts": ["UNREACHABLE_REACHED"]
+    });
     let unreachable = program(
         json!([]),
         json!([
             helper("m.positive", &[prim(INT)], ending),
+            helper("m.stated", &[], stated),
             helper("m.given", &[], given)
         ]),
         json!([]),

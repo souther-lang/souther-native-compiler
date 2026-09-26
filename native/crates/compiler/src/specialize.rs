@@ -54,6 +54,12 @@ impl Substitution {
     /// stands, and anything else has to be the same type made the same way. Nothing is widened and
     /// nothing is inferred, since what stands in `actual` is what the checker settled.
     pub(crate) fn binds(&mut self, template: &Ty, actual: &Ty) -> bool {
+        // A template that writes no variable binds nothing, and is the same type or not: asked
+        // whole, so a type added to the document is compared as itself and not by an arm each
+        // kind of type has to be given here.
+        if !template.is_open() {
+            return template == actual;
+        }
         match (template, actual) {
             (Ty::Var { var }, _) => {
                 if self.0.len() <= *var {
@@ -67,10 +73,6 @@ impl Substitution {
                     }
                 }
             }
-            (Ty::Prim { prim }, Ty::Prim { prim: also }) => prim == also,
-            (Ty::Nothing { .. }, Ty::Nothing { .. }) | (Ty::Never { .. }, Ty::Never { .. }) => true,
-            (Ty::Ref { named }, Ty::Ref { named: also }) => named == also,
-            (Ty::Union { union }, Ty::Union { union: also }) => union == also,
             (Ty::Option { option: held }, Ty::Option { option: also })
             | (Ty::List { list: held }, Ty::List { list: also })
             | (Ty::Set { set: held }, Ty::Set { set: also }) => self.binds(held, also),
@@ -89,18 +91,22 @@ impl Substitution {
             (Ty::Map { map }, Ty::Map { map: also }) => {
                 self.binds(&map.key, &also.key) && self.binds(&map.value, &also.value)
             }
+            // What holds no type writes no variable, and was compared whole above.
             (
                 Ty::Prim { .. }
                 | Ty::Ref { .. }
                 | Ty::Union { .. }
-                | Ty::Option { .. }
+                | Ty::Nothing { .. }
+                | Ty::Never { .. },
+                _,
+            ) => unreachable!("a template writing no variable is compared whole"),
+            (
+                Ty::Option { .. }
                 | Ty::List { .. }
                 | Ty::Set { .. }
                 | Ty::Tuple { .. }
                 | Ty::Fn { .. }
-                | Ty::Map { .. }
-                | Ty::Nothing { .. }
-                | Ty::Never { .. },
+                | Ty::Map { .. },
                 _,
             ) => false,
         }
