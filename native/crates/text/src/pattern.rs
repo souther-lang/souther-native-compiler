@@ -154,9 +154,20 @@ fn compile_within(parts: &[Part], written_out: usize) -> Result<Vec<u32>, NotARe
         words: vec![0, 0],
         sets: Vec::new(),
         set_of: vec![None; parts.len()],
+        emitted: 0,
     };
     building.emit(parts.len() - 1);
     building.words.push(MATCH);
+    // Writing the machine is work in proportion to what it writes, and never to what a part
+    // counts: every part emitted writes a word or stands in the parts of one that does, and a part
+    // that writes none is not emitted at all.
+    debug_assert!(
+        building.emitted <= building.words.len() * (parts.len() + 1) * (parts.len() + 1),
+        "{} parts emitted for {} words of {} parts",
+        building.emitted,
+        building.words.len(),
+        parts.len()
+    );
     Ok(building.finished())
 }
 
@@ -214,6 +225,8 @@ struct Building<'a> {
     /// Which of `sets` a part's set is, once it has been met: a part inside a loop is written once
     /// however many times it is read.
     set_of: Vec<Option<usize>>,
+    /// How many times a part has been emitted, which writing out a repetition does once a copy.
+    emitted: usize,
 }
 
 impl<'a> Building<'a> {
@@ -222,6 +235,13 @@ impl<'a> Building<'a> {
     }
 
     fn emit(&mut self, at: usize) {
+        // A part writing no words accepts the empty string and nothing else, which is what writing
+        // nothing does: so it is not emitted, and a repetition of one, written out, is not a loop
+        // run as many times as it counts.
+        if self.sizes[at] == 0 {
+            return;
+        }
+        self.emitted += 1;
         let parts = self.parts;
         match &parts[at] {
             Part::Nothing => {}
@@ -778,6 +798,39 @@ mod tests {
                     "{parts:?} {text}"
                 );
             }
+        }
+    }
+
+    /// A repetition of what writes no words is written as nothing and at once, however much it
+    /// counts, and accepts the empty string alone: `(){1048576}`, `(){0,1048576}`, and counts of
+    /// such parts inside counts and sequences of them.
+    #[test]
+    fn a_repetition_of_nothing_is_written_as_nothing_at_once() {
+        let huge = 1 << 20;
+        for parts in [
+            vec![Part::Nothing, counted(0, huge, Some(huge))],
+            vec![Part::Nothing, counted(0, 0, Some(huge))],
+            vec![Part::Nothing, counted(0, huge, None)],
+            vec![
+                Part::Nothing,
+                counted(0, huge, Some(huge)),
+                counted(1, huge, Some(huge)),
+            ],
+            vec![
+                Part::Nothing,
+                Part::InTurn(vec![0, 0, 0]),
+                counted(1, 3_000_000_000, Some(3_000_000_000)),
+            ],
+            vec![
+                one('a'),
+                counted(0, 0, Some(0)),
+                counted(1, huge, Some(huge)),
+            ],
+        ] {
+            let machine = compile(&parts).expect("a machine");
+            assert!(machine.len() < 16, "{parts:?} {}", machine.len());
+            assert!(matches(&machine, Text::held("")), "{parts:?}");
+            assert!(!matches(&machine, Text::held("a")), "{parts:?}");
         }
     }
 

@@ -284,6 +284,15 @@ class AKernelAnswersWhatTheJvmAnswersTest {
             behavior ranged : (s: String) -> Bool
             let ranged (s) = String.matches("[^぀-ゟ]{2,3}", s)
 
+            behavior emptied : (s: String) -> Bool
+            let emptied (s) = String.matches("(){1048576}", s)
+
+            behavior emptiedUpTo : (s: String) -> Bool
+            let emptiedUpTo (s) = String.matches("(){0,1048576}", s)
+
+            behavior counted : (s: String) -> Bool
+            let counted (s) = String.matches("[ab]{300}", s)
+
             example postal
                 | "a postal code" : ("123-4567") -> true
                 | "one digit short" : ("123-456") -> false
@@ -303,11 +312,23 @@ class AKernelAnswersWhatTheJvmAnswersTest {
                 | "a word, a space and a digit" : ("ab_9 7") -> true
                 | "an ideographic space" : ("ab　7") -> false
 
+            example emptied
+                | "nothing" : ("") -> true
+                | "something" : ("a") -> false
+
+            example emptiedUpTo
+                | "nothing" : ("") -> true
+                | "something" : ("a") -> false
+
+            example counted
+                | "exactly as many" : ("%1$s") -> true
+                | "one fewer" : ("%2$s") -> false
+
             example ranged
                 | "outside the hiragana" : ("ア𠮷") -> true
                 | "one of them hiragana" : ("アあ") -> false
                 | "too many" : ("abcd") -> false
-            """;
+            """.formatted("ab".repeat(150), "ab".repeat(150).substring(1));
 
     @Test
     void everyIntKernelRowHolds() throws Exception {
