@@ -243,7 +243,15 @@ fn whole(ty: &Ty) -> Option<HostWord> {
             | Prim::Instant
             | Prim::Raw => None,
         },
-        Ty::Declared { .. } => Some(HostWord::Value),
+        Ty::Ref {
+            named: Case::Declared { .. },
+        } => Some(HostWord::Value),
+        // A primitive named as a type is laid out nowhere here (`named_as_a_type`), and a case the
+        // language gives is one no behavior may take or answer on its own (the checker's E1325),
+        // so neither is handed to a host.
+        Ty::Ref {
+            named: Case::Primitive { .. } | Case::Language { .. },
+        } => None,
         // The address of the list, where its element crosses: a host builds and reads one through
         // the functions for what the element crosses as, so a list whose element does not cross
         // is one a host could hold and do nothing with.
@@ -269,8 +277,8 @@ fn whole(ty: &Ty) -> Option<HostWord> {
         // offers it to a host.
         Ty::Tuple { .. } | Ty::Fn { .. } => None,
         Ty::Var { var } => crate::laid_out_nowhere(*var),
-        // No value of it is made, so none is handed to a host or taken from one.
-        Ty::Nothing { .. } => None,
+        // No value of either is made, so none is handed to a host or taken from one.
+        Ty::Nothing { .. } | Ty::Never { .. } => None,
     }
 }
 
@@ -394,9 +402,7 @@ pub(crate) fn define(
             )?);
         }
         if let Declaration::Sum { cases, .. } = declaration {
-            let sum = Ty::Declared {
-                declared: key.clone(),
-            };
+            let sum = Ty::declared(key.clone());
             // Where a host could be handed each case, as it could a union of them.
             let crosses = whole(&Ty::Union {
                 union: cases.clone(),
@@ -645,9 +651,10 @@ pub(crate) fn define_values(
 ) -> Lowered<()> {
     for value in values {
         // The manifest names a type by what it is in the model, and the model has no name for the
-        // type of what has no value: the checker gives it to an empty list literal and no source
-        // writes it. Refused rather than described as something it is not.
-        if value.answers.writes_nothing() {
+        // type of what has no value or of what does not answer: the checker gives them to an empty
+        // list literal and to an `unreachable`, and no source writes either. Refused rather than
+        // described as something it is not.
+        if value.answers.writes_what_no_source_writes() {
             return Err(not_lowered(format!(
                 "the published value {}.{} of {}, which a manifest has no name for",
                 value.module,

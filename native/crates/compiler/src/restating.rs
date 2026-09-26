@@ -106,7 +106,7 @@ pub(crate) fn restatement(from: &Ty, to: &Ty) -> Lowered<Restatement> {
         ))
     };
     Ok(match (from, to) {
-        (Ty::Nothing { .. }, _) => Restatement::Same,
+        (Ty::Nothing { .. } | Ty::Never { .. }, _) => Restatement::Same,
         (Ty::Prim { prim }, _) if says_its_case(to) => {
             built_in_case(&Case::Primitive { prim: *prim })?;
             Restatement::Carry(*prim)
@@ -161,7 +161,7 @@ pub(crate) fn restatement(from: &Ty, to: &Ty) -> Lowered<Restatement> {
         // have no layout yet, and are asked of nothing until they do.
         (
             Ty::Prim { .. }
-            | Ty::Declared { .. }
+            | Ty::Ref { .. }
             | Ty::Union { .. }
             | Ty::Option { .. }
             | Ty::List { .. }

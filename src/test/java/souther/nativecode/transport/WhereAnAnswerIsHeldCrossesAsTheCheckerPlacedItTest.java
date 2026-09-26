@@ -73,14 +73,14 @@ class WhereAnAnswerIsHeldCrossesAsTheCheckerPlacedItTest {
         assertThat(written()).contains("""
                 "ensures":{"at":"callee","contract":{"parameters":["id"],"rules":[\
                 {"guard":{"is":"case","selects":{"tests":"which","atoms":[\
-                {"is":"declared","declared":"m.Found"}]},"binds":{"declared":"m.Found"}},\
+                {"is":"declared","declared":"m.Found"}]},"binds":{"ref":{"is":"declared","declared":"m.Found"}}},\
                 "value":1,"condition":{"core":"binary","op":"EQ","reading":{"is":"astheystand"},\
                 "left":{"core":"field","target":{"core":"read","binding":1,\
-                "type":{"declared":"m.Found"},"aborts":[]},"field":"id","type":{"prim":"INT"},\
+                "type":{"ref":{"is":"declared","declared":"m.Found"}},"aborts":[]},"field":"id","type":{"prim":"INT"},\
                 "aborts":[]},"right":{"core":"read","binding":0,"type":{"prim":"INT"},"aborts":[]},\
                 "type":{"prim":"BOOL"},"aborts":[]},"readsanswer":true,"clause":"sameId"},\
                 {"guard":{"is":"case","selects":{"tests":"which","atoms":[\
-                {"is":"declared","declared":"m.Missing"}]},"binds":{"declared":"m.Missing"}},\
+                {"is":"declared","declared":"m.Missing"}]},"binds":{"ref":{"is":"declared","declared":"m.Missing"}}},\
                 "value":2,""");
         // A rule that names no value reads no answer, which is the checker's to say and is said.
         assertThat(written()).contains("\"readsanswer\":false,\"clause\":null}]}}");

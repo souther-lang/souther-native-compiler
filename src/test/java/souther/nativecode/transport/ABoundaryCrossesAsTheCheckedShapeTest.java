@@ -57,7 +57,7 @@ class ABoundaryCrossesAsTheCheckedShapeTest {
     void anAnswerOfADeclaredTypeCrossesAsTheNominalShapeTheCheckerSettled() {
         assertThat(written()).contains(
                 "\"name\":\"openDoor\",\"is\":\"body\",\"parameters\":{\"named\":[{\"name\":\"n\",\"input\":{\"is\":\"scalar\",\"scalar\":\"INT\"}}]},"
-                        + "\"output\":{\"is\":\"nominal\",\"declared\":\"shop.Door\"},"
+                        + "\"output\":{\"is\":\"nominal\",\"named\":{\"is\":\"declared\",\"declared\":\"shop.Door\"}},"
                         + "\"ensures\":{\"at\":\"none\"},\"requirements\":[]}");
     }
 
@@ -65,10 +65,10 @@ class ABoundaryCrossesAsTheCheckedShapeTest {
     void aFieldCarriesItsCodecShapeWithItsName() {
         assertThat(written()).contains(
                 "\"name\":\"Holder\",\"by\":\"amodule\",\"is\":\"product\",\"fields\":["
-                        + "{\"name\":\"state\",\"binding\":0,\"codec\":{\"is\":\"named\",\"declared\":\"shop.Closed\"}},"
+                        + "{\"name\":\"state\",\"binding\":0,\"codec\":{\"is\":\"named\",\"named\":{\"is\":\"declared\",\"declared\":\"shop.Closed\"}}},"
                         + "{\"name\":\"note\",\"binding\":1,\"codec\":{\"is\":\"optionof\","
                         + "\"present\":{\"is\":\"scalar\",\"scalar\":\"STRING\"}}},"
-                        + "{\"name\":\"phase\",\"binding\":2,\"codec\":{\"is\":\"named\",\"declared\":\"shop.Phase\"}}]");
+                        + "{\"name\":\"phase\",\"binding\":2,\"codec\":{\"is\":\"named\",\"named\":{\"is\":\"declared\",\"declared\":\"shop.Phase\"}}}]");
     }
 
     @Test

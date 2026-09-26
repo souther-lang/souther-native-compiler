@@ -12,9 +12,9 @@ const INT: &str = r#"{"prim":"INT"}"#;
 const BOOL: &str = r#"{"prim":"BOOL"}"#;
 const STRING: &str = r#"{"prim":"STRING"}"#;
 const DECIMAL: &str = r#"{"prim":"DECIMAL"}"#;
-const A: &str = r#"{"declared":"m.A"}"#;
-const S: &str = r#"{"declared":"m.S"}"#;
-const P: &str = r#"{"declared":"m.P"}"#;
+const A: &str = r#"{"ref":{"is":"declared","declared":"m.A"}}"#;
+const S: &str = r#"{"ref":{"is":"declared","declared":"m.S"}}"#;
+const P: &str = r#"{"ref":{"is":"declared","declared":"m.P"}}"#;
 
 /// The units `m.A` and `m.B`, the sum `m.S = m.A | m.B`, the product `m.P` with one field `f` of
 /// `m.S`, and the newtype `m.N` over an `Int`; the behaviors, helpers and local definitions given;
@@ -22,14 +22,14 @@ const P: &str = r#"{"declared":"m.P"}"#;
 fn document(behaviors: &[String], helpers: &[String], definitions: &[String]) -> String {
     format!(
         concat!(
-            r#"{{"transport":23,"declarations":["#,
+            r#"{{"transport":24,"declarations":["#,
             r#"{{"module":"m","name":"A","by":"amodule","is":"unit"}},"#,
             r#"{{"module":"m","name":"B","by":"amodule","is":"unit"}},"#,
             r#"{{"module":"m","name":"S","by":"amodule","is":"sum","#,
             r#""cases":[{{"is":"declared","declared":"m.A"}},{{"is":"declared","declared":"m.B"}}],"#,
             r#""form":{{"is":"enumeration"}}}},"#,
             r#"{{"module":"m","name":"P","by":"amodule","is":"product","#,
-            r#""fields":[{{"name":"f","binding":0,"codec":{{"is":"named","declared":"m.S"}}}}],"invariants":[]}},"#,
+            r#""fields":[{{"name":"f","binding":0,"codec":{{"is":"named","named":{{"is":"declared","declared":"m.S"}}}}}}],"invariants":[]}},"#,
             r#"{{"module":"m","name":"N","by":"amodule","is":"newtype","#,
             r#""field":{{"name":"v","binding":0,"codec":{{"is":"scalar","scalar":"INT"}}}},"invariants":[]}}],"#,
             r#""behaviors":[{}],"#,
@@ -112,8 +112,8 @@ fn truth(value: bool) -> String {
 fn unit(declared: &str) -> String {
     node(
         "unit",
-        &format!(r#""declared":"{declared}""#),
-        &format!(r#"{{"declared":"{declared}"}}"#),
+        &format!(r#""unit":{{"is":"declared","declared":"{declared}"}}"#),
+        &format!(r#"{{"ref":{{"is":"declared","declared":"{declared}"}}}}"#),
     )
 }
 
@@ -598,7 +598,7 @@ fn a_function_value_is_applied_to_values_of_what_it_takes() {
 #[test]
 fn a_call_of_a_value_stands_at_what_the_value_answers() {
     let good = include_str!("values.transport.json");
-    let reaching = r#""reaches":{"is":"value","module":"m","name":"ks"},"arguments":[],"type":{"declared":"m.P"}"#;
+    let reaching = r#""reaches":{"is":"value","module":"m","name":"ks"},"arguments":[],"type":{"ref":{"is":"declared","declared":"m.P"}}"#;
     assert!(good.contains(reaching), "the fixture this perturbs moved");
     let bad = good.replace(
         reaching,
@@ -612,7 +612,7 @@ fn a_call_of_a_value_stands_at_what_the_value_answers() {
 #[test]
 fn a_call_of_a_published_value_stands_at_what_its_entry_answers() {
     let good = include_str!("published_value.transport.json");
-    let reaching = r#""reaches":{"is":"publishedvalue","module":"publisher","name":"ys"},"arguments":[],"type":{"declared":"publisher.Box"}"#;
+    let reaching = r#""reaches":{"is":"publishedvalue","module":"publisher","name":"ys"},"arguments":[],"type":{"ref":{"is":"declared","declared":"publisher.Box"}}"#;
     assert!(good.contains(reaching), "the fixture this perturbs moved");
     let bad = good.replace(
         reaching,
@@ -687,7 +687,7 @@ fn routed(first: &str, made: &str, taken: &str, routing: &str, flows: &str) -> S
 #[test]
 fn what_runs_is_routed_on_its_cases_only_where_it_says_them() {
     let scalar = r#"{"is":"scalar","scalar":"INT"}"#;
-    let sum = r#"{"is":"nominal","declared":"m.S"}"#;
+    let sum = r#"{"is":"nominal","named":{"is":"declared","declared":"m.S"}}"#;
     let int_case = r#"{"is":"primitive","prim":"INT"}"#;
     let a_case = r#"{"is":"declared","declared":"m.A"}"#;
     let b_case = r#"{"is":"declared","declared":"m.B"}"#;
@@ -1117,10 +1117,90 @@ fn a_rows_body_is_read_as_every_other_body_is() {
 /// What a unit value names is a unit, and what a construction builds has fields.
 #[test]
 fn a_unit_or_a_construction_names_the_kind_of_declaration_it_makes() {
-    let unit_of_a_product = node("unit", r#""declared":"m.P""#, P);
+    let unit_of_a_product = node("unit", r#""unit":{"is":"declared","declared":"m.P"}"#, P);
     is_the_halves_disagreeing(&helpers(&[h(&[], &unit_of_a_product)]), "m.P");
     let building_a_unit = node("construct", r#""declared":"m.A","values":[]"#, A);
     is_the_halves_disagreeing(&helpers(&[h(&[], &building_a_unit)]), "m.A");
+}
+
+/// A unit the language gives is carried as a union carries it, and names its type as the case it
+/// is. A primitive named as a unit has no representation designed, and is not lowered rather than
+/// the halves disagreeing: the checker names a type so.
+#[test]
+fn a_unit_the_language_gives_is_carried_and_a_primitive_named_as_one_is_not_lowered() {
+    let division = r#"{"is":"language","case":"DIVISION_BY_ZERO"}"#;
+    let given = node(
+        "unit",
+        &format!(r#""unit":{division}"#),
+        &format!(r#"{{"ref":{division}}}"#),
+    );
+    reads_whole(&helpers(&[h(&[], &given)]));
+    is_the_halves_disagreeing(
+        &helpers(&[h(&[], &node("unit", &format!(r#""unit":{division}"#), A))]),
+        "DivisionByZero",
+    );
+
+    let int = r#"{"is":"primitive","prim":"INT"}"#;
+    let named = node(
+        "unit",
+        &format!(r#""unit":{int}"#),
+        &format!(r#"{{"ref":{int}}}"#),
+    );
+    let refused = object_for(&helpers(&[h(&[], &named)])).expect_err("a primitive named as a type");
+    assert!(refused.downcast_ref::<NotLowered>().is_some(), "{refused}");
+    assert!(refused.to_string().contains("named as a type"), "{refused}");
+}
+
+/// An `unreachable` ends the run for the one reason there is to, whatever the position it stands in
+/// takes. Naming another reason, or none, is the halves disagreeing.
+#[test]
+fn an_unreachable_ends_the_run_for_the_one_reason_it_has() {
+    let unreachable = |ty: &str, aborts: &str| {
+        format!(r#"{{"core":"unreachable","reason":"no","type":{ty},"aborts":[{aborts}]}}"#)
+    };
+    reads_whole(&helpers(&[h(
+        &[],
+        &unreachable(INT, r#""UNREACHABLE_REACHED""#),
+    )]));
+    reads_whole(&helpers(&[h(
+        &[],
+        &unreachable(A, r#""UNREACHABLE_REACHED""#),
+    )]));
+    is_the_halves_disagreeing(
+        &helpers(&[h(&[], &unreachable(INT, r#""DIVISION_BY_ZERO""#))]),
+        "unreachable",
+    );
+    is_the_halves_disagreeing(&helpers(&[h(&[], &unreachable(INT, ""))]), "unreachable");
+}
+
+/// A helper answering the type of what does not answer, called where that is what the call stands
+/// at, is called at its own type: not the halves disagreeing, and not lowered only because nothing
+/// of a value of it is laid out.
+#[test]
+fn a_helper_that_does_not_answer_is_called_at_its_own_type() {
+    let never = r#"{"never":{}}"#;
+    let ending = format!(
+        r#"{{"core":"unreachable","reason":"no","type":{never},"aborts":["UNREACHABLE_REACHED"]}}"#
+    );
+    let g = helper("m.g", &[], &ending);
+    let reaches = &format!(r#"{{"is":"helper","reached":{}}}"#, own("m.g"));
+    let refused = object_for(&helpers(&[g, h(&[], &call(reaches, &[], never))]))
+        .expect_err("a value of Never");
+    assert!(refused.downcast_ref::<NotLowered>().is_some(), "{refused}");
+    assert!(refused.to_string().contains("Never"), "{refused}");
+}
+
+/// The type of what does not answer is read, and nothing of it is laid out: a position the
+/// checker left typed as it is holds no value this backend could make.
+#[test]
+fn a_value_of_the_type_of_what_does_not_answer_is_not_lowered() {
+    let never = r#"{"never":{}}"#;
+    let ending = format!(
+        r#"{{"core":"unreachable","reason":"no","type":{never},"aborts":["UNREACHABLE_REACHED"]}}"#
+    );
+    let refused = object_for(&helpers(&[h(&[], &ending)])).expect_err("a value of Never");
+    assert!(refused.downcast_ref::<NotLowered>().is_some(), "{refused}");
+    assert!(refused.to_string().contains("Never"), "{refused}");
 }
 
 /// An arm tests the leaves a case resolved to, and at least one of them.
@@ -1276,10 +1356,10 @@ fn the_language_declares_nothing_built_from_fields() {
 /// node's type, a binding's.
 #[test]
 fn every_declaration_a_type_names_is_one_the_document_carries() {
-    let missing = r#"{"declared":"m.Missing"}"#;
+    let missing = r#"{"ref":{"is":"declared","declared":"m.Missing"}}"#;
     let codec = helpers(&[behind()]).replace(
-        r#""codec":{"is":"named","declared":"m.S"}"#,
-        r#""codec":{"is":"named","declared":"m.Missing"}"#,
+        r#""codec":{"is":"named","named":{"is":"declared","declared":"m.S"}}"#,
+        r#""codec":{"is":"named","named":{"is":"declared","declared":"m.Missing"}}"#,
     );
     is_the_halves_disagreeing(&codec, "m.Missing");
     let deep = option_of(&tuple_of(&[INT, missing]));
@@ -1343,7 +1423,13 @@ fn a_narrower_value_stands_in_a_slot_only_under_a_widen() {
 fn a_widen_stands_a_value_only_as_what_it_is_a_value_of() {
     reads_whole(&helpers(&[h(&[], &widen(&unit("m.A"), S))]));
     is_the_halves_disagreeing(
-        &helpers(&[h(&[], &widen(&unit("m.A"), r#"{"declared":"m.B"}"#))]),
+        &helpers(&[h(
+            &[],
+            &widen(
+                &unit("m.A"),
+                r#"{"ref":{"is":"declared","declared":"m.B"}}"#,
+            ),
+        )]),
         "a value standing as a wider type",
     );
 }
@@ -1449,7 +1535,7 @@ fn a_function_stands_as_one_taking_less_and_answering_more() {
 /// the checker does not write, and it is refused as that.
 #[test]
 fn a_concat_operand_narrower_than_its_slot_without_a_widen_is_the_halves_disagreeing() {
-    let b = r#"{"declared":"m.B"}"#;
+    let b = r#"{"ref":{"is":"declared","declared":"m.B"}}"#;
     let joined = |left: &str, right: &str| {
         node(
             "binary",
@@ -1503,7 +1589,7 @@ fn a_concat_of_two_strings_reads_whole() {
 fn with_clauses(fields: &str, invariants: &str, helpers: &[String]) -> String {
     format!(
         concat!(
-            r#"{{"transport":23,"declarations":["#,
+            r#"{{"transport":24,"declarations":["#,
             r#"{{"module":"m","name":"R","by":"amodule","is":"product","#,
             r#""fields":[{}],"invariants":[{}]}}],"#,
             r#""behaviors":[],"#,
@@ -1586,7 +1672,7 @@ fn no_two_fields_share_a_binding() {
 fn a_construction_says_it_can_fail_exactly_where_its_type_states_a_clause() {
     let built = |aborts: &str| {
         format!(
-            r#"{{"core":"construct","declared":"m.R","values":[{}],"type":{{"declared":"m.R"}},"aborts":{aborts}}}"#,
+            r#"{{"core":"construct","declared":"m.R","values":[{}],"type":{{"ref":{{"is":"declared","declared":"m.R"}}}},"aborts":{aborts}}}"#,
             int(1)
         )
     };
@@ -1610,7 +1696,7 @@ fn a_construction_says_it_can_fail_exactly_where_its_type_states_a_clause() {
 fn a_clause_builds_no_value() {
     let fields = field("count", 0, "INT");
     let built = format!(
-        r#"{{"core":"construct","declared":"m.R","values":[{}],"type":{{"declared":"m.R"}},"aborts":["INVARIANT_NOT_HELD"]}}"#,
+        r#"{{"core":"construct","declared":"m.R","values":[{}],"type":{{"ref":{{"is":"declared","declared":"m.R"}}}},"aborts":["INVARIANT_NOT_HELD"]}}"#,
         read(0, INT)
     );
     let read_back = node(
@@ -1810,7 +1896,7 @@ fn an_operator_is_read_only_as_the_checker_reads_it() {
             if matches!(op, "AND" | "OR") { BOOL } else { ty },
         )
     };
-    let in_amount = r#"{"is":"in","type":{"declared":"m.A"}}"#;
+    let in_amount = r#"{"is":"in","type":{"ref":{"is":"declared","declared":"m.A"}}}"#;
     let exact = r#"{"is":"exactnumbers"}"#;
     let stands = r#"{"is":"astheystand"}"#;
     let documents = |body: String, ty: &str| helpers(&[h(&[ty, ty], &body)]);
@@ -1839,7 +1925,7 @@ fn an_operator_is_read_only_as_the_checker_reads_it() {
 /// lowering read a field out of an `Int`, or a token out of a value that carries none.
 #[test]
 fn a_pair_read_in_a_type_is_one_the_type_takes_apart() {
-    let n = r#"{"declared":"m.N"}"#;
+    let n = r#"{"ref":{"is":"declared","declared":"m.N"}}"#;
     let compared = |reading: &str, left: &str, right: &str| {
         helpers(&[h(
             &[left, right],
@@ -1889,23 +1975,23 @@ fn a_pair_read_in_a_type_is_one_the_type_takes_apart() {
 fn a_newtype_that_wraps_itself_is_the_halves_disagreeing() {
     let newtype = |name: &str, wraps: &str| {
         format!(
-            r#"{{"module":"m","name":"{name}","by":"amodule","is":"newtype","field":{{"name":"v","binding":0,"codec":{{"is":"named","declared":"m.{wraps}"}}}},"invariants":[]}}"#
+            r#"{{"module":"m","name":"{name}","by":"amodule","is":"newtype","field":{{"name":"v","binding":0,"codec":{{"is":"named","named":{{"is":"declared","declared":"m.{wraps}"}}}}}},"invariants":[]}}"#
         )
     };
     let compared = |declarations: &[String], reading: &str| {
-        let n = r#"{"declared":"m.N"}"#;
+        let n = r#"{"ref":{"is":"declared","declared":"m.N"}}"#;
         let body = format!(
             r#"{{"core":"binary","op":"LE","reading":{reading},"left":{},"right":{},"type":{BOOL},"aborts":[]}}"#,
             read(0, n),
             read(1, n)
         );
         format!(
-            r#"{{"transport":23,"declarations":[{}],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[{}],"values":[],"entries":[],"definitions":[],"examples":[]}}]}}"#,
+            r#"{{"transport":24,"declarations":[{}],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[{}],"values":[],"entries":[],"definitions":[],"examples":[]}}]}}"#,
             declarations.join(","),
             h(&[n, n], &body)
         )
     };
-    let in_n = r#"{"is":"in","type":{"declared":"m.N"}}"#;
+    let in_n = r#"{"is":"in","type":{"ref":{"is":"declared","declared":"m.N"}}}"#;
     let stands = r#"{"is":"astheystand"}"#;
     for declarations in [
         vec![newtype("N", "N")],
@@ -1922,7 +2008,7 @@ fn a_newtype_that_wraps_itself_is_the_halves_disagreeing() {
 /// and what a kernel's application takes and was settled against.
 #[test]
 fn every_type_a_node_writes_is_one_the_document_declares() {
-    let missing = r#"{"declared":"m.Missing"}"#;
+    let missing = r#"{"ref":{"is":"declared","declared":"m.Missing"}}"#;
     let refuses = |body: String, takes: &[&str]| {
         let refused =
             object_for(&helpers(&[h(takes, &body)])).expect_err("a type nothing declares");
@@ -2192,13 +2278,13 @@ fn a_construction_of_another_builds_type_names_the_reason_its_clauses_give() {
             &node(
                 "construct",
                 &format!(r#""declared":"m.R","values":[{}]"#, int(1)),
-                r#"{"declared":"m.R"}"#,
+                r#"{"ref":{"is":"declared","declared":"m.R"}}"#,
             ),
             aborts,
         );
         format!(
             concat!(
-                r#"{{"transport":23,"declarations":["#,
+                r#"{{"transport":24,"declarations":["#,
                 r#"{{"module":"m","name":"R","by":"onthepath","is":"product","#,
                 r#""fields":[{}],"headers":[{}]}}],"behaviors":[],"#,
                 r#""modules":[{{"name":"m","publishes":[],"helpers":[{}],"values":[],"#,
@@ -2237,7 +2323,7 @@ fn a_binding_is_an_identity_and_not_a_position() {
         &node(
             "construct",
             &format!(r#""declared":"m.R","values":[{}]"#, int(1)),
-            r#"{"declared":"m.R"}"#,
+            r#"{"ref":{"is":"declared","declared":"m.R"}}"#,
         ),
         r#""INVARIANT_NOT_HELD""#,
     );
@@ -2384,7 +2470,7 @@ fn an_arm_binds_and_says_what_it_reads_it_as_together() {
 fn a_handover_carries_a_value_the_module_builds() {
     let value = |carries: &str| {
         format!(
-            r#"{{"transport":23,"declarations":[],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[],"values":[{{"module":"m","name":"ks","handovers":[],"body":{}}},{{"module":"m","name":"ys","handovers":[{{"parameter":"dep","type":{INT},"carries":{{"module":"m","name":"{carries}"}}}}],"body":{}}}],"entries":[],"definitions":[],"examples":[]}}]}}"#,
+            r#"{{"transport":24,"declarations":[],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[],"values":[{{"module":"m","name":"ks","handovers":[],"body":{}}},{{"module":"m","name":"ys","handovers":[{{"parameter":"dep","type":{INT},"carries":{{"module":"m","name":"{carries}"}}}}],"body":{}}}],"entries":[],"definitions":[],"examples":[]}}]}}"#,
             int(1),
             read(0, INT)
         )
@@ -2413,7 +2499,7 @@ fn held(is: &str, output: &str, ensures: &str) -> String {
 }
 
 const ANSWERS_INT: &str = r#"{"is":"scalar","scalar":"INT"}"#;
-const ANSWERS_S: &str = r#"{"is":"nominal","declared":"m.S"}"#;
+const ANSWERS_S: &str = r#"{"is":"nominal","named":{"is":"declared","declared":"m.S"}}"#;
 const ALWAYS: &str = r#"{"is":"always"}"#;
 
 /// Held `at` the place named, by these rules over the one parameter `a`.
@@ -2646,7 +2732,7 @@ fn attempt(count: &str, then: &str, departures: &[(Option<&str>, &str)]) -> Stri
     node(
         "attempt",
         &format!(
-            r#""declared":"m.R","values":[{count}],"binding":1,"binds":{{"declared":"m.R"}},"then":{then},"departures":[{}]"#,
+            r#""declared":"m.R","values":[{count}],"binding":1,"binds":{{"ref":{{"is":"declared","declared":"m.R"}}}},"then":{then},"departures":[{}]"#,
             departures.join(",")
         ),
         INT,
@@ -2659,7 +2745,7 @@ fn field_of_r(binding: usize) -> String {
         "field",
         &format!(
             r#""target":{},"field":"count""#,
-            read(binding, r#"{"declared":"m.R"}"#)
+            read(binding, r#"{"ref":{"is":"declared","declared":"m.R"}}"#)
         ),
         INT,
     )
@@ -2813,8 +2899,10 @@ fn what_an_attempt_builds_is_read_only_where_it_was_built() {
 /// What is bound is what is built, at the declaration's own type.
 #[test]
 fn an_attempt_binds_what_it_builds() {
-    let rebound = attempted(&[(None, &int(0))])
-        .replace(r#""binds":{"declared":"m.R"}"#, r#""binds":{"prim":"INT"}"#);
+    let rebound = attempted(&[(None, &int(0))]).replace(
+        r#""binds":{"ref":{"is":"declared","declared":"m.R"}}"#,
+        r#""binds":{"prim":"INT"}"#,
+    );
     is_the_halves_disagreeing(&attempting(&rebound), "binds");
 }
 
@@ -2845,7 +2933,7 @@ fn a_clause_attempts_nothing() {
         &node(
             "attempt",
             &format!(
-                r#""declared":"m.R","values":[{}],"binding":1,"binds":{{"declared":"m.R"}},"then":{},"departures":[{{"clause":null,"body":{}}}]"#,
+                r#""declared":"m.R","values":[{}],"binding":1,"binds":{{"ref":{{"is":"declared","declared":"m.R"}}}},"then":{},"departures":[{{"clause":null,"body":{}}}]"#,
                 read(0, INT),
                 truth(true),
                 truth(false)
@@ -2867,7 +2955,7 @@ fn what_clauses_are_answered_under_crosses_where_another_build_runs_them() {
     let declared = |by: &str, clauses: &str| {
         format!(
             concat!(
-                r#"{{"transport":23,"declarations":["#,
+                r#"{{"transport":24,"declarations":["#,
                 r#"{{"module":"m","name":"R","by":"{}","is":"product","#,
                 r#""fields":[{}]{}}}],"behaviors":[],"#,
                 r#""modules":[{{"name":"m","publishes":[],"helpers":[],"values":[],"#,
@@ -3003,7 +3091,7 @@ fn a_set_of_alternatives_naming_no_case_is_refused_where_it_is_read() {
     is_the_halves_disagreeing(&helpers(&[h(&[S], &testing_nothing)]), "no case in it");
 
     let scalar = r#"{"is":"scalar","scalar":"INT"}"#;
-    let sum_answer = r#"{"is":"nominal","declared":"m.S"}"#;
+    let sum_answer = r#"{"is":"nominal","named":{"is":"declared","declared":"m.S"}}"#;
     is_the_halves_disagreeing(
         &routed(
             sum_answer,

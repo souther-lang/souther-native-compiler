@@ -122,7 +122,9 @@ fn primitive_reaches(prim: Prim, reached: &mut Vec<Option<&str>>) {
 fn shape_reaches<'s>(shape: &'s CodecShape, reached: &mut Vec<Option<&'s str>>) {
     match shape {
         CodecShape::Scalar { scalar } => primitive_reaches(scalar.prim(), reached),
-        CodecShape::Named { declared } => reached.push(Some(declared)),
+        // A primitive or a case the language gives, named as a field's type on its own, has no
+        // codec of its own designed here (`named_as_a_type`).
+        CodecShape::Named { named } => reached.push(named.declared()),
         CodecShape::OptionOf { present } => shape_reaches(present.shape(), reached),
         // An array of its elements, each written as one would be anywhere else.
         CodecShape::ListOf { element } => shape_reaches(element, reached),

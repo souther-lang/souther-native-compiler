@@ -517,9 +517,10 @@ impl<'w, 'f> Writing<'w, 'f> {
     fn value(&mut self, shape: &CodecShape, value: ir::Value) -> Lowered<ir::Value> {
         match shape {
             CodecShape::Scalar { scalar } => self.scalar(*scalar, value),
-            CodecShape::Named { declared } => unreachable!(
-                "a value of {declared} is written by its step, and `defers` keeps it from being \
-                 written in place"
+            CodecShape::Named { named } => unreachable!(
+                "a value of {} is written by its step, and `defers` keeps it from being written \
+                 in place",
+                named.spelt()
             ),
             CodecShape::OptionOf { present } => {
                 let absent = self.builder.create_block();
@@ -722,7 +723,10 @@ impl<'w, 'f> Scheduling<'_, 'w, 'f> {
             return Ok(());
         }
         match output {
-            BoundaryOutput::Nominal { declared } => {
+            BoundaryOutput::Nominal { named } => {
+                let Some(declared) = named.declared() else {
+                    return crate::named_as_a_type(&output.ty());
+                };
                 self.step(declared, answer);
                 Ok(())
             }
@@ -749,7 +753,10 @@ impl<'w, 'f> Scheduling<'_, 'w, 'f> {
             return Ok(());
         }
         match shape {
-            CodecShape::Named { declared } => {
+            CodecShape::Named { named } => {
+                let Some(declared) = named.declared() else {
+                    return crate::named_as_a_type(&shape.ty());
+                };
                 self.step(declared, value);
                 Ok(())
             }
@@ -876,9 +883,7 @@ impl<'w, 'f> Scheduling<'_, 'w, 'f> {
                 Ok(())
             }
             Declaration::Sum { cases, form, .. } => {
-                let sum = Ty::Declared {
-                    declared: key.to_string(),
-                };
+                let sum = Ty::declared(key.to_string());
                 self.alternatives(cases, form, Tagged::of(value, &sum))
             }
         }

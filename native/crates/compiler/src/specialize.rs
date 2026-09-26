@@ -54,6 +54,12 @@ impl Substitution {
     /// stands, and anything else has to be the same type made the same way. Nothing is widened and
     /// nothing is inferred, since what stands in `actual` is what the checker settled.
     pub(crate) fn binds(&mut self, template: &Ty, actual: &Ty) -> bool {
+        // A template that writes no variable binds nothing, and is the same type or not: asked
+        // whole, so a type added to the document is compared as itself and not by an arm each
+        // kind of type has to be given here.
+        if !template.is_open() {
+            return template == actual;
+        }
         match (template, actual) {
             (Ty::Var { var }, _) => {
                 if self.0.len() <= *var {
@@ -67,10 +73,6 @@ impl Substitution {
                     }
                 }
             }
-            (Ty::Prim { prim }, Ty::Prim { prim: also }) => prim == also,
-            (Ty::Nothing { .. }, Ty::Nothing { .. }) => true,
-            (Ty::Declared { declared }, Ty::Declared { declared: also }) => declared == also,
-            (Ty::Union { union }, Ty::Union { union: also }) => union == also,
             (Ty::Option { option: held }, Ty::Option { option: also })
             | (Ty::List { list: held }, Ty::List { list: also })
             | (Ty::Set { set: held }, Ty::Set { set: also }) => self.binds(held, also),
@@ -89,17 +91,22 @@ impl Substitution {
             (Ty::Map { map }, Ty::Map { map: also }) => {
                 self.binds(&map.key, &also.key) && self.binds(&map.value, &also.value)
             }
+            // What holds no type writes no variable, and was compared whole above.
             (
                 Ty::Prim { .. }
-                | Ty::Declared { .. }
+                | Ty::Ref { .. }
                 | Ty::Union { .. }
-                | Ty::Option { .. }
+                | Ty::Nothing { .. }
+                | Ty::Never { .. },
+                _,
+            ) => unreachable!("a template writing no variable is compared whole"),
+            (
+                Ty::Option { .. }
                 | Ty::List { .. }
                 | Ty::Set { .. }
                 | Ty::Tuple { .. }
                 | Ty::Fn { .. }
-                | Ty::Map { .. }
-                | Ty::Nothing { .. },
+                | Ty::Map { .. },
                 _,
             ) => false,
         }
@@ -109,9 +116,11 @@ impl Substitution {
     pub(crate) fn applied(&self, ty: &Ty) -> Option<Ty> {
         Some(match ty {
             Ty::Var { var } => self.0.get(*var)?.clone()?,
-            Ty::Prim { .. } | Ty::Declared { .. } | Ty::Union { .. } | Ty::Nothing { .. } => {
-                ty.clone()
-            }
+            Ty::Prim { .. }
+            | Ty::Ref { .. }
+            | Ty::Union { .. }
+            | Ty::Nothing { .. }
+            | Ty::Never { .. } => ty.clone(),
             Ty::Option { option } => Ty::Option {
                 option: Box::new(self.applied(option)?),
             },
@@ -680,7 +689,7 @@ mod tests {
     /// A module `m` holding `helpers` and building the one value `v`, whose body is `body`.
     fn holding(helpers: &[String], body: &str) -> String {
         format!(
-            r#"{{"transport":23,"declarations":[],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[{}],"values":[{{"module":"m","name":"v","handovers":[],"body":{body}}}],"entries":[],"definitions":[],"examples":[]}}]}}"#,
+            r#"{{"transport":24,"declarations":[],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[{}],"values":[{{"module":"m","name":"v","handovers":[],"body":{body}}}],"entries":[],"definitions":[],"examples":[]}}]}}"#,
             helpers.join(",")
         )
     }

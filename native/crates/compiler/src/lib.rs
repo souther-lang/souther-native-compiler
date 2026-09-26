@@ -1602,9 +1602,7 @@ impl<'a> Declared<'a> {
         // Once every field is known to name a declaration, so the walk reaches only ones that are.
         for declaration in declarations {
             if let Declaration::Newtype { .. } = declaration {
-                declared.newtype_spine(&Ty::Declared {
-                    declared: declaration.key(),
-                })?;
+                declared.newtype_spine(&Ty::declared(declaration.key()))?;
             }
         }
         Ok(declared)
@@ -1632,7 +1630,9 @@ impl<'a> Declared<'a> {
         };
         match ty {
             Ty::Prim { .. } => Ok(()),
-            Ty::Declared { declared } => named(declared),
+            Ty::Ref {
+                named: Case::Declared { declared },
+            } => named(declared),
             Ty::Union { union } => {
                 for case in union {
                     if let Case::Declared { declared } = case {
@@ -1657,7 +1657,12 @@ impl<'a> Declared<'a> {
                 }
                 self.resolving(owner, &fn_.answers, open)
             }
-            Ty::Nothing { .. } => Ok(()),
+            // Nothing a module declares, so nothing for the document to carry.
+            Ty::Ref {
+                named: Case::Primitive { .. } | Case::Language { .. },
+            }
+            | Ty::Nothing { .. }
+            | Ty::Never { .. } => Ok(()),
             Ty::Var { .. } if open => Ok(()),
             Ty::Var { var } => bail!(
                 "{owner}: the type variable {var} stands outside a helper's body, which is the one \
@@ -1814,8 +1819,9 @@ impl<'a> Declared<'a> {
             return Ok(Some(true));
         }
         Ok(match (actual, expected) {
-            // No value of it is made, so what it stands as is never handed one that does not fit.
-            (Ty::Nothing { .. }, _) => Some(true),
+            // No value of either is made, so what it stands as is never handed one that does not
+            // fit.
+            (Ty::Nothing { .. } | Ty::Never { .. }, _) => Some(true),
             (Ty::Set { .. } | Ty::Map { .. }, _) | (_, Ty::Set { .. } | Ty::Map { .. }) => None,
             (Ty::Option { option: actual }, Ty::Option { option: expected })
             | (Ty::List { list: actual }, Ty::List { list: expected }) => {
@@ -1869,7 +1875,9 @@ impl<'a> Declared<'a> {
     fn has_cases(&self, ty: &Ty) -> Result<bool> {
         Ok(match ty {
             Ty::Union { .. } => true,
-            Ty::Declared { declared } => matches!(self.shape(declared)?, Declaration::Sum { .. }),
+            Ty::Ref {
+                named: Case::Declared { declared },
+            } => matches!(self.shape(declared)?, Declaration::Sum { .. }),
             Ty::Prim { .. }
             | Ty::Option { .. }
             | Ty::List { .. }
@@ -1878,17 +1886,20 @@ impl<'a> Declared<'a> {
             | Ty::Tuple { .. }
             | Ty::Fn { .. }
             | Ty::Var { .. }
-            | Ty::Nothing { .. } => false,
+            | Ty::Nothing { .. }
+            | Ty::Never { .. }
+            | Ty::Ref {
+                named: Case::Primitive { .. } | Case::Language { .. },
+            } => false,
         })
     }
 
-    /// The cases a value of `ty` can be, where it is a type made of cases: a declared type, a
+    /// The cases a value of `ty` can be, where it is a type made of cases: a type named as one — a
+    /// declared type, or a primitive or a case the language gives named as a type on its own — a
     /// union, or a primitive, which is a case of a union that names it.
     fn cases_of(&self, ty: &Ty) -> Result<Option<Vec<Case>>> {
         Ok(match ty {
-            Ty::Declared { declared } => Some(self.leaves_of(&[Case::Declared {
-                declared: declared.clone(),
-            }])?),
+            Ty::Ref { named } => Some(self.leaves_of(std::slice::from_ref(named))?),
             Ty::Union { union } => Some(self.leaves_of(union)?),
             Ty::Prim { prim } => Some(vec![Case::Primitive { prim: *prim }]),
             _ => None,
@@ -1907,7 +1918,9 @@ impl<'a> Declared<'a> {
         let mut worn: Vec<String> = Vec::new();
         let mut opens: Vec<Ty> = Vec::new();
         let mut at = ty.clone();
-        while let Ty::Declared { declared } = &at
+        while let Ty::Ref {
+            named: Case::Declared { declared },
+        } = &at
             && let Declaration::Newtype { field, .. } = self.shape(declared)?
         {
             let comes_back = worn.contains(declared);
@@ -1954,7 +1967,9 @@ impl<'a> Declared<'a> {
     /// the checker found one. The checker's own answer is not on the node (souther-lang/souther#1987).
     fn enumeration_of(&self, ty: &Ty) -> Result<Option<String>> {
         let candidates = match ty {
-            Ty::Declared { declared } => self.enumerations_listing(declared)?,
+            Ty::Ref {
+                named: Case::Declared { declared },
+            } => self.enumerations_listing(declared)?,
             Ty::Union { union } => {
                 let mut shared: Option<Vec<String>> = None;
                 for member in union.iter() {
@@ -2317,7 +2332,23 @@ fn word_on_the_machine(word: Word) -> types::Type {
 /// is decided by giving it a width here.
 fn machine_type(ty: &Ty) -> Lowered<types::Type> {
     match ty {
-        Ty::Declared { .. } | Ty::Option { .. } | Ty::Tuple { .. } => Ok(POINTER),
+        Ty::Ref {
+            named: Case::Declared { .. },
+        }
+        | Ty::Option { .. }
+        | Ty::Tuple { .. } => Ok(POINTER),
+        // Laid out as it is where a union holds it (below): the address of what carries the
+        // runtime's token for the case, and nothing beside it. What an arm binding the case reads
+        // is the value the union held, as it was.
+        Ty::Ref {
+            named: named @ Case::Language { .. },
+        } => {
+            built_in_case(named)?;
+            Ok(POINTER)
+        }
+        Ty::Ref {
+            named: Case::Primitive { .. },
+        } => named_as_a_type(ty),
         // The address of its length and its elements, as `souther-native-abi` lays one out. What
         // the elements are is the static type's and is not asked here: every element is a slot.
         Ty::List { .. } => Ok(POINTER),
@@ -2350,6 +2381,10 @@ fn machine_type(ty: &Ty) -> Lowered<types::Type> {
         // handed one never runs that step (`growing`), so what asks this is code that would hold a
         // value no run can make, and it is refused rather than given a place to hold it in.
         Ty::Nothing { .. } => Err(not_lowered(format!("a value of type {}", ty.spelt()))),
+        // Nothing reads a value from where the run has ended, so what asks this is code that would
+        // hold one, and it is refused for the same reason `Nothing` is. Not given a width: a
+        // position the checker let `unreachable` stand in is typed as what the position takes.
+        Ty::Never { .. } => Err(not_lowered(format!("a value of type {}", ty.spelt()))),
         // Every primitive is named. A set the language closed is one this has to answer for member
         // by member: caught by an arm standing for the rest, a primitive added to the language
         // would arrive here as something with no representation and nothing would have said so.
@@ -2445,7 +2480,12 @@ impl CaseBody<'_> {
 /// is carried so that it says so too (`carry`), which is what makes this a fact about the type and
 /// not about which case a value happens to be.
 pub(crate) fn says_its_case(ty: &Ty) -> bool {
-    matches!(ty, Ty::Declared { .. } | Ty::Union { .. })
+    matches!(
+        ty,
+        Ty::Ref {
+            named: Case::Declared { .. } | Case::Language { .. }
+        } | Ty::Union { .. }
+    )
 }
 
 /// A value whose type says which case it is ([`says_its_case`]), so a token stands at [`WHICH`].
@@ -2616,29 +2656,14 @@ fn means_the_same_elsewhere(ty: &Ty) -> bool {
             | Prim::Instant
             | Prim::Raw => false,
         },
-        // A value of a declared type says which type it is with the address of its declaration's
-        // token, which the linker resolves. Two objects naming one declaration reach one address,
-        // so the comparison a fork makes is about the same thing on either side.
-        //
-        // Which is what a value says it is, and not where its fields are. Both objects read the
-        // field order off their own copy of the declaration, so they agree while they were checked
-        // against the one build of the module that declares it — and whether the object handed to
-        // the linker is that build is not something an object can ask. That is a separate
-        // question, and answering it here would be answering it with the wrong thing.
-        Ty::Declared { .. } => true,
+        Ty::Ref { named } => case_means_the_same_elsewhere(named),
         // Written nowhere at run time: what holds a union holds one of its members, and each of
         // those says which case it is by a token the linker resolves — a declaration's, which the
         // object of the build declaring it defines, or the runtime's for a primitive or a case the
         // language gives, which every object in a library links. So a union means what its cases
         // do: a declared case is its declared type, a primitive what that primitive means, and a
         // case the language gives holds nothing but its token.
-        Ty::Union { union } => union.iter().all(|case| match case {
-            Case::Declared { declared } => means_the_same_elsewhere(&Ty::Declared {
-                declared: declared.clone(),
-            }),
-            Case::Primitive { prim } => means_the_same_elsewhere(&Ty::Prim { prim: *prim }),
-            Case::Language { .. } => true,
-        }),
+        Ty::Union { union } => union.iter().all(case_means_the_same_elsewhere),
         Ty::Option { option } => means_the_same_elsewhere(option),
         // A length and slots, laid out in the crate both halves read, so a list means what its
         // elements mean.
@@ -2657,8 +2682,29 @@ fn means_the_same_elsewhere(ty: &Ty) -> bool {
         // that happens to be built from types that already cross.
         Ty::Fn { .. } => false,
         Ty::Var { var } => laid_out_nowhere(*var),
-        // No value of it crosses, so none can mean something else once it has.
-        Ty::Nothing { .. } => true,
+        // No value of either crosses, so none can mean something else once it has.
+        Ty::Nothing { .. } | Ty::Never { .. } => true,
+    }
+}
+
+/// Whether a value of one case, or of a type named as one, means in another object what it means
+/// in this one.
+fn case_means_the_same_elsewhere(case: &Case) -> bool {
+    match case {
+        // A value of a declared type says which type it is with the address of its declaration's
+        // token, which the linker resolves. Two objects naming one declaration reach one address,
+        // so the comparison a fork makes is about the same thing on either side.
+        //
+        // Which is what a value says it is, and not where its fields are. Both objects read the
+        // field order off their own copy of the declaration, so they agree while they were checked
+        // against the one build of the module that declares it — and whether the object handed to
+        // the linker is that build is not something an object can ask. That is a separate
+        // question, and answering it here would be answering it with the wrong thing.
+        Case::Declared { .. } => true,
+        // What that primitive means.
+        Case::Primitive { prim } => means_the_same_elsewhere(&Ty::Prim { prim: *prim }),
+        // Nothing but the runtime's token, which every object in a library links.
+        Case::Language { .. } => true,
     }
 }
 
@@ -2670,6 +2716,21 @@ fn laid_out_nowhere(var: usize) -> ! {
         "the type variable {var} reached a lowering, which is handed only copies of a helper with \
          every variable replaced"
     )
+}
+
+/// A primitive or a case the language gives, named as a type on its own rather than as one case
+/// of a union, where nothing here has designed what is asked of it.
+///
+/// A primitive named so is not laid out at all: whether a value of it is the primitive bare or
+/// carried with its token (`carry`) is a representation nothing here has decided, so it is refused
+/// as not lowered rather than laid out as whichever of the two it resembles. A case the language
+/// gives is laid out as a union holds it (`machine_type`), and refused through this only where it
+/// is asked what no union of it has been asked yet: an order, or a form at a boundary.
+pub(crate) fn named_as_a_type<T>(ty: &Ty) -> Lowered<T> {
+    Err(not_lowered(format!(
+        "a value of {}, named as a type on its own",
+        ty.spelt()
+    )))
 }
 
 /// What holds the address of a value made of fields.
@@ -3491,13 +3552,7 @@ fn constructor_signature(declaration: &Declaration, call_conv: CallConv) -> Lowe
         .iter()
         .map(|field| field.codec.ty())
         .collect();
-    signature_over(
-        &takes,
-        &Ty::Declared {
-            declared: declaration.key(),
-        },
-        call_conv,
-    )
+    signature_over(&takes, &Ty::declared(declaration.key()), call_conv)
 }
 
 /// What [`define_checked`] takes and answers: what the constructor does, with room for which
@@ -4597,6 +4652,108 @@ impl Bindings {
     }
 }
 
+/// `node` lowered where a `Widen` stands it as `stands`.
+///
+/// What it answers, or, where its own type is `Never`, the run ended and nothing answered. No value
+/// of `Never` is made, so it has no width of its own (`machine_type`), and the one place the
+/// document gives it one is here. The checker joins a branch that does not answer with its
+/// siblings by dropping it (`TypeOps.join`) and stands every branch at the join
+/// (`Core.standingAs`), which for one of `Never` is a `Widen`: so wherever a value of `Never` is
+/// asked for, a `Widen` says what it is asked for as, and a branch standing directly in a fork is
+/// of the fork's type exactly (`Coherent` holds it). The width is the `Widen`'s, as the checker's
+/// own emitter takes it from where the node stands (`shapeAt`), and a value of it is put where
+/// nothing reaches, for the code around to be handed one.
+fn lower_standing(
+    builder: &mut FunctionBuilder,
+    lowering: &Lowering,
+    module: &mut ObjectModule,
+    bindings: &mut Bindings,
+    abort: ir::Block,
+    node: &Node,
+    stands: &Ty,
+) -> Lowered<ir::Value> {
+    if !matches!(node.ty(), Ty::Never { .. }) {
+        return lower(builder, lowering, module, bindings, abort, node);
+    }
+    let width = machine_type(stands)?;
+    end(builder, lowering, module, bindings, abort, node)?;
+    Ok(past_the_end(builder, width))
+}
+
+/// `node`, of the type of what does not answer, lowered as where the run ends: every block it is
+/// lowered into is left ended.
+///
+/// An `unreachable`, and a fork whose branches are each of `Never` — which is what the checker
+/// joins at `Never`, `standingAs` leaving each as it is — including the `let` a helper that does
+/// not answer is expanded into. Anything else of `Never`, such as a call of a helper answering it,
+/// is refused as `machine_type` refuses a value of it.
+fn end(
+    builder: &mut FunctionBuilder,
+    lowering: &Lowering,
+    module: &mut ObjectModule,
+    bindings: &mut Bindings,
+    abort: ir::Block,
+    node: &Node,
+) -> Lowered<()> {
+    match node {
+        Node::Unreachable { .. } => {
+            unreachable_reached(builder, abort);
+            Ok(())
+        }
+        Node::Let { .. } | Node::If { .. } | Node::Match { .. } | Node::Attempt { .. } => {
+            let forked = branched(
+                builder,
+                lowering,
+                module,
+                bindings,
+                abort,
+                node,
+                &mut |builder, module, bindings, branch| {
+                    end(builder, lowering, module, bindings, abort, branch)
+                },
+            )?;
+            assert!(forked, "a let, an if, a match and an attempt are forks");
+            Ok(())
+        }
+        Node::Int { ty, .. }
+        | Node::Read { ty, .. }
+        | Node::Bool { ty, .. }
+        | Node::Str { ty, .. }
+        | Node::Binary { ty, .. }
+        | Node::Neg { ty, .. }
+        | Node::Unit { ty, .. }
+        | Node::Construct { ty, .. }
+        | Node::Field { ty, .. }
+        | Node::Some { ty, .. }
+        | Node::None { ty, .. }
+        | Node::Tuple { ty, .. }
+        | Node::Member { ty, .. }
+        | Node::List { ty, .. }
+        | Node::Call { ty, .. }
+        | Node::Block { ty, .. }
+        | Node::Apply { ty, .. }
+        | Node::Widen { ty, .. } => machine_type(ty).map(|_| ()),
+    }
+}
+
+/// The run ended with the status the runtime numbers an `unreachable` by.
+fn unreachable_reached(builder: &mut FunctionBuilder, abort: ir::Block) {
+    let status = builder.ins().iconst(
+        types::I32,
+        i64::from(native_status(AbortKind::UnreachableReached)),
+    );
+    builder.ins().jump(abort, &[status.into()]);
+}
+
+/// A block nothing reaches, written to next, holding a value of `width` for what is lowered after a
+/// run that ended to be handed: the code around still asks for one, and never reads it.
+fn past_the_end(builder: &mut FunctionBuilder, width: types::Type) -> ir::Value {
+    let past = builder.create_block();
+    builder.seal_block(past);
+    builder.switch_to_block(past);
+    builder.ins().iconst(width, 0)
+}
+
 fn lower(
     builder: &mut FunctionBuilder,
     lowering: &Lowering,
@@ -4691,7 +4848,26 @@ fn lower(
                 aborts,
             },
         )?,
-        Node::Unit { declared, .. } => construct(builder, lowering, module, abort, declared, &[])?,
+        Node::Unit { unit, .. } => match unit {
+            Case::Declared { declared } => {
+                construct(builder, lowering, module, abort, declared, &[])?
+            }
+            // The runtime's token, carried as a union carries the case: it holds nothing else.
+            Case::Language { .. } => carry(builder, lowering, module, unit, None)?,
+            Case::Primitive { .. } => {
+                return named_as_a_type(&Ty::Ref {
+                    named: unit.clone(),
+                });
+            }
+        },
+        // The run ends here, where the checker typed it as the position it stands in. One it
+        // typed `Never` takes its width from where it stands (`lower_standing`), and one standing
+        // nowhere that gives one is refused by `machine_type`, as a value of `Never` is.
+        Node::Unreachable { ty, .. } => {
+            let width = machine_type(ty)?;
+            unreachable_reached(builder, abort);
+            past_the_end(builder, width)
+        }
         // The fields are worked out here, in the order they are written; whether the value is one
         // the type admits, and how one is laid out, is not this site's to say (`construct`).
         Node::Construct {
@@ -4707,7 +4883,10 @@ fn lower(
             target, field, ty, ..
         } => {
             let of = target.ty();
-            let Ty::Declared { declared } = of else {
+            let Ty::Ref {
+                named: Case::Declared { declared },
+            } = of
+            else {
                 unreachable!("`Coherent` held every field read to be of a declared type");
             };
             let value = lower(builder, lowering, module, bindings, abort, target)?;
@@ -4885,7 +5064,7 @@ fn lower(
             ..
         } => {
             machine_type(ty)?;
-            let held = lower(builder, lowering, module, bindings, abort, narrower)?;
+            let held = lower_standing(builder, lowering, module, bindings, abort, narrower, ty)?;
             restate(builder, lowering, module, held, narrower.ty(), ty)?
         }
         Node::Member { tuple, at, ty, .. } => {
@@ -4979,7 +5158,10 @@ fn shared_field(
     field: &str,
     ty: &Ty,
 ) -> Lowered<ir::Value> {
-    let Ty::Declared { declared } = of else {
+    let Ty::Ref {
+        named: Case::Declared { declared },
+    } = of
+    else {
         unreachable!("a field is read off a sum only where the sum is its target's type");
     };
     let cases = lowering
@@ -5477,7 +5659,8 @@ fn branched(
         | Node::Call { .. }
         | Node::Block { .. }
         | Node::Apply { .. }
-        | Node::Widen { .. } => return Ok(false),
+        | Node::Widen { .. }
+        | Node::Unreachable { .. } => return Ok(false),
     }
     Ok(true)
 }

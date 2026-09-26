@@ -88,7 +88,7 @@ public final class ProgramWriter {
      * written moves, so that a driver and a writer that disagree say so rather than producing an
      * object that is wrong quietly.
      */
-    public static final int TRANSPORT_VERSION = 23;
+    public static final int TRANSPORT_VERSION = 24;
 
     private final CheckedProgram program;
 
@@ -307,7 +307,7 @@ public final class ProgramWriter {
             case CheckedData.Sum it -> {
                 StringJoiner cases = new StringJoiner(",", "[", "]");
                 for (TypeSymbol held : it.cases()) {
-                    cases.add(caseOf(held));
+                    cases.add(identity(held));
                 }
                 yield identity + ",\"is\":\"sum\",\"cases\":" + cases
                         + ",\"form\":" + form(it.representation()) + "}";
@@ -451,7 +451,7 @@ public final class ProgramWriter {
             case CheckedCodecShape.Scalar it ->
                     "{\"is\":\"scalar\",\"scalar\":" + quoted(leaf(it.kind())) + "}";
             case CheckedCodecShape.Named it ->
-                    "{\"is\":\"named\",\"declared\":" + quoted(declaredName(it.name())) + "}";
+                    "{\"is\":\"named\",\"named\":" + identity(it.name()) + "}";
             case CheckedCodecShape.ListOf it ->
                     "{\"is\":\"listof\",\"element\":" + codec(it.element()) + "}";
             case CheckedCodecShape.SetOf it ->
@@ -469,7 +469,7 @@ public final class ProgramWriter {
             case CheckedBoundaryInput.Scalar it ->
                     "{\"is\":\"scalar\",\"scalar\":" + quoted(leaf(it.scalar())) + "}";
             case CheckedBoundaryInput.Nominal it ->
-                    "{\"is\":\"nominal\",\"declared\":" + quoted(declaredName(it.name())) + "}";
+                    "{\"is\":\"nominal\",\"named\":" + identity(it.name()) + "}";
             case CheckedBoundaryInput.ListOf it ->
                     "{\"is\":\"listof\",\"element\":" + input(it.element()) + "}";
             case CheckedBoundaryInput.SetOf it ->
@@ -491,7 +491,7 @@ public final class ProgramWriter {
             case CheckedBoundaryOutput.Scalar it ->
                     "{\"is\":\"scalar\",\"scalar\":" + quoted(leaf(it.scalar())) + "}";
             case CheckedBoundaryOutput.Nominal it ->
-                    "{\"is\":\"nominal\",\"declared\":" + quoted(declaredName(it.name())) + "}";
+                    "{\"is\":\"nominal\",\"named\":" + identity(it.name()) + "}";
             case CheckedBoundaryOutput.ListOf it ->
                     "{\"is\":\"listof\",\"element\":" + output(it.element()) + "}";
             case CheckedBoundaryOutput.SetOf it ->
@@ -501,7 +501,7 @@ public final class ProgramWriter {
             case CheckedBoundaryOutput.Cases it -> {
                 StringJoiner cases = new StringJoiner(",", "[", "]");
                 for (TypeSymbol held : it.cases()) {
-                    cases.add(caseOf(held));
+                    cases.add(identity(held));
                 }
                 yield "{\"is\":\"cases\",\"type\":" + type(it.type()) + ",\"cases\":" + cases
                         + ",\"form\":" + form(it.representation()) + "}";
@@ -518,7 +518,7 @@ public final class ProgramWriter {
             case MapKeyRepresentation.DateTime it -> "{\"is\":\"datetime\"}";
             case MapKeyRepresentation.Instant it -> "{\"is\":\"instant\"}";
             case MapKeyRepresentation.NamedKey it ->
-                    "{\"is\":\"namedkey\",\"declared\":" + quoted(declaredName(it.name())) + "}";
+                    "{\"is\":\"namedkey\",\"named\":" + identity(it.name()) + "}";
         };
     }
 
@@ -856,15 +856,17 @@ public final class ProgramWriter {
                 + "}";
     }
 
-    /** How a definition of a module is named on the wire: its module, then its own name. */
-    private String reached(ValueName name) {
-        return switch (name) {
-            case ValueName.OfAModule it -> it.module() + "." + it.name();
-            // A name that is in scope where it stands, and one the standard library declares.
-            // Neither is a definition a module holds, and nothing here reaches one.
-            case ValueName.InScope it -> throw notYet("a call reaching " + it.name());
-            case ValueName.Stdlib it -> throw notYet("a call reaching " + it.name());
-        };
+    /**
+     * How a behavior is named on the wire: its module, then its own name.
+     *
+     * <p>A behavior and nothing wider. What a call reaches the checker has already answered as one
+     * of {@link Core.Reaches}' arms, and the one of them that names a behavior names it by
+     * {@link ValueName.Behavior}. A name in scope, or one the standard library declares, is not a
+     * behavior some module holds, and taking one here would be taking a name this writer would
+     * then have to resolve.
+     */
+    private static String reached(ValueName.Behavior name) {
+        return name.module() + "." + name.name();
     }
 
     /**
@@ -885,28 +887,20 @@ public final class ProgramWriter {
     }
 
     /**
-     * The same for a name standing where only a declaration can, which is refused rather than
-     * guessed at: what is built, what a field or a key is named by, what a boundary names.
-     */
-    private String declaredName(TypeSymbol name) {
-        return switch (name) {
-            case TypeSymbol.AtModule it -> named(it);
-            case TypeSymbol.Primitive it ->
-                    throw notYet("the primitive " + it.name() + " named as a declaration");
-            case TypeSymbol.LanguageCase it ->
-                    throw notYet("the case " + it.name() + " named as a declaration");
-        };
-    }
-
-    /**
-     * Which case a name is, where a case may be any of the three the language has: one a module
-     * declares, a primitive standing as a case, or one the language gives.
+     * Which type a {@link TypeSymbol} is: one a module declares, a primitive standing as one, or
+     * one the language gives. Written wherever the checker hands a {@code TypeSymbol} — a union's
+     * member, a sum's case, a type reference, what a field or a key or a boundary is named by, a
+     * unit — so the three cross as the one sum they are upstream, and an arm added there stops
+     * this compiling and the far side reading. Where the checker has already narrowed the name to
+     * a declaration, {@link #named} writes the declaration's key instead.
      *
      * <p>The identity and not the shape. How a case is written at a boundary is read on the far
      * side off what the identity reaches — a declaration's arm, or a primitive's being one — so
-     * nothing about the shape crosses here that the identity does not already answer.
+     * nothing about the shape crosses here that the identity does not already answer. Whether a
+     * value of a primitive or a language case named here has a representation is the lowering's
+     * to say, not this writer's.
      */
-    private String caseOf(TypeSymbol name) {
+    private String identity(TypeSymbol name) {
         return switch (name) {
             case TypeSymbol.AtModule it ->
                     "{\"is\":\"declared\",\"declared\":" + quoted(named(it)) + "}";
@@ -1165,7 +1159,7 @@ public final class ProgramWriter {
             case Composition.Routing.OnCases it -> {
                 StringJoiner accepted = new StringJoiner(",", "[", "]");
                 for (TypeSymbol type : it.accepted()) {
-                    accepted.add(caseOf(type));
+                    accepted.add(identity(type));
                 }
                 yield "{\"is\":\"oncases\",\"accepted\":" + accepted + "}";
             }
@@ -1228,8 +1222,8 @@ public final class ProgramWriter {
                 + ",\"type\":" + type(type) + ",\"aborts\":" + spelled(aborts) + "}";
     }
 
-    private String unitNode(String declared, Type type, AbortSet aborts) {
-        return "{\"core\":\"unit\",\"declared\":" + quoted(declared)
+    private String unitNode(String identity, Type type, AbortSet aborts) {
+        return "{\"core\":\"unit\",\"unit\":" + identity
                 + ",\"type\":" + type(type) + ",\"aborts\":" + spelled(aborts) + "}";
     }
 
@@ -1283,7 +1277,7 @@ public final class ProgramWriter {
                     + ",\"right\":" + core(it.right(), bindings)
                     + ",\"type\":" + type(it.type()) + ",\"aborts\":" + aborts(it) + "}";
             case Core.UnitValue it ->
-                    unitNode(declaredName(it.data()), it.type(), program.abortsAt(it));
+                    unitNode(identity(it.data()), it.type(), program.abortsAt(it));
             case Core.Construct it -> {
                 List<String> values = new ArrayList<>();
                 for (Core.FieldValue field : it.values()) {
@@ -1331,13 +1325,25 @@ public final class ProgramWriter {
 
             case Core.Decimal it -> throw notYet("a decimal literal", it);
             case Core.Temporal it -> throw notYet("a temporal literal", it);
-            case Core.MaterialisedValue it -> throw notYet("a value read from its module", it);
+            // What the checker builds for an analysis to read, and not for a backend to run: a
+            // value's build standing as its template, and a call kept standing for what it says.
+            // The tree a checked program hands a backend keeps neither — the checker's own emitter
+            // refuses both as a tree it was not meant to be handed — so one here is that premise
+            // not holding, and not a node this writer is behind on.
+            case Core.MaterialisedValue it -> throw new IllegalStateException(
+                    "the tree a checked program runs holds no build of a value, and this holds one"
+                            + " of " + it.value() + " at " + it.pos());
             case Core.Call it -> call(it, bindings);
-            case Core.PreservedCall it -> throw notYet("a call kept for what it says", it);
+            case Core.PreservedCall it -> throw it.unexpectedIn("a backend's writer");
             case Core.Apply it -> apply(it, bindings);
             case Core.IfConstructed it -> attempt(it, bindings);
             case Core.Block it -> block(it, bindings);
-            case Core.Unreachable it -> throw notYet("an unreachable", it);
+            // Where the run ends, and why, in the author's words. The reason crosses though the
+            // status a run ends with has no room for it: what a run can say when it ends is the
+            // runtime's to widen, and a document that dropped the reason would have to move then.
+            case Core.Unreachable it -> "{\"core\":\"unreachable\",\"reason\":"
+                    + quoted(it.reason())
+                    + ",\"type\":" + type(it.type()) + ",\"aborts\":" + aborts(it) + "}";
         };
     }
 
@@ -1679,7 +1685,7 @@ public final class ProgramWriter {
             case Refinement.Direct it -> {
                 StringJoiner atoms = new StringJoiner(",", "[", "]");
                 for (TypeSymbol atom : selected.atoms()) {
-                    atoms.add(caseOf(atom));
+                    atoms.add(identity(atom));
                 }
                 yield "{\"tests\":\"which\",\"atoms\":" + atoms + "}";
             }
@@ -1792,8 +1798,14 @@ public final class ProgramWriter {
             // accumulator a walk seeded with `[]` starts from. It crosses as a type like any other;
             // that nothing of it is ever laid out is the driver's to act on.
             case Type.Nothing it -> "{\"nothing\":{}}";
-            case Type.Never it -> throw notYet("the type " + it);
-            case Type.Erroneous it -> throw notYet("the type " + it);
+            // The type of what does not answer: a computation that ends the run, so nothing that
+            // reads a value from here is ever reached. Settled, unlike `Nothing`, which is a type
+            // inference has yet to fill in; that no value of it is ever laid out is the driver's.
+            case Type.Never it -> "{\"never\":{}}";
+            // What the checker stands in where it reported an error and went on. A checked program
+            // is one it reported none in, so one here is that premise not holding.
+            case Type.Erroneous it -> throw new IllegalStateException(
+                    "a checked program holds no type the checker gave up on");
             // A variable crosses only inside the helper that leaves it open, under the number that
             // helper gives it. Anywhere else it is a type the checker did not settle.
             case Type.Var it -> {
@@ -1808,7 +1820,7 @@ public final class ProgramWriter {
                 yield "{\"var\":" + number + "}";
             }
             case Type.MetaVar it -> throw notYet("a type this compiler left open");
-            case Type.Ref it -> "{\"declared\":" + quoted(declaredName(it.name())) + "}";
+            case Type.Ref it -> "{\"ref\":" + identity(it.name()) + "}";
             case Type.OptionOf it -> "{\"option\":" + type(it.element()) + "}";
             case Type.TupleOf it -> {
                 StringJoiner members = new StringJoiner(",", "[", "]");
@@ -1823,7 +1835,7 @@ public final class ProgramWriter {
             case Type.Union it -> {
                 StringJoiner members = new StringJoiner(",", "[", "]");
                 for (TypeSymbol member : it.members()) {
-                    members.add(caseOf(member));
+                    members.add(identity(member));
                 }
                 yield "{\"union\":" + members + "}";
             }

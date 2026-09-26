@@ -222,6 +222,8 @@ impl Confining<'_> {
     fn answering(&mut self, node: &Node) -> Result<()> {
         match node {
             Node::Read { binding, .. } if self.growing.contains(binding) => Ok(()),
+            // An arm that ends the run answers no list, and so none other than the grown one.
+            Node::Unreachable { .. } => Ok(()),
             Node::Widen { value, .. } => self.answering(value),
             Node::Let {
                 binding,

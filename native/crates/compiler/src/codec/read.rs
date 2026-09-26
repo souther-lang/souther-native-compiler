@@ -288,7 +288,10 @@ impl Reading<'_, '_> {
                 self.refuse_where(failed);
                 Ok(self.builder.ins().load(ty, TRUSTED, room, 0))
             }
-            CodecShape::Named { declared } => {
+            CodecShape::Named { named } => {
+                let Some(declared) = named.declared() else {
+                    return crate::named_as_a_type(&shape.ty());
+                };
                 let reader = self.codecs.reader(self.module, self.declared, declared);
                 let reaching = self.module.declare_func_in_func(reader, self.builder.func);
                 let room = out_slot(self.builder);
