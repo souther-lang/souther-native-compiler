@@ -492,10 +492,12 @@ public final class PhpBindings {
      */
     private @Nullable Member carried(Case.Primitive of) {
         Word word = CrossingShape.heldAs(of);
-        Manifest.CaseCrossing crossing = manifest.crossing(of);
-        if (word == null || crossing == null) {
+        if (word == null) {
             return null;
         }
+        // Said for every primitive a host is handed, which the manifest was refused for leaving
+        // out, so a missing one is never read here as PHP having no way to hold it.
+        Manifest.CaseCrossing crossing = manifest.crossing(of);
         CrossingShape.agreesAsCarried(crossing);
         Whole whole = Whole.primitive(new CrossingShape.Whole(word, new Type.Primitive(of.name())));
         return whole == null ? null : new Member(whole, crossing);

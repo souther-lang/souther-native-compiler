@@ -151,7 +151,9 @@ class AValueCrossesInTheShapeTheAbiGivesItTest {
         assertThat(told.words()).containsExactly(Word.VALUE);
         assertThat(CrossingShape.received(module,
                 new Answer(EITHER, new UnionAnswer(EITHER.cases(), null)))).isNull();
-        assertThat(CrossingShape.received(module, new Answer(EITHER, null))).isNull();
+        assertThatThrownBy(() -> new Answer(EITHER, null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("says nothing of its cases");
     }
 
     /** A {@code which} that is not what tells cases apart is two readings of one thing disagreeing. */

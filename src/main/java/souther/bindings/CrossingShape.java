@@ -183,8 +183,10 @@ public sealed interface CrossingShape {
         if (!(answer.type() instanceof Type.Union union)) {
             return received(module, answer.type());
         }
-        UnionAnswer cases = answer.union();
-        if (wordOf(union) == null || cases == null || cases.which() == null) {
+        // Said of every answer that is a union ({@link Answer}), and told where the behavior can be
+        // called ({@link Manifest.Behavior}); no call, nothing handed.
+        UnionAnswer cases = java.util.Objects.requireNonNull(answer.union());
+        if (wordOf(union) == null || cases.which() == null) {
             return null;
         }
         return new Told(union, cases.cases(), cases.which());

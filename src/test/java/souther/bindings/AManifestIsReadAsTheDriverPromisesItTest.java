@@ -58,7 +58,45 @@ class AManifestIsReadAsTheDriverPromisesItTest {
             let outer (adjusted) = adjusted()
             """;
 
+    /** A behavior answering a union with an `Int` among its cases, and an injection answering one. */
+    private static final String CARRYING = """
+            module owing exposing ( Free, quantityOf, doubled )
+
+            data Free
+
+            behavior quantityOf : (paid: Int) -> Int | Free
+            let quantityOf (paid) = if paid > 0 then paid else Free
+
+            behavior chooseQuantity : (paid: Int) -> Int | Free
+
+            behavior doubled : (paid: Int) -> Int
+                depends on chooseQuantity
+            let doubled (paid, chooseQuantity) = match chooseQuantity(paid) with
+                | Int as n -> n * 2
+                | Free -> 0
+            """;
+
     private static final JsonMapper JSON = JsonMapper.builder().build();
+
+    /** Reads the library's manifest after {@code changing} the whole of it. */
+    private static Manifest readWholeAfter(Path into, NativeCompiler.Library library,
+                                           Consumer<ObjectNode> changing) throws Exception {
+        ObjectNode manifest = (ObjectNode) JSON.readTree(library.manifest().toFile());
+        changing.accept(manifest);
+        Path changed = into.resolve("changed.json");
+        Files.writeString(changed, JSON.writeValueAsString(manifest), StandardCharsets.UTF_8);
+        return Manifest.read(changed);
+    }
+
+    /** The behavior named {@code name} of {@code module}. */
+    private static ObjectNode behavior(ObjectNode module, String name) {
+        for (JsonNode it : module.get("behaviors")) {
+            if (it.get("name").stringValue().equals(name)) {
+                return (ObjectNode) it;
+            }
+        }
+        throw new IllegalArgumentException("no behavior " + name);
+    }
 
     private static NativeCompiler.Library built(Path into, String... sources) throws Exception {
         return NativeCompiler.library(CheckedProgram.of(List.of(sources)), into.resolve("native"));
@@ -135,6 +173,62 @@ class AManifestIsReadAsTheDriverPromisesItTest {
         }))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("souther4_m_stock_l_value_at");
+    }
+
+    /**
+     * How a case no declaration names is made and read is said for every such case a host crosses,
+     * wherever the manifest names it, and not only where a behavior answers it: here what a host
+     * implements answers the `Int`, and no behavior does. A manifest leaving it out is refused as
+     * incomplete, and not read as a union a host's language cannot hold.
+     */
+    @Test
+    void aCaseAHostCrossesCarriedWithNothingToMakeItIsRefused(@TempDir Path into)
+            throws Exception {
+        NativeCompiler.Library library = built(into, CARRYING);
+
+        assertThatThrownBy(() -> readWholeAfter(into, library, manifest -> {
+            ArrayNode cases = (ArrayNode) manifest.get("cases");
+            for (int at = cases.size() - 1; at >= 0; at--) {
+                if (cases.get(at).get("case").get("name").stringValue().equals("Int")) {
+                    cases.remove(at);
+                }
+            }
+            ArrayNode behaviors = (ArrayNode) manifest.get("modules").get(0).get("behaviors");
+            for (int at = behaviors.size() - 1; at >= 0; at--) {
+                if (behaviors.get(at).get("name").stringValue().equals("quantityOf")) {
+                    behaviors.remove(at);
+                }
+            }
+        }))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("holds Primitive[name=Int], and nothing of how a value of it"
+                        + " is made or read");
+    }
+
+    /**
+     * An answer that is a union says what tells its cases apart, and that is there exactly where
+     * the behavior can be called; a set of cases is never empty. A manifest breaking any of these
+     * is refused, and not read as a behavior a host cannot be handed the answer of.
+     */
+    @Test
+    void aUnionAnswerIsSaidWholeOrTheManifestIsRefused(@TempDir Path into) throws Exception {
+        NativeCompiler.Library library = built(into, CARRYING);
+
+        assertThatThrownBy(() -> readAfter(into, library, "owing",
+                module -> ((ObjectNode) behavior(module, "quantityOf").get("answers"))
+                        .putNull("union")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("says nothing of its cases");
+        assertThatThrownBy(() -> readAfter(into, library, "owing",
+                module -> ((ObjectNode) behavior(module, "quantityOf").get("answers").get("union"))
+                        .putNull("case")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("its answer's case is told no way");
+        assertThatThrownBy(() -> readAfter(into, library, "owing",
+                module -> ((ArrayNode) behavior(module, "quantityOf").get("answers").get("union")
+                        .get("cases")).removeAll()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("with no case in it");
     }
 
     /** One element twice in a module is two things said of one list. */
