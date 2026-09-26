@@ -12,6 +12,7 @@ import tools.jackson.databind.node.ObjectNode;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
 
@@ -146,6 +147,56 @@ class AManifestIsReadAsTheDriverPromisesItTest {
             lists.add(lists.get(0).deepCopy());
         }))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("module `shop` two lists of");
+                .hasMessageContaining("module `shop` says two lists of");
+    }
+
+    private static final Manifest.Element VALUES = new Manifest.Element(false, Manifest.Word.VALUE);
+
+    private static Manifest.ListCrossing listOf(Manifest.Element element, String name) {
+        List<Manifest.Parameter> built = new ArrayList<>(
+                List.of(Manifest.Parameter.given(Manifest.Word.COUNT)));
+        element.words().forEach(word -> built.add(Manifest.Parameter.slice(word)));
+        List<Manifest.Parameter> at = new ArrayList<>(List.of(
+                Manifest.Parameter.given(Manifest.Word.LIST),
+                Manifest.Parameter.given(Manifest.Word.COUNT)));
+        element.words().forEach(word -> at.add(Manifest.Parameter.room(word)));
+        return new Manifest.ListCrossing(element,
+                new Manifest.Function(name + "_construct", built, Manifest.Word.LIST),
+                new Manifest.Function(name + "_length",
+                        List.of(Manifest.Parameter.given(Manifest.Word.LIST)), Manifest.Word.COUNT),
+                new Manifest.Function(name + "_at", at, Manifest.Word.BOOL));
+    }
+
+    private static Manifest.Module moduleOf(List<Manifest.ListCrossing> lists) {
+        return new Manifest.Module("m", List.of(), List.of(), List.of(), List.of(), List.of(), lists);
+    }
+
+    /**
+     * A part of a manifest holds what the driver promises of it however it is made, and not only
+     * where a manifest is read: a generator handed a module is handed one that keeps its promises.
+     */
+    @Test
+    void aPartOfAManifestIsNotMadeBreakingAPromise() {
+        Manifest.ListCrossing values = listOf(VALUES, "values");
+
+        assertThatThrownBy(() -> new Manifest.ListCrossing(
+                new Manifest.Element(true, Manifest.Word.INT),
+                values.construct(), values.length(), values.at()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("values_construct");
+        assertThatThrownBy(() -> moduleOf(List.of(values, listOf(VALUES, "again"))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("module `m` says two lists of");
+    }
+
+    /** What a module was made of is copied, so changing it afterwards changes nothing it holds. */
+    @Test
+    void aModuleHoldsWhatItWasMadeOfAndNotTheListItWasHanded() {
+        List<Manifest.ListCrossing> handed = new ArrayList<>(List.of(listOf(VALUES, "values")));
+        Manifest.Module module = moduleOf(handed);
+
+        handed.add(listOf(VALUES, "again"));
+
+        assertThat(module.lists()).hasSize(1);
     }
 }

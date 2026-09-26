@@ -25,33 +25,37 @@ import java.util.List;
  * <p>Nothing here is of any host's language. Where this answers null, the ABI hands a value of the
  * type no way, and no host is handed one. Where it answers a shape, a host's generator still
  * decides whether its language has a way to hold what crosses: a union no declaration names crosses
- * as one word both ways, and a language whose every value of it has to be an object of a class the
- * binding generated has none for a union whose member it generated no class for.
+ * as one word, and a language whose every value of it has to be an object of a class the binding
+ * generated has none for a union whose member it generated no class for.
  *
- * <p>The two ways are asked apart ({@link #given}, {@link #received}), because a union no
+ * <p>A shape says what crosses, and not which way: the words are the same both ways. Which way a
+ * value crosses at all is asked apart ({@link #given}, {@link #received}), because a union no
  * declaration names crosses one way and not the other. A host handing one over hands over the
  * value, which already is the case it is. A host handed one has to be told which case it is before
  * it can hold it as that, and only a behavior's answer says ({@link Told}); a union anywhere else,
- * at any depth, is one a host is handed no way.
+ * at any depth, is one a host is handed no way. So a {@link Whole} of a union is a shape
+ * {@link #given} answers and {@link #received} never does, and no type here claims a shape crosses
+ * both ways.
+ *
+ * <p>Each shape holds what the ABI gives one, whoever makes it: a word that is not the one its type
+ * crosses as, a list through another element's functions, or a union told its case by what does not
+ * tell cases apart is refused where it would be made.
  */
 public sealed interface CrossingShape {
 
     /** The words a value of it is handed over as, in order. */
     List<Word> words();
 
-    /** How a value crosses from the library to a host. */
-    sealed interface Received extends CrossingShape {
-    }
-
     /**
-     * How a value crosses both ways, and the same way each: one word, or a presence beside one for
-     * an optional.
+     * How a value crosses wherever it stands, the way a field of its type is handed across: one
+     * word, or a presence beside one. Everything but a union a behavior answers, which is
+     * {@link Told} its case.
      */
-    sealed interface Both extends Received {
+    sealed interface Plain extends CrossingShape {
     }
 
     /** One word: what an optional is a presence beside, and what a list holds either of. */
-    sealed interface Single extends Both {
+    sealed interface Single extends Plain {
 
         Word word();
 
@@ -67,17 +71,34 @@ public sealed interface CrossingShape {
      * never reads behind.
      *
      * @param type what the model says it is: a {@link Type.Primitive}, a {@link Type.Declared} or
-     *             a {@link Type.Union}
+     *             a {@link Type.Union}, whose word {@code word} is
      */
     record Whole(Word word, Type type) implements Single {
+
+        public Whole {
+            Word crosses = wordOf(type);
+            if (crosses != word) {
+                throw new IllegalArgumentException(type + " crosses as "
+                        + (crosses == null ? "no one word" : crosses) + ", not as " + word);
+            }
+        }
     }
 
     /**
      * A list, as one word: built by {@code crossing}'s {@code construct} out of a column for each
      * word {@code element} crosses as, and read as {@code length} elements, each written by
-     * {@code at} into room for those words.
+     * {@code at} into room for those words. {@code crossing} is the one for how {@code element}
+     * crosses.
      */
-    record Listed(Both element, ListCrossing crossing) implements Single {
+    record Listed(Plain element, ListCrossing crossing) implements Single {
+
+        public Listed {
+            if (!crossing.element().equals(elementOf(element))) {
+                throw new IllegalArgumentException("a list of " + elementOf(element)
+                        + " is not built through " + crossing.construct().name() + ", which builds"
+                        + " a list of " + crossing.element());
+            }
+        }
 
         @Override
         public Word word() {
@@ -89,7 +110,7 @@ public sealed interface CrossingShape {
      * An optional: whether it holds a value, as a {@code BOOL}, then the value, or nothing where it
      * holds none.
      */
-    record Present(Single of) implements Both {
+    record Present(Single of) implements Plain {
 
         @Override
         public List<Word> words() {
@@ -101,8 +122,20 @@ public sealed interface CrossingShape {
      * A union no declaration names, answered by a behavior: one word, and {@code which} answers
      * which of {@code cases} a value is, counting them in the order they are listed. A member that
      * is a sum stands among them as its own cases.
+     *
+     * @throws IllegalStateException where the manifest says {@code which} is other than what tells
+     *                               a union's cases apart
      */
-    record Told(Type.Union union, List<Case> cases, Function which) implements Received {
+    record Told(Type.Union union, List<Case> cases, Function which) implements CrossingShape {
+
+        public Told {
+            if (wordOf(union) == null) {
+                throw new IllegalArgumentException(union + " is handed to a host no way, as a"
+                        + " member of it is not a declared type");
+            }
+            agreesAsWhich(which);
+            cases = List.copyOf(cases);
+        }
 
         @Override
         public List<Word> words() {
@@ -117,7 +150,7 @@ public sealed interface CrossingShape {
      * @throws IllegalStateException where a list crosses and {@code module} says nothing to build
      *                               one of its element through
      */
-    static @Nullable Both given(Module module, Type type) {
+    static @Nullable Plain given(Module module, Type type) {
         if (type instanceof Type.Option option) {
             Single of = single(module, option.of());
             return of == null ? null : new Present(of);
@@ -133,8 +166,8 @@ public sealed interface CrossingShape {
      * @throws IllegalStateException where a list crosses and {@code module} says nothing to build
      *                               one of its element through
      */
-    static @Nullable Both received(Module module, Type type) {
-        Both shape = given(module, type);
+    static @Nullable Plain received(Module module, Type type) {
+        Plain shape = given(module, type);
         return shape == null || holdsAUnion(shape) ? null : shape;
     }
 
@@ -146,15 +179,14 @@ public sealed interface CrossingShape {
      * @throws IllegalStateException where the manifest says {@code which} is other than what tells
      *                               a union's cases apart
      */
-    static @Nullable Received received(Module module, Answer answer) {
+    static @Nullable CrossingShape received(Module module, Answer answer) {
         if (!(answer.type() instanceof Type.Union union)) {
             return received(module, answer.type());
         }
         UnionAnswer cases = answer.union();
-        if (given(module, union) == null || cases == null || cases.which() == null) {
+        if (wordOf(union) == null || cases == null || cases.which() == null) {
             return null;
         }
-        agreesAsWhich(cases.which());
         return new Told(union, cases.cases(), cases.which());
     }
 
@@ -194,7 +226,7 @@ public sealed interface CrossingShape {
      * Holds a field's {@code read} to taking the value and answering the field: one word as its
      * answer, and an optional as whether it is there, the value written through room.
      */
-    static void agreesAsRead(Function read, Both field) {
+    static void agreesAsRead(Function read, Plain field) {
         switch (field) {
             case Single single -> agrees(read, List.of(Word.VALUE), List.of(), single.word());
             case Present present -> agrees(read, List.of(Word.VALUE), List.of(present.of().word()),
@@ -261,28 +293,38 @@ public sealed interface CrossingShape {
     // Working a shape out.
 
     /**
-     * How a value of {@code type} crosses as one word, or null where it does not. Every primitive
-     * the ABI hands over named, as {@code host.rs} names them: one the manifest spells otherwise is
-     * one no host is handed.
+     * The one word a value of {@code type} is itself handed over as, or null where it is not one:
+     * every primitive the ABI hands over named, as {@code host.rs} names them, so one the manifest
+     * spells otherwise is one no host is handed. A list is one word too, but through functions of
+     * its module's ({@link Listed}), and is not asked of here.
      */
-    private static @Nullable Single single(Module module, Type type) {
+    private static @Nullable Word wordOf(Type type) {
         return switch (type) {
             case Type.Primitive it -> switch (it.name()) {
-                case "Int" -> new Whole(Word.INT, it);
-                case "Bool" -> new Whole(Word.BOOL, it);
-                case "String" -> new Whole(Word.STRING, it);
+                case "Int" -> Word.INT;
+                case "Bool" -> Word.BOOL;
+                case "String" -> Word.STRING;
                 default -> null;
             };
-            case Type.Declared it -> new Whole(Word.VALUE, it);
+            case Type.Declared it -> Word.VALUE;
             // What holds a union holds one of its members, each of which says which it is, where
             // every member is a declared type.
             case Type.Union it -> it.cases().stream().allMatch(Case.Declared.class::isInstance)
-                    ? new Whole(Word.VALUE, it) : null;
-            case Type.ListOf it -> listed(module, it);
-            // An optional inside an optional would need a presence for each.
+                    ? Word.VALUE : null;
+            case Type.ListOf it -> null;
             case Type.Option it -> null;
             case Type.Unrepresented it -> null;
         };
+    }
+
+    /** How a value of {@code type} crosses as one word, or null where it does not. */
+    private static @Nullable Single single(Module module, Type type) {
+        if (type instanceof Type.ListOf list) {
+            return listed(module, list);
+        }
+        // An optional inside an optional would need a presence for each, and has no word.
+        Word word = wordOf(type);
+        return word == null ? null : new Whole(word, type);
     }
 
     /**
@@ -293,14 +335,11 @@ public sealed interface CrossingShape {
      * can reach.
      */
     private static @Nullable Listed listed(Module module, Type.ListOf list) {
-        Both element = given(module, list.of());
+        Plain element = given(module, list.of());
         if (element == null) {
             return null;
         }
-        Element shape = switch (element) {
-            case Present present -> new Element(true, present.of().word());
-            case Single single -> new Element(false, single.word());
-        };
+        Element shape = elementOf(element);
         ListCrossing crossing = module.lists().stream()
                 .filter(it -> it.element().equals(shape))
                 .findFirst()
@@ -310,7 +349,15 @@ public sealed interface CrossingShape {
         return new Listed(element, crossing);
     }
 
-    private static boolean holdsAUnion(Both shape) {
+    /** How a manifest says an element crosses as {@code shape}. */
+    private static Element elementOf(Plain shape) {
+        return switch (shape) {
+            case Present present -> new Element(true, present.of().word());
+            case Single single -> new Element(false, single.word());
+        };
+    }
+
+    private static boolean holdsAUnion(Plain shape) {
         return switch (shape) {
             case Whole whole -> whole.type() instanceof Type.Union;
             case Listed listed -> holdsAUnion(listed.element());

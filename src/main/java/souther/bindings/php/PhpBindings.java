@@ -332,7 +332,7 @@ public final class PhpBindings {
 
         /** How PHP hands the library a value of {@code type}, or null where it has no way to. */
         @Nullable Given given(Type type) {
-            CrossingShape.Both shape = CrossingShape.given(module, type);
+            CrossingShape.Plain shape = CrossingShape.given(module, type);
             if (shape instanceof CrossingShape.Whole whole && whole.type() instanceof Type.Union union) {
                 List<Whole> members = members(union);
                 return members == null ? null : new OneOf(whole, members);
@@ -342,7 +342,7 @@ public final class PhpBindings {
 
         /** How the library hands PHP a value of {@code type}, or null where it has no way to. */
         @Nullable Received received(Type type) {
-            CrossingShape.Both shape = CrossingShape.received(module, type);
+            CrossingShape.Plain shape = CrossingShape.received(module, type);
             return shape == null ? null : both(shape);
         }
 
@@ -359,7 +359,7 @@ public final class PhpBindings {
         @Nullable Received received(Manifest.Answer answer, String what) {
             return switch (CrossingShape.received(module, answer)) {
                 case null -> null;
-                case CrossingShape.Both both -> both(both);
+                case CrossingShape.Plain plain -> both(plain);
                 case CrossingShape.Told told -> {
                     List<Whole> members = members(told.union());
                     if (members == null) {
@@ -409,11 +409,11 @@ public final class PhpBindings {
         }
 
         /** How PHP holds a value crossing both ways in {@code shape}, or null where it has no way. */
-        private @Nullable Both both(CrossingShape.Both shape) {
+        private @Nullable Both both(CrossingShape.Plain shape) {
             return switch (shape) {
                 case CrossingShape.Present present -> {
                     Single of = single(present.of());
-                    yield of == null ? null : new Present(present, of);
+                    yield of == null ? null : new Present(of);
                 }
                 case CrossingShape.Single single -> single(single);
             };
@@ -431,7 +431,7 @@ public final class PhpBindings {
                 case CrossingShape.Whole whole -> whole(whole);
                 case CrossingShape.Listed listed -> {
                     Both element = both(listed.element());
-                    yield element == null ? null : new Listed(listed, element);
+                    yield element == null ? null : new Listed(element, listed.crossing());
                 }
             };
         }

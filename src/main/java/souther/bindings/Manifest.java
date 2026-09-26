@@ -39,7 +39,10 @@ import static net.unit8.raoh.json.JsonDecoders.strict;
  * functions as something they are not.
  *
  * <p>Made only by {@link #read}, so a manifest a generator holds is one read that way; what it is
- * made of is plain records a generator takes apart as it needs.
+ * made of is plain records a generator takes apart as it needs. What the driver promises of a
+ * manifest is held by the part that holds it, wherever that part is made: a list by the shape of
+ * its functions ({@link ListCrossing}), a module by saying one list for each element
+ * ({@link Module}), and what constructing a behavior requires by being closed over the whole.
  */
 public final class Manifest {
 
@@ -58,8 +61,30 @@ public final class Manifest {
     private final List<Function> runtime;
     private final List<Module> modules;
 
+    /**
+     * What constructing a behavior requires is closed, as the driver holds a library's surface to
+     * be: every behavior a construction requires is one a module here constructs or asks a host to
+     * implement. A construction naming what nothing constructs would be found out by a host, at a
+     * call, as something no binding can build.
+     */
     private Manifest(int abi, Map<String, Integer> statuses, Map<String, Integer> outcomes,
                      List<Function> runtime, List<Module> modules) {
+        Set<String> constructible = new HashSet<>();
+        for (Module module : modules) {
+            module.constructions().forEach(it -> constructible.add(module.name() + "." + it.name()));
+            module.injections().forEach(it -> constructible.add(module.name() + "." + it.name()));
+        }
+        for (Module module : modules) {
+            for (Construction construction : module.constructions()) {
+                for (Required required : construction.requires()) {
+                    if (!constructible.contains(required.key())) {
+                        throw new IllegalArgumentException("it says " + module.name() + "."
+                                + construction.name() + " requires " + required.key()
+                                + ", which nothing in it constructs or asks a host to implement");
+                    }
+                }
+            }
+        }
         this.abi = abi;
         this.statuses = Collections.unmodifiableMap(new LinkedHashMap<>(statuses));
         this.outcomes = Collections.unmodifiableMap(new LinkedHashMap<>(outcomes));
@@ -126,18 +151,63 @@ public final class Manifest {
     public record Function(String name, List<Parameter> takes, @Nullable Word answers) {
     }
 
+    /**
+     * What one module offers a host. It says one list for each way an element crosses, since a
+     * list of one element built through two sets of functions is two things said of one list.
+     */
     public record Module(String name, List<Behavior> behaviors, List<Construction> constructions,
                          List<Injection> injections,
                          List<PublishedValue> values, List<Declaration> declarations,
                          List<ListCrossing> lists) {
+
+        public Module {
+            behaviors = List.copyOf(behaviors);
+            constructions = List.copyOf(constructions);
+            injections = List.copyOf(injections);
+            values = List.copyOf(values);
+            declarations = List.copyOf(declarations);
+            lists = List.copyOf(lists);
+            Set<Element> listed = new HashSet<>();
+            for (ListCrossing list : lists) {
+                if (!listed.add(list.element())) {
+                    throw new IllegalArgumentException("module `" + name + "` says two lists of "
+                            + list.element());
+                }
+            }
+        }
     }
 
     /**
      * What a list whose elements cross as {@code element} is built and read through: a list of one
-     * declared type through the same functions as a list of any other.
+     * declared type through the same functions as a list of any other. Each function is of the
+     * shape a list of that element is: {@code (count, a slice for each word an element crosses as)
+     * -> list}, {@code (list) -> count}, and {@code (list, index, room for each word) -> bool}.
      */
     public record ListCrossing(Element element, Function construct, Function length,
                                Function at) {
+
+        public ListCrossing {
+            List<Word> words = element.words();
+            List<Parameter> built = new ArrayList<>();
+            built.add(Parameter.given(Word.COUNT));
+            words.forEach(word -> built.add(Parameter.slice(word)));
+            List<Parameter> read = new ArrayList<>(
+                    List.of(Parameter.given(Word.LIST), Parameter.given(Word.COUNT)));
+            words.forEach(word -> read.add(Parameter.room(word)));
+            shaped(element, construct, built, Word.LIST);
+            shaped(element, length, List.of(Parameter.given(Word.LIST)), Word.COUNT);
+            shaped(element, at, read, Word.BOOL);
+        }
+
+        private static void shaped(Element element, Function function, List<Parameter> takes,
+                                   Word answers) {
+            if (!takes.equals(function.takes()) || answers != function.answers()) {
+                throw new IllegalArgumentException("a list of " + element + " is built and read"
+                        + " through " + function.name() + ", which takes " + function.takes()
+                        + " and answers " + function.answers() + " rather than " + takes + " and "
+                        + answers);
+            }
+        }
     }
 
     /** How an element of a list crosses: one word, or a presence beside one for an optional. */
@@ -314,75 +384,16 @@ public final class Manifest {
                     + says.format() + " for ABI generation " + says.abi() + ", and this generator"
                     + " reads version " + VERSION + " of " + FORMAT + " for generation " + ABI);
         }
-        Manifest manifest = MANIFEST.decode(read).orElseThrow(issues -> new IllegalArgumentException(
-                path + " is not a manifest this generator reads: " + issues));
-        String broken = manifest.broken();
-        if (broken != null) {
+        Result<Manifest> decoded;
+        try {
+            decoded = MANIFEST.decode(read);
+        } catch (IllegalArgumentException broken) {
+            // What a part of it holds of itself, refused where the part is made.
             throw new IllegalArgumentException(path + " is not a manifest this generator reads: "
-                    + broken);
+                    + broken.getMessage(), broken);
         }
-        return manifest;
-    }
-
-    /**
-     * What this says that a manifest promises it does not, or null where it keeps every promise a
-     * generator relies on without working out how a value crosses: what constructing a behavior
-     * requires is closed, and a module says one list for each way an element crosses, built and
-     * read through functions of the shape a list of that element is.
-     *
-     * <p>What a manifest says only in agreement with how a value crosses, such as a function
-     * handing a list across with a list of that element here to build it through, is held where
-     * that is worked out ({@link CrossingShape}).
-     */
-    private @Nullable String broken() {
-        Set<String> constructible = new HashSet<>();
-        for (Module module : modules) {
-            module.constructions().forEach(it -> constructible.add(module.name() + "." + it.name()));
-            module.injections().forEach(it -> constructible.add(module.name() + "." + it.name()));
-        }
-        for (Module module : modules) {
-            for (Construction construction : module.constructions()) {
-                for (Required required : construction.requires()) {
-                    if (!constructible.contains(required.key())) {
-                        return "it says " + module.name() + "." + construction.name() + " requires "
-                                + required.key() + ", which nothing in it constructs or asks a host"
-                                + " to implement";
-                    }
-                }
-            }
-            Set<Element> listed = new HashSet<>();
-            for (ListCrossing list : module.lists()) {
-                if (!listed.add(list.element())) {
-                    return "it gives module `" + module.name() + "` two lists of " + list.element();
-                }
-                List<Word> words = list.element().words();
-                List<Parameter> built = new ArrayList<>();
-                built.add(Parameter.given(Word.COUNT));
-                words.forEach(word -> built.add(Parameter.slice(word)));
-                List<Parameter> at = new ArrayList<>(
-                        List.of(Parameter.given(Word.LIST), Parameter.given(Word.COUNT)));
-                words.forEach(word -> at.add(Parameter.room(word)));
-                String shaped = shaped(list.construct(), built, Word.LIST);
-                if (shaped == null) {
-                    shaped = shaped(list.length(), List.of(Parameter.given(Word.LIST)), Word.COUNT);
-                }
-                if (shaped == null) {
-                    shaped = shaped(list.at(), at, Word.BOOL);
-                }
-                if (shaped != null) {
-                    return shaped + ", which a list of " + list.element() + " is built and read"
-                            + " through";
-                }
-            }
-        }
-        return null;
-    }
-
-    /** What {@code function} is said to be, where that is not {@code takes} and {@code answers}. */
-    private static @Nullable String shaped(Function function, List<Parameter> takes, Word answers) {
-        return takes.equals(function.takes()) && answers == function.answers() ? null
-                : "it says " + function.name() + " takes " + function.takes() + " and answers "
-                + function.answers() + " rather than " + takes + " and " + answers;
+        return decoded.orElseThrow(issues -> new IllegalArgumentException(
+                path + " is not a manifest this generator reads: " + issues));
     }
 
     /** What a manifest says it is, read past everything else it says. */

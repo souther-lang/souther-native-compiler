@@ -170,4 +170,27 @@ class AValueCrossesInTheShapeTheAbiGivesItTest {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("this generator would call it with");
     }
+
+    /**
+     * A shape holds what the ABI gives one however it is made: a word its type does not cross as,
+     * a list through another element's functions, and a union told its case where a member is not
+     * a declared type are refused where they would be made.
+     */
+    @Test
+    void aShapeIsNotMadeOtherThanTheAbiGivesIt() {
+        Type.Union withAnInt = new Type.Union(List.of(
+                new Case.Declared("m", "Item"), new Case.Other("primitive", "Int")));
+        Function which = new Function("which", List.of(Parameter.given(Word.VALUE)), Word.CASE);
+        ListCrossing values = module(new Element(false, Word.VALUE)).lists().getFirst();
+
+        assertThatThrownBy(() -> new Whole(Word.INT, ITEM))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new Whole(Word.VALUE, withAnInt))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new Listed(new Whole(Word.INT, INT), values))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("is not built through construct_0");
+        assertThatThrownBy(() -> new Told(withAnInt, withAnInt.cases(), which))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
 }
