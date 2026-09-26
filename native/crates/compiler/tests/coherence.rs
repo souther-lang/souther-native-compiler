@@ -451,6 +451,54 @@ fn an_arm_reads_a_present_value_as_what_the_optional_holds() {
     is_the_halves_disagreeing(&helpers(&[h(&[&optional], &fork(A))]), "m.h");
 }
 
+/// An arm binds what each of its tests leaves to read. A test that an optional holds nothing
+/// leaves nothing, so an arm binding a value there is the two halves disagreeing, and not this
+/// backend being behind; and an arm testing for `None` among the cases of a union binds the value
+/// as one of those cases, the way an arm testing for declared cases does.
+#[test]
+fn an_arm_binds_what_each_of_its_tests_leaves_to_read() {
+    let optional = option_of(S);
+    let binding_nothing = node(
+        "match",
+        &format!(
+            r#""subject":{},"arms":[{},{}]"#,
+            read(0, &optional),
+            arm(r#"{"tests":"held"}"#, Some((1, S)), &read(1, S)),
+            arm(
+                r#"{"tests":"nothing"}"#,
+                Some((2, &optional)),
+                &widen(&unit("m.A"), S)
+            )
+        ),
+        S,
+    );
+    is_the_halves_disagreeing(
+        &helpers(&[h(&[&optional], &binding_nothing)]),
+        "leaves nothing to bind",
+    );
+
+    let none = r#"{"is":"language","case":"NONE"}"#;
+    let a_case = r#"{"is":"declared","declared":"m.A"}"#;
+    let b_case = r#"{"is":"declared","declared":"m.B"}"#;
+    let union = format!(r#"{{"union":[{none},{a_case},{b_case}]}}"#);
+    let tested = format!(r#"{{"union":[{none},{a_case}]}}"#);
+    let with_cases = node(
+        "match",
+        &format!(
+            r#""subject":{},"arms":[{},{}]"#,
+            read(0, &union),
+            arm(
+                &format!(r#"{{"tests":"which","atoms":[{none},{a_case}]}}"#),
+                Some((1, &tested)),
+                &int(1)
+            ),
+            arm(&which(&["m.B"]), None, &int(2)),
+        ),
+        INT,
+    );
+    reads_whole(&helpers(&[h(&[&union], &with_cases)]));
+}
+
 /// What a present value holds is what the optional holds.
 #[test]
 fn a_present_value_holds_a_value_of_what_its_optional_holds() {

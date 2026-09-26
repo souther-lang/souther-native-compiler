@@ -1800,12 +1800,44 @@ impl<'a> Walk<'_, 'a> {
     /// What an arm reads the value it forks on as, against what reaches the arm.
     ///
     /// The one place a read is narrower than what it reads from, and narrower only by what the
-    /// arm tested: every value that reaches the arm is a value of what it binds, and what it binds
-    /// is no wider than the subject. An optional's present value is read out of the optional, and
-    /// is what the optional holds.
+    /// arm tested. Each selector is asked what it leaves to be read: a test of which case a value is
+    /// leaves the value, as one of the cases it tests, and a test that an optional holds a value
+    /// leaves what it holds. Every value that reaches the arm is one of those, so what the arm binds
+    /// is no narrower than any of them and no wider than what it reads them from.
+    ///
+    /// A test that an optional holds nothing leaves nothing to read, so an arm binding a value
+    /// where one of its selectors is that test is not an arm the checker writes, whatever else it
+    /// tests; nor is one whose selectors read the value two ways, since nothing tells at run time
+    /// which of the two the arm was reached by. Neither is this backend being behind.
     fn arm_binds(&mut self, subject: &Ty, selects: &[Selects], binds: &Ty) -> Result<()> {
-        match selects {
-            [Selects::Held] => {
+        let mut read_out = None;
+        let mut tested = Vec::new();
+        for selector in selects {
+            let holds_it = match selector {
+                Selects::Nothing => bail!(
+                    "{}: an arm binds a value where it tests that {} holds nothing, which leaves \
+                     nothing to bind: the two halves disagree",
+                    self.owner,
+                    subject.spelt()
+                ),
+                Selects::Held => true,
+                Selects::Which { atoms } => {
+                    tested.extend(atoms.iter().cloned());
+                    false
+                }
+            };
+            if *read_out.get_or_insert(holds_it) != holds_it {
+                bail!(
+                    "{}: an arm binds {} as what it holds under one of its tests and as itself \
+                     under another: the two halves disagree",
+                    self.owner,
+                    subject.spelt()
+                );
+            }
+        }
+        match read_out {
+            None => bail!("{}: an arm binds a value and tests nothing", self.owner),
+            Some(true) => {
                 let Ty::Option { option } = subject else {
                     bail!(
                         "{}: an arm reads a present value out of {}, which is not optional",
@@ -1820,14 +1852,7 @@ impl<'a> Walk<'_, 'a> {
                     "what the optional holds",
                 )
             }
-            _ if selects.iter().all(|it| matches!(it, Selects::Which { .. })) => {
-                let tested: Vec<Case> = selects
-                    .iter()
-                    .flat_map(|it| match it {
-                        Selects::Which { atoms } => atoms.clone(),
-                        Selects::Held | Selects::Nothing => Vec::new(),
-                    })
-                    .collect();
+            Some(false) => {
                 self.fits(
                     "a case an arm tests is read as what it binds",
                     &Ty::Union { union: tested },
@@ -1838,13 +1863,6 @@ impl<'a> Walk<'_, 'a> {
                     binds,
                     subject,
                 );
-                Ok(())
-            }
-            _ => {
-                self.not_lowered(format!(
-                    "an arm binding the value of {} it tests as more than a present value",
-                    subject.spelt()
-                ));
                 Ok(())
             }
         }
