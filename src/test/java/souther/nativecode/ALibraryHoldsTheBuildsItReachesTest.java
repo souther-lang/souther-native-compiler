@@ -103,7 +103,7 @@ class ALibraryHoldsTheBuildsItReachesTest {
 
     @Test
     void aHostReachesBothBuildsThroughOneLibrary(@TempDir Path into) throws Exception {
-        byte[] before = NativeArtifacts.object(CheckedProgram.of(List.of(BUILT_BEFORE)));
+        byte[] before = NativeArtifacts.object(Checked.of(List.of(BUILT_BEFORE)));
         NativeCompiler.Library library = NativeCompiler.library(program(), List.of(before), into);
 
         String declarations = Files.readString(library.declarations(), StandardCharsets.UTF_8);
@@ -135,7 +135,7 @@ class ALibraryHoldsTheBuildsItReachesTest {
 
     private static CheckedProgram program() {
         Map<String, ClassFileImage> published = Compiler.compile(BUILT_BEFORE);
-        return CheckedProgram.of(List.of(BUILDING), ModulePath.of(published));
+        return Checked.of(List.of(BUILDING), ModulePath.of(published));
     }
 
     private static String said(List<String> command) throws Exception {

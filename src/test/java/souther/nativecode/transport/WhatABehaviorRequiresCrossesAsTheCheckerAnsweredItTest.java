@@ -1,9 +1,9 @@
 package souther.nativecode.transport;
 
+import souther.nativecode.Checked;
 import org.junit.jupiter.api.Test;
 import souther.compiler.Compiler;
 import souther.compiler.meta.ModulePath;
-import souther.compiler.program.CheckedProgram;
 
 import java.util.List;
 
@@ -40,7 +40,7 @@ class WhatABehaviorRequiresCrossesAsTheCheckerAnsweredItTest {
             """;
 
     private static String written() {
-        return ProgramWriter.written(CheckedProgram.of(List.of(SHOP)));
+        return ProgramWriter.written(Checked.of(List.of(SHOP)));
     }
 
     /** The target of {@code name} in {@code module}, from its name to the end of its object. */
@@ -124,7 +124,7 @@ class WhatABehaviorRequiresCrossesAsTheCheckerAnsweredItTest {
      */
     @Test
     void aBehaviorAnotherBuildImplementsRequiresWhatThatBuildPublished() {
-        String written = ProgramWriter.written(CheckedProgram.of(List.of(PIPED),
+        String written = ProgramWriter.written(Checked.of(List.of(PIPED),
                 ModulePath.of(Compiler.compile(PORT))));
 
         assertThat(target(written, "lib.port", "looked")).contains("\"is\":\"elsewhere\"");

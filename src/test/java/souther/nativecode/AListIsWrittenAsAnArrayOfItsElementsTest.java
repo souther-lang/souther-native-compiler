@@ -1,7 +1,6 @@
 package souther.nativecode;
 
 import org.junit.jupiter.api.Test;
-import souther.compiler.program.CheckedProgram;
 
 import java.util.List;
 
@@ -47,7 +46,7 @@ class AListIsWrittenAsAnArrayOfItsElementsTest {
                 .harness();
 
         assertThat(AValueIsReadFromTheFormItIsWrittenInTest.run(
-                CheckedProgram.of(List.of(WIRE)), harness)).isEqualTo("""
+                Checked.of(List.of(WIRE)), harness)).isEqualTo("""
                 order: value {"number":1,"lines":[{"sku":"a","quantity":2},{"sku":"b","quantity":1}]}
                 order empty: value {"number":1,"lines":[]}
                 order bad line: issues [@/lines/2/quantity type_mismatch actual=string expected=Int]

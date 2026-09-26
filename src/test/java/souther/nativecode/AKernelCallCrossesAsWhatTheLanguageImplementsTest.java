@@ -35,7 +35,7 @@ class AKernelCallCrossesAsWhatTheLanguageImplementsTest {
 
     @Test
     void aKernelCallAnswersTheSameSumAnOperatorDoes() throws Exception {
-        CheckedProgram program = CheckedProgram.of(List.of(SOURCE));
+        CheckedProgram program = Checked.of(List.of(SOURCE));
         Running running = Running.of(program);
         CheckedModule module = program.modules().getFirst();
         CheckedBehavior add = module.behaviors().stream()
@@ -55,7 +55,7 @@ class AKernelCallCrossesAsWhatTheLanguageImplementsTest {
      */
     @Test
     void aKernelCallPastTheEndAnswersRequiredFormHasNoPlace() throws Exception {
-        CheckedProgram program = CheckedProgram.of(List.of(SOURCE));
+        CheckedProgram program = Checked.of(List.of(SOURCE));
         Running running = Running.of(program);
         CheckedModule module = program.modules().getFirst();
         CheckedBehavior add = module.behaviors().stream()

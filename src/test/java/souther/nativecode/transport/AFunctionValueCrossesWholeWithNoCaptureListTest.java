@@ -1,7 +1,7 @@
 package souther.nativecode.transport;
 
+import souther.nativecode.Checked;
 import org.junit.jupiter.api.Test;
-import souther.compiler.program.CheckedProgram;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -107,12 +107,12 @@ class AFunctionValueCrossesWholeWithNoCaptureListTest {
     @Test
     void theFixtureTheDriverIsTestedAgainstIsWhatThisWrites() throws IOException {
         assertThat(Files.readString(FIXTURE, StandardCharsets.UTF_8).strip())
-                .isEqualTo(ProgramWriter.written(CheckedProgram.of(List.of(MODULE))));
+                .isEqualTo(ProgramWriter.written(Checked.of(List.of(MODULE))));
     }
 
     @Test
     void aFunctionTypeCrossesAsTakesAndAnswersNestedUnderFn() {
-        String written = ProgramWriter.written(CheckedProgram.of(List.of(MODULE)));
+        String written = ProgramWriter.written(Checked.of(List.of(MODULE)));
 
         assertThat(written).contains(
                 "\"type\":{\"fn\":{\"takes\":[{\"prim\":\"INT\"}],\"answers\":{\"prim\":\"INT\"}}}");
@@ -120,7 +120,7 @@ class AFunctionValueCrossesWholeWithNoCaptureListTest {
 
     @Test
     void aBlockCarriesASiteAndItsOwnParametersAndNothingAboutWhatItReaches() {
-        String written = ProgramWriter.written(CheckedProgram.of(List.of(MODULE)));
+        String written = ProgramWriter.written(Checked.of(List.of(MODULE)));
 
         assertThat(written).contains("\"core\":\"block\",\"site\":0,\"parameters\":[{\"binding\":");
         // Never a capture list: closure conversion is this backend's own question, not written
@@ -131,7 +131,7 @@ class AFunctionValueCrossesWholeWithNoCaptureListTest {
 
     @Test
     void anApplyNamesItsFunctionTheSameWayAnyOtherOperandIsNamed() {
-        String written = ProgramWriter.written(CheckedProgram.of(List.of(MODULE)));
+        String written = ProgramWriter.written(Checked.of(List.of(MODULE)));
 
         assertThat(written).contains("\"core\":\"apply\",\"function\":{\"core\":\"read\",\"binding\":");
     }
@@ -143,7 +143,7 @@ class AFunctionValueCrossesWholeWithNoCaptureListTest {
      */
     @Test
     void aLambdaAppliedWhereNothingElseCouldBeMeantNeverBecomesABlock() {
-        String written = ProgramWriter.written(CheckedProgram.of(List.of("""
+        String written = ProgramWriter.written(Checked.of(List.of("""
                 module inlined
 
                 behavior straight : (a: Int) -> Int

@@ -1,8 +1,8 @@
 package souther.bindings.php;
 
+import souther.nativecode.Checked;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import souther.compiler.program.CheckedProgram;
 import souther.nativecode.NativeCompiler;
 import souther.nativecode.Php;
 
@@ -208,11 +208,11 @@ class APhpHostHandsOverAndReadsBackAListTest {
     @Test
     void aPhpListCrossesBothWaysWhereverAListStands(@TempDir Path into) throws Exception {
         NativeCompiler.Library library =
-                NativeCompiler.library(CheckedProgram.of(List.of(CART)), into.resolve("native"));
+                NativeCompiler.library(Checked.of(List.of(CART)), into.resolve("native"));
         PhpBindings.Generated binding =
                 LibraryBinding.generated(library, into.resolve("php"), "Acme\\Billing");
         NativeCompiler.Library again =
-                NativeCompiler.library(CheckedProgram.of(List.of(CART)), into.resolve("again"));
+                NativeCompiler.library(Checked.of(List.of(CART)), into.resolve("again"));
         Path host = into.resolve("host.php");
         Files.writeString(host, HOST, StandardCharsets.UTF_8);
 
@@ -230,7 +230,7 @@ class APhpHostHandsOverAndReadsBackAListTest {
     @Test
     void aListIsTypedAsAListOfItsElementForPhpStan(@TempDir Path into) throws Exception {
         NativeCompiler.Library library =
-                NativeCompiler.library(CheckedProgram.of(List.of(CART)), into.resolve("native"));
+                NativeCompiler.library(Checked.of(List.of(CART)), into.resolve("native"));
         PhpBindings.Generated binding =
                 LibraryBinding.generated(library, into.resolve("php"), "Acme\\Billing");
         Path cart = binding.root().resolve("Cart");

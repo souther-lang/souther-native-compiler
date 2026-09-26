@@ -394,7 +394,7 @@ class ABehaviorAnotherBuildImplementsTest {
     }
 
     private static CheckedProgram compiled(String source) {
-        return CheckedProgram.of(List.of(source), path());
+        return Checked.of(List.of(source), path());
     }
 
     /**
@@ -405,7 +405,7 @@ class ABehaviorAnotherBuildImplementsTest {
      * against a build of itself.
      */
     private static CheckedProgram builtBefore() {
-        return CheckedProgram.of(List.of(BUILT_BEFORE));
+        return Checked.of(List.of(BUILT_BEFORE));
     }
 
     private static ModulePath path() {

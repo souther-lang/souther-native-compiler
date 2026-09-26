@@ -40,7 +40,7 @@ class AnEntryIsChosenWhenTheRunStartsTest {
 
     @Test
     void anyNumberOfEntriesOfOneProgramIsOneCompileAndOneLink() throws Exception {
-        CheckedProgram program = CheckedProgram.of(List.of(SOURCE));
+        CheckedProgram program = Checked.of(List.of(SOURCE));
         CheckedModule module = program.modules().stream()
                 .filter(it -> it.name().equals("entriesChosenLate")).findFirst().orElseThrow();
 
@@ -55,7 +55,7 @@ class AnEntryIsChosenWhenTheRunStartsTest {
         // Another Running of the same program, so that what is kept is not kept by the first.
         // and of a program checked again from the same source, so that what is kept is kept by
         // what the program says and not by which object happens to hold it.
-        CheckedProgram again = CheckedProgram.of(List.of(SOURCE));
+        CheckedProgram again = Checked.of(List.of(SOURCE));
         CheckedModule moduleAgain = again.modules().stream()
                 .filter(it -> it.name().equals("entriesChosenLate")).findFirst().orElseThrow();
         module = moduleAgain;
@@ -72,7 +72,7 @@ class AnEntryIsChosenWhenTheRunStartsTest {
 
     @Test
     void whatIsKeptIsNotChangedByAnArrayAnyoneStillHolds() throws Exception {
-        CheckedProgram program = CheckedProgram.of(List.of(SOURCE.replace(
+        CheckedProgram program = Checked.of(List.of(SOURCE.replace(
                 "entriesChosenLate", "entriesKeptApart")));
 
         byte[] handedOut = NativeArtifacts.object(program);

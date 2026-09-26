@@ -1,8 +1,8 @@
 package souther.bindings;
 
+import souther.nativecode.Checked;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import souther.compiler.program.CheckedProgram;
 import souther.nativecode.NativeCompiler;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
@@ -99,7 +99,7 @@ class AManifestIsReadAsTheDriverPromisesItTest {
     }
 
     private static NativeCompiler.Library built(Path into, String... sources) throws Exception {
-        return NativeCompiler.library(CheckedProgram.of(List.of(sources)), into.resolve("native"));
+        return NativeCompiler.library(Checked.of(List.of(sources)), into.resolve("native"));
     }
 
     /** Reads the library's manifest after {@code changing} the module named {@code module}. */

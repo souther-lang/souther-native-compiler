@@ -72,7 +72,7 @@ class AListIsItsLengthAndItsElementsTest {
 
     @BeforeAll
     static void build() throws Exception {
-        program = CheckedProgram.of(List.of(SOURCE));
+        program = Checked.of(List.of(SOURCE));
         running = Running.of(program);
         module = program.modules().getFirst();
     }

@@ -1,5 +1,6 @@
 package souther.nativecode.transport;
 
+import souther.nativecode.Checked;
 import org.junit.jupiter.api.Test;
 import souther.compiler.program.CheckedProgram;
 import souther.nativecode.NativeCompiler;
@@ -45,7 +46,7 @@ class AHelperCrossesUnderTheReferenceItIsReachedByTest {
             Path.of("native", "crates", "compiler", "tests", "folding.transport.json");
 
     private static String written() {
-        return ProgramWriter.written(CheckedProgram.of(List.of(FOLDING)));
+        return ProgramWriter.written(Checked.of(List.of(FOLDING)));
     }
 
     private static final String FOLD_FROM =
@@ -69,7 +70,7 @@ class AHelperCrossesUnderTheReferenceItIsReachedByTest {
      */
     @Test
     void aHelperOfAnotherModuleCrossesUnderThatModulesName() {
-        CheckedProgram program = CheckedProgram.of(List.of("""
+        CheckedProgram program = Checked.of(List.of("""
                 module lib.walk exposing ( count )
 
                 partial let count (n: Int, acc: Int): Int = if n == 0 then acc else count(n - 1, acc + 1)

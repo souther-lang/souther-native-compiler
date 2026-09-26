@@ -2,7 +2,6 @@ package souther.nativecode;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import souther.compiler.program.CheckedProgram;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -406,7 +405,7 @@ class AHostCallsALibraryThroughItsHeaderTest {
     void aCProgramIncludingOnlyTheHeaderCallsTheLibrary(@TempDir Path into) throws Exception {
         assertThat(HARNESS).doesNotContain("__asm__").doesNotContain("extern");
         NativeCompiler.Library library =
-                NativeCompiler.library(CheckedProgram.of(List.of(SHOP)), into);
+                NativeCompiler.library(Checked.of(List.of(SHOP)), into);
 
         Path source = into.resolve("host.c");
         Files.writeString(source, HARNESS, StandardCharsets.UTF_8);
@@ -422,7 +421,7 @@ class AHostCallsALibraryThroughItsHeaderTest {
     void phpDeclaresTheFunctionsFromTheDeclarationsAndCallsTheLibrary(@TempDir Path into)
             throws Exception {
         NativeCompiler.Library library =
-                NativeCompiler.library(CheckedProgram.of(List.of(SHOP)), into);
+                NativeCompiler.library(Checked.of(List.of(SHOP)), into);
         Path script = into.resolve("host.php");
         Files.writeString(script, PHP, StandardCharsets.UTF_8);
 
@@ -439,7 +438,7 @@ class AHostCallsALibraryThroughItsHeaderTest {
     @Test
     void theManifestIsWhatVersionNineSays(@TempDir Path into) throws Exception {
         NativeCompiler.Library library =
-                NativeCompiler.library(CheckedProgram.of(List.of(SHOP)), into);
+                NativeCompiler.library(Checked.of(List.of(SHOP)), into);
 
         String written = Files.readString(library.manifest(), StandardCharsets.UTF_8);
         String fixed = Files.exists(INTERFACE_V9)
@@ -460,7 +459,7 @@ class AHostCallsALibraryThroughItsHeaderTest {
     @Test
     void theHeaderTheManifestAndTheLibraryNameOneSet(@TempDir Path into) throws Exception {
         NativeCompiler.Library library =
-                NativeCompiler.library(CheckedProgram.of(List.of(SHOP)), into);
+                NativeCompiler.library(Checked.of(List.of(SHOP)), into);
 
         String declarations = Files.readString(library.declarations());
         assertThat(declarations.lines()).noneMatch(line -> line.strip().startsWith("#"));

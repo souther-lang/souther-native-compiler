@@ -43,7 +43,7 @@ class AFieldEveryCaseTakesInIsReadOffTheSumTest {
 
     @Test
     void theFieldIsReadWhereTheCaseTheValueIsLaysItOut() throws Exception {
-        CheckedProgram program = CheckedProgram.of(List.of(SOURCE));
+        CheckedProgram program = Checked.of(List.of(SOURCE));
         Running running = Running.of(program);
         CheckedModule module = program.modules().getFirst();
         var measured = module.behavior(new ValueName.Behavior("shapes", "measured"));

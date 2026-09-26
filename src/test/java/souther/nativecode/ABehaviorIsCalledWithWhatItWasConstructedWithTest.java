@@ -173,8 +173,8 @@ class ABehaviorIsCalledWithWhatItWasConstructedWithTest {
     @Test
     void aStageAnotherBuildImplementsIsHandedWhatItRequires() throws Exception {
         Map<String, ClassFileImage> published = Compiler.compile(PORT);
-        byte[] port = NativeArtifacts.object(CheckedProgram.of(List.of(PORT)));
-        CheckedProgram piped = CheckedProgram.of(List.of(PIPED), ModulePath.of(published));
+        byte[] port = NativeArtifacts.object(Checked.of(List.of(PORT)));
+        CheckedProgram piped = Checked.of(List.of(PIPED), ModulePath.of(published));
         CheckedModule module = piped.modules().getFirst();
         CheckedBehavior behavior = module.behaviors().stream()
                 .filter(it -> it.name().name().equals("piped")).findFirst().orElseThrow();

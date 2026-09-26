@@ -55,8 +55,8 @@ class ACaseBuiltElsewhereIsWrittenAsItsOwnCaseTest {
 
     @Test
     void aCaseBuiltInAnotherObjectIsWrittenAsTheCaseItIs() throws Exception {
-        CheckedProgram program = CheckedProgram.of(List.of(RELAYING), path());
-        byte[] before = NativeArtifacts.object(CheckedProgram.of(List.of(BUILT_BEFORE)));
+        CheckedProgram program = Checked.of(List.of(RELAYING), path());
+        byte[] before = NativeArtifacts.object(Checked.of(List.of(BUILT_BEFORE)));
 
         Running running = Running.of(program, List.of(before));
         CheckedModule module = program.modules().getFirst();

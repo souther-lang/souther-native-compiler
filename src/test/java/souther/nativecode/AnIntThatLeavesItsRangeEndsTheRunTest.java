@@ -88,7 +88,7 @@ class AnIntThatLeavesItsRangeEndsTheRunTest {
     private static void assertEndsButItsNeighbourAnswers(String behavior, List<Long> ends,
                                                          List<Long> answers, long with)
             throws Exception {
-        CheckedProgram program = CheckedProgram.of(List.of(SOURCE));
+        CheckedProgram program = Checked.of(List.of(SOURCE));
         Running running = Running.of(program);
         CheckedModule module = program.modules().getFirst();
         CheckedBehavior reached = module.behaviors().stream()

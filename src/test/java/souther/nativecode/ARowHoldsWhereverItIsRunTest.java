@@ -9,7 +9,6 @@ import souther.compiler.program.CheckedProgram;
 import souther.compiler.program.CheckedRow;
 import souther.compiler.diag.CompileException;
 
-import java.util.ArrayList;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -537,7 +536,7 @@ class ARowHoldsWhereverItIsRunTest {
      */
     @Test
     void aRowStatingWhatTheJvmDoesNotAnswerIsNotAcceptedAtAll() {
-        assertThatThrownBy(() -> CheckedProgram.of(List.of("""
+        assertThatThrownBy(() -> Checked.of(List.of("""
                 module calculation
 
                 behavior add : (a: Int, b: Int) -> Int
@@ -558,19 +557,10 @@ class ARowHoldsWhereverItIsRunTest {
      * which is the one thing a count of what it did compare could never tell it. Said as a switch
      * with no arm standing for the rest, so a way of arriving added later has to be answered here.
      */
-    /** Whether what a row states holds of what was answered, for the rows that state one. */
-    private static Verdict holds(CheckedRow.Statement stated, ObservedValue answered) {
-        return switch (stated) {
-            case CheckedRow.SelfContained it -> it.holds(answered);
-            case CheckedRow.WithStandIns it -> it.holds(answered);
-            default -> throw new AssertionError("only a row stating an answer is run: " + stated);
-        };
-    }
-
     static void assertEveryRowHolds(String... sources) throws Exception {
-        CheckedProgram program = CheckedProgram.of(List.of(sources));
-        List<Running.Row> run = new ArrayList<>();
-        List<CheckedRow.Statement> stated = new ArrayList<>();
+        CheckedProgram program = Checked.of(List.of(sources));
+        int asked = 0;
+        Running running = Running.of(program);
         for (CheckedModule module : program.modules()) {
             for (CheckedBehavior behavior : module.behaviors()) {
                 List<CheckedRow> rows = behavior.rows();
@@ -578,16 +568,26 @@ class ARowHoldsWhereverItIsRunTest {
                     CheckedRow row = rows.get(at);
                     String where = row.identity() + " of " + behavior.name();
                     switch (row.statement()) {
+                        case CheckedRow.SelfContained states -> {
+                            ObservedValue answered =
+                                    running.rowAnswering(module, behavior, at, List.of());
+
+                            assertThat(states.holds(answered))
+                                    .as("%s answered %s", where, answered)
+                                    .isInstanceOf(Verdict.Held.class);
+                            asked++;
+                        }
                         // A behavior that depends on another is run with what the row says
                         // that other one answers, which its entry stands in with out of the
-                        // object: the run is handed nothing for it. So both are run alike.
-                        case CheckedRow.SelfContained states -> {
-                            run.add(new Running.Row(module, behavior, at));
-                            stated.add(states);
-                        }
+                        // object: the run is handed nothing for it.
                         case CheckedRow.WithStandIns states -> {
-                            run.add(new Running.Row(module, behavior, at));
-                            stated.add(states);
+                            ObservedValue answered =
+                                    running.rowAnswering(module, behavior, at, List.of());
+
+                            assertThat(states.holds(answered))
+                                    .as("%s answered %s", where, answered)
+                                    .isInstanceOf(Verdict.Held.class);
+                            asked++;
                         }
                         case CheckedRow.AnswerOwed states -> throw new AssertionError(
                                 where + " states no answer to hold anything to: " + states);
@@ -599,20 +599,6 @@ class ARowHoldsWhereverItIsRunTest {
                     }
                 }
             }
-        }
-        // Every row in one run of the harness, each bracketed on its own.
-        List<RunOutcome> outcomes = Running.of(program).rowsAnsweredOrEnded(run);
-        int asked = 0;
-        for (int at = 0; at < run.size(); at++) {
-            Running.Row row = run.get(at);
-            String where = "row " + row.at() + " of " + row.behavior().name();
-            if (!(outcomes.get(at) instanceof RunOutcome.Answered(ObservedValue answered))) {
-                throw new AssertionError(where + " did not answer: " + outcomes.get(at));
-            }
-            assertThat(holds(stated.get(at), answered))
-                    .as("%s answered %s", where, answered)
-                    .isInstanceOf(Verdict.Held.class);
-            asked++;
         }
         assertThat(asked)
                 .as("a program whose rows were never reached says nothing about either carrier")

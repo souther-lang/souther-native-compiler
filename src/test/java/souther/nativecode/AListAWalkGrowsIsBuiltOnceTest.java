@@ -115,7 +115,7 @@ class AListAWalkGrowsIsBuiltOnceTest {
 
     @BeforeAll
     static void build() throws Exception {
-        CheckedProgram program = CheckedProgram.of(List.of(SOURCE));
+        CheckedProgram program = Checked.of(List.of(SOURCE));
         running = Running.of(program);
         module = program.modules().getFirst();
     }

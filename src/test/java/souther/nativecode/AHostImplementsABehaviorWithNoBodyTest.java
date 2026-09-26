@@ -168,7 +168,7 @@ class AHostImplementsABehaviorWithNoBodyTest {
     @Test
     void phpImplementsABehaviorWithAClosure(@TempDir Path into) throws Exception {
         NativeCompiler.Library library =
-                NativeCompiler.library(CheckedProgram.of(List.of(PRICING)), into);
+                NativeCompiler.library(Checked.of(List.of(PRICING)), into);
 
         assertThat(Files.readString(library.declarations(), StandardCharsets.UTF_8))
                 .contains("typedef souther_status (*souther4_m_pricing_b_lookUp_implementation)"
@@ -271,7 +271,7 @@ class AHostImplementsABehaviorWithNoBodyTest {
     @Test
     void textATruthAndAValueCrossToAnImplementationAndBack(@TempDir Path into) throws Exception {
         NativeCompiler.Library library =
-                NativeCompiler.library(CheckedProgram.of(List.of(SHOP)), into);
+                NativeCompiler.library(Checked.of(List.of(SHOP)), into);
         assertThat(Files.readString(library.declarations(), StandardCharsets.UTF_8))
                 .contains("typedef souther_status (*souther4_m_shop_b_priceOf_implementation)"
                         + "(void *, souther_string, uint8_t, souther_value *);")
@@ -351,10 +351,10 @@ class AHostImplementsABehaviorWithNoBodyTest {
     void theBuildThatDeclaresItAnswersItForEveryBuildThatCallsIt(@TempDir Path into)
             throws Exception {
         Map<String, ClassFileImage> published = Compiler.compile(PORT);
-        byte[] port = NativeArtifacts.object(CheckedProgram.of(List.of(PORT)));
+        byte[] port = NativeArtifacts.object(Checked.of(List.of(PORT)));
         byte[] second = NativeArtifacts.object(
-                CheckedProgram.of(List.of(SECOND), ModulePath.of(published)));
-        CheckedProgram first = CheckedProgram.of(List.of(FIRST), ModulePath.of(published));
+                Checked.of(List.of(SECOND), ModulePath.of(published)));
+        CheckedProgram first = Checked.of(List.of(FIRST), ModulePath.of(published));
 
         String symbol = "souther" + Running.ABI + ".lib.port.lookUp";
         String implement = "souther" + Running.ABI + "_m_lib_m_port_b_lookUp_implement";

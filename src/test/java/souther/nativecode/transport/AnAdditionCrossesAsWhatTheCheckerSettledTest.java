@@ -1,5 +1,6 @@
 package souther.nativecode.transport;
 
+import souther.nativecode.Checked;
 import org.junit.jupiter.api.Test;
 import souther.compiler.program.CheckedProgram;
 import souther.nativecode.NotLowered;
@@ -33,7 +34,7 @@ class AnAdditionCrossesAsWhatTheCheckerSettledTest {
 
     @Test
     void anAdditionOfTwoParametersCrossesAsABinaryOverTwoReads() {
-        String written = ProgramWriter.written(CheckedProgram.of(List.of(ADDING)));
+        String written = ProgramWriter.written(Checked.of(List.of(ADDING)));
 
         assertThat(written).isEqualTo("""
                 {"transport":23,"declarations":[],\
@@ -57,7 +58,7 @@ class AnAdditionCrossesAsWhatTheCheckerSettledTest {
      */
     @Test
     void aParameterCrossesUnderTheNameItsSignatureGivesIt() {
-        String written = ProgramWriter.written(CheckedProgram.of(List.of("""
+        String written = ProgramWriter.written(Checked.of(List.of("""
                 module calculation exposing ( add )
 
                 behavior add : (augend: Int, addend: Int) -> Int
@@ -74,7 +75,7 @@ class AnAdditionCrossesAsWhatTheCheckerSettledTest {
     /** A composition declares no parameters, and takes what it takes in order and unnamed. */
     @Test
     void aCompositionCrossesWithItsInputsInOrderAndUnnamed() {
-        String written = ProgramWriter.written(CheckedProgram.of(List.of("""
+        String written = ProgramWriter.written(Checked.of(List.of("""
                 module calculation exposing ( add, doubledSum : Int )
 
                 behavior add : (a: Int, b: Int) -> Int
@@ -95,7 +96,7 @@ class AnAdditionCrossesAsWhatTheCheckerSettledTest {
     @Test
     void theFixtureTheDriverIsTestedAgainstIsWhatThisWrites() throws IOException {
         assertThat(Files.readString(FIXTURE, StandardCharsets.UTF_8).strip())
-                .isEqualTo(ProgramWriter.written(CheckedProgram.of(List.of(ADDING))));
+                .isEqualTo(ProgramWriter.written(Checked.of(List.of(ADDING))));
     }
 
     /**
@@ -107,7 +108,7 @@ class AnAdditionCrossesAsWhatTheCheckerSettledTest {
      */
     @Test
     void aTypeOnlyASignatureNamesIsStillDeclared() {
-        String written = ProgramWriter.written(CheckedProgram.of(List.of("""
+        String written = ProgramWriter.written(Checked.of(List.of("""
                 module demo
 
                 data Inner = Int
@@ -132,7 +133,7 @@ class AnAdditionCrossesAsWhatTheCheckerSettledTest {
      */
     @Test
     void aBodyThisBackendDoesNotWriteYetSaysWhichItWas() {
-        CheckedProgram program = CheckedProgram.of(List.of("""
+        CheckedProgram program = Checked.of(List.of("""
                 module calculation
 
                 behavior rate : (a: Int) -> Decimal

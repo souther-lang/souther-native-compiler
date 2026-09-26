@@ -1,9 +1,9 @@
 package souther.bindings.php;
 
+import souther.nativecode.Checked;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import souther.bindings.NotBindable;
-import souther.compiler.program.CheckedProgram;
 import souther.nativecode.NativeCompiler;
 import souther.nativecode.Php;
 import tools.jackson.databind.JsonNode;
@@ -27,7 +27,7 @@ class APhpBindingIsWrittenFromTheManifestTest {
 
     private static PhpBindings.Generated generated(Path into, String source) throws Exception {
         NativeCompiler.Library library =
-                NativeCompiler.library(CheckedProgram.of(List.of(source)), into.resolve("native"));
+                NativeCompiler.library(Checked.of(List.of(source)), into.resolve("native"));
         return LibraryBinding.generated(library, into.resolve("php"), "Acme\\Billing");
     }
 
@@ -72,7 +72,7 @@ class APhpBindingIsWrittenFromTheManifestTest {
     /** Where the manifest gives a behavior no way in, nothing is written that a caller could call. */
     @Test
     void aBehaviorTheManifestGivesNoCallIsNotWritten(@TempDir Path into) throws Exception {
-        NativeCompiler.Library library = NativeCompiler.library(CheckedProgram.of(List.of("""
+        NativeCompiler.Library library = NativeCompiler.library(Checked.of(List.of("""
                 module m exposing ( half, twice )
 
                 behavior half : (n: Int) -> Int
@@ -259,7 +259,7 @@ class APhpBindingIsWrittenFromTheManifestTest {
      */
     @Test
     void aBehaviorRequiringWhatNoHostCanImplementHasNoClass(@TempDir Path into) throws Exception {
-        NativeCompiler.Library library = NativeCompiler.library(CheckedProgram.of(List.of("""
+        NativeCompiler.Library library = NativeCompiler.library(Checked.of(List.of("""
                 module m exposing ( charge, charged, twice )
 
                 behavior rate : (n: Int) -> Int
@@ -300,7 +300,7 @@ class APhpBindingIsWrittenFromTheManifestTest {
     @Test
     void twoRequirementsOfOneNameAreTakenByTheirPlaces(@TempDir Path into) throws Exception {
         PhpBindings.Generated generated = LibraryBinding.generated(NativeCompiler.library(
-                CheckedProgram.of(List.of("""
+                Checked.of(List.of("""
                         module a exposing ( load )
 
                         behavior load : (n: Int) -> Int
@@ -369,7 +369,7 @@ class APhpBindingIsWrittenFromTheManifestTest {
 
     @Test
     void aNamespaceIsTheBindingsOwnAndMustBeOne(@TempDir Path into) throws Exception {
-        NativeCompiler.Library library = NativeCompiler.library(CheckedProgram.of(List.of("""
+        NativeCompiler.Library library = NativeCompiler.library(Checked.of(List.of("""
                 module m exposing ( Box )
 
                 data Box = Bool
@@ -432,7 +432,7 @@ class APhpBindingIsWrittenFromTheManifestTest {
      */
     @Test
     void twoParametersUnderOneNameAreRefused(@TempDir Path into) throws Exception {
-        NativeCompiler.Library library = NativeCompiler.library(CheckedProgram.of(List.of("""
+        NativeCompiler.Library library = NativeCompiler.library(Checked.of(List.of("""
                 module m exposing ( f )
 
                 behavior f : (a: Int, b: Int) -> Int
@@ -453,7 +453,7 @@ class APhpBindingIsWrittenFromTheManifestTest {
     @Test
     void aTypeTheModelNoLongerDeclaresLeavesTheBinding(@TempDir Path into) throws Exception {
         Path php = into.resolve("php");
-        LibraryBinding.generated(NativeCompiler.library(CheckedProgram.of(List.of("""
+        LibraryBinding.generated(NativeCompiler.library(Checked.of(List.of("""
                 module m exposing ( Kept, Dropped )
 
                 data Kept = Int
@@ -461,7 +461,7 @@ class APhpBindingIsWrittenFromTheManifestTest {
                 """)), into.resolve("before")), php, "Acme\\Billing");
         assertThat(php.resolve("M").resolve("Dropped.php")).exists();
 
-        LibraryBinding.generated(NativeCompiler.library(CheckedProgram.of(List.of("""
+        LibraryBinding.generated(NativeCompiler.library(Checked.of(List.of("""
                 module m exposing ( Kept )
 
                 data Kept = Int
@@ -475,13 +475,13 @@ class APhpBindingIsWrittenFromTheManifestTest {
     @Test
     void aRefusedGenerationLeavesTheBindingThatWasThere(@TempDir Path into) throws Exception {
         Path php = into.resolve("php");
-        LibraryBinding.generated(NativeCompiler.library(CheckedProgram.of(List.of("""
+        LibraryBinding.generated(NativeCompiler.library(Checked.of(List.of("""
                 module m exposing ( Kept )
 
                 data Kept = Int
                 """)), into.resolve("before")), php, "Acme\\Billing");
         String before = Files.readString(php.resolve("M").resolve("Kept.php"));
-        NativeCompiler.Library refused = NativeCompiler.library(CheckedProgram.of(List.of("""
+        NativeCompiler.Library refused = NativeCompiler.library(Checked.of(List.of("""
                 module m exposing ( Kept, Tag )
 
                 data Kept = Bool
@@ -504,7 +504,7 @@ class APhpBindingIsWrittenFromTheManifestTest {
         Files.writeString(php.resolve("mine.php"), "<?php\n", StandardCharsets.UTF_8);
 
         assertThatThrownBy(() -> LibraryBinding.generated(NativeCompiler.library(
-                CheckedProgram.of(List.of("""
+                Checked.of(List.of("""
                         module m exposing ( Kept )
 
                         data Kept = Int
@@ -530,7 +530,7 @@ class APhpBindingIsWrittenFromTheManifestTest {
             """;
 
     private static NativeCompiler.Library twoModules(Path into) throws Exception {
-        return NativeCompiler.library(CheckedProgram.of(List.of(TWO_MODULES_OF_LISTS,
+        return NativeCompiler.library(Checked.of(List.of(TWO_MODULES_OF_LISTS,
                 SECOND_MODULE_OF_LISTS)), into.resolve("native"));
     }
 

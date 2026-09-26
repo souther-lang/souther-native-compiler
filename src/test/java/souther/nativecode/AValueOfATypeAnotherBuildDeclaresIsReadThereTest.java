@@ -80,7 +80,7 @@ class AValueOfATypeAnotherBuildDeclaresIsReadThereTest {
     @Test
     void theReaderOfATypeIsDefinedByTheBuildThatDeclaresIt() throws Exception {
         Set<String> here = NativeArtifacts.built(program()).defined();
-        Set<String> there = NativeArtifacts.built(CheckedProgram.of(List.of(BUILT_BEFORE))).defined();
+        Set<String> there = NativeArtifacts.built(Checked.of(List.of(BUILT_BEFORE))).defined();
 
         List<String> theirs = List.of(reader("lib.money", "Money"), reader("lib.money", "Price"),
                 reader("lib.money", "Open"), reader("lib.money", "Waived"),
@@ -96,11 +96,11 @@ class AValueOfATypeAnotherBuildDeclaresIsReadThereTest {
     }
 
     private static byte[] builtBefore() throws Exception {
-        return NativeArtifacts.object(CheckedProgram.of(List.of(BUILT_BEFORE)));
+        return NativeArtifacts.object(Checked.of(List.of(BUILT_BEFORE)));
     }
 
     private static CheckedProgram program() {
         Map<String, ClassFileImage> published = Compiler.compile(BUILT_BEFORE);
-        return CheckedProgram.of(List.of(READING), ModulePath.of(published));
+        return Checked.of(List.of(READING), ModulePath.of(published));
     }
 }

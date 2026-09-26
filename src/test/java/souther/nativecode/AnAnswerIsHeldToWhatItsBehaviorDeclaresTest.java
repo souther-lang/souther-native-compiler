@@ -87,7 +87,7 @@ class AnAnswerIsHeldToWhatItsBehaviorDeclaresTest {
      */
     @Test
     void aRuleThatEndsWithoutAnAnswerEndsTheRunForItsOwnReason() throws Exception {
-        CheckedProgram program = CheckedProgram.of(List.of(HELD_WHERE_IT_ANSWERS));
+        CheckedProgram program = Checked.of(List.of(HELD_WHERE_IT_ANSWERS));
         Running running = Running.of(program);
         CheckedModule module = program.modules().getFirst();
         CheckedBehavior doubled = named(module, "doubled");
@@ -105,7 +105,7 @@ class AnAnswerIsHeldToWhatItsBehaviorDeclaresTest {
      */
     @Test
     void aRuleOverACaseIsHeldOnlyWhereTheAnswerIsThatCase() throws Exception {
-        CheckedProgram program = CheckedProgram.of(List.of(HELD_WHERE_IT_ANSWERS));
+        CheckedProgram program = Checked.of(List.of(HELD_WHERE_IT_ANSWERS));
         Running running = Running.of(program);
         CheckedModule module = program.modules().getFirst();
         CheckedBehavior idOf = named(module, "idOf");
@@ -200,7 +200,7 @@ class AnAnswerIsHeldToWhatItsBehaviorDeclaresTest {
      */
     @Test
     void aRuleReachesTheHelpersOfTheModuleThatDeclaresIt() throws Exception {
-        CheckedProgram program = CheckedProgram.of(List.of(DECLARING_A_HELPER, CALLING_IT));
+        CheckedProgram program = Checked.of(List.of(DECLARING_A_HELPER, CALLING_IT));
         String written = ProgramWriter.written(program);
         assertThat(written)
                 .as("the rule calls the helper rather than holding it written out")
@@ -249,14 +249,14 @@ class AnAnswerIsHeldToWhatItsBehaviorDeclaresTest {
      */
     @Test
     void anotherBuildsBehaviorIsHeldWhereThatBuildAnswersIt() throws Exception {
-        CheckedProgram program = CheckedProgram.of(List.of("""
+        CheckedProgram program = Checked.of(List.of("""
                 module app.uses exposing ( shrunk )
                 import lib.held ( shrink )
 
                 behavior shrunk : (n: Int) -> Int
                 let shrunk (n) = shrink(n)
                 """), ModulePath.of(Compiler.compile(DECLARED_ELSEWHERE)));
-        byte[] before = NativeArtifacts.object(CheckedProgram.of(List.of(DECLARED_ELSEWHERE)));
+        byte[] before = NativeArtifacts.object(Checked.of(List.of(DECLARED_ELSEWHERE)));
 
         assertThat(ProgramWriter.written(program)).contains(
                 "\"module\":\"lib.held\",\"name\":\"shrink\",\"is\":\"elsewhere\"");
@@ -310,7 +310,7 @@ class AnAnswerIsHeldToWhatItsBehaviorDeclaresTest {
     private static void assertEndsButItsNeighbourAnswers(String source, String behavior, long ends,
                                                          long answers, long answered)
             throws Exception {
-        CheckedProgram program = CheckedProgram.of(List.of(source));
+        CheckedProgram program = Checked.of(List.of(source));
         Running running = Running.of(program);
         CheckedModule module = program.modules().getFirst();
         CheckedBehavior reached = named(module, behavior);
@@ -331,7 +331,7 @@ class AnAnswerIsHeldToWhatItsBehaviorDeclaresTest {
     private static void assertCrossingEndsButItsNeighbourAnswers(String behavior, long ends,
                                                                  long answers, long answered)
             throws Exception {
-        CheckedProgram program = CheckedProgram.of(List.of(HELD_WHERE_IT_CROSSES_IN));
+        CheckedProgram program = Checked.of(List.of(HELD_WHERE_IT_CROSSES_IN));
         Running running = Running.of(program);
         CheckedModule module = program.modules().getFirst();
         CheckedBehavior reached = named(module, behavior);

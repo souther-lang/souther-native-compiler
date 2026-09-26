@@ -384,7 +384,7 @@ class AKernelAnswersWhatTheJvmAnswersTest {
         private final Running running;
 
         Asked(String source) {
-            this.program = CheckedProgram.of(List.of(source));
+            this.program = Checked.of(List.of(source));
             this.running = Running.of(program);
         }
 

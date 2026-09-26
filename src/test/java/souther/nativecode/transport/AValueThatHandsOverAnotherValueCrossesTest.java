@@ -1,7 +1,7 @@
 package souther.nativecode.transport;
 
+import souther.nativecode.Checked;
 import org.junit.jupiter.api.Test;
-import souther.compiler.program.CheckedProgram;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -39,7 +39,7 @@ class AValueThatHandsOverAnotherValueCrossesTest {
 
     @Test
     void aValueNamingAnotherCrossesWithTheHandoverThatCarriesIt() {
-        String written = ProgramWriter.written(CheckedProgram.of(List.of(MODULE)));
+        String written = ProgramWriter.written(Checked.of(List.of(MODULE)));
 
         assertThat(written).isEqualTo("""
                 {"transport":23,"declarations":[{"module":"m","name":"P","by":"amodule","is":"product",\
@@ -72,6 +72,6 @@ class AValueThatHandsOverAnotherValueCrossesTest {
     @Test
     void theFixtureTheDriverIsTestedAgainstIsWhatThisWrites() throws IOException {
         assertThat(Files.readString(FIXTURE, StandardCharsets.UTF_8).strip())
-                .isEqualTo(ProgramWriter.written(CheckedProgram.of(List.of(MODULE))));
+                .isEqualTo(ProgramWriter.written(Checked.of(List.of(MODULE))));
     }
 }

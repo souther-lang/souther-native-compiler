@@ -1,7 +1,7 @@
 package souther.nativecode.transport;
 
+import souther.nativecode.Checked;
 import org.junit.jupiter.api.Test;
-import souther.compiler.program.CheckedProgram;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -50,7 +50,7 @@ class APublishedValueCrossesAsItsOwnReachTest {
 
     @Test
     void aCallToAnotherModulesValueCrossesAsPublishedValueWithZeroArguments() {
-        String written = ProgramWriter.written(CheckedProgram.of(List.of(PUBLISHER, READER)));
+        String written = ProgramWriter.written(Checked.of(List.of(PUBLISHER, READER)));
 
         // Both wire spellings appear in this document, and they must not be interchangeable: the
         // publisher's own entry reaches ys and ks as ordinary same-module values ("value"), while
@@ -67,6 +67,6 @@ class APublishedValueCrossesAsItsOwnReachTest {
     @Test
     void theFixtureTheDriverIsTestedAgainstIsWhatThisWrites() throws IOException {
         assertThat(Files.readString(FIXTURE, StandardCharsets.UTF_8).strip())
-                .isEqualTo(ProgramWriter.written(CheckedProgram.of(List.of(PUBLISHER, READER))));
+                .isEqualTo(ProgramWriter.written(Checked.of(List.of(PUBLISHER, READER))));
     }
 }

@@ -1,7 +1,6 @@
 package souther.nativecode;
 
 import org.junit.jupiter.api.Test;
-import souther.compiler.program.CheckedProgram;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
@@ -45,7 +44,7 @@ class AValueIsWrittenHoweverDeeplyItsDeclarationsNestTest {
 
     @Test
     void aValueAMillionLevelsDeepIsWrittenWhole() throws Exception {
-        Path run = NativeArtifacts.executable(CheckedProgram.of(List.of(DEEP)), List.of(), harness());
+        Path run = NativeArtifacts.executable(Checked.of(List.of(DEEP)), List.of(), harness());
         Process process = new ProcessBuilder(run.toString()).redirectErrorStream(true).start();
         String said = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
         assertThat(process.waitFor()).as(said).isZero();

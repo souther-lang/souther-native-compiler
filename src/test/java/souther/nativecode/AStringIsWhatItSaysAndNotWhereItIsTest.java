@@ -99,7 +99,7 @@ class AStringIsWhatItSaysAndNotWhereItIsTest {
      */
     @Test
     void twoStringsMadeApartOutOfOneTextAreEqual() throws Exception {
-        CheckedProgram program = CheckedProgram.of(List.of(TEXT));
+        CheckedProgram program = Checked.of(List.of(TEXT));
 
         Running running = Running.of(program);
         assertThat(answering(running, program, "same", text("abc"), text("abc")))
@@ -120,7 +120,7 @@ class AStringIsWhatItSaysAndNotWhereItIsTest {
      */
     @Test
     void textCrossesBothWaysWhateverBytesItHolds() throws Exception {
-        CheckedProgram program = CheckedProgram.of(List.of(TEXT));
+        CheckedProgram program = Checked.of(List.of(TEXT));
 
         Running running = Running.of(program);
         assertThat(answering(running, program, "joined", text("ab"), text("cd")))

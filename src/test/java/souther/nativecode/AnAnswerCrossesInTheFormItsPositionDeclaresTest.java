@@ -164,7 +164,7 @@ class AnAnswerCrossesInTheFormItsPositionDeclaresTest {
      */
     @Test
     void oneUnitIsWrittenFourWaysByThePositionItStandsIn() throws Exception {
-        CheckedProgram program = CheckedProgram.of(List.of(DOORS));
+        CheckedProgram program = Checked.of(List.of(DOORS));
         Running running = Running.of(program);
         assertThat(answer(running, program, "closedAlone", integer(0)))
                 .isEqualTo(json("{}"));
@@ -178,7 +178,7 @@ class AnAnswerCrossesInTheFormItsPositionDeclaresTest {
 
     @Test
     void aProductCaseTakesTheTagBesideItsOwnFields() throws Exception {
-        CheckedProgram program = CheckedProgram.of(List.of(DOORS));
+        CheckedProgram program = Checked.of(List.of(DOORS));
         Running running = Running.of(program);
         assertThat(answer(running, program, "doorOf", integer(7)))
                 .isEqualTo(json("{\"type\":\"Open\",\"since\":7}"));
@@ -189,7 +189,7 @@ class AnAnswerCrossesInTheFormItsPositionDeclaresTest {
     /** A field of a sum's type is written as that sum is, whichever of its forms it has. */
     @Test
     void aFieldIsWrittenAsItsOwnDeclarationIs() throws Exception {
-        CheckedProgram program = CheckedProgram.of(List.of(DOORS));
+        CheckedProgram program = Checked.of(List.of(DOORS));
         Running running = Running.of(program);
         assertThat(answer(running, program, "porchOf", integer(3)))
                 .isEqualTo(json("{\"door\":{\"type\":\"Open\",\"since\":3},\"phase\":\"Pending\"}"));
@@ -197,7 +197,7 @@ class AnAnswerCrossesInTheFormItsPositionDeclaresTest {
 
     @Test
     void aNewtypeIsWrittenAsWhatItWraps() throws Exception {
-        CheckedProgram program = CheckedProgram.of(List.of(DOORS));
+        CheckedProgram program = Checked.of(List.of(DOORS));
         Running running = Running.of(program);
         assertThat(answer(running, program, "customer", text("c-42")))
                 .isEqualTo(json("\"c-42\""));
@@ -206,7 +206,7 @@ class AnAnswerCrossesInTheFormItsPositionDeclaresTest {
     /** A truth held in a field is a slot wide, and is written as a truth and not as the slot. */
     @Test
     void aProductIsAnObjectOfItsFields() throws Exception {
-        CheckedProgram program = CheckedProgram.of(List.of(DOORS));
+        CheckedProgram program = Checked.of(List.of(DOORS));
         Running running = Running.of(program);
         assertThat(answer(running, program, "placeOrder",
                 integer(12), new ObservedValue.Bool(true), text("rush")))
@@ -219,7 +219,7 @@ class AnAnswerCrossesInTheFormItsPositionDeclaresTest {
     /** A field holding nothing is not there at all, and one holding something is what it holds. */
     @Test
     void anAbsentOptionalFieldIsLeftOut() throws Exception {
-        CheckedProgram program = CheckedProgram.of(List.of(DOORS));
+        CheckedProgram program = Checked.of(List.of(DOORS));
         Running running = Running.of(program);
         assertThat(answer(running, program, "noteOf", new ObservedValue.Bool(false), text("x")))
                 .isEqualTo(json("{\"count\":0}"));
@@ -233,7 +233,7 @@ class AnAnswerCrossesInTheFormItsPositionDeclaresTest {
      */
     @Test
     void aTruthHeldUnderAnOptionalFieldIsWrittenAsATruth() throws Exception {
-        CheckedProgram program = CheckedProgram.of(List.of(DOORS));
+        CheckedProgram program = Checked.of(List.of(DOORS));
         Running running = Running.of(program);
         assertThat(answer(running, program, "flagOf",
                 new ObservedValue.Bool(true), new ObservedValue.Bool(true)))
@@ -249,7 +249,7 @@ class AnAnswerCrossesInTheFormItsPositionDeclaresTest {
     /** A declaration that holds itself is written by the one encoder, as deep as the value is. */
     @Test
     void aDeclarationThatHoldsItselfIsWrittenAsDeepAsTheValueIs() throws Exception {
-        CheckedProgram program = CheckedProgram.of(List.of(DOORS));
+        CheckedProgram program = Checked.of(List.of(DOORS));
         Running running = Running.of(program);
         assertThat(answer(running, program, "chainOf", integer(1)))
                 .isEqualTo(json("{\"n\":1,\"next\":{\"n\":2}}"));
@@ -261,7 +261,7 @@ class AnAnswerCrossesInTheFormItsPositionDeclaresTest {
      */
     @Test
     void aListOfADeclaredTypeIsWrittenElementByElementInOrder() throws Exception {
-        CheckedProgram program = CheckedProgram.of(List.of(DOORS));
+        CheckedProgram program = Checked.of(List.of(DOORS));
         Running running = Running.of(program);
         assertThat(answer(running, program, "doorsOf", integer(4)))
                 .isEqualTo(json("[{\"type\":\"Open\",\"since\":4},{\"type\":\"Closed\"},"
@@ -274,7 +274,7 @@ class AnAnswerCrossesInTheFormItsPositionDeclaresTest {
      */
     @Test
     void aFieldAfterAListOfADeclaredTypeIsPutAfterIt() throws Exception {
-        CheckedProgram program = CheckedProgram.of(List.of(DOORS));
+        CheckedProgram program = Checked.of(List.of(DOORS));
         Running running = Running.of(program);
         JsonNode written = answer(running, program, "linksOf", integer(1));
         assertThat(written).isEqualTo(json("{\"chains\":[{\"n\":1,\"next\":{\"n\":2}},{\"n\":0}],"
@@ -288,7 +288,7 @@ class AnAnswerCrossesInTheFormItsPositionDeclaresTest {
      */
     @Test
     void aNewtypeCaseIsWrappedBesideTheTag() throws Exception {
-        CheckedProgram program = CheckedProgram.of(List.of(DOORS));
+        CheckedProgram program = Checked.of(List.of(DOORS));
         Running running = Running.of(program);
         assertThat(answer(running, program, "rankOf", integer(3)))
                 .isEqualTo(json("{\"type\":\"Manager\",\"value\":3}"));
@@ -298,7 +298,7 @@ class AnAnswerCrossesInTheFormItsPositionDeclaresTest {
 
     @Test
     void anAnswerNobodyNamedIsDiscriminatedLikeASumOverTheSameCases() throws Exception {
-        CheckedProgram program = CheckedProgram.of(List.of(DOORS));
+        CheckedProgram program = Checked.of(List.of(DOORS));
         Running running = Running.of(program);
         assertThat(answer(running, program, "bill", integer(200)))
                 .isEqualTo(json("{\"type\":\"Issued\",\"amount\":200}"));
@@ -312,7 +312,7 @@ class AnAnswerCrossesInTheFormItsPositionDeclaresTest {
      */
     @Test
     void aSumAmongAnAnswersMembersIsWrittenAsItsOwnCases() throws Exception {
-        CheckedProgram program = CheckedProgram.of(List.of(DOORS));
+        CheckedProgram program = Checked.of(List.of(DOORS));
         Running running = Running.of(program);
         assertThat(answer(running, program, "lookUp", integer(4)))
                 .isEqualTo(json("{\"type\":\"Open\",\"since\":4}"));
@@ -329,7 +329,7 @@ class AnAnswerCrossesInTheFormItsPositionDeclaresTest {
      */
     @Test
     void aPrimitiveMemberIsWrittenUnderTheContentsKeyBesideItsName() throws Exception {
-        CheckedProgram program = CheckedProgram.of(List.of(DOORS));
+        CheckedProgram program = Checked.of(List.of(DOORS));
         Running running = Running.of(program);
         assertThat(answer(running, program, "lengthOf", integer(4)))
                 .isEqualTo(json("{\"type\":\"Int\",\"value\":4}"));
@@ -352,7 +352,7 @@ class AnAnswerCrossesInTheFormItsPositionDeclaresTest {
      */
     @Test
     void aStageAcceptingAPrimitiveCaseIsHandedThePrimitive() throws Exception {
-        CheckedProgram program = CheckedProgram.of(List.of(DOORS));
+        CheckedProgram program = Checked.of(List.of(DOORS));
         Running running = Running.of(program);
         assertThat(answer(running, program, "doubledLength", integer(21)))
                 .isEqualTo(json("{\"type\":\"Int\",\"value\":42}"));
@@ -362,7 +362,7 @@ class AnAnswerCrossesInTheFormItsPositionDeclaresTest {
 
     @Test
     void theEndsOfAnIntAreWrittenWhole() throws Exception {
-        CheckedProgram program = CheckedProgram.of(List.of(DOORS));
+        CheckedProgram program = Checked.of(List.of(DOORS));
         Running running = Running.of(program);
         assertThat(answer(running, program, "echoInt", integer(Long.MIN_VALUE)))
                 .isEqualTo(json(Long.toString(Long.MIN_VALUE)));
@@ -375,7 +375,7 @@ class AnAnswerCrossesInTheFormItsPositionDeclaresTest {
     /** Whatever a string holds reads back as that string once the JSON is read as JSON. */
     @Test
     void aStringIsWrittenSoThatItReadsBackAsItself() throws Exception {
-        CheckedProgram program = CheckedProgram.of(List.of(DOORS));
+        CheckedProgram program = Checked.of(List.of(DOORS));
         Running running = Running.of(program);
         for (String said : List.of("", "a\"b\\c", "line\nbreak\ttab\rreturn", "\u0001\u001f",
                 "𠮷￥", "nought\u0000after")) {
