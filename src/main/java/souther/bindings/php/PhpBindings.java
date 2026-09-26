@@ -720,13 +720,14 @@ public final class PhpBindings {
                     {
                         $%s = %s;
                         $%s = $%s->call();
-                        $%s = $%s->new('souther_value');
+                        $%s = $%s->new('%s');
                         $%s = $%s->%s(%s);
                         return $%s->constructed($%s,
                             static fn (): %s => new %s($%s->held($%s)));
                     }
                 """.formatted(it.key(), described, it.fqcn(), String.join(", ", parameters),
-                session, innermost(), ffi, session, made, ffi, status, ffi, construct.name(),
+                session, innermost(), ffi, session, made, ffi,
+                Crossing.storage(construct.takes().getLast().word()), status, ffi, construct.name(),
                 String.join(", ", given), session, status, it.fqcn(), it.fqcn(), session, made));
     }
 
@@ -791,11 +792,12 @@ public final class PhpBindings {
         return """
                 $session = %s;
                 $ffi = $session->call();
-                $reading = $ffi->new('souther_decoded');
+                $reading = $ffi->new('%s');
                 $status = $ffi->%s($session->bytes($json), \\strlen($json), \\FFI::addr($reading));
                 return $session->decoded($status, $reading,
                     static fn (\\FFI\\CData $value): %s => %s);""".formatted(innermost(),
-                function.name(), answers, made).lines().map(line -> indent + line)
+                Crossing.storage(function.takes().getLast().word()), function.name(), answers, made)
+                .lines().map(line -> indent + line)
                 .collect(Collectors.joining("\n"));
     }
 
@@ -818,7 +820,7 @@ public final class PhpBindings {
             }
             case Present present -> {
                 CrossingShape.agreesAsRead(read, present.shape());
-                yield "$room = $ffi->new('" + present.of().cType() + "');\n"
+                yield "$room = $ffi->new('" + present.of().storage() + "');\n"
                         + "        $present = $ffi->" + read.name()
                         + "($value, \\FFI::addr($room));\n"
                         + "        return " + present.of(List.of("$present",
@@ -1055,7 +1057,7 @@ public final class PhpBindings {
         body.append("        $").append(ffi).append(" = $").append(session).append("->call();\n");
         for (int at = 0; at < rooms.size(); at++) {
             body.append("        $").append(roomNames.get(at)).append(" = $").append(ffi)
-                    .append("->new('").append(rooms.get(at).cType()).append("');\n");
+                    .append("->new('").append(Crossing.storage(rooms.get(at))).append("');\n");
             given.add("\\FFI::addr($" + roomNames.get(at) + ")");
         }
         body.append("        $").append(status).append(" = $").append(ffi).append("->")

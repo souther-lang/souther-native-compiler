@@ -42,6 +42,26 @@ sealed interface Crossing {
         return shape().words();
     }
 
+    /**
+     * What PHP's FFI makes ({@code FFI::new}) to hold one word the library writes or reads: room a
+     * function writes through, or a column of a list. The word's own C type, as the declarations
+     * the build wrote spell it, which is what room for it points at, and not how a parameter taking
+     * that room is declared. Only a word PHP holds room for has one here: another is a word no
+     * function writes into PHP's room, and room made of it would be a mistake found at a call.
+     */
+    static String storage(Word word) {
+        return switch (word) {
+            case INT -> "int64_t";
+            case BOOL -> "uint8_t";
+            case VALUE -> "souther_value";
+            case STRING -> "souther_string";
+            case LIST -> "souther_list";
+            case DECODED -> "souther_decoded";
+            case STATUS, CASE, OUTCOME, COUNT, MARK, BYTES, ISSUE, REQUIREMENTS, CAPABILITY,
+                 USERDATA -> throw new IllegalArgumentException("PHP holds no room for a " + word);
+        };
+    }
+
     /** A value PHP hands the library. */
     sealed interface Given extends Crossing {
 
@@ -98,9 +118,9 @@ sealed interface Crossing {
         /** The word held in room {@code room} names, as {@link #of} takes it. */
         String fromRoom(String room);
 
-        /** What C calls room for this word. */
-        default String cType() {
-            return word().cType();
+        /** What PHP's FFI makes to hold this word ({@link Crossing#storage}). */
+        default String storage() {
+            return Crossing.storage(word());
         }
 
         @Override
@@ -285,7 +305,7 @@ sealed interface Crossing {
 
         /** What C calls each word an element crosses as, as a PHP array. */
         private String columns() {
-            return element.words().stream().map(it -> "'" + it.cType() + "'")
+            return element.words().stream().map(it -> "'" + Crossing.storage(it) + "'")
                     .collect(Collectors.joining(", ", "[", "]"));
         }
     }
