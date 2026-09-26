@@ -2007,19 +2007,28 @@ fn a_kernel_settles_what_this_backend_knows_it_settles() {
         "settles",
     );
 
-    // A kernel this backend does not lower is refused as not lowered, whatever it settles.
-    let read_decimal = r#"{"union":[{"is":"primitive","prim":"DECIMAL"},{"is":"language","case":"NOT_A_NUMBER"}]}"#;
-    let reading = node(
+    // A kernel this backend does not lower is refused as not lowered, whatever it settles. Every
+    // kernel over types this backend lays out is lowered, so the one here is a key the standard
+    // library does not declare, over a list of `Int`s: what refuses it is the kernel and not a
+    // type it takes or answers.
+    let ints = list_of(INT);
+    let shuffling = node(
         "call",
         &format!(
-            r#""reaches":{{"is":"kernel","kernel":"string.toDecimal","takes":[{STRING}],"fact":{{"is":"orderingsubject","type":{INT}}}}},"arguments":[{}]"#,
-            read(0, STRING)
+            r#""reaches":{{"is":"kernel","kernel":"list.shuffle","takes":[{ints}],"fact":{{"is":"orderingsubject","type":{INT}}}}},"arguments":[{}]"#,
+            read(0, &ints)
         ),
-        read_decimal,
+        &ints,
     );
     let refused =
-        object_for(&helpers(&[h(&[STRING], &reading)])).expect_err("a kernel nothing here lowers");
+        object_for(&helpers(&[h(&[&ints], &shuffling)])).expect_err("a kernel nothing here lowers");
     assert!(refused.downcast_ref::<NotLowered>().is_some(), "{refused}");
+    assert!(
+        refused
+            .to_string()
+            .contains("a call to the kernel list.shuffle"),
+        "{refused}"
+    );
 }
 
 /// A kernel's call on the wire: the kernel it reaches, what the application takes, and what else

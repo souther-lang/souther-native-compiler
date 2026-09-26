@@ -825,8 +825,12 @@ mod tests {
                 assert!(shape.binds(&ty, &mut bound), "{key}");
             }
             assert!(contract.answers.settled(&bound).is_some(), "{key}");
-            // The fact is settled by it too, and answering it binds nothing new.
-            let _ = contract.fact.holds(&bound);
+            // So is the type a fact of it has to hold, where the kind carries one.
+            assert_eq!(
+                contract.fact.holds(&bound).is_some(),
+                matches!(contract.fact, FactContract::OrderingSubject(_)),
+                "{key}"
+            );
         }
     }
 

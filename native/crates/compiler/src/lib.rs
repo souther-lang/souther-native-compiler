@@ -5098,10 +5098,53 @@ fn lower_kernel(
             "a kernel lowered here takes one function, first"
         );
         let beside = lower(builder, lowering, module, bindings, abort, beside)?;
+        // Every kernel is named, so one added that takes a function says here what it answers
+        // for nothing.
         return Ok(match kernel {
             LoweredKernel::ListFind => builder.ins().iconst(POINTER, NOTHING),
             LoweredKernel::ListSortBy | LoweredKernel::OptionMap => beside,
-            _ => unreachable!("{kernel:?} is handed no function"),
+            LoweredKernel::IntAdd
+            | LoweredKernel::IntSubtract
+            | LoweredKernel::IntMultiply
+            | LoweredKernel::IntCompare
+            | LoweredKernel::IntFloorMod
+            | LoweredKernel::ListLength
+            | LoweredKernel::ListGet
+            | LoweredKernel::ListSort
+            | LoweredKernel::ListMax
+            | LoweredKernel::ListMin
+            | LoweredKernel::ListReverse
+            | LoweredKernel::ListSum
+            | LoweredKernel::ListProduct
+            | LoweredKernel::ListRangeInclusive
+            | LoweredKernel::IntTruncatingDivide
+            | LoweredKernel::IntTruncatingRemainder
+            | LoweredKernel::StringLength
+            | LoweredKernel::StringToInt
+            | LoweredKernel::StringFromInt
+            | LoweredKernel::StringTrim
+            | LoweredKernel::StringLowercase
+            | LoweredKernel::StringUppercase
+            | LoweredKernel::StringContains
+            | LoweredKernel::StringStartsWith
+            | LoweredKernel::StringEndsWith
+            | LoweredKernel::StringMatches
+            | LoweredKernel::StringSlice
+            | LoweredKernel::StringAppend
+            | LoweredKernel::StringSplit
+            | LoweredKernel::StringJoin
+            | LoweredKernel::StringConcat
+            | LoweredKernel::StringReplace
+            | LoweredKernel::StringWords
+            | LoweredKernel::StringLines
+            | LoweredKernel::StringReverse
+            | LoweredKernel::StringRepeat
+            | LoweredKernel::StringPadLeft
+            | LoweredKernel::StringPadRight
+            | LoweredKernel::StringCharacters
+            | LoweredKernel::StringCodePoints => {
+                unreachable!("{kernel:?} takes no function")
+            }
         });
     }
     // What a pattern means is what the checker settled, so the argument it was written as is not
