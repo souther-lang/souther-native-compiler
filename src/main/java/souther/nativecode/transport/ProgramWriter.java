@@ -88,7 +88,7 @@ public final class ProgramWriter {
      * written moves, so that a driver and a writer that disagree say so rather than producing an
      * object that is wrong quietly.
      */
-    public static final int TRANSPORT_VERSION = 23;
+    public static final int TRANSPORT_VERSION = 24;
 
     private final CheckedProgram program;
 
