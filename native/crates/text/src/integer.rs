@@ -5,14 +5,15 @@
 //! more ASCII digits, and nothing else. A decimal digit from outside ASCII is not a digit here, so
 //! no Unicode version decides what is a number.
 
-use alloc::string::ToString;
-use alloc::vec::Vec;
+use crate::Text;
+use alloc::string::{String, ToString};
 
 /// The integer the text writes in decimal, where it is integer text and the integer is an `Int`.
 ///
 /// Leading zeros are read, before or after a sign, and `-0` is nought. A number outside the range
 /// is not integer text of an `Int`, which is an answer and not a reason to end the run.
-pub fn integer(text: &[u8]) -> Option<i64> {
+pub fn integer(text: Text) -> Option<i64> {
+    let text = text.as_bytes();
     let (negative, digits) = match text.split_first()? {
         (b'-', rest) => (true, rest),
         (b'+', rest) => (false, rest),
@@ -41,8 +42,8 @@ pub fn integer(text: &[u8]) -> Option<i64> {
 
 /// The integer written in decimal (`String.fromInt`): a `-` where it is below nought, and no
 /// leading zero.
-pub fn written(value: i64) -> Vec<u8> {
-    value.to_string().into_bytes()
+pub fn written(value: i64) -> String {
+    value.to_string()
 }
 
 #[cfg(test)]
@@ -73,14 +74,14 @@ mod tests {
             ("--5", None),
             ("+-5", None),
         ] {
-            assert_eq!(integer(text.as_bytes()), read, "{text:?}");
+            assert_eq!(integer(Text::held(text)), read, "{text:?}");
         }
     }
 
     #[test]
     fn an_integer_is_written_in_decimal() {
-        assert_eq!(written(0), b"0");
-        assert_eq!(written(-42), b"-42");
-        assert_eq!(written(i64::MIN), b"-9223372036854775808");
+        assert_eq!(written(0), "0");
+        assert_eq!(written(-42), "-42");
+        assert_eq!(written(i64::MIN), "-9223372036854775808");
     }
 }

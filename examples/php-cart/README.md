@@ -57,7 +57,7 @@ as they are.
 ## Building and running it
 
 What it needs is what the repository's own build needs: Maven, Cargo, Composer, and PHP 8.2 or later
-with the `ffi`, `intl` and `pdo_sqlite` extensions.
+with the `ffi` and `pdo_sqlite` extensions.
 
     bin/build
     composer install

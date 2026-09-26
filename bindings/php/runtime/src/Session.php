@@ -144,20 +144,17 @@ final class Session
     /**
      * @internal Text as the library holds it.
      *
-     * The library takes text as UTF-8 already in the form Souther keeps it in, NFC, and checks
-     * neither: bytes that are not would make two equal texts compare unequal. So both are done
-     * here, where a PHP string, which is any bytes, becomes one.
+     * The library admits text where it comes in: it puts it in NFC by the Unicode version the
+     * language names, which PHP's own normalizer, reading whichever ICU it was built with, need not
+     * be. What the library cannot answer is bytes that are not UTF-8, which end the process there,
+     * so a PHP string, which is any bytes, is asked here and refused as an exception instead.
      */
     public function string(string $text): CData
     {
         if (preg_match('//u', $text) !== 1) {
             throw new \InvalidArgumentException('text handed to a Souther library is not UTF-8');
         }
-        $normalized = \Normalizer::normalize($text, \Normalizer::FORM_C);
-        if ($normalized === false) {
-            throw new \InvalidArgumentException('text handed to a Souther library could not be put in NFC');
-        }
-        return $this->ffi()->souther_string_of_utf8($this->bytes($normalized), strlen($normalized));
+        return $this->ffi()->souther_string_of_utf8($this->bytes($text), strlen($text));
     }
 
     /** @internal Bytes the library reads for the length of one call and does not keep. */

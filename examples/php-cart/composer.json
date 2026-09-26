@@ -18,7 +18,6 @@
     "require": {
         "php": "^8.2",
         "ext-ffi": "*",
-        "ext-intl": "*",
         "ext-pdo_sqlite": "*",
         "raoh/raoh": "^0.5",
         "souther-lang/php-runtime": "dev-main"

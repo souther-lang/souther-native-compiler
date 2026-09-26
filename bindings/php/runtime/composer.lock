@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "84c12ae5a71ead1ca438b6e0b074d1ea",
+    "content-hash": "239c3de1e836d075b0f5788e5da6130c",
     "packages": [
         {
             "name": "raoh/raoh",
@@ -76,8 +76,7 @@
     "prefer-lowest": false,
     "platform": {
         "php": "^8.2",
-        "ext-ffi": "*",
-        "ext-intl": "*"
+        "ext-ffi": "*"
     },
     "platform-dev": {},
     "plugin-api-version": "2.9.0"

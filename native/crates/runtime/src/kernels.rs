@@ -9,6 +9,7 @@
 
 use crate::{Count, List, Text, souther_alloc, string_of, text};
 use souther_native_abi::{LIST_LENGTH, list_at, room_for_list};
+use souther_text::Text as Held;
 use souther_text::pattern;
 
 /// A list of these, each written into its slot by `slot`.
@@ -29,25 +30,26 @@ fn list_of<T>(each: &[T], slot: impl Fn(&T) -> i64) -> *mut List {
 }
 
 /// A list of strings holding these pieces of text.
-fn list_of_strings(pieces: &[&[u8]]) -> *mut List {
-    list_of(pieces, |piece| string_of(piece) as i64)
+fn list_of_strings(pieces: &[Held]) -> *mut List {
+    list_of(pieces, |piece| string_of(piece.as_str()) as i64)
 }
 
-/// The text of each string a list of strings holds, in order.
+/// The text of each string a list of strings holds, in order, for as long as the pointer to the
+/// list is borrowed, as [`text`] is.
 ///
 /// # Safety
 ///
 /// `list` is a list whose every element is a string, and the mark below it still stands.
-unsafe fn texts<'a>(list: *const List) -> Vec<&'a [u8]> {
+unsafe fn texts<'a>(list: &'a *const List) -> Vec<Held<'a>> {
     let at = list.cast::<u8>();
     let elements = unsafe { at.offset(LIST_LENGTH as isize).cast::<i64>().read() };
     (0..elements)
-        .map(|index| unsafe {
-            let element = at
-                .offset(list_at(index) as isize)
-                .cast::<*const u8>()
-                .read();
-            text(element)
+        .map(|index| {
+            // Each element is a slot of the list holding a string's address, there for as long as
+            // the list is.
+            let slot: &'a *const u8 =
+                unsafe { &*at.offset(list_at(index) as isize).cast::<*const u8>() };
+            unsafe { text(slot) }
         })
         .collect()
 }
@@ -74,7 +76,7 @@ unsafe fn answered<T>(value: Option<T>, out: *mut T) -> i8 {
 /// As [`crate::souther_string_compare`], for every string handed over. So for every function here.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_string_trim(s: *const Text) -> *mut Text {
-    string_of(souther_text::trim(unsafe { text(s.cast()) }))
+    string_of(souther_text::trim(unsafe { text(&s) }).as_str())
 }
 
 /// `String.lowercase`.
@@ -84,7 +86,7 @@ pub unsafe extern "C" fn souther_string_trim(s: *const Text) -> *mut Text {
 /// As [`souther_string_trim`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_string_lowercase(s: *const Text) -> *mut Text {
-    string_of(&souther_text::lowercase(unsafe { text(s.cast()) }))
+    string_of(&souther_text::lowercase(unsafe { text(&s) }))
 }
 
 /// `String.uppercase`.
@@ -94,7 +96,7 @@ pub unsafe extern "C" fn souther_string_lowercase(s: *const Text) -> *mut Text {
 /// As [`souther_string_trim`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_string_uppercase(s: *const Text) -> *mut Text {
-    string_of(&souther_text::uppercase(unsafe { text(s.cast()) }))
+    string_of(&souther_text::uppercase(unsafe { text(&s) }))
 }
 
 /// `String.contains`.
@@ -104,7 +106,7 @@ pub unsafe extern "C" fn souther_string_uppercase(s: *const Text) -> *mut Text {
 /// As [`souther_string_trim`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_string_contains(sub: *const Text, s: *const Text) -> i8 {
-    unsafe { souther_text::contains(text(sub.cast()), text(s.cast())) }.into()
+    unsafe { souther_text::contains(text(&sub), text(&s)) }.into()
 }
 
 /// `String.startsWith`.
@@ -114,7 +116,7 @@ pub unsafe extern "C" fn souther_string_contains(sub: *const Text, s: *const Tex
 /// As [`souther_string_trim`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_string_starts_with(prefix: *const Text, s: *const Text) -> i8 {
-    unsafe { souther_text::starts_with(text(prefix.cast()), text(s.cast())) }.into()
+    unsafe { souther_text::starts_with(text(&prefix), text(&s)) }.into()
 }
 
 /// `String.endsWith`.
@@ -124,7 +126,7 @@ pub unsafe extern "C" fn souther_string_starts_with(prefix: *const Text, s: *con
 /// As [`souther_string_trim`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_string_ends_with(suffix: *const Text, s: *const Text) -> i8 {
-    unsafe { souther_text::ends_with(text(suffix.cast()), text(s.cast())) }.into()
+    unsafe { souther_text::ends_with(text(&suffix), text(&s)) }.into()
 }
 
 /// `String.matches`, run on the machine the pattern was compiled to.
@@ -136,7 +138,7 @@ pub unsafe extern "C" fn souther_string_ends_with(suffix: *const Text, s: *const
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_string_matches(machine: *const u32, s: *const Text) -> i8 {
     let words = unsafe { std::slice::from_raw_parts(machine, pattern::length(machine.read())) };
-    pattern::matches(words, unsafe { text(s.cast()) }).into()
+    pattern::matches(words, unsafe { text(&s) }).into()
 }
 
 /// `String.slice`, written through `out` where the string has the code points asked for.
@@ -151,7 +153,8 @@ pub unsafe extern "C" fn souther_string_slice(
     s: *const Text,
     out: *mut *mut Text,
 ) -> i8 {
-    let sliced = souther_text::slice(from, to, unsafe { text(s.cast()) }).map(string_of);
+    let sliced =
+        souther_text::slice(from, to, unsafe { text(&s) }).map(|it| string_of(it.as_str()));
     unsafe { answered(sliced, out) }
 }
 
@@ -162,10 +165,9 @@ pub unsafe extern "C" fn souther_string_slice(
 /// As [`souther_string_trim`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_string_split(separator: *const Text, s: *const Text) -> *mut List {
-    list_of_strings(&souther_text::split(
-        unsafe { text(separator.cast()) },
-        unsafe { text(s.cast()) },
-    ))
+    list_of_strings(&souther_text::split(unsafe { text(&separator) }, unsafe {
+        text(&s)
+    }))
 }
 
 /// `String.join`.
@@ -175,11 +177,8 @@ pub unsafe extern "C" fn souther_string_split(separator: *const Text, s: *const 
 /// As [`souther_string_trim`], and `xs` is a list of strings.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_string_join(separator: *const Text, xs: *const List) -> *mut Text {
-    let pieces = unsafe { texts(xs) };
-    string_of(&souther_text::join(
-        unsafe { text(separator.cast()) },
-        pieces,
-    ))
+    let pieces = unsafe { texts(&xs) };
+    string_of(&souther_text::join(unsafe { text(&separator) }, pieces))
 }
 
 /// `String.concat`.
@@ -189,8 +188,8 @@ pub unsafe extern "C" fn souther_string_join(separator: *const Text, xs: *const 
 /// As [`souther_string_join`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_string_concat_all(xs: *const List) -> *mut Text {
-    let pieces = unsafe { texts(xs) };
-    string_of(&souther_text::join(b"", pieces))
+    let pieces = unsafe { texts(&xs) };
+    string_of(&souther_text::join(Held::held(""), pieces))
 }
 
 /// `String.replace`.
@@ -204,13 +203,7 @@ pub unsafe extern "C" fn souther_string_replace(
     replacement: *const Text,
     s: *const Text,
 ) -> *mut Text {
-    let replaced = unsafe {
-        souther_text::replace(
-            text(target.cast()),
-            text(replacement.cast()),
-            text(s.cast()),
-        )
-    };
+    let replaced = unsafe { souther_text::replace(text(&target), text(&replacement), text(&s)) };
     string_of(&replaced)
 }
 
@@ -221,7 +214,7 @@ pub unsafe extern "C" fn souther_string_replace(
 /// As [`souther_string_trim`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_string_words(s: *const Text) -> *mut List {
-    list_of_strings(&souther_text::words(unsafe { text(s.cast()) }))
+    list_of_strings(&souther_text::words(unsafe { text(&s) }))
 }
 
 /// `String.lines`.
@@ -231,7 +224,7 @@ pub unsafe extern "C" fn souther_string_words(s: *const Text) -> *mut List {
 /// As [`souther_string_trim`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_string_lines(s: *const Text) -> *mut List {
-    list_of_strings(&souther_text::lines(unsafe { text(s.cast()) }))
+    list_of_strings(&souther_text::lines(unsafe { text(&s) }))
 }
 
 /// `String.fromInt`.
@@ -247,7 +240,7 @@ pub extern "C" fn souther_string_from_int(n: i64) -> *mut Text {
 /// As [`souther_string_trim`], and `out` is room for an `Int`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_string_to_int(s: *const Text, out: *mut i64) -> i8 {
-    unsafe { answered(souther_text::integer(text(s.cast())), out) }
+    unsafe { answered(souther_text::integer(text(&s)), out) }
 }
 
 /// `String.reverse`.
@@ -257,7 +250,7 @@ pub unsafe extern "C" fn souther_string_to_int(s: *const Text, out: *mut i64) ->
 /// As [`souther_string_trim`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_string_reverse(s: *const Text) -> *mut Text {
-    string_of(&souther_text::reverse(unsafe { text(s.cast()) }))
+    string_of(&souther_text::reverse(unsafe { text(&s) }))
 }
 
 /// `String.repeat`, written through `out` where the count is one a string can hold.
@@ -271,7 +264,7 @@ pub unsafe extern "C" fn souther_string_repeat(
     s: *const Text,
     out: *mut *mut Text,
 ) -> i8 {
-    let repeated = souther_text::repeat(copies, unsafe { text(s.cast()) });
+    let repeated = souther_text::repeat(copies, unsafe { text(&s) });
     unsafe { answered(repeated.as_deref().map(string_of), out) }
 }
 
@@ -287,7 +280,7 @@ pub unsafe extern "C" fn souther_string_pad_left(
     s: *const Text,
     out: *mut *mut Text,
 ) -> i8 {
-    let padded = unsafe { souther_text::pad_left(width, text(pad.cast()), text(s.cast())) };
+    let padded = unsafe { souther_text::pad_left(width, text(&pad), text(&s)) };
     unsafe { answered(padded.as_deref().map(string_of), out) }
 }
 
@@ -303,7 +296,7 @@ pub unsafe extern "C" fn souther_string_pad_right(
     s: *const Text,
     out: *mut *mut Text,
 ) -> i8 {
-    let padded = unsafe { souther_text::pad_right(width, text(pad.cast()), text(s.cast())) };
+    let padded = unsafe { souther_text::pad_right(width, text(&pad), text(&s)) };
     unsafe { answered(padded.as_deref().map(string_of), out) }
 }
 
@@ -314,7 +307,7 @@ pub unsafe extern "C" fn souther_string_pad_right(
 /// As [`souther_string_trim`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_string_characters(s: *const Text) -> *mut List {
-    list_of_strings(&souther_text::characters(unsafe { text(s.cast()) }))
+    list_of_strings(&souther_text::characters(unsafe { text(&s) }))
 }
 
 /// `String.codePoints`.
@@ -325,7 +318,7 @@ pub unsafe extern "C" fn souther_string_characters(s: *const Text) -> *mut List 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_string_code_point_values(s: *const Text) -> *mut List {
     list_of(
-        &souther_text::code_points_of(unsafe { text(s.cast()) }),
+        &souther_text::code_points_of(unsafe { text(&s) }),
         |point| *point,
     )
 }
@@ -337,17 +330,17 @@ mod tests {
     use std::ptr;
 
     fn made(text: &str) -> *mut Text {
-        string_of(text.as_bytes())
+        string_of(text)
     }
 
     fn said(at: *const Text) -> String {
-        String::from_utf8(unsafe { text(at.cast()) }.to_vec()).unwrap()
+        String::from(unsafe { text(&at) }.as_str())
     }
 
     fn strings(list: *const List) -> Vec<String> {
-        unsafe { texts(list) }
+        unsafe { texts(&list) }
             .into_iter()
-            .map(|it| String::from_utf8(it.to_vec()).unwrap())
+            .map(|it| String::from(it.as_str()))
             .collect()
     }
 

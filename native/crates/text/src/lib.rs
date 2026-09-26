@@ -1,18 +1,18 @@
-//! What the language says text means, over the bytes it is kept in and nothing else.
+//! What the language says text means, over the text alone.
 //!
-//! A Souther string is a sequence of Unicode scalar values, kept as UTF-8 in NFC, and what the
-//! language asks of it — how long it is, which of two comes first, what `trim` or `lowercase` or
-//! `matches` answers — is a question about the text and not about where it stands. So everything
-//! here takes slices and answers numbers, orderings, pieces of what it was handed, or the bytes of
-//! text it built: no arena, no address of either runtime's width, no layout. That is what lets
-//! this move, as it is, into what the native and the wasm runtimes both read (#17), the way
-//! `souther-json-syntax` is shaped to. What the runtime adds is where the answer is kept.
+//! A Souther string is a sequence of Unicode scalar values in NFC (spec §string-code-points,
+//! §string-canonical), and what the language asks of it — how long it is, which of two comes first,
+//! what `trim` or `lowercase` or `matches` answers — is a question about the text and not about
+//! where it stands. So everything here takes [`Text`] and answers numbers, orderings, pieces of what
+//! it was handed, or text it built: no arena, no address of either runtime's width, no layout. That
+//! is what lets this move, as it is, into what the native and the wasm runtimes both read (#17),
+//! the way `souther-json-syntax` is shaped to. What the runtime adds is where the answer is kept.
 //!
-//! The text is read one code point at a time by [`decoded`], and every operation here that reads
-//! code points is written over it and not over a reading of its own. Two readings agree on
-//! well-formed text and part on the rest — one counts the bytes that start a code point, another
-//! steps by what a first byte says — and the difference is found by nobody, since a Souther string
-//! is never ill-formed. One reading means that where they would part, they cannot.
+//! A [`Text`] is what a string holds, and so is already what the language says a string is. Text
+//! from outside becomes one through [`admitted`] and nowhere else, which refuses what is not UTF-8
+//! and puts the rest in NFC. What is built here is built from texts and is put in NFC where joining
+//! can leave it not, so it is one too. Nothing here reads bytes that may be anything, and nothing
+//! here puts text in NFC that already is.
 //!
 //! Where the language names a Unicode version — for NFC, for case — it is the one [`tables`] was
 //! generated from, and not whichever a dependency was last released at.
@@ -28,7 +28,6 @@ mod operations;
 pub mod pattern;
 mod tables;
 
-pub use canonical::nfc;
 pub use case::{lowercase, uppercase};
 pub use integer::{integer, written};
 pub use operations::{
@@ -37,71 +36,65 @@ pub use operations::{
 };
 pub use tables::UNICODE_VERSION;
 
-use alloc::vec::Vec;
+use alloc::borrow::Cow;
 use core::cmp::Ordering;
 
-/// The code point that starts at `at`, and how many bytes it takes, or nothing past the end.
+/// What a Souther string holds: Unicode scalar values, in NFC.
 ///
-/// The width is what the first byte says. A byte the text does not have reads as a continuation
-/// byte of nought, so a sequence cut short at the end answers a code point and never reads past the
-/// slice. What it answers for bytes that are not UTF-8 means nothing; that it answers without
-/// reading past them is the one thing it promises.
-fn decoded(text: &[u8], at: usize) -> Option<(u32, usize)> {
-    let first = u32::from(*text.get(at)?);
-    let trailing = |offset: usize| u32::from(text.get(at + offset).copied().unwrap_or(0)) & 0x3f;
-    Some(if first < 0x80 {
-        (first, 1)
-    } else if first < 0xe0 {
-        (((first & 0x1f) << 6) | trailing(1), 2)
-    } else if first < 0xf0 {
-        (((first & 0x0f) << 12) | (trailing(1) << 6) | trailing(2), 3)
-    } else {
-        (
-            ((first & 0x07) << 18) | (trailing(1) << 12) | (trailing(2) << 6) | trailing(3),
-            4,
-        )
-    })
-}
+/// Scalar values because it is a `str`. NFC because every door text comes in by admits it in NFC
+/// ([`admitted`]) and everything built here from texts is put in it, so a string holds nothing
+/// else. That is what lets an operation join two texts by putting only the seam in NFC again, and
+/// search one for another as the `str`s they are.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Text<'a>(&'a str);
 
-/// The scalar values the text writes, in order.
-///
-/// A code point [`decoded`] reads out of bytes that are not UTF-8 may be none, and is answered as
-/// U+FFFD: what such bytes mean is nothing, and this answers without reading past them.
-pub(crate) fn scalar_values(text: &[u8]) -> impl Iterator<Item = u32> + '_ {
-    let mut at = 0;
-    core::iter::from_fn(move || {
-        let (point, width) = decoded(text, at)?;
-        at += width;
-        Some(char::from_u32(point).map_or(0xfffd, u32::from))
-    })
-}
-
-/// These scalar values as UTF-8.
-pub(crate) fn encoded(points: &[u32]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(points.len());
-    let mut written = [0u8; 4];
-    for point in points {
-        let character = char::from_u32(*point).unwrap_or(char::REPLACEMENT_CHARACTER);
-        out.extend_from_slice(character.encode_utf8(&mut written).as_bytes());
+impl<'a> Text<'a> {
+    /// The text a string holds.
+    ///
+    /// Held to be NFC, which is the language's and not a question of memory: a text that was not
+    /// would be answered for as the text it is, and two equal texts written two ways would compare
+    /// unequal. A debug build checks it, which is what every test runs as.
+    pub fn held(text: &'a str) -> Text<'a> {
+        debug_assert!(
+            text.is_ascii() || canonical::nfc(text) == text,
+            "a string holds text in NFC: {text:?}"
+        );
+        Text(text)
     }
-    out
+
+    pub fn as_str(self) -> &'a str {
+        self.0
+    }
+
+    pub fn as_bytes(self) -> &'a [u8] {
+        self.0.as_bytes()
+    }
+}
+
+/// Text arriving from outside, as a string holds it: in NFC, or nothing where it is not UTF-8.
+///
+/// The one way text becomes a string, whichever door it came through — a decoder's string leaf, a
+/// host handing text in. The doors differ in how they say no and not in what they refuse. Refused
+/// and not repaired: bytes that are not UTF-8 are no text, and reading them as U+FFFD would make
+/// them and U+FFFD itself one value.
+pub fn admitted(bytes: &[u8]) -> Option<Cow<'_, str>> {
+    let text = core::str::from_utf8(bytes).ok()?;
+    Some(if text.is_ascii() {
+        Cow::Borrowed(text)
+    } else {
+        Cow::Owned(canonical::nfc(text))
+    })
 }
 
 /// How long the text is as the language counts it, in code points (`String.length`).
 ///
 /// Not the bytes it is kept in, and not the characters a reader sees: `𠮷` is one code point and
 /// four bytes, and `🇯🇵` is two code points and one flag.
-pub fn code_points(text: &[u8]) -> usize {
-    let mut at = 0;
-    let mut counted = 0;
-    while let Some((_, width)) = decoded(text, at) {
-        at += width;
-        counted += 1;
-    }
-    counted
+pub fn code_points(text: Text) -> usize {
+    text.0.chars().count()
 }
 
-/// Two runs of text, in the order the language gives text.
+/// Two texts, in the order the language gives text.
 ///
 /// A string is a sequence of Unicode scalar values and is ordered lexicographically over them: the
 /// first value where the two differ decides, and a run that begins the other comes before it (spec
@@ -110,8 +103,8 @@ pub fn code_points(text: &[u8]) -> usize {
 /// the bytes is that order, and nothing is decoded to answer it. A carrier holding UTF-16 would
 /// have to correct its units where a surrogate meets a unit from E000 up; this one has nothing to
 /// correct.
-pub fn compare(left: &[u8], right: &[u8]) -> Ordering {
-    left.cmp(right)
+pub fn compare(left: Text, right: Text) -> Ordering {
+    left.as_bytes().cmp(right.as_bytes())
 }
 
 #[cfg(test)]
@@ -119,7 +112,10 @@ mod tests {
     extern crate std;
 
     use super::*;
-    use std::vec::Vec;
+
+    fn held(text: &str) -> Text<'_> {
+        Text::held(text)
+    }
 
     /// A length is counted in code points: not bytes, and not what a reader sees as one character.
     #[test]
@@ -133,7 +129,7 @@ mod tests {
             ("🇯🇵", 2),
             ("a𠮷b", 3),
         ] {
-            assert_eq!(code_points(text.as_bytes()), counted, "{text}");
+            assert_eq!(code_points(held(text)), counted, "{text}");
         }
     }
 
@@ -141,14 +137,11 @@ mod tests {
     /// E000 up: the order a JVM string's UTF-16 units are in is the other way round there.
     #[test]
     fn text_is_ordered_by_scalar_value() {
-        assert_eq!(compare("￥".as_bytes(), "𠮷".as_bytes()), Ordering::Less);
-        assert_eq!(compare("a".as_bytes(), "ab".as_bytes()), Ordering::Less);
-        assert_eq!(compare("b".as_bytes(), "ab".as_bytes()), Ordering::Greater);
-        assert_eq!(
-            compare("日本".as_bytes(), "日本".as_bytes()),
-            Ordering::Equal
-        );
-        assert_eq!(compare("".as_bytes(), "a".as_bytes()), Ordering::Less);
+        assert_eq!(compare(held("￥"), held("𠮷")), Ordering::Less);
+        assert_eq!(compare(held("a"), held("ab")), Ordering::Less);
+        assert_eq!(compare(held("b"), held("ab")), Ordering::Greater);
+        assert_eq!(compare(held("日本"), held("日本")), Ordering::Equal);
+        assert_eq!(compare(held(""), held("a")), Ordering::Less);
     }
 
     /// The order of the bytes is the order of the scalar values they write, for every pair of
@@ -173,20 +166,30 @@ mod tests {
         let mut other = [0u8; 4];
         for one in points {
             for another in points {
-                let a = one.encode_utf8(&mut written).as_bytes();
-                let b = another.encode_utf8(&mut other).as_bytes();
-                assert_eq!(compare(a, b), one.cmp(&another), "{one:?} {another:?}");
+                let a = one.encode_utf8(&mut written);
+                let b = another.encode_utf8(&mut other);
+                assert_eq!(
+                    compare(held(a), held(b)),
+                    one.cmp(&another),
+                    "{one:?} {another:?}"
+                );
             }
         }
     }
 
-    /// A sequence cut short at the end is read as far as the slice goes and no further.
+    /// Bytes that are not UTF-8 are refused and not repaired, and what is admitted is in NFC.
     #[test]
-    fn a_sequence_cut_short_reads_nothing_past_the_end() {
-        let whole = "日".as_bytes();
-        for cut in 1..whole.len() {
-            let part: Vec<u8> = whole[..cut].to_vec();
-            assert_eq!(code_points(&part), 1);
-        }
+    fn what_is_admitted_is_utf_8_put_in_nfc() {
+        assert_eq!(admitted(b"\xff").as_deref(), None);
+        assert_eq!(admitted(b"a\xed\xa0\x80").as_deref(), None);
+        assert_eq!(admitted("e\u{301}".as_bytes()).as_deref(), Some("\u{e9}"));
+        assert_eq!(admitted(b"plain").as_deref(), Some("plain"));
+    }
+
+    /// A text a string holds is in NFC, which a debug build holds it to.
+    #[test]
+    #[should_panic(expected = "a string holds text in NFC")]
+    fn a_text_not_in_nfc_is_not_held() {
+        Text::held("e\u{301}");
     }
 }

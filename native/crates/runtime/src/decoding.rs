@@ -21,8 +21,8 @@
 //! it when it ends.
 
 use crate::document::{Form, Node, parsed};
-use crate::{Count, Text, Value, room_for_a_string, souther_alloc, text};
-use souther_native_abi::{DECODED_ISSUES, DECODED_MALFORMED, DECODED_VALUE, TEXT_BYTES};
+use crate::{Count, Text, Value, souther_alloc, string_of, text};
+use souther_native_abi::{DECODED_ISSUES, DECODED_MALFORMED, DECODED_VALUE};
 use std::ptr;
 
 /// One reading of one document, from when its bytes are handed over to what a host is answered.
@@ -77,35 +77,25 @@ fn held<T>(value: T) -> *mut T {
     at
 }
 
-/// A string of the runtime's layout holding these bytes.
-fn string(bytes: &[u8]) -> *mut u8 {
-    let at = room_for_a_string(bytes.len());
-    unsafe {
-        at.offset(TEXT_BYTES as isize)
-            .copy_from_nonoverlapping(bytes.as_ptr(), bytes.len())
-    };
-    at
-}
-
 /// The JSON Pointer of `path`: each step after a `/`, with `~` written `~0` and `/` written `~1`
 /// so that a key holding either is one step and not two (RFC 6901).
 ///
 /// # Safety
 /// `path` is null or a path made here whose steps are strings of the runtime's layout.
-unsafe fn pointer(path: *const Path) -> Vec<u8> {
+unsafe fn pointer(path: *const Path) -> String {
     let mut steps = Vec::new();
     let mut at = path;
     while let Some(step) = unsafe { at.as_ref() } {
-        steps.push(unsafe { text(step.step) });
+        steps.push(unsafe { text(&step.step) }.as_str());
         at = step.above;
     }
-    let mut written = Vec::new();
+    let mut written = String::new();
     for step in steps.iter().rev() {
-        written.push(b'/');
-        for &byte in *step {
-            match byte {
-                b'~' => written.extend_from_slice(b"~0"),
-                b'/' => written.extend_from_slice(b"~1"),
+        written.push('/');
+        for character in step.chars() {
+            match character {
+                '~' => written.push_str("~0"),
+                '/' => written.push_str("~1"),
                 other => written.push(other),
             }
         }
@@ -113,19 +103,24 @@ unsafe fn pointer(path: *const Path) -> Vec<u8> {
     written
 }
 
+/// A string of the runtime's layout holding this text, as an issue holds one.
+fn string(text: &str) -> *const u8 {
+    string_of(text).cast()
+}
+
 /// Records an issue found at `path`.
 ///
 /// # Safety
 /// `decoding` is one [`souther_decode_begin`] answered and still reading, and `path` is as
 /// [`pointer`] says.
-unsafe fn found(decoding: *mut Decoding, code: &str, path: *const Path, meta: &[(&str, &[u8])]) {
+unsafe fn found(decoding: *mut Decoding, code: &str, path: *const Path, meta: &[(&str, &str)]) {
     assert!(meta.len() <= META, "no code says more than {META} things");
     let mut entries = [(ptr::null::<u8>(), ptr::null::<u8>()); META];
     for (entry, (key, value)) in entries.iter_mut().zip(meta) {
-        *entry = (string(key.as_bytes()), string(value));
+        *entry = (string(key), string(value));
     }
     let issue = held(Issue {
-        code: string(code.as_bytes()),
+        code: string(code),
         path: string(&unsafe { pointer(path) }),
         meta: entries,
         meta_count: meta.len() as i64,
@@ -147,23 +142,16 @@ unsafe fn mismatched(decoding: *mut Decoding, path: *const Path, node: &Node, wa
             decoding,
             "type_mismatch",
             path,
-            &[
-                ("actual", node.kind().as_bytes()),
-                ("expected", wanted.as_bytes()),
-            ],
+            &[("actual", node.kind()), ("expected", wanted)],
         )
     };
 }
 
-/// Text arriving from outside, canonicalized to NFC where it arrives, which is at its string leaf
+/// Text arriving from outside, admitted where it arrives, which is at its string leaf: put in NFC
 /// (spec §string-canonical). What most documents write is ASCII, which is NFC already and is taken
 /// as it is.
-fn canonical(written: &[u8]) -> std::borrow::Cow<'_, [u8]> {
-    if written.is_ascii() {
-        std::borrow::Cow::Borrowed(written)
-    } else {
-        std::borrow::Cow::Owned(souther_text::nfc(written))
-    }
+fn canonical(written: &[u8]) -> std::borrow::Cow<'_, str> {
+    souther_text::admitted(written).expect("the parser holds a string to be UTF-8")
 }
 
 /// Begins reading `length` bytes at `bytes` as a document in the external form.
@@ -304,7 +292,7 @@ pub unsafe extern "C" fn souther_path_below(path: *const Path, step: *const Text
 pub unsafe extern "C" fn souther_path_at(path: *const Path, index: Count) -> *const Path {
     held(Path {
         above: path,
-        step: string(index.0.to_string().as_bytes()),
+        step: string(&index.0.to_string()),
     })
 }
 
@@ -378,7 +366,7 @@ pub unsafe extern "C" fn souther_read_object(
 /// `node` is a place in a document being read; `key` is a string of the runtime's layout.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_read_member(node: *const Node, key: *const Text) -> *const Node {
-    match unsafe { (*node).member(text(key.cast())) } {
+    match unsafe { (*node).member(text(&key).as_bytes()) } {
         Some(member) => member,
         None => ptr::null(),
     }
@@ -396,7 +384,7 @@ pub unsafe extern "C" fn souther_read_missing(path: *const Path, decoding: *mut 
             decoding,
             "missing_field",
             path,
-            &[("actual", b"nothing"), ("expected", b"a field")],
+            &[("actual", "nothing"), ("expected", "a field")],
         )
     };
 }
@@ -470,7 +458,7 @@ unsafe fn int(node: &Node, path: *const Path, decoding: *mut Decoding) -> Option
                 decoding,
                 "out_of_range",
                 path,
-                &[("actual", b"number"), ("expected", b"Int")],
+                &[("actual", "number"), ("expected", "Int")],
             )
         };
     }
@@ -512,7 +500,7 @@ pub unsafe extern "C" fn souther_read_string(
     out: *mut *mut Text,
 ) -> i8 {
     let read = match unsafe { &*node } {
-        Node::String(written) => Some(string(&canonical(written)).cast::<Text>()),
+        Node::String(written) => Some(string_of(&canonical(written))),
         other => {
             unsafe { mismatched(decoding, path, other, "String") };
             None
@@ -553,13 +541,13 @@ pub unsafe extern "C" fn souther_read_tag(
     path: *const Path,
     decoding: *mut Decoding,
 ) -> *const Node {
-    let Some(tag) = (unsafe { (*node).member(text(key.cast())) }) else {
+    let Some(tag) = (unsafe { (*node).member(text(&key).as_bytes()) }) else {
         unsafe {
             found(
                 decoding,
                 "missing_field",
                 path,
-                &[("actual", b"nothing"), ("expected", b"a case")],
+                &[("actual", "nothing"), ("expected", "a case")],
             )
         };
         return ptr::null();
@@ -578,7 +566,9 @@ pub unsafe extern "C" fn souther_read_tag(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_read_is(node: *const Node, name: *const Text) -> i8 {
     match unsafe { &*node } {
-        Node::String(written) => i8::from(*canonical(written) == *unsafe { text(name.cast()) }),
+        Node::String(written) => {
+            i8::from(canonical(written).as_bytes() == unsafe { text(&name) }.as_bytes())
+        }
         _ => 0,
     }
 }
@@ -593,16 +583,17 @@ pub unsafe extern "C" fn souther_read_not_a_case(
     path: *const Path,
     decoding: *mut Decoding,
 ) {
-    let written: &[u8] = match unsafe { &*node } {
-        Node::String(written) => written,
-        _ => b"",
+    // What was written, as the text it is admitted as: every string holds text in NFC.
+    let written = match unsafe { &*node } {
+        Node::String(written) => canonical(written),
+        _ => std::borrow::Cow::Borrowed(""),
     };
     unsafe {
         found(
             decoding,
             "not_allowed",
             path,
-            &[("actual", written), ("expected", b"a case")],
+            &[("actual", &written), ("expected", "a case")],
         )
     };
 }
@@ -622,10 +613,10 @@ pub unsafe extern "C" fn souther_read_invariant(
     name: *const Text,
     clause: *const Text,
 ) {
-    let (module, name) = unsafe { (text(module.cast()), text(name.cast())) };
-    let mut meta: Vec<(&str, &[u8])> = vec![("module", module), ("type", name)];
+    let (module, name) = unsafe { (text(&module).as_str(), text(&name).as_str()) };
+    let mut meta: Vec<(&str, &str)> = vec![("module", module), ("type", name)];
     if !clause.is_null() {
-        meta.push(("clause", unsafe { text(clause.cast()) }));
+        meta.push(("clause", unsafe { text(&clause).as_str() }));
     }
     unsafe { found(decoding, "invariant_violation", path, &meta) };
 }
@@ -760,7 +751,7 @@ mod tests {
     use crate::{souther_mark, souther_reset, souther_string_of_utf8};
 
     fn said(at: *const Text) -> String {
-        String::from_utf8(unsafe { text(at.cast()) }.to_vec()).unwrap()
+        String::from_utf8(unsafe { text(&at).as_bytes() }.to_vec()).unwrap()
     }
 
     fn literal(value: &str) -> *mut Text {

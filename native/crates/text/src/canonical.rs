@@ -8,8 +8,9 @@
 //! by class, compose what nothing blocks — over the tables [`crate::tables`] was generated with, and
 //! Hangul's syllables by the formula Unicode states for them rather than by a table.
 
+use crate::Text;
 use crate::tables::{COMBINING_CLASS, COMPOSITION, DECOMPOSITION, SECOND_OF_A_PAIR};
-use crate::{decoded, encoded, scalar_values};
+use alloc::string::String;
 use alloc::vec::Vec;
 
 const S_BASE: u32 = 0xac00;
@@ -25,22 +26,25 @@ const S_COUNT: u32 = L_COUNT * N_COUNT;
 /// The text in NFC.
 ///
 /// Text of ASCII alone is in NFC already, which is most of what a program handles, so it is
-/// answered as it is without being decoded.
-pub fn nfc(text: &[u8]) -> Vec<u8> {
+/// answered as it is without being decomposed.
+pub(crate) fn nfc(text: &str) -> String {
     if text.is_ascii() {
-        return text.to_vec();
+        return String::from(text);
     }
-    normalized(scalar_values(text).collect())
+    normalized(text.chars())
 }
 
-/// These code points in NFC, as UTF-8.
-pub(crate) fn normalized(points: Vec<u32>) -> Vec<u8> {
-    let mut decomposed = Vec::with_capacity(points.len());
-    for point in points {
-        decompose(point, &mut decomposed);
+/// These characters in NFC.
+pub(crate) fn normalized(characters: impl Iterator<Item = char>) -> String {
+    let mut decomposed = Vec::new();
+    for character in characters {
+        decompose(u32::from(character), &mut decomposed);
     }
     put_in_canonical_order(&mut decomposed);
-    encoded(&composed(decomposed))
+    composed(decomposed)
+        .into_iter()
+        .map(|point| char::from_u32(point).expect("NFC of scalar values is scalar values"))
+        .collect()
 }
 
 /// Text in NFC made by joining runs of text each in NFC already.
@@ -54,28 +58,29 @@ pub(crate) fn normalized(points: Vec<u32>) -> Vec<u8> {
 /// A stable starter is one nothing written after it is reordered in front of it. The first run's text before its last one is
 /// already what NFC makes of it and nothing after can reach it. The second run's text from its
 /// first one that is also no second of a pair is out of reach of anything before it.
-pub(crate) struct Joined(Vec<u8>);
+pub(crate) struct Joined(String);
 
 impl Joined {
     pub(crate) fn new() -> Joined {
-        Joined(Vec::new())
+        Joined(String::new())
     }
 
-    /// `next`, which is in NFC, joined on.
-    pub(crate) fn push(&mut self, next: &[u8]) {
+    /// `next` joined on.
+    pub(crate) fn push(&mut self, next: Text) {
+        let next = next.as_str();
         let reach = out_of_reach(next);
         if reach == 0 {
-            self.0.extend_from_slice(next);
+            self.0.push_str(next);
             return;
         }
         let from = last_stable_starter(&self.0);
         let mut seam = self.0.split_off(from);
-        seam.extend_from_slice(&next[..reach]);
-        self.0.extend_from_slice(&nfc(&seam));
-        self.0.extend_from_slice(&next[reach..]);
+        seam.push_str(&next[..reach]);
+        self.0.push_str(&nfc(&seam));
+        self.0.push_str(&next[reach..]);
     }
 
-    pub(crate) fn into_bytes(self) -> Vec<u8> {
+    pub(crate) fn finished(self) -> String {
         self.0
     }
 }
@@ -99,31 +104,21 @@ fn second_of_a_pair(point: u32) -> bool {
 
 /// Where the text stops being within reach of what is joined before it: the first code point
 /// that is a stable starter and no second of a pair, or the end.
-fn out_of_reach(text: &[u8]) -> usize {
-    let mut at = 0;
-    while let Some((point, width)) = decoded(text, at) {
-        if stable_starter(point) && !second_of_a_pair(point) {
-            return at;
-        }
-        at += width;
-    }
-    text.len()
+fn out_of_reach(text: &str) -> usize {
+    text.char_indices()
+        .find(|(_, character)| {
+            let point = u32::from(*character);
+            stable_starter(point) && !second_of_a_pair(point)
+        })
+        .map_or(text.len(), |(at, _)| at)
 }
 
 /// Where the text's last stable starter begins, or nought where it has none.
-fn last_stable_starter(text: &[u8]) -> usize {
-    let mut end = text.len();
-    while end > 0 {
-        let mut start = end - 1;
-        while start > 0 && text[start] & 0xc0 == 0x80 && end - start < 4 {
-            start -= 1;
-        }
-        if decoded(text, start).is_some_and(|(point, _)| stable_starter(point)) {
-            return start;
-        }
-        end = start;
-    }
-    0
+fn last_stable_starter(text: &str) -> usize {
+    text.char_indices()
+        .rev()
+        .find(|(_, character)| stable_starter(u32::from(*character)))
+        .map_or(0, |(at, _)| at)
 }
 
 /// The canonical combining class of a code point: nought for a starter, and for every code point
@@ -241,7 +236,7 @@ mod tests {
     use std::vec::Vec;
 
     fn in_nfc(text: &str) -> String {
-        String::from_utf8(nfc(text.as_bytes())).expect("NFC of text is text")
+        nfc(text)
     }
 
     #[test]
@@ -301,19 +296,21 @@ mod tests {
             (seed % bound as u64) as usize
         };
         for _ in 0..3_000 {
-            let runs: Vec<Vec<u8>> = (0..1 + next(3))
+            let runs: Vec<String> = (0..1 + next(3))
                 .map(|_| {
-                    let points: Vec<u32> = (0..next(5)).map(|_| pool[next(pool.len())]).collect();
-                    nfc(&encoded(&points))
+                    let written: String = (0..next(5))
+                        .map(|_| char::from_u32(pool[next(pool.len())]).unwrap())
+                        .collect();
+                    nfc(&written)
                 })
                 .collect();
             let mut joined = Joined::new();
-            let mut whole = Vec::new();
+            let mut whole = String::new();
             for run in &runs {
-                joined.push(run);
-                whole.extend_from_slice(run);
+                joined.push(Text::held(run));
+                whole.push_str(run);
             }
-            assert_eq!(joined.into_bytes(), nfc(&whole), "{runs:?}");
+            assert_eq!(joined.finished(), nfc(&whole), "{runs:?}");
         }
     }
 

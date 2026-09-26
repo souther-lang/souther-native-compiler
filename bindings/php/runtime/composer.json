@@ -6,7 +6,6 @@
     "require": {
         "php": "^8.2",
         "ext-ffi": "*",
-        "ext-intl": "*",
         "raoh/raoh": "^0.5"
     },
     "autoload": {

@@ -6,14 +6,15 @@
 //! about the text around a capital sigma and not about who is reading it. What either answers is
 //! put in NFC again, since mapping case can leave text that is not.
 
+use crate::Text;
 use crate::canonical::normalized;
-use crate::scalar_values;
 use crate::tables::{CASE_IGNORABLE, CASED, FINAL_SIGMA, LOWERCASE, UPPERCASE};
+use alloc::string::String;
 use alloc::vec::Vec;
 
 /// The text lowercased (`String.lowercase`).
-pub fn lowercase(text: &[u8]) -> Vec<u8> {
-    let points: Vec<u32> = scalar_values(text).collect();
+pub fn lowercase(text: Text) -> String {
+    let points: Vec<u32> = text.as_str().chars().map(u32::from).collect();
     let mut out = Vec::with_capacity(points.len());
     for (at, point) in points.iter().enumerate() {
         let mapped = mapping(FINAL_SIGMA, *point)
@@ -24,19 +25,24 @@ pub fn lowercase(text: &[u8]) -> Vec<u8> {
             None => out.push(*point),
         }
     }
-    normalized(out)
+    normalized(out.into_iter().map(scalar))
 }
 
 /// The text uppercased (`String.uppercase`).
-pub fn uppercase(text: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(text.len());
-    for point in scalar_values(text) {
+pub fn uppercase(text: Text) -> String {
+    let mut out = Vec::with_capacity(text.as_str().len());
+    for point in text.as_str().chars().map(u32::from) {
         match mapping(UPPERCASE, point) {
             Some(mapped) => out.extend_from_slice(mapped),
             None => out.push(point),
         }
     }
-    normalized(out)
+    normalized(out.into_iter().map(scalar))
+}
+
+/// A code point a table maps to, which is a scalar value.
+fn scalar(point: u32) -> char {
+    char::from_u32(point).expect("a case mapping maps to scalar values")
 }
 
 /// What a table maps a code point to, where it maps it at all: a code point it does not name maps
@@ -73,11 +79,11 @@ mod tests {
     use std::string::String;
 
     fn lower(text: &str) -> String {
-        String::from_utf8(lowercase(text.as_bytes())).unwrap()
+        lowercase(Text::held(text))
     }
 
     fn upper(text: &str) -> String {
-        String::from_utf8(uppercase(text.as_bytes())).unwrap()
+        uppercase(Text::held(text))
     }
 
     /// The full mapping widens where Unicode says it does.

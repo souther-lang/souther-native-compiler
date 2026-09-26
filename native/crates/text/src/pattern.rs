@@ -18,7 +18,7 @@
 //! The machine is a run of words, so that the compiler can write it into an object and the runtime
 //! read it from there. What a word means is this module's, on both sides.
 
-use crate::scalar_values;
+use crate::Text;
 use alloc::collections::BTreeSet;
 use alloc::vec;
 use alloc::vec::Vec;
@@ -540,7 +540,7 @@ fn decide(
 /// # Panics
 ///
 /// Where `machine` is not words [`compile`] answered.
-pub fn matches(machine: &[u32], text: &[u8]) -> bool {
+pub fn matches(machine: &[u32], text: Text) -> bool {
     let steps = machine[1] as usize;
     let mut now = Ways::new(steps);
     // One record of which steps have had a plain way added, told apart by character, handed on
@@ -551,7 +551,7 @@ pub fn matches(machine: &[u32], text: &[u8]) -> bool {
         counts: Vec::new(),
     };
     follow(machine, start, &mut now);
-    for (read, point) in scalar_values(text).enumerate() {
+    for (read, point) in text.as_str().chars().map(u32::from).enumerate() {
         next.clear(read + 1);
         next.added = core::mem::take(&mut now.added);
         for &at in &now.plain {
@@ -595,7 +595,7 @@ mod tests {
     }
 
     fn accepts(parts: &[Part], text: &str) -> bool {
-        matches(&compile(parts).expect("a machine"), text.as_bytes())
+        matches(&compile(parts).expect("a machine"), Text::held(text))
     }
 
     /// `[0-9]{3}-[0-9]{4}`.
@@ -671,7 +671,7 @@ mod tests {
         let machine = compile(&[one('a'), counted(0, 1 << 20, Some(1 << 20))]).expect("a machine");
         let few = compile(&[one('a'), counted(0, 1000, Some(1000))]).expect("a machine");
         assert_eq!(machine.len(), few.len());
-        assert!(!matches(&machine, b"aaa"));
+        assert!(!matches(&machine, Text::held("aaa")));
         let nested = [
             one('a'),
             counted(0, 1000, Some(1000)),
@@ -768,12 +768,12 @@ mod tests {
                 let points: Vec<u32> = text.chars().map(u32::from).collect();
                 let meant = ends(&parts, parts.len() - 1, &points, 0).contains(&points.len());
                 assert_eq!(
-                    matches(&counted_all, text.as_bytes()),
+                    matches(&counted_all, Text::held(&text)),
                     meant,
                     "{parts:?} {text}"
                 );
                 assert_eq!(
-                    matches(&written_all, text.as_bytes()),
+                    matches(&written_all, Text::held(&text)),
                     meant,
                     "{parts:?} {text}"
                 );

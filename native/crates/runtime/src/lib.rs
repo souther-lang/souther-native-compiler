@@ -32,7 +32,7 @@ mod document;
 mod external;
 mod kernels;
 pub use kernels::*;
-use souther_text::{append, code_points, compare};
+use souther_text::{Text as Held, append, code_points, compare};
 use std::cell::RefCell;
 use std::cmp::Ordering;
 
@@ -210,13 +210,22 @@ unsafe fn length(at: *const u8) -> usize {
     usize::try_from(said).expect("a string carries a count of bytes, and never fewer than 0")
 }
 
-/// The text a string carries.
+/// The text a string holds, for as long as the pointer to it is borrowed.
+///
+/// Bound to a borrow of the caller's pointer and not to a lifetime the caller names: what a string
+/// holds is good until a mark below it is reset, which nothing here can see, so the text is let out
+/// no further than the call that was handed the pointer.
 ///
 /// # Safety
 ///
-/// As [`length`], and for as long as the mark below the string stands.
-pub(crate) unsafe fn text<'a>(at: *const u8) -> &'a [u8] {
-    unsafe { std::slice::from_raw_parts(at.offset(TEXT_BYTES as isize), length(at)) }
+/// As [`length`]. And the string holds UTF-8, which is not asked again here: every string is
+/// written by [`string_of`] from text, or is a literal the object carries, which the compiler writes
+/// from text, and a host's text comes in through [`souther_string_of_utf8`], which refuses bytes
+/// that are not.
+pub(crate) unsafe fn text<'a, P>(at: &'a *const P) -> Held<'a> {
+    let at = at.cast::<u8>();
+    let bytes = unsafe { std::slice::from_raw_parts(at.offset(TEXT_BYTES as isize), length(at)) };
+    Held::held(unsafe { std::str::from_utf8_unchecked(bytes) })
 }
 
 /// Room for a string of `bytes` bytes, with the count written and the text left to the caller.
@@ -232,12 +241,13 @@ fn room_for_a_string(bytes: usize) -> *mut u8 {
     at
 }
 
-/// A string holding this text, in room the arena answered.
-pub(crate) fn string_of(bytes: &[u8]) -> *mut Text {
-    let at = room_for_a_string(bytes.len());
+/// A string holding this text, in room the arena answered: the one way a string is written, so
+/// that every string holds text.
+pub(crate) fn string_of(text: &str) -> *mut Text {
+    let at = room_for_a_string(text.len());
     unsafe {
         at.offset(TEXT_BYTES as isize)
-            .copy_from_nonoverlapping(bytes.as_ptr(), bytes.len())
+            .copy_from_nonoverlapping(text.as_ptr(), text.len())
     };
     at.cast()
 }
@@ -257,7 +267,7 @@ pub unsafe extern "C" fn souther_string_compare(
     left: *const Text,
     right: *const Text,
 ) -> Comparison {
-    let ordering = unsafe { compare(text(left.cast()), text(right.cast())) };
+    let ordering = unsafe { compare(text(&left), text(&right)) };
     Comparison(match ordering {
         Ordering::Less => -1,
         Ordering::Equal => 0,
@@ -279,47 +289,45 @@ pub unsafe extern "C" fn souther_string_compare(
 /// As [`souther_string_compare`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_string_concat(left: *const Text, right: *const Text) -> *mut Text {
-    let joined = unsafe { append(text(left.cast()), text(right.cast())) };
+    let joined = unsafe { append(text(&left), text(&right)) };
     string_of(&joined)
 }
 
-/// A string holding these bytes, for a caller outside a Souther program.
+/// A string holding this text, for a caller outside a Souther program.
 ///
 /// What generated code makes a string from is a literal the object carries or a join of two it
 /// already holds. This is the other direction — a host handing text in — and it is here rather
 /// than written by each such host so that the layout stays between this crate and the one that
 /// states it.
 ///
-/// Not a boundary, and the difference matters. Text arriving from outside a Souther program is
-/// canonicalized to NFC where it arrives — a decoder, or the compiler reading a literal — and what
-/// reaches this is a Souther string's text being put into the form this carrier holds it in.
-/// Nothing here folds it and nothing here reads it for sense, which is why the caller is the one
-/// who has to have done both.
+/// A door, as a decoder's string leaf is: text arriving from outside is admitted here, put in NFC
+/// by the language's Unicode version, whatever the host's own is, and refused where it is not
+/// UTF-8 (`souther_text::admitted`). So every string holds text as the language says a string is,
+/// whoever made it.
 ///
 /// # Safety
 ///
 /// `bytes` points at `length` bytes that may be read.
 ///
-/// # Contract
-///
-/// Those bytes are valid UTF-8, already in the form Souther keeps text in.
-///
-/// Apart from the safety above, and not folded into it, because breaking it is not a memory fault:
-/// the decoding reads no byte the length does not cover, so bytes that are neither make a
-/// comparison answer something meaningless rather than send an access where it should not go. What
-/// is owed to Rust and what is owed to the language are two different debts, and writing them as
-/// one would make the second look like it had teeth it does not have.
 /// # Panics
 ///
-/// Where the length is below nought.
+/// Where the length is below nought, or the bytes are not UTF-8, which ends the process: a panic
+/// does not leave a function a C caller called. A host that hands over what is no text has no
+/// string to be answered with, and this answers nothing rather than something that is not one
+/// (`souther_text::admitted` refuses it). A binding says so first in its own terms, as the PHP
+/// binding does.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_string_of_utf8(bytes: *const u8, length: Count) -> *mut Text {
     let held =
         usize::try_from(length.0).expect("text is handed over as bytes, and never fewer than 0");
-    if held == 0 {
-        return string_of(&[]);
-    }
-    string_of(unsafe { std::slice::from_raw_parts(bytes, held) })
+    let bytes = if held == 0 {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(bytes, held) }
+    };
+    let admitted =
+        souther_text::admitted(bytes).expect("text handed to a Souther library is UTF-8");
+    string_of(&admitted)
 }
 
 /// How many bytes of text the string carries, for the same caller.
@@ -354,7 +362,7 @@ pub unsafe extern "C" fn souther_string_bytes(at: *const Text) -> *const u8 {
 /// As [`souther_string_compare`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_string_code_points(at: *const Text) -> i64 {
-    let counted = code_points(unsafe { text(at.cast()) });
+    let counted = code_points(unsafe { text(&at) });
     i64::try_from(counted).expect("a string holds fewer code points than an Int counts")
 }
 
@@ -711,6 +719,16 @@ mod tests {
         for (value, at) in held.iter().enumerate() {
             assert_eq!(unsafe { at.read() }, value as i64);
         }
+        souther_reset(mark);
+    }
+
+    /// A host's text is admitted where it comes in: put in NFC by the language's Unicode version,
+    /// so a host normalizing by its own, or not at all, hands over the same string.
+    #[test]
+    fn a_hosts_text_is_put_in_nfc_where_it_comes_in() {
+        let mark = souther_mark();
+        assert_eq!(said(made("e\u{301}")), "\u{e9}");
+        assert_eq!(compared(made("e\u{301}"), made("\u{e9}")), 0);
         souther_reset(mark);
     }
 
