@@ -118,6 +118,9 @@ public final class RustBindings {
     /** Each Rust module the crate has, by its path, and what is written in it. */
     private final Map<List<String>, RustModule> tree = new LinkedHashMap<>();
 
+    /** The type each behavior is written as, by {@code module.name}, where it has one. */
+    private final Map<String, BehaviorType> behaviorTypes = new LinkedHashMap<>();
+
     /** The type of every function the generated code calls, by its symbol, in the order first asked for. */
     private final Map<String, String> symbols = new LinkedHashMap<>();
 
@@ -228,6 +231,7 @@ public final class RustBindings {
                 }
             }
         }
+        behaviorTypes();
         for (Manifest.Module module : manifest.modules()) {
             module(module);
         }
@@ -374,6 +378,18 @@ public final class RustBindings {
         }
         behaviors(at, module);
         values(at, module);
+        for (Manifest.Injection injection : module.injections()) {
+            BehaviorType it = behaviorTypes.get(module.name() + "." + injection.name());
+            if (it != null) {
+                injected(at, module, injection, it);
+            }
+        }
+        for (Manifest.Behavior behavior : module.behaviors()) {
+            BehaviorType it = behaviorTypes.get(module.name() + "." + behavior.name());
+            if (it != null) {
+                bound(at, module, behavior, it);
+            }
+        }
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -457,7 +473,7 @@ public final class RustBindings {
         }
         String function = symbol(construct.function());
         StringBuilder body = new StringBuilder("        let library = run.library();\n");
-        List<String> handed = given(body, names, takes);
+        List<String> handed = given(body, "        ", names, takes);
         body.append("        let mut made: rt::Word = std::ptr::null();\n");
         handed.add("&mut made");
         body.append("        let called = run.call(|| unsafe { (library.symbols.").append(function)
@@ -528,7 +544,7 @@ public final class RustBindings {
             return;
         }
         StringBuilder body = new StringBuilder("        let library = self.library;\n");
-        List<String> rooms = rooms(body, crossing.words());
+        List<String> rooms = rooms(body, "        ", crossing.words());
         List<String> handed = new ArrayList<>(List.of("self.__word()"));
         rooms.forEach(room -> handed.add("&mut " + room));
         body.append("        // SAFETY: the value is good for `'run`, and so is what it holds.\n");
@@ -753,38 +769,50 @@ public final class RustBindings {
      */
     private String call(String doc, String name, List<String> names, List<Crossing> takes,
                         Crossing answers, Function function, @Nullable String requirements) {
-        List<String> parameters = new ArrayList<>(List.of("run: &mut crate::Run<'run>"));
+        return call(doc, "", "pub fn " + name + "<'run>", "", "", names, takes, answers, function,
+                requirements);
+    }
+
+    /**
+     * A function declared as {@code declared}, indented by {@code indent}, calling {@code function}
+     * in the run it is handed and answering what it wrote. {@code receiver} is what it takes ahead
+     * of the run, {@code preamble} what it works out first, and {@code requirements} what a
+     * behavior is called with first, or null for a value, which is called with nothing more.
+     */
+    private String call(String doc, String indent, String declared, String receiver,
+                        String preamble, List<String> names, List<Crossing> takes, Crossing answers,
+                        Function function, @Nullable String requirements) {
+        List<String> parameters = new ArrayList<>(List.of(receiver + "run: &mut crate::Run<'run>"));
         for (int at = 0; at < takes.size(); at++) {
             parameters.add(names.get(at) + ": " + takes.get(at).view());
         }
-        StringBuilder body = new StringBuilder("    let library = run.library();\n");
+        String inner = indent + "    ";
+        StringBuilder body = new StringBuilder(inner + "let library = run.library();\n");
+        body.append(preamble.lines().map(it -> inner + it + "\n").collect(Collectors.joining()));
         List<String> handed = new ArrayList<>();
         if (requirements != null) {
             handed.add(requirements);
         }
-        handed.addAll(given(body, names, takes));
-        List<String> rooms = rooms(body, answers.words());
+        handed.addAll(given(body, inner, names, takes));
+        List<String> rooms = rooms(body, inner, answers.words());
         rooms.forEach(room -> handed.add("&mut " + room));
-        body.append("    run.call(|| unsafe { (library.symbols.").append(symbol(function))
+        body.append(inner).append("run.call(|| unsafe { (library.symbols.").append(symbol(function))
                 .append(")(").append(String.join(", ", handed)).append(") })?;\n");
-        body.append("    // SAFETY: the library answered what it wrote in this run.\n");
-        body.append("    Ok(unsafe { ").append(answers.of(rooms)).append(" })\n");
-        return """
-
-                /// %s
-                pub fn %s<'run>(%s) -> Result<%s, crate::Failure> {
-                %s}
-                """.formatted(doc, name, String.join(", ", parameters), answers.owned(), body);
+        body.append(inner).append("// SAFETY: the library answered what it wrote in this run.\n");
+        body.append(inner).append("Ok(unsafe { ").append(answers.of(rooms)).append(" })\n");
+        return "\n" + indent + "/// " + doc + "\n" + indent + declared + "("
+                + String.join(", ", parameters) + ") -> Result<" + answers.owned()
+                + ", crate::Failure> {\n" + body + indent + "}\n";
     }
 
     /**
      * Writes into {@code body} the words handing each of {@code names} over as its crossing says,
      * each into a local of its own before the call, and answers the locals in order.
      */
-    private static List<String> given(StringBuilder body, List<String> names, List<Crossing> takes) {
+    private static List<String> given(StringBuilder body, String indent, List<String> names,
+                                      List<Crossing> takes) {
         List<String> handed = new ArrayList<>();
         int word = 0;
-        String indent = body.toString().startsWith("        ") ? "        " : "    ";
         for (int at = 0; at < takes.size(); at++) {
             for (String expression : takes.get(at).given(names.get(at))) {
                 String local = "given" + word++;
@@ -797,9 +825,8 @@ public final class RustBindings {
     }
 
     /** Writes into {@code body} room for each of {@code words}, and answers what each is called. */
-    private static List<String> rooms(StringBuilder body, List<Word> words) {
+    private static List<String> rooms(StringBuilder body, String indent, List<Word> words) {
         List<String> rooms = new ArrayList<>();
-        String indent = body.toString().startsWith("        ") ? "        " : "    ";
         for (int at = 0; at < words.size(); at++) {
             String room = "answer" + at;
             body.append(indent).append("let mut ").append(room).append(": ")
@@ -808,6 +835,349 @@ public final class RustBindings {
             rooms.add(room);
         }
         return rooms;
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // A behavior as an application holds one.
+
+    /**
+     * The type a behavior is written as: a trait a host implements, with the type an implementation
+     * is made into beside it, where the library asks a host to implement the behavior; and
+     * otherwise a type bound to what the behavior requires.
+     *
+     * @param type the name of the trait or the type, in its module
+     */
+    private record BehaviorType(String module, String name, List<String> path, String type,
+                                boolean injected) {
+
+        String key() {
+            return module + "." + name;
+        }
+
+        /** What stands for the behavior where another requires it, from the root of the crate. */
+        String requirement() {
+            return "crate::" + String.join("::", path) + "::" + type
+                    + (injected ? IMPLEMENTATION : "");
+        }
+    }
+
+    /** What the type an implementation of a behavior is made into is called, after the trait. */
+    private static final String IMPLEMENTATION = "Implementation";
+
+    /**
+     * Which behaviors are written as a type, of every module: each a host implements and can be
+     * handed across to, and each published behavior a host can call whose every requirement has a
+     * type too, since binding it hands one of each over.
+     *
+     * <p>The type's name is this generator's, the behavior's made capital, as the PHP binding names
+     * a behavior's class. So a name Rust will not take, or one another type of the module already
+     * is, leaves the behavior with no type rather than refusing the binding; what requires it has
+     * none either. What the model itself names is refused where Rust will not take it, as before.
+     */
+    private void behaviorTypes() {
+        Map<String, BehaviorType> candidates = new LinkedHashMap<>();
+        Map<String, List<Manifest.Required>> requires = new LinkedHashMap<>();
+        for (Manifest.Module module : manifest.modules()) {
+            List<String> path = RustNames.modulePath(module.name());
+            for (Manifest.Injection injection : module.injections()) {
+                if (implementable(module, injection)) {
+                    BehaviorType it = new BehaviorType(module.name(), injection.name(), path,
+                            RustNames.capitalized(injection.name()), true);
+                    candidates.put(it.key(), it);
+                    requires.put(it.key(), List.of());
+                }
+            }
+            for (Manifest.Behavior behavior : module.behaviors()) {
+                if (callable(module, behavior)) {
+                    BehaviorType it = new BehaviorType(module.name(), behavior.name(), path,
+                            RustNames.capitalized(behavior.name()), false);
+                    candidates.put(it.key(), it);
+                    requires.put(it.key(), requiresOf(it.key()));
+                }
+            }
+        }
+        Map<String, Long> spelt = new LinkedHashMap<>();
+        for (BehaviorType it : candidates.values()) {
+            for (String name : names(it)) {
+                spelt.merge(String.join("::", it.path()) + "::" + name, 1L, Long::sum);
+            }
+        }
+        candidates.values().removeIf(it -> names(it).stream().anyMatch(name ->
+                !RustNames.takes(name) || RustNames.identifier(name, name).startsWith("r#")
+                        || moduleAt(it.path()).types.has(name)
+                        || spelt.get(String.join("::", it.path()) + "::" + name) > 1));
+        boolean dropped = true;
+        while (dropped) {
+            dropped = candidates.values().removeIf(it -> requires.get(it.key()).stream()
+                    .anyMatch(required -> !candidates.containsKey(required.key())));
+        }
+        for (BehaviorType it : candidates.values()) {
+            for (String name : names(it)) {
+                moduleAt(it.path()).types.claim(name, "the type of behavior `" + it.key() + "`");
+            }
+        }
+        behaviorTypes.putAll(candidates);
+    }
+
+    /** The names the type of {@code it} takes in its module. */
+    private static List<String> names(BehaviorType it) {
+        return it.injected() ? List.of(it.type(), it.type() + IMPLEMENTATION) : List.of(it.type());
+    }
+
+    /** Whether a host can be handed what {@code injection} takes and hand back what it answers. */
+    private boolean implementable(Manifest.Module module, Manifest.Injection injection) {
+        return crossings(module, injection.parameters().stream().map(Manifest.NamedParameter::type)
+                .toList(), injection.signature().takes(), Manifest.Way.HANDED) != null
+                && !(injection.answers() instanceof Type.Union)
+                && crossing(module, injection.answers(), injection.signature().answers(),
+                Manifest.Way.GIVEN) != null;
+    }
+
+    /** Whether a host can call {@code behavior}, handing over what it takes and handed what it answers. */
+    private boolean callable(Manifest.Module module, Manifest.Behavior behavior) {
+        Manifest.Call call = behavior.call().available();
+        return call != null && !(behavior.answers().type() instanceof Type.Union)
+                && crossings(module, behavior.parameters().types(), call.signature().takes(),
+                Manifest.Way.GIVEN) != null
+                && crossing(module, behavior.answers().type(), call.signature().answers(),
+                Manifest.Way.HANDED) != null;
+    }
+
+    /** The names a behavior's parameters are written under, the run's name taken already. */
+    private static List<String> parameterNames(Manifest.Parameters parameters, String what,
+                                               String... taken) {
+        RustNames.Claimed claimed = new RustNames.Claimed("the parameters of " + what);
+        for (String it : taken) {
+            claimed.claim(it, "the generated `" + it + "`");
+        }
+        return switch (parameters) {
+            case Manifest.Parameters.Named named -> named.parameters().stream()
+                    .map(it -> claimed.claim(RustNames.identifier(it.name(),
+                            "parameter `" + it.name() + "` of " + what),
+                            "parameter `" + it.name() + "`"))
+                    .toList();
+            case Manifest.Parameters.Positional positional -> java.util.stream.IntStream
+                    .range(0, positional.types().size()).mapToObj(it -> "input" + it).toList();
+        };
+    }
+
+    /**
+     * The trait a host implements {@code injection} as, the type an implementation is made into
+     * that the library calls it through, and the function the library calls: it makes Rust values
+     * of what the library handed over, calls the implementation in the run of the call that
+     * reached it, and writes what it answered through the room the library handed over.
+     */
+    private void injected(RustModule at, Manifest.Module module, Manifest.Injection injection,
+                          BehaviorType it) {
+        List<Crossing> takes = Objects.requireNonNull(crossings(module, injection.parameters()
+                .stream().map(Manifest.NamedParameter::type).toList(),
+                injection.signature().takes(), Manifest.Way.HANDED));
+        Crossing answers = Objects.requireNonNull(crossing(module, injection.answers(),
+                injection.signature().answers(), Manifest.Way.GIVEN));
+        String what = "behavior `" + it.key() + "`";
+        List<String> names = parameterNames(new Manifest.Parameters.Named(injection.parameters()),
+                what, "run", "self");
+        String trait = it.type();
+        String implementation = trait + IMPLEMENTATION;
+        String dispatch = "__" + trait + "Dispatch";
+        String entry = "__" + trait + "_implementation";
+        symbols.putIfAbsent(injection.implement(), "rt::ImplementFn");
+
+        List<String> parameters = new ArrayList<>();
+        for (int place = 0; place < takes.size(); place++) {
+            parameters.add(names.get(place) + ": " + takes.get(place).owned());
+        }
+        // What the library calls: what it was handed first, what the behavior takes, and room for
+        // what it answers, as the manifest says the implementation's type is.
+        List<String> cParameters = new ArrayList<>();
+        List<String> handed = new ArrayList<>();
+        List<String> rooms = new ArrayList<>();
+        for (Parameter parameter : injection.implementation().takes()) {
+            if (parameter.word() == Word.USERDATA && parameter.mode() == Parameter.Mode.GIVEN
+                    && cParameters.isEmpty()) {
+                cParameters.add("userdata: *mut std::ffi::c_void");
+            } else if (parameter.mode() == Parameter.Mode.GIVEN) {
+                String name = "handed" + handed.size();
+                handed.add(name);
+                cParameters.add(name + ": " + Crossing.word(parameter.word()));
+            } else {
+                String name = "answer" + rooms.size();
+                rooms.add(name);
+                cParameters.add(name + ": *mut " + Crossing.word(parameter.word()));
+            }
+        }
+        StringBuilder made = new StringBuilder();
+        int word = 0;
+        List<String> arguments = new ArrayList<>();
+        for (int place = 0; place < takes.size(); place++) {
+            int wide = takes.get(place).words().size();
+            made.append("        let ").append(names.get(place)).append(" = unsafe { ")
+                    .append(takes.get(place).of(handed.subList(word, word + wide))).append(" };\n");
+            word += wide;
+            arguments.add(names.get(place));
+        }
+        StringBuilder written = new StringBuilder();
+        List<String> given = answers.given("answer");
+        for (int place = 0; place < given.size(); place++) {
+            written.append("        let given").append(place).append(" = ").append(given.get(place))
+                    .append(";\n");
+        }
+        for (int place = 0; place < given.size(); place++) {
+            written.append("        unsafe { *").append(rooms.get(place)).append(" = given")
+                    .append(place).append(" };\n");
+        }
+        at.items.append("""
+
+                /// What implements `%s`, which the library asks a host to implement. Made into a
+                /// [`%s`], it is handed to what requires the behavior, and the library calls
+                /// `apply` wherever what was bound to it reaches the behavior.
+                pub trait %s {
+                    /// Answers `%s` in `run`, the run of the call that reached it. A failure answered
+                    /// here comes back out of that call, as a panic here does.
+                    fn apply<'run>(&self, run: &mut crate::Run<'run>%s) -> Result<%s, crate::HostError>;
+                }
+
+                struct %s<'a> {
+                    library: &'a crate::Library,
+                    implementation: Box<dyn %s + 'a>,
+                }
+
+                /// An implementation of `%s`, made into a capability the library calls it through.
+                pub struct %s<'a> {
+                    implemented: rt::Implemented<%s<'a>>,
+                }
+
+                impl<'a> %s<'a> {
+                    /// `implementation`, as `library` calls it.
+                    pub fn new(library: &'a crate::Library, implementation: impl %s + 'a) -> Self {
+                        let dispatch = %s { library, implementation: Box::new(implementation) };
+                        // SAFETY: the function is the library's making a capability of `%s`, and the
+                        // entry below is of the type its implementation is, reading the dispatch.
+                        let implemented = unsafe {
+                            rt::Implemented::new(
+                                rt::Loaded::runtime(library),
+                                library.symbols.%s,
+                                %s as *const std::ffi::c_void,
+                                dispatch,
+                            )
+                        };
+                        %s { implemented }
+                    }
+                }
+
+                impl rt::Requirement for %s<'_> {
+                    fn capability(&self) -> std::ptr::NonNull<rt::Capability> {
+                        rt::Requirement::capability(&self.implemented)
+                    }
+
+                    fn made(&self) -> rt::Made {
+                        rt::Requirement::made(&self.implemented)
+                    }
+                }
+
+                unsafe extern "C" fn %s(%s) -> u32 {
+                    // SAFETY: what the library hands first is what the capability was made with, the
+                    // dispatch, which lives for as long as the capability may be called.
+                    let dispatch = unsafe { &*userdata.cast::<%s<'_>>() };
+                    let library = dispatch.library;
+                    rt::implemented(library, |run| {
+                        // SAFETY: the library handed these over in the run of the call reaching this.
+                %s        let answer = dispatch.implementation.apply(run%s)?;
+                        let answer = %s;
+                %s        Ok(())
+                    })
+                }
+                """.formatted(it.key(), implementation, trait, it.key(),
+                parameters.stream().map(p -> ", " + p).collect(Collectors.joining()),
+                answers.owned(), dispatch, trait, it.key(), implementation, dispatch,
+                implementation, trait, dispatch, it.key(), injection.implement(), entry,
+                implementation, implementation, entry, String.join(", ", cParameters), dispatch,
+                made, arguments.stream().map(a -> ", " + a).collect(Collectors.joining()),
+                answers.viewOf("(&answer)"), written));
+    }
+
+    /**
+     * The type an application binds {@code behavior} through and calls it on: {@code bind}, taking
+     * what stands for each behavior it requires, or {@code new} where it requires none, and
+     * {@code call}, calling it with the capabilities of what it was bound to, in the caller's run.
+     */
+    private void bound(RustModule at, Manifest.Module module, Manifest.Behavior behavior,
+                       BehaviorType it) {
+        Manifest.Call call = Objects.requireNonNull(behavior.call().available());
+        List<Crossing> takes = Objects.requireNonNull(crossings(module,
+                behavior.parameters().types(), call.signature().takes(), Manifest.Way.GIVEN));
+        Crossing answers = Objects.requireNonNull(crossing(module, behavior.answers().type(),
+                call.signature().answers(), Manifest.Way.HANDED));
+        String what = "behavior `" + it.key() + "`";
+        List<String> names = parameterNames(behavior.parameters(), what, "run", "self");
+        List<Manifest.Required> requires = requiresOf(it.key());
+        Manifest.Construction construction = null;
+        for (Manifest.Module each : manifest.modules()) {
+            for (Manifest.Construction c : each.constructions()) {
+                if ((each.name() + "." + c.name()).equals(it.key())) {
+                    construction = c;
+                }
+            }
+        }
+        String bind = construction == null || construction.bind() == null ? "None"
+                : "Some(library.symbols." + symbol(construction.bind()) + ")";
+        // A requirement is named after the behavior it is where no other is of that name, and
+        // after its place otherwise, as the PHP binding names one.
+        Map<String, Long> counted = requires.stream().collect(Collectors.groupingBy(
+                Manifest.Required::name, Collectors.counting()));
+        List<String> requirementNames = new ArrayList<>();
+        List<String> requirementParameters = new ArrayList<>();
+        for (int place = 0; place < requires.size(); place++) {
+            Manifest.Required required = requires.get(place);
+            String name = counted.get(required.name()) == 1 && RustNames.takes(required.name())
+                    && !RustNames.identifier(required.name(), required.name()).startsWith("r#")
+                    && !required.name().equals("library")
+                    ? required.name() : "dependency" + place;
+            requirementNames.add(name);
+            requirementParameters.add(", " + name + ": &'a "
+                    + behaviorTypes.get(required.key()).requirement() + "<'_>");
+        }
+        String constructor = requires.isEmpty() ? """
+                    /// `%s`, which requires nothing.
+                    pub fn new(library: &'a crate::Library) -> Self {
+                """.formatted(it.key()) : """
+                    /// `%s`, bound to what stands for each behavior it requires.
+                    pub fn bind(library: &'a crate::Library%s) -> Self {
+                """.formatted(it.key(), String.join("", requirementParameters));
+        at.items.append("""
+
+                /// `%s` as an application holds it: bound to what stands for each behavior it
+                /// requires, which each call is made with.
+                pub struct %s<'a> {
+                    bound: rt::Bound<'a>,
+                }
+
+                impl<'a> %s<'a> {
+                %s        let requires: [&'a dyn rt::Requirement; %d] = [%s];
+                        // SAFETY: the function is the library's making the capability of `%s`, and
+                        // what is handed stands for what it requires, in order.
+                        let bound = unsafe { rt::Bound::new(rt::Loaded::runtime(library), %s, &requires) };
+                        %s { bound }
+                    }
+                """.formatted(it.key(), it.type(), it.type(), constructor, requires.size(),
+                String.join(", ", requirementNames), it.key(), bind, it.type()));
+        at.items.append(call("Calls `" + it.key() + "` with what this was bound to.", "    ",
+                "pub fn call<'run>", "&self, ",
+                "let requirements = self.bound.requirements(rt::Loaded::runtime(library));",
+                names, takes, answers, call.function(), "requirements"));
+        at.items.append("""
+                }
+
+                impl rt::Requirement for %s<'_> {
+                    fn capability(&self) -> std::ptr::NonNull<rt::Capability> {
+                        rt::Requirement::capability(&self.bound)
+                    }
+
+                    fn made(&self) -> rt::Made {
+                        rt::Requirement::made(&self.bound)
+                    }
+                }
+                """.formatted(it.type()));
     }
 
     // ---------------------------------------------------------------------------------------------
