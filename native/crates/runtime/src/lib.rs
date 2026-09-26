@@ -20,7 +20,9 @@
 // slid off it onto a neighbour is a contract nobody states. Refused rather than warned about.
 #![deny(missing_docs)]
 
-use souther_native_abi::{SLOT, TEXT_BYTES, TEXT_LENGTH, room_for_text};
+use souther_native_abi::{
+    CARRIED, SLOT, TEXT_BYTES, TEXT_LENGTH, WHICH, room_for_carried, room_for_fields, room_for_text,
+};
 
 #[cfg(test)]
 mod contract;
@@ -126,8 +128,10 @@ pub struct Text {
     _opaque: [u8; 0],
 }
 
-/// A value of a declared type, as the functions here take and answer one: an address the runtime
-/// never reads behind, a type of its own for the reason [`Text`] is.
+/// A value of a declared type or of a union, as the functions here take and answer one: an address,
+/// a type of its own for the reason [`Text`] is. The runtime reads behind one only where it made
+/// what is there: a case no declaration names, carried with the token defined here
+/// ([`souther_case_int_make`] and the rest).
 #[repr(C)]
 pub struct Value {
     _opaque: [u8; 0],
@@ -370,6 +374,144 @@ built_in_cases! {
     "NotATime" => CASE_NOT_A_TIME,
     "NotWhole" => CASE_NOT_WHOLE,
     "NotAFiniteDecimal" => CASE_NOT_A_FINITE_DECIMAL,
+}
+
+/// A value of a case no declaration names, as a union holds one: room with the case's token at
+/// `WHICH`, and what the case holds, where it holds something, at `CARRIED`. Laid out as generated
+/// code lays one out when it carries a primitive or makes a case the language gives, so a value a
+/// host made here and one a run made are one representation.
+fn carried(token: &[u8; 1], held: Option<i64>) -> *const Value {
+    let size = match held {
+        Some(_) => room_for_carried(),
+        None => room_for_fields(0),
+    };
+    let room = souther_alloc(Count(size));
+    // SAFETY: the room was just taken, at least as wide as the slots written, and aligned to a
+    // slot as every room the arena hands out is.
+    unsafe {
+        room.add(WHICH as usize)
+            .cast::<i64>()
+            .write(token.as_ptr() as i64);
+        if let Some(held) = held {
+            room.add(CARRIED as usize).cast::<i64>().write(held);
+        }
+    }
+    room.cast_const().cast()
+}
+
+/// What a value carrying a primitive holds.
+///
+/// # Safety
+///
+/// `value` is a value of a union that a test of which case it is said is the primitive's case: what
+/// is read is not asked again here, as a run reading one out after the same test does not ask.
+unsafe fn held(value: *const Value) -> i64 {
+    unsafe {
+        value
+            .cast::<u8>()
+            .add(CARRIED as usize)
+            .cast::<i64>()
+            .read()
+    }
+}
+
+/// An `Int` carried as a case of a union.
+#[unsafe(no_mangle)]
+pub extern "C" fn souther_case_int_make(value: i64) -> *const Value {
+    carried(&CASE_INT, Some(value))
+}
+
+/// What a value of a union that is the case `Int` holds.
+///
+/// # Safety
+///
+/// `value` is one a test of which case it is said is `Int`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_case_int_read(value: *const Value) -> i64 {
+    unsafe { held(value) }
+}
+
+/// A `Bool` carried as a case of a union: nought or one in its slot, as generated code widens one.
+#[unsafe(no_mangle)]
+pub extern "C" fn souther_case_bool_make(value: i8) -> *const Value {
+    carried(&CASE_BOOL, Some(i64::from(value as u8)))
+}
+
+/// What a value of a union that is the case `Bool` holds.
+///
+/// # Safety
+///
+/// `value` is one a test of which case it is said is `Bool`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_case_bool_read(value: *const Value) -> i8 {
+    (unsafe { held(value) } & 0xff) as u8 as i8
+}
+
+/// A `String` carried as a case of a union: its address in the slot, the text where it was.
+#[unsafe(no_mangle)]
+pub extern "C" fn souther_case_string_make(value: *const Text) -> *const Value {
+    carried(&CASE_STRING, Some(value as i64))
+}
+
+/// What a value of a union that is the case `String` holds.
+///
+/// # Safety
+///
+/// `value` is one a test of which case it is said is `String`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_case_string_read(value: *const Value) -> *const Text {
+    (unsafe { held(value) }) as *const Text
+}
+
+// Each case the language gives holds nothing, so a value of it is its token alone. Written out one
+// by one, so that the contract's scan of this source finds every function a host is told of.
+
+/// A value of the case `Some`, as a union holds one.
+#[unsafe(no_mangle)]
+pub extern "C" fn souther_case_some_make() -> *const Value {
+    carried(&CASE_SOME, None)
+}
+
+/// A value of the case `None`, as a union holds one.
+#[unsafe(no_mangle)]
+pub extern "C" fn souther_case_none_make() -> *const Value {
+    carried(&CASE_NONE, None)
+}
+
+/// A value of the case `DivisionByZero`, as a union holds one.
+#[unsafe(no_mangle)]
+pub extern "C" fn souther_case_division_by_zero_make() -> *const Value {
+    carried(&CASE_DIVISION_BY_ZERO, None)
+}
+
+/// A value of the case `NotANumber`, as a union holds one.
+#[unsafe(no_mangle)]
+pub extern "C" fn souther_case_not_a_number_make() -> *const Value {
+    carried(&CASE_NOT_A_NUMBER, None)
+}
+
+/// A value of the case `NotADate`, as a union holds one.
+#[unsafe(no_mangle)]
+pub extern "C" fn souther_case_not_a_date_make() -> *const Value {
+    carried(&CASE_NOT_A_DATE, None)
+}
+
+/// A value of the case `NotATime`, as a union holds one.
+#[unsafe(no_mangle)]
+pub extern "C" fn souther_case_not_a_time_make() -> *const Value {
+    carried(&CASE_NOT_A_TIME, None)
+}
+
+/// A value of the case `NotWhole`, as a union holds one.
+#[unsafe(no_mangle)]
+pub extern "C" fn souther_case_not_whole_make() -> *const Value {
+    carried(&CASE_NOT_WHOLE, None)
+}
+
+/// A value of the case `NotAFiniteDecimal`, as a union holds one.
+#[unsafe(no_mangle)]
+pub extern "C" fn souther_case_not_a_finite_decimal_make() -> *const Value {
+    carried(&CASE_NOT_A_FINITE_DECIMAL, None)
 }
 
 #[cfg(test)]
