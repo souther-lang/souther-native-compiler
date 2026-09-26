@@ -21,6 +21,7 @@ mod index;
 mod interface;
 mod kernels;
 mod link;
+mod lists;
 mod literals;
 mod manifest;
 mod ordering;
@@ -61,8 +62,8 @@ use souther_native_abi::{
     WHICH, Word, behavior_symbol, boundary_symbol, built_in_case_symbol,
     checked_constructor_symbol, constructor_symbol, example_symbol, field_at, generated_call,
     held_symbol, home_symbol, list_at, member_at, requirement_at, room_for_capability,
-    room_for_carried, room_for_fields, room_for_held, room_for_list, room_for_members,
-    room_for_requirements, spells_a_module, spells_a_name, type_symbol, value_symbol,
+    room_for_carried, room_for_fields, room_for_list, room_for_members, room_for_requirements,
+    spells_a_module, spells_a_name, type_symbol, value_symbol,
 };
 use specialize::{Instance, InstanceId, Specializations};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -71,8 +72,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use transport::{
     AbortKind, AlternativesForm, Arm, Carrier, Case, Declaration, DeclaredBy, Definition,
-    Departures, Emitted, Ensures, Guard, KernelFact, LanguageCase, Node, Op, Owner, Prim, Program,
-    Publication, Reaches, Reading, Requirement, Routing, Selects, Target, Ty,
+    Departures, Emitted, Ensures, FnSignature, Guard, KernelFact, LanguageCase, Node, Op, Owner,
+    Prim, Program, Publication, Reaches, Reading, Requirement, Routing, Selects, Target, Ty,
 };
 
 /// A fork that ran out of arms, which is this compiler having emitted the wrong test rather than
@@ -4404,26 +4405,31 @@ fn define_rules(
     Ok(())
 }
 
-/// A closure applied: `Core.Apply`, lowered as an indirect call through the code pointer its own
-/// slot 0 holds, with the closure itself handed over as the hidden environment argument every
+/// A function value applied, lowered as an indirect call through the code pointer its closure's
+/// own slot 0 holds, with the closure itself handed over as the hidden environment argument every
 /// lifted function's own signature reserves ([`lifted_signature`]).
+///
+/// The one way a function value is called here: by `Core.Apply`, and by a kernel handed one, such
+/// as `List.find`'s predicate. How a closure is laid out and called is this object's own and
+/// crosses to nothing else (`means_the_same_elsewhere`), so a kernel calls what it is handed the
+/// way the body calls it, and never through a convention of its own that could stop agreeing.
 ///
 /// Shares [`status_or_answer`] with [`call_reached`] rather than repeating it, so an indirect call
 /// forwards a callee's abort exactly the way a direct one does — the two calling conventions differ
 /// only in what is called and what the first argument is, not in how a status that is not
 /// `ANSWERED` reaches this function's own `abort` block.
-fn call_indirect_reached(
+fn call_function(
     builder: &mut FunctionBuilder,
     abort: ir::Block,
     closure: ir::Value,
     call_conv: CallConv,
-    takes: &[Ty],
-    answers: types::Type,
+    function: &FnSignature,
     arguments: &[ir::Value],
 ) -> Lowered<ir::Value> {
+    let answers = machine_type(&function.answers)?;
     let mut signature = ir::Signature::new(call_conv);
     signature.params.push(AbiParam::new(POINTER));
-    for taken in takes {
+    for taken in &function.takes {
         signature.params.push(AbiParam::new(machine_type(taken)?));
     }
     signature.params.push(AbiParam::new(POINTER));
@@ -4728,11 +4734,7 @@ fn lower(
         }
         Node::Some { value, .. } => {
             let held = lower(builder, lowering, module, bindings, abort, value)?;
-            let held = into_slot(builder, held);
-            let flags = TRUSTED;
-            let holding = lowering.room(builder, module, room_for_held());
-            builder.ins().store(flags, held, holding, HELD as i32);
-            holding
+            lists::some(builder, lowering, module, held)
         }
         Node::None { .. } => builder.ins().iconst(POINTER, NOTHING),
         Node::Tuple { members, .. } => {
@@ -4866,6 +4868,7 @@ fn lower(
                         arguments,
                         fact,
                         aborts,
+                        unrun: unrun::never_applied(node),
                     };
                     lower_kernel(builder, lowering, module, bindings, abort, call)?
                 }
@@ -4936,10 +4939,10 @@ fn lower(
             }
             value
         }
+        // What the application answers is what its function answers, which `Coherent` held it to.
         Node::Apply {
             function,
             arguments,
-            ty,
             ..
         } => {
             let Ty::Fn { fn_ } = function.ty() else {
@@ -4951,15 +4954,7 @@ fn lower(
                 given.push(lower(builder, lowering, module, bindings, abort, argument)?);
             }
             let call_conv = module.isa().default_call_conv();
-            call_indirect_reached(
-                builder,
-                abort,
-                closure,
-                call_conv,
-                &fn_.takes,
-                machine_type(ty)?,
-                &given,
-            )?
+            call_function(builder, abort, closure, call_conv, fn_, &given)?
         }
     })
 }
@@ -5062,6 +5057,8 @@ struct KernelCall<'a> {
     arguments: &'a [Node],
     fact: &'a KernelFact,
     aborts: &'a [AbortKind],
+    /// Where among the arguments the functions it never applies stand ([`unrun::never_applied`]).
+    unrun: Vec<usize>,
 }
 
 /// A kernel applied.
@@ -5086,7 +5083,27 @@ fn lower_kernel(
         arguments,
         fact,
         aborts,
+        unrun,
     } = call;
+    // A function over what has no value is handed over beside a list or an optional of what has no
+    // value, which holds nothing to hand it: the function is not lowered, and the kernel answers
+    // what it answers for nothing, which is what it was handed beside the function or nothing.
+    if !unrun.is_empty() {
+        let [_, beside] = arguments else {
+            unreachable!("`Coherent` held {kernel:?} to the two arguments it takes");
+        };
+        assert_eq!(
+            unrun,
+            [0],
+            "a kernel lowered here takes one function, first"
+        );
+        let beside = lower(builder, lowering, module, bindings, abort, beside)?;
+        return Ok(match kernel {
+            LoweredKernel::ListFind => builder.ins().iconst(POINTER, NOTHING),
+            LoweredKernel::ListSortBy | LoweredKernel::OptionMap => beside,
+            _ => unreachable!("{kernel:?} is handed no function"),
+        });
+    }
     // What a pattern means is what the checker settled, so the argument it was written as is not
     // lowered: it is a string the checker folded at compile time, and nothing it would compute at
     // run time is read.
@@ -5186,6 +5203,70 @@ fn lower_kernel(
             let slot = builder.ins().iadd_imm_s(at, list_at(0));
             let nothing = builder.ins().iconst(POINTER, NOTHING);
             builder.ins().select(inside, slot, nothing)
+        }
+        LoweredKernel::ListFind => {
+            let [predicate, list] = given[..] else {
+                unreachable!("`Coherent` held list.find to the two arguments it takes");
+            };
+            lists::find(builder, module, abort, predicate, list.value)?
+        }
+        LoweredKernel::ListSortBy => {
+            let [key, list] = given[..] else {
+                unreachable!("`Coherent` held list.sortBy to the two arguments it takes");
+            };
+            let subject = ordering_subject(kernel, fact);
+            lists::sorted_by(builder, lowering, module, abort, key, subject, list.value)?
+        }
+        LoweredKernel::ListSort => {
+            let [list] = values[..] else {
+                unreachable!("`Coherent` held list.sort to the one argument it takes");
+            };
+            let subject = ordering_subject(kernel, fact);
+            lists::sorted(builder, lowering, module, subject, list)?
+        }
+        LoweredKernel::ListMax | LoweredKernel::ListMin => {
+            let [list] = values[..] else {
+                unreachable!("`Coherent` held {kernel:?} to the one argument it takes");
+            };
+            let op = match kernel {
+                LoweredKernel::ListMax => Op::Gt,
+                _ => Op::Lt,
+            };
+            let subject = ordering_subject(kernel, fact);
+            lists::extreme(builder, lowering, module, op, subject, list)?
+        }
+        LoweredKernel::ListReverse => {
+            let [list] = values[..] else {
+                unreachable!("`Coherent` held list.reverse to the one argument it takes");
+            };
+            lists::reversed(builder, lowering, module, list)
+        }
+        LoweredKernel::ListSum | LoweredKernel::ListProduct => {
+            let [list] = given[..] else {
+                unreachable!("`Coherent` held {kernel:?} to the one argument it takes");
+            };
+            let Ty::List { list: element } = list.ty else {
+                unreachable!("`Coherent` held {kernel:?} to taking a list");
+            };
+            let op = match kernel {
+                LoweredKernel::ListSum => Op::Add,
+                _ => Op::Mul,
+            };
+            let status = one_reason_status(aborts);
+            lists::total(builder, abort, status, op, element, list.value)?
+        }
+        LoweredKernel::ListRangeInclusive => {
+            let [from, to] = values[..] else {
+                unreachable!("`Coherent` held list.rangeInclusive to the two arguments it takes");
+            };
+            let status = one_reason_status(aborts);
+            lists::range_inclusive(builder, lowering, module, abort, status, from, to)
+        }
+        LoweredKernel::OptionMap => {
+            let [function, optional] = given[..] else {
+                unreachable!("`Coherent` held option.map to the two arguments it takes");
+            };
+            lists::mapped(builder, lowering, module, abort, function, optional.value)?
         }
         LoweredKernel::IntTruncatingDivide | LoweredKernel::IntTruncatingRemainder => {
             let [dividend, divisor] = values[..] else {
@@ -5297,6 +5378,15 @@ fn lower_kernel(
         }
         LoweredKernel::StringMatches => unreachable!("answered above"),
     })
+}
+
+/// What a kernel that orders was settled as ordering by, which `Coherent` held to be the one type
+/// its contract says it orders.
+fn ordering_subject(kernel: LoweredKernel, fact: &KernelFact) -> &Ty {
+    let KernelFact::OrderingSubject { ty } = fact else {
+        unreachable!("`Coherent` held {kernel:?} to the ordering subject it settles");
+    };
+    ty
 }
 
 /// A call of one of the `String` kernels' functions, and what it answers.
@@ -5901,19 +5991,7 @@ fn arithmetic(
     match (left.ty, right.ty) {
         (Ty::Prim { prim }, Ty::Prim { prim: also }) if prim == also => match prim {
             Prim::Int => match op {
-                Op::Add => {
-                    let sum = builder.ins().iadd(a, b);
-                    let past = builder.ins().bxor(a, sum);
-                    let also = builder.ins().bxor(b, sum);
-                    abort_where_the_sign_bit_is_set(
-                        builder,
-                        abort,
-                        one_reason_status(aborts),
-                        past,
-                        also,
-                    );
-                    Ok(sum)
-                }
+                Op::Add => Ok(sum(builder, abort, one_reason_status(aborts), a, b)),
                 Op::Sub => Ok(difference(builder, abort, one_reason_status(aborts), a, b)),
                 Op::Mul => Ok(product(builder, abort, one_reason_status(aborts), a, b)),
                 _ => unreachable!("reached from a sum, a difference or a product and nothing else"),
@@ -5999,12 +6077,7 @@ fn joined_lists(
         .ins()
         .load(types::I64, TRUSTED, b, LIST_LENGTH as i32);
     let length = builder.ins().iadd(first, second);
-    let slots = builder.ins().imul_imm_s(length, SLOT);
-    let bytes = builder.ins().iadd_imm_s(slots, room_for_list(0));
-    let joined = lowering.room_of(builder, module, bytes);
-    builder
-        .ins()
-        .store(TRUSTED, length, joined, LIST_LENGTH as i32);
+    let joined = lists::new_list(builder, lowering, module, length);
 
     let into = builder.ins().iadd_imm_s(joined, list_at(0));
     let from = builder.ins().iadd_imm_s(a, list_at(0));
@@ -6312,6 +6385,24 @@ fn as_a_whole_number(op: Op) -> IntCC {
             unreachable!("reached from a comparison and nothing else")
         }
     }
+}
+
+/// An addition that left the range an `Int` holds ends the computation.
+///
+/// The answer disagreeing in sign with both operands is what that is: two operands of one sign
+/// whose sum wrapped round.
+fn sum(
+    builder: &mut FunctionBuilder,
+    abort: ir::Block,
+    status: Status,
+    a: ir::Value,
+    b: ir::Value,
+) -> ir::Value {
+    let sum = builder.ins().iadd(a, b);
+    let past = builder.ins().bxor(a, sum);
+    let also = builder.ins().bxor(b, sum);
+    abort_where_the_sign_bit_is_set(builder, abort, status, past, also);
+    sum
 }
 
 /// A subtraction that left the range an `Int` holds ends the computation.

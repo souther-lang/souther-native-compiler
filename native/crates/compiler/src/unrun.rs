@@ -2,23 +2,30 @@
 //!
 //! A body either runs or does not (`Runs::runs`), and inside one that runs this is the only code
 //! that does not. It is upstream's `Core.Call.functionArgument` answering `NEVER_APPLIED`,
-//! transcribed and not reworked: a call that is not a kernel's, handed a function one of whose
-//! parameters is the type of what has no value (`Core.neverRuns`). No value of that type is ever
-//! made, so nothing can be handed to that parameter and the function is never applied. The unit is
-//! the argument, whatever it is written as: the `let`s the checker binds around a block are part
-//! of it, and upstream emits "none of it — no class, no body".
+//! transcribed, and widened by one kind of call: a call that is not a kernel's, or is one of a
+//! kernel this backend lowers, handed a function one of whose parameters is the type of what has
+//! no value (`Core.neverRuns`). No value of that type is ever made, so nothing can be handed to
+//! that parameter and the function is never applied. The unit is the argument, whatever it is
+//! written as: the `let`s the checker binds around a block are part of it, and upstream emits
+//! "none of it — no class, no body".
 //!
 //! The step of a walk over an empty list literal is the case that happens: `List.map(f, [])`
 //! walks with a step taking a `Nothing` for an element. A walk hands its step nothing in its place
-//! and answers an empty list. Any other call would have to hand the function it never applies to
-//! a copy that takes it, which is a function taking what has no value; that is refused as not
-//! lowered where the call is read (`Coherent`), and nothing of the function is lowered either way.
+//! and answers an empty list. So does a kernel this backend lowers: it applies a function it is
+//! handed only to what the list or the optional beside it holds, which is nothing where the
+//! function takes what has no value, so `List.sortBy(f, [])` answers the empty list it was handed
+//! and calls nothing. Upstream hands a kernel every function because its runtime is handed the
+//! function as a value; here a kernel is emitted where it is called, and nothing is handed over.
+//! Any other call would have to hand the function it never applies to a copy that takes it, which
+//! is a function taking what has no value; that is refused as not lowered where the call is read
+//! (`Coherent`), and nothing of the function is lowered either way.
 //!
 //! Every pass asking what an object runs, reaches or has to lower asks it through this: by
 //! [`each_lowered`], by [`lowered_children`] and [`lowered_children_mut`], or by
 //! [`never_applied`] where it walks a call itself. Whether the document is coherent is asked of
 //! all of it, run or not.
 
+use crate::kernels::LoweredKernel;
 use crate::transport::{Node, Reaches, Ty};
 
 /// Where among `node`'s arguments the functions it never applies stand, where `node` is a call
@@ -34,9 +41,10 @@ pub(crate) fn never_applied(node: &Node) -> Vec<usize> {
         return Vec::new();
     };
     match reaches {
-        // A kernel's row hands the runtime the function it is given, whatever it is.
-        Reaches::Kernel { .. } => Vec::new(),
-        Reaches::Emitted { .. }
+        // A kernel this backend does not lower is refused whatever it is handed.
+        Reaches::Kernel { kernel, .. } if LoweredKernel::of(kernel).is_none() => Vec::new(),
+        Reaches::Kernel { .. }
+        | Reaches::Emitted { .. }
         | Reaches::Helper { .. }
         | Reaches::Value { .. }
         | Reaches::PublishedValue { .. }
@@ -175,12 +183,18 @@ mod tests {
         );
     }
 
-    /// The same of a helper's call, and not of a kernel's, whose row hands the function over.
+    /// The same of a helper's call and of a kernel's this backend lowers, and not of one it does
+    /// not, which is refused with every function it is handed.
     #[test]
-    fn a_kernel_is_handed_every_function_it_is_given() {
+    fn a_kernel_this_backend_lowers_never_applies_a_function_over_nothing() {
         let helper = call(json!({ "is": "helper", "reached":
             { "is": "own", "module": "m", "name": "h" } }));
         assert_eq!(never_applied(&helper), vec![0]);
+        let lowered = call(
+            json!({ "is": "kernel", "kernel": "list.sortBy", "takes": [],
+            "fact": { "is": "none" } }),
+        );
+        assert_eq!(never_applied(&lowered), vec![0]);
         let kernel = call(json!({ "is": "kernel", "kernel": "list.fold", "takes": [],
             "fact": { "is": "none" } }));
         assert!(never_applied(&kernel).is_empty());

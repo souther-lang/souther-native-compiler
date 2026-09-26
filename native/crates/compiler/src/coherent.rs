@@ -1498,10 +1498,11 @@ impl<'a> Walk<'_, 'a> {
                 for argument in arguments {
                     self.node(argument)?;
                 }
-                // A walk hands its step nothing in its place. Anything else would hand the
-                // function it never applies to a copy taking a function over what has no value,
-                // which nothing here lowers; none of the function is lowered either way.
-                if !matches!(reaches, Reaches::Emitted { .. }) {
+                // A walk hands its step nothing in its place, and a kernel emitted here calls
+                // nothing where it would call it. Anything else would hand the function it never
+                // applies to a copy taking a function over what has no value, which nothing here
+                // lowers; none of the function is lowered either way.
+                if !matches!(reaches, Reaches::Emitted { .. } | Reaches::Kernel { .. }) {
                     for at in crate::unrun::never_applied(node) {
                         self.not_lowered(format!(
                             "argument {at} of a call of {}, a function over {} it never applies",
@@ -2046,6 +2047,19 @@ impl<'a> Walk<'_, 'a> {
                                 known_to_take.spelt()
                             );
                         }
+                    }
+                    // What an ordering was checked against is what the lowering compares by, so it
+                    // is held to the one type the kernel orders: the element of the list a sort
+                    // takes, and what the key a `sortBy` takes answers.
+                    if let (Some(known_to_hold), KernelFact::OrderingSubject { ty: subject }) =
+                        (contract.fact.holds(&bound), fact)
+                    {
+                        self.same(
+                            &format!("what an application of {kernel} orders by"),
+                            subject,
+                            &known_to_hold,
+                            "what it takes orders",
+                        )?;
                     }
                     self.ends_for(&format!("a call of {kernel}"), aborts, &contract.aborts)?;
                     let Some(answers) = contract.answers.settled(&bound) else {
