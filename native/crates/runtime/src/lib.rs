@@ -25,12 +25,15 @@ use souther_native_abi::{
     CARRIED, SLOT, TEXT_BYTES, TEXT_LENGTH, WHICH, room_for_carried, room_for_fields, room_for_text,
 };
 
+mod amount;
 #[cfg(test)]
 mod contract;
+mod decimal;
 mod decoding;
 mod document;
 mod external;
 mod kernels;
+pub use decimal::*;
 pub use kernels::*;
 use souther_text::{Text as Held, append, code_points, compare};
 use std::cell::RefCell;
@@ -390,6 +393,7 @@ built_in_cases! {
     "Int" => CASE_INT,
     "Bool" => CASE_BOOL,
     "String" => CASE_STRING,
+    "Decimal" => CASE_DECIMAL,
     "Some" => CASE_SOME,
     "None" => CASE_NONE,
     "DivisionByZero" => CASE_DIVISION_BY_ZERO,
@@ -485,6 +489,22 @@ pub extern "C" fn souther_case_string_make(value: *const Text) -> *const Value {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_case_string_read(value: *const Value) -> *const Text {
     (unsafe { held(value) }) as *const Text
+}
+
+/// A `Decimal` carried as a case of a union: its address in the slot, the value where it was.
+#[unsafe(no_mangle)]
+pub extern "C" fn souther_case_decimal_make(value: *const Decimal) -> *const Value {
+    carried(&CASE_DECIMAL, Some(value as i64))
+}
+
+/// What a value of a union that is the case `Decimal` holds.
+///
+/// # Safety
+///
+/// `value` is one a test of which case it is said is `Decimal`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_case_decimal_read(value: *const Value) -> *const Decimal {
+    (unsafe { held(value) }) as *const Decimal
 }
 
 // Each case the language gives holds nothing, so a value of it is its token alone. Written out one

@@ -52,13 +52,16 @@ use literals::Literals;
 use patterns::Machines;
 use restating::restate;
 use souther_native_abi::{
-    ALLOCATE, ANSWERED, CAPABILITY_ENVIRONMENT, CAPABILITY_INVOKE, CARRIED, EXAMPLE_STATUSES,
-    FAKE_NO_OUTPUT, HELD, HOST_STATUSES, INJECTION_UNBOUND, LIST_LENGTH, NO_FAILED_CLAUSE, NOTHING,
-    Parameter, SLOT, STRING_CHARACTERS, STRING_CODE_POINT_VALUES, STRING_CODE_POINTS,
-    STRING_COMPARE, STRING_CONCAT, STRING_CONCAT_ALL, STRING_CONTAINS, STRING_ENDS_WITH,
-    STRING_FROM_INT, STRING_JOIN, STRING_LINES, STRING_LOWERCASE, STRING_MATCHES, STRING_PAD_LEFT,
-    STRING_PAD_RIGHT, STRING_REPEAT, STRING_REPLACE, STRING_REVERSE, STRING_SLICE, STRING_SPLIT,
-    STRING_STARTS_WITH, STRING_TO_INT, STRING_TRIM, STRING_UPPERCASE, STRING_WORDS, Status, TOKEN,
+    ALLOCATE, ANSWERED, CAPABILITY_ENVIRONMENT, CAPABILITY_INVOKE, CARRIED, DECIMAL_ADD,
+    DECIMAL_COMPARE, DECIMAL_DIVIDE, DECIMAL_FROM_INT, DECIMAL_IS_ZERO, DECIMAL_LITERAL,
+    DECIMAL_MULTIPLY, DECIMAL_NEGATE, DECIMAL_ROUND, DECIMAL_SUBTRACT, DECIMAL_TO_INT,
+    EXAMPLE_STATUSES, FAKE_NO_OUTPUT, HELD, HOST_STATUSES, INJECTION_UNBOUND, LANGUAGE_UNITS,
+    LIST_LENGTH, NO_FAILED_CLAUSE, NOTHING, Parameter, SLOT, STRING_CHARACTERS,
+    STRING_CODE_POINT_VALUES, STRING_CODE_POINTS, STRING_COMPARE, STRING_CONCAT, STRING_CONCAT_ALL,
+    STRING_CONTAINS, STRING_ENDS_WITH, STRING_FROM_DECIMAL, STRING_FROM_INT, STRING_JOIN,
+    STRING_LINES, STRING_LOWERCASE, STRING_MATCHES, STRING_PAD_LEFT, STRING_PAD_RIGHT,
+    STRING_REPEAT, STRING_REPLACE, STRING_REVERSE, STRING_SLICE, STRING_SPLIT, STRING_STARTS_WITH,
+    STRING_TO_DECIMAL, STRING_TO_INT, STRING_TRIM, STRING_UPPERCASE, STRING_WORDS, Status, TOKEN,
     WHICH, Word, behavior_symbol, boundary_symbol, built_in_case_symbol,
     checked_constructor_symbol, constructor_symbol, example_symbol, field_at, generated_call,
     held_symbol, home_symbol, list_at, member_at, requirement_at, room_for_capability,
@@ -433,8 +436,9 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
     let count_text = import_runtime(&mut module, STRING_CODE_POINTS, call_conv);
 
     // And what each of the `String` module's kernels is computed through, for the same reason
-    // again: each is a walk over text, and `souther_text` is where what it answers is written.
-    let text_kernels: HashMap<&'static str, FuncId> = TEXT_KERNELS
+    // again: each is a walk over text, and `souther_text` is where what it answers is written. And
+    // every operation over a `Decimal`, which only the runtime reads behind.
+    let runtime_kernels: HashMap<&'static str, FuncId> = RUNTIME_KERNELS
         .iter()
         .map(|name| (*name, import_runtime(&mut module, name, call_conv)))
         .collect();
@@ -749,7 +753,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
         compare_text,
         join_text,
         count_text,
-        text_kernels: &text_kernels,
+        runtime_kernels: &runtime_kernels,
         closures: &closures,
         lifted: &lifted,
         targets: &targets,
@@ -2101,11 +2105,18 @@ impl<'a> Declared<'a> {
             // cases another build can reach is the checker's to say, and not asked here.
             DeclaredBy::AModule => Linkage::Export,
             DeclaredBy::OnThePath => Linkage::Import,
+            // At home in the runtime, which defines the token of every unit the language declares
+            // and which every object in a library links; one this runtime defines no token for is
+            // a value no object can say it is, and is refused as that rather than imported under a
+            // name nothing defines.
             DeclaredBy::TheLanguage => {
-                return Err(not_lowered(format!(
-                    "a value of {declared}, which the language declares and no build of a module \
-                     defines"
-                )));
+                if !LANGUAGE_UNITS.contains(&(declaration.module(), declaration.name())) {
+                    return Err(not_lowered(format!(
+                        "a value of {declared}, which the language declares and the runtime \
+                         defines no token for"
+                    )));
+                }
+                Linkage::Import
             }
         };
         let symbol = type_symbol(declaration.module(), declaration.name());
@@ -2161,8 +2172,9 @@ struct Lowerings<'a> {
     compare_text: FuncId,
     join_text: FuncId,
     count_text: FuncId,
-    /// The function each of the `String` module's kernels is computed through, by its symbol.
-    text_kernels: &'a HashMap<&'static str, FuncId>,
+    /// The function each of the `String` and `Decimal` modules' kernels, and each operator over a
+    /// `Decimal`, is computed through, by its symbol.
+    runtime_kernels: &'a HashMap<&'static str, FuncId>,
     /// Every closure site the whole document holds, and what each one reaches — read here rather
     /// than re-walked per body, since a `Node::Block` nested under one top-level body may be
     /// referenced (its captures restored) while defining a different site's own lifted function.
@@ -2396,8 +2408,13 @@ fn machine_type(ty: &Ty) -> Lowered<types::Type> {
             // the object, for a literal, or the arena, for one a run worked out — is not something
             // the value says, and nothing that reads one has to ask.
             Prim::String => Ok(POINTER),
-            Prim::Decimal
-            | Prim::Rational
+            // The address of what the runtime keeps a `Decimal` as, which nothing here reads
+            // behind: every operation on one is a call into the runtime, which alone knows the
+            // layout. So a `Decimal` is one word wherever a value is held — a slot, an element, a
+            // field, what a union carries — and how its integer is kept is not a fact any of those
+            // has to agree on.
+            Prim::Decimal => Ok(POINTER),
+            Prim::Rational
             | Prim::Date
             | Prim::Time
             | Prim::DateTime
@@ -2422,8 +2439,8 @@ fn built_in_case(case: &Case) -> Lowered<&'static str> {
             Prim::Int => "Int",
             Prim::Bool => "Bool",
             Prim::String => "String",
-            Prim::Decimal
-            | Prim::Rational
+            Prim::Decimal => "Decimal",
+            Prim::Rational
             | Prim::Date
             | Prim::Time
             | Prim::DateTime
@@ -2649,8 +2666,11 @@ fn means_the_same_elsewhere(ty: &Ty) -> bool {
             // about it for the reason they agree that an `Int` is sixty-four bits wide. No linker
             // is involved: there is no name here for one to resolve.
             Prim::String => true,
-            Prim::Decimal
-            | Prim::Rational
+            // An address only the runtime reads behind, and the runtime is the one thing every
+            // object in a library links: two objects agree about a `Decimal` because neither of them
+            // reads one, and not because each lays one out the same way.
+            Prim::Decimal => true,
+            Prim::Rational
             | Prim::Date
             | Prim::Time
             | Prim::DateTime
@@ -4725,6 +4745,7 @@ fn end(
         | Node::Read { ty, .. }
         | Node::Bool { ty, .. }
         | Node::Str { ty, .. }
+        | Node::Decimal { ty, .. }
         | Node::Binary { ty, .. }
         | Node::Neg { ty, .. }
         | Node::Unit { ty, .. }
@@ -4797,13 +4818,20 @@ fn lower(
         Node::Neg {
             operand, aborts, ..
         } => {
-            // The width first: a `Decimal` or a `Rational` has none here, and is refused before its
-            // negation is asked what it can end for. An `Int` names the one reason `Coherent` held
-            // it to.
+            // The width first: a `Rational` has none here, and is refused before its negation is
+            // asked what it can end for. An `Int` names the one reason `Coherent` held it to, and a
+            // `Decimal` only changes sign, at the scale it had, which the runtime does.
             let width = machine_type(operand.ty())?;
             let held = lower(builder, lowering, module, bindings, abort, operand)?;
-            let nought = builder.ins().iconst(width, 0);
-            difference(builder, abort, one_reason_status(aborts), nought, held)
+            if let Ty::Prim {
+                prim: Prim::Decimal,
+            } = operand.ty()
+            {
+                runtime_call(builder, lowering, module, DECIMAL_NEGATE, &[held])
+            } else {
+                let nought = builder.ins().iconst(width, 0);
+                difference(builder, abort, one_reason_status(aborts), nought, held)
+            }
         }
         // A fork answers what the branch it takes answers, and each branch hands that to the block
         // after the fork. Which nodes are forks, and how each chooses a branch, is `branched`'s.
@@ -4833,6 +4861,16 @@ fn lower(
         }
         Node::Bool { value, ty, .. } => builder.ins().iconst(machine_type(ty)?, i64::from(*value)),
         Node::Str { value, .. } => lowering.literals.address(builder, module, value),
+        // Made by the runtime from the integer and the scale, each time the literal is reached:
+        // the runtime's layout is its own, so the object carries the two numbers and never a
+        // `Decimal`. The integer is a string the object carries like any other literal.
+        Node::Decimal {
+            unscaled, scale, ..
+        } => {
+            let digits = lowering.literals.address(builder, module, unscaled);
+            let scale = builder.ins().iconst(types::I64, i64::from(*scale));
+            runtime_call(builder, lowering, module, DECIMAL_LITERAL, &[digits, scale])
+        }
         Node::Binary {
             op,
             reading,
@@ -5209,10 +5247,10 @@ fn shared_field(
     Ok(builder.block_params(read)[0])
 }
 
-/// Every function a `String` kernel is computed through, imported into every object: which of them
-/// a program calls is known only once its bodies are lowered, and a function no call reaches costs
-/// the object a name.
-const TEXT_KERNELS: &[&str] = &[
+/// Every function a `String` or a `Decimal` kernel, or an operator over a `Decimal`, is computed
+/// through, imported into every object: which of them a program calls is known only once its bodies
+/// are lowered, and a function no call reaches costs the object a name.
+const RUNTIME_KERNELS: &[&str] = &[
     STRING_TRIM,
     STRING_LOWERCASE,
     STRING_UPPERCASE,
@@ -5235,6 +5273,19 @@ const TEXT_KERNELS: &[&str] = &[
     STRING_PAD_RIGHT,
     STRING_CHARACTERS,
     STRING_CODE_POINT_VALUES,
+    STRING_TO_DECIMAL,
+    STRING_FROM_DECIMAL,
+    DECIMAL_LITERAL,
+    DECIMAL_COMPARE,
+    DECIMAL_IS_ZERO,
+    DECIMAL_NEGATE,
+    DECIMAL_ADD,
+    DECIMAL_SUBTRACT,
+    DECIMAL_MULTIPLY,
+    DECIMAL_FROM_INT,
+    DECIMAL_TO_INT,
+    DECIMAL_ROUND,
+    DECIMAL_DIVIDE,
 ];
 
 /// A call of a kernel this backend lowers, as the node calling it holds it.
@@ -5309,7 +5360,7 @@ fn lower_kernel(
                 LoweredKernel::IntSubtract => Op::Sub,
                 _ => Op::Mul,
             };
-            arithmetic(builder, abort, op, a, b, aborts)?
+            arithmetic(builder, lowering, module, abort, op, a, b, aborts)?
         }
         // -1, 0 or 1: whether the first is above the second, less whether it is below.
         LoweredKernel::IntCompare => {
@@ -5416,8 +5467,9 @@ fn lower_kernel(
                 LoweredKernel::ListSum => Op::Add,
                 _ => Op::Mul,
             };
-            let status = one_reason_status(aborts);
-            lists::total(builder, abort, status, op, element, list.value)?
+            lists::total(
+                builder, lowering, module, abort, aborts, op, element, list.value,
+            )?
         }
         LoweredKernel::ListRangeInclusive => {
             let [from, to] = values[..] else {
@@ -5488,13 +5540,9 @@ fn lower_kernel(
                 LoweredKernel::StringPadLeft => STRING_PAD_LEFT,
                 _ => STRING_PAD_RIGHT,
             };
-            let room = out_slot(builder);
-            let mut handed = values.clone();
-            handed.push(room);
-            let wrote = runtime_call(builder, lowering, module, name, &handed);
-            let nothing = builder.ins().icmp_imm_s(IntCC::Equal, wrote, 0);
-            abort_where(builder, abort, one_reason_status(aborts), nothing);
-            builder.ins().load(POINTER, TRUSTED, room, 0)
+            written_or_ended(
+                builder, lowering, module, abort, name, &values, POINTER, aborts,
+            )
         }
         LoweredKernel::StringFromInt => {
             runtime_call(builder, lowering, module, STRING_FROM_INT, &values)
@@ -5540,6 +5588,93 @@ fn lower_kernel(
         LoweredKernel::StringCodePoints => {
             runtime_call(builder, lowering, module, STRING_CODE_POINT_VALUES, &values)
         }
+        // Text that is decimal text is the union's `Decimal` case, and any other is
+        // `NotANumber`, as `String.toInt` answers its own.
+        LoweredKernel::StringToDecimal => {
+            let room = out_slot(builder);
+            let mut handed = values.clone();
+            handed.push(room);
+            let read = runtime_call(builder, lowering, module, STRING_TO_DECIMAL, &handed);
+            fork(builder, read, POINTER, |builder, taken| {
+                if taken {
+                    let value = builder.ins().load(POINTER, TRUSTED, room, 0);
+                    let decimal = Case::Primitive {
+                        prim: Prim::Decimal,
+                    };
+                    return carry(builder, lowering, module, &decimal, Some(value));
+                }
+                let no_number = Case::Language {
+                    case: LanguageCase::NotANumber,
+                };
+                carry(builder, lowering, module, &no_number, None)
+            })?
+        }
+        LoweredKernel::StringFromDecimal => {
+            runtime_call(builder, lowering, module, STRING_FROM_DECIMAL, &values)
+        }
+        LoweredKernel::DecimalAdd
+        | LoweredKernel::DecimalSubtract
+        | LoweredKernel::DecimalMultiply
+        | LoweredKernel::DecimalRound => {
+            let name = match kernel {
+                LoweredKernel::DecimalAdd => DECIMAL_ADD,
+                LoweredKernel::DecimalSubtract => DECIMAL_SUBTRACT,
+                LoweredKernel::DecimalMultiply => DECIMAL_MULTIPLY,
+                _ => DECIMAL_ROUND,
+            };
+            written_or_ended(
+                builder, lowering, module, abort, name, &values, POINTER, aborts,
+            )
+        }
+        LoweredKernel::DecimalToInt => written_or_ended(
+            builder,
+            lowering,
+            module,
+            abort,
+            DECIMAL_TO_INT,
+            &values,
+            types::I64,
+            aborts,
+        ),
+        // Already -1, 0 or 1, by amount.
+        LoweredKernel::DecimalCompare => {
+            runtime_call(builder, lowering, module, DECIMAL_COMPARE, &values)
+        }
+        LoweredKernel::DecimalFromInt => {
+            runtime_call(builder, lowering, module, DECIMAL_FROM_INT, &values)
+        }
+        // A zero divisor is answered as a case before the scale or anything else is looked at
+        // (spec §a-division-that-does-not-run-needs-no-scale); every argument has been worked out
+        // all the same, as at any call. Past it the quotient is the union's `Decimal` case, or the
+        // run ends where the scale or the quotient has no place.
+        LoweredKernel::DecimalDivide => {
+            let [_, divisor, _, _] = values[..] else {
+                unreachable!("`Coherent` held decimal.divide to the four arguments it takes");
+            };
+            let by_nought = runtime_call(builder, lowering, module, DECIMAL_IS_ZERO, &[divisor]);
+            fork(builder, by_nought, POINTER, |builder, nought| {
+                if nought {
+                    let undivided = Case::Language {
+                        case: LanguageCase::DivisionByZero,
+                    };
+                    return carry(builder, lowering, module, &undivided, None);
+                }
+                let quotient = written_or_ended(
+                    builder,
+                    lowering,
+                    module,
+                    abort,
+                    DECIMAL_DIVIDE,
+                    &values,
+                    POINTER,
+                    aborts,
+                );
+                let decimal = Case::Primitive {
+                    prim: Prim::Decimal,
+                };
+                carry(builder, lowering, module, &decimal, Some(quotient))
+            })?
+        }
         LoweredKernel::StringMatches => unreachable!("answered above"),
     })
 }
@@ -5553,18 +5688,43 @@ fn ordering_subject(kernel: LoweredKernel, fact: &KernelFact) -> &Ty {
     ty
 }
 
-/// A call of one of the `String` kernels' functions, and what it answers.
+/// A call of one of the functions a kernel or a `Decimal` operator is computed through, and what it
+/// answers.
 fn runtime_call(
     builder: &mut FunctionBuilder,
-    lowering: &Lowering,
+    lowering: &Lowerings,
     module: &mut ObjectModule,
     name: &str,
     handed: &[ir::Value],
 ) -> ir::Value {
-    let id = lowering.text_kernels[name];
+    let id = lowering.runtime_kernels[name];
     let calling = module.declare_func_in_func(id, builder.func);
     let called = builder.ins().call(calling, handed);
     builder.inst_results(called)[0]
+}
+
+/// A call of a runtime function that answers whether it wrote its value through room it is handed
+/// last, and the value, read back at `width`, where it did. Where it did not, the run ends for the
+/// one reason the call names: which reason that is, is the call's contract, and the runtime says
+/// nothing of why.
+#[allow(clippy::too_many_arguments)]
+fn written_or_ended(
+    builder: &mut FunctionBuilder,
+    lowering: &Lowerings,
+    module: &mut ObjectModule,
+    abort: ir::Block,
+    name: &str,
+    handed: &[ir::Value],
+    width: types::Type,
+    aborts: &[AbortKind],
+) -> ir::Value {
+    let room = out_slot(builder);
+    let mut handed = handed.to_vec();
+    handed.push(room);
+    let wrote = runtime_call(builder, lowering, module, name, &handed);
+    let nothing = builder.ins().icmp_imm_s(IntCC::Equal, wrote, 0);
+    abort_where(builder, abort, one_reason_status(aborts), nothing);
+    builder.ins().load(width, TRUSTED, room, 0)
 }
 
 /// Where `node` is a fork, what chooses its branch, with each branch ended by `branch`; and
@@ -5718,6 +5878,7 @@ fn branched(
         | Node::Read { .. }
         | Node::Bool { .. }
         | Node::Str { .. }
+        | Node::Decimal { .. }
         | Node::Binary { .. }
         | Node::Neg { .. }
         | Node::Unit { .. }
@@ -6077,7 +6238,9 @@ fn binary_as_they_stand(
                 lower(builder, lowering, module, bindings, abort, right)?,
             );
             match op {
-                Op::Add | Op::Sub | Op::Mul => arithmetic(builder, abort, op, a, b, aborts),
+                Op::Add | Op::Sub | Op::Mul => {
+                    arithmetic(builder, lowering, module, abort, op, a, b, aborts)
+                }
                 Op::Eq | Op::Ne | Op::Lt | Op::Le | Op::Gt | Op::Ge => {
                     compare(builder, lowering, module, op, a.ty, a.value, b.value)
                 }
@@ -6144,8 +6307,14 @@ fn compare(
 /// to the wrapped number and not to the value. So the operands are two `Int`s by the time this
 /// reads them. That is the checker's arrangement and not this driver's, which is why anything else
 /// is the two halves disagreeing rather than a lowering that is still to be written.
+///
+/// Over two `Int`s the machine computes it here; over two `Decimal`s the runtime does, since only
+/// it reads one, and answers whether the result is one a `Decimal` holds.
+#[allow(clippy::too_many_arguments)]
 fn arithmetic(
     builder: &mut FunctionBuilder,
+    lowering: &Lowerings,
+    module: &mut ObjectModule,
     abort: ir::Block,
     op: Op,
     left: Held,
@@ -6161,8 +6330,27 @@ fn arithmetic(
                 Op::Mul => Ok(product(builder, abort, one_reason_status(aborts), a, b)),
                 _ => unreachable!("reached from a sum, a difference or a product and nothing else"),
             },
-            Prim::Decimal
-            | Prim::Rational
+            Prim::Decimal => {
+                let name = match op {
+                    Op::Add => DECIMAL_ADD,
+                    Op::Sub => DECIMAL_SUBTRACT,
+                    Op::Mul => DECIMAL_MULTIPLY,
+                    _ => unreachable!(
+                        "reached from a sum, a difference or a product and nothing else"
+                    ),
+                };
+                Ok(written_or_ended(
+                    builder,
+                    lowering,
+                    module,
+                    abort,
+                    name,
+                    &[a, b],
+                    POINTER,
+                    aborts,
+                ))
+            }
+            Prim::Rational
             | Prim::Bool
             | Prim::String
             | Prim::Date

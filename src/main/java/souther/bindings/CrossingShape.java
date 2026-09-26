@@ -323,6 +323,7 @@ public sealed interface CrossingShape {
                 case "Int" -> Word.INT;
                 case "Bool" -> Word.BOOL;
                 case "String" -> Word.STRING;
+                case "Decimal" -> Word.DECIMAL;
                 default -> null;
             };
             case Type.Declared it -> Word.VALUE;

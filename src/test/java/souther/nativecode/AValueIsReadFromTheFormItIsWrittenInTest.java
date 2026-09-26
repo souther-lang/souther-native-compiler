@@ -193,7 +193,7 @@ class AValueIsReadFromTheFormItIsWrittenInTest {
                 module shop exposing ( Money, Partial, Kind )
 
                 data Money = Int
-                data Partial = { count: Int, amount: Decimal }
+                data Partial = { count: Int, opened: Date }
                 data Big
                 data Small
                 data Kind = Big | Small

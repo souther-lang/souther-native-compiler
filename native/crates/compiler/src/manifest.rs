@@ -69,6 +69,13 @@ pub(crate) const MOVES: &[(u32, &str)] = &[
          makes and reads each through the runtime (`cases`), and a union's `case` answers for \
          every union and not only one of declared cases",
     ),
+    (
+        10,
+        "a `Decimal` crosses as a word of its own (`decimal`): a host makes one of its integer, as \
+         integer text, and its scale, and reads the two back, through the runtime \
+         (`souther_decimal_of_parts`, `souther_decimal_unscaled`, `souther_decimal_scale`), and \
+         carries one as a case of a union",
+    ),
 ];
 
 /// Everything a host can call in one shared library, and the model it reaches.
@@ -547,6 +554,7 @@ pub(crate) enum Word {
     Bytes,
     Value,
     String,
+    Decimal,
     Decoded,
     Issue,
     List,
@@ -568,6 +576,7 @@ impl From<HostWord> for Word {
             HostWord::Bytes => Word::Bytes,
             HostWord::Value => Word::Value,
             HostWord::String => Word::String,
+            HostWord::Decimal => Word::Decimal,
             HostWord::Decoded => Word::Decoded,
             HostWord::Issue => Word::Issue,
             HostWord::List => Word::List,
@@ -591,6 +600,7 @@ impl From<Word> for HostWord {
             Word::Bytes => HostWord::Bytes,
             Word::Value => HostWord::Value,
             Word::String => HostWord::String,
+            Word::Decimal => HostWord::Decimal,
             Word::Decoded => HostWord::Decoded,
             Word::Issue => HostWord::Issue,
             Word::List => HostWord::List,
@@ -629,19 +639,19 @@ mod tests {
         }
     }
 
-    /// What version 9 is. Read by these types, which refuse a member they do not name, and
+    /// What version 10 is. Read by these types, which refuse a member they do not name, and
     /// written back the same: a field renamed or a kind reshaped here stops matching the fixture
     /// the Java half's test also holds a written manifest to.
-    const V9: &str = include_str!("../tests/interface-v9.json");
+    const V10: &str = include_str!("../tests/interface-v10.json");
 
     #[test]
-    fn version_nine_is_read_and_written_back_as_it_is() {
-        let read: Manifest = serde_json::from_str(V9).expect("version 9 reads");
+    fn version_ten_is_read_and_written_back_as_it_is() {
+        let read: Manifest = serde_json::from_str(V10).expect("version 10 reads");
         assert_eq!(read.format, FORMAT);
         assert_eq!(read.version, VERSION);
         let mut written = serde_json::to_string_pretty(&read).unwrap();
         written.push('\n');
-        assert_eq!(written, V9);
+        assert_eq!(written, V10);
     }
 
     /// A surface an object of an earlier release carries is refused as that, and not as whichever

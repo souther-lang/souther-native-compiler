@@ -1,6 +1,6 @@
 {
   "format": "souther-native-interface",
-  "version": 9,
+  "version": 10,
   "abi": 4,
   "statuses": {
     "ANSWERED": 0,
@@ -63,6 +63,36 @@
         }
       ],
       "answers": "bytes"
+    },
+    {
+      "name": "souther_decimal_of_parts",
+      "takes": [
+        {
+          "given": "string"
+        },
+        {
+          "given": "int"
+        }
+      ],
+      "answers": "decimal"
+    },
+    {
+      "name": "souther_decimal_unscaled",
+      "takes": [
+        {
+          "given": "decimal"
+        }
+      ],
+      "answers": "string"
+    },
+    {
+      "name": "souther_decimal_scale",
+      "takes": [
+        {
+          "given": "decimal"
+        }
+      ],
+      "answers": "int"
     },
     {
       "name": "souther_decoded_outcome",
@@ -235,6 +265,30 @@
           }
         ],
         "answers": "bool"
+      }
+    },
+    {
+      "case": {
+        "kind": "primitive",
+        "name": "Decimal"
+      },
+      "make": {
+        "name": "souther_case_decimal_make",
+        "takes": [
+          {
+            "given": "decimal"
+          }
+        ],
+        "answers": "value"
+      },
+      "read": {
+        "name": "souther_case_decimal_read",
+        "takes": [
+          {
+            "given": "value"
+          }
+        ],
+        "answers": "decimal"
       }
     },
     {
@@ -723,6 +777,83 @@
               },
               {
                 "room": "int"
+              }
+            ],
+            "answers": "status"
+          }
+        },
+        {
+          "name": "rated",
+          "parameters": {
+            "named": [
+              {
+                "name": "price",
+                "type": {
+                  "kind": "primitive",
+                  "name": "Decimal"
+                }
+              },
+              {
+                "name": "rate",
+                "type": {
+                  "kind": "primitive",
+                  "name": "Decimal"
+                }
+              }
+            ]
+          },
+          "answers": {
+            "type": {
+              "kind": "union",
+              "cases": [
+                {
+                  "kind": "primitive",
+                  "name": "Decimal"
+                },
+                {
+                  "kind": "declared",
+                  "module": "shop",
+                  "name": "Free"
+                }
+              ]
+            },
+            "union": {
+              "cases": [
+                {
+                  "kind": "primitive",
+                  "name": "Decimal"
+                },
+                {
+                  "kind": "declared",
+                  "module": "shop",
+                  "name": "Free"
+                }
+              ],
+              "case": {
+                "name": "souther4_m_shop_b_rated_answer_case",
+                "takes": [
+                  {
+                    "given": "value"
+                  }
+                ],
+                "answers": "case"
+              }
+            }
+          },
+          "call": {
+            "name": "souther4_m_shop_b_rated",
+            "takes": [
+              {
+                "given": "requirements"
+              },
+              {
+                "given": "decimal"
+              },
+              {
+                "given": "decimal"
+              },
+              {
+                "room": "value"
               }
             ],
             "answers": "status"

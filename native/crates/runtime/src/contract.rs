@@ -11,6 +11,7 @@
 //! a [`Count`], and not all of them an address or an `i64`, so a table saying one where the function
 //! takes the other is caught here and not by a host reading the wrong thing.
 
+use crate::decimal::*;
 use crate::decoding::*;
 use crate::document::Node;
 use crate::external::*;
@@ -66,6 +67,8 @@ words! {
     *const u8 => Word::Host(HostWord::Bytes),
     *mut u8 => Word::Memory,
     *const Text => Word::Host(HostWord::String),
+    *const Decimal => Word::Host(HostWord::Decimal),
+    *mut Decimal => Word::Host(HostWord::Decimal),
     *mut Text => Word::Host(HostWord::String),
     *const Value => Word::Host(HostWord::Value),
     *const List => Word::Host(HostWord::List),
@@ -83,6 +86,7 @@ rooms! {
     *mut i64 => Word::Host(HostWord::Int),
     *mut i8 => Word::Host(HostWord::Bool),
     *mut *mut Text => Word::Host(HostWord::String),
+    *mut *mut Decimal => Word::Host(HostWord::Decimal),
 }
 
 /// What a function takes and answers.
@@ -452,6 +456,137 @@ fn functions() -> Vec<(&'static str, Shape)> {
             shape_of(souther_case_string_read as unsafe extern "C" fn(*const Value) -> T),
         ),
         (
+            "souther_case_decimal_make",
+            shape_of(souther_case_decimal_make as extern "C" fn(*const Decimal) -> *const Value),
+        ),
+        (
+            "souther_case_decimal_read",
+            shape_of(
+                souther_case_decimal_read as unsafe extern "C" fn(*const Value) -> *const Decimal,
+            ),
+        ),
+        (
+            "souther_decimal_of_parts",
+            shape_of(souther_decimal_of_parts as unsafe extern "C" fn(T, i64) -> *mut Decimal),
+        ),
+        (
+            "souther_decimal_literal",
+            shape_of(souther_decimal_literal as unsafe extern "C" fn(T, i64) -> *mut Decimal),
+        ),
+        (
+            "souther_decimal_unscaled",
+            shape_of(souther_decimal_unscaled as unsafe extern "C" fn(*const Decimal) -> M),
+        ),
+        (
+            "souther_decimal_scale",
+            shape_of(souther_decimal_scale as unsafe extern "C" fn(*const Decimal) -> i64),
+        ),
+        (
+            "souther_decimal_compare",
+            shape_of(
+                souther_decimal_compare
+                    as unsafe extern "C" fn(*const Decimal, *const Decimal) -> Comparison,
+            ),
+        ),
+        (
+            "souther_decimal_is_zero",
+            shape_of(souther_decimal_is_zero as unsafe extern "C" fn(*const Decimal) -> i8),
+        ),
+        (
+            "souther_decimal_negate",
+            shape_of(
+                souther_decimal_negate as unsafe extern "C" fn(*const Decimal) -> *mut Decimal,
+            ),
+        ),
+        (
+            "souther_decimal_add",
+            shape_of(
+                souther_decimal_add
+                    as unsafe extern "C" fn(
+                        *const Decimal,
+                        *const Decimal,
+                        *mut *mut Decimal,
+                    ) -> i8,
+            ),
+        ),
+        (
+            "souther_decimal_subtract",
+            shape_of(
+                souther_decimal_subtract
+                    as unsafe extern "C" fn(
+                        *const Decimal,
+                        *const Decimal,
+                        *mut *mut Decimal,
+                    ) -> i8,
+            ),
+        ),
+        (
+            "souther_decimal_multiply",
+            shape_of(
+                souther_decimal_multiply
+                    as unsafe extern "C" fn(
+                        *const Decimal,
+                        *const Decimal,
+                        *mut *mut Decimal,
+                    ) -> i8,
+            ),
+        ),
+        (
+            "souther_decimal_from_int",
+            shape_of(souther_decimal_from_int as extern "C" fn(i64) -> *mut Decimal),
+        ),
+        (
+            "souther_decimal_to_int",
+            shape_of(
+                souther_decimal_to_int
+                    as unsafe extern "C" fn(*const Value, *const Decimal, *mut i64) -> i8,
+            ),
+        ),
+        (
+            "souther_decimal_round",
+            shape_of(
+                souther_decimal_round
+                    as unsafe extern "C" fn(
+                        i64,
+                        *const Value,
+                        *const Decimal,
+                        *mut *mut Decimal,
+                    ) -> i8,
+            ),
+        ),
+        (
+            "souther_decimal_divide",
+            shape_of(
+                souther_decimal_divide
+                    as unsafe extern "C" fn(
+                        *const Decimal,
+                        *const Decimal,
+                        i64,
+                        *const Value,
+                        *mut *mut Decimal,
+                    ) -> i8,
+            ),
+        ),
+        (
+            "souther_string_to_decimal",
+            shape_of(souther_string_to_decimal as unsafe extern "C" fn(T, *mut *mut Decimal) -> i8),
+        ),
+        (
+            "souther_string_from_decimal",
+            shape_of(souther_string_from_decimal as unsafe extern "C" fn(*const Decimal) -> M),
+        ),
+        (
+            "souther_external_decimal",
+            shape_of(souther_external_decimal as unsafe extern "C" fn(*const Decimal) -> *mut Form),
+        ),
+        (
+            "souther_read_decimal",
+            shape_of(
+                souther_read_decimal
+                    as unsafe extern "C" fn(*const Node, *const Path, D, *mut *mut Decimal) -> i8,
+            ),
+        ),
+        (
             "souther_case_some_make",
             shape_of(souther_case_some_make as extern "C" fn() -> *const Value),
         ),
@@ -563,6 +698,7 @@ fn every_function_the_runtime_defines_is_in_one_table() {
         include_str!("external.rs"),
         include_str!("document.rs"),
         include_str!("kernels.rs"),
+        include_str!("decimal.rs"),
     ];
     let marker = "extern \"C\" fn ";
     let mut defined = BTreeSet::new();

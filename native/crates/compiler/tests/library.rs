@@ -505,7 +505,7 @@ fn an_object_carrying_no_surface_is_refused() {
 /// they walk a union's a behavior answers, so it is where both are put to a host's documents. The
 /// primitive stands under the contents key beside its name, and the case the language gives is its
 /// name alone.
-const CARRYING: &str = r#"{"transport":24,"declarations":[
+const CARRYING: &str = r#"{"transport":25,"declarations":[
     {"module":"m","name":"A","by":"amodule","is":"unit"},
     {"module":"m","name":"Q","by":"amodule","is":"sum",
      "cases":[{"is":"primitive","prim":"INT"},{"is":"language","case":"DIVISION_BY_ZERO"},

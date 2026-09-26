@@ -235,8 +235,10 @@ fn whole(ty: &Ty) -> Option<HostWord> {
             // Made and read through the runtime's own functions, which is where a host already
             // makes one to hand a behavior.
             Prim::String => Some(HostWord::String),
-            Prim::Decimal
-            | Prim::Rational
+            // An address a host never reads behind, made and read through the runtime's own
+            // functions as its integer and its scale.
+            Prim::Decimal => Some(HostWord::Decimal),
+            Prim::Rational
             | Prim::Date
             | Prim::Time
             | Prim::DateTime

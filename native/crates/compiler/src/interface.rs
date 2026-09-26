@@ -114,6 +114,7 @@ pub(crate) fn machine(word: HostWord) -> types::Type {
         HostWord::Bytes
         | HostWord::Value
         | HostWord::String
+        | HostWord::Decimal
         | HostWord::Decoded
         | HostWord::Issue
         | HostWord::List
@@ -137,6 +138,7 @@ fn c_word(word: Word) -> &'static str {
         Word::Bytes => "const uint8_t *",
         Word::Value => "souther_value",
         Word::String => "souther_string",
+        Word::Decimal => "souther_decimal",
         Word::Decoded => "souther_decoded",
         Word::Issue => "souther_issue",
         Word::List => "souther_list",
@@ -851,6 +853,7 @@ pub(crate) fn declarations(manifest: &Manifest) -> String {
          typedef uint32_t souther_status;\n\
          typedef const struct souther_value_ *souther_value;\n\
          typedef const struct souther_string_ *souther_string;\n\
+         typedef const struct souther_decimal_ *souther_decimal;\n\
          typedef const struct souther_decoded_ *souther_decoded;\n\
          typedef const struct souther_issue_ *souther_issue;\n\
          typedef const struct souther_list_ *souther_list;\n\

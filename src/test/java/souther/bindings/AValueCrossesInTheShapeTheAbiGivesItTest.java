@@ -57,6 +57,8 @@ class AValueCrossesInTheShapeTheAbiGivesItTest {
         Module module = module();
 
         assertThat(CrossingShape.given(module, INT)).isEqualTo(new Whole(Word.INT, INT));
+        Type decimal = new Type.Primitive("Decimal");
+        assertThat(CrossingShape.given(module, decimal)).isEqualTo(new Whole(Word.DECIMAL, decimal));
         assertThat(CrossingShape.received(module, ITEM)).isEqualTo(new Whole(Word.VALUE, ITEM));
         assertThat(CrossingShape.given(module, new Type.Option(INT)))
                 .isEqualTo(new Present(new Whole(Word.INT, INT)))
@@ -72,11 +74,11 @@ class AValueCrossesInTheShapeTheAbiGivesItTest {
     void whatTheAbiHasNoWordForDoesNotCross() {
         Module module = module();
 
-        assertThat(CrossingShape.given(module, new Type.Primitive("Decimal"))).isNull();
+        assertThat(CrossingShape.given(module, new Type.Primitive("Date"))).isNull();
         assertThat(CrossingShape.given(module, new Type.Option(new Type.Option(INT)))).isNull();
         assertThat(CrossingShape.given(module, new Type.Unrepresented("tuple"))).isNull();
         assertThat(CrossingShape.given(module, new Type.Union(List.of(
-                new Case.Declared("m", "Item"), new Case.Primitive("Decimal"))))).isNull();
+                new Case.Declared("m", "Item"), new Case.Primitive("Date"))))).isNull();
     }
 
     /**
@@ -194,7 +196,7 @@ class AValueCrossesInTheShapeTheAbiGivesItTest {
     @Test
     void aShapeIsNotMadeOtherThanTheAbiGivesIt() {
         Type.Union withAnInt = new Type.Union(List.of(
-                new Case.Declared("m", "Item"), new Case.Primitive("Decimal")));
+                new Case.Declared("m", "Item"), new Case.Primitive("Date")));
         Function which = new Function("which", List.of(Parameter.given(Word.VALUE)), Word.CASE);
         ListCrossing values = module(new Element(false, Word.VALUE)).lists().getFirst();
 

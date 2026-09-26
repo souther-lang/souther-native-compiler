@@ -275,6 +275,8 @@ impl Reading<'_, '_> {
                     Prim::Int => (Runtime::ReadInt, types::I64),
                     Prim::Bool => (Runtime::ReadBool, types::I8),
                     Prim::String => (Runtime::ReadString, POINTER),
+                    // At the scale the number was spelt at, which the runtime reads off it.
+                    Prim::Decimal => (Runtime::ReadDecimal, POINTER),
                     other => {
                         return Err(not_lowered(format!(
                             "a {} read at a boundary",

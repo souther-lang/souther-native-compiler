@@ -50,7 +50,7 @@ public final class Manifest {
     public static final String FORMAT = "souther-native-interface";
 
     /** The version of what a manifest says that this reads. */
-    public static final int VERSION = 9;
+    public static final int VERSION = 10;
 
     /** The ABI generation the functions this binds answer to. */
     public static final int ABI = 4;
@@ -220,8 +220,8 @@ public final class Manifest {
 
     /** One word a host hands over or is handed. */
     public enum Word {
-        STATUS, INT, BOOL, CASE, OUTCOME, COUNT, MARK, BYTES, VALUE, STRING, DECODED, ISSUE, LIST,
-        REQUIREMENTS, CAPABILITY, USERDATA
+        STATUS, INT, BOOL, CASE, OUTCOME, COUNT, MARK, BYTES, VALUE, STRING, DECIMAL, DECODED,
+        ISSUE, LIST, REQUIREMENTS, CAPABILITY, USERDATA
     }
 
     /**

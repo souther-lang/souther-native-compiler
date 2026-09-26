@@ -57,6 +57,7 @@ sealed interface Crossing {
             case BOOL -> "uint8_t";
             case VALUE -> "souther_value";
             case STRING -> "souther_string";
+            case DECIMAL -> "souther_decimal";
             case LIST -> "souther_list";
             case DECODED -> "souther_decoded";
             case STATUS, CASE, OUTCOME, COUNT, MARK, BYTES, ISSUE, REQUIREMENTS, CAPABILITY,
@@ -142,13 +143,14 @@ sealed interface Crossing {
     record Whole(CrossingShape.Whole shape, String phpType, Kind kind, @Nullable String declared)
             implements Single {
 
-        enum Kind { INT, BOOL, STRING, PRODUCT, SUM }
+        enum Kind { INT, BOOL, STRING, DECIMAL, PRODUCT, SUM }
 
         public Whole {
             boolean is = switch (kind) {
                 case INT -> shape.word() == Word.INT;
                 case BOOL -> shape.word() == Word.BOOL;
                 case STRING -> shape.word() == Word.STRING;
+                case DECIMAL -> shape.word() == Word.DECIMAL;
                 case PRODUCT, SUM -> shape.type() instanceof Manifest.Type.Declared;
             };
             if (!is) {
@@ -162,6 +164,9 @@ sealed interface Crossing {
                 case INT -> new Whole(shape, "int", Kind.INT, null);
                 case BOOL -> new Whole(shape, "bool", Kind.BOOL, null);
                 case STRING -> new Whole(shape, "string", Kind.STRING, null);
+                // Its integer and its scale, which is all a `Decimal` is and which no type of PHP's
+                // own keeps: a scale below nought has no place in one.
+                case DECIMAL -> new Whole(shape, "\\Souther\\Runtime\\Decimal", Kind.DECIMAL, null);
                 default -> null;
             };
         }
@@ -185,6 +190,7 @@ sealed interface Crossing {
                 case INT -> value;
                 case BOOL -> "(" + value + " ? 1 : 0)";
                 case STRING -> session + "->string(" + value + ")";
+                case DECIMAL -> session + "->decimal(" + value + ")";
                 case PRODUCT, SUM -> value + "->nativeHandle()->borrow(" + session + ")";
             });
         }
@@ -193,7 +199,7 @@ sealed interface Crossing {
         public String absent() {
             return switch (kind) {
                 case INT, BOOL -> "0";
-                case STRING, PRODUCT, SUM -> "null";
+                case STRING, DECIMAL, PRODUCT, SUM -> "null";
             };
         }
 
@@ -203,7 +209,7 @@ sealed interface Crossing {
                 case INT -> "\\is_int(" + value + ")";
                 case BOOL -> "\\is_bool(" + value + ")";
                 case STRING -> "\\is_string(" + value + ")";
-                case PRODUCT, SUM -> value + " instanceof " + phpType;
+                case DECIMAL, PRODUCT, SUM -> value + " instanceof " + phpType;
             };
         }
 
@@ -214,6 +220,7 @@ sealed interface Crossing {
                 case INT -> word;
                 case BOOL -> "(" + word + " !== 0)";
                 case STRING -> session + "->text(" + word + ")";
+                case DECIMAL -> session + "->amount(" + word + ")";
                 case PRODUCT -> "new " + declared + "(" + session + "->held(" + word + "))";
                 case SUM -> declared + "::wrap(" + session + ", " + word + ")";
             };
@@ -223,7 +230,7 @@ sealed interface Crossing {
         public String fromRoom(String room) {
             return switch (kind) {
                 case INT, BOOL -> room + "->cdata";
-                case STRING, PRODUCT, SUM -> room;
+                case STRING, DECIMAL, PRODUCT, SUM -> room;
             };
         }
     }
@@ -356,7 +363,7 @@ sealed interface Crossing {
 
         public Member {
             boolean primitive = switch (whole.kind()) {
-                case INT, BOOL, STRING -> true;
+                case INT, BOOL, STRING, DECIMAL -> true;
                 case PRODUCT, SUM -> false;
             };
             if (primitive != (carried != null)) {

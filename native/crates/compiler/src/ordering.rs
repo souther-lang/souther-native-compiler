@@ -18,6 +18,7 @@ use cranelift::object::ObjectModule;
 
 use crate::transport::{Case, Op, Prim, Ty};
 use crate::{Lowered, Lowerings, Tagged, as_a_whole_number, not_lowered, opened, token_of};
+use souther_native_abi::DECIMAL_COMPARE;
 
 /// Whether `a` and `b`, two values of `ty`, stand as `op` asks: a truth, as `<` answers one.
 pub(crate) fn ordered(
@@ -48,15 +49,18 @@ pub(crate) fn ordered(
             // Two truths are equal or they are not, and nothing orders them, nor raw bytes: an
             // order over either is one the checker never writes.
             Prim::Bool | Prim::Raw => Err(unordered(op, ty)),
-            Prim::Decimal
-            | Prim::Rational
-            | Prim::Date
-            | Prim::Time
-            | Prim::DateTime
-            | Prim::Instant => Err(not_lowered(format!(
-                "a comparison of two values of type {}",
-                prim.spelt()
-            ))),
+            // By amount, whatever the scales, which the runtime compares.
+            Prim::Decimal => {
+                let compared =
+                    crate::runtime_call(builder, lowering, module, DECIMAL_COMPARE, &[a, b]);
+                Ok(builder.ins().icmp_imm_s(condition, compared, 0))
+            }
+            Prim::Rational | Prim::Date | Prim::Time | Prim::DateTime | Prim::Instant => {
+                Err(not_lowered(format!(
+                    "a comparison of two values of type {}",
+                    prim.spelt()
+                )))
+            }
         },
         // A value of an enumeration, of one of its cases, or of a union of them, ordered by the
         // one enumeration that places them (ADR-0069). That is the type itself where it is one, and

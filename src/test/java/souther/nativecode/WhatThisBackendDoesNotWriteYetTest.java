@@ -25,10 +25,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 class WhatThisBackendDoesNotWriteYetTest {
 
-    private static final String OVER_A_DECIMAL = """
+    private static final String OVER_A_DATE = """
             module calculation
 
-            behavior widen : (a: Decimal) -> Decimal
+            behavior widen : (a: Date) -> Date
 
             let widen (a) = a
             """;
@@ -47,9 +47,9 @@ class WhatThisBackendDoesNotWriteYetTest {
      */
     @Test
     void aTypeWithNoRepresentationStillCrosses() {
-        String written = ProgramWriter.written(Checked.of(List.of(OVER_A_DECIMAL)));
+        String written = ProgramWriter.written(Checked.of(List.of(OVER_A_DATE)));
 
-        assertThat(written).contains("\"prim\":\"DECIMAL\"");
+        assertThat(written).contains("\"prim\":\"DATE\"");
     }
 
     /**
@@ -130,21 +130,21 @@ class WhatThisBackendDoesNotWriteYetTest {
 
     /**
      * A value only passing through is not written, so a behavior handing one back compiles; what
-     * is refused is the boundary that would have to write a {@code Decimal} out, which is where
-     * its canonical form would be decided.
+     * is refused is the boundary that would have to write a {@code Date} out, which is where its
+     * external form would be decided.
      */
     @Test
-    void anAnswerWithADecimalFieldIsRefusedWhereItWouldBeWrittenOut() {
+    void anAnswerWithADateFieldIsRefusedWhereItWouldBeWrittenOut() {
         assertThatThrownBy(() -> NativeCompiler.compile(Checked.of(List.of("""
-                module priced exposing ( same, Priced )
+                module dated exposing ( same, Dated )
 
-                data Priced = { amount: Decimal }
+                data Dated = { on: Date }
 
-                behavior same : (p: Priced) -> Priced
+                behavior same : (p: Dated) -> Dated
                 let same (p) = p
                 """))))
                 .isInstanceOf(NotLowered.class)
-                .hasMessageContaining("Decimal");
+                .hasMessageContaining("Date");
     }
 
     /**
@@ -179,39 +179,6 @@ class WhatThisBackendDoesNotWriteYetTest {
     }
 
     /**
-     * A value of a type the language declares, which is at home in no build's object.
-     *
-     * <p>A declared type's values are tagged by the address of a byte one object defines, and the
-     * object that defines it is the one built from the module that declared the type. The language
-     * declares {@code RoundingMode} and its cases in its own namespace, in no module of any
-     * compilation, so there is no such object — an implementation of one is shipped by hand or
-     * generated, and which of the two is a question this backend has not answered.
-     *
-     * <p>Followed from the writer to the driver, which is what makes this the third answer about
-     * who declared a type rather than the two a program of modules alone can produce. What the
-     * driver answers is what says which of the three it read: a declaration of a module here would
-     * have had its token defined and one off the path named, and either of those compiles.
-     */
-    @Test
-    void aValueOfATypeTheLanguageDeclaresIsAtHomeInNoObject() {
-        CheckedProgram program = Checked.of(List.of("""
-                module rounding
-
-                behavior of : (a: Int) -> Int
-                let of (a) = {
-                    let mode = HALF_UP
-                    a
-                }
-                """));
-
-        assertThat(ProgramWriter.written(program)).contains(
-                "\"module\":\"souther.decimal\",\"name\":\"HALF_UP\",\"by\":\"thelanguage\"");
-        assertThatThrownBy(() -> NativeCompiler.compile(program))
-                .isInstanceOf(NotLowered.class)
-                .hasMessageContaining("souther.decimal.HALF_UP");
-    }
-
-    /**
      * An arm binding a name where it tests that an optional holds nothing is admitted with no type
      * for the name (souther-lang/souther#1984), and there is nothing to write it as. Refused as not
      * lowered, naming that, rather than written with a type this side made up.
@@ -236,15 +203,15 @@ class WhatThisBackendDoesNotWriteYetTest {
 
     @Test
     void theDriverSaysItIsOneThisBackendHasNotGotRoundTo() {
-        assertThatThrownBy(() -> NativeCompiler.compile(Checked.of(List.of(OVER_A_DECIMAL))))
+        assertThatThrownBy(() -> NativeCompiler.compile(Checked.of(List.of(OVER_A_DATE))))
                 .isInstanceOf(NotLowered.class)
-                .hasMessageContaining("Decimal");
+                .hasMessageContaining("Date");
     }
 
     @Test
     void theCommandLineSaysTheBackendIsBehindAndNotThatTheCommandWasWrong() throws Exception {
         Path source = Files.createTempDirectory("souther-native-test").resolve("calculation.sou");
-        Files.writeString(source, OVER_A_DECIMAL, StandardCharsets.UTF_8);
+        Files.writeString(source, OVER_A_DATE, StandardCharsets.UTF_8);
         ByteArrayOutputStream problems = new ByteArrayOutputStream();
 
         int ended = Main.run(
