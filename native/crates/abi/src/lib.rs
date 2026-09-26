@@ -724,6 +724,12 @@ pub fn built_in_case_symbol(name: &str) -> String {
 /// since a value of it is always one of its cases, and nothing the language declares is built from
 /// fields. A declaration the language gives that is not here is one no object can name, and the
 /// driver refuses it as that rather than importing a symbol nothing defines.
+///
+/// What the language declares is the language's to say, and not this table's: `language-units.txt`
+/// beside this crate is every unit the checker's library declares, which the Java half writes from
+/// `CheckedProgram.languageDeclarations()` and holds to what upstream answers, and a test here
+/// holds this table to that file. So a unit the language adds fails here until the runtime defines
+/// its token, and the runtime's own test holds its tokens to this table.
 pub const LANGUAGE_UNITS: &[(&str, &str)] = &[
     ("souther.decimal", "HALF_UP"),
     ("souther.decimal", "HALF_EVEN"),
@@ -2293,6 +2299,21 @@ pub const IMPLEMENTATION_ANSWERS: &[Status] = &[ANSWERED, HOST_EXCEPTION];
 
 #[cfg(test)]
 mod tests {
+    /// Every unit the language declares, as the Java half holds it to what upstream's library
+    /// declares, and this table names each of them and nothing else.
+    #[test]
+    fn the_runtime_has_a_token_for_every_unit_the_language_declares() {
+        let declared: std::collections::BTreeSet<String> = include_str!("../language-units.txt")
+            .lines()
+            .map(str::to_string)
+            .collect();
+        let tabled: std::collections::BTreeSet<String> = super::LANGUAGE_UNITS
+            .iter()
+            .map(|(module, name)| format!("{module}.{name}"))
+            .collect();
+        assert_eq!(tabled, declared);
+        assert_eq!(super::LANGUAGE_UNITS.len(), declared.len());
+    }
 
     use super::{
         ABI_GENERATION, EXAMPLE_STATUSES, FAKE_NO_OUTPUT, FIRST_FIELD, HOST_STATUSES,
