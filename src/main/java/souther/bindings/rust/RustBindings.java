@@ -279,6 +279,10 @@ public final class RustBindings {
                 case Type.Primitive it -> Crossing.Whole.primitive(it.name(), leaf.word());
                 case Type.Declared it -> leaf.word() == Word.VALUE ? handle(it.module(), it.name())
                         : null;
+                // Handed to Rust only as a behavior's answer, which says which case it is
+                // (`answered`): anywhere else Rust would be handed a value of it told nothing.
+                case Type.Union union -> leaf.word() == Word.VALUE && way == Manifest.Way.GIVEN
+                        ? oneOf(module, union, null) : null;
                 default -> null;
             };
             case Shape.Option option -> type instanceof Type.Option it
@@ -334,6 +338,139 @@ public final class RustBindings {
             made.add(it);
         }
         return made;
+    }
+
+    /**
+     * How the library hands Rust what {@code behavior} answers, or null where it has no way to: a
+     * union no declaration names as the variant of the member the case the library says it is
+     * belongs to, and anything else as a value of its type is handed.
+     */
+    private @Nullable Crossing answered(Manifest.Module module, Manifest.Answer answer,
+                                        Shape shape) {
+        if (!(answer.type() instanceof Type.Union union)) {
+            return crossing(module, answer.type(), shape, Manifest.Way.HANDED);
+        }
+        Manifest.UnionAnswer told = Objects.requireNonNull(answer.union());
+        if (!(shape instanceof Shape.Leaf leaf) || leaf.word() != Word.VALUE || told.which() == null) {
+            return null;
+        }
+        return oneOf(module, union, told);
+    }
+
+    /** The enum each union no declaration names is written as, by its members, once it is asked for. */
+    private final Map<List<Case>, UnionEnum> unions = new LinkedHashMap<>();
+
+    /** A union's enum: where it stands, and its members. */
+    private record UnionEnum(String type, List<Crossing.OneOf.Member> members) {
+    }
+
+    /**
+     * {@code union} as the enum generated for it, written in {@code module}'s module the first time
+     * it is asked for, and told its case as {@code told} says where it is handed to Rust. Null where
+     * a member has no way to be held: a declared type with no handle, a primitive Rust holds no way,
+     * a case the language gives, or two members that would be one variant or an enum whose name
+     * another type of the module already is.
+     */
+    private Crossing.@Nullable OneOf oneOf(Manifest.Module module, Type.Union union,
+                                           Manifest.@Nullable UnionAnswer told) {
+        UnionEnum made = unions.computeIfAbsent(union.cases(), cases -> unionEnum(module, union));
+        if (made == null) {
+            return null;
+        }
+        if (told == null) {
+            return new Crossing.OneOf(made.type(), made.members(), null);
+        }
+        List<Crossing.OneOf.Arm> arms = new ArrayList<>();
+        for (Case of : told.cases()) {
+            Crossing.OneOf.Arm arm = arm(union, made, of);
+            if (arm == null) {
+                return null;
+            }
+            arms.add(arm);
+        }
+        return new Crossing.OneOf(made.type(), made.members(),
+                new Crossing.OneOf.Told(symbol(Objects.requireNonNull(told.which())), arms));
+    }
+
+    /**
+     * How a value the library says is the case {@code of} is made, as the member of {@code union}
+     * it is or the member sum it is a case of; null where it is neither, a case the model keeps.
+     */
+    private Crossing.OneOf.@Nullable Arm arm(Type.Union union, UnionEnum made, Case of) {
+        for (int at = 0; at < union.cases().size(); at++) {
+            Crossing.OneOf.Member member = made.members().get(at);
+            Case each = union.cases().get(at);
+            if (each.equals(of)) {
+                return new Crossing.OneOf.Arm(member, member.read() == null
+                        ? member.whole().of(List.of("value"))
+                        : member.whole().of(List.of("(library.symbols." + member.read() + ")(value)")));
+            }
+        }
+        if (of instanceof Case.Declared leaf) {
+            for (int at = 0; at < union.cases().size(); at++) {
+                if (union.cases().get(at) instanceof Case.Declared d
+                        && declared.get(d.module() + "." + d.name()) instanceof Declared it
+                        && it.declaration() instanceof Declaration.Sum sum
+                        && cases(sum).contains(leaf.module() + "." + leaf.name())) {
+                    Crossing.OneOf.Member member = made.members().get(at);
+                    return new Crossing.OneOf.Arm(member, member.whole().of(List.of("value")));
+                }
+            }
+        }
+        return null;
+    }
+
+    private @Nullable UnionEnum unionEnum(Manifest.Module module, Type.Union union) {
+        List<Crossing.OneOf.Member> members = new ArrayList<>();
+        Set<String> variants = new java.util.HashSet<>();
+        for (Case each : union.cases()) {
+            Crossing.OneOf.Member member = switch (each) {
+                case Case.Declared d -> {
+                    Declared it = declared.get(d.module() + "." + d.name());
+                    yield it == null ? null
+                            : new Crossing.OneOf.Member(it.name(), Crossing.Whole.handle(it.type()),
+                            null, null);
+                }
+                case Case.Primitive p -> {
+                    Manifest.CaseCrossing crossing = manifest.crossing(p);
+                    Word held = crossing.holds();
+                    Crossing.Whole whole = held == null ? null
+                            : Crossing.Whole.primitive(p.name(), held);
+                    yield whole == null ? null : new Crossing.OneOf.Member(p.name(), whole,
+                            symbol(crossing.make()), symbol(Objects.requireNonNull(crossing.read())));
+                }
+                case Case.Language l -> null;
+            };
+            if (member == null || !variants.add(member.variant())) {
+                return null;
+            }
+            members.add(member);
+        }
+        String name = members.stream().map(Crossing.OneOf.Member::variant)
+                .collect(Collectors.joining("Or"));
+        List<String> path = RustNames.modulePath(module.name());
+        RustModule at = moduleAt(path);
+        if (!RustNames.takes(name) || at.types.has(name)) {
+            return null;
+        }
+        at.types.claim(name, "the enum of a union");
+        boolean holds = members.stream().anyMatch(it -> it.whole().kind() == Crossing.Whole.Kind.HANDLE);
+        String lifetime = holds ? "<'run>" : "";
+        String written = members.stream().map(it -> "    " + it.variant() + "(" + it.whole().owned()
+                + "),\n").collect(Collectors.joining());
+        String what = union.cases().stream().map(it -> switch (it) {
+            case Case.Declared d -> d.module() + "." + d.name();
+            case Case.Primitive p -> p.name();
+            case Case.Language l -> l.name();
+        }).collect(Collectors.joining(" | "));
+        at.items.append("""
+
+                /// A value of `%s`: one of its members.
+                #[derive(Clone)]
+                pub enum %s%s {
+                %s}
+                """.formatted(what, name, lifetime, written));
+        return new UnionEnum("crate::" + String.join("::", path) + "::" + name + lifetime, members);
     }
 
     /** The handle of the declared type {@code module.name}, or null where it has none. */
@@ -700,7 +837,7 @@ public final class RustBindings {
     private void behaviors(RustModule at, Manifest.Module module) {
         for (Manifest.Behavior behavior : module.behaviors()) {
             Manifest.Call call = behavior.call().available();
-            if (call == null || behavior.answers().type() instanceof Type.Union) {
+            if (call == null) {
                 continue;
             }
             String key = module.name() + "." + behavior.name();
@@ -709,8 +846,7 @@ public final class RustBindings {
             }
             List<Crossing> takes = crossings(module, behavior.parameters().types(),
                     call.signature().takes(), Manifest.Way.GIVEN);
-            Crossing answers = crossing(module, behavior.answers().type(),
-                    call.signature().answers(), Manifest.Way.HANDED);
+            Crossing answers = answered(module, behavior.answers(), call.signature().answers());
             if (takes == null || answers == null) {
                 continue;
             }
@@ -928,7 +1064,6 @@ public final class RustBindings {
     private boolean implementable(Manifest.Module module, Manifest.Injection injection) {
         return crossings(module, injection.parameters().stream().map(Manifest.NamedParameter::type)
                 .toList(), injection.signature().takes(), Manifest.Way.HANDED) != null
-                && !(injection.answers() instanceof Type.Union)
                 && crossing(module, injection.answers(), injection.signature().answers(),
                 Manifest.Way.GIVEN) != null;
     }
@@ -936,11 +1071,10 @@ public final class RustBindings {
     /** Whether a host can call {@code behavior}, handing over what it takes and handed what it answers. */
     private boolean callable(Manifest.Module module, Manifest.Behavior behavior) {
         Manifest.Call call = behavior.call().available();
-        return call != null && !(behavior.answers().type() instanceof Type.Union)
+        return call != null
                 && crossings(module, behavior.parameters().types(), call.signature().takes(),
                 Manifest.Way.GIVEN) != null
-                && crossing(module, behavior.answers().type(), call.signature().answers(),
-                Manifest.Way.HANDED) != null;
+                && answered(module, behavior.answers(), call.signature().answers()) != null;
     }
 
     /** The names a behavior's parameters are written under, the run's name taken already. */
@@ -1106,8 +1240,8 @@ public final class RustBindings {
         Manifest.Call call = Objects.requireNonNull(behavior.call().available());
         List<Crossing> takes = Objects.requireNonNull(crossings(module,
                 behavior.parameters().types(), call.signature().takes(), Manifest.Way.GIVEN));
-        Crossing answers = Objects.requireNonNull(crossing(module, behavior.answers().type(),
-                call.signature().answers(), Manifest.Way.HANDED));
+        Crossing answers = Objects.requireNonNull(answered(module, behavior.answers(),
+                call.signature().answers()));
         String what = "behavior `" + it.key() + "`";
         List<String> names = parameterNames(behavior.parameters(), what, "run", "self");
         List<Manifest.Required> requires = requiresOf(it.key());
@@ -1292,6 +1426,9 @@ public final class RustBindings {
 
                 use souther_binding_runtime as rt;
 
+                // What carries a value into a union and reads it back out is looked up with the
+                // union, and a binding may call one way of the two only.
+                #[allow(dead_code)]
                 pub(crate) struct Symbols {
                 %s}
 

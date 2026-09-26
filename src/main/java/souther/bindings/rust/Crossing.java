@@ -179,7 +179,7 @@ sealed interface Crossing {
         @Override
         public String viewOf(String owned) {
             return switch (kind) {
-                case INT, BOOL, HANDLE -> "*" + owned;
+                case INT, BOOL, HANDLE -> "(*" + owned + ")";
                 case STRING -> owned + ".as_str()";
                 case DECIMAL -> owned;
             };
@@ -378,6 +378,94 @@ sealed interface Crossing {
         @Override
         public String viewOf(String owned) {
             return owned + ".as_slice()";
+        }
+    }
+
+    /**
+     * A value of a union no declaration names, as the enum generated for it: a variant for each of
+     * its members, a declared one holding its handle and a primitive Rust's own value. Handed over as
+     * a reference to one, since a member may be one Rust owns; handed to Rust only where the library
+     * says which case it is, which a behavior's answer does ({@code told}).
+     *
+     * @param type    the enum, as {@code crate::m::Name}, with its lifetime where a member has one
+     * @param members each member, in the order the union names them
+     * @param told    how each case the library counts is made, in its order, and what counts it;
+     *                null where the library says nothing of which case a value is
+     */
+    record OneOf(String type, List<Member> members, @org.jspecify.annotations.Nullable Told told)
+            implements Crossing {
+
+        /**
+         * One member: the variant it is, how Rust holds its value, and where it is a primitive, the
+         * fields of the symbol table carrying a value of it into the union and reading it back out.
+         */
+        record Member(String variant, Whole whole, @org.jspecify.annotations.Nullable String make,
+                      @org.jspecify.annotations.Nullable String read) {
+        }
+
+        /**
+         * What the library says a value is: {@code which} counts the cases the union descends to,
+         * and each is made as the member it is, or the member sum it is a case of.
+         */
+        record Told(String which, List<Arm> arms) {
+        }
+
+        /** One case the library counts: the member it is made as, and how. */
+        record Arm(Member member, String made) {
+        }
+
+        public OneOf {
+            members = List.copyOf(members);
+        }
+
+        @Override
+        public Shape shape() {
+            return new Shape.Leaf(Word.VALUE);
+        }
+
+        @Override
+        public String owned() {
+            return type;
+        }
+
+        @Override
+        public String view() {
+            return "&" + type;
+        }
+
+        @Override
+        public List<String> given(String value) {
+            String name = type.replaceAll("<.*", "");
+            StringBuilder arms = new StringBuilder("match " + value + " {");
+            for (Member member : members) {
+                String word = member.whole().given(member.whole().viewOf("held")).getFirst();
+                arms.append(" ").append(name).append("::").append(member.variant())
+                        .append("(held) => ").append(member.make() == null ? word
+                                : "unsafe { (library.symbols." + member.make() + ")(" + word + ") }")
+                        .append(",");
+            }
+            return List.of(arms.append(" }").toString());
+        }
+
+        @Override
+        public String of(List<String> words) {
+            Objects.requireNonNull(told, "a union is handed to Rust only where it is told its case");
+            String name = type.replaceAll("<.*", "");
+            String value = words.getFirst();
+            StringBuilder arms = new StringBuilder("{ let value = " + value + "; match (library"
+                    + ".symbols." + told.which() + ")(value) {");
+            for (int place = 0; place < told.arms().size(); place++) {
+                Arm arm = told.arms().get(place);
+                arms.append(" ").append(place).append(" => ").append(name).append("::")
+                        .append(arm.member().variant()).append("(").append(arm.made()).append("),");
+            }
+            return arms.append(" _ => unreachable!(\"the library answered a case the union does not"
+                    + " have\"), } }").toString();
+        }
+
+        @Override
+        public String viewOf(String owned) {
+            return owned;
         }
     }
 
