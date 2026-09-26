@@ -105,8 +105,23 @@ impl Ord for Dropped {
 /// `log2(10)`, for how many bits a power of ten is wide.
 const LOG2_10: f64 = std::f64::consts::LOG2_10;
 
+/// Ten to each power a `u128` holds, from nought to 38: what most amounts are measured and brought
+/// to one scale against, read here rather than worked out by `pow` each time.
+const TENS: [u128; 39] = {
+    let mut tens = [1u128; 39];
+    let mut at = 1;
+    while at < tens.len() {
+        tens[at] = tens[at - 1] * 10;
+        at += 1;
+    }
+    tens
+};
+
 /// Ten to `n`, for an `n` the caller has already held to a width a value may have.
 fn ten_to(n: u64) -> BigUint {
+    if let Some(small) = TENS.get(n as usize) {
+        return BigUint::from(*small);
+    }
     let n = u32::try_from(n).expect("a power of ten built here is one a value may be as wide as");
     BigUint::from(10u8).pow(n)
 }
@@ -135,8 +150,9 @@ fn scaled_up(magnitude: &BigUint, by: u64) -> Option<BigUint> {
 /// Read off how many bits it has, which gives it to within one, and settled against a power of ten
 /// no wider than the magnitude itself.
 fn precision(magnitude: &BigUint) -> u64 {
-    if magnitude.is_zero() {
-        return 1;
+    if let Some(small) = magnitude.to_u128() {
+        // How many of the powers are no greater than it, which is its digits; nought has one.
+        return TENS.partition_point(|&ten| ten <= small).max(1) as u64;
     }
     let mut digits = ((magnitude.bits() - 1) as f64 * std::f64::consts::LOG10_2) as u64 + 1;
     while digits > 1 && *magnitude < ten_to(digits - 1) {
@@ -308,9 +324,12 @@ impl Amount {
 
     /// Two values by amount, whatever their scales (`Decimal.compare`, `==` and `<`). Total.
     ///
-    /// By sign first, then by where each value's leading digit stands; only two values whose
-    /// leading digits stand at one place are brought to one scale, and then the one with the
-    /// larger scale is no wider than the other already is.
+    /// By sign first. Two values at one scale are then their magnitudes compared, and two whose
+    /// magnitudes a `u128` holds are brought to one scale in one: those are nearly every pair a
+    /// sort or a comparison of amounts is handed, and neither needs a digit counted. Past them, by
+    /// where each value's leading digit stands; only two values whose leading digits stand at one
+    /// place are brought to one scale, and then the one with the larger scale is no wider than the
+    /// other already is.
     pub(crate) fn compare(&self, other: &Amount) -> Ordering {
         let sign = |it: &Amount| match (it.is_zero(), it.negative) {
             (true, _) => 0,
@@ -321,8 +340,39 @@ impl Amount {
         if by_sign != Ordering::Equal || self.is_zero() {
             return by_sign;
         }
+        let by_magnitude = if self.scale == other.scale {
+            self.magnitude.cmp(&other.magnitude)
+        } else if let (Some(mine), Some(theirs)) =
+            (self.magnitude.to_u128(), other.magnitude.to_u128())
+        {
+            // The one at the smaller scale raised to the other's. Neither is nought here, so one
+            // raised past what a `u128` holds is the greater.
+            let apart = i64::from(self.scale) - i64::from(other.scale);
+            let raised = |magnitude: u128, by: i64| {
+                TENS.get(by as usize)
+                    .and_then(|ten| magnitude.checked_mul(*ten))
+            };
+            if apart < 0 {
+                raised(mine, -apart).map_or(Ordering::Greater, |it| it.cmp(&theirs))
+            } else {
+                raised(theirs, apart).map_or(Ordering::Less, |it| mine.cmp(&it))
+            }
+        } else {
+            self.compare_wide(other)
+        };
+        if self.negative {
+            by_magnitude.reverse()
+        } else {
+            by_magnitude
+        }
+    }
+
+    /// The magnitudes of two values of one sign compared by amount, where either is wider than a
+    /// `u128`: by where each value's leading digit stands, and brought to one scale only where
+    /// those stand at one place.
+    fn compare_wide(&self, other: &Amount) -> Ordering {
         let leading = |it: &Amount| precision(&it.magnitude) as i64 - i64::from(it.scale);
-        let by_magnitude = match leading(self).cmp(&leading(other)) {
+        match leading(self).cmp(&leading(other)) {
             Ordering::Equal => {
                 let apart = i64::from(self.scale) - i64::from(other.scale);
                 let raised = |magnitude: &BigUint, by: i64| magnitude * ten_to(by as u64);
@@ -333,11 +383,6 @@ impl Amount {
                 }
             }
             unequal => unequal,
-        };
-        if self.negative {
-            by_magnitude.reverse()
-        } else {
-            by_magnitude
         }
     }
 
@@ -695,6 +740,37 @@ mod tests {
             ("1e-2000000000", "0", Ordering::Greater),
             ("1e2000000000", "1e1999999999", Ordering::Greater),
             ("12.30", "1.23e1", Ordering::Equal),
+            ("1.50", "1.49", Ordering::Greater),
+            (
+                "1",
+                "1.00000000000000000000000000000000000000",
+                Ordering::Equal,
+            ),
+            (
+                "1",
+                "1.000000000000000000000000000000000000001",
+                Ordering::Less,
+            ),
+            (
+                "2",
+                "1.999999999999999999999999999999999999999",
+                Ordering::Greater,
+            ),
+            (
+                "340282366920938463463374607431768211455",
+                "3.4e38",
+                Ordering::Greater,
+            ),
+            (
+                "340282366920938463463374607431768211456",
+                "340282366920938463463374607431768211455.9",
+                Ordering::Greater,
+            ),
+            (
+                "-7e40",
+                "-70000000000000000000000000000000000000000.0",
+                Ordering::Equal,
+            ),
         ] {
             assert_eq!(d(one).compare(&d(other)), order, "{one} {other}");
             assert_eq!(d(other).compare(&d(one)), order.reverse(), "{other} {one}");
@@ -948,6 +1024,10 @@ mod tests {
             (BigUint::from(10u8), 2),
             (BigUint::from(99u8), 2),
             (BigUint::from(u64::MAX), 20),
+            (BigUint::from(u128::MAX), 39),
+            (ten_to(38), 39),
+            (ten_to(38) - 1u8, 38),
+            (ten_to(39), 40),
             (ten_to(100), 101),
             (ten_to(100) - 1u8, 100),
         ] {
