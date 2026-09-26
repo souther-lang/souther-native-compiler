@@ -24,7 +24,17 @@ use std::collections::HashMap;
 
 /// The machine what a pattern means compiles to.
 pub(crate) fn machine(meaning: &[PatternPart]) -> Result<Vec<u32>, Refused> {
-    let parts: Vec<Part> = meaning
+    pattern::compile(&parts(meaning))
+}
+
+/// What [`machine`] would refuse, found without building the machine.
+pub(crate) fn check(meaning: &[PatternPart]) -> Result<usize, Refused> {
+    pattern::check(&parts(meaning))
+}
+
+/// The parts of what a pattern means, as `souther_text` reads them.
+fn parts(meaning: &[PatternPart]) -> Vec<Part> {
+    meaning
         .iter()
         .map(|part| match part {
             PatternPart::Nothing => Part::Nothing,
@@ -38,8 +48,7 @@ pub(crate) fn machine(meaning: &[PatternPart]) -> Result<Vec<u32>, Refused> {
                 most: *most,
             },
         })
-        .collect();
-    pattern::compile(&parts)
+        .collect()
 }
 
 /// Every machine this object holds, one per machine however many calls match against it.

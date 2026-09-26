@@ -5,11 +5,11 @@
 //! answers the text it built, put in NFC again, since NFC is not closed under joining. Every
 //! length, index and count is in code points.
 //!
-//! A search for one run of text inside another is a search over bytes. UTF-8 never writes the
-//! bytes of one code point in the middle of another's, so where the bytes of a well-formed run
-//! are found in well-formed text they stand at code points and nowhere else.
+//! A search for one run of text inside another is `str`'s, which does not slow down on text that
+//! nearly matches over and over. UTF-8 never writes the bytes of one code point in the middle of
+//! another's, so where one run is found in another it stands at code points and nowhere else.
 
-use crate::canonical::nfc;
+use crate::canonical::Joined;
 use crate::{code_points, decoded, scalar_values};
 use alloc::vec::Vec;
 
@@ -40,32 +40,38 @@ pub fn is_whitespace(point: u32) -> bool {
     )
 }
 
-/// Where each code point starts, and where the text ends: one more than there are code points.
-fn boundaries(text: &[u8]) -> Vec<usize> {
-    let mut at = 0;
-    let mut starts = Vec::new();
-    while let Some((_, width)) = decoded(text, at) {
-        starts.push(at);
-        at += width;
-    }
-    starts.push(text.len());
-    starts
+/// The bytes as the text they are, where they are UTF-8, which a Souther string always is.
+fn as_text(bytes: &[u8]) -> Option<&str> {
+    core::str::from_utf8(bytes).ok()
 }
 
-/// Where the first run of `needle` starts in `text` at or after `from`.
-fn found(text: &[u8], needle: &[u8], from: usize) -> Option<usize> {
-    if needle.is_empty() {
-        return Some(from);
+/// Where the code point before `end` starts.
+fn start_before(text: &[u8], end: usize) -> usize {
+    let mut start = end - 1;
+    while start > 0 && text[start] & 0xc0 == 0x80 && end - start < 4 {
+        start -= 1;
     }
-    text.get(from..)?
-        .windows(needle.len())
+    start
+}
+
+/// Where the first run of `needle` starts in `text`.
+///
+/// Over bytes that are not UTF-8, which no string is, by comparing each place in turn: an answer
+/// that means nothing, reached without reading past either.
+fn found(text: &[u8], needle: &[u8]) -> Option<usize> {
+    if let (Some(text), Some(needle)) = (as_text(text), as_text(needle)) {
+        return text.find(needle);
+    }
+    if needle.is_empty() {
+        return Some(0);
+    }
+    text.windows(needle.len())
         .position(|window| window == needle)
-        .map(|at| from + at)
 }
 
 /// Whether `needle` is in the text (`String.contains`). The empty text is in every text.
 pub fn contains(needle: &[u8], text: &[u8]) -> bool {
-    found(text, needle, 0).is_some()
+    found(text, needle).is_some()
 }
 
 /// Whether the text begins with `prefix` (`String.startsWith`).
@@ -80,27 +86,40 @@ pub fn ends_with(suffix: &[u8], text: &[u8]) -> bool {
 
 /// The code points from `from` up to but not including `to` (`String.slice`), or nothing where the
 /// string has no such index or `to` is before `from`.
+///
+/// Read as far as `to` and no further.
 pub fn slice(from: i64, to: i64, text: &[u8]) -> Option<&[u8]> {
-    let starts = boundaries(text);
-    let at = |index: i64| starts.get(usize::try_from(index).ok()?).copied();
-    let (begin, end) = (at(from)?, at(to)?);
-    text.get(begin..end)
+    let (from, to) = (usize::try_from(from).ok()?, usize::try_from(to).ok()?);
+    if to < from {
+        return None;
+    }
+    let mut at = 0;
+    let mut begin = None;
+    for index in 0..=to {
+        if index == from {
+            begin = Some(at);
+        }
+        if index == to {
+            break;
+        }
+        let (_, width) = decoded(text, at)?;
+        at += width;
+    }
+    text.get(begin?..at)
 }
 
 /// The text with the String whitespace at either end taken off (`String.trim`).
 pub fn trim(text: &[u8]) -> &[u8] {
-    let starts = boundaries(text);
-    let white = |at: usize| decoded(text, starts[at]).is_some_and(|(it, _)| is_whitespace(it));
-    let points = starts.len() - 1;
+    let white = |at: usize| decoded(text, at).is_some_and(|(it, _)| is_whitespace(it));
     let mut begin = 0;
-    while begin < points && white(begin) {
-        begin += 1;
+    while begin < text.len() && white(begin) {
+        begin += decoded(text, begin).map_or(1, |(_, width)| width);
     }
-    let mut end = points;
-    while end > begin && white(end - 1) {
-        end -= 1;
+    let mut end = text.len();
+    while end > begin && white(start_before(text, end)) {
+        end = start_before(text, end);
     }
-    &text[starts[begin]..starts[end]]
+    &text[begin..end]
 }
 
 /// The runs of the text between runs of String whitespace, none of them empty (`String.words`).
@@ -131,11 +150,14 @@ pub fn split<'a>(separator: &[u8], text: &'a [u8]) -> Vec<&'a [u8]> {
     if separator.is_empty() {
         return alloc::vec![text];
     }
+    if let (Some(text), Some(separator)) = (as_text(text), as_text(separator)) {
+        return text.split(separator).map(str::as_bytes).collect();
+    }
     let mut pieces = Vec::new();
     let mut from = 0;
-    while let Some(at) = found(text, separator, from) {
-        pieces.push(&text[from..at]);
-        from = at + separator.len();
+    while let Some(at) = found(&text[from..], separator) {
+        pieces.push(&text[from..from + at]);
+        from += at + separator.len();
     }
     pieces.push(&text[from..]);
     pieces
@@ -157,32 +179,34 @@ pub fn lines(text: &[u8]) -> Vec<&[u8]> {
 
 /// Each code point of the text, as the piece of it that writes it (`String.characters`).
 pub fn characters(text: &[u8]) -> Vec<&[u8]> {
-    let starts = boundaries(text);
-    starts
-        .windows(2)
-        .map(|pair| &text[pair[0]..pair[1]])
-        .collect()
+    let mut pieces = Vec::new();
+    let mut at = 0;
+    while let Some((_, width)) = decoded(text, at) {
+        pieces.push(&text[at..(at + width).min(text.len())]);
+        at += width;
+    }
+    pieces
 }
 
 /// The two joined, in NFC (`String.append`, and `++` over two strings).
 pub fn append(left: &[u8], right: &[u8]) -> Vec<u8> {
-    let mut joined = Vec::with_capacity(left.len() + right.len());
-    joined.extend_from_slice(left);
-    joined.extend_from_slice(right);
-    nfc(&joined)
+    let mut joined = Joined::new();
+    joined.push(left);
+    joined.push(right);
+    joined.into_bytes()
 }
 
 /// The pieces joined with `separator` between each two, in NFC (`String.join`; `String.concat`
 /// is this with no separator).
 pub fn join<'a>(separator: &[u8], pieces: impl IntoIterator<Item = &'a [u8]>) -> Vec<u8> {
-    let mut joined = Vec::new();
+    let mut joined = Joined::new();
     for (at, piece) in pieces.into_iter().enumerate() {
         if at > 0 {
-            joined.extend_from_slice(separator);
+            joined.push(separator);
         }
-        joined.extend_from_slice(piece);
+        joined.push(piece);
     }
-    nfc(&joined)
+    joined.into_bytes()
 }
 
 /// Every run of `target` replaced by `replacement`, left to right and none overlapping, in NFC
@@ -213,11 +237,11 @@ pub fn repeat(copies: i64, text: &[u8]) -> Option<Vec<u8>> {
         return None;
     }
     let copies = usize::try_from(copies).ok()?;
-    let mut joined = Vec::with_capacity(text.len().checked_mul(copies)?);
+    let mut joined = Joined::new();
     for _ in 0..copies {
-        joined.extend_from_slice(text);
+        joined.push(text);
     }
-    Some(nfc(&joined))
+    Some(joined.into_bytes())
 }
 
 /// The text widened on the left to `width` code points with copies of `pad`

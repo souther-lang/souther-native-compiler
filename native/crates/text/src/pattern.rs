@@ -72,7 +72,25 @@ const FIRST_STEP: usize = 2;
 /// holds where the set starts. The count comes first so that a reader handed the address of the
 /// first word knows how far it may read.
 pub fn compile(parts: &[Part]) -> Result<Vec<u32>, Refused> {
-    let whole = parts.len().checked_sub(1).ok_or(Refused::NotAReading)?;
+    let steps = check(parts)?;
+    let whole = parts.len() - 1;
+    let mut building = Building {
+        parts,
+        steps: Vec::with_capacity(steps),
+        sets: Vec::new(),
+        set_of: vec![None; parts.len()],
+    };
+    building.emit(whole);
+    building.push(MATCH, 0, 0);
+    Ok(building.words())
+}
+
+/// Whether the parts are a reading of a pattern whose machine is within [`MOST_STEPS`], and how
+/// many steps it is: what [`compile`] would refuse, found without building anything.
+pub fn check(parts: &[Part]) -> Result<usize, Refused> {
+    if parts.is_empty() {
+        return Err(Refused::NotAReading);
+    }
     for (at, part) in parts.iter().enumerate() {
         well_formed(at, part)?;
     }
@@ -81,18 +99,11 @@ pub fn compile(parts: &[Part]) -> Result<Vec<u32>, Refused> {
         let size = steps(part, &sizes);
         sizes.push(size);
     }
-    if sizes[whole] + 1 > MOST_STEPS {
+    let whole = sizes[parts.len() - 1] + 1;
+    if whole > MOST_STEPS {
         return Err(Refused::TooLarge);
     }
-    let mut building = Building {
-        parts,
-        steps: Vec::with_capacity(sizes[whole] + 1),
-        sets: Vec::new(),
-        set_of: vec![None; parts.len()],
-    };
-    building.emit(whole);
-    building.push(MATCH, 0, 0);
-    Ok(building.words())
+    Ok(whole)
 }
 
 fn well_formed(at: usize, part: &Part) -> Result<(), Refused> {

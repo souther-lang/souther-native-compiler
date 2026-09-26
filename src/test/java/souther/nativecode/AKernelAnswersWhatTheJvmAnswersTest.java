@@ -331,11 +331,12 @@ class AKernelAnswersWhatTheJvmAnswersTest {
     /** A difference or a product no {@code Int} holds ends the run, and so does a zero divisor. */
     @Test
     void anIntKernelEndsTheRunWhereItsContractSays() throws Exception {
-        assertThat(outcome(INT, "less", integer(-9223372036854775807L), integer(2)))
+        Asked ints = new Asked(INT);
+        assertThat(ints.outcome("less", integer(-9223372036854775807L), integer(2)))
                 .isEqualTo(ended(AbortKind.REQUIRED_FORM_HAS_NO_PLACE));
-        assertThat(outcome(INT, "times", integer(4611686018427387904L), integer(2)))
+        assertThat(ints.outcome("times", integer(4611686018427387904L), integer(2)))
                 .isEqualTo(ended(AbortKind.REQUIRED_FORM_HAS_NO_PLACE));
-        assertThat(outcome(INT, "floored", integer(1), integer(0)))
+        assertThat(ints.outcome("floored", integer(1), integer(0)))
                 .isEqualTo(ended(AbortKind.DIVISION_BY_ZERO));
     }
 
@@ -346,17 +347,18 @@ class AKernelAnswersWhatTheJvmAnswersTest {
      */
     @Test
     void aStringKernelEndsTheRunWhereItsContractSays() throws Exception {
-        assertThat(outcome(TEXT, "sliced", integer(0), integer(5), text("abcd")))
+        Asked texts = new Asked(TEXT);
+        assertThat(texts.outcome("sliced", integer(0), integer(5), text("abcd")))
                 .isEqualTo(ended(AbortKind.INVALID_BOUNDS));
-        assertThat(outcome(TEXT, "sliced", integer(-1), integer(1), text("a")))
+        assertThat(texts.outcome("sliced", integer(-1), integer(1), text("a")))
                 .isEqualTo(ended(AbortKind.INVALID_BOUNDS));
-        assertThat(outcome(TEXT, "sliced", integer(2), integer(1), text("abc")))
+        assertThat(texts.outcome("sliced", integer(2), integer(1), text("abc")))
                 .isEqualTo(ended(AbortKind.INVALID_BOUNDS));
-        assertThat(outcome(TEXT, "repeated", integer(3000000000L), text("a")))
+        assertThat(texts.outcome("repeated", integer(3000000000L), text("a")))
                 .isEqualTo(ended(AbortKind.REQUIRED_FORM_HAS_NO_PLACE));
-        assertThat(outcome(TEXT, "paddedLeft", integer(3000000000L), text("0"), text("a")))
+        assertThat(texts.outcome("paddedLeft", integer(3000000000L), text("0"), text("a")))
                 .isEqualTo(ended(AbortKind.REQUIRED_FORM_HAS_NO_PLACE));
-        assertThat(outcome(TEXT, "paddedRight", integer(3000000000L), text("0"), text("a")))
+        assertThat(texts.outcome("paddedRight", integer(3000000000L), text("0"), text("a")))
                 .isEqualTo(ended(AbortKind.REQUIRED_FORM_HAS_NO_PLACE));
     }
 
@@ -372,15 +374,27 @@ class AKernelAnswersWhatTheJvmAnswersTest {
         return new RunOutcome.Aborted(kind);
     }
 
-    private static RunOutcome outcome(String source, String behavior, ObservedValue... handed)
-            throws Exception {
-        CheckedProgram program = CheckedProgram.of(List.of(source));
-        Running running = Running.of(program);
-        CheckedModule module = program.modules().getFirst();
-        CheckedBehavior reached = module.behaviors().stream()
-                .filter(it -> it.name().name().equals(behavior))
-                .findFirst()
-                .orElseThrow(() -> new AssertionError("no behavior " + behavior));
-        return running.answeredOrEnded(module, reached, List.of(handed));
+    /**
+     * A program checked once and asked as many questions as a test has: checking one runs every
+     * row it states on the JVM, which is paid for each program and not for each question.
+     */
+    private static final class Asked {
+
+        private final CheckedProgram program;
+        private final Running running;
+
+        Asked(String source) {
+            this.program = CheckedProgram.of(List.of(source));
+            this.running = Running.of(program);
+        }
+
+        RunOutcome outcome(String behavior, ObservedValue... handed) throws Exception {
+            CheckedModule module = program.modules().getFirst();
+            CheckedBehavior reached = module.behaviors().stream()
+                    .filter(it -> it.name().name().equals(behavior))
+                    .findFirst()
+                    .orElseThrow(() -> new AssertionError("no behavior " + behavior));
+            return running.answeredOrEnded(module, reached, List.of(handed));
+        }
     }
 }

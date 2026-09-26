@@ -2025,7 +2025,7 @@ impl<'a> Walk<'_, 'a> {
                     // parts before them, runs of scalar values in order. One too large for a
                     // machine is refused where it is lowered, as this backend's limit.
                     if let KernelFact::StringMatches { written, meaning } = fact
-                        && crate::patterns::machine(meaning) == Err(Refused::NotAReading)
+                        && crate::patterns::check(meaning) == Err(Refused::NotAReading)
                     {
                         bail!(
                             "{}: an application of {kernel} says the pattern {written:?} means \

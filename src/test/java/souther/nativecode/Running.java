@@ -19,6 +19,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -217,8 +218,25 @@ final class Running {
     private BoundaryOutcome rowAtItsBoundary(CheckedModule module, CheckedBehavior behavior,
                                              int at, List<StandsIn> standIns)
             throws IOException, InterruptedException {
-        String named = module.name() + "." + behavior.name().name() + ".example." + at;
-        return ran(linked(standIns), named, List.of());
+        return ran(linked(standIns), rowEntry(module, behavior, at), List.of());
+    }
+
+    /** One row of a behavior, as a caller asking many of them at once names it. */
+    record Row(CheckedModule module, CheckedBehavior behavior, int at) {}
+
+    /**
+     * What each of these rows answers, or the reason its run ended, in the order they were asked:
+     * {@link #rowAnsweredOrEnded} for every one of them, run by one process.
+     */
+    List<RunOutcome> rowsAnsweredOrEnded(List<Row> rows) throws IOException, InterruptedException {
+        List<String> entries = rows.stream()
+                .map(row -> rowEntry(row.module(), row.behavior(), row.at()))
+                .toList();
+        return ranEach(linked(List.of()), entries).stream().map(Running::observed).toList();
+    }
+
+    private static String rowEntry(CheckedModule module, CheckedBehavior behavior, int at) {
+        return module.name() + "." + behavior.name().name() + ".example." + at;
     }
 
     /**
@@ -290,7 +308,45 @@ final class Running {
         for (ObservedValue given : inputs) {
             command.add(written(given));
         }
+        Iterator<String> lines = said(command).iterator();
+        return next(lines, command);
+    }
 
+    /**
+     * What each of these entries answered, each run in turn by one process: the harness brackets
+     * every call on its own, so what one run made is given back before the next starts, and a run
+     * that ended says so on its own lines without stopping the ones after it.
+     *
+     * <p>One process and not one per entry, because starting one costs more than every run a row
+     * makes, and a program's rows were paying it once each.
+     */
+    private List<BoundaryOutcome> ranEach(Path executable, List<String> entries)
+            throws IOException, InterruptedException {
+        List<String> command = new ArrayList<>();
+        command.add(executable.toString());
+        command.add(EACH);
+        command.addAll(entries);
+        Iterator<String> lines = said(command).iterator();
+        List<BoundaryOutcome> outcomes = new ArrayList<>();
+        for (int at = 0; at < entries.size(); at++) {
+            outcomes.add(next(lines, command));
+        }
+        if (lines.hasNext()) {
+            throw new AssertionError("the harness wrote more than was asked of it: " + command);
+        }
+        return outcomes;
+    }
+
+    /**
+     * What the harness asks for where its first argument is this: every argument after it is an
+     * entry that takes nothing, run in turn. No entry is called this, since every name one has is
+     * a module's, and a module's name begins with a letter.
+     */
+    private static final String EACH = "--each";
+
+    /** The lines a run of the harness wrote, where it answered at all. */
+    private static List<String> said(List<String> command)
+            throws IOException, InterruptedException {
         Process process = new ProcessBuilder(command)
                 .redirectErrorStream(true)
                 .start();
@@ -301,16 +357,20 @@ final class Running {
         }
         // The JSON the boundary wrote is one line: every character JSON cannot hold bare, a
         // newline among them, is escaped in it.
-        List<String> lines = said.lines().toList();
-        if (lines.isEmpty()) {
-            throw new AssertionError("the harness wrote no status: " + said);
+        return said.lines().toList();
+    }
+
+    /** The outcome of the next run the harness wrote, read off its lines. */
+    private static BoundaryOutcome next(Iterator<String> lines, List<String> command) {
+        if (!lines.hasNext()) {
+            throw new AssertionError("the harness wrote no status: " + command);
         }
-        int status = Integer.parseInt(lines.get(0).strip());
+        int status = Integer.parseInt(lines.next().strip());
         if (status == ANSWERED) {
-            if (lines.size() < 2) {
-                throw new AssertionError("ANSWERED with no value on the line under it: " + said);
+            if (!lines.hasNext()) {
+                throw new AssertionError("ANSWERED with no value on the line under it: " + command);
             }
-            return new BoundaryOutcome.Answered(JSON.readTree(lines.get(1)));
+            return new BoundaryOutcome.Answered(JSON.readTree(lines.next()));
         }
         if (status == FAKE_NO_OUTPUT) {
             return new BoundaryOutcome.StoodInForNothing();
@@ -550,10 +610,7 @@ final class Running {
                 extern const uint8_t *souther_string_bytes(const uint8_t *);
 
                 %s
-                int main(int argc, char **argv) {
-                    if (argc < 2) {
-                        return 2;
-                    }
+                static int run(int argc, char **argv) {
                     int64_t mark = souther_mark();
                     const uint8_t *answered;
                     uint32_t status;
@@ -570,12 +627,30 @@ final class Running {
                     souther_reset(mark);
                     return 0;
                 }
+
+                int main(int argc, char **argv) {
+                    if (argc < 2) {
+                        return 2;
+                    }
+                    if (strcmp(argv[1], "%s") != 0) {
+                        return run(argc, argv);
+                    }
+                    for (int at = 2; at < argc; at++) {
+                        char *one[] = {argv[0], argv[at]};
+                        int ran = run(2, one);
+                        if (ran != 0) {
+                            return ran;
+                        }
+                    }
+                    return 0;
+                }
                 """.formatted(
                 text ? TEXT_CROSSING : "",
                 supplied.toString(),
                 declared,
                 reaching,
-                chosen);
+                chosen,
+                EACH);
     }
 
     /** What `standIns` states `dependency` answers, and null where it states nothing of it. */

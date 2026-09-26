@@ -8,8 +8,8 @@
 //! by class, compose what nothing blocks — over the tables [`crate::tables`] was generated with, and
 //! Hangul's syllables by the formula Unicode states for them rather than by a table.
 
-use crate::tables::{COMBINING_CLASS, COMPOSITION, DECOMPOSITION};
-use crate::{encoded, scalar_values};
+use crate::tables::{COMBINING_CLASS, COMPOSITION, DECOMPOSITION, SECOND_OF_A_PAIR};
+use crate::{decoded, encoded, scalar_values};
 use alloc::vec::Vec;
 
 const S_BASE: u32 = 0xac00;
@@ -41,6 +41,89 @@ pub(crate) fn normalized(points: Vec<u32>) -> Vec<u8> {
     }
     put_in_canonical_order(&mut decomposed);
     encoded(&composed(decomposed))
+}
+
+/// Text in NFC made by joining runs of text each in NFC already.
+///
+/// NFC is not closed under joining, but what joining two runs can change is only where they meet:
+/// the code points from the last stable starter of the first run to the first one of the second
+/// that nothing before it can compose with. So each run added puts that much in NFC again and
+/// copies the rest, and joining many runs costs what copying them does rather than normalizing all
+/// that came before once more for each.
+///
+/// A stable starter is one nothing written after it is reordered in front of it. The first run's text before its last one is
+/// already what NFC makes of it and nothing after can reach it. The second run's text from its
+/// first one that is also no second of a pair is out of reach of anything before it.
+pub(crate) struct Joined(Vec<u8>);
+
+impl Joined {
+    pub(crate) fn new() -> Joined {
+        Joined(Vec::new())
+    }
+
+    /// `next`, which is in NFC, joined on.
+    pub(crate) fn push(&mut self, next: &[u8]) {
+        let reach = out_of_reach(next);
+        if reach == 0 {
+            self.0.extend_from_slice(next);
+            return;
+        }
+        let from = last_stable_starter(&self.0);
+        let mut seam = self.0.split_off(from);
+        seam.extend_from_slice(&next[..reach]);
+        self.0.extend_from_slice(&nfc(&seam));
+        self.0.extend_from_slice(&next[reach..]);
+    }
+
+    pub(crate) fn into_bytes(self) -> Vec<u8> {
+        self.0
+    }
+}
+
+/// Whether nothing written after this code point is reordered in front of it, in text in NFC.
+///
+/// A starter, since marks are reordered among themselves and never past one. A starter whose
+/// decomposition begins with a mark would not do, but every such code point is excluded from
+/// composition and so never stands in text in NFC.
+fn stable_starter(point: u32) -> bool {
+    combining_class(point) == 0
+}
+
+/// Whether a starter written before this code point may compose with it: the second of a pair
+/// the table composes, or a Hangul vowel or trailing consonant.
+fn second_of_a_pair(point: u32) -> bool {
+    (V_BASE..V_BASE + V_COUNT).contains(&point)
+        || (T_BASE + 1..T_BASE + T_COUNT).contains(&point)
+        || SECOND_OF_A_PAIR.binary_search(&point).is_ok()
+}
+
+/// Where the text stops being within reach of what is joined before it: the first code point
+/// that is a stable starter and no second of a pair, or the end.
+fn out_of_reach(text: &[u8]) -> usize {
+    let mut at = 0;
+    while let Some((point, width)) = decoded(text, at) {
+        if stable_starter(point) && !second_of_a_pair(point) {
+            return at;
+        }
+        at += width;
+    }
+    text.len()
+}
+
+/// Where the text's last stable starter begins, or nought where it has none.
+fn last_stable_starter(text: &[u8]) -> usize {
+    let mut end = text.len();
+    while end > 0 {
+        let mut start = end - 1;
+        while start > 0 && text[start] & 0xc0 == 0x80 && end - start < 4 {
+            start -= 1;
+        }
+        if decoded(text, start).is_some_and(|(point, _)| stable_starter(point)) {
+            return start;
+        }
+        end = start;
+    }
+    0
 }
 
 /// The canonical combining class of a code point: nought for a starter, and for every code point
@@ -199,6 +282,39 @@ mod tests {
     #[test]
     fn a_mark_behind_one_of_its_own_class_is_blocked() {
         assert_eq!(in_nfc("a\u{301}\u{301}"), "\u{e1}\u{301}");
+    }
+
+    /// Joining runs in NFC one after another answers what NFC makes of all of them joined, over
+    /// runs made of what composes, reorders and is excluded: letters and marks of several classes,
+    /// Hangul jamo and syllables, and starters that are the second of a pair.
+    #[test]
+    fn joining_at_the_seam_answers_what_nfc_of_the_whole_does() {
+        let pool: [u32; 24] = [
+            0x61, 0x65, 0x41, 0x3c9, 0x1100, 0x1161, 0x11a8, 0xac00, 0xac01, 0x301, 0x302, 0x323,
+            0x308, 0x345, 0x304b, 0x3099, 0x915, 0x93c, 0xb47, 0xb3e, 0xf71, 0xf72, 0x212b, 0x344,
+        ];
+        let mut seed: u64 = 0x2545_f491_4f6c_dd1d;
+        let mut next = |bound: usize| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % bound as u64) as usize
+        };
+        for _ in 0..3_000 {
+            let runs: Vec<Vec<u8>> = (0..1 + next(3))
+                .map(|_| {
+                    let points: Vec<u32> = (0..next(5)).map(|_| pool[next(pool.len())]).collect();
+                    nfc(&encoded(&points))
+                })
+                .collect();
+            let mut joined = Joined::new();
+            let mut whole = Vec::new();
+            for run in &runs {
+                joined.push(run);
+                whole.extend_from_slice(run);
+            }
+            assert_eq!(joined.into_bytes(), nfc(&whole), "{runs:?}");
+        }
     }
 
     /// NFC of NFC is itself.

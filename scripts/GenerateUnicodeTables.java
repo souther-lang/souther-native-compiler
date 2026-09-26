@@ -144,6 +144,18 @@ public final class GenerateUnicodeTables {
         }
         out.append("];\n\n");
 
+        out.append("/// Every code point that is the second of a pair [`COMPOSITION`] composes, in order: what a\n");
+        out.append("/// starter written before it may compose with.\n");
+        out.append("pub(crate) static SECOND_OF_A_PAIR: &[u32] = &[\n");
+        Set<Integer> seconds = new TreeSet<>();
+        for (long pair : composition.keySet()) {
+            seconds.add((int) pair);
+        }
+        for (int second : seconds) {
+            out.append("    ").append(hex(second)).append(",\n");
+        }
+        out.append("];\n\n");
+
         out.append("/// The full lowercase mapping of each code point that has one: `SpecialCasing.txt`'s\n");
         out.append("/// unconditional mapping where it states one, and `UnicodeData.txt`'s simple one otherwise.\n");
         out.append("pub(crate) static LOWERCASE: &[(u32, &[u32])] = &[\n");
