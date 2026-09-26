@@ -126,7 +126,20 @@ pub(crate) fn equal(
             "a comparison of two values of {}",
             ty.spelt()
         ))),
-        Ty::Declared { .. }
+        Ty::Ref {
+            named: Case::Primitive { .. },
+        } => crate::named_as_a_type(ty),
+        // A case the language gives holds nothing, so two values of one are the one value.
+        Ty::Ref {
+            named: Case::Language { .. },
+        } => Ok(builder.ins().iconst(types::I8, 1)),
+        Ty::Never { .. } => Err(not_lowered(format!(
+            "a comparison of two values of {}",
+            ty.spelt()
+        ))),
+        Ty::Ref {
+            named: Case::Declared { .. },
+        }
         | Ty::Union { .. }
         | Ty::Option { .. }
         | Ty::Tuple { .. }
@@ -187,7 +200,9 @@ struct Comparing<'b, 'f, 'l, 'm> {
 impl Comparing<'_, '_, '_, '_> {
     fn body(&mut self, ty: &Ty, a: ir::Value, b: ir::Value) -> Lowered<()> {
         match ty {
-            Ty::Declared { declared } => match self.lowering.declared.laid(declared) {
+            Ty::Ref {
+                named: Case::Declared { declared },
+            } => match self.lowering.declared.laid(declared) {
                 // A value of a type built from fields is tagged with that type and no other, so
                 // two of one type differ in nothing but their fields.
                 Declaration::Product { fields, .. } => {
@@ -206,10 +221,14 @@ impl Comparing<'_, '_, '_, '_> {
             Ty::Tuple { tuple } => self.slots(tuple, member_at, a, b)?,
             Ty::List { list } => self.list(list, a, b)?,
             Ty::Prim { .. }
+            | Ty::Ref {
+                named: Case::Primitive { .. } | Case::Language { .. },
+            }
             | Ty::Fn { .. }
             | Ty::Set { .. }
             | Ty::Map { .. }
-            | Ty::Nothing { .. } => {
+            | Ty::Nothing { .. }
+            | Ty::Never { .. } => {
                 let same = equal(self.builder, self.lowering, self.module, ty, a, b)?;
                 self.unless(same);
             }
@@ -292,9 +311,7 @@ impl Comparing<'_, '_, '_, '_> {
     fn as_the_case(&mut self, leaf: &Case, a: ir::Value, b: ir::Value) -> Lowered<ir::Value> {
         match leaf {
             Case::Declared { declared } => {
-                let as_it = Ty::Declared {
-                    declared: declared.clone(),
-                };
+                let as_it = Ty::declared(declared.clone());
                 equal(self.builder, self.lowering, self.module, &as_it, a, b)
             }
             Case::Primitive { prim } => {

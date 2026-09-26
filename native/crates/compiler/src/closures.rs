@@ -349,6 +349,7 @@ impl<'p, 'a> Planner<'p, 'a> {
             | Node::Bool { .. }
             | Node::Str { .. }
             | Node::Unit { .. }
+            | Node::Unreachable { .. }
             | Node::None { .. } => {}
         }
         Ok(())

@@ -83,7 +83,7 @@ fn helper(name: &str, takes: &[Value], body: Value) -> Value {
 /// What no fixture the writer produced holds: a type that states a clause and is built, a kernel
 /// call, a fork on an optional, arithmetic of each kind, and an operator read in a type.
 fn by_hand() -> Vec<(&'static str, Value)> {
-    let amount = json!({ "declared": "m.R" });
+    let amount = json!({ "ref": { "is": "declared", "declared": "m.R" } });
     let clause = binary("GE", read(0, prim(INT)), int(0), prim("BOOL"), json!([]));
     let declarations = json!([{
         "module": "m", "name": "R", "by": "amodule", "is": "product",
@@ -111,6 +111,27 @@ fn by_hand() -> Vec<(&'static str, Value)> {
     let kernel = program(
         json!([]),
         json!([helper("m.add", &[prim(INT), prim(INT)], added)]),
+        json!([]),
+    );
+
+    let division = json!({ "is": "language", "case": "DIVISION_BY_ZERO" });
+    let ending = json!({
+        "core": "if",
+        "cond": binary("GT", read(0, prim(INT)), int(0), prim("BOOL"), json!([])),
+        "then": read(0, prim(INT)),
+        "else": { "core": "unreachable", "reason": "not positive", "type": prim(INT),
+                  "aborts": ["UNREACHABLE_REACHED"] },
+        "type": prim(INT), "aborts": []
+    });
+    let given = json!({
+        "core": "unit", "unit": division, "type": { "ref": division }, "aborts": []
+    });
+    let unreachable = program(
+        json!([]),
+        json!([
+            helper("m.positive", &[prim(INT)], ending),
+            helper("m.given", &[], given)
+        ]),
         json!([]),
     );
 
@@ -246,7 +267,7 @@ fn by_hand() -> Vec<(&'static str, Value)> {
                        { "name": "hi", "binding": 1, "codec": { "is": "scalar", "scalar": INT } }]
         });
         declaration[key] = stated;
-        let span = json!({ "declared": "m.S" });
+        let span = json!({ "ref": { "is": "declared", "declared": "m.S" } });
         let width = json!({
             "core": "field", "target": read(2, span.clone()), "field": "hi",
             "type": prim(INT), "aborts": []
@@ -303,6 +324,7 @@ fn by_hand() -> Vec<(&'static str, Value)> {
         ("arithmetic of every kind", arithmetic),
         ("a quotient", dividing),
         ("an operator read in a type", reading),
+        ("an unreachable, and a case the language gives", unreachable),
     ]
 }
 

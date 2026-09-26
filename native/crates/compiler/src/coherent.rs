@@ -797,6 +797,7 @@ impl<'a> Walk<'_, 'a> {
             | Node::Bool { .. }
             | Node::Str { .. }
             | Node::Unit { .. }
+            | Node::Unreachable { .. }
             | Node::None { .. } => Vec::new(),
             Node::Construct {
                 declared, values, ..
@@ -1167,25 +1168,35 @@ impl<'a> Walk<'_, 'a> {
                     "the binder",
                 )
             }
-            Node::Unit { declared, ty, .. } => {
-                if !matches!(
-                    self.declared.shape(declared)?,
-                    crate::transport::Declaration::Unit { .. }
-                ) {
+            Node::Unit { unit, ty, .. } => {
+                if let Some(declared) = unit.declared()
+                    && !matches!(
+                        self.declared.shape(declared)?,
+                        crate::transport::Declaration::Unit { .. }
+                    )
+                {
                     bail!(
                         "{}: {declared} is written as a unit's value and is not declared a unit",
                         self.owner
                     );
                 }
                 self.same(
-                    &format!("the unit {declared}"),
+                    &format!("the unit {}", unit.spelt()),
                     ty,
-                    &Ty::Declared {
-                        declared: declared.clone(),
+                    &Ty::Ref {
+                        named: unit.clone(),
                     },
                     "what it names",
                 )
             }
+            // Its value is made of nothing, so there is nothing its type is held to: the type is
+            // what the position it stands in takes, which that position's own slot holds it to.
+            // What it ends the run for is the one reason there is for ending it here.
+            Node::Unreachable { ty, aborts, .. } => self.ends_for(
+                &format!("an unreachable standing as {}", ty.spelt()),
+                aborts,
+                &[AbortKind::UnreachableReached],
+            ),
             Node::Construct {
                 declared,
                 values,
@@ -1195,9 +1206,7 @@ impl<'a> Walk<'_, 'a> {
                 self.same(
                     &format!("a construction of {declared}"),
                     ty,
-                    &Ty::Declared {
-                        declared: declared.clone(),
-                    },
+                    &Ty::declared(declared.clone()),
                     "what it builds",
                 )?;
                 let shape = self.declared.shape(declared)?;
@@ -1274,9 +1283,7 @@ impl<'a> Walk<'_, 'a> {
                 self.same(
                     &format!("what an attempted construction of {declared} binds"),
                     binds,
-                    &Ty::Declared {
-                        declared: declared.clone(),
-                    },
+                    &Ty::declared(declared.clone()),
                     "what it builds",
                 )?;
                 // A type that states no clause has no failing side, which the checker refuses to
@@ -1310,7 +1317,10 @@ impl<'a> Walk<'_, 'a> {
             } => {
                 self.node(target)?;
                 let of = target.ty();
-                let Ty::Declared { declared } = of else {
+                let Ty::Ref {
+                    named: Case::Declared { declared },
+                } = of
+                else {
                     bail!(
                         "{}: a field of {}, which holds no fields",
                         self.owner,

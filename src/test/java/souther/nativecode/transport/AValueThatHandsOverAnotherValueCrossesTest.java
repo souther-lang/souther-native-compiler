@@ -48,22 +48,22 @@ class AValueThatHandsOverAnotherValueCrossesTest {
                 "values":[{"module":"m","name":"ks","handovers":[],\
                 "body":{"core":"construct","declared":"m.P",\
                 "values":[{"core":"int","value":42,"type":{"prim":"INT"},"aborts":[]}],\
-                "type":{"declared":"m.P"},"aborts":[]}},\
+                "type":{"ref":{"is":"declared","declared":"m.P"}},"aborts":[]}},\
                 {"module":"m","name":"ys",\
-                "handovers":[{"parameter":"$dep_ks","type":{"declared":"m.P"},\
+                "handovers":[{"parameter":"$dep_ks","type":{"ref":{"is":"declared","declared":"m.P"}},\
                 "carries":{"module":"m","name":"ks"}}],\
-                "body":{"core":"read","binding":0,"type":{"declared":"m.P"},"aborts":[]}}],\
+                "body":{"core":"read","binding":0,"type":{"ref":{"is":"declared","declared":"m.P"}},"aborts":[]}}],\
                 "entries":[{"value":{"module":"m","name":"ys"},\
-                "body":{"core":"let","binding":0,"binds":{"declared":"m.P"},\
+                "body":{"core":"let","binding":0,"binds":{"ref":{"is":"declared","declared":"m.P"}},\
                 "value":{"core":"call","reaches":{"is":"value","module":"m","name":"ks"},\
-                "arguments":[],"type":{"declared":"m.P"},"aborts":[]},\
-                "body":{"core":"let","binding":1,"binds":{"declared":"m.P"},\
+                "arguments":[],"type":{"ref":{"is":"declared","declared":"m.P"}},"aborts":[]},\
+                "body":{"core":"let","binding":1,"binds":{"ref":{"is":"declared","declared":"m.P"}},\
                 "value":{"core":"call","reaches":{"is":"value","module":"m","name":"ys"},\
-                "arguments":[{"core":"read","binding":0,"type":{"declared":"m.P"},"aborts":[]}],\
-                "type":{"declared":"m.P"},"aborts":[]},\
-                "body":{"core":"read","binding":1,"type":{"declared":"m.P"},"aborts":[]},\
-                "type":{"declared":"m.P"},"aborts":[]},\
-                "type":{"declared":"m.P"},"aborts":[]}}],\
+                "arguments":[{"core":"read","binding":0,"type":{"ref":{"is":"declared","declared":"m.P"}},"aborts":[]}],\
+                "type":{"ref":{"is":"declared","declared":"m.P"}},"aborts":[]},\
+                "body":{"core":"read","binding":1,"type":{"ref":{"is":"declared","declared":"m.P"}},"aborts":[]},\
+                "type":{"ref":{"is":"declared","declared":"m.P"}},"aborts":[]},\
+                "type":{"ref":{"is":"declared","declared":"m.P"}},"aborts":[]}}],\
                 "definitions":[],"examples":[]}]}""");
     }
 

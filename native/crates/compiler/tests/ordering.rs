@@ -47,13 +47,13 @@ fn is_lowered(document: &str) {
 
 #[test]
 fn a_case_one_enumeration_lists_is_ordered_by_it() {
-    is_lowered(&ordering(r#"{"declared":"m.A"}"#));
+    is_lowered(&ordering(r#"{"ref":{"is":"declared","declared":"m.A"}}"#));
 }
 
 #[test]
 fn an_enumeration_is_ordered_by_itself_though_another_lists_its_cases() {
-    is_lowered(&ordering(r#"{"declared":"m.S"}"#));
-    is_lowered(&ordering(r#"{"declared":"m.T"}"#));
+    is_lowered(&ordering(r#"{"ref":{"is":"declared","declared":"m.S"}}"#));
+    is_lowered(&ordering(r#"{"ref":{"is":"declared","declared":"m.T"}}"#));
 }
 
 /// `m.A | m.B` is placed by `m.S` and by nothing else, since `m.T` does not list `m.A`: what orders
@@ -67,7 +67,8 @@ fn a_union_is_ordered_by_the_one_enumeration_listing_every_member() {
 
 #[test]
 fn a_case_two_enumerations_list_is_not_ordered_by_either() {
-    let refused = object_for(&ordering(r#"{"declared":"m.B"}"#)).expect_err("placed twice");
+    let refused = object_for(&ordering(r#"{"ref":{"is":"declared","declared":"m.B"}}"#))
+        .expect_err("placed twice");
     assert!(refused.downcast_ref::<NotLowered>().is_some(), "{refused}");
     assert!(
         refused.to_string().contains("no one enumeration"),

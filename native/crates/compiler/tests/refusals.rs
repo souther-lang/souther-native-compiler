@@ -5,7 +5,7 @@
 //! disagreeing about what they are saying to each other. The half that started the driver reports
 //! them to different people, so what is checked here is that they arrive apart.
 
-use souther_native_driver::transport::Program;
+use souther_native_driver::transport::{Program, TRANSPORT_VERSION};
 use souther_native_driver::{NotLowered, object_for};
 
 /// One behavior over one primitive, joined by one operator — the smallest document that reaches
@@ -104,7 +104,7 @@ fn is_refused_and_not_lowered(document: &str, naming: &str) {
 /// neither.
 #[test]
 fn a_sum_answering_other_than_a_number_is_the_halves_disagreeing() {
-    let amount = r#"{"declared":"counting.Amount"}"#;
+    let amount = r#"{"ref":{"is":"declared","declared":"counting.Amount"}}"#;
     let refused = object_for(&over("ADD", amount, amount)).expect_err("a sum answers a number");
     assert!(refused.downcast_ref::<NotLowered>().is_none(), "{refused}");
     assert!(refused.to_string().contains("calculation.f"), "{refused}");
@@ -115,7 +115,7 @@ fn a_sum_answering_other_than_a_number_is_the_halves_disagreeing() {
 /// answered an address that points at neither: refused as the two halves disagreeing.
 #[test]
 fn a_sum_of_a_number_and_an_address_is_the_halves_disagreeing_whichever_side_it_is_on() {
-    let amount = r#"{"declared":"counting.Amount"}"#;
+    let amount = r#"{"ref":{"is":"declared","declared":"counting.Amount"}}"#;
     let number = r#"{"prim":"INT"}"#;
     for (left, right) in [(number, amount), (amount, number)] {
         let refused = object_for(&over_answering("ADD", left, right, number))
@@ -183,11 +183,20 @@ fn a_field_this_driver_does_not_know_is_refused_rather_than_skipped() {
 /// would be reading a document written to mean something else.
 #[test]
 fn a_transport_from_another_version_is_refused() {
-    let later = document("ADD", "INT").replace(r#""transport":23"#, r#""transport":24"#);
+    let later = document("ADD", "INT").replace(
+        &format!(r#""transport":{TRANSPORT_VERSION}"#),
+        &format!(r#""transport":{}"#, TRANSPORT_VERSION + 1),
+    );
 
     let refused = object_for(&later).expect_err("a version this does not read");
 
-    assert!(refused.to_string().contains("23"), "{refused}");
+    assert!(
+        refused.to_string().contains(&format!(
+            "reads transport {TRANSPORT_VERSION} and was handed {}",
+            TRANSPORT_VERSION + 1
+        )),
+        "{refused}"
+    );
 }
 
 /// A behavior's parameter is a boundary shape, and a function is not one: the language gives a
@@ -309,9 +318,9 @@ fn a_transport_of_an_earlier_shape_is_refused_by_its_version() {
     let refused = object_for(earlier).expect_err("a transport of another version");
 
     assert!(
-        refused
-            .to_string()
-            .contains("this driver reads transport 23 and was handed 18"),
+        refused.to_string().contains(&format!(
+            "this driver reads transport {TRANSPORT_VERSION} and was handed 18"
+        )),
         "{refused}"
     );
 }
@@ -506,7 +515,7 @@ fn a_compositions_own_takes_disagreeing_with_its_first_stages_target_is_the_halv
 }
 
 /// A hand-written document where an `Apply`'s own applied function answers one declared type and
-/// the `Apply` node itself is typed as a different one — both `Ty::Declared`, so both share one
+/// the `Apply` node itself is typed as a different one — both a declared `Ty::Ref`, so both share one
 /// machine representation (`POINTER`). A check at machine representation alone, the same as
 /// `Apply`'s own arguments are held to, would pass this silently: the closure would store one
 /// type's address into `out` and the caller would read the same address back as the other type,
@@ -527,10 +536,10 @@ fn an_applys_answer_disagreeing_with_its_functions_own_type_is_the_halves_disagr
         r#""behaviors":[],"#,
         r#""modules":[{"name":"m","publishes":[],"#,
         r#""helpers":[{"reached":{"is":"own","module":"m","name":"f"},"#,
-        r#""parameters":[{"name":"f","type":{"fn":{"takes":[],"answers":{"declared":"m.A"}}}}],"#,
+        r#""parameters":[{"name":"f","type":{"fn":{"takes":[],"answers":{"ref":{"is":"declared","declared":"m.A"}}}}}],"#,
         r#""body":{"core":"apply","function":{"core":"read","binding":0,"#,
-        r#""type":{"fn":{"takes":[],"answers":{"declared":"m.A"}}},"aborts":[]},"#,
-        r#""arguments":[],"type":{"declared":"m.B"},"aborts":[]}}],"#,
+        r#""type":{"fn":{"takes":[],"answers":{"ref":{"is":"declared","declared":"m.A"}}}},"aborts":[]},"#,
+        r#""arguments":[],"type":{"ref":{"is":"declared","declared":"m.B"}},"aborts":[]}}],"#,
         r#""values":[],"entries":[],"definitions":[],"examples":[]}]}"#,
     );
 
@@ -557,11 +566,11 @@ fn a_published_answer_with_a_decimal_field_is_not_lowered_where_it_is_written() 
         r#"{"module":"m","name":"Priced","by":"amodule","is":"product","#,
         r#""fields":[{"name":"amount","binding":0,"codec":{"is":"scalar","scalar":"DECIMAL"}}],"invariants":[]}],"#,
         r#""behaviors":[{"module":"m","name":"same","is":"body","#,
-        r#""parameters":{"named":[{"name":"p0","input":{"is":"nominal","declared":"m.Priced"}}]},"#,
-        r#""output":{"is":"nominal","declared":"m.Priced"},"requirements":[],"ensures":{"at":"none"}}],"#,
+        r#""parameters":{"named":[{"name":"p0","input":{"is":"nominal","named":{"is":"declared","declared":"m.Priced"}}}]},"#,
+        r#""output":{"is":"nominal","named":{"is":"declared","declared":"m.Priced"}},"requirements":[],"ensures":{"at":"none"}}],"#,
         r#""modules":[{"name":"m","publishes":[],"helpers":[],"values":[],"entries":[],"definitions":["#,
         r#"{"is":"body","declared":"m.same","parameters":["p"],"publication":"published","#,
-        r#""body":{"core":"read","binding":0,"type":{"declared":"m.Priced"},"aborts":[]}}"#,
+        r#""body":{"core":"read","binding":0,"type":{"ref":{"is":"declared","declared":"m.Priced"}},"aborts":[]}}"#,
         r#"],"examples":[]}]}"#,
     );
 
@@ -587,11 +596,11 @@ fn answering_a_sum(case_fields: &str, form: &str) -> String {
             r#"{{"module":"m","name":"S","by":"amodule","is":"sum","#,
             r#""cases":[{{"is":"declared","declared":"m.C"}}],"form":{}}}],"#,
             r#""behaviors":[{{"module":"m","name":"same","is":"body","#,
-            r#""parameters":{{"named":[{{"name":"p0","input":{{"is":"nominal","declared":"m.S"}}}}]}},"#,
-            r#""output":{{"is":"nominal","declared":"m.S"}},"requirements":[],"ensures":{{"at":"none"}}}}],"#,
+            r#""parameters":{{"named":[{{"name":"p0","input":{{"is":"nominal","named":{{"is":"declared","declared":"m.S"}}}}}}]}},"#,
+            r#""output":{{"is":"nominal","named":{{"is":"declared","declared":"m.S"}}}},"requirements":[],"ensures":{{"at":"none"}}}}],"#,
             r#""modules":[{{"name":"m","publishes":[],"helpers":[],"values":[],"entries":[],"definitions":["#,
             r#"{{"is":"body","declared":"m.same","parameters":["s"],"publication":"published","#,
-            r#""body":{{"core":"read","binding":0,"type":{{"declared":"m.S"}},"aborts":[]}}}}"#,
+            r#""body":{{"core":"read","binding":0,"type":{{"ref":{{"is":"declared","declared":"m.S"}}}},"aborts":[]}}}}"#,
             r#"],"examples":[]}}]}}"#
         ),
         case_fields, form
@@ -646,12 +655,12 @@ fn a_construction_disagreeing_with_what_its_field_carries_is_the_halves_disagree
         r#"{"module":"m","name":"P","by":"amodule","is":"product","#,
         r#""fields":[{"name":"n","binding":0,"codec":{"is":"scalar","scalar":"STRING"}}],"invariants":[]}],"#,
         r#""behaviors":[{"module":"m","name":"make","is":"body","parameters":{"named":[]},"#,
-        r#""output":{"is":"nominal","declared":"m.P"},"requirements":[],"ensures":{"at":"none"}}],"#,
+        r#""output":{"is":"nominal","named":{"is":"declared","declared":"m.P"}},"requirements":[],"ensures":{"at":"none"}}],"#,
         r#""modules":[{"name":"m","publishes":[],"helpers":[],"values":[],"entries":[],"definitions":["#,
         r#"{"is":"body","declared":"m.make","parameters":[],"publication":"kept","#,
         r#""body":{"core":"construct","declared":"m.P","#,
         r#""values":[{"core":"int","value":42,"type":{"prim":"INT"},"aborts":[]}],"#,
-        r#""type":{"declared":"m.P"},"aborts":[]}}"#,
+        r#""type":{"ref":{"is":"declared","declared":"m.P"}},"aborts":[]}}"#,
         r#"],"examples":[]}]}"#,
     );
 
@@ -679,11 +688,11 @@ fn building(codec: &str, value: &str) -> String {
             r#"{{"module":"m","name":"P","by":"amodule","is":"product","#,
             r#""fields":[{{"name":"f","binding":0,"codec":{}}}],"invariants":[]}}],"#,
             r#""behaviors":[{{"module":"m","name":"make","is":"body","parameters":{{"named":[]}},"#,
-            r#""output":{{"is":"nominal","declared":"m.P"}},"requirements":[],"ensures":{{"at":"none"}}}}],"#,
+            r#""output":{{"is":"nominal","named":{{"is":"declared","declared":"m.P"}}}},"requirements":[],"ensures":{{"at":"none"}}}}],"#,
             r#""modules":[{{"name":"m","publishes":[],"helpers":[],"values":[],"entries":[],"definitions":["#,
             r#"{{"is":"body","declared":"m.make","parameters":[],"publication":"kept","#,
             r#""body":{{"core":"construct","declared":"m.P","values":[{}],"#,
-            r#""type":{{"declared":"m.P"}},"aborts":[]}}}}"#,
+            r#""type":{{"ref":{{"is":"declared","declared":"m.P"}}}},"aborts":[]}}}}"#,
             r#"],"examples":[]}}]}}"#
         ),
         codec, value
@@ -692,7 +701,7 @@ fn building(codec: &str, value: &str) -> String {
 
 fn unit(declared: &str) -> String {
     format!(
-        r#"{{"core":"unit","declared":"{declared}","type":{{"declared":"{declared}"}},"aborts":[]}}"#
+        r#"{{"core":"unit","unit":{{"is":"declared","declared":"{declared}"}},"type":{{"ref":{{"is":"declared","declared":"{declared}"}}}},"aborts":[]}}"#
     )
 }
 
@@ -701,7 +710,10 @@ fn unit(declared: &str) -> String {
 /// declaration lays its fields out.
 #[test]
 fn a_field_of_one_declaration_given_a_value_of_another_is_the_halves_disagreeing() {
-    let document = building(r#"{"is":"named","declared":"m.A"}"#, &unit("m.U"));
+    let document = building(
+        r#"{"is":"named","named":{"is":"declared","declared":"m.A"}}"#,
+        &unit("m.U"),
+    );
 
     let refused = object_for(&document).expect_err("m.U put where the field carries m.A");
 
@@ -717,9 +729,11 @@ fn a_field_of_one_declaration_given_a_value_of_another_is_the_halves_disagreeing
 /// of the sum is.
 #[test]
 fn a_field_of_a_sum_given_a_value_of_one_of_its_cases_is_built() {
-    let named_sum = r#"{"is":"named","declared":"m.S"}"#;
+    let named_sum = r#"{"is":"named","named":{"is":"declared","declared":"m.S"}}"#;
     let standing = |value: &str| {
-        format!(r#"{{"core":"widen","value":{value},"type":{{"declared":"m.S"}},"aborts":[]}}"#)
+        format!(
+            r#"{{"core":"widen","value":{value},"type":{{"ref":{{"is":"declared","declared":"m.S"}}}},"aborts":[]}}"#
+        )
     };
 
     object_for(&building(named_sum, &standing(&unit("m.B")))).expect("m.B is a case of m.S");
@@ -822,9 +836,9 @@ fn a_body_naming_more_parameters_than_its_target_takes_is_the_halves_disagreeing
 /// What a body answers is a value of what its target answers, which the boundary writes it as.
 #[test]
 fn a_body_answering_other_than_its_target_is_the_halves_disagreeing() {
-    let document = building(r#"{"is":"named","declared":"m.A"}"#, &unit("m.A")).replace(
-        r#""output":{"is":"nominal","declared":"m.P"},"requirements":[],"ensures":{"at":"none"}"#,
-        r#""output":{"is":"nominal","declared":"m.U"},"requirements":[],"ensures":{"at":"none"}"#,
+    let document = building(r#"{"is":"named","named":{"is":"declared","declared":"m.A"}}"#, &unit("m.A")).replace(
+        r#""output":{"is":"nominal","named":{"is":"declared","declared":"m.P"}},"requirements":[],"ensures":{"at":"none"}"#,
+        r#""output":{"is":"nominal","named":{"is":"declared","declared":"m.U"}},"requirements":[],"ensures":{"at":"none"}"#,
     );
     is_the_halves_disagreeing(&document, "m.make");
 }

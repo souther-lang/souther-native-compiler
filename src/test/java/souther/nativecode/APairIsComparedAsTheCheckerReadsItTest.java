@@ -151,7 +151,7 @@ class APairIsComparedAsTheCheckerReadsItTest {
     @Test
     void theCheckerReadsTheLiteralAsTheNewtype() {
         assertThat(ProgramWriter.written(program))
-                .contains("\"reading\":{\"is\":\"in\",\"type\":{\"declared\":\"comparing.Amount\"}}");
+                .contains("\"reading\":{\"is\":\"in\",\"type\":{\"ref\":{\"is\":\"declared\",\"declared\":\"comparing.Amount\"}}}");
     }
 
     @Test

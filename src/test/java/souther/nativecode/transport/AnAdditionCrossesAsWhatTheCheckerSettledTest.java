@@ -118,7 +118,7 @@ class AnAdditionCrossesAsWhatTheCheckerSettledTest {
                 let ignore (token) = 42
                 """)));
 
-        assertThat(written).contains("{\"name\":\"token\",\"input\":{\"is\":\"nominal\",\"declared\":\"demo.Token\"}}");
+        assertThat(written).contains("{\"name\":\"token\",\"input\":{\"is\":\"nominal\",\"named\":{\"is\":\"declared\",\"declared\":\"demo.Token\"}}}");
         assertThat(written).contains(
                 "{\"module\":\"demo\",\"name\":\"Token\",\"by\":\"amodule\",\"is\":\"product\"");
         // And what that one holds, which nothing but its declaration names: found while the

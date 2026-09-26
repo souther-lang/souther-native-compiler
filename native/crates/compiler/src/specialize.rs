@@ -69,7 +69,7 @@ impl Substitution {
             }
             (Ty::Prim { prim }, Ty::Prim { prim: also }) => prim == also,
             (Ty::Nothing { .. }, Ty::Nothing { .. }) => true,
-            (Ty::Declared { declared }, Ty::Declared { declared: also }) => declared == also,
+            (Ty::Ref { named }, Ty::Ref { named: also }) => named == also,
             (Ty::Union { union }, Ty::Union { union: also }) => union == also,
             (Ty::Option { option: held }, Ty::Option { option: also })
             | (Ty::List { list: held }, Ty::List { list: also })
@@ -91,7 +91,7 @@ impl Substitution {
             }
             (
                 Ty::Prim { .. }
-                | Ty::Declared { .. }
+                | Ty::Ref { .. }
                 | Ty::Union { .. }
                 | Ty::Option { .. }
                 | Ty::List { .. }
@@ -99,7 +99,8 @@ impl Substitution {
                 | Ty::Tuple { .. }
                 | Ty::Fn { .. }
                 | Ty::Map { .. }
-                | Ty::Nothing { .. },
+                | Ty::Nothing { .. }
+                | Ty::Never { .. },
                 _,
             ) => false,
         }
@@ -109,9 +110,11 @@ impl Substitution {
     pub(crate) fn applied(&self, ty: &Ty) -> Option<Ty> {
         Some(match ty {
             Ty::Var { var } => self.0.get(*var)?.clone()?,
-            Ty::Prim { .. } | Ty::Declared { .. } | Ty::Union { .. } | Ty::Nothing { .. } => {
-                ty.clone()
-            }
+            Ty::Prim { .. }
+            | Ty::Ref { .. }
+            | Ty::Union { .. }
+            | Ty::Nothing { .. }
+            | Ty::Never { .. } => ty.clone(),
             Ty::Option { option } => Ty::Option {
                 option: Box::new(self.applied(option)?),
             },

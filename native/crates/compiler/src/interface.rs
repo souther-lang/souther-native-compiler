@@ -20,7 +20,7 @@
 //! and the name apart, read off the declaration.
 
 use crate::manifest::{self, Carried, Manifest, Parameter, Word};
-use crate::transport::{self, AbortKind, Declaration, Prim, Ty};
+use crate::transport::{self, AbortKind, Case, Declaration, Prim, Ty};
 use crate::{Declared, POINTER, index, native_status};
 use anyhow::{Result, bail};
 use cranelift::codegen::ir::{self, AbiParam, types};
@@ -1006,7 +1006,9 @@ fn type_of(ty: &Ty, declared: &Declared) -> manifest::Type {
         Ty::Prim { prim } => manifest::Type::Primitive {
             name: primitive(*prim),
         },
-        Ty::Declared { declared: key } => {
+        Ty::Ref {
+            named: Case::Declared { declared: key },
+        } => {
             let declaration = declared.laid(key);
             manifest::Type::Declared {
                 module: declaration.module().to_string(),
@@ -1032,6 +1034,17 @@ fn type_of(ty: &Ty, declared: &Declared) -> manifest::Type {
         Ty::Nothing { .. } => unreachable!(
             "no source writes the type of what has no value, so a boundary is never read as one, \
              and a published value of one is refused before it is described (`define_values`)"
+        ),
+        Ty::Never { .. } => unreachable!(
+            "no source writes the type of what does not answer, so a boundary is never read as \
+             one, and a value of one is laid out nowhere (`machine_type`)"
+        ),
+        Ty::Ref {
+            named: Case::Primitive { .. } | Case::Language { .. },
+        } => unreachable!(
+            "{} named as a type on its own is handed to no host (`whole`), since no behavior may \
+             take or answer one on its own",
+            ty.spelt()
         ),
     }
 }

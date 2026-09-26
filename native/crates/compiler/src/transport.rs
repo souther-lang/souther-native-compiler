@@ -67,6 +67,13 @@ pub const MOVES: &[(u32, &str)] = &[
         "what a `String.matches` pattern means as the checker read it (`meaning`), beside the text \
          it was written as (`written`), in place of the text alone",
     ),
+    (
+        24,
+        "a type named wherever the checker names one, as which of the three it is: a type \
+         reference (`ref`), what a field, a key or a boundary is named by (`named`), a unit \
+         (`unit`); the type of what does not answer (`never`), and where the run ends \
+         (`unreachable`)",
+    ),
 ];
 
 /// A document of [`TRANSPORT_VERSION`], and no other, read through [`Program::read`] and nothing
@@ -1119,7 +1126,7 @@ pub enum BoundaryInput {
         scalar: LeafScalar,
     },
     Nominal {
-        declared: String,
+        named: Case,
     },
     ListOf {
         element: Box<BoundaryInput>,
@@ -1139,8 +1146,8 @@ impl BoundaryInput {
             BoundaryInput::Scalar { scalar } => Ty::Prim {
                 prim: scalar.prim(),
             },
-            BoundaryInput::Nominal { declared } => Ty::Declared {
-                declared: declared.clone(),
+            BoundaryInput::Nominal { named } => Ty::Ref {
+                named: named.clone(),
             },
             BoundaryInput::ListOf { element } => Ty::List {
                 list: Box::new(element.ty()),
@@ -1166,7 +1173,7 @@ pub enum BoundaryOutput {
         scalar: LeafScalar,
     },
     Nominal {
-        declared: String,
+        named: Case,
     },
     ListOf {
         element: Box<BoundaryOutput>,
@@ -1194,8 +1201,8 @@ impl BoundaryOutput {
             BoundaryOutput::Scalar { scalar } => Ty::Prim {
                 prim: scalar.prim(),
             },
-            BoundaryOutput::Nominal { declared } => Ty::Declared {
-                declared: declared.clone(),
+            BoundaryOutput::Nominal { named } => Ty::Ref {
+                named: named.clone(),
             },
             BoundaryOutput::ListOf { element } => Ty::List {
                 list: Box::new(element.ty()),
@@ -1223,7 +1230,7 @@ pub enum MapKey {
     Time,
     DateTime,
     Instant,
-    NamedKey { declared: String },
+    NamedKey { named: Case },
 }
 
 impl MapKey {
@@ -1238,8 +1245,8 @@ impl MapKey {
             MapKey::Instant => Ty::Prim {
                 prim: Prim::Instant,
             },
-            MapKey::NamedKey { declared } => Ty::Declared {
-                declared: declared.clone(),
+            MapKey::NamedKey { named } => Ty::Ref {
+                named: named.clone(),
             },
         }
     }
@@ -1290,7 +1297,7 @@ pub enum CodecShape {
         scalar: LeafScalar,
     },
     Named {
-        declared: String,
+        named: Case,
     },
     ListOf {
         element: Box<CodecShape>,
@@ -1316,8 +1323,8 @@ impl CodecShape {
             CodecShape::Scalar { scalar } => Ty::Prim {
                 prim: scalar.prim(),
             },
-            CodecShape::Named { declared } => Ty::Declared {
-                declared: declared.clone(),
+            CodecShape::Named { named } => Ty::Ref {
+                named: named.clone(),
             },
             CodecShape::ListOf { element } => Ty::List {
                 list: Box::new(element.ty()),
@@ -1447,8 +1454,13 @@ impl<'c> IntoIterator for &'c Cases {
     }
 }
 
-/// Which case a name is: one a module declares, a primitive standing as a case, or one the
-/// language gives. The identity only — how a case is written is read off what it reaches.
+/// Which type a name is: one a module declares, a primitive standing as one, or one the language
+/// gives. Written wherever the checker names a type — a union's member, a sum's case, a type
+/// reference, what a field, a key or a boundary is named by, a unit — so a primitive or a case
+/// the language gives named where a declaration usually stands is read as what it is, and whether
+/// it has a representation there is the lowering's to answer.
+///
+/// The identity only — how a case is written is read off what it reaches.
 #[derive(Debug, Deserialize, PartialEq, Eq, Hash, Clone)]
 #[serde(tag = "is", rename_all = "lowercase", deny_unknown_fields)]
 pub enum Case {
@@ -1458,6 +1470,14 @@ pub enum Case {
 }
 
 impl Case {
+    /// The key of the declaration this is, where a module declares it.
+    pub fn declared(&self) -> Option<&str> {
+        match self {
+            Case::Declared { declared } => Some(declared),
+            Case::Primitive { .. } | Case::Language { .. } => None,
+        }
+    }
+
     pub fn spelt(&self) -> String {
         match self {
             Case::Declared { declared } => declared.clone(),
@@ -1699,11 +1719,13 @@ pub enum Ty {
     Prim {
         prim: Prim,
     },
-    /// A declaration of the document, by the key that reaches one. The key is what a reference
-    /// says and not what a declaration is made of: the module and the name apart are carried by
-    /// the declaration, and this finds it.
-    Declared {
-        declared: String,
+    /// A type by its name: a declaration of the document, by the key that reaches one, or a
+    /// primitive or a case the language gives, named as a type. The key is what a reference says
+    /// and not what a declaration is made of: the module and the name apart are carried by the
+    /// declaration, and this finds it.
+    Ref {
+        #[serde(rename = "ref")]
+        named: Case,
     },
     /// Several cases, any one of which a value here may be. A declared one says which it is, so a
     /// union of those is written nowhere at run time: what holds it is what holds one of them. A
@@ -1747,6 +1769,12 @@ pub enum Ty {
     Nothing {
         nothing: Bottom,
     },
+    /// The type of what does not answer: a computation that ends the run. Not [`Ty::Nothing`],
+    /// which is a type inference had not filled in; this one is settled. No value of it is ever
+    /// made, so nothing is laid out for one — and that is not a width chosen for it.
+    Never {
+        never: Bottom,
+    },
 }
 
 /// What [`Ty::Nothing`] is written with, which is nothing: an object with no field, read strictly
@@ -1774,10 +1802,19 @@ pub struct FnSignature {
 }
 
 impl Ty {
+    /// A declaration of the document, as a type, by the key that reaches it.
+    pub fn declared(key: impl Into<String>) -> Ty {
+        Ty::Ref {
+            named: Case::Declared {
+                declared: key.into(),
+            },
+        }
+    }
+
     pub fn spelt(&self) -> String {
         match self {
             Ty::Prim { prim } => prim.spelt().to_string(),
-            Ty::Declared { declared } => declared.clone(),
+            Ty::Ref { named } => named.spelt(),
             Ty::Union { union } => union
                 .iter()
                 .map(Case::spelt)
@@ -1799,6 +1836,7 @@ impl Ty {
             Ty::Map { map } => format!("a Map from {} to {}", map.key.spelt(), map.value.spelt()),
             Ty::Var { var } => format!("the type variable {var}"),
             Ty::Nothing { .. } => "Nothing".to_string(),
+            Ty::Never { .. } => "Never".to_string(),
         }
     }
 
@@ -1809,10 +1847,11 @@ impl Ty {
     pub fn members(&self) -> Vec<&Ty> {
         match self {
             Ty::Prim { .. }
-            | Ty::Declared { .. }
+            | Ty::Ref { .. }
             | Ty::Union { .. }
             | Ty::Var { .. }
-            | Ty::Nothing { .. } => Vec::new(),
+            | Ty::Nothing { .. }
+            | Ty::Never { .. } => Vec::new(),
             Ty::Option { option: held } | Ty::List { list: held } | Ty::Set { set: held } => {
                 vec![held]
             }
@@ -1925,7 +1964,7 @@ pub enum Node {
     },
     /// A value of a type with nothing in it. It still says which type it is: that is what it is.
     Unit {
-        declared: String,
+        unit: Case,
         #[serde(rename = "type")]
         ty: Ty,
         aborts: Vec<AbortKind>,
@@ -2047,6 +2086,16 @@ pub enum Node {
     /// nothing here works it out again.
     Widen {
         value: Box<Node>,
+        #[serde(rename = "type")]
+        ty: Ty,
+        aborts: Vec<AbortKind>,
+    },
+    /// Where the run ends, with the reason the author wrote. `type` is what the position it stands
+    /// in takes, which the checker states; nothing is made of that type here, since nothing past
+    /// this point runs. The reason is carried though the status a run ends with has no room for
+    /// it yet.
+    Unreachable {
+        reason: String,
         #[serde(rename = "type")]
         ty: Ty,
         aborts: Vec<AbortKind>,
@@ -2476,7 +2525,12 @@ impl Node {
                 aborts: _,
             }
             | Node::Unit {
-                declared: _,
+                unit: _,
+                ty,
+                aborts: _,
+            }
+            | Node::Unreachable {
+                reason: _,
                 ty,
                 aborts: _,
             }
@@ -2607,6 +2661,7 @@ impl Node {
             | Node::List { ty, .. }
             | Node::Block { ty, .. }
             | Node::Widen { ty, .. }
+            | Node::Unreachable { ty, .. }
             | Node::Apply { ty, .. } => vec![ty],
             Node::Binary { reading, ty, .. } => {
                 std::iter::once(ty).chain(reading.types_mut()).collect()
@@ -2664,6 +2719,7 @@ impl Node {
             | Node::Bool { .. }
             | Node::Str { .. }
             | Node::Unit { .. }
+            | Node::Unreachable { .. }
             | Node::None { .. } => Vec::new(),
         }
     }
@@ -2692,6 +2748,7 @@ impl Node {
             | Node::Call { aborts, .. }
             | Node::Block { aborts, .. }
             | Node::Widen { aborts, .. }
+            | Node::Unreachable { aborts, .. }
             | Node::Apply { aborts, .. } => aborts,
         }
     }
@@ -2721,7 +2778,8 @@ impl Node {
                 | Op::Or
                 | Op::Concat => false,
             },
-            Node::Neg { .. } | Node::Construct { .. } => true,
+            // An `unreachable` is where the run ends, and ending it is all it does.
+            Node::Neg { .. } | Node::Construct { .. } | Node::Unreachable { .. } => true,
             Node::Call { reaches, .. } => matches!(reaches, Reaches::Kernel { .. }),
             Node::Int { .. }
             | Node::Read { .. }
@@ -2789,6 +2847,7 @@ impl Node {
             | Node::Bool { .. }
             | Node::Str { .. }
             | Node::Unit { .. }
+            | Node::Unreachable { .. }
             | Node::None { .. } => Vec::new(),
         }
     }
@@ -2804,7 +2863,10 @@ impl Node {
     /// constructor ([`Node::attempts`]).
     pub fn builds(&self) -> Option<&str> {
         match self {
-            Node::Construct { declared, .. } | Node::Unit { declared, .. } => Some(declared),
+            Node::Construct { declared, .. } => Some(declared),
+            // A unit a module declares is built by its constructor. One the language gives is
+            // the runtime's token and is built by nothing here.
+            Node::Unit { unit, .. } => unit.declared(),
             Node::Attempt { .. }
             | Node::Int { .. }
             | Node::Read { .. }
@@ -2824,7 +2886,8 @@ impl Node {
             | Node::Call { .. }
             | Node::Block { .. }
             | Node::Apply { .. }
-            | Node::Widen { .. } => None,
+            | Node::Widen { .. }
+            | Node::Unreachable { .. } => None,
         }
     }
 
@@ -2856,7 +2919,8 @@ impl Node {
             | Node::Call { .. }
             | Node::Block { .. }
             | Node::Apply { .. }
-            | Node::Widen { .. } => None,
+            | Node::Widen { .. }
+            | Node::Unreachable { .. } => None,
         }
     }
 
@@ -2902,7 +2966,8 @@ impl Node {
             | Node::Call { ty, .. }
             | Node::Block { ty, .. }
             | Node::Apply { ty, .. }
-            | Node::Widen { ty, .. } => ty,
+            | Node::Widen { ty, .. }
+            | Node::Unreachable { ty, .. } => ty,
         }
     }
 }

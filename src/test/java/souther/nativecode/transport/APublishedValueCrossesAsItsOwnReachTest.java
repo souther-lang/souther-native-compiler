@@ -58,7 +58,7 @@ class APublishedValueCrossesAsItsOwnReachTest {
         // and with no arguments, since none of ys's own handovers are reader's to supply.
         assertThat(written).contains(
                 "\"declared\":\"reader.g\",\"parameters\":[],\"publication\":\"published\","
-                        + "\"body\":{\"core\":\"let\",\"binding\":0,\"binds\":{\"declared\":\"publisher.Box\"},"
+                        + "\"body\":{\"core\":\"let\",\"binding\":0,\"binds\":{\"ref\":{\"is\":\"declared\",\"declared\":\"publisher.Box\"}},"
                         + "\"value\":{\"core\":\"call\","
                         + "\"reaches\":{\"is\":\"publishedvalue\",\"module\":\"publisher\","
                         + "\"name\":\"ys\"},\"arguments\":[]");
