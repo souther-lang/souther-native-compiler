@@ -161,7 +161,7 @@ class AnAttemptedConstructionTakesTheArmItsClauseNamesTest {
      */
     @Test
     void itCrossesAsAnAttemptAndNotAsAConstruction() {
-        String written = ProgramWriter.written(CheckedProgram.of(List.of(SOURCE)));
+        String written = ProgramWriter.written(Checked.of(List.of(SOURCE)));
 
         assertThat(written)
                 .contains("{\"core\":\"attempt\",\"declared\":\"attempting.Span\"")
@@ -171,7 +171,7 @@ class AnAttemptedConstructionTakesTheArmItsClauseNamesTest {
     }
 
     private static RunOutcome ran(String behavior, long lo, long hi) throws Exception {
-        CheckedProgram program = CheckedProgram.of(List.of(SOURCE));
+        CheckedProgram program = Checked.of(List.of(SOURCE));
         CheckedModule module = program.modules().getFirst();
         CheckedBehavior reached = module.behaviors().stream()
                 .filter(it -> it.name().name().equals(behavior))

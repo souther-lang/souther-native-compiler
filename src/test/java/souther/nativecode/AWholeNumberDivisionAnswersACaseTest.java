@@ -225,7 +225,7 @@ class AWholeNumberDivisionAnswersACaseTest {
     }
 
     private static RunOutcome outcome(String behavior, long... handed) throws Exception {
-        CheckedProgram program = CheckedProgram.of(List.of(SOURCE));
+        CheckedProgram program = Checked.of(List.of(SOURCE));
         Running running = Running.of(program);
         CheckedModule module = program.modules().getFirst();
         CheckedBehavior reached = module.behaviors().stream()

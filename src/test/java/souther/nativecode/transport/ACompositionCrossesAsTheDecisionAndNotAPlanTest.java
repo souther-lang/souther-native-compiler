@@ -1,7 +1,7 @@
 package souther.nativecode.transport;
 
+import souther.nativecode.Checked;
 import org.junit.jupiter.api.Test;
-import souther.compiler.program.CheckedProgram;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -60,7 +60,7 @@ class ACompositionCrossesAsTheDecisionAndNotAPlanTest {
 
     @Test
     void aStageIsCalledAndItsRoutingTestsWhatTheCheckerResolved() {
-        String written = ProgramWriter.written(CheckedProgram.of(List.of(ROUTED)));
+        String written = ProgramWriter.written(Checked.of(List.of(ROUTED)));
 
         assertThat(written).contains("\"is\":\"composed\",\"declared\":\"routing.pipeline\"");
         assertThat(written).contains("\"stages\":[");
@@ -85,6 +85,6 @@ class ACompositionCrossesAsTheDecisionAndNotAPlanTest {
     @Test
     void theFixtureTheDriverIsTestedAgainstIsWhatThisWrites() throws IOException {
         assertThat(Files.readString(FIXTURE, StandardCharsets.UTF_8).strip())
-                .isEqualTo(ProgramWriter.written(CheckedProgram.of(List.of(ROUTED))));
+                .isEqualTo(ProgramWriter.written(Checked.of(List.of(ROUTED))));
     }
 }

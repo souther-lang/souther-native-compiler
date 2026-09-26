@@ -108,14 +108,22 @@ value. `/` answers the exact quotient, which is a `Rational` and has no represen
 `-` of a literal is folded at compile time, and of anything else ends the run where it leaves the
 range, the way `+`, `-` and `*` do.
 
-An operation the language implements as a kernel: `Int.add`, reusing the same instructions `+`
-does; `Int.truncatingDivide` and `Int.truncatingRemainder`, which answer `Int | DivisionByZero`
-and end a quotient only on the smallest `Int` over -1; and `String.length`, which counts code points
-and not the bytes a string is held in. Every other kernel is still ahead — including everything
-else a program does with text beyond a literal, the six comparisons and `++`, which the language
-reaches through one. What a comparison of two strings compares is neither of the two addresses and
-not the bytes either — the language orders text by UTF-16 code unit, and says so of every carrier
-whatever one stores a string as.
+An operation the language implements as a kernel, over `Int` and over `String`, every one the
+language declares but the two that read or write a `Decimal`. `Int.add`, `Int.subtract` and
+`Int.multiply` are the instructions `+`, `-` and `*` are; `Int.compare` and `Int.floorMod` are
+emitted beside them; `Int.truncatingDivide` and `Int.truncatingRemainder` answer
+`Int | DivisionByZero` and end a quotient only on the smallest `Int` over -1. Everything that walks
+text is a call into the runtime, which hands the text to `souther-text`: that crate is what the
+language says text means, over bytes alone, and where the wasm runtime is to read it from as well
+(#17). A string is a sequence of Unicode scalar values kept as UTF-8, so two are ordered by comparing
+their bytes, which are in scalar-value order; its length and every index count code points. What
+builds a string — `++`, `append`, `join`, `replace`, `reverse`, `repeat`, the pads and the case
+mappings — puts it in NFC, and NFC and case are Unicode 18.0.0's, generated from the Unicode
+Character Database by `scripts/GenerateUnicodeTables.java` rather than taken from a crate's own
+version. `String.matches` runs what the checker read the pattern as, compiled to a machine the
+object carries; nothing here reads pattern text. A kernel that can end a run for some of what it
+is handed — a slice the string has no room for, a zero divisor to `floorMod`, a count `repeat`
+cannot make — ends it with the reason the call names, and the runtime says only whether it answered.
 
 A value of a union says which case it is by the token at the front of it. A declared case's token is
 its declaration's; an `Int`, a `Bool` or a `String` standing as a case, and a case the language
@@ -279,8 +287,8 @@ the element's index (`/lines/2/quantity`). Two values of one type compare by wha
 of, a list element by element, through a comparator the object holds per type.
 
 Still ahead: a `Decimal`, a `Set` and a `Map`,
-every kernel but `Int.add`, `Int.truncatingDivide`, `Int.truncatingRemainder`,
-`String.length`, `List.length` and `List.get`, a value
+every kernel over a `Decimal`, a `Set`, a `Map` or a date, every list kernel but `List.length` and
+`List.get`, a value
 that runs in the module declaring it, and a
 behavior that declares what its answer owes, which is refused rather than answered without the
 rule being run. A set, a map and

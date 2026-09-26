@@ -97,7 +97,7 @@ class AValueIsReadFromTheFormItIsWrittenInTest {
 
     @Test
     void aDocumentIsReadAsTheLanguageWritesAValueAndEveryMistakeInItIsAnswered() throws Exception {
-        String said = run(CheckedProgram.of(List.of(WIRE)), ROWS.harness());
+        String said = run(Checked.of(List.of(WIRE)), ROWS.harness());
 
         assertThat(said).isEqualTo("""
                 line: value {"price":3,"quantity":2,"note":"gift wrap","gift":true}
@@ -175,7 +175,7 @@ class AValueIsReadFromTheFormItIsWrittenInTest {
                 .row("read", "Line", "{\"price\":3,\"quantity\":2,\"note\":\"gift wrap\",\"gift\":true}")
                 .harness();
 
-        assertThat(run(CheckedProgram.of(List.of(WIRE)), harness)).isEqualTo("""
+        assertThat(run(Checked.of(List.of(WIRE)), harness)).isEqualTo("""
                 built: {"price":3,"quantity":2,"note":"gift wrap","gift":true}
                 read quantity: 2
                 read: value {"price":3,"quantity":2,"note":"gift wrap","gift":true}
@@ -189,7 +189,7 @@ class AValueIsReadFromTheFormItIsWrittenInTest {
      */
     @Test
     void whatAHostReadsAndWritesIsWhatTheModulePublishesWithAForm() throws Exception {
-        Set<String> defined = NativeArtifacts.built(CheckedProgram.of(List.of("""
+        Set<String> defined = NativeArtifacts.built(Checked.of(List.of("""
                 module shop exposing ( Money, Partial, Kind )
 
                 data Money = Int
@@ -217,7 +217,7 @@ class AValueIsReadFromTheFormItIsWrittenInTest {
      */
     @Test
     void theKeysASetOfAlternativesTravelsUnderAreTheOnesTheProgramCarries() throws Exception {
-        String written = ProgramWriter.written(CheckedProgram.of(List.of(WIRE)));
+        String written = ProgramWriter.written(Checked.of(List.of(WIRE)));
         String discriminated = "\"tag\":\"type\",\"contents\":\"value\"";
         assertThat(written).contains(discriminated);
         byte[] object = NativeCompiler.driven(written.replace(discriminated,

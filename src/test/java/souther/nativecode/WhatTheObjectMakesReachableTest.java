@@ -52,7 +52,7 @@ class WhatTheObjectMakesReachableTest {
     @Test
     void aNameTheModulePublishesIsInTheSymbolTableAndOneItKeepsIsLocalToTheObject()
             throws Exception {
-        Map<String, String> table = named(CheckedProgram.of(List.of(SURFACE)));
+        Map<String, String> table = named(Checked.of(List.of(SURFACE)));
 
         assertThat(table)
                 .as("what the object carries: %s", table)
@@ -64,14 +64,14 @@ class WhatTheObjectMakesReachableTest {
      * A type is built through the object of the build that declares it, and what that object
      * makes reachable is what the module says of the type. One it publishes can be named, and so
      * built, by another build; one it keeps and builds here through its clauses is built here and
-     * nowhere else; one it keeps and nothing here builds has no constructor at all, and its clause,
-     * which this backend cannot lower, refuses nothing. One it keeps that states no clause has no
+     * nowhere else; one it keeps and nothing here builds has no constructor at all, and its clause
+     * is not lowered, having nothing to refuse. One it keeps that states no clause has no
      * constructor either, though a body builds it: there is nothing for one to run, and the value
      * is laid out where it is built.
      */
     @Test
     void aTypeIsBuiltWhereTheModuleSaysAndNowhereItDoesNot() throws Exception {
-        Map<String, String> table = named(CheckedProgram.of(List.of("""
+        Map<String, String> table = named(Checked.of(List.of("""
                 module shaped exposing ( Open, made )
 
                 data Open = { n: Int }
@@ -106,7 +106,7 @@ class WhatTheObjectMakesReachableTest {
      */
     @Test
     void everyRowOfAKeptBehaviorHoldsAllTheSame() throws Exception {
-        CheckedProgram program = CheckedProgram.of(List.of(SURFACE));
+        CheckedProgram program = Checked.of(List.of(SURFACE));
         int asked = 0;
         Running running = Running.of(program);
         CheckedModule module = program.modules().getFirst();
@@ -131,7 +131,7 @@ class WhatTheObjectMakesReachableTest {
      */
     @Test
     void reachingAKeptBehaviorItselfSaysThatIsWhatTheModuleDecided() throws Exception {
-        CheckedProgram program = CheckedProgram.of(List.of(SURFACE));
+        CheckedProgram program = Checked.of(List.of(SURFACE));
         Running running = Running.of(program);
         CheckedModule module = program.modules().getFirst();
         CheckedBehavior kept = behaviorOf(module, "hidden");
@@ -145,7 +145,7 @@ class WhatTheObjectMakesReachableTest {
     /** The row entries the object carries, which are reached whatever the module publishes. */
     @Test
     void theObjectCarriesAnEntryForEveryRowItWasHandedValuesFor() throws Exception {
-        Map<String, String> table = named(CheckedProgram.of(List.of(SURFACE)));
+        Map<String, String> table = named(Checked.of(List.of(SURFACE)));
 
         assertThat(table)
                 .containsEntry("souther4.surfaced.hidden$example$0", "T")
@@ -159,7 +159,7 @@ class WhatTheObjectMakesReachableTest {
      */
     @Test
     void aBoundaryIsOfferedWhereTheEntryItRunsIsReachedFromOutside() throws Exception {
-        Map<String, String> table = named(CheckedProgram.of(List.of(SURFACE)));
+        Map<String, String> table = named(Checked.of(List.of(SURFACE)));
 
         assertThat(table)
                 .as("what the object carries: %s", table)

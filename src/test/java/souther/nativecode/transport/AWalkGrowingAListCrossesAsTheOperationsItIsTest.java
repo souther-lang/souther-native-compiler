@@ -1,7 +1,7 @@
 package souther.nativecode.transport;
 
+import souther.nativecode.Checked;
 import org.junit.jupiter.api.Test;
-import souther.compiler.program.CheckedProgram;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -47,12 +47,12 @@ class AWalkGrowingAListCrossesAsTheOperationsItIsTest {
     @Test
     void theFixtureTheDriverIsTestedAgainstIsWhatThisWrites() throws IOException {
         assertThat(Files.readString(FIXTURE, StandardCharsets.UTF_8).strip())
-                .isEqualTo(ProgramWriter.written(CheckedProgram.of(List.of(MODULE))));
+                .isEqualTo(ProgramWriter.written(Checked.of(List.of(MODULE))));
     }
 
     @Test
     void theWalkAndItsGrowthCrossAsTheMembersTheyAre() {
-        String written = ProgramWriter.written(CheckedProgram.of(List.of(MODULE)));
+        String written = ProgramWriter.written(Checked.of(List.of(MODULE)));
 
         assertThat(written)
                 .contains("{\"is\":\"emitted\",\"operation\":\"BUILD_LIST\"}")
@@ -61,10 +61,15 @@ class AWalkGrowingAListCrossesAsTheOperationsItIsTest {
                 .doesNotContain("List.$grow");
     }
 
+    /**
+     * The {@code []} a walk is seeded with crosses at the type the walk settles, and the step is
+     * handed its accumulator at that type: no list of nothing is written for this side to read
+     * wider.
+     */
     @Test
-    void theEmptyListAWalkIsSeededWithCrossesAtItsOwnType() {
-        String written = ProgramWriter.written(CheckedProgram.of(List.of(MODULE)));
+    void theEmptyListAWalkIsSeededWithCrossesAtTheTypeTheWalkSettles() {
+        String written = ProgramWriter.written(Checked.of(List.of(MODULE)));
 
-        assertThat(written).contains("{\"list\":{\"nothing\":{}}}");
+        assertThat(written).doesNotContain("{\"list\":{\"nothing\":{}}}");
     }
 }

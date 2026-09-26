@@ -1,5 +1,6 @@
 package souther.bindings.php;
 
+import souther.nativecode.Checked;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import souther.compiler.Compiler;
@@ -63,7 +64,7 @@ class APhpHostConstructsWhatAPublishedBehaviorRequiresTest {
     void aBehaviorTheModuleKeepsIsConstructedWhereAPublishedOneRequiresIt(@TempDir Path into)
             throws Exception {
         NativeCompiler.Library library = NativeCompiler.library(
-                CheckedProgram.of(List.of(DEMO)), into.resolve("native"));
+                Checked.of(List.of(DEMO)), into.resolve("native"));
         PhpBindings.Generated binding =
                 LibraryBinding.generated(library, into.resolve("php"), "Acme");
         Path host = into.resolve("host.php");
@@ -110,7 +111,7 @@ class APhpHostConstructsWhatAPublishedBehaviorRequiresTest {
      */
     @Test
     void aLibraryWithoutWhatConstructsARequirementIsRefused(@TempDir Path into) {
-        CheckedProgram caller = CheckedProgram.of(List.of(CALLER),
+        CheckedProgram caller = Checked.of(List.of(CALLER),
                 ModulePath.of(Compiler.compile(PORT)));
 
         assertThatThrownBy(() -> NativeCompiler.library(caller, into))

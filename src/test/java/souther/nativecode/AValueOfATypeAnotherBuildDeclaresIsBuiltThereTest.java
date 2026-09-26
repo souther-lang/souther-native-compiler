@@ -95,10 +95,10 @@ class AValueOfATypeAnotherBuildDeclaresIsBuiltThereTest {
 
     private static CheckedProgram compiled() {
         Map<String, ClassFileImage> published = Compiler.compile(BUILT_BEFORE);
-        return CheckedProgram.of(List.of(BUILDING_IT), ModulePath.of(published));
+        return Checked.of(List.of(BUILDING_IT), ModulePath.of(published));
     }
 
     private static CheckedProgram builtBefore() {
-        return CheckedProgram.of(List.of(BUILT_BEFORE));
+        return Checked.of(List.of(BUILT_BEFORE));
     }
 }

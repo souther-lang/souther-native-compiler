@@ -11,10 +11,11 @@
 //! Where a computation here turns out to be the one the wasm runtime already does — a calendar, a
 //! regular expression — it is lifted into something both read. That is done when the second copy
 //! exists and not before: until then there is nothing to tell a shared meaning from a shared
-//! spelling. What the language says text means — its order, its length — already has a second copy,
-//! so it is not written here: it is `souther_text`, over bytes alone, and this reads the text out
-//! of a string and hands it over. A function of that kind added here instead would be a third copy
-//! (#17).
+//! spelling. What the language says text means — its order, its length, its canonical form, what
+//! each of the `String` module's kernels answers — is not written here: it is `souther_text`, over
+//! bytes alone, and this reads the text out of a string, hands it over, and keeps what comes back
+//! in the arena (`kernels`). A function of that kind added here instead would be a second copy of
+//! what the wasm runtime is to read from there too (#17).
 
 // Everything here is one half of a contract the other half reads by name, so an item whose doc has
 // slid off it onto a neighbour is a contract nobody states. Refused rather than warned about.
@@ -29,7 +30,9 @@ mod contract;
 mod decoding;
 mod document;
 mod external;
-use souther_text::{code_points, compare_utf8_as_utf16};
+mod kernels;
+pub use kernels::*;
+use souther_text::{Text as Held, append, code_points, compare};
 use std::cell::RefCell;
 use std::cmp::Ordering;
 
@@ -128,6 +131,14 @@ pub struct Text {
     _opaque: [u8; 0],
 }
 
+/// A list of the layout `souther_native_abi` states, as the functions here take and answer one: an
+/// address the runtime reads through that layout alone, a type of its own for the reason [`Text`]
+/// is.
+#[repr(C)]
+pub struct List {
+    _opaque: [u8; 0],
+}
+
 /// A value of a declared type or of a union, as the functions here take and answer one: an address,
 /// a type of its own for the reason [`Text`] is. The runtime reads behind one only where it made
 /// what is there: a case no declaration names, carried with the token defined here
@@ -199,13 +210,22 @@ unsafe fn length(at: *const u8) -> usize {
     usize::try_from(said).expect("a string carries a count of bytes, and never fewer than 0")
 }
 
-/// The text a string carries.
+/// The text a string holds, for as long as the pointer to it is borrowed.
+///
+/// Bound to a borrow of the caller's pointer and not to a lifetime the caller names: what a string
+/// holds is good until a mark below it is reset, which nothing here can see, so the text is let out
+/// no further than the call that was handed the pointer.
 ///
 /// # Safety
 ///
-/// As [`length`], and for as long as the mark below the string stands.
-unsafe fn text<'a>(at: *const u8) -> &'a [u8] {
-    unsafe { std::slice::from_raw_parts(at.offset(TEXT_BYTES as isize), length(at)) }
+/// As [`length`]. And the string holds UTF-8, which is not asked again here: every string is
+/// written by [`string_of`] from text, or is a literal the object carries, which the compiler writes
+/// from text, and a host's text comes in through [`souther_string_of_utf8`], which refuses bytes
+/// that are not.
+pub(crate) unsafe fn text<'a, P>(at: &'a *const P) -> Held<'a> {
+    let at = at.cast::<u8>();
+    let bytes = unsafe { std::slice::from_raw_parts(at.offset(TEXT_BYTES as isize), length(at)) };
+    Held::held(unsafe { std::str::from_utf8_unchecked(bytes) })
 }
 
 /// Room for a string of `bytes` bytes, with the count written and the text left to the caller.
@@ -219,6 +239,17 @@ fn room_for_a_string(bytes: usize) -> *mut u8 {
     let at = souther_alloc(Count(wanted));
     unsafe { at.offset(TEXT_LENGTH as isize).cast::<i64>().write(bytes) };
     at
+}
+
+/// A string holding this text, in room the arena answered: the one way a string is written, so
+/// that every string holds text.
+pub(crate) fn string_of(text: &str) -> *mut Text {
+    let at = room_for_a_string(text.len());
+    unsafe {
+        at.offset(TEXT_BYTES as isize)
+            .copy_from_nonoverlapping(text.as_ptr(), text.len())
+    };
+    at.cast()
 }
 
 /// Two strings, in the order Souther gives text.
@@ -236,7 +267,7 @@ pub unsafe extern "C" fn souther_string_compare(
     left: *const Text,
     right: *const Text,
 ) -> Comparison {
-    let ordering = unsafe { compare_utf8_as_utf16(text(left.cast()), text(right.cast())) };
+    let ordering = unsafe { compare(text(&left), text(&right)) };
     Comparison(match ordering {
         Ordering::Less => -1,
         Ordering::Equal => 0,
@@ -244,7 +275,11 @@ pub unsafe extern "C" fn souther_string_compare(
     })
 }
 
-/// The two strings' text, one after the other, as a string of its own.
+/// The two strings' text, one after the other, as a string of its own: `++` over two strings, and
+/// `String.append`.
+///
+/// In NFC, which each of the two is and the join need not be: a letter ending the one and a mark
+/// beginning the other compose into one code point (spec §string-canonical).
 ///
 /// Neither operand is touched. A Souther value is immutable and nothing frees one on its own, so
 /// joining two of them is a third value and never a longer first one.
@@ -254,56 +289,45 @@ pub unsafe extern "C" fn souther_string_compare(
 /// As [`souther_string_compare`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_string_concat(left: *const Text, right: *const Text) -> *mut Text {
-    let (before, after) = unsafe { (text(left.cast()), text(right.cast())) };
-    let at = room_for_a_string(before.len() + after.len());
-    unsafe {
-        let text = at.offset(TEXT_BYTES as isize);
-        text.copy_from_nonoverlapping(before.as_ptr(), before.len());
-        text.add(before.len())
-            .copy_from_nonoverlapping(after.as_ptr(), after.len());
-    }
-    at.cast()
+    let joined = unsafe { append(text(&left), text(&right)) };
+    string_of(&joined)
 }
 
-/// A string holding these bytes, for a caller outside a Souther program.
+/// A string holding this text, for a caller outside a Souther program.
 ///
 /// What generated code makes a string from is a literal the object carries or a join of two it
 /// already holds. This is the other direction — a host handing text in — and it is here rather
 /// than written by each such host so that the layout stays between this crate and the one that
 /// states it.
 ///
-/// Not a boundary, and the difference matters. Text arriving from outside a Souther program is
-/// canonicalized to NFC where it arrives — a decoder, or the compiler reading a literal — and what
-/// reaches this is a Souther string's text being put into the form this carrier holds it in.
-/// Nothing here folds it and nothing here reads it for sense, which is why the caller is the one
-/// who has to have done both.
+/// A door, as a decoder's string leaf is: text arriving from outside is admitted here, put in NFC
+/// by the language's Unicode version, whatever the host's own is, and refused where it is not
+/// UTF-8 (`souther_text::admitted`). So every string holds text as the language says a string is,
+/// whoever made it.
 ///
 /// # Safety
 ///
 /// `bytes` points at `length` bytes that may be read.
 ///
-/// # Contract
-///
-/// Those bytes are valid UTF-8, already in the form Souther keeps text in.
-///
-/// Apart from the safety above, and not folded into it, because breaking it is not a memory fault:
-/// the decoding reads no byte the length does not cover, so bytes that are neither make a
-/// comparison answer something meaningless rather than send an access where it should not go. What
-/// is owed to Rust and what is owed to the language are two different debts, and writing them as
-/// one would make the second look like it had teeth it does not have.
 /// # Panics
 ///
-/// Where the length is below nought.
+/// Where the length is below nought, or the bytes are not UTF-8, which ends the process: a panic
+/// does not leave a function a C caller called. A host that hands over what is no text has no
+/// string to be answered with, and this answers nothing rather than something that is not one
+/// (`souther_text::admitted` refuses it). A binding says so first in its own terms, as the PHP
+/// binding does.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_string_of_utf8(bytes: *const u8, length: Count) -> *mut Text {
     let held =
         usize::try_from(length.0).expect("text is handed over as bytes, and never fewer than 0");
-    let at = room_for_a_string(held);
-    unsafe {
-        at.offset(TEXT_BYTES as isize)
-            .copy_from_nonoverlapping(bytes, held)
+    let bytes = if held == 0 {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(bytes, held) }
     };
-    at.cast()
+    let admitted =
+        souther_text::admitted(bytes).expect("text handed to a Souther library is UTF-8");
+    string_of(&admitted)
 }
 
 /// How many bytes of text the string carries, for the same caller.
@@ -338,7 +362,7 @@ pub unsafe extern "C" fn souther_string_bytes(at: *const Text) -> *const u8 {
 /// As [`souther_string_compare`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_string_code_points(at: *const Text) -> i64 {
-    let counted = code_points(unsafe { text(at.cast()) });
+    let counted = code_points(unsafe { text(&at) });
     i64::try_from(counted).expect("a string holds fewer code points than an Int counts")
 }
 
@@ -698,6 +722,16 @@ mod tests {
         souther_reset(mark);
     }
 
+    /// A host's text is admitted where it comes in: put in NFC by the language's Unicode version,
+    /// so a host normalizing by its own, or not at all, hands over the same string.
+    #[test]
+    fn a_hosts_text_is_put_in_nfc_where_it_comes_in() {
+        let mark = souther_mark();
+        assert_eq!(said(made("e\u{301}")), "\u{e9}");
+        assert_eq!(compared(made("e\u{301}"), made("\u{e9}")), 0);
+        souther_reset(mark);
+    }
+
     #[test]
     fn a_string_carries_the_text_it_was_made_from() {
         let mark = souther_mark();
@@ -729,23 +763,21 @@ mod tests {
         souther_reset(mark);
     }
 
-    /// The order is by UTF-16 code unit, which is neither the order of the bytes nor the order of
-    /// the code points.
+    /// The order is by scalar value, which is the order of the bytes and not the order of a JVM
+    /// string's UTF-16 code units.
     ///
-    /// `𠮷` is U+20BB7 and `￥` is U+FFE5. By code point — which is also what comparing the UTF-8
-    /// bytes gives — the first is the greater. As UTF-16 the first begins D842, which is below
-    /// FFE5, so the first is the smaller. Both readings are asserted here, so that an
-    /// implementation that answered by bytes would fail on the reading it agrees with rather than
-    /// on a bare expectation.
+    /// `𠮷` is U+20BB7 and `￥` is U+FFE5. By scalar value, and by the UTF-8 bytes, the first is the
+    /// greater. As UTF-16 the first begins D842, which is below FFE5, so an implementation that
+    /// read the text back as those units would answer the other way here.
     #[test]
-    fn text_is_ordered_by_utf_16_code_unit_and_not_by_code_point() {
+    fn text_is_ordered_by_scalar_value_and_not_by_utf_16_code_unit() {
         let mark = souther_mark();
         let astral = "\u{20bb7}";
         let basic = "\u{ffe5}";
 
-        assert_eq!(compared(made(astral), made(basic)), -1);
-        assert!(astral.as_bytes() > basic.as_bytes());
-        assert!(astral.chars().next() > basic.chars().next());
+        assert_eq!(compared(made(astral), made(basic)), 1);
+        assert_eq!(compared(made(basic), made(astral)), -1);
+        assert!(astral.encode_utf16().next() < basic.encode_utf16().next());
         souther_reset(mark);
     }
 

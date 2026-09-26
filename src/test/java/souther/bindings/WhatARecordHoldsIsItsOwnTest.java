@@ -1,8 +1,8 @@
 package souther.bindings;
 
+import souther.nativecode.Checked;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import souther.compiler.program.CheckedProgram;
 import souther.nativecode.NativeCompiler;
 
 import java.nio.file.Path;
@@ -61,7 +61,7 @@ class WhatARecordHoldsIsItsOwnTest {
     @Test
     void everyCollectionARecordHoldsIsItsOwn(@TempDir Path into) throws Exception {
         Manifest manifest = Manifest.read(NativeCompiler.library(
-                CheckedProgram.of(List.of(EVERYTHING)), into).manifest());
+                Checked.of(List.of(EVERYTHING)), into).manifest());
         Owning owning = new Owning();
         owning.walk(manifest.runtime());
         owning.walk(manifest.modules());
@@ -78,7 +78,7 @@ class WhatARecordHoldsIsItsOwnTest {
     @Test
     void aManifestAnswersNothingItCanBeChangedThrough(@TempDir Path into) throws Exception {
         Manifest manifest = Manifest.read(NativeCompiler.library(
-                CheckedProgram.of(List.of(EVERYTHING)), into).manifest());
+                Checked.of(List.of(EVERYTHING)), into).manifest());
 
         assertThat(List.of(manifest.runtime(), manifest.modules(), manifest.statuses().keySet(),
                 manifest.outcomes().keySet())).allSatisfy(held -> assertThat(held).isNotEmpty());

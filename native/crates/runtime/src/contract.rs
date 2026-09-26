@@ -68,6 +68,9 @@ words! {
     *const Text => Word::Host(HostWord::String),
     *mut Text => Word::Host(HostWord::String),
     *const Value => Word::Host(HostWord::Value),
+    *const List => Word::Host(HostWord::List),
+    *mut List => Word::Host(HostWord::List),
+    *const u32 => Word::Machine,
     *const Decoding => Word::Host(HostWord::Decoded),
     *mut Decoding => Word::Host(HostWord::Decoded),
     *const Issue => Word::Host(HostWord::Issue),
@@ -157,6 +160,100 @@ fn functions() -> Vec<(&'static str, Shape)> {
         (
             "souther_string_code_points",
             shape_of(souther_string_code_points as unsafe extern "C" fn(T) -> i64),
+        ),
+        (
+            "souther_string_trim",
+            shape_of(souther_string_trim as unsafe extern "C" fn(T) -> M),
+        ),
+        (
+            "souther_string_lowercase",
+            shape_of(souther_string_lowercase as unsafe extern "C" fn(T) -> M),
+        ),
+        (
+            "souther_string_uppercase",
+            shape_of(souther_string_uppercase as unsafe extern "C" fn(T) -> M),
+        ),
+        (
+            "souther_string_contains",
+            shape_of(souther_string_contains as unsafe extern "C" fn(T, T) -> i8),
+        ),
+        (
+            "souther_string_starts_with",
+            shape_of(souther_string_starts_with as unsafe extern "C" fn(T, T) -> i8),
+        ),
+        (
+            "souther_string_ends_with",
+            shape_of(souther_string_ends_with as unsafe extern "C" fn(T, T) -> i8),
+        ),
+        (
+            "souther_string_matches",
+            shape_of(souther_string_matches as unsafe extern "C" fn(*const u32, T) -> i8),
+        ),
+        (
+            "souther_string_slice",
+            shape_of(
+                souther_string_slice as unsafe extern "C" fn(i64, i64, T, *mut *mut Text) -> i8,
+            ),
+        ),
+        (
+            "souther_string_split",
+            shape_of(souther_string_split as unsafe extern "C" fn(T, T) -> *mut List),
+        ),
+        (
+            "souther_string_join",
+            shape_of(souther_string_join as unsafe extern "C" fn(T, *const List) -> M),
+        ),
+        (
+            "souther_string_concat_all",
+            shape_of(souther_string_concat_all as unsafe extern "C" fn(*const List) -> M),
+        ),
+        (
+            "souther_string_replace",
+            shape_of(souther_string_replace as unsafe extern "C" fn(T, T, T) -> M),
+        ),
+        (
+            "souther_string_words",
+            shape_of(souther_string_words as unsafe extern "C" fn(T) -> *mut List),
+        ),
+        (
+            "souther_string_lines",
+            shape_of(souther_string_lines as unsafe extern "C" fn(T) -> *mut List),
+        ),
+        (
+            "souther_string_from_int",
+            shape_of(souther_string_from_int as extern "C" fn(i64) -> M),
+        ),
+        (
+            "souther_string_to_int",
+            shape_of(souther_string_to_int as unsafe extern "C" fn(T, *mut i64) -> i8),
+        ),
+        (
+            "souther_string_reverse",
+            shape_of(souther_string_reverse as unsafe extern "C" fn(T) -> M),
+        ),
+        (
+            "souther_string_repeat",
+            shape_of(souther_string_repeat as unsafe extern "C" fn(i64, T, *mut *mut Text) -> i8),
+        ),
+        (
+            "souther_string_pad_left",
+            shape_of(
+                souther_string_pad_left as unsafe extern "C" fn(i64, T, T, *mut *mut Text) -> i8,
+            ),
+        ),
+        (
+            "souther_string_pad_right",
+            shape_of(
+                souther_string_pad_right as unsafe extern "C" fn(i64, T, T, *mut *mut Text) -> i8,
+            ),
+        ),
+        (
+            "souther_string_characters",
+            shape_of(souther_string_characters as unsafe extern "C" fn(T) -> *mut List),
+        ),
+        (
+            "souther_string_code_point_values",
+            shape_of(souther_string_code_point_values as unsafe extern "C" fn(T) -> *mut List),
         ),
         (
             "souther_string_of_utf8",
@@ -465,6 +562,7 @@ fn every_function_the_runtime_defines_is_in_one_table() {
         include_str!("decoding.rs"),
         include_str!("external.rs"),
         include_str!("document.rs"),
+        include_str!("kernels.rs"),
     ];
     let marker = "extern \"C\" fn ";
     let mut defined = BTreeSet::new();

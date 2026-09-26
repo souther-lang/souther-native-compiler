@@ -21,7 +21,7 @@ class AListAWalkGrowsIsBuiltOnceTest {
     private static final String SOURCE = """
             module growing exposing (
                 mapped, filtered, emptyTyped, emptyLiteral, filteredThenMapped, closing,
-                pastTheFirstRoom, flattened, truths, values, neverASet, neverACopy
+                pastTheFirstRoom, flattened, truths, values, neverASet, neverACopy, dropped
             )
 
             data A = { v: Int }
@@ -56,6 +56,9 @@ class AListAWalkGrowsIsBuiltOnceTest {
 
             behavior neverACopy : (a: Int) -> Int
             let neverACopy (a) = List.length(List.map((x) -> List.drop(1, [a, a]), [])) + a
+
+            behavior dropped : (a: Int) -> Int
+            let dropped (a) = List.length(List.drop(a, [1, 2, 3]))
 
             behavior filteredThenMapped : (a: Int) -> Int
             let filteredThenMapped (a) = {
@@ -112,7 +115,7 @@ class AListAWalkGrowsIsBuiltOnceTest {
 
     @BeforeAll
     static void build() throws Exception {
-        CheckedProgram program = CheckedProgram.of(List.of(SOURCE));
+        CheckedProgram program = Checked.of(List.of(SOURCE));
         running = Running.of(program);
         module = program.modules().getFirst();
     }
@@ -148,13 +151,24 @@ class AListAWalkGrowsIsBuiltOnceTest {
 
     /**
      * The step of a walk over an empty list literal never runs, so nothing in it is asked of this
-     * backend: not a set, which nothing here lays out, and not a call of a helper this backend
-     * refuses (souther-lang/souther#1958), whose copy is then never made.
+     * backend: not a set, which nothing here lays out, and not a call of a helper whose copy is
+     * then never made.
      */
     @Test
     void whatAStepThatNeverRunsWouldDoIsNotAskedFor() throws Exception {
         assertThat(run("neverASet", 4)).isEqualTo(answered(4));
         assertThat(run("neverACopy", 5)).isEqualTo(answered(5));
+    }
+
+    /**
+     * A fold seeded with {@code []} that nothing rewrites into a walk hands its step the
+     * accumulator at the type the fold settles, and runs: {@code List.drop} is one.
+     */
+    @Test
+    void aFoldSeededWithAnEmptyListItDoesNotGrowRuns() throws Exception {
+        assertThat(run("dropped", 0)).isEqualTo(answered(3));
+        assertThat(run("dropped", 2)).isEqualTo(answered(1));
+        assertThat(run("dropped", 5)).isEqualTo(answered(0));
     }
 
     @Test

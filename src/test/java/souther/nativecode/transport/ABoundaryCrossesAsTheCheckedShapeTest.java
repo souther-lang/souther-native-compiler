@@ -1,7 +1,7 @@
 package souther.nativecode.transport;
 
+import souther.nativecode.Checked;
 import org.junit.jupiter.api.Test;
-import souther.compiler.program.CheckedProgram;
 
 import java.util.List;
 
@@ -50,7 +50,7 @@ class ABoundaryCrossesAsTheCheckedShapeTest {
             """;
 
     private static String written() {
-        return ProgramWriter.written(CheckedProgram.of(List.of(SHOP)));
+        return ProgramWriter.written(Checked.of(List.of(SHOP)));
     }
 
     @Test
@@ -115,7 +115,7 @@ class ABoundaryCrossesAsTheCheckedShapeTest {
 
     @Test
     void aCollectionTypeCrossesWholeRatherThanRefusingTheDocument() {
-        String written = ProgramWriter.written(CheckedProgram.of(List.of("""
+        String written = ProgramWriter.written(Checked.of(List.of("""
                 module lists exposing ( none, Bag )
 
                 data Bag = { items: List<Int> }

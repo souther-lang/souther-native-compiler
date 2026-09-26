@@ -1,7 +1,7 @@
 package souther.nativecode.transport;
 
+import souther.nativecode.Checked;
 import org.junit.jupiter.api.Test;
-import souther.compiler.program.CheckedProgram;
 
 import java.util.List;
 
@@ -32,7 +32,7 @@ class AClauseCrossesAsTheConditionTheCheckerElaboratedTest {
             """;
 
     private static String written() {
-        return ProgramWriter.written(CheckedProgram.of(List.of(OWING)));
+        return ProgramWriter.written(Checked.of(List.of(OWING)));
     }
 
     /** A clause reads a field through the number the field is written with. */

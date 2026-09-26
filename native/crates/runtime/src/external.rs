@@ -6,8 +6,7 @@
 //! handed and writes it out. The ownership each call takes and gives is stated beside the symbols
 //! in `souther-native-abi`.
 
-use super::{Text, room_for_a_string, text};
-use souther_native_abi::TEXT_BYTES;
+use super::{Text, string_of, text};
 
 /// One node of the external form.
 #[derive(Debug, PartialEq)]
@@ -51,7 +50,7 @@ pub extern "C" fn souther_external_int(value: i64) -> *mut Form {
 /// `at` is a string of the runtime's layout.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_external_string(at: *const Text) -> *mut Form {
-    handed(Form::String(unsafe { text(at.cast()) }.to_vec()))
+    handed(Form::String(unsafe { text(&at) }.as_bytes().to_vec()))
 }
 
 #[unsafe(no_mangle)]
@@ -85,7 +84,7 @@ pub unsafe extern "C" fn souther_external_put(
     key: *const Text,
     item: *mut Form,
 ) {
-    let key = unsafe { text(key.cast()) }.to_vec();
+    let key = unsafe { text(&key) }.as_bytes().to_vec();
     let item = unsafe { taken(item) };
     match unsafe { &mut *object } {
         Form::Object(members) => members.push((key, item)),
@@ -100,12 +99,7 @@ pub unsafe extern "C" fn souther_external_json(root: *mut Form) -> *mut Text {
     let root = unsafe { taken(root) };
     let mut written = Vec::new();
     write(&root, &mut written);
-    let at = room_for_a_string(written.len());
-    unsafe {
-        at.offset(TEXT_BYTES as isize)
-            .copy_from_nonoverlapping(written.as_ptr(), written.len())
-    };
-    at.cast()
+    string_of(std::str::from_utf8(&written).expect("JSON written of text is text"))
 }
 
 /// One thing left to write: a form, a key and its colon, or punctuation.

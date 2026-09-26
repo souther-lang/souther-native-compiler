@@ -76,7 +76,7 @@ class AnAttemptOfATypeAnotherBuildDeclaresIsDecidedThereTest {
 
     private static RunOutcome ran(long lo, long hi) throws Exception {
         CheckedProgram program = compiled();
-        byte[] before = NativeArtifacts.object(CheckedProgram.of(List.of(BUILT_BEFORE)));
+        byte[] before = NativeArtifacts.object(Checked.of(List.of(BUILT_BEFORE)));
         CheckedModule module = program.modules().getFirst();
         CheckedBehavior measured = module.behaviors().getFirst();
         return Running.of(program, List.of(before)).answeredOrEnded(module, measured,
@@ -89,6 +89,6 @@ class AnAttemptOfATypeAnotherBuildDeclaresIsDecidedThereTest {
 
     private static CheckedProgram compiled() {
         Map<String, ClassFileImage> published = Compiler.compile(BUILT_BEFORE);
-        return CheckedProgram.of(List.of(ATTEMPTING_IT), ModulePath.of(published));
+        return Checked.of(List.of(ATTEMPTING_IT), ModulePath.of(published));
     }
 }

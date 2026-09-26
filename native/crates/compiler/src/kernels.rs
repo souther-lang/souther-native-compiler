@@ -145,7 +145,10 @@ impl FactContract {
     pub(crate) fn accepts(self, fact: &KernelFact) -> bool {
         match fact {
             KernelFact::None => self == FactContract::None,
-            KernelFact::StringMatches { pattern: _ } => self == FactContract::StringMatches,
+            KernelFact::StringMatches {
+                written: _,
+                meaning: _,
+            } => self == FactContract::StringMatches,
             KernelFact::OrderingSubject { ty: _ } => self == FactContract::OrderingSubject,
         }
     }
@@ -156,6 +159,15 @@ impl FactContract {
 pub(crate) enum LoweredKernel {
     /// `int.add`: two `Int`s, and their sum.
     IntAdd,
+    /// `int.subtract`: two `Int`s, and the first less the second.
+    IntSubtract,
+    /// `int.multiply`: two `Int`s, and their product.
+    IntMultiply,
+    /// `int.compare`: two `Int`s, and -1, 0 or 1 as the first is below, at or above the second.
+    IntCompare,
+    /// `int.floorMod`: a dividend and a divisor, and what is left once the quotient is floored,
+    /// which takes the divisor's sign. A zero divisor ends the run.
+    IntFloorMod,
     /// `list.length`: a list, and how many elements it holds.
     ListLength,
     /// `list.get`: an index and a list, and the element at the index where there is one.
@@ -168,67 +180,198 @@ pub(crate) enum LoweredKernel {
     IntTruncatingRemainder,
     /// `string.length`: a string, and how many code points it holds.
     StringLength,
+    /// `string.toInt`: a string, and the `Int` it is integer text of, or `NotANumber`.
+    StringToInt,
+    /// `string.fromInt`: an `Int`, written in decimal.
+    StringFromInt,
+    /// `string.trim`: a string, and it with the String whitespace at either end taken off.
+    StringTrim,
+    /// `string.lowercase`: a string, lowercased.
+    StringLowercase,
+    /// `string.uppercase`: a string, uppercased.
+    StringUppercase,
+    /// `string.contains`: a string and another, and whether the first is in the second.
+    StringContains,
+    /// `string.startsWith`: a prefix and a string, and whether the string begins with it.
+    StringStartsWith,
+    /// `string.endsWith`: a suffix and a string, and whether the string ends with it.
+    StringEndsWith,
+    /// `string.matches`: a pattern and a string, and whether the whole string is one the pattern
+    /// denotes. What the pattern denotes is the fact the checker settles.
+    StringMatches,
+    /// `string.slice`: two indices and a string, and the code points between them. An index the
+    /// string has not got ends the run.
+    StringSlice,
+    /// `string.append`: two strings, joined.
+    StringAppend,
+    /// `string.split`: a separator and a string, and the pieces between.
+    StringSplit,
+    /// `string.join`: a separator and a list of strings, joined with it.
+    StringJoin,
+    /// `string.concat`: a list of strings, joined.
+    StringConcat,
+    /// `string.replace`: a target, a replacement and a string, and every run of the target
+    /// replaced.
+    StringReplace,
+    /// `string.words`: a string, and the runs of it between String whitespace.
+    StringWords,
+    /// `string.lines`: a string, and its lines.
+    StringLines,
+    /// `string.reverse`: a string, and its code points the other way round.
+    StringReverse,
+    /// `string.repeat`: a count and a string, and that many copies. A count no string could hold
+    /// ends the run.
+    StringRepeat,
+    /// `string.padLeft`: a width, a pad and a string, and the string widened on the left. A width
+    /// no string could hold ends the run.
+    StringPadLeft,
+    /// `string.padRight`: the same, widened on the right.
+    StringPadRight,
+    /// `string.characters`: a string, and each of its code points as a string.
+    StringCharacters,
+    /// `string.codePoints`: a string, and each of its code points as an `Int`.
+    StringCodePoints,
 }
 
 impl LoweredKernel {
     /// The kernel a key names, where this backend lowers it.
     pub(crate) fn of(key: &str) -> Option<Self> {
-        match key {
-            "int.add" => Some(LoweredKernel::IntAdd),
-            "list.length" => Some(LoweredKernel::ListLength),
-            "list.get" => Some(LoweredKernel::ListGet),
-            "int.truncatingDivide" => Some(LoweredKernel::IntTruncatingDivide),
-            "int.truncatingRemainder" => Some(LoweredKernel::IntTruncatingRemainder),
-            "string.length" => Some(LoweredKernel::StringLength),
-            _ => None,
-        }
+        Some(match key {
+            "int.add" => LoweredKernel::IntAdd,
+            "int.subtract" => LoweredKernel::IntSubtract,
+            "int.multiply" => LoweredKernel::IntMultiply,
+            "int.compare" => LoweredKernel::IntCompare,
+            "int.floorMod" => LoweredKernel::IntFloorMod,
+            "list.length" => LoweredKernel::ListLength,
+            "list.get" => LoweredKernel::ListGet,
+            "int.truncatingDivide" => LoweredKernel::IntTruncatingDivide,
+            "int.truncatingRemainder" => LoweredKernel::IntTruncatingRemainder,
+            "string.length" => LoweredKernel::StringLength,
+            "string.toInt" => LoweredKernel::StringToInt,
+            "string.fromInt" => LoweredKernel::StringFromInt,
+            "string.trim" => LoweredKernel::StringTrim,
+            "string.lowercase" => LoweredKernel::StringLowercase,
+            "string.uppercase" => LoweredKernel::StringUppercase,
+            "string.contains" => LoweredKernel::StringContains,
+            "string.startsWith" => LoweredKernel::StringStartsWith,
+            "string.endsWith" => LoweredKernel::StringEndsWith,
+            "string.matches" => LoweredKernel::StringMatches,
+            "string.slice" => LoweredKernel::StringSlice,
+            "string.append" => LoweredKernel::StringAppend,
+            "string.split" => LoweredKernel::StringSplit,
+            "string.join" => LoweredKernel::StringJoin,
+            "string.concat" => LoweredKernel::StringConcat,
+            "string.replace" => LoweredKernel::StringReplace,
+            "string.words" => LoweredKernel::StringWords,
+            "string.lines" => LoweredKernel::StringLines,
+            "string.reverse" => LoweredKernel::StringReverse,
+            "string.repeat" => LoweredKernel::StringRepeat,
+            "string.padLeft" => LoweredKernel::StringPadLeft,
+            "string.padRight" => LoweredKernel::StringPadRight,
+            "string.characters" => LoweredKernel::StringCharacters,
+            "string.codePoints" => LoweredKernel::StringCodePoints,
+            _ => return None,
+        })
     }
 
     /// What this backend knows of it.
     pub(crate) fn contract(self) -> Contract {
+        let int = || Shape::Prim(Prim::Int);
+        let string = || Shape::Prim(Prim::String);
+        let bool = || Shape::Prim(Prim::Bool);
+        let strings = || Shape::List(Box::new(string()));
+        let known = |takes: Vec<Shape>, answers: Shape, aborts: Vec<AbortKind>| Contract {
+            takes,
+            answers,
+            fact: FactContract::None,
+            aborts,
+        };
         match self {
-            LoweredKernel::IntAdd => Contract {
-                takes: vec![Shape::Prim(Prim::Int); 2],
-                answers: Shape::Prim(Prim::Int),
-                fact: FactContract::None,
-                aborts: vec![AbortKind::RequiredFormHasNoPlace],
-            },
-            LoweredKernel::ListLength => Contract {
-                takes: vec![Shape::List(Box::new(Shape::Var(0)))],
-                answers: Shape::Prim(Prim::Int),
-                fact: FactContract::None,
-                aborts: Vec::new(),
-            },
+            // A sum, a difference or a product no `Int` holds ends the run.
+            LoweredKernel::IntAdd | LoweredKernel::IntSubtract | LoweredKernel::IntMultiply => {
+                known(
+                    vec![int(), int()],
+                    int(),
+                    vec![AbortKind::RequiredFormHasNoPlace],
+                )
+            }
+            LoweredKernel::IntCompare => known(vec![int(), int()], int(), Vec::new()),
+            // A zero divisor ends the run, which is why what it answers is a plain `Int`; the
+            // remainder of the one pair whose quotient no `Int` holds is nought, which one does.
+            LoweredKernel::IntFloorMod => {
+                known(vec![int(), int()], int(), vec![AbortKind::DivisionByZero])
+            }
+            LoweredKernel::ListLength => known(
+                vec![Shape::List(Box::new(Shape::Var(0)))],
+                int(),
+                Vec::new(),
+            ),
             // An index outside the list answers nothing and ends no run: that is what the language
             // answers an `Option` for.
-            LoweredKernel::ListGet => Contract {
-                takes: vec![Shape::Prim(Prim::Int), Shape::List(Box::new(Shape::Var(0)))],
-                answers: Shape::Option(Box::new(Shape::Var(0))),
-                fact: FactContract::None,
-                aborts: Vec::new(),
-            },
+            LoweredKernel::ListGet => known(
+                vec![int(), Shape::List(Box::new(Shape::Var(0)))],
+                Shape::Option(Box::new(Shape::Var(0))),
+                Vec::new(),
+            ),
             // A zero divisor is a case of the answer and not a reason to end: that is what the
             // union says. What ends a quotient is the one pair whose quotient no `Int` holds, the
             // smallest `Int` over -1. The remainder of that pair is nought, which an `Int` holds,
             // so the remainder ends for nothing.
-            LoweredKernel::IntTruncatingDivide => Contract {
-                takes: vec![Shape::Prim(Prim::Int); 2],
-                answers: int_or_division_by_zero(),
-                fact: FactContract::None,
-                aborts: vec![AbortKind::RequiredFormHasNoPlace],
-            },
-            LoweredKernel::IntTruncatingRemainder => Contract {
-                takes: vec![Shape::Prim(Prim::Int); 2],
-                answers: int_or_division_by_zero(),
-                fact: FactContract::None,
+            LoweredKernel::IntTruncatingDivide => known(
+                vec![int(), int()],
+                int_or_division_by_zero(),
+                vec![AbortKind::RequiredFormHasNoPlace],
+            ),
+            LoweredKernel::IntTruncatingRemainder => {
+                known(vec![int(), int()], int_or_division_by_zero(), Vec::new())
+            }
+            LoweredKernel::StringLength => known(vec![string()], int(), Vec::new()),
+            // Text that is no integer, or one no `Int` holds, is a case of the answer.
+            LoweredKernel::StringToInt => known(vec![string()], int_or_not_a_number(), Vec::new()),
+            LoweredKernel::StringFromInt => known(vec![int()], string(), Vec::new()),
+            LoweredKernel::StringTrim
+            | LoweredKernel::StringLowercase
+            | LoweredKernel::StringUppercase
+            | LoweredKernel::StringReverse => known(vec![string()], string(), Vec::new()),
+            LoweredKernel::StringContains
+            | LoweredKernel::StringStartsWith
+            | LoweredKernel::StringEndsWith => known(vec![string(), string()], bool(), Vec::new()),
+            LoweredKernel::StringMatches => Contract {
+                takes: vec![string(), string()],
+                answers: bool(),
+                fact: FactContract::StringMatches,
                 aborts: Vec::new(),
             },
-            LoweredKernel::StringLength => Contract {
-                takes: vec![Shape::Prim(Prim::String)],
-                answers: Shape::Prim(Prim::Int),
-                fact: FactContract::None,
-                aborts: Vec::new(),
-            },
+            LoweredKernel::StringSlice => known(
+                vec![int(), int(), string()],
+                string(),
+                vec![AbortKind::InvalidBounds],
+            ),
+            LoweredKernel::StringAppend => known(vec![string(), string()], string(), Vec::new()),
+            LoweredKernel::StringSplit => known(vec![string(), string()], strings(), Vec::new()),
+            LoweredKernel::StringJoin => known(vec![string(), strings()], string(), Vec::new()),
+            LoweredKernel::StringConcat => known(vec![strings()], string(), Vec::new()),
+            LoweredKernel::StringReplace => {
+                known(vec![string(), string(), string()], string(), Vec::new())
+            }
+            LoweredKernel::StringWords
+            | LoweredKernel::StringLines
+            | LoweredKernel::StringCharacters => known(vec![string()], strings(), Vec::new()),
+            LoweredKernel::StringCodePoints => {
+                known(vec![string()], Shape::List(Box::new(int())), Vec::new())
+            }
+            // A count or a width no string could hold ends the run rather than answering fewer
+            // copies than were asked for.
+            LoweredKernel::StringRepeat => known(
+                vec![int(), string()],
+                string(),
+                vec![AbortKind::RequiredFormHasNoPlace],
+            ),
+            LoweredKernel::StringPadLeft | LoweredKernel::StringPadRight => known(
+                vec![int(), string(), string()],
+                string(),
+                vec![AbortKind::RequiredFormHasNoPlace],
+            ),
         }
     }
 }
@@ -243,13 +386,26 @@ fn int_or_division_by_zero() -> Shape {
     ])
 }
 
+/// What reading integer text answers, its members in the order the checker writes this union in,
+/// which is the order `String.toInt`'s declaration writes it in.
+fn int_or_not_a_number() -> Shape {
+    Shape::Cases(vec![
+        Case::Primitive { prim: Prim::Int },
+        Case::Language {
+            case: LanguageCase::NotANumber,
+        },
+    ])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::transport::PatternPart;
 
     fn pattern(text: &str) -> KernelFact {
         KernelFact::StringMatches {
-            pattern: text.to_string(),
+            written: text.to_string(),
+            meaning: vec![PatternPart::Nothing],
         }
     }
 
@@ -276,52 +432,124 @@ mod tests {
         }
     }
 
-    const LOWERED: [(&str, LoweredKernel); 6] = [
+    const LOWERED: [(&str, LoweredKernel); 33] = [
         ("int.add", LoweredKernel::IntAdd),
+        ("int.subtract", LoweredKernel::IntSubtract),
+        ("int.multiply", LoweredKernel::IntMultiply),
+        ("int.compare", LoweredKernel::IntCompare),
+        ("int.floorMod", LoweredKernel::IntFloorMod),
         ("int.truncatingDivide", LoweredKernel::IntTruncatingDivide),
         (
             "int.truncatingRemainder",
             LoweredKernel::IntTruncatingRemainder,
         ),
-        ("string.length", LoweredKernel::StringLength),
         ("list.length", LoweredKernel::ListLength),
         ("list.get", LoweredKernel::ListGet),
+        ("string.length", LoweredKernel::StringLength),
+        ("string.toInt", LoweredKernel::StringToInt),
+        ("string.fromInt", LoweredKernel::StringFromInt),
+        ("string.trim", LoweredKernel::StringTrim),
+        ("string.lowercase", LoweredKernel::StringLowercase),
+        ("string.uppercase", LoweredKernel::StringUppercase),
+        ("string.contains", LoweredKernel::StringContains),
+        ("string.startsWith", LoweredKernel::StringStartsWith),
+        ("string.endsWith", LoweredKernel::StringEndsWith),
+        ("string.matches", LoweredKernel::StringMatches),
+        ("string.slice", LoweredKernel::StringSlice),
+        ("string.append", LoweredKernel::StringAppend),
+        ("string.split", LoweredKernel::StringSplit),
+        ("string.join", LoweredKernel::StringJoin),
+        ("string.concat", LoweredKernel::StringConcat),
+        ("string.replace", LoweredKernel::StringReplace),
+        ("string.words", LoweredKernel::StringWords),
+        ("string.lines", LoweredKernel::StringLines),
+        ("string.reverse", LoweredKernel::StringReverse),
+        ("string.repeat", LoweredKernel::StringRepeat),
+        ("string.padLeft", LoweredKernel::StringPadLeft),
+        ("string.padRight", LoweredKernel::StringPadRight),
+        ("string.characters", LoweredKernel::StringCharacters),
+        ("string.codePoints", LoweredKernel::StringCodePoints),
     ];
 
-    /// No kernel lowered here settles a fact, which is a fact about this backend's reading of them.
+    /// `String.matches` settles what its pattern means, and no other kernel lowered here settles
+    /// anything beside what it takes.
     #[test]
-    fn no_lowered_kernel_settles_a_fact() {
+    fn only_string_matches_settles_a_fact() {
         for (key, kernel) in LOWERED {
-            assert_eq!(kernel.contract().fact, FactContract::None, "{key}");
+            let settled = match kernel {
+                LoweredKernel::StringMatches => FactContract::StringMatches,
+                _ => FactContract::None,
+            };
+            assert_eq!(kernel.contract().fact, settled, "{key}");
         }
     }
 
     /// Each key reaches its own kernel, and a key the language does not write reaches none: this
-    /// backend does not accept a name the standard library has no declaration for.
+    /// backend does not accept a name the standard library has no declaration for. A kernel over a
+    /// `Decimal` is not lowered here yet.
     #[test]
     fn a_key_reaches_the_kernel_it_names_and_no_other() {
         for (key, kernel) in LOWERED {
             assert_eq!(LoweredKernel::of(key), Some(kernel));
         }
         assert_eq!(LoweredKernel::of("int.divide"), None);
+        assert_eq!(LoweredKernel::of("string.toDecimal"), None);
+        assert_eq!(LoweredKernel::of("string.fromDecimal"), None);
+    }
+
+    /// A kernel that can end a run ends it for one reason, so what it hands back says only whether
+    /// it answered and the reason is read off the contract.
+    #[test]
+    fn a_kernel_ends_a_run_for_one_reason_at_most() {
+        for (key, kernel) in LOWERED {
+            assert!(kernel.contract().aborts.len() <= 1, "{key}");
+        }
     }
 
     fn some_shape_of(kernel: LoweredKernel) -> Vec<Ty> {
         let int = Ty::Prim { prim: Prim::Int };
+        let string = Ty::Prim { prim: Prim::String };
+        let strings = Ty::List {
+            list: Box::new(string.clone()),
+        };
+        let bools = Ty::List {
+            list: Box::new(Ty::Prim { prim: Prim::Bool }),
+        };
         match kernel {
             LoweredKernel::IntAdd
+            | LoweredKernel::IntSubtract
+            | LoweredKernel::IntMultiply
+            | LoweredKernel::IntCompare
+            | LoweredKernel::IntFloorMod
             | LoweredKernel::IntTruncatingDivide
             | LoweredKernel::IntTruncatingRemainder => vec![int.clone(), int],
-            LoweredKernel::StringLength => vec![Ty::Prim { prim: Prim::String }],
-            LoweredKernel::ListLength => vec![Ty::List {
-                list: Box::new(Ty::Prim { prim: Prim::Bool }),
-            }],
-            LoweredKernel::ListGet => vec![
-                int,
-                Ty::List {
-                    list: Box::new(Ty::Prim { prim: Prim::Bool }),
-                },
-            ],
+            LoweredKernel::ListLength => vec![bools],
+            LoweredKernel::ListGet => vec![int, bools],
+            LoweredKernel::StringLength
+            | LoweredKernel::StringToInt
+            | LoweredKernel::StringTrim
+            | LoweredKernel::StringLowercase
+            | LoweredKernel::StringUppercase
+            | LoweredKernel::StringReverse
+            | LoweredKernel::StringWords
+            | LoweredKernel::StringLines
+            | LoweredKernel::StringCharacters
+            | LoweredKernel::StringCodePoints => vec![string],
+            LoweredKernel::StringFromInt => vec![int],
+            LoweredKernel::StringContains
+            | LoweredKernel::StringStartsWith
+            | LoweredKernel::StringEndsWith
+            | LoweredKernel::StringMatches
+            | LoweredKernel::StringAppend
+            | LoweredKernel::StringSplit => vec![string.clone(), string],
+            LoweredKernel::StringJoin => vec![string, strings],
+            LoweredKernel::StringConcat => vec![strings],
+            LoweredKernel::StringReplace => vec![string.clone(), string.clone(), string],
+            LoweredKernel::StringSlice => vec![int.clone(), int, string],
+            LoweredKernel::StringRepeat => vec![int, string],
+            LoweredKernel::StringPadLeft | LoweredKernel::StringPadRight => {
+                vec![int, string.clone(), string]
+            }
         }
     }
 

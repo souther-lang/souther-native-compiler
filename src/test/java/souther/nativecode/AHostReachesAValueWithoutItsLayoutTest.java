@@ -1,7 +1,6 @@
 package souther.nativecode;
 
 import org.junit.jupiter.api.Test;
-import souther.compiler.program.CheckedProgram;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
@@ -64,7 +63,7 @@ class AHostReachesAValueWithoutItsLayoutTest {
             assertThat(harness).as("the harness says nothing of the layout").doesNotContain(layout);
         }
 
-        Path run = NativeArtifacts.executable(CheckedProgram.of(List.of(SHOP)), List.of(), harness);
+        Path run = NativeArtifacts.executable(Checked.of(List.of(SHOP)), List.of(), harness);
         Process process = new ProcessBuilder(run.toString()).redirectErrorStream(true).start();
         String said = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
         assertThat(process.waitFor()).as(said).isZero();
@@ -93,7 +92,7 @@ class AHostReachesAValueWithoutItsLayoutTest {
      */
     @Test
     void aHostReachesWhatTheModulePublishesAndNothingItKeeps() throws Exception {
-        Set<String> defined = NativeArtifacts.built(CheckedProgram.of(List.of(SHOP))).defined();
+        Set<String> defined = NativeArtifacts.built(Checked.of(List.of(SHOP))).defined();
 
         assertThat(defined).contains(
                 host("Money$construct"), host("Money$field$value"),
@@ -110,7 +109,7 @@ class AHostReachesAValueWithoutItsLayoutTest {
      */
     @Test
     void aFieldWithNoWayAcrossKeepsNoSiblingFromBeingRead() throws Exception {
-        Set<String> defined = NativeArtifacts.built(CheckedProgram.of(List.of("""
+        Set<String> defined = NativeArtifacts.built(Checked.of(List.of("""
                 module shop exposing ( Partial )
 
                 data Partial = { count: Int, amount: Decimal }

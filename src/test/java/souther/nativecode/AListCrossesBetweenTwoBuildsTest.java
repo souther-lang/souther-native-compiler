@@ -104,7 +104,7 @@ class AListCrossesBetweenTwoBuildsTest {
 
                 let steps: List<Decimal> = [1.5m]
                 """);
-        CheckedProgram program = CheckedProgram.of(List.of("""
+        CheckedProgram program = Checked.of(List.of("""
                 module app.steps exposing ( counted )
                 import lib.steps ( steps )
 
@@ -162,10 +162,10 @@ class AListCrossesBetweenTwoBuildsTest {
 
     private static CheckedProgram compiled() {
         Map<String, ClassFileImage> published = Compiler.compile(BUILT_BEFORE);
-        return CheckedProgram.of(List.of(READING_IT), ModulePath.of(published));
+        return Checked.of(List.of(READING_IT), ModulePath.of(published));
     }
 
     private static CheckedProgram builtBefore() {
-        return CheckedProgram.of(List.of(BUILT_BEFORE));
+        return Checked.of(List.of(BUILT_BEFORE));
     }
 }

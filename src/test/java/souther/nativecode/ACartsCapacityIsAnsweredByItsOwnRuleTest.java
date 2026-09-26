@@ -1,7 +1,6 @@
 package souther.nativecode;
 
 import org.junit.jupiter.api.Test;
-import souther.compiler.program.CheckedProgram;
 import souther.nativecode.transport.ProgramWriter;
 
 import java.util.List;
@@ -93,7 +92,7 @@ class ACartsCapacityIsAnsweredByItsOwnRuleTest {
 
     @Test
     void addingAnItemCompilesAsTheModelWritesIt() throws Exception {
-        assertThat(NativeCompiler.compile(CheckedProgram.of(List.of(CART)))).isNotEmpty();
+        assertThat(NativeCompiler.compile(Checked.of(List.of(CART)))).isNotEmpty();
     }
 
     @Test
@@ -104,7 +103,7 @@ class ACartsCapacityIsAnsweredByItsOwnRuleTest {
     /** The capacity is decided by the type's clause, which is the one place it is written. */
     @Test
     void theCapacityIsAskedOfPendingItemAndWrittenNowhereElse() {
-        String written = ProgramWriter.written(CheckedProgram.of(List.of(CART)));
+        String written = ProgramWriter.written(Checked.of(List.of(CART)));
 
         assertThat(written)
                 .contains("{\"core\":\"attempt\",\"declared\":\"com.example.cart.domain.PendingItem\"")

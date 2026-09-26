@@ -1,7 +1,7 @@
 package souther.nativecode.transport;
 
+import souther.nativecode.Checked;
 import org.junit.jupiter.api.Test;
-import souther.compiler.program.CheckedProgram;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -60,7 +60,7 @@ class WhereAnAnswerIsHeldCrossesAsTheCheckerPlacedItTest {
             Path.of("native", "crates", "compiler", "tests", "ensures.transport.json");
 
     private static String written() {
-        return ProgramWriter.written(CheckedProgram.of(List.of(DECLARING)));
+        return ProgramWriter.written(Checked.of(List.of(DECLARING)));
     }
 
     /**

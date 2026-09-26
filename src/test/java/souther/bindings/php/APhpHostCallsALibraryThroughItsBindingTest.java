@@ -1,8 +1,8 @@
 package souther.bindings.php;
 
+import souther.nativecode.Checked;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import souther.compiler.program.CheckedProgram;
 import souther.nativecode.NativeCompiler;
 import souther.nativecode.Php;
 
@@ -350,12 +350,12 @@ class APhpHostCallsALibraryThroughItsBindingTest {
                         + " tests", RUNTIME)
                 .exists();
         NativeCompiler.Library library =
-                NativeCompiler.library(CheckedProgram.of(List.of(SHOP)), into.resolve("native"));
+                NativeCompiler.library(Checked.of(List.of(SHOP)), into.resolve("native"));
         PhpBindings.Generated binding =
                 LibraryBinding.generated(library, into.resolve("php"), "Acme\\Billing");
         // The same model built a second time, which is a second library to PHP.
         NativeCompiler.Library again =
-                NativeCompiler.library(CheckedProgram.of(List.of(SHOP)), into.resolve("again"));
+                NativeCompiler.library(Checked.of(List.of(SHOP)), into.resolve("again"));
         Path host = into.resolve("host.php");
         Files.writeString(host, HOST, StandardCharsets.UTF_8);
 
@@ -374,7 +374,7 @@ class APhpHostCallsALibraryThroughItsBindingTest {
     @Test
     void aPreloadedLibraryIsCalledAsALoadedOneIs(@TempDir Path into) throws Exception {
         NativeCompiler.Library library =
-                NativeCompiler.library(CheckedProgram.of(List.of(SHOP)), into.resolve("native"));
+                NativeCompiler.library(Checked.of(List.of(SHOP)), into.resolve("native"));
         PhpBindings.Generated binding =
                 LibraryBinding.generated(library, into.resolve("php"), "Acme\\Billing");
         String requires = "require '" + RUNTIME.toAbsolutePath().resolve("vendor")

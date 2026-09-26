@@ -1,7 +1,6 @@
 package souther.nativecode;
 
 import org.junit.jupiter.api.Test;
-import souther.compiler.program.CheckedProgram;
 
 import java.io.IOException;
 import java.util.Arrays;
@@ -25,7 +24,7 @@ class AnAdditionCompilesToAnObjectTest {
     @Test
     void aCheckedProgramCrossesToTheDriverAndAnObjectComesBack()
             throws IOException, InterruptedException {
-        byte[] object = NativeCompiler.compile(CheckedProgram.of(List.of("""
+        byte[] object = NativeCompiler.compile(Checked.of(List.of("""
                 module calculation
 
                 behavior add : (a: Int, b: Int) -> Int

@@ -85,7 +85,7 @@ class ACartsLinesArePricedInsideARunTest {
     /** A priced cart with no lines is not one: its clause ends the run as the JVM's does. */
     @Test
     void aCartWithNoLinesIsNotBuilt() throws Exception {
-        CheckedProgram program = CheckedProgram.of(List.of(CART));
+        CheckedProgram program = Checked.of(List.of(CART));
         CheckedModule module = program.modules().getFirst();
         CheckedBehavior emptied = module.behaviors().stream()
                 .filter(it -> it.name().name().equals("emptied"))

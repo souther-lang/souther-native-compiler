@@ -142,7 +142,7 @@ class AValueIsBuiltOnlyWhereItsClausesHoldTest {
      */
     @Test
     void aClauseThatNamesAUnitRuns() throws Exception {
-        CheckedProgram program = CheckedProgram.of(List.of("""
+        CheckedProgram program = Checked.of(List.of("""
                 module ready exposing ( checked )
 
                 data Ready
@@ -173,7 +173,7 @@ class AValueIsBuiltOnlyWhereItsClausesHoldTest {
     private static void assertEndsButItsNeighbourAnswers(String behavior, List<Long> ends,
                                                          AbortKind with, List<Long> answers,
                                                          long answered) throws Exception {
-        CheckedProgram program = CheckedProgram.of(List.of(SOURCE));
+        CheckedProgram program = Checked.of(List.of(SOURCE));
         Running running = Running.of(program);
         CheckedModule module = program.modules().getFirst();
         CheckedBehavior reached = module.behaviors().stream()

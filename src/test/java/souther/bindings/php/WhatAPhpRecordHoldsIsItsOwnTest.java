@@ -1,5 +1,6 @@
 package souther.bindings.php;
 
+import souther.nativecode.Checked;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import souther.bindings.CrossingShape;
@@ -9,7 +10,6 @@ import souther.bindings.Manifest.Parameter;
 import souther.bindings.Manifest.Type;
 import souther.bindings.Manifest.Word;
 import souther.bindings.Owning;
-import souther.compiler.program.CheckedProgram;
 import souther.nativecode.NativeCompiler;
 
 import java.nio.file.Path;
@@ -28,7 +28,7 @@ class WhatAPhpRecordHoldsIsItsOwnTest {
     @Test
     void everyCollectionAPhpRecordHoldsIsItsOwn(@TempDir Path into) throws Exception {
         PhpBindings.Generated generated = LibraryBinding.generated(NativeCompiler.library(
-                CheckedProgram.of(List.of("""
+                Checked.of(List.of("""
                         module m exposing ( Kept )
 
                         data Kept = Int

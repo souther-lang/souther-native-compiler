@@ -76,7 +76,7 @@ class AValuePublishedByAnotherBuildIsReachedTest {
      */
     @Test
     void aValuePublishedByAnotherBuildIsReachedThroughItsEntry() throws Exception {
-        CheckedProgram publisherProgram = CheckedProgram.of(List.of(PUBLISHER));
+        CheckedProgram publisherProgram = Checked.of(List.of(PUBLISHER));
         byte[] publisherObject = NativeArtifacts.object(publisherProgram);
         CheckedProgram readerProgram = compiledReader();
 
@@ -90,6 +90,6 @@ class AValuePublishedByAnotherBuildIsReachedTest {
 
     private static CheckedProgram compiledReader() {
         Map<String, ClassFileImage> published = Compiler.compile(PUBLISHER);
-        return CheckedProgram.of(List.of(READER), ModulePath.of(published));
+        return Checked.of(List.of(READER), ModulePath.of(published));
     }
 }

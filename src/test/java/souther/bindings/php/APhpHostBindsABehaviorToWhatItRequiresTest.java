@@ -1,8 +1,8 @@
 package souther.bindings.php;
 
+import souther.nativecode.Checked;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import souther.compiler.program.CheckedProgram;
 import souther.nativecode.NativeCompiler;
 import souther.nativecode.Php;
 
@@ -281,7 +281,7 @@ class APhpHostBindsABehaviorToWhatItRequiresTest {
     void aHostBindsABehaviorToClassesImplementingWhatItRequires(@TempDir Path into)
             throws Exception {
         NativeCompiler.Library library = NativeCompiler.library(
-                CheckedProgram.of(List.of(CATALOG, WHOLESALE, SHOP)), into.resolve("native"));
+                Checked.of(List.of(CATALOG, WHOLESALE, SHOP)), into.resolve("native"));
         PhpBindings.Generated binding =
                 LibraryBinding.generated(library, into.resolve("php"), "Acme\\Billing");
         Path host = into.resolve("host.php");

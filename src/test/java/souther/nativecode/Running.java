@@ -217,8 +217,11 @@ final class Running {
     private BoundaryOutcome rowAtItsBoundary(CheckedModule module, CheckedBehavior behavior,
                                              int at, List<StandsIn> standIns)
             throws IOException, InterruptedException {
-        String named = module.name() + "." + behavior.name().name() + ".example." + at;
-        return ran(linked(standIns), named, List.of());
+        return ran(linked(standIns), rowEntry(module, behavior, at), List.of());
+    }
+
+    private static String rowEntry(CheckedModule module, CheckedBehavior behavior, int at) {
+        return module.name() + "." + behavior.name().name() + ".example." + at;
     }
 
     /**
@@ -247,12 +250,19 @@ final class Running {
     }
 
     /**
-     * A scalar the boundary wrote, as the value a row states. Decided by what the JSON value is and
-     * not by the type the answer was declared at, so a boundary that wrote the wrong kind of value
-     * is seen as having written it. Anything but a scalar is compared as the external form it is,
-     * through {@link #externalAnswer}.
+     * A scalar the boundary wrote, or a list of them, as the value a row states. Decided by what
+     * the JSON value is and not by the type the answer was declared at, so a boundary that wrote the
+     * wrong kind of value is seen as having written it. Anything else is compared as the external
+     * form it is, through {@link #externalAnswer}.
      */
     private static ObservedValue observed(JsonNode written) {
+        if (written.isArray()) {
+            List<ObservedValue> elements = new ArrayList<>();
+            for (JsonNode element : written) {
+                elements.add(observed(element));
+            }
+            return new ObservedValue.Sequence(elements);
+        }
         if (written.isIntegralNumber() && written.canConvertToLong()) {
             return new ObservedValue.Integer(written.longValue());
         }
@@ -263,52 +273,126 @@ final class Running {
             return new ObservedValue.Text(written.stringValue());
         }
         throw new AssertionError("the boundary wrote " + written
-                + ", which is not a scalar; compare external forms with externalAnswer");
+                + ", which is neither a scalar nor a list of them; compare external forms with"
+                + " externalAnswer");
     }
 
     private static final JsonMapper JSON = JsonMapper.builder().build();
 
     /**
      * What the harness's own two lines say: a status on the first, and — only where it is
-     * {@code ANSWERED} — the value on the second. A process that failed on its own account, before
+     * {@code ANSWERED} — the value on the second. A harness that failed on its own account, before
      * it could write either line, is neither {@link RunOutcome} case: it is this harness's own
      * failure and not a Souther computation's, so it is thrown rather than folded into one of them.
      */
     private BoundaryOutcome ran(Path executable, String entry, List<ObservedValue> inputs)
-            throws IOException, InterruptedException {
-        List<String> command = new ArrayList<>();
-        command.add(executable.toString());
-        command.add(entry);
+            throws IOException {
+        List<String> asked = new ArrayList<>();
+        asked.add(entry);
         for (ObservedValue given : inputs) {
-            command.add(written(given));
+            asked.add(written(given));
+        }
+        return Serving.of(executable).ask(asked);
+    }
+
+    /**
+     * A harness running for as long as the tests do, asked one question at a time.
+     *
+     * <p>One process for every question a linked program is asked, and not one each: starting a
+     * process costs more than every run a row or a behavior makes, and the questions were paying it
+     * once each. Each question is still a run of its own: the harness brackets every call, so what
+     * one run made is given back before the next is asked. A harness that ends — a stand-in asked
+     * for what nothing states ends it — is dropped, and the next question starts another.
+     */
+    private static final class Serving {
+
+        private static final Map<Path, Serving> RUNNING = new java.util.concurrent.ConcurrentHashMap<>();
+
+        static {
+            Runtime.getRuntime().addShutdownHook(new Thread(
+                    () -> RUNNING.values().forEach(it -> it.process.destroy())));
         }
 
-        Process process = new ProcessBuilder(command)
-                .redirectErrorStream(true)
-                .start();
-        String said = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-        if (process.waitFor() != 0) {
-            throw new AssertionError("the harness itself failed rather than answering a status: "
-                    + said);
+        private final Path executable;
+        private final Process process;
+        private final java.io.BufferedWriter asking;
+        private final java.io.BufferedReader answering;
+
+        private Serving(Path executable) throws IOException {
+            this.executable = executable;
+            this.process = new ProcessBuilder(executable.toString(), SERVE)
+                    .redirectErrorStream(true)
+                    .start();
+            this.asking = new java.io.BufferedWriter(new java.io.OutputStreamWriter(
+                    process.getOutputStream(), StandardCharsets.UTF_8));
+            this.answering = new java.io.BufferedReader(new java.io.InputStreamReader(
+                    process.getInputStream(), StandardCharsets.UTF_8));
         }
-        // The JSON the boundary wrote is one line: every character JSON cannot hold bare, a
-        // newline among them, is escaped in it.
-        List<String> lines = said.lines().toList();
-        if (lines.isEmpty()) {
-            throw new AssertionError("the harness wrote no status: " + said);
-        }
-        int status = Integer.parseInt(lines.get(0).strip());
-        if (status == ANSWERED) {
-            if (lines.size() < 2) {
-                throw new AssertionError("ANSWERED with no value on the line under it: " + said);
+
+        static Serving of(Path executable) throws IOException {
+            Serving serving = RUNNING.get(executable);
+            if (serving == null || !serving.process.isAlive()) {
+                serving = new Serving(executable);
+                RUNNING.put(executable, serving);
             }
-            return new BoundaryOutcome.Answered(JSON.readTree(lines.get(1)));
+            return serving;
         }
-        if (status == FAKE_NO_OUTPUT) {
-            return new BoundaryOutcome.StoodInForNothing();
+
+        /**
+         * What one question is answered: the words of its line are the entry and what it is
+         * handed, none of which holds a space.
+         */
+        synchronized BoundaryOutcome ask(List<String> words) throws IOException {
+            asking.write(String.join(" ", words));
+            asking.newLine();
+            asking.flush();
+            String status = answering.readLine();
+            if (status == null || !status.strip().matches("[0-9]+")) {
+                throw failed(words, status);
+            }
+            int said = Integer.parseInt(status.strip());
+            if (said == ANSWERED) {
+                // The JSON the boundary wrote is one line: every character JSON cannot hold bare,
+                // a newline among them, is escaped in it.
+                String value = answering.readLine();
+                if (value == null) {
+                    throw failed(words, status);
+                }
+                return new BoundaryOutcome.Answered(JSON.readTree(value));
+            }
+            if (said == FAKE_NO_OUTPUT) {
+                return new BoundaryOutcome.StoodInForNothing();
+            }
+            return new BoundaryOutcome.Aborted(abortKindOf(said));
         }
-        return new BoundaryOutcome.Aborted(abortKindOf(status));
+
+        /** The harness failing, with whatever it wrote before it did, and dropped. */
+        private AssertionError failed(List<String> words, @Nullable String first) throws IOException {
+            RUNNING.remove(executable, this);
+            asking.close();
+            StringBuilder said = new StringBuilder(first == null ? "" : first);
+            for (String line = answering.readLine(); line != null; line = answering.readLine()) {
+                said.append('\n').append(line);
+            }
+            String ended;
+            try {
+                ended = "exited " + process.waitFor();
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                ended = "interrupted";
+            }
+            return new AssertionError("the harness itself failed rather than answering a status ("
+                    + ended + ") when asked " + words + ": " + said);
+        }
     }
+
+    /**
+     * What the harness is asked to do where its first argument is this: read a question a line,
+     * the entry and what it is handed, and answer each as a run given the same on its command line
+     * would. No entry is called this, since every name one has is a module's, and a module's name
+     * begins with a letter.
+     */
+    private static final String SERVE = "--serve";
 
     /**
      * What a row's entry answers where a stand-in the row states is asked for what the row states
@@ -395,7 +479,8 @@ final class Running {
                 String reached = module.name() + "." + behavior.name().name();
                 List<Type> takes = behavior.signature().takes();
                 String boundary = "souther" + ABI + "." + reached + "$boundary";
-                if (carried.contains(PREFIX + boundary) && everyOneCrosses(takes)) {
+                if (carried.contains(PREFIX + boundary) && everyOneCrosses(takes)
+                        && everyOneStandsIn(behavior.requirements())) {
                     entries.add(new Entry(reached, "souther" + ABI + "." + reached, takes,
                             behavior.requirements()));
                 }
@@ -408,6 +493,27 @@ final class Running {
             }
         }
         return entries;
+    }
+
+    /**
+     * Whether a stand-in here can be written for each of what a behavior requires: a C function
+     * taking and answering what the dependency does, which {@link #cType} spells or refuses.
+     *
+     * <p>A row's entry is not asked this. What stands in for a row's dependencies is the object's
+     * own, built from what the row states, and not a function written here.
+     */
+    private boolean everyOneStandsIn(List<ValueName.Behavior> requires) {
+        for (ValueName.Behavior dependency : requires) {
+            CheckedSignature signature = program.behavior(dependency).signature();
+            List<Type> spoken = new ArrayList<>(signature.takes());
+            spoken.add(signature.answers());
+            for (Type type : spoken) {
+                if (!(type instanceof Type.Ref) && !everyOneCrosses(List.of(type))) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     private static boolean everyOneCrosses(List<Type> takes) {
@@ -502,11 +608,15 @@ final class Running {
         }
 
         return """
+                #define _POSIX_C_SOURCE 200809L
                 #include <inttypes.h>
                 #include <stdint.h>
                 #include <stdio.h>
                 #include <stdlib.h>
                 #include <string.h>
+
+                /* The most words a question to a serving harness is: its entry and what it hands. */
+                #define ASKED 64
 
                 /* A capability, as the object lays one out: its code and what the code is handed. */
                 typedef struct { void (*invoke)(void); const void *environment; } capability;
@@ -520,10 +630,7 @@ final class Running {
                 extern const uint8_t *souther_string_bytes(const uint8_t *);
 
                 %s
-                int main(int argc, char **argv) {
-                    if (argc < 2) {
-                        return 2;
-                    }
+                static int run(int argc, char **argv) {
                     int64_t mark = souther_mark();
                     const uint8_t *answered;
                     uint32_t status;
@@ -540,12 +647,51 @@ final class Running {
                     souther_reset(mark);
                     return 0;
                 }
+
+                int main(int argc, char **argv) {
+                    if (argc < 2) {
+                        return 2;
+                    }
+                    if (strcmp(argv[1], "%s") != 0) {
+                        return run(argc, argv);
+                    }
+                    char *line = NULL;
+                    size_t room = 0;
+                    while (getline(&line, &room, stdin) != -1) {
+                        /* Words a space apart, an empty one kept: the empty text is written as
+                           nothing. */
+                        char *asked[ASKED];
+                        int count = 0;
+                        asked[count++] = argv[0];
+                        asked[count++] = line;
+                        for (char *at = line; *at != '\\0'; at++) {
+                            if (*at == '\\n') {
+                                *at = '\\0';
+                                break;
+                            }
+                            if (*at == ' ') {
+                                if (count == ASKED) {
+                                    return 2;
+                                }
+                                *at = '\\0';
+                                asked[count++] = at + 1;
+                            }
+                        }
+                        if (run(count, asked) != 0) {
+                            printf("refused\\n");
+                        }
+                        fflush(stdout);
+                    }
+                    free(line);
+                    return 0;
+                }
                 """.formatted(
                 text ? TEXT_CROSSING : "",
                 supplied.toString(),
                 declared,
                 reaching,
-                chosen);
+                chosen,
+                SERVE);
     }
 
     /** What `standIns` states `dependency` answers, and null where it states nothing of it. */

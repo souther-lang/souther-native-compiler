@@ -57,7 +57,7 @@ as they are.
 ## Building and running it
 
 What it needs is what the repository's own build needs: Maven, Cargo, Composer, and PHP 8.2 or later
-with the `ffi`, `intl` and `pdo_sqlite` extensions.
+with the `ffi` and `pdo_sqlite` extensions.
 
     bin/build
     composer install
@@ -121,13 +121,7 @@ the request as in the response, where the Java example spells it in lower case. 
 also reads the cart's listing into `CartItem` values through a repository; here it is rows, for the
 reason above.
 
-The model is the Java example's `cart.sou` with two changes. The module has an `exposing` line,
-which the Java example's does not. A module with no `exposing` clause publishes everything, and the
-JVM backend reads it that way, but the checked program this repository reads answers that such a
-module publishes nothing (souther-lang/souther#1959). The PHP binding writes what the module
-publishes, so without the line it held no class for any type or behavior. Until that is fixed the
-line lists the types and the three composed behaviors. The injected behaviors get their classes
-without being listed, since the library asks a host for them. The other change is the discount, which
+The model is the Java example's `cart.sou` with one change: the discount, which
 is `sub * 10 / 100` in the source. Since `/` answers the exact quotient, a `Rational`, the model says
 it as `Int.truncatingDivide(sub * 10, 100)` and matches its `DivisionByZero` case, which the divisor
 of 100 never takes.

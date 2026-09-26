@@ -47,7 +47,7 @@ class WhatThisBackendDoesNotWriteYetTest {
      */
     @Test
     void aTypeWithNoRepresentationStillCrosses() {
-        String written = ProgramWriter.written(CheckedProgram.of(List.of(OVER_A_DECIMAL)));
+        String written = ProgramWriter.written(Checked.of(List.of(OVER_A_DECIMAL)));
 
         assertThat(written).contains("\"prim\":\"DECIMAL\"");
     }
@@ -59,7 +59,7 @@ class WhatThisBackendDoesNotWriteYetTest {
      */
     @Test
     void anAnswerThatIsASetIsReadAndNotLaidOut() {
-        assertThatThrownBy(() -> NativeCompiler.compile(CheckedProgram.of(List.of("""
+        assertThatThrownBy(() -> NativeCompiler.compile(Checked.of(List.of("""
                 module listed exposing ( many )
 
                 behavior many : (n: Int) -> Set<Int>
@@ -76,7 +76,7 @@ class WhatThisBackendDoesNotWriteYetTest {
      */
     @Test
     void aSetAnsweredCovariantlyIsNotLoweredRatherThanADisagreement() {
-        assertThatThrownBy(() -> NativeCompiler.compile(CheckedProgram.of(List.of("""
+        assertThatThrownBy(() -> NativeCompiler.compile(Checked.of(List.of("""
                 module demo exposing ( f, Box, A, B, S )
 
                 data A = { v: Int }
@@ -100,7 +100,7 @@ class WhatThisBackendDoesNotWriteYetTest {
      */
     @Test
     void aWalkBuildingAMapIsReadAndNotLowered() {
-        assertThatThrownBy(() -> NativeCompiler.compile(CheckedProgram.of(List.of("""
+        assertThatThrownBy(() -> NativeCompiler.compile(Checked.of(List.of("""
                 module grouping exposing ( groups )
 
                 behavior groups : (a: Int) -> Int
@@ -111,24 +111,6 @@ class WhatThisBackendDoesNotWriteYetTest {
     }
 
     /**
-     * A fold seeded with a value holding {@code []} that the checker's compiler does not rewrite
-     * hands its helper a seed and a step typed at that {@code []}, narrower than what the fold
-     * settles and with nothing saying it stands wider (souther-lang/souther#1958). Refused as not
-     * lowered, naming that, until the tree says it.
-     */
-    @Test
-    void aFoldSeededWithAnEmptyListItDoesNotGrowIsNotLoweredYet() {
-        assertThatThrownBy(() -> NativeCompiler.compile(CheckedProgram.of(List.of("""
-                module dropping exposing ( rest )
-
-                behavior rest : (a: Int) -> Int
-                let rest (a) = List.length(List.drop(a, [1, 2, 3]))
-                """))))
-                .isInstanceOf(NotLowered.class)
-                .hasMessageContaining("souther-lang/souther#1958");
-    }
-
-    /**
      * A fold over an empty list literal that is not rewritten into a walk hands its helper a
      * function over what has no value, which it never applies. The checker's backend hands
      * {@code Fn.NEVER} in its place; a copy here would have to take a function over a type nothing
@@ -136,7 +118,7 @@ class WhatThisBackendDoesNotWriteYetTest {
      */
     @Test
     void aFunctionAHelperNeverAppliesIsNotLoweredYet() {
-        assertThatThrownBy(() -> NativeCompiler.compile(CheckedProgram.of(List.of("""
+        assertThatThrownBy(() -> NativeCompiler.compile(Checked.of(List.of("""
                 module folding exposing ( kept )
 
                 behavior kept : (a: Int) -> Int
@@ -153,7 +135,7 @@ class WhatThisBackendDoesNotWriteYetTest {
      */
     @Test
     void anAnswerWithADecimalFieldIsRefusedWhereItWouldBeWrittenOut() {
-        assertThatThrownBy(() -> NativeCompiler.compile(CheckedProgram.of(List.of("""
+        assertThatThrownBy(() -> NativeCompiler.compile(Checked.of(List.of("""
                 module priced exposing ( same, Priced )
 
                 data Priced = { amount: Decimal }
@@ -179,7 +161,7 @@ class WhatThisBackendDoesNotWriteYetTest {
      */
     @Test
     void aRowStatingAValueWithNoExpressionToMakeItIsRefusedRatherThanLeftOut() {
-        CheckedProgram program = CheckedProgram.of(List.of("""
+        CheckedProgram program = Checked.of(List.of("""
                 module owing
 
                 data Due = { on: Date, label: String }
@@ -212,7 +194,7 @@ class WhatThisBackendDoesNotWriteYetTest {
      */
     @Test
     void aValueOfATypeTheLanguageDeclaresIsAtHomeInNoObject() {
-        CheckedProgram program = CheckedProgram.of(List.of("""
+        CheckedProgram program = Checked.of(List.of("""
                 module rounding
 
                 behavior of : (a: Int) -> Int
@@ -236,7 +218,7 @@ class WhatThisBackendDoesNotWriteYetTest {
      */
     @Test
     void anArmBindingANameToNothingIsNotLoweredYet() {
-        CheckedProgram program = CheckedProgram.of(List.of("""
+        CheckedProgram program = Checked.of(List.of("""
                 module absent exposing ( counted, Held )
 
                 data Held = { o: Int? }
@@ -254,7 +236,7 @@ class WhatThisBackendDoesNotWriteYetTest {
 
     @Test
     void theDriverSaysItIsOneThisBackendHasNotGotRoundTo() {
-        assertThatThrownBy(() -> NativeCompiler.compile(CheckedProgram.of(List.of(OVER_A_DECIMAL))))
+        assertThatThrownBy(() -> NativeCompiler.compile(Checked.of(List.of(OVER_A_DECIMAL))))
                 .isInstanceOf(NotLowered.class)
                 .hasMessageContaining("Decimal");
     }

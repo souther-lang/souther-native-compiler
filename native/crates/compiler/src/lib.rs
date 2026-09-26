@@ -24,6 +24,7 @@ mod link;
 mod literals;
 mod manifest;
 mod ordering;
+mod patterns;
 mod replaced;
 mod restating;
 mod specialize;
@@ -47,16 +48,21 @@ use cranelift::object::{ObjectBuilder, ObjectModule};
 use interface::Surface;
 use kernels::LoweredKernel;
 use literals::Literals;
+use patterns::Machines;
 use restating::restate;
 use souther_native_abi::{
     ALLOCATE, ANSWERED, CAPABILITY_ENVIRONMENT, CAPABILITY_INVOKE, CARRIED, EXAMPLE_STATUSES,
     FAKE_NO_OUTPUT, HELD, HOST_STATUSES, INJECTION_UNBOUND, LIST_LENGTH, NO_FAILED_CLAUSE, NOTHING,
-    Parameter, SLOT, STRING_CODE_POINTS, STRING_COMPARE, STRING_CONCAT, Status, TOKEN, WHICH, Word,
-    behavior_symbol, boundary_symbol, built_in_case_symbol, checked_constructor_symbol,
-    constructor_symbol, example_symbol, field_at, generated_call, held_symbol, home_symbol,
-    list_at, member_at, requirement_at, room_for_capability, room_for_carried, room_for_fields,
-    room_for_held, room_for_list, room_for_members, room_for_requirements, spells_a_module,
-    spells_a_name, type_symbol, value_symbol,
+    Parameter, SLOT, STRING_CHARACTERS, STRING_CODE_POINT_VALUES, STRING_CODE_POINTS,
+    STRING_COMPARE, STRING_CONCAT, STRING_CONCAT_ALL, STRING_CONTAINS, STRING_ENDS_WITH,
+    STRING_FROM_INT, STRING_JOIN, STRING_LINES, STRING_LOWERCASE, STRING_MATCHES, STRING_PAD_LEFT,
+    STRING_PAD_RIGHT, STRING_REPEAT, STRING_REPLACE, STRING_REVERSE, STRING_SLICE, STRING_SPLIT,
+    STRING_STARTS_WITH, STRING_TO_INT, STRING_TRIM, STRING_UPPERCASE, STRING_WORDS, Status, TOKEN,
+    WHICH, Word, behavior_symbol, boundary_symbol, built_in_case_symbol,
+    checked_constructor_symbol, constructor_symbol, example_symbol, field_at, generated_call,
+    held_symbol, home_symbol, list_at, member_at, requirement_at, room_for_capability,
+    room_for_carried, room_for_fields, room_for_held, room_for_list, room_for_members,
+    room_for_requirements, spells_a_module, spells_a_name, type_symbol, value_symbol,
 };
 use specialize::{Instance, InstanceId, Specializations};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -65,8 +71,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use transport::{
     AbortKind, AlternativesForm, Arm, Carrier, Case, Declaration, DeclaredBy, Definition,
-    Departures, Emitted, Ensures, Guard, LanguageCase, Node, Op, Owner, Prim, Program, Publication,
-    Reaches, Reading, Requirement, Routing, Selects, Target, Ty,
+    Departures, Emitted, Ensures, Guard, KernelFact, LanguageCase, Node, Op, Owner, Prim, Program,
+    Publication, Reaches, Reading, Requirement, Routing, Selects, Target, Ty,
 };
 
 /// A fork that ran out of arms, which is this compiler having emitted the wrong test rather than
@@ -142,22 +148,22 @@ const _: () = {
     }
 };
 
-/// The one status an arithmetic site that may leave the range its type holds jumps to the abort
-/// block with.
+/// The one status a site that ends a run for one reason jumps to the abort block with: an
+/// arithmetic site that may leave the range its type holds, or a call of a kernel whose contract
+/// names one reason, such as a slice the string has no room for.
 ///
 /// Read off the site's own `aborts` — `program.abortsAt(site)`'s answer, carried on the `Node` —
 /// rather than assumed from which operator or which kernel this is: what a machine condition here
 /// means is a fact `CheckedProgram` already settled, and asking the transport for it instead of
 /// deciding it again here is the one thing issue #9 exists to change.
 ///
-/// An arithmetic site names exactly one reason, which [`Coherent`] held every such site to: zero
-/// or more than one would be the two halves disagreeing about what kind of site this is, and
-/// answering a wrong value because the checker said `NONE` would be worse than refusing the
-/// program.
-fn overflow_status(aborts: &[AbortKind]) -> Status {
+/// Such a site names exactly one reason, which [`Coherent`] held every such site to: zero or more
+/// than one would be the two halves disagreeing about what kind of site this is, and answering a
+/// wrong value because the checker said `NONE` would be worse than refusing the program.
+fn one_reason_status(aborts: &[AbortKind]) -> Status {
     match aborts {
         [only] => native_status(*only),
-        _ => unreachable!("`Coherent` held every site that can leave its range to one reason"),
+        _ => unreachable!("`Coherent` held every site that ends a run for one reason to naming it"),
     }
 }
 
@@ -425,7 +431,15 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
     // bytes, counting what starts a code point.
     let count_text = import_runtime(&mut module, STRING_CODE_POINTS, call_conv);
 
+    // And what each of the `String` module's kernels is computed through, for the same reason
+    // again: each is a walk over text, and `souther_text` is where what it answers is written.
+    let text_kernels: HashMap<&'static str, FuncId> = TEXT_KERNELS
+        .iter()
+        .map(|name| (*name, import_runtime(&mut module, name, call_conv)))
+        .collect();
+
     let literals = Literals::default();
+    let machines = Machines::default();
 
     // The token every declaration at home in this object is tagged by, defined whether anything
     // here builds a value of one or not. A declaration has one home and it is the object of the
@@ -734,10 +748,12 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
         compare_text,
         join_text,
         count_text,
+        text_kernels: &text_kernels,
         closures: &closures,
         lifted: &lifted,
         targets: &targets,
         literals: &literals,
+        machines: &machines,
         constructors: &constructors,
     };
 
@@ -2129,6 +2145,8 @@ struct Lowerings<'a> {
     compare_text: FuncId,
     join_text: FuncId,
     count_text: FuncId,
+    /// The function each of the `String` module's kernels is computed through, by its symbol.
+    text_kernels: &'a HashMap<&'static str, FuncId>,
     /// Every closure site the whole document holds, and what each one reaches — read here rather
     /// than re-walked per body, since a `Node::Block` nested under one top-level body may be
     /// referenced (its captures restored) while defining a different site's own lifted function.
@@ -2138,6 +2156,8 @@ struct Lowerings<'a> {
     lifted: &'a BTreeMap<usize, FuncId>,
     /// What string literals this object already holds.
     literals: &'a Literals,
+    /// What pattern machines this object already holds.
+    machines: &'a Machines,
     /// The constructor of every declaration a body here builds a value of.
     constructors: &'a Constructors,
     /// Every behavior the document names, which is where what a composition's stage answers is
@@ -2286,7 +2306,7 @@ fn word_on_the_machine(word: Word) -> types::Type {
     match word {
         Word::Host(word) => interface::machine(word),
         Word::Comparison => types::I64,
-        Word::Memory | Word::Form | Word::Node | Word::Path => POINTER,
+        Word::Memory | Word::Form | Word::Node | Word::Path | Word::Machine => POINTER,
     }
 }
 
@@ -4620,7 +4640,7 @@ fn lower(
             let width = machine_type(operand.ty())?;
             let held = lower(builder, lowering, module, bindings, abort, operand)?;
             let nought = builder.ins().iconst(width, 0);
-            difference(builder, abort, overflow_status(aborts), nought, held)
+            difference(builder, abort, one_reason_status(aborts), nought, held)
         }
         // A fork answers what the branch it takes answers, and each branch hands that to the block
         // after the fork. Which nodes are forks, and how each chooses a branch, is `branched`'s.
@@ -4839,80 +4859,15 @@ fn lower(
             // has not met falls to NotLowered rather than a list here claiming to know. What one
             // takes is that table's contract and not the document's word: `Coherent` held the
             // settlement to it, so the arguments are exactly as many as the kernel takes.
-            Reaches::Kernel { kernel, .. } => match LoweredKernel::of(kernel) {
-                Some(LoweredKernel::IntAdd) => {
-                    let [left, right] = arguments.as_slice() else {
-                        unreachable!("`Coherent` held int.add to the two arguments it takes");
-                    };
-                    let a = Held::of(
-                        left,
-                        lower(builder, lowering, module, bindings, abort, left)?,
-                    );
-                    let b = Held::of(
-                        right,
-                        lower(builder, lowering, module, bindings, abort, right)?,
-                    );
-                    arithmetic(builder, abort, Op::Add, a, b, aborts)?
-                }
-                Some(LoweredKernel::ListLength) => {
-                    let [list] = arguments.as_slice() else {
-                        unreachable!("`Coherent` held list.length to the one argument it takes");
-                    };
-                    let list = lower(builder, lowering, module, bindings, abort, list)?;
-                    builder
-                        .ins()
-                        .load(types::I64, TRUSTED, list, LIST_LENGTH as i32)
-                }
-                // The element's own slot, which is what an `Option` holding it points at: nothing
-                // is copied and nothing taken from the arena. An index is in the list where it is
-                // below the length read without a sign, so a negative one, read as a very large
-                // one, is outside it as well. The address is worked out either way and only
-                // answered where the index is inside.
-                Some(LoweredKernel::ListGet) => {
-                    let [index, list] = arguments.as_slice() else {
-                        unreachable!("`Coherent` held list.get to the two arguments it takes");
-                    };
-                    let index = lower(builder, lowering, module, bindings, abort, index)?;
-                    let list = lower(builder, lowering, module, bindings, abort, list)?;
-                    let length = builder
-                        .ins()
-                        .load(types::I64, TRUSTED, list, LIST_LENGTH as i32);
-                    let inside = builder.ins().icmp(IntCC::UnsignedLessThan, index, length);
-                    let along = builder.ins().imul_imm_s(index, SLOT);
-                    let at = builder.ins().iadd(list, along);
-                    let slot = builder.ins().iadd_imm_s(at, list_at(0));
-                    let nothing = builder.ins().iconst(POINTER, NOTHING);
-                    builder.ins().select(inside, slot, nothing)
-                }
-                Some(
-                    divided @ (LoweredKernel::IntTruncatingDivide
-                    | LoweredKernel::IntTruncatingRemainder),
-                ) => {
-                    let [dividend, divisor] = arguments.as_slice() else {
-                        unreachable!("`Coherent` held {kernel} to the two arguments it takes");
-                    };
-                    let dividend = lower(builder, lowering, module, bindings, abort, dividend)?;
-                    let divisor = lower(builder, lowering, module, bindings, abort, divisor)?;
-                    let answering = match divided {
-                        LoweredKernel::IntTruncatingDivide => Division::Quotient,
-                        _ => Division::Remainder,
-                    };
-                    let division = Dividing {
-                        answering,
-                        dividend,
-                        divisor,
+            Reaches::Kernel { kernel, fact, .. } => match LoweredKernel::of(kernel) {
+                Some(known) => {
+                    let call = KernelCall {
+                        kernel: known,
+                        arguments,
+                        fact,
                         aborts,
                     };
-                    truncating_division(builder, lowering, module, abort, division)?
-                }
-                Some(LoweredKernel::StringLength) => {
-                    let [text] = arguments.as_slice() else {
-                        unreachable!("`Coherent` held string.length to the one argument it takes");
-                    };
-                    let text = lower(builder, lowering, module, bindings, abort, text)?;
-                    let counting = module.declare_func_in_func(lowering.count_text, builder.func);
-                    let counted = builder.ins().call(counting, &[text]);
-                    builder.inst_results(counted)[0]
+                    lower_kernel(builder, lowering, module, bindings, abort, call)?
                 }
                 None => return Err(not_lowered(format!("a call to the kernel {kernel}"))),
             },
@@ -5071,6 +5026,291 @@ fn shared_field(
     builder.seal_block(read);
     builder.switch_to_block(read);
     Ok(builder.block_params(read)[0])
+}
+
+/// Every function a `String` kernel is computed through, imported into every object: which of them
+/// a program calls is known only once its bodies are lowered, and a function no call reaches costs
+/// the object a name.
+const TEXT_KERNELS: &[&str] = &[
+    STRING_TRIM,
+    STRING_LOWERCASE,
+    STRING_UPPERCASE,
+    STRING_CONTAINS,
+    STRING_STARTS_WITH,
+    STRING_ENDS_WITH,
+    STRING_MATCHES,
+    STRING_SLICE,
+    STRING_SPLIT,
+    STRING_JOIN,
+    STRING_CONCAT_ALL,
+    STRING_REPLACE,
+    STRING_WORDS,
+    STRING_LINES,
+    STRING_FROM_INT,
+    STRING_TO_INT,
+    STRING_REVERSE,
+    STRING_REPEAT,
+    STRING_PAD_LEFT,
+    STRING_PAD_RIGHT,
+    STRING_CHARACTERS,
+    STRING_CODE_POINT_VALUES,
+];
+
+/// A call of a kernel this backend lowers, as the node calling it holds it.
+struct KernelCall<'a> {
+    kernel: LoweredKernel,
+    arguments: &'a [Node],
+    fact: &'a KernelFact,
+    aborts: &'a [AbortKind],
+}
+
+/// A kernel applied.
+///
+/// Arithmetic over `Int` is emitted here, as the operators that mean the same are: a kernel and an
+/// operator that answer alike are one computation, and a runtime call for either would be a second
+/// copy of it. Anything that walks text is a call into the runtime, which hands it to
+/// `souther_text`. A kernel whose contract can end the run says so to its caller by answering
+/// whether it wrote its value, and why the run ends is read here off what the call names, never
+/// off the runtime: a slice the string has no room for is `InvalidBounds` because that is the
+/// kernel's contract, and a runtime that said so would be a second place saying it.
+fn lower_kernel(
+    builder: &mut FunctionBuilder,
+    lowering: &Lowering,
+    module: &mut ObjectModule,
+    bindings: &mut Bindings,
+    abort: ir::Block,
+    call: KernelCall,
+) -> Lowered<ir::Value> {
+    let KernelCall {
+        kernel,
+        arguments,
+        fact,
+        aborts,
+    } = call;
+    // What a pattern means is what the checker settled, so the argument it was written as is not
+    // lowered: it is a string the checker folded at compile time, and nothing it would compute at
+    // run time is read.
+    if kernel == LoweredKernel::StringMatches {
+        let KernelFact::StringMatches { meaning, .. } = fact else {
+            unreachable!("`Coherent` held string.matches to the fact it settles");
+        };
+        let [_, text] = arguments else {
+            unreachable!("`Coherent` held string.matches to the two arguments it takes");
+        };
+        let machine = patterns::machine(meaning)
+            .expect("`Coherent` held what every pattern is said to mean to a reading of one");
+        let text = lower(builder, lowering, module, bindings, abort, text)?;
+        let at = lowering.machines.address(builder, module, &machine);
+        return Ok(runtime_call(
+            builder,
+            lowering,
+            module,
+            STRING_MATCHES,
+            &[at, text],
+        ));
+    }
+
+    let mut given = Vec::with_capacity(arguments.len());
+    for argument in arguments {
+        given.push(Held::of(
+            argument,
+            lower(builder, lowering, module, bindings, abort, argument)?,
+        ));
+    }
+    let values: Vec<ir::Value> = given.iter().map(|it| it.value).collect();
+    Ok(match kernel {
+        LoweredKernel::IntAdd | LoweredKernel::IntSubtract | LoweredKernel::IntMultiply => {
+            let [a, b] = given[..] else {
+                unreachable!("`Coherent` held {kernel:?} to the two arguments it takes");
+            };
+            let op = match kernel {
+                LoweredKernel::IntAdd => Op::Add,
+                LoweredKernel::IntSubtract => Op::Sub,
+                _ => Op::Mul,
+            };
+            arithmetic(builder, abort, op, a, b, aborts)?
+        }
+        // -1, 0 or 1: whether the first is above the second, less whether it is below.
+        LoweredKernel::IntCompare => {
+            let [a, b] = values[..] else {
+                unreachable!("`Coherent` held int.compare to the two arguments it takes");
+            };
+            let above = builder.ins().icmp(IntCC::SignedGreaterThan, a, b);
+            let below = builder.ins().icmp(IntCC::SignedLessThan, a, b);
+            let above = builder.ins().uextend(types::I64, above);
+            let below = builder.ins().uextend(types::I64, below);
+            builder.ins().isub(above, below)
+        }
+        // The remainder truncated toward zero takes the dividend's sign; floored, it takes the
+        // divisor's, so where the two differ and it is not nought the divisor is added once. The
+        // sum stays in range, since the remainder is nearer nought than the divisor. A zero
+        // divisor ends the run before the machine divides, since `srem` traps on it; the smallest
+        // `Int` over -1 is nought, which `srem` answers.
+        LoweredKernel::IntFloorMod => {
+            let [dividend, divisor] = values[..] else {
+                unreachable!("`Coherent` held int.floorMod to the two arguments it takes");
+            };
+            let by_nought = builder.ins().icmp_imm_s(IntCC::Equal, divisor, 0);
+            abort_where(builder, abort, one_reason_status(aborts), by_nought);
+            let truncated = builder.ins().srem(dividend, divisor);
+            let signs = builder.ins().bxor(truncated, divisor);
+            let apart = builder.ins().icmp_imm_s(IntCC::SignedLessThan, signs, 0);
+            let left = builder.ins().icmp_imm_s(IntCC::NotEqual, truncated, 0);
+            let moved = builder.ins().band(apart, left);
+            let floored = builder.ins().iadd(truncated, divisor);
+            builder.ins().select(moved, floored, truncated)
+        }
+        LoweredKernel::ListLength => {
+            let [list] = values[..] else {
+                unreachable!("`Coherent` held list.length to the one argument it takes");
+            };
+            builder
+                .ins()
+                .load(types::I64, TRUSTED, list, LIST_LENGTH as i32)
+        }
+        // The element's own slot, which is what an `Option` holding it points at: nothing is
+        // copied and nothing taken from the arena. An index is in the list where it is below the
+        // length read without a sign, so a negative one, read as a very large one, is outside it
+        // as well. The address is worked out either way and only answered where the index is
+        // inside.
+        LoweredKernel::ListGet => {
+            let [index, list] = values[..] else {
+                unreachable!("`Coherent` held list.get to the two arguments it takes");
+            };
+            let length = builder
+                .ins()
+                .load(types::I64, TRUSTED, list, LIST_LENGTH as i32);
+            let inside = builder.ins().icmp(IntCC::UnsignedLessThan, index, length);
+            let along = builder.ins().imul_imm_s(index, SLOT);
+            let at = builder.ins().iadd(list, along);
+            let slot = builder.ins().iadd_imm_s(at, list_at(0));
+            let nothing = builder.ins().iconst(POINTER, NOTHING);
+            builder.ins().select(inside, slot, nothing)
+        }
+        LoweredKernel::IntTruncatingDivide | LoweredKernel::IntTruncatingRemainder => {
+            let [dividend, divisor] = values[..] else {
+                unreachable!("`Coherent` held {kernel:?} to the two arguments it takes");
+            };
+            let answering = match kernel {
+                LoweredKernel::IntTruncatingDivide => Division::Quotient,
+                _ => Division::Remainder,
+            };
+            let division = Dividing {
+                answering,
+                dividend,
+                divisor,
+                aborts,
+            };
+            truncating_division(builder, lowering, module, abort, division)?
+        }
+        LoweredKernel::StringLength => {
+            let counting = module.declare_func_in_func(lowering.count_text, builder.func);
+            let counted = builder.ins().call(counting, &values);
+            builder.inst_results(counted)[0]
+        }
+        // `String.append` and `++` over two strings are one join.
+        LoweredKernel::StringAppend => {
+            let joining = module.declare_func_in_func(lowering.join_text, builder.func);
+            let joined = builder.ins().call(joining, &values);
+            builder.inst_results(joined)[0]
+        }
+        // Text that is integer text of an `Int` is the union's `Int` case, and any other is
+        // `NotANumber`: the runtime says which of the two it read, and the case is made here.
+        LoweredKernel::StringToInt => {
+            let room = out_slot(builder);
+            let mut handed = values.clone();
+            handed.push(room);
+            let read = runtime_call(builder, lowering, module, STRING_TO_INT, &handed);
+            fork(builder, read, POINTER, |builder, taken| {
+                if taken {
+                    let value = builder.ins().load(types::I64, TRUSTED, room, 0);
+                    let whole = Case::Primitive { prim: Prim::Int };
+                    return carry(builder, lowering, module, &whole, Some(value));
+                }
+                let no_number = Case::Language {
+                    case: LanguageCase::NotANumber,
+                };
+                carry(builder, lowering, module, &no_number, None)
+            })?
+        }
+        LoweredKernel::StringSlice
+        | LoweredKernel::StringRepeat
+        | LoweredKernel::StringPadLeft
+        | LoweredKernel::StringPadRight => {
+            let name = match kernel {
+                LoweredKernel::StringSlice => STRING_SLICE,
+                LoweredKernel::StringRepeat => STRING_REPEAT,
+                LoweredKernel::StringPadLeft => STRING_PAD_LEFT,
+                _ => STRING_PAD_RIGHT,
+            };
+            let room = out_slot(builder);
+            let mut handed = values.clone();
+            handed.push(room);
+            let wrote = runtime_call(builder, lowering, module, name, &handed);
+            let nothing = builder.ins().icmp_imm_s(IntCC::Equal, wrote, 0);
+            abort_where(builder, abort, one_reason_status(aborts), nothing);
+            builder.ins().load(POINTER, TRUSTED, room, 0)
+        }
+        LoweredKernel::StringFromInt => {
+            runtime_call(builder, lowering, module, STRING_FROM_INT, &values)
+        }
+        LoweredKernel::StringTrim => runtime_call(builder, lowering, module, STRING_TRIM, &values),
+        LoweredKernel::StringLowercase => {
+            runtime_call(builder, lowering, module, STRING_LOWERCASE, &values)
+        }
+        LoweredKernel::StringUppercase => {
+            runtime_call(builder, lowering, module, STRING_UPPERCASE, &values)
+        }
+        LoweredKernel::StringContains => {
+            runtime_call(builder, lowering, module, STRING_CONTAINS, &values)
+        }
+        LoweredKernel::StringStartsWith => {
+            runtime_call(builder, lowering, module, STRING_STARTS_WITH, &values)
+        }
+        LoweredKernel::StringEndsWith => {
+            runtime_call(builder, lowering, module, STRING_ENDS_WITH, &values)
+        }
+        LoweredKernel::StringSplit => {
+            runtime_call(builder, lowering, module, STRING_SPLIT, &values)
+        }
+        LoweredKernel::StringJoin => runtime_call(builder, lowering, module, STRING_JOIN, &values),
+        LoweredKernel::StringConcat => {
+            runtime_call(builder, lowering, module, STRING_CONCAT_ALL, &values)
+        }
+        LoweredKernel::StringReplace => {
+            runtime_call(builder, lowering, module, STRING_REPLACE, &values)
+        }
+        LoweredKernel::StringWords => {
+            runtime_call(builder, lowering, module, STRING_WORDS, &values)
+        }
+        LoweredKernel::StringLines => {
+            runtime_call(builder, lowering, module, STRING_LINES, &values)
+        }
+        LoweredKernel::StringReverse => {
+            runtime_call(builder, lowering, module, STRING_REVERSE, &values)
+        }
+        LoweredKernel::StringCharacters => {
+            runtime_call(builder, lowering, module, STRING_CHARACTERS, &values)
+        }
+        LoweredKernel::StringCodePoints => {
+            runtime_call(builder, lowering, module, STRING_CODE_POINT_VALUES, &values)
+        }
+        LoweredKernel::StringMatches => unreachable!("answered above"),
+    })
+}
+
+/// A call of one of the `String` kernels' functions, and what it answers.
+fn runtime_call(
+    builder: &mut FunctionBuilder,
+    lowering: &Lowering,
+    module: &mut ObjectModule,
+    name: &str,
+    handed: &[ir::Value],
+) -> ir::Value {
+    let id = lowering.text_kernels[name];
+    let calling = module.declare_func_in_func(id, builder.func);
+    let called = builder.ins().call(calling, handed);
+    builder.inst_results(called)[0]
 }
 
 /// Where `node` is a fork, what chooses its branch, with each branch ended by `branch`; and
@@ -5668,14 +5908,14 @@ fn arithmetic(
                     abort_where_the_sign_bit_is_set(
                         builder,
                         abort,
-                        overflow_status(aborts),
+                        one_reason_status(aborts),
                         past,
                         also,
                     );
                     Ok(sum)
                 }
-                Op::Sub => Ok(difference(builder, abort, overflow_status(aborts), a, b)),
-                Op::Mul => Ok(product(builder, abort, overflow_status(aborts), a, b)),
+                Op::Sub => Ok(difference(builder, abort, one_reason_status(aborts), a, b)),
+                Op::Mul => Ok(product(builder, abort, one_reason_status(aborts), a, b)),
                 _ => unreachable!("reached from a sum, a difference or a product and nothing else"),
             },
             Prim::Decimal
@@ -6115,7 +6355,7 @@ struct Dividing<'a> {
 ///
 /// A zero divisor is a case of the answer and not a reason to end, so it is answered as
 /// `DivisionByZero` and nothing is divided. The one pair whose quotient no `Int` holds, the
-/// smallest `Int` over -1, ends a quotient with the reason the call names ([`overflow_status`]).
+/// smallest `Int` over -1, ends a quotient with the reason the call names ([`one_reason_status`]).
 /// Its remainder is nought, which Cranelift's `srem` answers for it. Every other pair is divided,
 /// and the answer carried as the union's `Int` case.
 ///
@@ -6147,7 +6387,7 @@ fn truncating_division(
                 let smallest = builder.ins().icmp_imm_s(IntCC::Equal, dividend, i64::MIN);
                 let minus_one = builder.ins().icmp_imm_s(IntCC::Equal, divisor, -1);
                 let past = builder.ins().band(smallest, minus_one);
-                abort_where(builder, abort, overflow_status(aborts), past);
+                abort_where(builder, abort, one_reason_status(aborts), past);
                 builder.ins().sdiv(dividend, divisor)
             }
             Division::Remainder => builder.ins().srem(dividend, divisor),
@@ -6197,7 +6437,7 @@ fn abort_where_the_sign_bit_is_set(
 
 /// A machine condition that leaves an `Int` outside the range it holds is this backend's own
 /// invariant answering rather than the language's — the checker already settled that the site
-/// carries exactly this one reason (see `overflow_status`) — so what happens when `condition` is
+/// carries exactly this one reason (see `one_reason_status`) — so what happens when `condition` is
 /// true is a jump to `abort` with that reason's status, and lowering carries on in a fresh block
 /// for the case it is false. Not a trap: a trap is this compiler's own bug answering, and a Souther
 /// `Int` leaving its range is not that — it is the language's own answer to the computation, and
