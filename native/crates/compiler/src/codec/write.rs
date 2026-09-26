@@ -505,6 +505,9 @@ impl<'w, 'f> Writing<'w, 'f> {
             Prim::Int => Ok(self.call(Runtime::ExternalInt, &[value])),
             Prim::Bool => Ok(self.call(Runtime::ExternalBool, &[value])),
             Prim::String => Ok(self.call(Runtime::ExternalString, &[value])),
+            // The amount, and not the scale it carries: two equal values are written alike
+            // (spec §primitives), which the runtime settles.
+            Prim::Decimal => Ok(self.call(Runtime::ExternalDecimal, &[value])),
             other => Err(not_lowered(format!(
                 "a {} written at a boundary",
                 other.spelt()

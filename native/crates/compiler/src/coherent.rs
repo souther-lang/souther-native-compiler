@@ -790,6 +790,7 @@ impl<'a> Walk<'_, 'a> {
             | Node::Read { .. }
             | Node::Bool { .. }
             | Node::Str { .. }
+            | Node::Decimal { .. }
             | Node::Unit { .. }
             | Node::Unreachable { .. }
             | Node::None { .. } => Vec::new(),
@@ -1148,6 +1149,26 @@ impl<'a> Walk<'_, 'a> {
                 &Ty::Prim { prim: Prim::String },
                 "its kind",
             ),
+            Node::Decimal { unscaled, ty, .. } => {
+                // The integer is handed to the runtime as the text it is, and the runtime reads
+                // integer text and nothing else.
+                let digits = unscaled.strip_prefix('-').unwrap_or(unscaled);
+                if digits.is_empty() || !digits.bytes().all(|it| it.is_ascii_digit()) {
+                    bail!(
+                        "{}: a decimal literal whose integer is written {unscaled:?}, which is no \
+                         integer: the two halves disagree",
+                        self.owner
+                    );
+                }
+                self.same(
+                    "a decimal literal",
+                    ty,
+                    &Ty::Prim {
+                        prim: Prim::Decimal,
+                    },
+                    "its kind",
+                )
+            }
             Node::Read { binding, ty, .. } => {
                 let bound = self.bound.get(binding).ok_or_else(|| {
                     anyhow!(

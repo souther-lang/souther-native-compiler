@@ -365,6 +365,7 @@ impl<'p, 'a> Planner<'p, 'a> {
             Node::Int { .. }
             | Node::Bool { .. }
             | Node::Str { .. }
+            | Node::Decimal { .. }
             | Node::Unit { .. }
             | Node::Unreachable { .. }
             | Node::None { .. } => {}

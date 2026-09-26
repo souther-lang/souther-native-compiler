@@ -153,7 +153,8 @@ final class Running {
     RunOutcome answeredOrEnded(CheckedModule module, CheckedBehavior behavior,
                                List<ObservedValue> inputs, List<StandsIn> standIns)
             throws IOException, InterruptedException {
-        return observed(atItsBoundary(module, behavior, inputs, standIns));
+        return observed(atItsBoundary(module, behavior, inputs, standIns),
+                behavior.signature().answers());
     }
 
     /**
@@ -221,7 +222,8 @@ final class Running {
     RunOutcome rowAnsweredOrEnded(CheckedModule module, CheckedBehavior behavior,
                                   int at, List<StandsIn> standIns)
             throws IOException, InterruptedException {
-        return observed(rowAtItsBoundary(module, behavior, at, standIns));
+        return observed(rowAtItsBoundary(module, behavior, at, standIns),
+                behavior.signature().answers());
     }
 
     private BoundaryOutcome rowAtItsBoundary(CheckedModule module, CheckedBehavior behavior,
@@ -251,9 +253,10 @@ final class Running {
         record StoodInForNothing() implements BoundaryOutcome {}
     }
 
-    private static RunOutcome observed(BoundaryOutcome outcome) {
+    private static RunOutcome observed(BoundaryOutcome outcome, Type answers) {
         return switch (outcome) {
-            case BoundaryOutcome.Answered it -> new RunOutcome.Answered(observed(it.written()));
+            case BoundaryOutcome.Answered it ->
+                    new RunOutcome.Answered(observed(it.written(), answers));
             case BoundaryOutcome.Aborted it -> new RunOutcome.Aborted(it.kind());
             case BoundaryOutcome.StoodInForNothing it -> new RunOutcome.StoodInForNothing();
         };
@@ -264,14 +267,23 @@ final class Running {
      * the JSON value is and not by the type the answer was declared at, so a boundary that wrote the
      * wrong kind of value is seen as having written it. Anything else is compared as the external
      * form it is, through {@link #externalAnswer}.
+     *
+     * <p>But for a number where a {@code Decimal} is declared. JSON writes an {@code Int} and a
+     * {@code Decimal} alike, as a number, and a boundary writes a {@code Decimal} as its amount, so
+     * {@code 100.00} is written {@code 100}: what the number is read as is the one thing the JSON
+     * cannot say. It is read exactly, at the scale it was written at.
      */
-    private static ObservedValue observed(JsonNode written) {
+    private static ObservedValue observed(JsonNode written, Type answers) {
         if (written.isArray()) {
+            Type element = answers instanceof Type.ListOf list ? list.element() : answers;
             List<ObservedValue> elements = new ArrayList<>();
-            for (JsonNode element : written) {
-                elements.add(observed(element));
+            for (JsonNode each : written) {
+                elements.add(observed(each, element));
             }
             return new ObservedValue.Sequence(elements);
+        }
+        if (written.isNumber() && answers == Type.Prim.DECIMAL) {
+            return new ObservedValue.Decimal(written.decimalValue());
         }
         if (written.isIntegralNumber() && written.canConvertToLong()) {
             return new ObservedValue.Integer(written.longValue());
@@ -287,7 +299,10 @@ final class Running {
                 + " externalAnswer");
     }
 
-    private static final JsonMapper JSON = JsonMapper.builder().build();
+    /** Numbers read as they were written: a fraction as the decimal it spells and not a double. */
+    private static final JsonMapper JSON = JsonMapper.builder()
+            .enable(tools.jackson.databind.DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS)
+            .build();
 
     /**
      * What the harness's own two lines say: a status on the first, and — only where it is
@@ -529,7 +544,8 @@ final class Running {
     private static boolean everyOneCrosses(List<Type> takes) {
         for (Type taken : takes) {
             if (!(taken instanceof Type.Prim prim) || (prim != Type.Prim.INT
-                    && prim != Type.Prim.BOOL && prim != Type.Prim.STRING)) {
+                    && prim != Type.Prim.BOOL && prim != Type.Prim.STRING
+                    && prim != Type.Prim.DECIMAL)) {
                 return false;
             }
         }
@@ -855,10 +871,10 @@ final class Running {
         case LINUX -> "";
     };
 
-    /** Whether this harness has a string to make. */
+    /** Whether this harness has a string to make, which a `Decimal` is made of too. */
     private static boolean textCrossesHere(List<Type> takes) {
         for (Type taken : takes) {
-            if (prim(taken) == Type.Prim.STRING) {
+            if (prim(taken) == Type.Prim.STRING || prim(taken) == Type.Prim.DECIMAL) {
                 return true;
             }
         }
@@ -892,6 +908,17 @@ final class Running {
                 return held;
             }
 
+            extern const void *souther_decimal_of_parts(const uint8_t *, int64_t);
+
+            /* A Decimal handed over as its integer, a colon and its scale, made through the runtime
+               as a host makes one. */
+            static const void *readDecimal(const char *written) {
+                const char *colon = strchr(written, ':');
+                const uint8_t *unscaled = souther_string_of_utf8(
+                        (const uint8_t *) written, (int64_t) (colon - written));
+                return souther_decimal_of_parts(unscaled, strtoll(colon + 1, NULL, 10));
+            }
+
             """;
 
     private static String cType(Type type) {
@@ -905,6 +932,7 @@ final class Running {
             case INT -> "int64_t";
             case BOOL -> "int8_t";
             case STRING -> "const uint8_t *";
+            case DECIMAL -> "const void *";
             default -> throw new AssertionError("no harness writes a " + type + " yet");
         };
     }
@@ -914,6 +942,7 @@ final class Running {
             case INT -> "strtoll(argv[" + at + "], NULL, 10)";
             case BOOL -> "(int8_t) (strtoll(argv[" + at + "], NULL, 10) != 0)";
             case STRING -> "readText(argv[" + at + "])";
+            case DECIMAL -> "readDecimal(argv[" + at + "])";
             default -> throw new AssertionError("no harness reads a " + type + " yet");
         };
     }
@@ -924,6 +953,8 @@ final class Running {
             case ObservedValue.Integer it -> Long.toString(it.value());
             case ObservedValue.Bool it -> it.value() ? "1" : "0";
             case ObservedValue.Text it -> hex(it.value().getBytes(StandardCharsets.UTF_8));
+            // Its integer and its scale, which is what a host makes one of.
+            case ObservedValue.Decimal it -> it.value().unscaledValue() + ":" + it.value().scale();
             default -> throw new AssertionError("no harness hands over a " + given + " yet");
         };
     }

@@ -39,9 +39,9 @@ pub(crate) struct Contract {
 
 /// A type a kernel is known to take or answer, where some part of it may be any type.
 ///
-/// As much of a type as a kernel's contract has needed, and no more: a primitive, a list, an
-/// optional, a function and a fixed union of cases, and a variable standing for whatever one call
-/// settles it as. It is not the language's type and does not check one; it is matched against the
+/// As much of a type as a kernel's contract has needed, and no more: a primitive, a declared type
+/// by its key, a list, an optional, a function and a fixed union of cases, and a variable standing
+/// for whatever one call settles it as. It is not the language's type and does not check one; it is matched against the
 /// types the checker settled, which are concrete. A kernel answering a tuple adds its shape here
 /// when it is lowered.
 ///
@@ -51,6 +51,9 @@ pub(crate) struct Contract {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub(crate) enum Shape {
     Prim(Prim),
+    /// The declared type this key names: `RoundingMode`, which the language declares and the
+    /// `Decimal` kernels that round take.
+    Declared(&'static str),
     /// Whatever the call settles it as, the same type everywhere the one number stands.
     Var(usize),
     List(Box<Shape>),
@@ -75,6 +78,12 @@ impl Shape {
     pub(crate) fn binds(&self, ty: &Ty, bound: &mut Bound) -> bool {
         match (self, ty) {
             (Shape::Prim(known), Ty::Prim { prim }) => known == prim,
+            (
+                Shape::Declared(key),
+                Ty::Ref {
+                    named: Case::Declared { declared },
+                },
+            ) => declared == key,
             (Shape::Var(at), _) => {
                 if bound.0.len() <= *at {
                     bound.0.resize(at + 1, None);
@@ -100,6 +109,7 @@ impl Shape {
             (Shape::Cases(cases), Ty::Union { union }) => cases[..] == union[..],
             (
                 Shape::Prim(_)
+                | Shape::Declared(_)
                 | Shape::List(_)
                 | Shape::Option(_)
                 | Shape::Fn { .. }
@@ -113,6 +123,7 @@ impl Shape {
     pub(crate) fn settled(&self, bound: &Bound) -> Option<Ty> {
         Some(match self {
             Shape::Prim(prim) => Ty::Prim { prim: *prim },
+            Shape::Declared(key) => Ty::declared(key.to_string()),
             Shape::Var(at) => bound.0.get(*at)?.clone()?,
             Shape::List(element) => Ty::List {
                 list: Box::new(element.settled(bound)?),
@@ -140,6 +151,7 @@ impl Shape {
     pub(crate) fn spelt(&self) -> String {
         match self {
             Shape::Prim(prim) => prim.spelt().to_string(),
+            Shape::Declared(key) => key.to_string(),
             Shape::Var(at) => format!("'{}", (b'a' + *at as u8) as char),
             Shape::List(element) => format!("a List of {}", element.spelt()),
             Shape::Option(held) => format!("an optional {}", held.spelt()),
@@ -326,6 +338,30 @@ pub(crate) enum LoweredKernel {
     StringCharacters,
     /// `string.codePoints`: a string, and each of its code points as an `Int`.
     StringCodePoints,
+    /// `string.toDecimal`: a string, and the `Decimal` it is decimal text of, or `NotANumber`.
+    StringToDecimal,
+    /// `string.fromDecimal`: a `Decimal` in plain notation at its scale.
+    StringFromDecimal,
+    /// `decimal.add`: two `Decimal`s, and their sum at the larger scale. A sum no `Decimal` holds
+    /// ends the run.
+    DecimalAdd,
+    /// `decimal.subtract`: the same, the first less the second.
+    DecimalSubtract,
+    /// `decimal.multiply`: two `Decimal`s, and their product at the sum of their scales.
+    DecimalMultiply,
+    /// `decimal.compare`: two `Decimal`s, and -1, 0 or 1 by amount, whatever their scales.
+    DecimalCompare,
+    /// `decimal.fromInt`: an `Int`, as a `Decimal` at scale nought.
+    DecimalFromInt,
+    /// `decimal.toInt`: a rounding mode and a `Decimal`, and the whole number it rounds to. One no
+    /// `Int` holds ends the run.
+    DecimalToInt,
+    /// `decimal.round`: a scale, a rounding mode and a `Decimal`, and the value at that scale. A
+    /// scale outside the range, or a value no `Decimal` holds, ends the run.
+    DecimalRound,
+    /// `decimal.divide`: a dividend, a divisor, a scale and a rounding mode, and the quotient at
+    /// that scale, or `DivisionByZero`.
+    DecimalDivide,
 }
 
 impl LoweredKernel {
@@ -375,6 +411,16 @@ impl LoweredKernel {
             "string.padRight" => LoweredKernel::StringPadRight,
             "string.characters" => LoweredKernel::StringCharacters,
             "string.codePoints" => LoweredKernel::StringCodePoints,
+            "string.toDecimal" => LoweredKernel::StringToDecimal,
+            "string.fromDecimal" => LoweredKernel::StringFromDecimal,
+            "decimal.add" => LoweredKernel::DecimalAdd,
+            "decimal.subtract" => LoweredKernel::DecimalSubtract,
+            "decimal.multiply" => LoweredKernel::DecimalMultiply,
+            "decimal.compare" => LoweredKernel::DecimalCompare,
+            "decimal.fromInt" => LoweredKernel::DecimalFromInt,
+            "decimal.toInt" => LoweredKernel::DecimalToInt,
+            "decimal.round" => LoweredKernel::DecimalRound,
+            "decimal.divide" => LoweredKernel::DecimalDivide,
             _ => return None,
         })
     }
@@ -383,6 +429,8 @@ impl LoweredKernel {
     pub(crate) fn contract(self) -> Contract {
         let int = || Shape::Prim(Prim::Int);
         let string = || Shape::Prim(Prim::String);
+        let decimal = || Shape::Prim(Prim::Decimal);
+        let mode = || Shape::Declared(ROUNDING_MODE);
         let bool = || Shape::Prim(Prim::Bool);
         let strings = || Shape::List(Box::new(string()));
         let a = || Shape::Var(0);
@@ -529,8 +577,72 @@ impl LoweredKernel {
                 string(),
                 vec![AbortKind::RequiredFormHasNoPlace],
             ),
+            // Text that is no decimal text is a case of the answer.
+            LoweredKernel::StringToDecimal => {
+                known(vec![string()], decimal_or_not_a_number(), Vec::new())
+            }
+            // Plain notation is as long as the scale is far from nought, and the checker this build
+            // reads names no reason for it to end: a text no string could hold is one no run
+            // answers (`souther_string_from_decimal`). The language names one later
+            // (souther-lang/souther f0d169327), and this follows it when the build follows that.
+            LoweredKernel::StringFromDecimal => known(vec![decimal()], string(), Vec::new()),
+            // A result whose scale leaves the range, or that is wider than a `Decimal` holds, ends
+            // the run where it is computed.
+            LoweredKernel::DecimalAdd
+            | LoweredKernel::DecimalSubtract
+            | LoweredKernel::DecimalMultiply => known(
+                vec![decimal(), decimal()],
+                decimal(),
+                vec![AbortKind::RequiredFormHasNoPlace],
+            ),
+            LoweredKernel::DecimalCompare => known(vec![decimal(), decimal()], int(), Vec::new()),
+            LoweredKernel::DecimalFromInt => known(vec![int()], decimal(), Vec::new()),
+            LoweredKernel::DecimalToInt => known(
+                vec![mode(), decimal()],
+                int(),
+                vec![AbortKind::RequiredFormHasNoPlace],
+            ),
+            LoweredKernel::DecimalRound => known(
+                vec![int(), mode(), decimal()],
+                decimal(),
+                vec![AbortKind::RequiredFormHasNoPlace],
+            ),
+            // A zero divisor is a case of the answer, answered before the scale is looked at; a
+            // scale outside the range, or a quotient no `Decimal` holds at it, ends the run.
+            LoweredKernel::DecimalDivide => known(
+                vec![decimal(), decimal(), int(), mode()],
+                decimal_or_division_by_zero(),
+                vec![AbortKind::RequiredFormHasNoPlace],
+            ),
         }
     }
+}
+
+/// The key of `RoundingMode`, which the language declares in `souther.decimal`.
+pub(crate) const ROUNDING_MODE: &str = "souther.decimal.RoundingMode";
+
+/// What reading decimal text answers, its members in the order the checker writes this union in.
+fn decimal_or_not_a_number() -> Shape {
+    Shape::Cases(vec![
+        Case::Primitive {
+            prim: Prim::Decimal,
+        },
+        Case::Language {
+            case: LanguageCase::NotANumber,
+        },
+    ])
+}
+
+/// What `Decimal.divide` answers, its members in the order the checker writes this union in.
+fn decimal_or_division_by_zero() -> Shape {
+    Shape::Cases(vec![
+        Case::Primitive {
+            prim: Prim::Decimal,
+        },
+        Case::Language {
+            case: LanguageCase::DivisionByZero,
+        },
+    ])
 }
 
 /// What a truncating division answers, its members in the order the checker writes this union in.
@@ -589,7 +701,7 @@ mod tests {
         }
     }
 
-    const LOWERED: [(&str, LoweredKernel); 43] = [
+    const LOWERED: [(&str, LoweredKernel); 53] = [
         ("int.add", LoweredKernel::IntAdd),
         ("int.subtract", LoweredKernel::IntSubtract),
         ("int.multiply", LoweredKernel::IntMultiply),
@@ -636,6 +748,16 @@ mod tests {
         ("string.padRight", LoweredKernel::StringPadRight),
         ("string.characters", LoweredKernel::StringCharacters),
         ("string.codePoints", LoweredKernel::StringCodePoints),
+        ("string.toDecimal", LoweredKernel::StringToDecimal),
+        ("string.fromDecimal", LoweredKernel::StringFromDecimal),
+        ("decimal.add", LoweredKernel::DecimalAdd),
+        ("decimal.subtract", LoweredKernel::DecimalSubtract),
+        ("decimal.multiply", LoweredKernel::DecimalMultiply),
+        ("decimal.compare", LoweredKernel::DecimalCompare),
+        ("decimal.fromInt", LoweredKernel::DecimalFromInt),
+        ("decimal.toInt", LoweredKernel::DecimalToInt),
+        ("decimal.round", LoweredKernel::DecimalRound),
+        ("decimal.divide", LoweredKernel::DecimalDivide),
     ];
 
     /// `String.matches` settles what its pattern means, and the kernels that order settle what
@@ -716,15 +838,15 @@ mod tests {
 
     /// Each key reaches its own kernel, and a key the language does not write reaches none: this
     /// backend does not accept a name the standard library has no declaration for. A kernel over a
-    /// `Decimal` is not lowered here yet.
+    /// `Rational` is not lowered here yet.
     #[test]
     fn a_key_reaches_the_kernel_it_names_and_no_other() {
         for (key, kernel) in LOWERED {
             assert_eq!(LoweredKernel::of(key), Some(kernel));
         }
         assert_eq!(LoweredKernel::of("int.divide"), None);
-        assert_eq!(LoweredKernel::of("string.toDecimal"), None);
-        assert_eq!(LoweredKernel::of("string.fromDecimal"), None);
+        assert_eq!(LoweredKernel::of("decimal.abs"), None);
+        assert_eq!(LoweredKernel::of("rational.fromDecimal"), None);
     }
 
     /// A kernel that can end a run ends it for one reason, so what it hands back says only whether
@@ -739,6 +861,10 @@ mod tests {
     fn some_shape_of(kernel: LoweredKernel) -> Vec<Ty> {
         let int = Ty::Prim { prim: Prim::Int };
         let string = Ty::Prim { prim: Prim::String };
+        let decimal = Ty::Prim {
+            prim: Prim::Decimal,
+        };
+        let mode = Ty::declared(ROUNDING_MODE.to_string());
         let strings = Ty::List {
             list: Box::new(string.clone()),
         };
@@ -811,6 +937,16 @@ mod tests {
             LoweredKernel::StringPadLeft | LoweredKernel::StringPadRight => {
                 vec![int, string.clone(), string]
             }
+            LoweredKernel::StringToDecimal => vec![string],
+            LoweredKernel::StringFromDecimal => vec![decimal],
+            LoweredKernel::DecimalAdd
+            | LoweredKernel::DecimalSubtract
+            | LoweredKernel::DecimalMultiply
+            | LoweredKernel::DecimalCompare => vec![decimal.clone(), decimal],
+            LoweredKernel::DecimalFromInt => vec![int],
+            LoweredKernel::DecimalToInt => vec![mode, decimal],
+            LoweredKernel::DecimalRound => vec![int, mode, decimal],
+            LoweredKernel::DecimalDivide => vec![decimal.clone(), decimal, int, mode],
         }
     }
 

@@ -88,7 +88,7 @@ public final class ProgramWriter {
      * written moves, so that a driver and a writer that disagree say so rather than producing an
      * object that is wrong quietly.
      */
-    public static final int TRANSPORT_VERSION = 24;
+    public static final int TRANSPORT_VERSION = 25;
 
     private final CheckedProgram program;
 
@@ -1222,6 +1222,17 @@ public final class ProgramWriter {
                 + ",\"type\":" + type(type) + ",\"aborts\":" + spelled(aborts) + "}";
     }
 
+    /**
+     * A {@code Decimal} literal as the checker read it: the integer and the scale, and not the text
+     * it was written as. The integer has as many digits as it has, so it crosses as the digits of
+     * one, and the scale is the 32-bit number a {@code Decimal}'s scale is.
+     */
+    private String decimalNode(java.math.BigDecimal value, Type type, AbortSet aborts) {
+        return "{\"core\":\"decimal\",\"unscaled\":" + quoted(value.unscaledValue().toString())
+                + ",\"scale\":" + value.scale()
+                + ",\"type\":" + type(type) + ",\"aborts\":" + spelled(aborts) + "}";
+    }
+
     private String unitNode(String identity, Type type, AbortSet aborts) {
         return "{\"core\":\"unit\",\"unit\":" + identity
                 + ",\"type\":" + type(type) + ",\"aborts\":" + spelled(aborts) + "}";
@@ -1323,7 +1334,7 @@ public final class ProgramWriter {
                     + ",\"else\":" + core(it.els(), bindings)
                     + ",\"type\":" + type(it.type()) + ",\"aborts\":" + aborts(it) + "}";
 
-            case Core.Decimal it -> throw notYet("a decimal literal", it);
+            case Core.Decimal it -> decimalNode(it.value(), it.type(), program.abortsAt(it));
             case Core.Temporal it -> throw notYet("a temporal literal", it);
             // What the checker builds for an analysis to read, and not for a backend to run: a
             // value's build standing as its template, and a call kept standing for what it says.

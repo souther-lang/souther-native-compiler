@@ -77,7 +77,7 @@ public final class PhpBindings {
      * The version of what generated code calls of the runtime package that this writes against:
      * {@code Binding::PROTOCOL} in {@code bindings/php/runtime}, which a test holds to this.
      */
-    static final int RUNTIME_PROTOCOL = 8;
+    static final int RUNTIME_PROTOCOL = 9;
 
     private final Manifest manifest;
     private final String root;

@@ -30,7 +30,7 @@ use cranelift::frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift::module::{FuncId, Module};
 use cranelift::object::ObjectModule;
 use souther_native_abi::{
-    CARRIED, HELD, LIST_ELEMENTS, LIST_LENGTH, NOTHING, SLOT, field_at, member_at,
+    CARRIED, DECIMAL_COMPARE, HELD, LIST_ELEMENTS, LIST_LENGTH, NOTHING, SLOT, field_at, member_at,
 };
 
 use crate::transport::{Case, Declaration, Prim, Ty};
@@ -102,8 +102,13 @@ pub(crate) fn equal(
                 let answered = builder.inst_results(compared)[0];
                 Ok(builder.ins().icmp_imm_s(IntCC::Equal, answered, 0))
             }
-            Prim::Decimal
-            | Prim::Rational
+            // By amount and not by scale, which the runtime compares: `1.0` and `1.00` are equal.
+            Prim::Decimal => {
+                let compared =
+                    crate::runtime_call(builder, lowering, module, DECIMAL_COMPARE, &[a, b]);
+                Ok(builder.ins().icmp_imm_s(IntCC::Equal, compared, 0))
+            }
+            Prim::Rational
             | Prim::Date
             | Prim::Time
             | Prim::DateTime

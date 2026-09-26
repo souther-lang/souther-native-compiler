@@ -72,6 +72,7 @@ sealed interface Crossing {
             case BOOL -> "uint8_t";
             case VALUE -> "souther_value";
             case STRING -> "souther_string";
+            case DECIMAL -> "souther_decimal";
             case LIST -> "souther_list";
             case FUNCTION -> "souther_function";
             case DECODED -> "souther_decoded";
@@ -134,13 +135,14 @@ sealed interface Crossing {
     record Whole(Shape.Leaf shape, String phpType, Kind kind, @Nullable String declared)
             implements Given, Received {
 
-        enum Kind { INT, BOOL, STRING, PRODUCT, SUM }
+        enum Kind { INT, BOOL, STRING, DECIMAL, PRODUCT, SUM }
 
         public Whole {
             Word is = switch (kind) {
                 case INT -> Word.INT;
                 case BOOL -> Word.BOOL;
                 case STRING -> Word.STRING;
+                case DECIMAL -> Word.DECIMAL;
                 case PRODUCT, SUM -> Word.VALUE;
             };
             if (shape.word() != is) {
@@ -154,8 +156,10 @@ sealed interface Crossing {
          *
          * <p>The one place this binding says which primitives it holds and how: an {@code Int} as
          * an {@code int} where it crosses as an {@code INT}, a {@code Bool} as a {@code bool} where
-         * it crosses as a {@code BOOL}, and a {@code String} as a {@code string} where it crosses as
-         * a {@code STRING}. Both are asked, the name and the word: what a primitive crosses as is
+         * it crosses as a {@code BOOL}, a {@code String} as a {@code string} where it crosses as a
+         * {@code STRING}, and a {@code Decimal} as a {@code \\Souther\\Runtime\\Decimal}, its
+         * integer and its scale, where it crosses as a {@code DECIMAL}, since no type of PHP's own
+         * keeps a scale below nought. Both are asked, the name and the word: what a primitive crosses as is
          * the manifest's to say, and a {@code Decimal} said to cross as an {@code INT} is a pair
          * this binding does not hold, and not an {@code int}. A value of a union carrying the
          * primitive is asked the same.
@@ -168,6 +172,9 @@ sealed interface Crossing {
                         ? new Whole(new Shape.Leaf(word), "bool", Kind.BOOL, null) : null;
                 case "String" -> word == Word.STRING
                         ? new Whole(new Shape.Leaf(word), "string", Kind.STRING, null) : null;
+                case "Decimal" -> word == Word.DECIMAL
+                        ? new Whole(new Shape.Leaf(word), "\\Souther\\Runtime\\Decimal",
+                                Kind.DECIMAL, null) : null;
                 default -> null;
             };
         }
@@ -191,6 +198,7 @@ sealed interface Crossing {
                 case INT -> value;
                 case BOOL -> "(" + value + " ? 1 : 0)";
                 case STRING -> session + "->string(" + value + ")";
+                case DECIMAL -> session + "->decimal(" + value + ")";
                 case PRODUCT, SUM -> value + "->nativeHandle()->borrow(" + session + ")";
             });
         }
@@ -201,7 +209,7 @@ sealed interface Crossing {
                 case INT -> "\\is_int(" + value + ")";
                 case BOOL -> "\\is_bool(" + value + ")";
                 case STRING -> "\\is_string(" + value + ")";
-                case PRODUCT, SUM -> value + " instanceof " + phpType;
+                case DECIMAL, PRODUCT, SUM -> value + " instanceof " + phpType;
             };
         }
 
@@ -212,6 +220,7 @@ sealed interface Crossing {
                 case INT -> word;
                 case BOOL -> "(" + word + " !== 0)";
                 case STRING -> session + "->text(" + word + ")";
+                case DECIMAL -> session + "->amount(" + word + ")";
                 case PRODUCT -> "new " + declared + "(" + session + "->held(" + word + "))";
                 case SUM -> declared + "::wrap(" + session + ", " + word + ")";
             };
@@ -652,7 +661,7 @@ sealed interface Crossing {
 
         public Member {
             boolean primitive = switch (whole.kind()) {
-                case INT, BOOL, STRING -> true;
+                case INT, BOOL, STRING, DECIMAL -> true;
                 case PRODUCT, SUM -> false;
             };
             if (primitive != (carried != null)) {

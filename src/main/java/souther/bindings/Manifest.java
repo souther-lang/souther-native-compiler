@@ -58,7 +58,7 @@ public final class Manifest {
     public static final String FORMAT = "souther-native-interface";
 
     /** The version of what a manifest says that this reads. */
-    public static final int VERSION = 10;
+    public static final int VERSION = 11;
 
     /** The ABI generation the functions this binds answer to. */
     public static final int ABI = 5;
@@ -273,8 +273,8 @@ public final class Manifest {
 
     /** One word a host hands over or is handed. */
     public enum Word {
-        STATUS, INT, BOOL, CASE, OUTCOME, COUNT, MARK, BYTES, VALUE, STRING, DECODED, ISSUE, LIST,
-        REQUIREMENTS, CAPABILITY, USERDATA, FUNCTION
+        STATUS, INT, BOOL, CASE, OUTCOME, COUNT, MARK, BYTES, VALUE, STRING, DECIMAL, DECODED,
+        ISSUE, LIST, REQUIREMENTS, CAPABILITY, USERDATA, FUNCTION
     }
 
     /**
@@ -339,11 +339,18 @@ public final class Manifest {
             return shapes.stream().flatMap(it -> it.words().stream()).toList();
         }
 
-        /** One word that is the value itself: an {@code INT}, a {@code BOOL}, a {@code STRING} or a {@code VALUE}. */
+        /**
+         * One word that is the value itself: an {@code INT}, a {@code BOOL}, a {@code STRING}, a
+         * {@code DECIMAL} or a {@code VALUE}.
+         */
         record Leaf(Word word) implements Shape {
 
+            /** Every word a value is handed over whole as, which a manifest's leaf is read against. */
+            public static final List<Word> WORDS =
+                    List.of(Word.INT, Word.BOOL, Word.STRING, Word.DECIMAL, Word.VALUE);
+
             public Leaf {
-                if (!List.of(Word.INT, Word.BOOL, Word.STRING, Word.VALUE).contains(word)) {
+                if (!WORDS.contains(word)) {
                     throw new IllegalArgumentException(word + " is not a value handed over whole");
                 }
             }
@@ -439,7 +446,7 @@ public final class Manifest {
 
     /** What stands in the way of a value crossing to a host. */
     public enum Reason {
-        /** A type with no representation for a host yet: a {@code Decimal}, a date, a set, a map. */
+        /** A type with no representation for a host yet: a {@code Rational}, a date, a set, a map. */
         NO_REPRESENTATION,
         /** A type with no value to hand over. */
         NO_VALUE,
@@ -1186,9 +1193,9 @@ public final class Manifest {
             field("takes", list(SHAPE)),
             field("answers", SHAPE)).strict(Signature::new));
 
-    /** A leaf's word, which is one of the four a value is handed over whole as. */
+    /** A leaf's word, which is one of {@link Shape.Leaf#WORDS}: what a value is handed over whole as. */
     private static final Decoder<JsonNode, Word> LEAF = WORD.flatMap(word ->
-            List.of(Word.INT, Word.BOOL, Word.STRING, Word.VALUE).contains(word)
+            Shape.Leaf.WORDS.contains(word)
                     ? Result.ok(word)
                     : Result.fail("invalid_value", word + " is not a value handed over whole"));
 

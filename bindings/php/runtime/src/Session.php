@@ -216,6 +216,23 @@ final class Session
         return $this->ffi()->souther_string_of_utf8($this->bytes($text), strlen($text));
     }
 
+    /**
+     * @internal A `Decimal` as the library holds it, made of its integer and its scale, which
+     * `Decimal` has already held to what the library takes.
+     */
+    public function decimal(Decimal $decimal): CData
+    {
+        return $this->ffi()->souther_decimal_of_parts($this->string($decimal->unscaled), $decimal->scale);
+    }
+
+    /** @internal A `Decimal` the library answered, as its integer and its scale. */
+    public function amount(CData $decimal): Decimal
+    {
+        $ffi = $this->ffi();
+        return new Decimal($this->text($ffi->souther_decimal_unscaled($decimal)),
+            $ffi->souther_decimal_scale($decimal));
+    }
+
     /** @internal Bytes the library reads for the length of one call and does not keep. */
     public function bytes(string $bytes): CData
     {

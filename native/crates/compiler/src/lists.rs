@@ -24,15 +24,16 @@ use cranelift::frontend::FunctionBuilder;
 use cranelift::module::Module;
 use cranelift::object::ObjectModule;
 use souther_native_abi::{
-    HELD, LIST_LENGTH, NOTHING, SLOT, Status, list_at, room_for_held, room_for_list,
+    DECIMAL_ADD, DECIMAL_FROM_INT, DECIMAL_MULTIPLY, HELD, LIST_LENGTH, NOTHING, SLOT, Status,
+    list_at, room_for_held, room_for_list,
 };
 
 use crate::ordering::ordered;
-use crate::transport::{FnSignature, Op, Prim, Ty};
+use crate::transport::{AbortKind, FnSignature, Op, Prim, Ty};
 use crate::unrun::never_runs;
 use crate::{
     Held, Lowered, Lowering, POINTER, TRUSTED, abort_where, call_function, into_slot, machine_type,
-    not_lowered, out_of_slot, product, sum,
+    not_lowered, one_reason_status, out_of_slot, product, runtime_call, sum, written_or_ended,
 };
 
 /// The first element of `list` that `predicate` holds for (`List.find`), as the slot it stands in,
@@ -232,18 +233,63 @@ pub(crate) fn range_inclusive(
 
 /// The sum (`Op::Add`) or the product (`Op::Mul`) of the numbers `list` holds, from nought or one:
 /// `List.sum` and `List.product`, one element at a time through what `+` or `*` over the two is
-/// lowered as, so a total no number of the element's type holds ends the run with `status` as the
-/// operator's would.
+/// lowered as, so a total no number of the element's type holds ends the run for `aborts`' one
+/// reason as the operator's would.
+///
+/// A total of `Decimal`s starts from nought or one at scale nought, as the JVM's does, so the
+/// elements' own scales carry through the walk: a sum is at the largest of them and a product at
+/// their sum.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn total(
     builder: &mut FunctionBuilder,
+    lowering: &Lowering,
+    module: &mut ObjectModule,
     abort: ir::Block,
-    status: Status,
+    aborts: &[AbortKind],
     op: Op,
     element: &Ty,
     list: ir::Value,
 ) -> Lowered<ir::Value> {
+    let status = one_reason_status(aborts);
     match element {
         Ty::Prim { prim: Prim::Int } => {}
+        Ty::Prim {
+            prim: Prim::Decimal,
+        } => {
+            let seed = builder.ins().iconst(
+                types::I64,
+                match op {
+                    Op::Add => 0,
+                    _ => 1,
+                },
+            );
+            let seed = runtime_call(builder, lowering, module, DECIMAL_FROM_INT, &[seed]);
+            let running = builder.declare_var(POINTER);
+            builder.def_var(running, seed);
+            let name = match op {
+                Op::Add => DECIMAL_ADD,
+                _ => DECIMAL_MULTIPLY,
+            };
+            let count = length(builder, list);
+            each(builder, count, |builder, at| {
+                let slot = element_at(builder, list, at);
+                let value = builder.ins().load(POINTER, TRUSTED, slot, 0);
+                let so_far = builder.use_var(running);
+                let now = written_or_ended(
+                    builder,
+                    lowering,
+                    module,
+                    abort,
+                    name,
+                    &[so_far, value],
+                    POINTER,
+                    aborts,
+                );
+                builder.def_var(running, now);
+                Ok(())
+            })?;
+            return Ok(builder.use_var(running));
+        }
         _ => {
             return Err(not_lowered(format!(
                 "{} of a list of {}",

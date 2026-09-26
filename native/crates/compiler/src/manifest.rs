@@ -2,7 +2,7 @@
 //!
 //! Written as types and not built as JSON, so that what a manifest of one version says is a thing
 //! the compiler holds this code to. A field renamed here is a change to these types, and the
-//! fixture `tests/interface-v10.json` is what version 10 is: every manifest this writes is read
+//! fixture `tests/interface-v11.json` is what version 11 is: every manifest this writes is read
 //! back by these same types, which refuse a member they do not name.
 //!
 //! [`VERSION`] moves when what a manifest says is read differently. What the functions it names
@@ -84,6 +84,13 @@ pub(crate) const MOVES: &[(u32, &str)] = &[
          function value called and made through functions for its own (`functions`), each only \
          where something crossing that way needs it; a field's reader writes the field through \
          room; every type the model has is named, `nothing` and `never` among them",
+    ),
+    (
+        11,
+        "a `Decimal` crosses as a leaf of its own (`decimal`): a host makes one of its integer, as \
+         integer text, and its scale, and reads the two back, through the runtime \
+         (`souther_decimal_of_parts`, `souther_decimal_unscaled`, `souther_decimal_scale`), and \
+         carries one as a case of a union",
     ),
 ];
 
@@ -312,7 +319,20 @@ pub(crate) enum Leaf {
     Int,
     Bool,
     String,
+    Decimal,
     Value,
+}
+
+impl From<Leaf> for HostLeaf {
+    fn from(leaf: Leaf) -> HostLeaf {
+        match leaf {
+            Leaf::Int => HostLeaf::Int,
+            Leaf::Bool => HostLeaf::Bool,
+            Leaf::String => HostLeaf::String,
+            Leaf::Decimal => HostLeaf::Decimal,
+            Leaf::Value => HostLeaf::Value,
+        }
+    }
 }
 
 impl From<&HostShape> for Shape {
@@ -322,6 +342,7 @@ impl From<&HostShape> for Shape {
                 HostLeaf::Int => Leaf::Int,
                 HostLeaf::Bool => Leaf::Bool,
                 HostLeaf::String => Leaf::String,
+                HostLeaf::Decimal => Leaf::Decimal,
                 HostLeaf::Value => Leaf::Value,
             }),
             HostShape::Option(of) => Shape::Option(Box::new(of.as_ref().into())),
@@ -784,6 +805,7 @@ pub(crate) enum Word {
     Bytes,
     Value,
     String,
+    Decimal,
     Decoded,
     Issue,
     List,
@@ -806,6 +828,7 @@ impl From<HostWord> for Word {
             HostWord::Bytes => Word::Bytes,
             HostWord::Value => Word::Value,
             HostWord::String => Word::String,
+            HostWord::Decimal => Word::Decimal,
             HostWord::Decoded => Word::Decoded,
             HostWord::Issue => Word::Issue,
             HostWord::List => Word::List,
@@ -830,6 +853,7 @@ impl From<Word> for HostWord {
             Word::Bytes => HostWord::Bytes,
             Word::Value => HostWord::Value,
             Word::String => HostWord::String,
+            Word::Decimal => HostWord::Decimal,
             Word::Decoded => HostWord::Decoded,
             Word::Issue => HostWord::Issue,
             Word::List => HostWord::List,
@@ -869,19 +893,19 @@ mod tests {
         }
     }
 
-    /// What version 10 is. Read by these types, which refuse a member they do not name, and
+    /// What version 11 is. Read by these types, which refuse a member they do not name, and
     /// written back the same: a field renamed or a kind reshaped here stops matching the fixture
     /// the Java half's test also holds a written manifest to.
-    const V10: &str = include_str!("../tests/interface-v10.json");
+    const V11: &str = include_str!("../tests/interface-v11.json");
 
     #[test]
-    fn version_ten_is_read_and_written_back_as_it_is() {
-        let read: Manifest = serde_json::from_str(V10).expect("version 10 reads");
+    fn version_eleven_is_read_and_written_back_as_it_is() {
+        let read: Manifest = serde_json::from_str(V11).expect("version 11 reads");
         assert_eq!(read.format, FORMAT);
         assert_eq!(read.version, VERSION);
         let mut written = serde_json::to_string_pretty(&read).unwrap();
         written.push('\n');
-        assert_eq!(written, V10);
+        assert_eq!(written, V11);
     }
 
     /// A surface an object of an earlier release carries is refused as that, and not as whichever

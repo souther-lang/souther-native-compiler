@@ -20,6 +20,8 @@
 //! everything else the call made. The document is the one thing on the heap, and the reading drops
 //! it when it ends.
 
+use crate::amount::Amount;
+use crate::decimal::{Decimal, decimal_of};
 use crate::document::{Form, Node, parsed};
 use crate::{Count, Text, Value, souther_alloc, string_of, text};
 use souther_native_abi::{DECODED_ISSUES, DECODED_MALFORMED, DECODED_VALUE};
@@ -503,6 +505,46 @@ pub unsafe extern "C" fn souther_read_string(
         Node::String(written) => Some(string_of(&canonical(written))),
         other => {
             unsafe { mismatched(decoding, path, other, "String") };
+            None
+        }
+    };
+    unsafe { answered(out, read, ptr::null_mut()) }
+}
+
+/// A `Decimal`, written through `out` as one of the runtime's in the arena, where `node` writes a
+/// number whose scale is one a `Decimal` has: the value its spelling writes, at the scale its
+/// spelling gives it, as many places as its fraction has less its exponent. So `1.50` is read at
+/// scale 2 and `1e2` at scale -2, as the JVM reads them. Null is written where it does not.
+///
+/// A number whose exponent puts its scale outside the 32-bit range is `out_of_range`: a number, and
+/// not one a `Decimal` holds, as an `Int` too wide for sixty-four bits is.
+///
+/// # Safety
+/// As [`souther_read_int`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_read_decimal(
+    node: *const Node,
+    path: *const Path,
+    decoding: *mut Decoding,
+    out: *mut *mut Decimal,
+) -> i8 {
+    let read = match unsafe { &*node } {
+        Node::Number(written) => {
+            let read = Amount::of_json_number(written);
+            if read.is_none() {
+                unsafe {
+                    found(
+                        decoding,
+                        "out_of_range",
+                        path,
+                        &[("actual", "number"), ("expected", "Decimal")],
+                    )
+                };
+            }
+            read.as_ref().map(decimal_of)
+        }
+        other => {
+            unsafe { mismatched(decoding, path, other, "Decimal") };
             None
         }
     };

@@ -37,7 +37,7 @@ class AnAdditionCrossesAsWhatTheCheckerSettledTest {
         String written = ProgramWriter.written(Checked.of(List.of(ADDING)));
 
         assertThat(written).isEqualTo("""
-                {"transport":24,"declarations":[],\
+                {"transport":25,"declarations":[],\
                 "behaviors":[{"module":"calculation","name":"add","is":"body",\
                 "parameters":{"named":[{"name":"a","input":{"is":"scalar","scalar":"INT"}},\
                 {"name":"b","input":{"is":"scalar","scalar":"INT"}}]},\
@@ -136,13 +136,13 @@ class AnAdditionCrossesAsWhatTheCheckerSettledTest {
         CheckedProgram program = Checked.of(List.of("""
                 module calculation
 
-                behavior rate : (a: Int) -> Decimal
+                behavior opening : (a: Int) -> Date
 
-                let rate (a) = 1.5m
+                let opening (a) = Date("2026-04-01")
                 """));
 
         assertThatThrownBy(() -> ProgramWriter.written(program))
                 .isInstanceOf(NotLowered.class)
-                .hasMessageContaining("a decimal literal");
+                .hasMessageContaining("a temporal literal");
     }
 }

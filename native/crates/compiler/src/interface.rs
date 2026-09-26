@@ -30,7 +30,7 @@ use cranelift::object::ObjectModule;
 use object::{Object, ObjectSection};
 use souther_native_abi::{
     ABI_GENERATION, ANSWERED, DECODED_ISSUES, DECODED_MALFORMED, DECODED_VALUE, HOST_CASES,
-    HOST_RUNTIME, HOST_STATUSES, HostParameter, HostShape, HostWord,
+    HOST_RUNTIME, HOST_STATUSES, HostLeaf, HostParameter, HostShape, HostWord,
 };
 use std::collections::BTreeMap;
 use target_lexicon::BinaryFormat;
@@ -149,6 +149,7 @@ pub(crate) fn machine(word: HostWord) -> types::Type {
         HostWord::Bytes
         | HostWord::Value
         | HostWord::String
+        | HostWord::Decimal
         | HostWord::Decoded
         | HostWord::Issue
         | HostWord::List
@@ -173,6 +174,7 @@ fn c_word(word: Word) -> &'static str {
         Word::Bytes => "const uint8_t *",
         Word::Value => "souther_value",
         Word::String => "souther_string",
+        Word::Decimal => "souther_decimal",
         Word::Decoded => "souther_decoded",
         Word::Issue => "souther_issue",
         Word::List => "souther_list",
@@ -1001,6 +1003,7 @@ pub(crate) fn declarations(manifest: &Manifest) -> String {
          typedef uint32_t souther_status;\n\
          typedef const struct souther_value_ *souther_value;\n\
          typedef const struct souther_string_ *souther_string;\n\
+         typedef const struct souther_decimal_ *souther_decimal;\n\
          typedef const struct souther_decoded_ *souther_decoded;\n\
          typedef const struct souther_issue_ *souther_issue;\n\
          typedef const struct souther_list_ *souther_list;\n\
@@ -1214,13 +1217,7 @@ fn type_of(ty: &Ty, declared: &Declared) -> manifest::Type {
 /// optional, a product, a list and a function are made of, between brackets.
 fn spelt(shape: &Shape) -> String {
     match shape {
-        Shape::Leaf(leaf) => c_word(match leaf {
-            manifest::Leaf::Int => Word::Int,
-            manifest::Leaf::Bool => Word::Bool,
-            manifest::Leaf::String => Word::String,
-            manifest::Leaf::Value => Word::Value,
-        })
-        .to_string(),
+        Shape::Leaf(leaf) => c_word(HostLeaf::from(*leaf).word().into()).to_string(),
         Shape::Option(of) => format!("an optional ({})", spelt(of)),
         Shape::Product(members) => format!(
             "({})",

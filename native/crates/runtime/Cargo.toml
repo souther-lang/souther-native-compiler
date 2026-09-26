@@ -14,6 +14,12 @@ souther-json-syntax.workspace = true
 # What the language says text means: its length, its order, its canonical form, and what each
 # of the `String` module's kernels answers.
 souther-text.workspace = true
+# The integer arithmetic a `Decimal`'s operations are worked out with past what a `u128` holds, and
+# nothing else of one: what a `Decimal` is and what each operation answers is `amount`'s, the
+# integer is `magnitude`'s, and none of these crates' types is seen outside `magnitude`.
+num-bigint.workspace = true
+num-integer.workspace = true
+num-traits.workspace = true
 
 [lints]
 workspace = true

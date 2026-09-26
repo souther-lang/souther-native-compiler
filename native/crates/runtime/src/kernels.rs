@@ -59,7 +59,7 @@ unsafe fn texts<'a>(list: &'a *const List) -> Vec<Held<'a>> {
 /// # Safety
 ///
 /// `out` is room for one `T`.
-unsafe fn answered<T>(value: Option<T>, out: *mut T) -> i8 {
+pub(crate) unsafe fn answered<T>(value: Option<T>, out: *mut T) -> i8 {
     match value {
         Some(value) => {
             unsafe { out.write(value) };

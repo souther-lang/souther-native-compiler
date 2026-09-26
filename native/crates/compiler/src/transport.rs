@@ -74,6 +74,10 @@ pub const MOVES: &[(u32, &str)] = &[
          (`unit`); the type of what does not answer (`never`), and where the run ends \
          (`unreachable`)",
     ),
+    (
+        25,
+        "a `Decimal` literal (`decimal`), as the integer and the scale the checker read it as",
+    ),
 ];
 
 /// A document of [`TRANSPORT_VERSION`], and no other, read through [`Program::read`] and nothing
@@ -1921,6 +1925,19 @@ pub enum Node {
         ty: Ty,
         aborts: Vec<AbortKind>,
     },
+    /// A `Decimal` literal, as the checker read it: its integer, as integer text since it has as
+    /// many digits as it has, and its scale. `1.50m` is `150` at scale 2.
+    ///
+    /// The two numbers and not the text it was written as. How a literal is spelt is the source's
+    /// grammar, which the checker has already read, and a writer that handed this side the
+    /// spelling would be asking it to read the grammar a second time.
+    Decimal {
+        unscaled: String,
+        scale: i32,
+        #[serde(rename = "type")]
+        ty: Ty,
+        aborts: Vec<AbortKind>,
+    },
     Binary {
         op: Op,
         /// What the operator reads its operands as, which the checker settled and the operands'
@@ -2512,6 +2529,12 @@ impl Node {
                 ty,
                 aborts: _,
             }
+            | Node::Decimal {
+                unscaled: _,
+                scale: _,
+                ty,
+                aborts: _,
+            }
             | Node::Neg {
                 operand: _,
                 ty,
@@ -2649,6 +2672,7 @@ impl Node {
             | Node::Read { ty, .. }
             | Node::Bool { ty, .. }
             | Node::Str { ty, .. }
+            | Node::Decimal { ty, .. }
             | Node::Neg { ty, .. }
             | Node::If { ty, .. }
             | Node::Unit { ty, .. }
@@ -2718,6 +2742,7 @@ impl Node {
             | Node::Read { .. }
             | Node::Bool { .. }
             | Node::Str { .. }
+            | Node::Decimal { .. }
             | Node::Unit { .. }
             | Node::Unreachable { .. }
             | Node::None { .. } => Vec::new(),
@@ -2731,6 +2756,7 @@ impl Node {
             | Node::Read { aborts, .. }
             | Node::Bool { aborts, .. }
             | Node::Str { aborts, .. }
+            | Node::Decimal { aborts, .. }
             | Node::Binary { aborts, .. }
             | Node::Neg { aborts, .. }
             | Node::Let { aborts, .. }
@@ -2785,6 +2811,7 @@ impl Node {
             | Node::Read { .. }
             | Node::Bool { .. }
             | Node::Str { .. }
+            | Node::Decimal { .. }
             | Node::Let { .. }
             | Node::If { .. }
             | Node::Unit { .. }
@@ -2846,6 +2873,7 @@ impl Node {
             | Node::Read { .. }
             | Node::Bool { .. }
             | Node::Str { .. }
+            | Node::Decimal { .. }
             | Node::Unit { .. }
             | Node::Unreachable { .. }
             | Node::None { .. } => Vec::new(),
@@ -2872,6 +2900,7 @@ impl Node {
             | Node::Read { .. }
             | Node::Bool { .. }
             | Node::Str { .. }
+            | Node::Decimal { .. }
             | Node::Binary { .. }
             | Node::Neg { .. }
             | Node::Let { .. }
@@ -2903,6 +2932,7 @@ impl Node {
             | Node::Read { .. }
             | Node::Bool { .. }
             | Node::Str { .. }
+            | Node::Decimal { .. }
             | Node::Binary { .. }
             | Node::Neg { .. }
             | Node::Let { .. }
@@ -2949,6 +2979,7 @@ impl Node {
             | Node::Read { ty, .. }
             | Node::Bool { ty, .. }
             | Node::Str { ty, .. }
+            | Node::Decimal { ty, .. }
             | Node::Binary { ty, .. }
             | Node::Neg { ty, .. }
             | Node::Let { ty, .. }

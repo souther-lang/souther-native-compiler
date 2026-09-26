@@ -16,7 +16,7 @@ abstract class Binding
      * binding generated before would call something this does not have, or call it as something it
      * is not; a binding says which it was generated for and refuses to load over any other.
      */
-    public const PROTOCOL = 8;
+    public const PROTOCOL = 9;
 
     /**
      * What each version of the protocol moved, by its number, oldest first. The versions before the
@@ -46,6 +46,8 @@ abstract class Binding
             . 'and a function value is a Closure: one the library answered is called through '
             . 'Session::callable, and one PHP hands over is made through the FunctionSlot the '
             . 'binding keeps for its type (Binding::hosting, FunctionSlot, Some)',
+        9 => 'a Decimal is its integer and its scale, handed over and read back through the '
+            . 'runtime (Decimal, Session::decimal, Session::amount)',
     ];
 
     /**

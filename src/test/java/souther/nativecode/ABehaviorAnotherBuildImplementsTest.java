@@ -44,7 +44,7 @@ class ABehaviorAnotherBuildImplementsTest {
 
     private static final String BUILT_BEFORE = """
             module lib.rates exposing ( Rate, Shape, Round, Square, spin, tally, twice, rounded,
-                                        squared, shout, Missing, sizeOf, heldOf )
+                                        squared, shout, Missing, sizeOf, heldOf, priced )
 
             // `Round` first, so that this document carries it before anything else, in the order
             // the module declares it, and the one below, which carries what its bodies name in the
@@ -82,6 +82,9 @@ class ABehaviorAnotherBuildImplementsTest {
 
             behavior heldOf : (a: Int) -> Bool | Missing
             let heldOf (a) = if a > 0 then a > 1 else Missing
+
+            behavior priced : (a: Decimal) -> Decimal | Missing
+            let priced (a) = if a > 0m then a * 1.10m else Missing
             """;
 
     private static final String REACHING_IT = """
@@ -289,6 +292,48 @@ class ABehaviorAnotherBuildImplementsTest {
                 .isEqualTo(new ObservedValue.Text("hi!!"));
         assertThat(running.answering(module, agrees,
                 List.of(new ObservedValue.Text("hi"))))
+                .isEqualTo(new ObservedValue.Bool(true));
+    }
+
+    /**
+     * A {@code Decimal} made in one object, carried as a case of a union, and forked on, worked
+     * on and compared in another.
+     *
+     * <p>A {@code Decimal} is an address only the runtime reads behind, and the runtime is the one
+     * thing both objects link, so what one object made is what the other reads without either
+     * knowing how it is kept. Its scale comes across with it: the product the other object answers
+     * is at scale 4, and doubling it here keeps that.
+     */
+    @Test
+    void aDecimalMadeInOneObjectIsWorkedOnInAnother() throws Exception {
+        CheckedProgram program = compiled("""
+                module app.prices exposing ( doubledPrice, samePrice )
+                import lib.rates ( Missing, priced )
+
+                behavior doubledPrice : (a: Decimal) -> String
+                let doubledPrice (a) = match priced(a) with
+                    | Decimal as p -> String.fromDecimal(p * 2m)
+                    | Missing -> "missing"
+
+                behavior samePrice : (a: Decimal) -> Bool
+                let samePrice (a) = match priced(a) with
+                    | Decimal as p -> p == a * 1.1m
+                    | Missing -> false
+                """);
+        byte[] before = NativeArtifacts.object(builtBefore());
+
+        Running running = Running.of(program, List.of(before));
+        CheckedModule module = program.modules().getFirst();
+        var doubledPrice = module.behavior(new ValueName.Behavior("app.prices", "doubledPrice"));
+        var samePrice = module.behavior(new ValueName.Behavior("app.prices", "samePrice"));
+        ObservedValue oneFifty = new ObservedValue.Decimal(new java.math.BigDecimal("1.50"));
+
+        assertThat(running.answering(module, doubledPrice, List.of(oneFifty)))
+                .isEqualTo(new ObservedValue.Text("3.3000"));
+        assertThat(running.answering(module, doubledPrice,
+                List.of(new ObservedValue.Decimal(java.math.BigDecimal.ZERO))))
+                .isEqualTo(new ObservedValue.Text("missing"));
+        assertThat(running.answering(module, samePrice, List.of(oneFifty)))
                 .isEqualTo(new ObservedValue.Bool(true));
     }
 

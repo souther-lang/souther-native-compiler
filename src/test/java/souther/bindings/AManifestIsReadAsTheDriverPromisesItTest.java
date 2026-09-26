@@ -140,7 +140,7 @@ class AManifestIsReadAsTheDriverPromisesItTest {
         assertThatThrownBy(() -> Manifest.read(earlier))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("is version 3 of souther-native-interface for ABI generation"
-                        + " 3, and this generator reads version 10")
+                        + " 3, and this generator reads version 11")
                 .hasMessageNotContaining("answers");
     }
 
@@ -306,7 +306,7 @@ class AManifestIsReadAsTheDriverPromisesItTest {
 
     /**
      * Which shape a type crosses in is the driver's to say, and is read as it says it, whatever the
-     * type: a `Decimal` said to cross as two words, as a later driver may say, is read, and not held
+     * type: a `Date` said to cross as two words, as a later driver may say, is read, and not held
      * to how any type crosses today. What is held is that each function takes and answers the words
      * of the shapes said beside it.
      */
@@ -316,11 +316,11 @@ class AManifestIsReadAsTheDriverPromisesItTest {
 
         Manifest read = readAfter(into, library, "shaped", module -> {
             ObjectNode pair = (ObjectNode) module.get("values").get(0);
-            pair.set("type", JSON.readTree("{\"kind\": \"primitive\", \"name\": \"Decimal\"}"));
+            pair.set("type", JSON.readTree("{\"kind\": \"primitive\", \"name\": \"Date\"}"));
         });
 
         Manifest.PublishedValue pair = read.modules().getFirst().values().getFirst();
-        assertThat(pair.type()).isEqualTo(new Manifest.Type.Primitive("Decimal"));
+        assertThat(pair.type()).isEqualTo(new Manifest.Type.Primitive("Date"));
         assertThat(pair.read().available()).isNotNull();
     }
 

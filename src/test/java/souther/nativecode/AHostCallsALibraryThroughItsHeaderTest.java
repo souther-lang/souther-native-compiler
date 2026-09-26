@@ -32,7 +32,7 @@ class AHostCallsALibraryThroughItsHeaderTest {
     private static final String SHOP = """
             module shop exposing ( Money, Line, Free, Paid, Owed, Settled, Outcome, settle, owing, stillOwing : Int,
                                    charge, quantityOf, Basket, counted, doubled, discounted, pair, deep,
-                                   pairs, either, Partial )
+                                   pairs, either, Partial, rated )
 
             data Money = Int
                 invariant notNegative = value >= 0
@@ -96,7 +96,10 @@ class AHostCallsALibraryThroughItsHeaderTest {
 
             let either: Int | Free = Free
 
-            data Partial = { count: Int, amount: Decimal }
+            data Partial = { count: Int, opened: Date }
+
+            behavior rated : (price: Decimal, rate: Decimal) -> Decimal | Free
+            let rated (price, rate) = if rate == 0m then Free else price * rate
             """;
 
     private static final String HARNESS = """
@@ -292,6 +295,24 @@ class AHostCallsALibraryThroughItsHeaderTest {
                 decoded("read wrong", "{\\"price\\": -1, \\"quantity\\": 5}");
                 decoded("not json", "{\\"price\\"");
 
+                souther_decimal price = souther_decimal_of_parts(
+                        souther_string_of_utf8((const uint8_t *) "1999", 4), 2);
+                souther_decimal rate = souther_decimal_of_parts(
+                        souther_string_of_utf8((const uint8_t *) "150", 3), 3);
+                souther_decimal nought = souther_decimal_of_parts(
+                        souther_string_of_utf8((const uint8_t *) "-0", 2), 7);
+                souther_value rated = NULL;
+                status = souther@_m_shop_b_rated(NULL, price, rate, &rated);
+                souther_decimal product = souther_case_decimal_read(rated);
+                souther_value unrated = NULL;
+                souther_status free_rated = souther@_m_shop_b_rated(NULL, price, nought, &unrated);
+                printf("rated: status %u, case %u, ", status, souther@_m_shop_b_rated_answer_case(rated));
+                text(souther_decimal_unscaled(product));
+                printf(" at %" PRId64 ", status %u, case %u, nought ", souther_decimal_scale(product),
+                       free_rated, souther@_m_shop_b_rated_answer_case(unrated));
+                text(souther_decimal_unscaled(nought));
+                printf(" at %" PRId64 "\\n", souther_decimal_scale(nought));
+
                 souther_reset(mark);
                 return 0;
             }
@@ -470,6 +491,21 @@ class AHostCallsALibraryThroughItsHeaderTest {
             decoded($ffi, "read wrong", '{"price": -1, "quantity": 5}');
             decoded($ffi, "not json", '{"price"');
 
+            $price = $ffi->souther_decimal_of_parts($ffi->souther_string_of_utf8(bytes($ffi, "1999"), 4), 2);
+            $rate = $ffi->souther_decimal_of_parts($ffi->souther_string_of_utf8(bytes($ffi, "150"), 3), 3);
+            $nought = $ffi->souther_decimal_of_parts($ffi->souther_string_of_utf8(bytes($ffi, "-0"), 2), 7);
+            $rated = $ffi->new("souther_value");
+            $status = $ffi->souther@_m_shop_b_rated(null, $price, $rate, FFI::addr($rated));
+            $product = $ffi->souther_case_decimal_read($rated);
+            $unrated = $ffi->new("souther_value");
+            $freeRated = $ffi->souther@_m_shop_b_rated(null, $price, $nought, FFI::addr($unrated));
+            echo "rated: status $status, case ", $ffi->souther@_m_shop_b_rated_answer_case($rated), ", ",
+                    text($ffi, $ffi->souther_decimal_unscaled($product)), " at ",
+                    $ffi->souther_decimal_scale($product), ", status $freeRated, case ",
+                    $ffi->souther@_m_shop_b_rated_answer_case($unrated), ", nought ",
+                    text($ffi, $ffi->souther_decimal_unscaled($nought)), " at ",
+                    $ffi->souther_decimal_scale($nought), "\n";
+
             $ffi->souther_reset($mark);
             """;
 
@@ -489,11 +525,12 @@ class AHostCallsALibraryThroughItsHeaderTest {
             read: status 0, quantity 5
             read wrong: status 0, [/price invariant_violation]
             not json: status 0, malformed at 8
+            rated: status 0, case 0, 299850 at 5, status 0, case 1, nought 0 at 7
             """;
 
-    /** What version 10 of the manifest is, for the program above. */
-    private static final Path INTERFACE_V10 =
-            Path.of("native", "crates", "compiler", "tests", "interface-v10.json");
+    /** What version 11 of the manifest is, for the program above. */
+    private static final Path INTERFACE_V11 =
+            Path.of("native", "crates", "compiler", "tests", "interface-v11.json");
 
     private static final JsonMapper JSON = JsonMapper.builder().build();
 
@@ -527,21 +564,21 @@ class AHostCallsALibraryThroughItsHeaderTest {
     }
 
     /**
-     * The manifest a binding is written against, as version 10 says it for this program. A change
+     * The manifest a binding is written against, as version 11 says it for this program. A change
      * to what the manifest says is a change here, and whether it moves the version is decided
      * looking at it.
      */
     @Test
-    void theManifestIsWhatVersionTenSays(@TempDir Path into) throws Exception {
+    void theManifestIsWhatVersionElevenSays(@TempDir Path into) throws Exception {
         NativeCompiler.Library library =
                 NativeCompiler.library(Checked.of(List.of(SHOP)), into);
 
         String written = Files.readString(library.manifest(), StandardCharsets.UTF_8);
-        String fixed = Files.exists(INTERFACE_V10)
-                ? Files.readString(INTERFACE_V10, StandardCharsets.UTF_8) : "";
+        String fixed = Files.exists(INTERFACE_V11)
+                ? Files.readString(INTERFACE_V11, StandardCharsets.UTF_8) : "";
         if (!written.equals(fixed)) {
             // Kept where it can be compared with the fixture, and copied over it once it is read.
-            Files.writeString(Path.of("target", "interface-v10.written.json"), written,
+            Files.writeString(Path.of("target", "interface-v11.written.json"), written,
                     StandardCharsets.UTF_8);
         }
         assertThat(written).isEqualTo(fixed);

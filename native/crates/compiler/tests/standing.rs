@@ -88,7 +88,7 @@ fn a_row_stands_in_with_the_first_entry_stating_the_call_and_otherwise_with_the_
         .arg(&executable)
         .arg(&harness)
         .arg(&object)
-        .arg(support::runtime())
+        .args(support::runtime_arguments())
         .output()
         .unwrap();
     assert!(
@@ -173,7 +173,7 @@ fn a_row_of_what_a_host_implements_answers_unbound() {
         .arg(&executable)
         .arg(&harness)
         .arg(&object)
-        .arg(support::runtime())
+        .args(support::runtime_arguments())
         .output()
         .unwrap();
     assert!(

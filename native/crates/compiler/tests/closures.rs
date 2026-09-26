@@ -41,10 +41,6 @@ const CLOSURES: &str = include_str!("closures.transport.json");
 
 /// What generated code takes room from — needed here because every closure this fixture builds is
 /// allocated through it, the same as any other compound value.
-fn runtime() -> &'static std::path::Path {
-    support::runtime()
-}
-
 const HARNESS: &str = r#"
 #include <inttypes.h>
 #include <stdint.h>
@@ -227,7 +223,7 @@ fn build() -> (TempDir, PathBuf) {
         .arg(&executable)
         .arg(&harness)
         .arg(&object)
-        .arg(runtime())
+        .args(support::runtime_arguments())
         .output()
         .expect("a C compiler to link with");
     assert!(

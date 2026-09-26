@@ -14,6 +14,8 @@ pub enum Form {
     Null,
     Bool(bool),
     Number(i64),
+    /// A `Decimal`, as the text its amount is written as.
+    Amount(String),
     String(Vec<u8>),
     Array(Vec<Form>),
     /// Members in the order they were put, a key given twice kept twice: the code that builds an
@@ -21,7 +23,7 @@ pub enum Form {
     Object(Vec<(Vec<u8>, Form)>),
 }
 
-fn handed(form: Form) -> *mut Form {
+pub(crate) fn handed(form: Form) -> *mut Form {
     Box::into_raw(Box::new(form))
 }
 
@@ -124,6 +126,7 @@ fn write(root: &Form, out: &mut Vec<u8>) {
             Step::Form(Form::Bool(true)) => out.extend_from_slice(b"true"),
             Step::Form(Form::Bool(false)) => out.extend_from_slice(b"false"),
             Step::Form(Form::Number(value)) => out.extend_from_slice(value.to_string().as_bytes()),
+            Step::Form(Form::Amount(written)) => out.extend_from_slice(written.as_bytes()),
             Step::Form(Form::String(text)) => quoted(text, out),
             // What follows the opening is pushed last-first, so it comes off in the order written.
             Step::Form(Form::Array(items)) => {
@@ -167,7 +170,7 @@ fn take_children(form: &mut Form, into: &mut Vec<Form>) {
     match form {
         Form::Array(items) => into.append(items),
         Form::Object(members) => into.extend(members.drain(..).map(|(_, item)| item)),
-        Form::Null | Form::Bool(_) | Form::Number(_) | Form::String(_) => {}
+        Form::Null | Form::Bool(_) | Form::Number(_) | Form::Amount(_) | Form::String(_) => {}
     }
 }
 

@@ -108,8 +108,8 @@ value. `/` answers the exact quotient, which is a `Rational` and has no represen
 `-` of a literal is folded at compile time, and of anything else ends the run where it leaves the
 range, the way `+`, `-` and `*` do.
 
-An operation the language implements as a kernel, over `Int` and over `String`, every one the
-language declares but the two that read or write a `Decimal`. `Int.add`, `Int.subtract` and
+An operation the language implements as a kernel, over `Int`, `String` and `Decimal`, every one the
+language declares. `Int.add`, `Int.subtract` and
 `Int.multiply` are the instructions `+`, `-` and `*` are; `Int.compare` and `Int.floorMod` are
 emitted beside them; `Int.truncatingDivide` and `Int.truncatingRemainder` answer
 `Int | DivisionByZero` and end a quotient only on the smallest `Int` over -1. Everything that walks
@@ -125,8 +125,30 @@ object carries; nothing here reads pattern text. A kernel that can end a run for
 is handed — a slice the string has no room for, a zero divisor to `floorMod`, a count `repeat`
 cannot make — ends it with the reason the call names, and the runtime says only whether it answered.
 
+A `Decimal` is an address, and what it points at is the runtime's alone: generated code, another
+object and a host all hand the address over and never read behind it, so how the runtime keeps a
+`Decimal` can change without anything being built again. Every operation on one is a call into the
+runtime — a literal is made there from the integer and the scale the checker read it as, which the
+object carries — and what each answers is the runtime's `amount` module: the scale a sum, a
+difference and a product answer at, each of `RoundingMode`'s seven cases, `Decimal.divide`
+answering `DivisionByZero` before it looks at the scale, `String.toDecimal` reading decimal text by
+the grammar the language states (souther-lang/souther f391aa62a; the JVM this build is tested
+against still reads it as `new BigDecimal`) and `String.fromDecimal` writing plain notation at the
+value's scale. Equality and order are by amount, so `1.0` and `1.00` are equal. The integer is
+held in a `u128` where it fits, which is nearly every amount, and every operation on it is machine
+arithmetic there; `num-bigint` works it out only past that, inside the runtime's `magnitude` module,
+and a test holds every `u128` path to what `num-bigint` answers for the same operands. A result whose scale leaves the 32-bit
+range, or whose integer is wider than a JVM `BigInteger` holds, ends the run where it is computed; a
+value a long way below the unit it is rounded to is rounded from how many digits it has, without the
+power of ten its scale names. A plain notation longer than a string holds ends the process, since
+the checker this build reads names no reason for `String.fromDecimal` to end a run. A boundary
+writes a `Decimal` as its amount and not at its scale — `1.50` is written `1.5` and `100.00` is
+written `100`, an exponent spelt out into at most a thousand digits — and reads one at the scale the
+number was spelt at. The cases of `RoundingMode` are declared by the language and at home in no
+module's object: the runtime defines their tokens, and every object naming one imports it.
+
 A value of a union says which case it is by the token at the front of it. A declared case's token is
-its declaration's; an `Int`, a `Bool` or a `String` standing as a case, and a case the language
+its declaration's; an `Int`, a `Bool`, a `String` or a `Decimal` standing as a case, and a case the language
 gives such as `DivisionByZero`, is carried with a token the runtime defines for it, so a value of
 `Int | DivisionByZero` is told apart the way a value of a sum is, and a case keeps its token when
 the union it stands in widens. Such a union stays in the object that made it for now: no program
@@ -214,7 +236,7 @@ sum there is `..._case`, answering which of the cases the sum descends to the va
 among them counted from nought; the address the value is tagged with never leaves the object. A
 declared case is the value itself. A primitive among the cases of a union is carried, and a host
 makes one and reads back what it holds through the runtime, `souther_case_int_make` and
-`souther_case_int_read` for an `Int` and the same for a `Bool` and a `String`; a case the language
+`souther_case_int_read` for an `Int` and the same for a `Bool`, a `String` and a `Decimal`; a case the language
 gives holds nothing and is only made (`souther_case_division_by_zero_make`). Those are the case's
 and not the union's, since a carried `Int` is laid out alike in every union it stands in, and the
 manifest lists them under `cases`. A read is made only of a value `..._case` has said is that case,
@@ -227,7 +249,11 @@ not the union's, which has no name to be spelt under.
 
 How a value crosses is decided once, as the shape it crosses in, and the manifest says that shape
 beside every function that hands one across. An `Int` crosses as 64 bits, a `Bool` as a byte, and
-text and a value of a declared type or of a union as an address. An optional crosses as a presence
+text and a value of a declared type or of a union as an address. A `Decimal` crosses as an address
+of type `souther_decimal`, which a host makes through `souther_decimal_of_parts`, handing its
+integer as integer text in a string and its scale, and reads back through `souther_decimal_unscaled`
+and `souther_decimal_scale`: the two numbers the language says a `Decimal` is, and not its text,
+which would be one spelling among several. An optional crosses as a presence
 and then what it holds: a constructor takes a byte and the words of the value, which are ignored
 where the byte is nought, and a reader writes the byte, and the value only where there is one. Each
 optional says so of itself, so an optional of an optional is two presences, and absence at one depth
@@ -325,14 +351,13 @@ In the external form a list is an array of its elements, and a mistake inside on
 the element's index (`/lines/2/quantity`). Two values of one type compare by what they are made
 of, a list element by element, through a comparator the object holds per type.
 
-Still ahead: a `Decimal`, a `Set` and a `Map`,
-every kernel over a `Decimal`, a `Set`, a `Map` or a date, every list kernel but `List.length` and
+Still ahead: a `Rational`, a `Set` and a `Map`,
+every kernel over a `Rational`, a `Set`, a `Map` or a date, every list kernel but `List.length` and
 `List.get`, a value
 that runs in the module declaring it, and a
 behavior that declares what its answer owes, which is refused rather than answered without the
-rule being run. A set, a map and
-a `Decimal` are read off the program whole and refused where one would be laid out or written: how
-every carrier orders a set's members, spells a map's keys and writes a decimal is for the language
+rule being run. A set and a map are read off the program whole and refused where one would be laid
+out or written: how every carrier orders a set's members and spells a map's keys is for the language
 to state before a backend writes one.
 
 
@@ -408,8 +433,8 @@ behavior's `call` takes the capabilities of what it requires first, as `requirem
 names two readings of a value: `decode`, out of text in the external form, and `decodehost`, out of
 a value a host built of ordered maps and wrote with every container as an object, in which a map
 keyed by its indices is read as an array wherever the declaration holds one. What a manifest may say
-is Rust types, and version 10
-is `native/crates/compiler/tests/interface-v10.json`: a test holds a program's manifest to it, and
+is Rust types, and version 11
+is `native/crates/compiler/tests/interface-v11.json`: a test holds a program's manifest to it, and
 another reads it with those types and writes it back unchanged. The manifest carries its own
 `version`, moved when what it says is read differently, and the `abi` its functions answer to,
 which is the generation in every symbol.
@@ -461,13 +486,22 @@ driver runs is:
 
     # macOS
     cc -dynamiclib -o libsouther.dylib -Wl,-install_name,@rpath/libsouther.dylib \
-        -Wl,-exported_symbols_list,<list> -Wl,-u,_<symbol> ... souther.o libsouther_native_runtime.a
+        -Wl,-exported_symbols_list,<list> -Wl,-u,_<symbol> ... souther.o libsouther_native_runtime.a \
+        <what the archive needs>
 
     # Linux
     cc -shared -o libsouther.so -Wl,--version-script=<script> -Wl,--no-undefined \
-        -Wl,-u,<symbol> ... souther.o libsouther_native_runtime.a
+        -Wl,-u,<symbol> ... souther.o libsouther_native_runtime.a <what the archive needs>
 
 where the list and the script name every function the header declares.
+
+What the archive needs is not written in this project. The archive carries Rust's standard library,
+and which system libraries that reaches is the target's and the toolchain's to say (`-lm`, `-lpthread`
+and `-ldl` among them on Linux, which a linker that adds them for you hides on macOS). The runtime's
+`build.rs` asks `rustc` (`--print native-static-libs`) and writes the answer beside the archive as
+`libsouther_native_runtime.link`, one argument to a line, and the driver and every test read that
+file and pass what it says after the archive. An archive with no such file beside it is refused,
+so ship the two together; the driver's `--runtime` names the archive.
 
 A library is one program, so it holds every build the program reaches: a build's object defines
 what reads and builds a value of a type it declares, and another build calls that. Those objects are
@@ -535,6 +569,9 @@ list both ways, typed `array` for PHP and `list<T>` in the docblock for PHPStan:
 over as a value of its type is anywhere else, in the run the list is built in, so an array
 with a key out of order or an element of another type is refused before the library is called. A
 list read is copied into a PHP array when it is read, each element held as a field's value is.
+A `Decimal` is a `Souther\Runtime\Decimal` both ways: its integer as a string of digits and its
+scale as an `int`, the two it is made of, since no type of PHP's own keeps a scale below nought. What
+PHP does with them — a `BcMath\Number`, text, a money library — is the application's.
 A module's classes build and read a list through that module's own functions and no other
 module's, every list a module's manifest entry says is held to what a list of its element is built
 and read through, and a module with a function handing a list across and nothing to build one

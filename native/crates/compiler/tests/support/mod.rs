@@ -38,6 +38,11 @@ pub fn harness(text: &str) -> String {
 /// not as the archive a C linker takes — so a path to it would be linking against whatever a
 /// separate `cargo build` last left there, or against nothing. This asks cargo for it, once per
 /// test binary, into a directory of its own so it never waits on the build that is running it.
+///
+/// Built with `--print native-static-libs`, and the file the runtime's build wrote beside the
+/// archive is held to what `rustc` says of this very archive: that file is what every link passes
+/// after the archive ([`runtime_arguments`]), so it has to be what the archive needs, whatever
+/// the standard library or a dependency of the runtime came to ask of the system.
 #[allow(dead_code)]
 pub fn runtime() -> &'static Path {
     static BUILT: OnceLock<PathBuf> = OnceLock::new();
@@ -45,19 +50,51 @@ pub fn runtime() -> &'static Path {
         let into = Path::new(env!("CARGO_TARGET_TMPDIR")).join("runtime");
         let built = Command::new(env!("CARGO"))
             .args([
-                "build",
+                "rustc",
                 "--quiet",
                 "-p",
                 "souther-native-runtime",
+                "--lib",
+                "--crate-type",
+                "staticlib",
                 "--target-dir",
             ])
             .arg(&into)
+            .args(["--", "--print", "native-static-libs"])
             .current_dir(env!("CARGO_MANIFEST_DIR"))
-            .status()
+            .output()
             .expect("cargo to build the runtime with");
-        assert!(built.success(), "the runtime did not build");
+        let said = String::from_utf8_lossy(&built.stderr);
+        assert!(built.status.success(), "the runtime did not build: {said}");
         let archive = into.join("debug").join("libsouther_native_runtime.a");
         assert!(archive.is_file(), "no archive at {}", archive.display());
+        let asked: Vec<&str> = said
+            .lines()
+            .find_map(|line| line.split_once("native-static-libs:"))
+            .expect("rustc to say what the archive needs")
+            .1
+            .split_whitespace()
+            .collect();
+        let written = souther_native_driver::runtime_arguments(&archive)
+            .expect("the requirements written beside the archive");
+        let written: Vec<String> = written[1..]
+            .iter()
+            .map(|it| it.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            written, asked,
+            "what the runtime's build wrote beside the archive is not what rustc says the archive \
+             needs"
+        );
         archive
     })
+}
+
+/// The archive, and after it what it needs linked with it: what every link of a test's executable
+/// is handed in place of the archive's path alone, which is a link that works where the linker
+/// happens to add the rest.
+#[allow(dead_code)]
+pub fn runtime_arguments() -> Vec<std::ffi::OsString> {
+    souther_native_driver::runtime_arguments(runtime())
+        .expect("the requirements written beside the archive")
 }

@@ -171,8 +171,10 @@ fn planned(
             // Made and read through the runtime's own functions, which is where a host already
             // makes one to hand a behavior.
             Prim::String => Ok(HostShape::Leaf(HostLeaf::String)),
-            Prim::Decimal
-            | Prim::Rational
+            // An address a host never reads behind, made and read through the runtime's own
+            // functions as its integer and its scale.
+            Prim::Decimal => Ok(HostShape::Leaf(HostLeaf::Decimal)),
+            Prim::Rational
             | Prim::Date
             | Prim::Time
             | Prim::DateTime
@@ -1874,17 +1876,47 @@ mod tests {
         crossing(ty, direction).map(|it| it.shape)
     }
 
+    /// A `Decimal` is one word, an address a host never reads behind, so it crosses wherever a
+    /// leaf does: on its own, inside an optional, a tuple and a list, and as what a function value
+    /// takes and answers.
+    #[test]
+    fn a_decimal_crosses_as_a_leaf_wherever_a_leaf_does() {
+        let decimal = || Ty::Prim {
+            prim: Prim::Decimal,
+        };
+        let leaf = || HostShape::Leaf(HostLeaf::Decimal);
+        for direction in [Direction::Given, Direction::Handed] {
+            assert_eq!(shape(&decimal(), direction), Ok(leaf()));
+            assert_eq!(
+                shape(
+                    &Ty::Tuple {
+                        tuple: vec![int(), optional(decimal())],
+                    },
+                    direction
+                ),
+                Ok(HostShape::Product(vec![
+                    HostShape::Leaf(HostLeaf::Int),
+                    HostShape::Option(Box::new(leaf())),
+                ]))
+            );
+            assert_eq!(
+                shape(
+                    &Ty::List {
+                        list: Box::new(decimal())
+                    },
+                    direction
+                ),
+                Ok(HostShape::List(Box::new(leaf())))
+            );
+        }
+    }
+
     /// A refusal says its reason and where it stands in words, as a refused build is told.
     #[test]
     fn a_refusal_says_why_and_where_in_words() {
         let refusal = shape(
             &Ty::Tuple {
-                tuple: vec![
-                    int(),
-                    optional(Ty::Prim {
-                        prim: Prim::Decimal,
-                    }),
-                ],
+                tuple: vec![int(), optional(Ty::Prim { prim: Prim::Date })],
             },
             Direction::Given,
         )
@@ -2003,12 +2035,7 @@ mod tests {
         assert_eq!(
             shape(
                 &Ty::Tuple {
-                    tuple: vec![
-                        int(),
-                        Ty::Prim {
-                            prim: Prim::Decimal
-                        }
-                    ]
+                    tuple: vec![int(), Ty::Prim { prim: Prim::Date }]
                 },
                 Direction::Given
             ),

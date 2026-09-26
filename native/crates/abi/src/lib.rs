@@ -681,6 +681,7 @@ pub const BUILT_IN_CASES: &[&str] = &[
     "Int",
     "Bool",
     "String",
+    "Decimal",
     "Some",
     "None",
     "DivisionByZero",
@@ -707,6 +708,37 @@ pub fn built_in_case_symbol(name: &str) -> String {
     );
     format!("souther$case${name}")
 }
+
+/// Every unit the language itself declares, as the module and the name the checker writes it
+/// under: the cases of `RoundingMode`, which `Decimal.divide`, `Decimal.round` and `Decimal.toInt`
+/// take (spec §stdlib-decimal).
+///
+/// A value of one is tagged by its declaration's token, under [`type_symbol`], as a value of any
+/// declared type is. What differs is who defines it. A module's declaration is at home in the
+/// object of the build that checked the module, and the language's are at home in no build: the
+/// runtime defines each of these, as it defines a token for each of [`BUILT_IN_CASES`], and every
+/// object naming one imports it. An object defining its own would give one value two addresses, and
+/// a value built in one object would not be the value another tests for.
+///
+/// Units and nothing else: a sum the language declares is never tagged with a token of its own,
+/// since a value of it is always one of its cases, and nothing the language declares is built from
+/// fields. A declaration the language gives that is not here is one no object can name, and the
+/// driver refuses it as that rather than importing a symbol nothing defines.
+///
+/// What the language declares is the language's to say, and not this table's: `language-units.txt`
+/// beside this crate is every unit the checker's library declares, which the Java half writes from
+/// `CheckedProgram.languageDeclarations()` and holds to what upstream answers, and a test here
+/// holds this table to that file. So a unit the language adds fails here until the runtime defines
+/// its token, and the runtime's own test holds its tokens to this table.
+pub const LANGUAGE_UNITS: &[(&str, &str)] = &[
+    ("souther.decimal", "HALF_UP"),
+    ("souther.decimal", "HALF_EVEN"),
+    ("souther.decimal", "HALF_DOWN"),
+    ("souther.decimal", "UP"),
+    ("souther.decimal", "DOWN"),
+    ("souther.decimal", "CEILING"),
+    ("souther.decimal", "FLOOR"),
+];
 
 /// How wide a slot is, and so what a value made of slots is measured in.
 ///
@@ -1023,6 +1055,63 @@ pub const STRING_LENGTH: &str = "souther_string_length";
 /// And then where those bytes start.
 pub const STRING_BYTES: &str = "souther_string_bytes";
 
+/// The symbol a caller outside a Souther program makes a `Decimal` with: its integer, as integer
+/// text in a string, and its scale.
+///
+/// A `Decimal` is an address and nothing a host reads behind: how the runtime keeps one is the
+/// runtime's alone, so a host hands over and reads back the two numbers the language says a
+/// `Decimal` is, and never a layout. The integer crosses as text because it has as many digits as
+/// it has, which no word holds; the text is the integer and not the value's written form, so it
+/// says nothing of where a point goes and nothing of how a boundary writes the amount.
+pub const DECIMAL_OF_PARTS: &str = "souther_decimal_of_parts";
+/// The symbols such a caller reads a `Decimal` back through: its integer, as integer text in a
+/// string.
+pub const DECIMAL_UNSCALED: &str = "souther_decimal_unscaled";
+/// And its scale.
+pub const DECIMAL_SCALE: &str = "souther_decimal_scale";
+
+/// The symbol a `Decimal` literal is made through, from the integer the checker read it as, which
+/// the object carries as a string, and its scale.
+pub const DECIMAL_LITERAL: &str = "souther_decimal_literal";
+
+/// The symbol two `Decimal`s are compared through, by amount and whatever their scales. Answers
+/// below, at or above nought, as [`STRING_COMPARE`] does, and for all six comparisons for the same
+/// reason.
+pub const DECIMAL_COMPARE: &str = "souther_decimal_compare";
+
+/// The symbol a division asks whether its divisor is nought through, before it divides.
+pub const DECIMAL_IS_ZERO: &str = "souther_decimal_is_zero";
+
+/// The symbols the `Decimal` module's kernels and its operators are computed through (spec
+/// §stdlib-decimal), taking what each takes in the order it takes it.
+///
+/// What each answers is the runtime's to work out and not generated code's: the scale a result
+/// has, how it is rounded, and where there is no result at all. One that answers nothing for some
+/// of what it is handed answers whether it wrote its value through room it is handed last, as a
+/// kernel over strings does ([`STRING_TRIM`]), and the reason the run ends for is the caller's.
+/// A `RoundingMode` is handed over as the value it is, and the runtime reads which case it is off
+/// the token it carries ([`LANGUAGE_UNITS`]).
+pub const DECIMAL_NEGATE: &str = "souther_decimal_negate";
+/// `+` and `Decimal.add`, into room for the `Decimal`.
+pub const DECIMAL_ADD: &str = "souther_decimal_add";
+/// `-` and `Decimal.subtract`, into room for the `Decimal`.
+pub const DECIMAL_SUBTRACT: &str = "souther_decimal_subtract";
+/// `*` and `Decimal.multiply`, into room for the `Decimal`.
+pub const DECIMAL_MULTIPLY: &str = "souther_decimal_multiply";
+/// `Decimal.fromInt`.
+pub const DECIMAL_FROM_INT: &str = "souther_decimal_from_int";
+/// `Decimal.toInt`, into room for the `Int`.
+pub const DECIMAL_TO_INT: &str = "souther_decimal_to_int";
+/// `Decimal.round`, into room for the `Decimal`.
+pub const DECIMAL_ROUND: &str = "souther_decimal_round";
+/// `Decimal.divide`, into room for the `Decimal`, over a divisor [`DECIMAL_IS_ZERO`] has said is
+/// not nought.
+pub const DECIMAL_DIVIDE: &str = "souther_decimal_divide";
+/// `String.toDecimal`, into room for the `Decimal`.
+pub const STRING_TO_DECIMAL: &str = "souther_string_to_decimal";
+/// `String.fromDecimal`.
+pub const STRING_FROM_DECIMAL: &str = "souther_string_from_decimal";
+
 /// The symbol generated code takes room from.
 ///
 /// It answers a pointer to `size` bytes that stay valid until the mark below them is reset. A
@@ -1055,6 +1144,9 @@ pub const EXTERNAL_BOOL: &str = "souther_external_bool";
 pub const EXTERNAL_INT: &str = "souther_external_int";
 /// `(string) -> form`, the bytes copied.
 pub const EXTERNAL_STRING: &str = "souther_external_string";
+/// `(decimal) -> form`: the amount, written with as few digits as it is written with and not at
+/// the scale it carries (spec §primitives).
+pub const EXTERNAL_DECIMAL: &str = "souther_external_decimal";
 /// `() -> form`, an array with nothing in it.
 pub const EXTERNAL_ARRAY: &str = "souther_external_array";
 /// `(array, item)`: the item is appended and owned by the array from then on.
@@ -1120,6 +1212,9 @@ pub const READ_INT: &str = "souther_read_int";
 pub const READ_BOOL: &str = "souther_read_bool";
 /// `(node, path, reading, out) -> i8`: a string of this crate's layout written through `out`.
 pub const READ_STRING: &str = "souther_read_string";
+/// `(node, path, reading, out) -> i8`: a `Decimal` written through `out`, at the scale the number
+/// was spelt at.
+pub const READ_DECIMAL: &str = "souther_read_decimal";
 /// `(node, path, reading) -> i8`: whether it is text naming a case.
 pub const READ_CASE: &str = "souther_read_case";
 /// `(node, key string, path, reading) -> node`: the text an object names its case with under a
@@ -1198,6 +1293,9 @@ pub enum HostWord {
     /// The address of text of the runtime's layout, read through [`STRING_LENGTH`] and
     /// [`STRING_BYTES`].
     String,
+    /// The address of a `Decimal`, which a host never reads behind: made through
+    /// [`DECIMAL_OF_PARTS`], and read through [`DECIMAL_UNSCALED`] and [`DECIMAL_SCALE`].
+    Decimal,
     /// A reading a decoder answered, asked through the `DECODED_*` functions.
     Decoded,
     /// One issue a reading found, asked through the `ISSUE_*` functions.
@@ -1238,6 +1336,7 @@ impl HostWord {
             HostWord::Bytes => "bytes",
             HostWord::Value => "value",
             HostWord::String => "string",
+            HostWord::Decimal => "decimal",
             HostWord::Decoded => "decoded",
             HostWord::Issue => "issue",
             HostWord::List => "list",
@@ -1258,6 +1357,9 @@ pub enum HostLeaf {
     Bool,
     /// A `String`, as the address of text of the runtime's layout.
     String,
+    /// A `Decimal`, as the address of what the runtime keeps one as, which a host never reads
+    /// behind ([`HostWord::Decimal`]).
+    Decimal,
     /// The address of a value of a declared type or of a union, which a host never reads behind.
     Value,
 }
@@ -1269,6 +1371,7 @@ impl HostLeaf {
             HostLeaf::Int => HostWord::Int,
             HostLeaf::Bool => HostWord::Bool,
             HostLeaf::String => HostWord::String,
+            HostLeaf::Decimal => HostWord::Decimal,
             HostLeaf::Value => HostWord::Value,
         }
     }
@@ -1409,7 +1512,7 @@ pub struct RuntimeFunction {
 /// function it names.
 pub const HOST_RUNTIME: &[RuntimeFunction] = {
     use HostParameter::Given;
-    use HostWord::{Bytes, Count, Decoded, Issue, Mark, Outcome, String, Value};
+    use HostWord::{Bytes, Count, Decimal, Decoded, Int, Issue, Mark, Outcome, String, Value};
     &[
         RuntimeFunction {
             name: MARK,
@@ -1435,6 +1538,21 @@ pub const HOST_RUNTIME: &[RuntimeFunction] = {
             name: STRING_BYTES,
             takes: &[Given(String)],
             answers: Some(Bytes),
+        },
+        RuntimeFunction {
+            name: DECIMAL_OF_PARTS,
+            takes: &[Given(String), Given(Int)],
+            answers: Some(Decimal),
+        },
+        RuntimeFunction {
+            name: DECIMAL_UNSCALED,
+            takes: &[Given(Decimal)],
+            answers: Some(String),
+        },
+        RuntimeFunction {
+            name: DECIMAL_SCALE,
+            takes: &[Given(Decimal)],
+            answers: Some(Int),
         },
         RuntimeFunction {
             name: DECODED_OUTCOME,
@@ -1512,7 +1630,7 @@ pub struct CaseCrossing {
 /// runtime's own tests hold each function to the one it names, and the cases to that table.
 pub const HOST_CASES: &[CaseCrossing] = {
     use HostParameter::Given;
-    use HostWord::{Bool, Int, String, Value};
+    use HostWord::{Bool, Decimal, Int, String, Value};
     const fn holding(
         case: &'static str,
         make: &'static str,
@@ -1566,6 +1684,13 @@ pub const HOST_CASES: &[CaseCrossing] = {
             "souther_case_string_read",
             &[Given(String)],
             String,
+        ),
+        holding(
+            "Decimal",
+            "souther_case_decimal_make",
+            "souther_case_decimal_read",
+            &[Given(Decimal)],
+            Decimal,
         ),
         empty("Some", "souther_case_some_make"),
         empty("None", "souther_case_none_make"),
@@ -1644,7 +1769,7 @@ pub struct GeneratedCall {
 /// hold each of these to the function it names, as they hold [`HOST_RUNTIME`]. Between the two
 /// tables is every function the runtime defines, which those tests hold too.
 pub const GENERATED_RUNTIME: &[GeneratedCall] = {
-    use HostWord::{Bool, Bytes, Count, Decoded, Int, List, String, Value};
+    use HostWord::{Bool, Bytes, Count, Decimal, Decoded, Int, List, String, Value};
     use Parameter::{Given, Room};
     use Word::{Comparison, Form, Host, Machine, Memory, Node, Path};
     &[
@@ -1798,6 +1923,94 @@ pub const GENERATED_RUNTIME: &[GeneratedCall] = {
             answers: Some(Host(List)),
         },
         GeneratedCall {
+            name: STRING_TO_DECIMAL,
+            takes: &[Given(Host(String)), Room(Host(Decimal))],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: STRING_FROM_DECIMAL,
+            takes: &[Given(Host(Decimal))],
+            answers: Some(Host(String)),
+        },
+        GeneratedCall {
+            name: DECIMAL_LITERAL,
+            takes: &[Given(Host(String)), Given(Host(Int))],
+            answers: Some(Host(Decimal)),
+        },
+        GeneratedCall {
+            name: DECIMAL_COMPARE,
+            takes: &[Given(Host(Decimal)), Given(Host(Decimal))],
+            answers: Some(Comparison),
+        },
+        GeneratedCall {
+            name: DECIMAL_IS_ZERO,
+            takes: &[Given(Host(Decimal))],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: DECIMAL_NEGATE,
+            takes: &[Given(Host(Decimal))],
+            answers: Some(Host(Decimal)),
+        },
+        GeneratedCall {
+            name: DECIMAL_ADD,
+            takes: &[
+                Given(Host(Decimal)),
+                Given(Host(Decimal)),
+                Room(Host(Decimal)),
+            ],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: DECIMAL_SUBTRACT,
+            takes: &[
+                Given(Host(Decimal)),
+                Given(Host(Decimal)),
+                Room(Host(Decimal)),
+            ],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: DECIMAL_MULTIPLY,
+            takes: &[
+                Given(Host(Decimal)),
+                Given(Host(Decimal)),
+                Room(Host(Decimal)),
+            ],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: DECIMAL_FROM_INT,
+            takes: &[Given(Host(Int))],
+            answers: Some(Host(Decimal)),
+        },
+        GeneratedCall {
+            name: DECIMAL_TO_INT,
+            takes: &[Given(Host(Value)), Given(Host(Decimal)), Room(Host(Int))],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: DECIMAL_ROUND,
+            takes: &[
+                Given(Host(Int)),
+                Given(Host(Value)),
+                Given(Host(Decimal)),
+                Room(Host(Decimal)),
+            ],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: DECIMAL_DIVIDE,
+            takes: &[
+                Given(Host(Decimal)),
+                Given(Host(Decimal)),
+                Given(Host(Int)),
+                Given(Host(Value)),
+                Room(Host(Decimal)),
+            ],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
             name: EXTERNAL_NULL,
             takes: &[],
             answers: Some(Form),
@@ -1815,6 +2028,11 @@ pub const GENERATED_RUNTIME: &[GeneratedCall] = {
         GeneratedCall {
             name: EXTERNAL_STRING,
             takes: &[Given(Host(String))],
+            answers: Some(Form),
+        },
+        GeneratedCall {
+            name: EXTERNAL_DECIMAL,
+            takes: &[Given(Host(Decimal))],
             answers: Some(Form),
         },
         GeneratedCall {
@@ -1939,6 +2157,16 @@ pub const GENERATED_RUNTIME: &[GeneratedCall] = {
                 Given(Path),
                 Given(Host(Decoded)),
                 Room(Host(String)),
+            ],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: READ_DECIMAL,
+            takes: &[
+                Given(Node),
+                Given(Path),
+                Given(Host(Decoded)),
+                Room(Host(Decimal)),
             ],
             answers: Some(Host(Bool)),
         },
@@ -2071,6 +2299,22 @@ pub const IMPLEMENTATION_ANSWERS: &[Status] = &[ANSWERED, HOST_EXCEPTION];
 
 #[cfg(test)]
 mod tests {
+    /// Every unit the language declares, as the Java half holds it to what upstream's library
+    /// declares, and this table names each of them and nothing else.
+    #[test]
+    fn the_runtime_has_a_token_for_every_unit_the_language_declares() {
+        let declared: std::collections::BTreeSet<String> = include_str!("../language-units.txt")
+            .lines()
+            .map(str::to_string)
+            .collect();
+        let tabled: std::collections::BTreeSet<String> = super::LANGUAGE_UNITS
+            .iter()
+            .map(|(module, name)| format!("{module}.{name}"))
+            .collect();
+        assert_eq!(tabled, declared);
+        assert_eq!(super::LANGUAGE_UNITS.len(), declared.len());
+    }
+
     use super::{
         ABI_GENERATION, EXAMPLE_STATUSES, FAKE_NO_OUTPUT, FIRST_FIELD, HOST_STATUSES,
         HostFunctionOperation, HostLeaf, HostListOperation, HostShape, IMPLEMENTATION_ANSWERS,
@@ -2415,6 +2659,7 @@ mod tests {
                 HostLeaf::Int,
                 HostLeaf::Bool,
                 HostLeaf::String,
+                HostLeaf::Decimal,
                 HostLeaf::Value,
             ]
             .into_iter()
@@ -2448,6 +2693,7 @@ mod tests {
                 "int" => HostShape::Leaf(HostLeaf::Int),
                 "bool" => HostShape::Leaf(HostLeaf::Bool),
                 "string" => HostShape::Leaf(HostLeaf::String),
+                "decimal" => HostShape::Leaf(HostLeaf::Decimal),
                 "value" => HostShape::Leaf(HostLeaf::Value),
                 "o" => HostShape::Option(Box::new(read(tokens)?)),
                 "l" => HostShape::List(Box::new(read(tokens)?)),

@@ -689,7 +689,7 @@ mod tests {
     /// A module `m` holding `helpers` and building the one value `v`, whose body is `body`.
     fn holding(helpers: &[String], body: &str) -> String {
         format!(
-            r#"{{"transport":24,"declarations":[],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[{}],"values":[{{"module":"m","name":"v","handovers":[],"body":{body}}}],"entries":[],"definitions":[],"examples":[]}}]}}"#,
+            r#"{{"transport":25,"declarations":[],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[{}],"values":[{{"module":"m","name":"v","handovers":[],"body":{body}}}],"entries":[],"definitions":[],"examples":[]}}]}}"#,
             helpers.join(",")
         )
     }

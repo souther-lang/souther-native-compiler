@@ -23,12 +23,14 @@ extern crate alloc;
 
 mod canonical;
 mod case;
+mod decimal;
 mod integer;
 mod operations;
 pub mod pattern;
 mod tables;
 
 pub use case::{lowercase, uppercase};
+pub use decimal::{DecimalText, decimal_text};
 pub use integer::{integer, written};
 pub use operations::{
     MOST, append, characters, code_points_of, contains, ends_with, is_whitespace, join, lines,
