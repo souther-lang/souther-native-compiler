@@ -1606,7 +1606,7 @@ impl<'a> Walk<'_, 'a> {
     /// in a type, that type is one the document carries. Which pairs an operator is written over,
     /// and which reading the checker gives each, is the checker's rule and is not answered again
     /// here: this holds only what a reading, once given, says.
-    fn reading(&self, op: Op, reading: &Reading, left: &Ty, right: &Ty) -> Result<()> {
+    fn reading(&mut self, op: Op, reading: &Reading, left: &Ty, right: &Ty) -> Result<()> {
         // Which readings an operator can have. The checker reads a truth operator and a join as
         // their operands stand, always, and arithmetic as they stand or at their exact values:
         // only a comparison is read in a type. A document saying otherwise is one the lowering,
@@ -1645,8 +1645,33 @@ impl<'a> Walk<'_, 'a> {
                 )
             }
             // The type it is read in is one the document declares, which `Node::types` holds of
-            // every type a node writes.
-            Reading::In { .. } => Ok(()),
+            // every type a node writes. What it says of the two sides is how the lowering takes
+            // them apart: a newtype is read by opening the side that is one and comparing what it
+            // wraps with the other, so the other has to be what it wraps all the way down; any
+            // other type is read by holding both sides as a value of it, so each has to be one.
+            Reading::In { ty } => {
+                let what = format!("a side of {} read as {}", op.spelt(), ty.spelt());
+                match self.declared.innermost(ty)? {
+                    Some(inner) => {
+                        let opens =
+                            (left == ty && *right == inner) || (right == ty && *left == inner);
+                        if !opens {
+                            bail!(
+                                "{}: {what} is {} and the other {}, which is not a newtype beside \
+                                 what it wraps: the two halves disagree",
+                                self.owner,
+                                left.spelt(),
+                                right.spelt()
+                            );
+                        }
+                    }
+                    None => {
+                        self.fits(&what, left, ty);
+                        self.fits(&what, right, ty);
+                    }
+                }
+                Ok(())
+            }
         }
     }
 

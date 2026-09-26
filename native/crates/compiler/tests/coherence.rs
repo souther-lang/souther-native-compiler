@@ -16,8 +16,9 @@ const A: &str = r#"{"declared":"m.A"}"#;
 const S: &str = r#"{"declared":"m.S"}"#;
 const P: &str = r#"{"declared":"m.P"}"#;
 
-/// The units `m.A` and `m.B`, the sum `m.S = m.A | m.B`, and the product `m.P` with one field `f`
-/// of `m.S`; the behaviors, helpers and local definitions given; one module `m`.
+/// The units `m.A` and `m.B`, the sum `m.S = m.A | m.B`, the product `m.P` with one field `f` of
+/// `m.S`, and the newtype `m.N` over an `Int`; the behaviors, helpers and local definitions given;
+/// one module `m`.
 fn document(behaviors: &[String], helpers: &[String], definitions: &[String]) -> String {
     format!(
         concat!(
@@ -28,7 +29,9 @@ fn document(behaviors: &[String], helpers: &[String], definitions: &[String]) ->
             r#""cases":[{{"is":"declared","declared":"m.A"}},{{"is":"declared","declared":"m.B"}}],"#,
             r#""form":{{"is":"enumeration"}}}},"#,
             r#"{{"module":"m","name":"P","by":"amodule","is":"product","#,
-            r#""fields":[{{"name":"f","binding":0,"codec":{{"is":"named","declared":"m.S"}}}}],"invariants":[]}}],"#,
+            r#""fields":[{{"name":"f","binding":0,"codec":{{"is":"named","declared":"m.S"}}}}],"invariants":[]}},"#,
+            r#"{{"module":"m","name":"N","by":"amodule","is":"newtype","#,
+            r#""field":{{"name":"v","binding":0,"codec":{{"is":"scalar","scalar":"INT"}}}},"invariants":[]}}],"#,
             r#""behaviors":[{}],"#,
             r#""modules":[{{"name":"m","publishes":[],"helpers":[{}],"values":[],"entries":[],"definitions":[{}],"#,
             r#""examples":[]}}]}}"#
@@ -1826,6 +1829,40 @@ fn an_operator_is_read_only_as_the_checker_reads_it() {
         &documents(over("ADD", in_amount, INT), INT),
         "never reads it as",
     );
+}
+
+/// A pair read in a type is one the lowering can take apart as that type. A newtype is read by
+/// opening the side that is one, so the other side is what it wraps; any other type is read by
+/// holding both sides as a value of it, so each is one. A pair that is neither would have the
+/// lowering read a field out of an `Int`, or a token out of a value that carries none.
+#[test]
+fn a_pair_read_in_a_type_is_one_the_type_takes_apart() {
+    let n = r#"{"declared":"m.N"}"#;
+    let compared = |reading: &str, left: &str, right: &str| {
+        helpers(&[h(
+            &[left, right],
+            &node(
+                "binary",
+                &format!(
+                    r#""op":"EQ","reading":{{"is":"in","type":{reading}}},"left":{},"right":{}"#,
+                    read(0, left),
+                    read(1, right)
+                ),
+                BOOL,
+            ),
+        )])
+    };
+
+    reads_whole(&compared(n, n, INT));
+    reads_whole(&compared(n, INT, n));
+    reads_whole(&compared(S, S, A));
+    reads_whole(&compared(S, A, S));
+
+    is_the_halves_disagreeing(&compared(n, INT, INT), "not a newtype beside");
+    is_the_halves_disagreeing(&compared(n, n, n), "not a newtype beside");
+    is_the_halves_disagreeing(&compared(n, n, STRING), "not a newtype beside");
+    is_the_halves_disagreeing(&compared(S, INT, S), "is not a value of");
+    is_the_halves_disagreeing(&compared(A, S, A), "is not a value of");
 }
 
 /// Every type a node writes is one the document declares, the ones it carries beside its own

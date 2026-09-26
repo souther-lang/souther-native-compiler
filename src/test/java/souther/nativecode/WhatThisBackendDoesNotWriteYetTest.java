@@ -252,59 +252,6 @@ class WhatThisBackendDoesNotWriteYetTest {
                 .hasMessageContaining("souther-lang/souther#1984");
     }
 
-    /**
-     * A value of a newtype compared with a bare literal, which is a comparison of what it wraps.
-     *
-     * <p>Both orders, and the order is the point. The checker reads the pair as values of the
-     * newtype, for this operator only, and says so on the node whichever side the literal is on:
-     * an `Int` on one side and an address on the other is what the operands are, and what they are
-     * read as is the newtype. Nothing here takes a literal as a newtype yet, so both orders are
-     * refused, and for that reason.
-     */
-    @Test
-    void aNewtypeComparedWithABareLiteralIsNotComparedByWhereItIs() {
-        for (String body : List.of("0 == a", "a == 0", "100 <= a", "a >= 100")) {
-            CheckedProgram program = CheckedProgram.of(List.of("""
-                    module comparing
-
-                    data Amount = Int
-
-                    behavior asked : (a: Amount) -> Bool
-                    let asked (a) = %s
-                    """.formatted(body)));
-            assertThat(ProgramWriter.written(program))
-                    .as("`%s`", body)
-                    .contains("\"reading\":{\"is\":\"in\",\"type\":{\"declared\":\"comparing.Amount\"}}");
-            assertThatThrownBy(() -> NativeCompiler.compile(program))
-                    .as("`%s`", body)
-                    .isInstanceOf(NotLowered.class)
-                    .hasMessageContaining("read as comparing.Amount");
-        }
-    }
-
-    /**
-     * A sum compared with one of its cases, which is two declared types that are not one type.
-     *
-     * <p>A case value is a value of its sum, so this is as legitimate as comparing two values of
-     * one type — and it arrives with a different declaration named on each side. What it comes to
-     * is which case the value is, which is not written here either.
-     */
-    @Test
-    void aSumComparedWithOneOfItsCasesIsNotComparedByWhereItIs() {
-        assertThatThrownBy(() -> NativeCompiler.compile(CheckedProgram.of(List.of("""
-                module staging
-
-                data Prospecting
-                data Won
-                data Stage = Prospecting | Won
-
-                behavior done : (s: Stage) -> Bool
-                let done (s) = s == Won
-                """))))
-                .isInstanceOf(NotLowered.class)
-                .hasMessageContaining("staging.Stage");
-    }
-
     @Test
     void theDriverSaysItIsOneThisBackendHasNotGotRoundTo() {
         assertThatThrownBy(() -> NativeCompiler.compile(CheckedProgram.of(List.of(OVER_A_DECIMAL))))
