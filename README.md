@@ -45,7 +45,9 @@ C++ compiler are needed too, by the tests that link what came out and run it, an
 with the `ffi` and `intl` extensions, by the tests that read what a host is handed the way an FFI
 with no preprocessor does and run a generated PHP binding. Maven also runs Composer, which has to be
 installed, for what the PHP runtime in `bindings/php/runtime` depends on, as its `composer.lock`
-fixes it.
+fixes it. The Rust runtime in `bindings/rust/runtime` is a crate of its own, which Maven formats,
+lints and tests beside the Rust half, and the tests of a generated Rust binding build a host of it
+with Cargo, fetching what the runtime depends on the first time.
 
 ## From the command line
 
@@ -58,20 +60,23 @@ build what it runs. From the root of a clone:
 `process-classes` builds the driver the command hands the program to; where it is built already,
 `mvn -q exec:java -Dargs='...'` is enough. The command ends with what `Main` ends with: 0 where it
 wrote everything, 1 where the build is refused (a compile error, what this backend does not write
-yet, or a name from the model PHP will not take), and 2 where the command is refused.
+yet, or a name from the model a binding's language will not take), and 2 where the command is
+refused.
 
     souther-native [-cp <path>] -o <object> <source>...
     souther-native [-cp <path>] --library <dir> [--with <object>]...
-                   [--php <dir> --namespace <ns>] <source>...
+                   [--php <dir> --namespace <ns>] [--rust <dir> --crate <name>] <source>...
 
 A source is a `.sou` file or a directory holding some. `--library` writes what a host is handed
-(below) into its directory, and `--php` the binding of it, from the manifest the library was written
-with. A program importing another build reads that build's modules from `-cp`, the class path the
-`souther` command takes, and has its object linked in with `--with`, one for each build.
+(below) into its directory, `--php` the PHP binding of it and `--rust` the Rust one, each from the
+manifest the library was written with. A program importing another build reads that build's modules
+from `-cp`, the class path the `souther` command takes, and has its object linked in with `--with`,
+one for each build.
 
-The two directories are each replaced whole, and they are two: a binding refused for a name in the
-model leaves the new library and the binding that was there before. A namespace PHP will not take,
-or a binding directory holding what no binding wrote, is refused before the library is built.
+The directories are each replaced whole, and each is its own: a binding refused for a name in the
+model leaves the new library and the binding that was there before. A namespace PHP will not take, a
+crate name Cargo will not take, or a binding directory holding what no binding wrote, is refused
+before the library is built.
 
 Until the runtime is published, an application reaches it as a Composer path repository, which is
 the supported way for now:
@@ -92,6 +97,18 @@ the API.
 `raoh-souther` example, with its HTTP boundary decoded by raoh-php and its injected behaviors
 implemented over PDO. Its README says how to build and run it, and what differs from the Java one.
 `scripts/php-cart-example.sh` builds it and runs its tests in CI.
+
+A Rust host depends on the crate `--rust` wrote by path, and until the runtime crate is published,
+reaches it by patching it in from the clone:
+
+    [dependencies]
+    acme = { path = "build/rust" }
+
+    [patch.crates-io]
+    souther-binding-runtime = { path = "<clone>/bindings/rust/runtime" }
+
+The library is loaded by path when the host runs, not linked. `scripts/rust-from-the-command-line.sh`
+does this in CI, as the PHP script does.
 
 ## Where it runs
 
@@ -696,6 +713,61 @@ thread to another; nothing here checks for one that was. A fiber is checked for:
 ended in the order they nest, so while a run is going on one fiber, another fiber can neither start
 one nor use a value of it (`RunOnAnotherFiber`), a call made there finds no run of its own
 (`OutsideAnyRun`), and one suspended in a run holds the library until it ends that run.
+
+## A Rust binding
+
+`RustBindings.generate(manifest, into, crate)` writes the Rust crate a host calls a library through,
+from the manifest and nothing else, over the runtime crate in `bindings/rust/runtime`. A module is a
+Rust module (`cart.lines` is `cart::lines`), and every name is the model's, a keyword written raw
+(`r#type`); the crate allows the lints that would ask for Rust's own case. Nothing is linked and no
+`build.rs` is written: `Library::load(path)` loads the library by path and looks each function up
+through that handle, into a table of typed function pointers written from the manifest. Every Souther
+library exports the same runtime functions, so a link could not say which of two a call reaches, and
+each is reached through its own handle, as the PHP runtime does. Loading is `unsafe`, since a
+library built from another program may export a function of the same name that is something else,
+and it is the one `unsafe` a host writes.
+
+What the PHP runtime checks while a host runs, the Rust types check when it is built.
+`library.run(|run| ...)` opens a root run whose lifetime is its closure's own, so no value made in it
+is answered out of it. A value is a handle of that lifetime (`Line<'run>`), neither `Send` nor
+`Sync`, and everything that makes something in the arena takes the run mutably: a constructor,
+`decode`, a behavior, a published value, calling a function value. A field's reader, `case` and
+`encode` take only the value, since what they answer the value already held. `run.scope(|inner| ...)`
+opens a run inside it and borrows it until that one ends, so nothing is made through the outer run
+meanwhile. The `Scope` a closure is handed says the run outside outlives it, so a value made outside
+is handed to a computation inside, and one made inside cannot be kept outside; the runtime crate's
+tests hold each of these to what rustc accepts and refuses (`trybuild`). The one thing the types
+cannot see is two `Library` values over one file, two handles on one arena: a second root run of it
+on a thread with one open is refused where it is opened (`AlreadyRunning`). A library is told apart by
+the address of its `souther_mark`, which whatever works on one arena shares.
+
+A product, a newtype and a unit are each a `Copy` handle with a reader for each field, `new`
+answering a `Construction` (the value, or an `invariant_violation` Raoh issue), `decode` answering a
+`Reading` (the value, or Raoh's issues, or `invalid_format`) and `encode`. A sum is a handle too, with
+`case` answering an enum of its cases, a case the model keeps being `Kept`, and `From` each of its
+cases and each narrower sum. An `Int`, a `Bool` and a `String` are Rust's own, a `Decimal` the
+runtime's integer and scale as PHP's is, and a `Date`, a `Time`, a `DateTime` and an `Instant` the
+runtime's types, held as their numbers and checked where they are made, since the library ends the
+process on text that names none; they cross as the text `java.time` writes. An optional is an
+`Option` at every depth, a tuple a Rust tuple, a list a slice handed over and a `Vec` handed back. A
+union no declaration names is an enum with a variant for each member, named after them in the
+manifest's order (`FreeOrInt`), handed over by reference and handed back where the library says its
+case, as a behavior's answer. A function value is an enum of its type (`FnIntToInt`): `Library`, one
+the library made, or `Host`, an `Rc` of a `'static` Rust function, which the library calls through an
+entry the crate writes. Both are called with `call`, and both are handed over; a host's function is
+kept, with the room it is made into, by the run it is handed over in until that run ends, and one
+handed over again is the value it was made into before.
+
+A behavior that requires nothing is a function of its module. A behavior is also a type named after
+it, as the PHP binding's class is: `bind` takes a reference to what stands for each behavior it
+requires, in order, so a missing one does not compile, and `call` calls it in the caller's run. A
+behavior a host implements is a trait with an `apply` typed as the model says, and
+`<Behavior>Implementation::new(&library, implementation)` makes one into what stands for it. The
+library calls `apply` in the run of the call that reached it, lent that run rather than opening one,
+so what it answers is made where the caller's run holds it. A failure it answers comes back out of
+that call as `Failure::Host`, and a panic is caught before it reaches the library and raised again
+where the call returns. Which behaviors have a type is decided as the PHP generator decides which have
+a class. What Rust has no way to hold is not written, as in the PHP binding.
 
 ## Where a value lives
 

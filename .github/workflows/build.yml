@@ -73,6 +73,17 @@ jobs:
       # and its binding, Composer installs the runtime from its path, and PHP calls the library.
       - run: scripts/php-from-the-command-line.sh
 
+      # The same for Rust: the command line builds a library and its crate, Cargo builds a host
+      # depending on the crate with the runtime patched in from the clone, and it calls the library.
+      - run: scripts/rust-from-the-command-line.sh
+
+      # The Rust runtime says it builds with the rust-version Raoh asks for, which is older than the
+      # toolchain this repository pins, and a dependency moving past it is found here and not by a
+      # host. The runtime's library only: its tests run on the pinned toolchain above.
+      - run: |
+          rustup toolchain install 1.87 --profile minimal
+          cargo +1.87 build --locked --lib --manifest-path bindings/rust/runtime/Cargo.toml
+
       # Every Composer project installs what its lock fixes, and the lock still matches it.
       - run: scripts/composer-locks.sh
 
