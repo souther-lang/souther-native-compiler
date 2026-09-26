@@ -848,3 +848,24 @@ fn two_local_definitions_written_the_same_are_the_halves_disagreeing() {
     let document = composed_document().replace(inner, &format!("{inner},{inner}"));
     is_the_halves_disagreeing(&document, "m.inner");
 }
+
+/// An answer written by no case is refused where it is read, as every set of alternatives naming
+/// none is (`coherence.rs` holds the rest).
+#[test]
+fn an_answer_written_by_no_case_is_refused_where_it_is_read() {
+    let document = concat!(
+        r#"{"transport":22,"declarations":["#,
+        r#"{"module":"m","name":"NotFound","by":"amodule","is":"unit"}],"#,
+        r#""behaviors":[{"module":"m","name":"lengthOf","is":"injected","parameters":{"named":[]},"#,
+        r#""output":{"is":"cases","type":{"union":[{"is":"primitive","prim":"INT"},"#,
+        r#"{"is":"declared","declared":"m.NotFound"}]},"#,
+        r#""cases":[],"#,
+        r#""form":{"is":"discriminated","tag":"type","contents":"value"}},"requirements":[],"ensures":{"at":"none"}}],"#,
+        r#""modules":[{"name":"m","publishes":[],"helpers":[],"values":[],"entries":[],"definitions":[],"examples":[]}]}"#,
+    );
+
+    let refused = object_for(document).expect_err("an answer written by no case");
+
+    assert!(refused.downcast_ref::<NotLowered>().is_none(), "{refused}");
+    assert!(refused.to_string().contains("no case in it"), "{refused}");
+}

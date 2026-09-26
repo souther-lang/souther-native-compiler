@@ -2829,3 +2829,50 @@ fn a_field_is_read_off_a_sum_only_where_every_case_lays_it_out() {
     );
     is_the_halves_disagreeing(&helpers(&[h(&[S], &read_off)]), "declares none");
 }
+
+/// A set of alternatives naming no case is refused where it is read, wherever it stands: a sum's
+/// cases, a union's members, the atoms an arm tests and the cases a stage accepts. Every reader of
+/// one tells a value apart by its token and takes the last case for what is tagged by none of the
+/// others, which a set with nothing in it gives no last case for: a field read off a sum with no
+/// case would branch to nowhere. So it is not a document the checker writes, and not something
+/// this backend is behind on.
+#[test]
+fn a_set_of_alternatives_naming_no_case_is_refused_where_it_is_read() {
+    let both = r#""cases":[{"is":"declared","declared":"m.A"},{"is":"declared","declared":"m.B"}],"form":{"is":"enumeration"}"#;
+    let none = r#""cases":[],"form":{"is":"discriminated","tag":"type","contents":"value"}"#;
+    let read_off = node(
+        "field",
+        &format!(r#""target":{},"field":"v""#, read(0, S)),
+        INT,
+    );
+    let sum = helpers(&[h(&[S], &read_off)]);
+    assert!(sum.contains(both));
+    is_the_halves_disagreeing(&sum.replacen(both, none, 1), "no case in it");
+
+    let empty_union = r#"{"union":[]}"#;
+    is_the_halves_disagreeing(&helpers(&[h(&[empty_union], &int(1))]), "Ty");
+
+    let testing_nothing = node(
+        "match",
+        &format!(
+            r#""subject":{},"arms":[{}]"#,
+            read(0, S),
+            arm(r#"{"tests":"which","atoms":[]}"#, None, &int(1))
+        ),
+        INT,
+    );
+    is_the_halves_disagreeing(&helpers(&[h(&[S], &testing_nothing)]), "no case in it");
+
+    let scalar = r#"{"is":"scalar","scalar":"INT"}"#;
+    let sum_answer = r#"{"is":"nominal","declared":"m.S"}"#;
+    is_the_halves_disagreeing(
+        &routed(
+            sum_answer,
+            &widen(&unit("m.A"), S),
+            sum_answer,
+            r#"{"is":"oncases","accepted":[]}"#,
+            scalar,
+        ),
+        "no case in it",
+    );
+}

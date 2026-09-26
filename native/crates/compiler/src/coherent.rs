@@ -55,8 +55,8 @@ use crate::closures::ClosureSites;
 use crate::index;
 use crate::kernels::{Bound, LoweredKernel};
 use crate::transport::{
-    AbortKind, Answers, Carrier, Case, Declaration, Definition, Emitted, Ensures, Guard, Held,
-    Node, Op, Owner, Prim, Program, Reaches, Reaching, Reading, Reference, Routing, Selects,
+    AbortKind, Answers, Carrier, Case, Cases, Declaration, Definition, Emitted, Ensures, Guard,
+    Held, Node, Op, Owner, Prim, Program, Reaches, Reaching, Reading, Reference, Routing, Selects,
     Target, Ty, Value,
 };
 use crate::{Declared, Runs, Targets, departures_taken, not_lowered, says_its_case};
@@ -1593,10 +1593,10 @@ impl<'a> Walk<'_, 'a> {
         }
     }
 
-    /// Refuses a test naming no case, or a case that is a sum: what a value is tagged with is one
-    /// of the leaves a case resolved to, and the checker answers those, so a sum here would be a
-    /// test this side had to descend itself.
-    fn leaves(&self, what: &str, cases: &[Case]) -> Result<()> {
+    /// Refuses a test naming a case that is a sum: what a value is tagged with is one of the leaves
+    /// a case resolved to, and the checker answers those, so a sum here would be a test this side
+    /// had to descend itself. One naming no case is refused where it is read ([`Cases`]).
+    fn leaves(&self, what: &str, cases: &Cases) -> Result<()> {
         leaves(self.declared, &format!("{}: {what}", self.owner), cases)
     }
 
@@ -1855,7 +1855,10 @@ impl<'a> Walk<'_, 'a> {
             Some(false) => {
                 self.fits(
                     "a case an arm tests is read as what it binds",
-                    &Ty::Union { union: tested },
+                    &Ty::Union {
+                        union: Cases::one_or_more(tested)
+                            .expect("an arm reading its value as itself tests a case or more"),
+                    },
                     binds,
                 );
                 self.fits(
@@ -2419,7 +2422,7 @@ fn composes(
                     .into_iter()
                     .filter(|case| !accepted.contains(case))
                     .collect();
-                if !leaving.is_empty() {
+                if let Some(leaving) = Cases::one_or_more(leaving) {
                     owed.fits(
                         format!(
                             "what leaves {name} at its stage {} is what it answers",
@@ -2557,12 +2560,9 @@ fn spelt_declaration(declaration: Reaching) -> String {
     }
 }
 
-/// Refuses a test naming no case, or naming a sum where the checker answers the leaves it descends
-/// to.
-fn leaves(declared: &Declared, what: &str, cases: &[Case]) -> Result<()> {
-    if cases.is_empty() {
-        bail!("{what} tests for no case");
-    }
+/// Refuses a test naming a sum where the checker answers the leaves it descends to. One naming no
+/// case is refused where it is read ([`Cases`]).
+fn leaves(declared: &Declared, what: &str, cases: &Cases) -> Result<()> {
     for case in cases {
         if let Case::Declared { declared: key } = case
             && let crate::transport::Declaration::Sum { .. } = declared.shape(key)?

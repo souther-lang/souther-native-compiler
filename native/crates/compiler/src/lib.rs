@@ -1655,7 +1655,12 @@ impl<'a> Declared<'a> {
     /// Asked of every sum when the document is read, and of every answer union
     /// ([`Coherent::of`](coherent::Coherent::of)), so nothing downstream is handed a form and cases
     /// that disagree.
-    fn settled(&self, owner: &str, cases: &[Case], form: &AlternativesForm) -> Result<()> {
+    fn settled(
+        &self,
+        owner: &str,
+        cases: &transport::Cases,
+        form: &AlternativesForm,
+    ) -> Result<()> {
         let mut not_a_unit = None;
         for case in cases {
             let unit = match case {
@@ -1674,12 +1679,12 @@ impl<'a> Declared<'a> {
                 not_a_unit = Some(case.spelt());
             }
         }
-        let every_one_a_unit = !cases.is_empty() && not_a_unit.is_none();
+        let every_one_a_unit = not_a_unit.is_none();
         match form {
             AlternativesForm::Enumeration if !every_one_a_unit => bail!(
                 "{owner} travels as an enumeration and its case {} is not a unit: the two halves \
                  disagree about its form",
-                not_a_unit.unwrap_or_else(|| "list is empty".to_string())
+                not_a_unit.expect("a set not every case of which is a unit has a case that is not")
             ),
             AlternativesForm::Discriminated { .. } if every_one_a_unit => bail!(
                 "{owner} travels discriminated and every one of its cases is a unit, which is an \
@@ -1740,7 +1745,7 @@ impl<'a> Declared<'a> {
         for member in members {
             let reached = match member {
                 Case::Declared { declared } => match self.shape(declared)? {
-                    Declaration::Sum { cases, .. } => cases.clone(),
+                    Declaration::Sum { cases, .. } => cases.to_vec(),
                     _ => vec![member.clone()],
                 },
                 _ => vec![member.clone()],

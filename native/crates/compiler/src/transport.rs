@@ -428,7 +428,7 @@ pub enum Declaration {
         module: String,
         name: String,
         by: DeclaredBy,
-        cases: Vec<Case>,
+        cases: Cases,
         form: AlternativesForm,
     },
 }
@@ -744,7 +744,7 @@ pub enum Routing {
     Always,
     /// Only where the running value is one of `accepted`. Anything else has left the main line,
     /// and the composition answers with it rather than offering it to what follows.
-    OnCases { accepted: Vec<Case> },
+    OnCases { accepted: Cases },
 }
 
 /// Whether the module that declares a behavior publishes it under that name, or keeps it.
@@ -1177,7 +1177,7 @@ pub enum BoundaryOutput {
     Cases {
         #[serde(rename = "type")]
         ty: Ty,
-        cases: Vec<Case>,
+        cases: Cases,
         form: AlternativesForm,
     },
 }
@@ -1392,6 +1392,53 @@ pub struct Invariant {
 #[serde(deny_unknown_fields)]
 pub struct Header {
     pub name: Option<String>,
+}
+
+/// A set of alternatives: one case or more, never none.
+///
+/// Every place the document names cases a value may be one of — a sum's cases, a union's members,
+/// the cases an answer is written by, the atoms an arm tests, the cases a stage accepts — is one of
+/// these, and refused as read where it names none. The checker never writes one empty: a sum and a
+/// union have cases, and an arm or a stage that tests for none is refused upstream. Everything
+/// reading one tells a value apart by its token and takes the last case for what a value tagged by
+/// none of the others is, which holds only of a set with a case in it; so the fact is held here,
+/// once, rather than by each reader remembering to ask.
+#[derive(Debug, Deserialize, PartialEq, Eq, Hash, Clone)]
+#[serde(try_from = "Vec<Case>")]
+pub struct Cases(Vec<Case>);
+
+impl Cases {
+    /// `cases`, where there is one.
+    pub fn one_or_more(cases: Vec<Case>) -> Option<Cases> {
+        (!cases.is_empty()).then_some(Cases(cases))
+    }
+}
+
+impl TryFrom<Vec<Case>> for Cases {
+    type Error = String;
+
+    fn try_from(cases: Vec<Case>) -> Result<Cases, String> {
+        Cases::one_or_more(cases).ok_or_else(|| {
+            "a set of alternatives with no case in it, which the checker never states".to_string()
+        })
+    }
+}
+
+impl std::ops::Deref for Cases {
+    type Target = [Case];
+
+    fn deref(&self) -> &[Case] {
+        &self.0
+    }
+}
+
+impl<'c> IntoIterator for &'c Cases {
+    type Item = &'c Case;
+    type IntoIter = std::slice::Iter<'c, Case>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
 }
 
 /// Which case a name is: one a module declares, a primitive standing as a case, or one the
@@ -1657,7 +1704,7 @@ pub enum Ty {
     /// primitive or a case the language gives says nothing of the kind, and a union with one
     /// among its members is read and not laid out.
     Union {
-        union: Vec<Case>,
+        union: Cases,
     },
     Option {
         option: Box<Ty>,
@@ -2252,7 +2299,7 @@ pub enum Selects {
     /// case to, so a case that is a sum arrives as the several types it stands for — each as the
     /// case identity it is, and a declared one by the key that reaches its declaration.
     Which {
-        atoms: Vec<Case>,
+        atoms: Cases,
     },
     Held,
     Nothing,
