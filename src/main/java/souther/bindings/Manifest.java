@@ -98,7 +98,27 @@ public final class Manifest {
     /** One word a host hands over or is handed. */
     public enum Word {
         STATUS, INT, BOOL, CASE, OUTCOME, COUNT, MARK, BYTES, VALUE, STRING, DECODED, ISSUE, LIST,
-        REQUIREMENTS, CAPABILITY, USERDATA
+        REQUIREMENTS, CAPABILITY, USERDATA;
+
+        /** What the declarations the build wrote call room for this word. */
+        public String cType() {
+            return switch (this) {
+                case STATUS -> "souther_status";
+                case INT, COUNT, MARK -> "int64_t";
+                case BOOL -> "uint8_t";
+                case CASE -> "uint32_t";
+                case OUTCOME -> "int32_t";
+                case BYTES -> "uint8_t *";
+                case VALUE -> "souther_value";
+                case STRING -> "souther_string";
+                case DECODED -> "souther_decoded";
+                case ISSUE -> "souther_issue";
+                case LIST -> "souther_list";
+                case REQUIREMENTS -> "const souther_capability *const *";
+                case CAPABILITY -> "souther_capability";
+                case USERDATA -> "void *";
+            };
+        }
     }
 
     /**
@@ -332,7 +352,7 @@ public final class Manifest {
      *
      * <p>What a manifest says only in agreement with how a value crosses, such as a function
      * handing a list across with a list of that element here to build it through, is held where
-     * that is worked out.
+     * that is worked out ({@link CrossingShape}).
      */
     private @Nullable String broken() {
         Set<String> constructible = new HashSet<>();

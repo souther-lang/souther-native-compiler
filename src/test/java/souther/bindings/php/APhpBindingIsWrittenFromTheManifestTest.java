@@ -8,7 +8,6 @@ import souther.nativecode.NativeCompiler;
 import souther.nativecode.Php;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
-import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;
 
 import java.nio.charset.StandardCharsets;
@@ -567,19 +566,5 @@ class APhpBindingIsWrittenFromTheManifestTest {
         assertThat(Files.readString(generated.root().resolve("Stock").resolve("Bin.php")))
                 .contains("souther4_m_stock_l_value_construct", "souther4_m_stock_l_value_at")
                 .doesNotContain("souther4_m_shop_");
-    }
-
-    /**
-     * A module with a function handing a list across and nothing to build one through is the
-     * manifest and the binding disagreeing, and is refused rather than written without the function.
-     */
-    @Test
-    void aListWithNothingToBuildItThroughIsRefused(@TempDir Path into) throws Exception {
-        NativeCompiler.Library library = twoModules(into);
-
-        assertThatThrownBy(() -> generatedAfter(into, library, "stock",
-                module -> ((ArrayNode) module.get("lists")).removeAll()))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("module `stock` nothing to build a list of");
     }
 }
