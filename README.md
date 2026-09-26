@@ -550,7 +550,10 @@ value is taken is made into one through a slot the binding keeps for each functi
 for the binding for the reason an implementation's is, and the closure is kept for as long as the
 run it was handed over in: what it throws comes back out of the call into the library that reached
 it. How each of these crosses is the shape the manifest says beside it, and the binding decides only
-how PHP holds what crosses in that shape.
+how PHP holds what crosses in that shape: an `Int`, a `Bool` or a `String` as PHP's own type where it
+crosses as that word, and a value of a declared type or of a union as an object where it crosses as
+a `value`. A pair of a type and a shape it has no way to hold is not written, and what it writes is
+held to cross in the shape the manifest says, or the generation stops as the binding's mistake.
 The FFI declarations are the build's own, copied beside the binding as `souther.ffi.h`, and
 `autoload.php` loads the binding's classes for a host that does not map the namespace itself. The
 directory is written beside where it goes and put there whole, so it is the binding of one manifest:

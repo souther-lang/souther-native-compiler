@@ -148,12 +148,26 @@ sealed interface Crossing {
             }
         }
 
-        /** A value of a primitive, as PHP's own type for it, or null where PHP has none. */
-        static @Nullable Whole primitive(Word word) {
-            return switch (word) {
-                case INT -> new Whole(new Shape.Leaf(word), "int", Kind.INT, null);
-                case BOOL -> new Whole(new Shape.Leaf(word), "bool", Kind.BOOL, null);
-                case STRING -> new Whole(new Shape.Leaf(word), "string", Kind.STRING, null);
+        /**
+         * A value of the primitive {@code name} crossing as {@code word}, as PHP's own type for it,
+         * or null where this binding has no way to hold that pair.
+         *
+         * <p>The one place this binding says which primitives it holds and how: an {@code Int} as
+         * an {@code int} where it crosses as an {@code INT}, a {@code Bool} as a {@code bool} where
+         * it crosses as a {@code BOOL}, and a {@code String} as a {@code string} where it crosses as
+         * a {@code STRING}. Both are asked, the name and the word: what a primitive crosses as is
+         * the manifest's to say, and a {@code Decimal} said to cross as an {@code INT} is a pair
+         * this binding does not hold, and not an {@code int}. A value of a union carrying the
+         * primitive is asked the same.
+         */
+        static @Nullable Whole primitive(String name, Word word) {
+            return switch (name) {
+                case "Int" -> word == Word.INT
+                        ? new Whole(new Shape.Leaf(word), "int", Kind.INT, null) : null;
+                case "Bool" -> word == Word.BOOL
+                        ? new Whole(new Shape.Leaf(word), "bool", Kind.BOOL, null) : null;
+                case "String" -> word == Word.STRING
+                        ? new Whole(new Shape.Leaf(word), "string", Kind.STRING, null) : null;
                 default -> null;
             };
         }

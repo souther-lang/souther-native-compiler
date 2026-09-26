@@ -359,14 +359,29 @@ public final class PhpBindings {
          * one it knows is beyond PHP. Which shape a type crosses in is the manifest's to say, and
          * a pair made otherwise than this binding knows is one it does not bind rather than one it
          * refuses the manifest over.
+         *
+         * <p>What this binding holds a leaf as is its own capability, said once: a primitive as
+         * {@link Whole#primitive} says, and a value of a declared type or of a union as the object
+         * of a generated class, whose handle crosses as a {@code VALUE} and as nothing else. That is
+         * what PHP holds and not how the model crosses: a declared type the manifest says crosses
+         * otherwise is one this binding does not bind.
+         *
+         * <p>What is made is held to the shape the manifest says ({@link #agreeing}), so a way of
+         * holding a value that does not cross as the manifest says is this binding's own mistake,
+         * found where it is made rather than at a call.
          */
         @Nullable Given given(Type type, Shape shape) {
+            return agreeing(heldGiven(type, shape), shape);
+        }
+
+        private @Nullable Given heldGiven(Type type, Shape shape) {
             return switch (shape) {
                 case Shape.Leaf leaf -> switch (type) {
-                    case Type.Primitive it -> Whole.primitive(leaf.word());
-                    case Type.Declared it -> whole(it.module(), it.name());
+                    case Type.Primitive it -> Whole.primitive(it.name(), leaf.word());
+                    case Type.Declared it ->
+                            leaf.word() == Word.VALUE ? whole(it.module(), it.name()) : null;
                     case Type.Union union -> {
-                        List<Member> members = members(union);
+                        List<Member> members = leaf.word() == Word.VALUE ? members(union) : null;
                         yield members == null ? null : new OneOf(union, members);
                     }
                     default -> null;
@@ -402,13 +417,19 @@ public final class PhpBindings {
         /**
          * How the library hands PHP a value of {@code type} in {@code shape}, or null where it has
          * no way to, for the reasons {@link #given} has none. A union no declaration names is
-         * handed to PHP only as a behavior's answer, which says which case it is.
+         * handed to PHP only as a behavior's answer, which says which case it is. A leaf is held as
+         * {@link #given} says, and what is made is held to the shape the manifest says the same way.
          */
         @Nullable Received received(Type type, Shape shape) {
+            return agreeing(heldReceived(type, shape), shape);
+        }
+
+        private @Nullable Received heldReceived(Type type, Shape shape) {
             return switch (shape) {
                 case Shape.Leaf leaf -> switch (type) {
-                    case Type.Primitive it -> Whole.primitive(leaf.word());
-                    case Type.Declared it -> whole(it.module(), it.name());
+                    case Type.Primitive it -> Whole.primitive(it.name(), leaf.word());
+                    case Type.Declared it ->
+                            leaf.word() == Word.VALUE ? whole(it.module(), it.name()) : null;
                     default -> null;
                 };
                 case Shape.Option option -> type instanceof Type.Option it
@@ -440,6 +461,23 @@ public final class PhpBindings {
             };
         }
 
+        /**
+         * {@code made}, where it crosses in {@code shape}: what this binding makes of a value is
+         * held to the shape the manifest says the value crosses in, since PHP hands over and reads
+         * the words of that shape and of no other. Made crossing otherwise, it would be a call made
+         * with words the library does not take, which is this binding's mistake and not the
+         * manifest's.
+         *
+         * @throws IllegalStateException where {@code made} crosses in another shape
+         */
+        private static <C extends Crossing> @Nullable C agreeing(@Nullable C made, Shape shape) {
+            if (made != null && !made.shape().equals(shape)) {
+                throw new IllegalStateException("this binding holds a value crossing as " + shape
+                        + " as what crosses as " + made.shape());
+            }
+            return made;
+        }
+
         /** What this module says a list of {@code element} is reached through. */
         private Manifest.ListCrossing listOf(Shape element) {
             return module.lists().stream().filter(it -> it.element().equals(element)).findFirst()
@@ -466,6 +504,11 @@ public final class PhpBindings {
             if (!(answer.type() instanceof Type.Union union)) {
                 return received(answer.type(), shape);
             }
+            // Held as the object of the class of the case it is, whose handle crosses as a
+            // `VALUE`, as a value of a union PHP hands over is.
+            if (!(shape instanceof Shape.Leaf leaf) || leaf.word() != Word.VALUE) {
+                return null;
+            }
             Manifest.UnionAnswer told = Objects.requireNonNull(answer.union());
             List<Member> members = members(union);
             if (members == null || told.which() == null) {
@@ -489,8 +532,8 @@ public final class PhpBindings {
                 }
                 made.add(it);
             }
-            return new Told(told.which(), members.stream().map(it -> it.whole().phpType())
-                    .collect(Collectors.joining("|")), made, quotedInSingle("`" + what + "`"));
+            return agreeing(new Told(told.which(), members.stream().map(it -> it.whole().phpType())
+                    .collect(Collectors.joining("|")), made, quotedInSingle("`" + what + "`")), shape);
         }
 
         /**
@@ -597,7 +640,7 @@ public final class PhpBindings {
     private @Nullable Member carried(Case.Primitive of) {
         Manifest.CaseCrossing crossing = manifest.crossing(of);
         Word held = crossing.holds();
-        Whole whole = held == null ? null : Whole.primitive(held);
+        Whole whole = held == null ? null : Whole.primitive(of.name(), held);
         return whole == null ? null : new Member(whole, crossing);
     }
 

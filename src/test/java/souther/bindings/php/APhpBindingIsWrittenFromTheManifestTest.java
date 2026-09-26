@@ -93,6 +93,92 @@ class APhpBindingIsWrittenFromTheManifestTest {
                 .contains("function other(").doesNotContain("function pair(");
     }
 
+    /**
+     * A leaf is held by this binding only where the type and the word are a pair it holds, which is
+     * this binding's capability and not how the model crosses: an `Int` as an `int` crossing as an
+     * `INT`, a value of a declared type or of a union as an object crossing as a `VALUE`, and a
+     * primitive case of a union likewise. A manifest pairing a type with another word is read, and
+     * what takes or answers the pair is not written; the rest is.
+     */
+    @Test
+    void aLeafThisBindingCannotHoldIsNotWritten(@TempDir Path into) throws Exception {
+        NativeCompiler.Library library = NativeCompiler.library(Checked.of(List.of("""
+                module m exposing ( Box, Found, Missing, Free, twice, find, quantityOf, kept )
+
+                data Box = { n: Int }
+                data Found = { id: Int }
+                data Missing
+                data Free
+
+                behavior twice : (n: Int) -> Int
+                let twice (n) = n * 2
+
+                behavior find : (id: Int) -> Found | Missing
+                let find (id) = if id > 0 then Found { id = id } else Missing
+
+                behavior quantityOf : (paid: Int) -> Int | Free
+                let quantityOf (paid) = if paid > 0 then paid else Free
+
+                behavior kept : (n: Int) -> Int
+                let kept (n) = n + 1
+                """)), into.resolve("native"));
+        Path behaviors = into.resolve("php").resolve("M").resolve("Behaviors.php");
+
+        // A `Decimal` said to cross as an `INT`, which the function takes as it says.
+        generatedAfter(into, library, "m", module -> ((ObjectNode) behaviorNamed(module, "twice")
+                .get("parameters").get("named").get(0))
+                .set("type", JSON.readTree("{\"kind\":\"primitive\",\"name\":\"Decimal\"}")));
+        assertThat(Files.readString(behaviors)).contains("function kept(").doesNotContain("function twice(");
+
+        // A value of a declared type said to cross as an `INT`.
+        generatedAfter(into, library, "m", module -> ((ObjectNode) behaviorNamed(module, "twice")
+                .get("parameters").get("named").get(0))
+                .set("type", JSON.readTree("{\"kind\":\"declared\",\"module\":\"m\",\"name\":\"Box\"}")));
+        assertThat(Files.readString(behaviors)).contains("function kept(").doesNotContain("function twice(");
+
+        // A union a behavior answers said to cross as an `INT`, the function writing one.
+        generatedAfter(into, library, "m", module -> {
+            ObjectNode call = (ObjectNode) behaviorNamed(module, "find").get("call").get("available");
+            ((ObjectNode) call.get("signature")).set("answers", JSON.readTree("{\"leaf\":\"int\"}"));
+            ArrayNode takes = (ArrayNode) call.get("function").get("takes");
+            takes.set(takes.size() - 1, JSON.readTree("{\"room\":\"int\"}"));
+        });
+        assertThat(Files.readString(behaviors)).contains("function kept(").doesNotContain("function find(");
+
+        // The `Int` a union carries said to be made and read as a `STRING`.
+        generatedWholeAfter(into, library, manifest -> {
+            for (JsonNode crossing : manifest.get("cases")) {
+                if (crossing.get("case").get("name").stringValue().equals("Int")) {
+                    ((ArrayNode) crossing.get("make").get("takes"))
+                            .set(0, JSON.readTree("{\"given\":\"string\"}"));
+                    ((ObjectNode) crossing.get("read")).put("answers", "string");
+                }
+            }
+        });
+        assertThat(Files.readString(behaviors)).contains("function kept(", "function find(")
+                .doesNotContain("function quantityOf(");
+    }
+
+    /** The behavior named {@code name} of {@code module}. */
+    private static ObjectNode behaviorNamed(ObjectNode module, String name) {
+        for (JsonNode it : module.get("behaviors")) {
+            if (it.get("name").stringValue().equals(name)) {
+                return (ObjectNode) it;
+            }
+        }
+        throw new IllegalArgumentException("no behavior " + name);
+    }
+
+    /** Generates from the library's manifest after {@code changing} the whole of it. */
+    private static void generatedWholeAfter(Path into, NativeCompiler.Library library,
+                                            Consumer<ObjectNode> changing) throws Exception {
+        ObjectNode manifest = (ObjectNode) JSON.readTree(library.manifest().toFile());
+        changing.accept(manifest);
+        Path changed = into.resolve("changed.json");
+        Files.writeString(changed, JSON.writeValueAsString(manifest), StandardCharsets.UTF_8);
+        PhpBindings.generate(changed, library.declarations(), into.resolve("php"), "Acme\\Billing");
+    }
+
     /** Where the manifest gives a behavior no way in, nothing is written that a caller could call. */
     @Test
     void aBehaviorTheManifestGivesNoCallIsNotWritten(@TempDir Path into) throws Exception {

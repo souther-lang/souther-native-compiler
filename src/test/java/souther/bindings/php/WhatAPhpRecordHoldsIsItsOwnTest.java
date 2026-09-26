@@ -40,7 +40,7 @@ class WhatAPhpRecordHoldsIsItsOwnTest {
                 null);
         Crossing.Member missing = new Crossing.Member(
                 Crossing.Whole.product("\\Acme\\M\\Missing"), null);
-        Crossing.Whole count = java.util.Objects.requireNonNull(Crossing.Whole.primitive(Word.INT));
+        Crossing.Whole count = java.util.Objects.requireNonNull(Crossing.Whole.primitive("Int", Word.INT));
         Function which = new Function("which", List.of(Parameter.given(Word.VALUE)), Word.CASE);
 
         Owning owning = new Owning();
