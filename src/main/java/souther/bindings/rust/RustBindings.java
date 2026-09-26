@@ -311,7 +311,17 @@ public final class RustBindings {
                         read == null ? null : symbol(read.length()),
                         read == null ? null : symbol(read.at()));
             }
-            case Shape.FunctionOf function -> null;
+            case Shape.FunctionOf function -> {
+                if (!(type instanceof Type.Function it)) {
+                    yield null;
+                }
+                FunctionEnum written = functionEnum(module, it, function);
+                // Handed to Rust, a function value is one the library made, which is called through
+                // the library; handed over, it may be one of the host's, which the library calls.
+                yield written == null
+                        || !(way == Manifest.Way.HANDED ? written.called() : written.hosted())
+                        ? null : new Crossing.Function(written.type(), function);
+            }
         };
         if (made != null && !made.shape().equals(shape)) {
             throw new IllegalStateException("this binding holds a value crossing as " + shape
@@ -471,6 +481,232 @@ public final class RustBindings {
                 %s}
                 """.formatted(what, name, lifetime, written));
         return new UnionEnum("crate::" + String.join("::", path) + "::" + name + lifetime, members);
+    }
+
+    /**
+     * The enum a function type is written as: where it stands, and whether a value the library made
+     * can be called ({@code called}) and a host's own function handed over ({@code hosted}).
+     */
+    private record FunctionEnum(String type, boolean called, boolean hosted) {
+    }
+
+    /** Each function type's enum, by the type and the shape it crosses in, once it is asked for. */
+    private final Map<List<Object>, FunctionEnum> functions = new LinkedHashMap<>();
+
+    /**
+     * {@code type} crossing as {@code shape} as the enum generated for it, written in {@code module}'s
+     * module the first time it is asked for; or null where a value of it can be neither called nor
+     * made: what it takes or answers has no way to cross either way it would, or its name is one
+     * another type of the module already is.
+     *
+     * <p>Calling one the library made hands over what it takes and is handed what it answers;
+     * a host's own is handed what it takes and hands back what it answers. The two are asked
+     * apart, since a union is handed over and not handed to Rust, and each is written where the
+     * manifest says how ({@code call}, {@code make}).
+     */
+    private @Nullable FunctionEnum functionEnum(Manifest.Module module, Type.Function type,
+                                                Shape.FunctionOf shape) {
+        List<Object> key = List.of(type, shape);
+        if (functions.containsKey(key)) {
+            return functions.get(key);
+        }
+        functions.put(key, null);
+        Manifest.Signature signature = shape.signature();
+        Manifest.FunctionCrossing crossing = module.functions().stream()
+                .filter(it -> it.signature().equals(signature)).findFirst().orElseThrow();
+        if (type.takes().size() != signature.takes().size()) {
+            return null;
+        }
+        List<Crossing> handedOver = crossing.call() == null ? null
+                : crossings(module, type.takes(), signature.takes(), Manifest.Way.GIVEN);
+        Crossing answered = crossing.call() == null ? null
+                : crossing(module, type.answers(), signature.answers(), Manifest.Way.HANDED);
+        boolean called = handedOver != null && answered != null;
+        List<Crossing> handed = crossing.make() == null ? null
+                : crossings(module, type.takes(), signature.takes(), Manifest.Way.HANDED);
+        Crossing answering = crossing.make() == null ? null
+                : crossing(module, type.answers(), signature.answers(), Manifest.Way.GIVEN);
+        boolean hosted = handed != null && answering != null;
+        if (!called && !hosted) {
+            return null;
+        }
+        List<Crossing> takes = called ? handedOver : handed;
+        Crossing answers = called ? answered : answering;
+        String name = "Fn" + takes.stream().map(Crossing::label).collect(Collectors.joining("And"))
+                + "To" + answers.label();
+        List<String> path = RustNames.modulePath(module.name());
+        RustModule at = moduleAt(path);
+        if (!RustNames.takes(name) || at.types.has(name)) {
+            return null;
+        }
+        at.types.claim(name, "the enum of a function type");
+        String typed = "crate::" + String.join("::", path) + "::" + name + "<'run>";
+        FunctionEnum made = new FunctionEnum(typed, called, hosted);
+        functions.put(key, made);
+
+        List<String> inputs = java.util.stream.IntStream.range(0, takes.size())
+                .mapToObj(it -> "input" + it).toList();
+        String signed = "dyn for<'x> Fn(&mut crate::Run<'x>" + takes.stream()
+                .map(it -> ", " + it.owned().replace("'run", "'x")).collect(Collectors.joining())
+                + ") -> Result<" + answers.owned().replace("'run", "'x") + ", crate::HostError>";
+        String parameters = java.util.stream.IntStream.range(0, takes.size())
+                .mapToObj(it -> ", " + inputs.get(it) + ": " + takes.get(it).owned())
+                .collect(Collectors.joining());
+        String what = "a function value of " + String.join(", ", takes.stream()
+                .map(Crossing::owned).toList()) + " to " + answers.owned();
+
+        StringBuilder callArm = new StringBuilder();
+        if (called) {
+            callArm.append("            Self::Library(held) => {\n")
+                    .append("                let library = run.library();\n")
+                    .append("                let function = held.word();\n");
+            List<String> given = new ArrayList<>(List.of("function"));
+            int word = 0;
+            for (int place = 0; place < takes.size(); place++) {
+                for (String expression : handedOver.get(place).given(handedOver.get(place)
+                        .viewOf("(&" + inputs.get(place) + ")"))) {
+                    String local = "given" + word++;
+                    callArm.append("                let ").append(local).append(" = ")
+                            .append(expression).append(";\n");
+                    given.add(local);
+                }
+            }
+            List<String> rooms = rooms(callArm, "                ", answered.words());
+            rooms.forEach(room -> given.add("&mut " + room));
+            callArm.append("                run.call(|| unsafe { (library.symbols.")
+                    .append(symbol(Objects.requireNonNull(crossing.call()))).append(")(")
+                    .append(String.join(", ", given)).append(") })?;\n")
+                    .append("                // SAFETY: the library answered what it wrote in this run.\n")
+                    .append("                Ok(unsafe { ").append(answered.of(rooms)).append(" })\n")
+                    .append("            }\n");
+        } else {
+            callArm.append("            Self::Library(_) => unreachable!(\"the library hands over no ")
+                    .append(what).append(" it offers no way to call\"),\n");
+        }
+
+        StringBuilder wordArm = new StringBuilder();
+        StringBuilder entry = new StringBuilder();
+        String dispatch = "__" + name + "Hosted";
+        String function = "__" + name + "_hosted";
+        if (hosted) {
+            Manifest.FunctionMaking making = Objects.requireNonNull(crossing.make());
+            symbols.putIfAbsent(making.implement(), "rt::FunctionImplementFn");
+            wordArm.append("""
+                            Self::Host(function) => {
+                                let library = run.library();
+                                let key = std::rc::Rc::as_ptr(function) as *const () as usize;
+                                let hosted = %s { library, function: function.clone() };
+                                // SAFETY: the function is the library's making a value of this shape,
+                                // and the entry below is of the type it calls, reading the dispatch.
+                                unsafe {
+                                    run.host_function(library.symbols.%s, %s as *const std::ffi::c_void, key, hosted)
+                                }
+                            }
+                    """.formatted(dispatch, making.implement(), function));
+            List<String> cParameters = new ArrayList<>();
+            List<String> handedWords = new ArrayList<>();
+            List<String> roomWords = new ArrayList<>();
+            for (Parameter parameter : making.implementation().takes()) {
+                if (parameter.word() == Word.USERDATA && cParameters.isEmpty()) {
+                    cParameters.add("userdata: *mut std::ffi::c_void");
+                } else if (parameter.mode() == Parameter.Mode.GIVEN) {
+                    String n = "handed" + handedWords.size();
+                    handedWords.add(n);
+                    cParameters.add(n + ": " + Crossing.word(parameter.word()));
+                } else {
+                    String n = "answer" + roomWords.size();
+                    roomWords.add(n);
+                    cParameters.add(n + ": *mut " + Crossing.word(parameter.word()));
+                }
+            }
+            StringBuilder made2 = new StringBuilder();
+            int word = 0;
+            for (int place = 0; place < handed.size(); place++) {
+                int wide = handed.get(place).words().size();
+                made2.append("        let ").append(inputs.get(place)).append(" = unsafe { ")
+                        .append(handed.get(place).of(handedWords.subList(word, word + wide)))
+                        .append(" };\n");
+                word += wide;
+            }
+            StringBuilder written = new StringBuilder();
+            List<String> answerWords = answering.given("answer");
+            for (int place = 0; place < answerWords.size(); place++) {
+                written.append("        let given").append(place).append(" = ")
+                        .append(answerWords.get(place)).append(";\n");
+            }
+            for (int place = 0; place < answerWords.size(); place++) {
+                written.append("        unsafe { *").append(roomWords.get(place)).append(" = given")
+                        .append(place).append(" };\n");
+            }
+            entry.append("""
+
+                    struct %s {
+                        library: *const crate::Library,
+                        function: std::rc::Rc<%s>,
+                    }
+
+                    unsafe extern "C" fn %s(%s) -> u32 {
+                        // SAFETY: what the library hands first is what the value was made with, kept by
+                        // the run it was made in for as long as the value may be called, and so is the
+                        // library it points at.
+                        let hosted = unsafe { &*userdata.cast::<%s>() };
+                        let library = unsafe { &*hosted.library };
+                        rt::implemented(library, |run| {
+                            let run: &mut crate::Run<'_> = run;
+                            // SAFETY: the library handed these over in the run of the call reaching this.
+                    %s        let answer = (hosted.function)(run%s)?;
+                            let answer = %s;
+                    %s        Ok(())
+                        })
+                    }
+                    """.formatted(dispatch, signed, function, String.join(", ", cParameters),
+                    dispatch, made2, inputs.stream().map(it -> ", " + it)
+                            .collect(Collectors.joining()), answering.viewOf("(&answer)"), written));
+        } else {
+            wordArm.append("            Self::Host(_) => panic!(\"the library offers no way to make ")
+                    .append(what).append(" of a host's own function\"),\n");
+        }
+
+        at.items.append("""
+
+                /// %s: one the library made, or a function of the host's own.
+                #[derive(Clone)]
+                pub enum %s<'run> {
+                    /// One the library made, called through the library.
+                    Library(rt::Held<'run, crate::Library>),
+                    /// A function of the host's own, which the library calls in the run of the call
+                    /// reaching it. Kept by the run it is handed over in until that run ends.
+                    Host(std::rc::Rc<%s>),
+                }
+
+                impl<'run> %s<'run> {
+                    /// A function of the host's own.
+                    pub fn host(function: impl for<'x> Fn(&mut crate::Run<'x>%s) -> Result<%s, crate::HostError> + 'static) -> Self {
+                        %s::Host(std::rc::Rc::new(function))
+                    }
+
+                    /// Calls it in `run`, with what it takes.
+                    pub fn call(&self, run: &mut crate::Run<'run>%s) -> Result<%s, crate::Failure> {
+                        match self {
+                            Self::Host(function) => function(run%s).map_err(crate::Failure::Host),
+                %s        }
+                    }
+
+                    /// The value, as the library is handed it in `run`: a host's function is made into
+                    /// one there the first time it is handed over.
+                    #[allow(dead_code, unused_variables)]
+                    pub(crate) fn __word(&self, run: &mut crate::Run<'_>) -> rt::Word {
+                        match self {
+                            Self::Library(held) => held.word(),
+                %s        }
+                    }
+                }
+                %s""".formatted(what.substring(0, 1).toUpperCase() + what.substring(1), name, signed,
+                name, takes.stream().map(it -> ", " + it.owned().replace("'run", "'x"))
+                        .collect(Collectors.joining()), answers.owned().replace("'run", "'x"), name,
+                parameters, answers.owned(), inputs.stream().map(it -> ", " + it)
+                        .collect(Collectors.joining()), callArm, wordArm, entry));
+        return made;
     }
 
     /** The handle of the declared type {@code module.name}, or null where it has none. */
@@ -1352,6 +1588,8 @@ public final class RustBindings {
                 /// The library this binding was generated for, loaded from a path.
                 pub struct Library {
                     pub(crate) symbols: __ffi::Symbols,
+                    // Unread by a binding whose values hold no text, no Decimal and no reading.
+                    #[allow(dead_code)]
                     pub(crate) words: souther_binding_runtime::Words,
                     runtime: souther_binding_runtime::Runtime,
                     // Dropped last, unloading the library once nothing above can be called.

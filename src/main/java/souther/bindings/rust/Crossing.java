@@ -58,6 +58,12 @@ sealed interface Crossing {
     /** The Rust expression of {@link #view} of {@code owned}, an expression of {@code &owned()}. */
     String viewOf(String owned);
 
+    /**
+     * What a type named after this one calls it: a function type's enum is named after what it
+     * takes and answers.
+     */
+    String label();
+
     /** What Rust calls one word, as it stands in a function's parameters and in room. */
     static String word(Word word) {
         return switch (word) {
@@ -177,6 +183,17 @@ sealed interface Crossing {
         }
 
         @Override
+        public String label() {
+            return switch (kind) {
+                case INT -> "Int";
+                case BOOL -> "Bool";
+                case STRING -> "String";
+                case DECIMAL -> "Decimal";
+                case HANDLE -> type.substring(type.lastIndexOf(':') + 1);
+            };
+        }
+
+        @Override
         public String viewOf(String owned) {
             return switch (kind) {
                 case INT, BOOL, HANDLE -> "(*" + owned + ")";
@@ -225,6 +242,11 @@ sealed interface Crossing {
         @Override
         public String viewOf(String owned) {
             return owned + ".as_ref().map(|held| " + of.viewOf("held") + ")";
+        }
+
+        @Override
+        public String label() {
+            return "Option" + of.label();
         }
     }
 
@@ -275,6 +297,11 @@ sealed interface Crossing {
         public String viewOf(String owned) {
             return tuple(IntStream.range(0, members.size())
                     .mapToObj(at -> members.get(at).viewOf("(&" + owned + "." + at + ")")).toList());
+        }
+
+        @Override
+        public String label() {
+            return "Tuple" + members.stream().map(Crossing::label).collect(Collectors.joining("And"));
         }
 
         /** A Rust tuple of {@code of}: a one-member tuple keeps its comma. */
@@ -379,6 +406,11 @@ sealed interface Crossing {
         public String viewOf(String owned) {
             return owned + ".as_slice()";
         }
+
+        @Override
+        public String label() {
+            return "List" + element.label();
+        }
     }
 
     /**
@@ -466,6 +498,53 @@ sealed interface Crossing {
         @Override
         public String viewOf(String owned) {
             return owned;
+        }
+
+        @Override
+        public String label() {
+            return type.replaceAll("<.*", "").substring(type.replaceAll("<.*", "").lastIndexOf(':') + 1);
+        }
+    }
+
+    /**
+     * A function value, as the enum generated for its type: one the library made, which the enum
+     * calls through the library, or a function of the host's own, which the library calls through
+     * the run it is handed over in. Handed over as a reference to one, and handed to Rust as one
+     * the library made.
+     *
+     * @param type the enum, as {@code crate::m::Name<'run>}
+     */
+    record Function(String type, Shape.FunctionOf shape) implements Crossing {
+
+        @Override
+        public String owned() {
+            return type;
+        }
+
+        @Override
+        public String view() {
+            return "&" + type;
+        }
+
+        @Override
+        public List<String> given(String value) {
+            return List.of(value + ".__word(run)");
+        }
+
+        @Override
+        public String of(List<String> words) {
+            return type.replaceAll("<.*", "") + "::Library(rt::Held::new(library, " + words.getFirst()
+                    + "))";
+        }
+
+        @Override
+        public String viewOf(String owned) {
+            return owned;
+        }
+
+        @Override
+        public String label() {
+            return type.replaceAll("<.*", "").substring(type.replaceAll("<.*", "").lastIndexOf(':') + 1);
         }
     }
 

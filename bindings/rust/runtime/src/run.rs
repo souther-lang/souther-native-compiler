@@ -1,7 +1,10 @@
 //! A run, and what the types hold of it.
 
 use crate::failure::{Caught, Failure, HostError, Status, Statuses};
+use crate::keep::{FunctionImplementFn, Keeper};
+use crate::native::Word;
 use std::cell::RefCell;
+use std::ffi::c_void;
 use std::fmt;
 use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
@@ -109,9 +112,11 @@ pub fn run<'lib, L: Loaded, R>(
     f: impl for<'run> FnOnce(&mut Scope<'run, 'lib, L>) -> R,
 ) -> Result<R, AlreadyRunning> {
     let runtime = library.runtime();
+    // Dropped last, once the arena no longer holds a value that reads what it keeps.
+    let keeper = Keeper::default();
     let _open = Open::enter(runtime.identity())?;
     let _bracket = Bracket::open(runtime);
-    Ok(f(&mut Scope::over(library)))
+    Ok(f(&mut Scope::over(library, NonNull::from(&keeper))))
 }
 
 /// Runs a host implementation of a behavior, which the library has just called back, in the run
@@ -136,16 +141,19 @@ pub fn host<'lib, L: Loaded, R>(
     f: impl for<'run> FnOnce(&mut Scope<'run, 'lib, L>) -> Result<R, HostError>,
 ) -> Result<R, HostFailure> {
     let identity = library.runtime().identity();
-    let inside = CALLS.with(|calls| {
+    let keeper = CALLS.with(|calls| {
         calls
             .borrow()
             .last()
-            .is_some_and(|call| call.runtime == identity)
+            .filter(|call| call.runtime == identity)
+            .map(|call| call.keeper)
     });
-    if !inside {
+    let Some(keeper) = keeper else {
         return Err(HostFailure::OutsideCall);
-    }
-    let mut scope = Scope::over(library);
+    };
+    // What the implementation makes that the library reads is kept by the run the call was made
+    // in, which is still open, and not by anything that ends with the implementation.
+    let mut scope = Scope::over(library, keeper);
     let caught = match panic::catch_unwind(AssertUnwindSafe(|| f(&mut scope))) {
         Ok(Ok(answer)) => return Ok(answer),
         Ok(Err(failure)) => Caught::Failed(failure),
@@ -180,6 +188,7 @@ pub fn implemented<'lib, L: Loaded>(
 /// `'run` is invariant, so a run is never taken for one that ends sooner or later than it does.
 pub struct Run<'run, L> {
     library: &'run L,
+    keeper: NonNull<Keeper>,
     _brand: PhantomData<fn(&'run ()) -> &'run ()>,
     _this_thread: PhantomData<*const ()>,
 }
@@ -197,8 +206,9 @@ impl<'run, L: Loaded> Run<'run, L> {
     /// open. A [`Value`] made in this run is still one `f` can read and hand to a computation it
     /// starts; one made inside cannot be answered out of `f`.
     pub fn scope<R>(&mut self, f: impl for<'inner> FnOnce(&mut Scope<'inner, 'run, L>) -> R) -> R {
+        let keeper = Keeper::default();
         let _bracket = Bracket::open(self.library.runtime());
-        f(&mut Scope::over(self.library))
+        f(&mut Scope::over(self.library, NonNull::from(&keeper)))
     }
 
     /// Calls into the library: `native` is the call, made while this run is the innermost, and
@@ -213,10 +223,35 @@ impl<'run, L: Loaded> Run<'run, L> {
     /// implementation's failure where it answered one.
     pub fn call(&mut self, native: impl FnOnce() -> Status) -> Result<(), Failure> {
         let runtime = self.library.runtime();
-        let call = OpenCall::enter(runtime.identity());
+        let call = OpenCall::enter(runtime.identity(), self.keeper);
         let status = native();
         let caught = call.close();
         runtime.statuses.answered(status, caught)
+    }
+
+    /// The function value `implement` makes of `dispatch`, which the library calls through
+    /// `implementation`, kept with the room it is until this run ends; or the one made of the same
+    /// `key` in this run already, where it was made through the same `implementation`.
+    ///
+    /// # Safety
+    ///
+    /// `implement` is this library's function making a function value of the shape
+    /// `implementation` is of, and `implementation` reads what it is handed first as a `D`. `key`
+    /// says which host function `dispatch` calls: two dispatches of one key call one function.
+    pub unsafe fn host_function<D: 'static>(
+        &mut self,
+        implement: FunctionImplementFn,
+        implementation: *const c_void,
+        key: usize,
+        dispatch: D,
+    ) -> Word {
+        // SAFETY: the keeper is the one of the run this is, or of the run it was lent from, and
+        // that run is open for as long as this is reached; and what the caller says.
+        unsafe {
+            self.keeper
+                .as_ref()
+                .function(implement, implementation, key, dispatch)
+        }
     }
 
     /// The value at `at`, as one made in this run.
@@ -246,10 +281,11 @@ pub struct Scope<'run, 'outer, L> {
 }
 
 impl<'run, L> Scope<'run, '_, L> {
-    fn over(library: &'run L) -> Self {
+    fn over(library: &'run L, keeper: NonNull<Keeper>) -> Self {
         Scope {
             run: Run {
                 library,
+                keeper,
                 _brand: PhantomData,
                 _this_thread: PhantomData,
             },
@@ -332,6 +368,7 @@ pub enum HostFailure {
 /// left for it to raise or answer once the library has returned.
 struct Call {
     runtime: usize,
+    keeper: NonNull<Keeper>,
     caught: Option<Caught>,
 }
 
@@ -399,10 +436,11 @@ impl Drop for Bracket<'_> {
 struct OpenCall;
 
 impl OpenCall {
-    fn enter(runtime: usize) -> Self {
+    fn enter(runtime: usize, keeper: NonNull<Keeper>) -> Self {
         CALLS.with(|calls| {
             calls.borrow_mut().push(Call {
                 runtime,
+                keeper,
                 caught: None,
             });
         });

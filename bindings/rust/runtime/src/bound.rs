@@ -20,6 +20,15 @@ pub struct Hosted {
     userdata: *mut c_void,
 }
 
+impl Hosted {
+    pub(crate) fn empty() -> Self {
+        Hosted {
+            implementation: ptr::null(),
+            userdata: ptr::null_mut(),
+        }
+    }
+}
+
 impl Capability {
     fn room() -> Room<Self> {
         Room::of(Capability {
@@ -34,10 +43,10 @@ impl Capability {
 ///
 /// Held as the address and not as a `Box`: a `Box` moved while the library holds the address would
 /// assert that nothing else reaches what it owns, which the library does.
-struct Room<T: ?Sized>(NonNull<T>);
+pub(crate) struct Room<T: ?Sized>(NonNull<T>);
 
 impl<T> Room<T> {
-    fn of(it: T) -> Self {
+    pub(crate) fn of(it: T) -> Self {
         Room(NonNull::from(Box::leak(Box::new(it))))
     }
 }
@@ -49,7 +58,7 @@ impl<T> Room<[T]> {
 }
 
 impl<T: ?Sized> Room<T> {
-    fn at(&self) -> *mut T {
+    pub(crate) fn at(&self) -> *mut T {
         self.0.as_ptr()
     }
 }
@@ -216,10 +225,7 @@ impl<D> Implemented<D> {
         dispatch: D,
     ) -> Self {
         let dispatch = Room::of(dispatch);
-        let hosted = Room::of(Hosted {
-            implementation: ptr::null(),
-            userdata: ptr::null_mut(),
-        });
+        let hosted = Room::of(Hosted::empty());
         let capability = Capability::room();
         // SAFETY: what the caller says; all three stay where they are for as long as `self`.
         unsafe {

@@ -26,12 +26,14 @@
 mod bound;
 mod decimal;
 mod failure;
+mod keep;
 mod native;
 mod run;
 
 pub use bound::{BindFn, Bound, Capability, Hosted, ImplementFn, Implemented, Made, Requirement};
 pub use decimal::{Decimal, NotADecimal};
 pub use failure::{Abort, Failure, HostError, Status, Statuses, UnnamedStatus};
+pub use keep::{FunctionImplementFn, Held, HostedFunction};
 pub use native::{Construction, LoadError, NativeLibrary, Reading, Word, Words};
 pub use run::{
     AlreadyRunning, HostFailure, Loaded, MarkFn, RawMark, ResetFn, Run, Runtime, Scope, Value,
