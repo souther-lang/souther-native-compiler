@@ -2132,6 +2132,28 @@ fn ordering_subject(ty: &str) -> String {
 
 const NO_FACT: &str = r#"{"is":"none"}"#;
 
+/// A list of a type no value of which is made is empty, so a kernel ordering one compares nothing
+/// and is lowered whatever that type is, where comparing two of it would be refused.
+#[test]
+fn a_list_no_value_of_whose_element_is_made_is_ordered_without_a_comparison() {
+    for element in [r#"{"nothing":{}}"#, r#"{"never":{}}"#] {
+        let listed = list_of(element);
+        for (key, answers) in [
+            ("list.sort", listed.clone()),
+            ("list.max", option_of(element)),
+        ] {
+            reads_whole(&helpers(&[h(
+                &[&listed],
+                &call(
+                    &kernel(key, &[&listed], &ordering_subject(element)),
+                    &[read(0, &listed)],
+                    &answers,
+                ),
+            )]));
+        }
+    }
+}
+
 /// A kernel handed a function is held to one type for each of the contract's variables wherever
 /// it stands: `List.find`'s predicate takes the list's element, and `Option.map`'s function takes
 /// what the optional holds and answers what the answer holds. A predicate over another type than

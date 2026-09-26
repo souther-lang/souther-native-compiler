@@ -258,8 +258,8 @@ pub(crate) fn total(
 /// (`Op::Lt`, `List.min`), ordered as `subject`, or nothing where it is empty.
 ///
 /// An element replaces the one chosen so far only where it is strictly greater or less, so the
-/// first of equal elements is the one answered. A list of what has no value is empty, and nothing
-/// is compared.
+/// first of equal elements is the one answered. A list of a type no value of which is made is
+/// empty, and nothing is compared.
 pub(crate) fn extreme(
     builder: &mut FunctionBuilder,
     lowering: &Lowering,
@@ -268,7 +268,7 @@ pub(crate) fn extreme(
     subject: &Ty,
     list: ir::Value,
 ) -> Lowered<ir::Value> {
-    if matches!(subject, Ty::Nothing { .. }) {
+    if has_no_value(subject) {
         return Ok(builder.ins().iconst(POINTER, NOTHING));
     }
     let machine = machine_type(subject)?;
@@ -297,7 +297,7 @@ pub(crate) fn extreme(
 }
 
 /// `list` ordered as `subject` (`List.sort`), equal elements in the order they came in, as a new
-/// list. A list of what has no value is empty, and is answered as it is.
+/// list. A list of a type no value of which is made is empty, and is answered as it is.
 pub(crate) fn sorted(
     builder: &mut FunctionBuilder,
     lowering: &Lowering,
@@ -305,7 +305,7 @@ pub(crate) fn sorted(
     subject: &Ty,
     list: ir::Value,
 ) -> Lowered<ir::Value> {
-    if matches!(subject, Ty::Nothing { .. }) {
+    if has_no_value(subject) {
         return Ok(list);
     }
     let count = length(builder, list);
@@ -330,9 +330,9 @@ pub(crate) fn sorted(
 ///
 /// Each element's key is worked out once, in order, before anything is compared, and the keys are
 /// ordered with the elements beside them: a key is a function the program wrote, and one worked
-/// out again at each comparison would be called as many times as the sort compares. Where the key
-/// answers what has no value, no key is ever answered, so a list the walk gets past is empty and
-/// nothing is compared.
+/// out again at each comparison would be called as many times as the sort compares. Where no value
+/// of what the key answers is made, no key is ever answered, so a list the walk gets past is empty
+/// and nothing is compared.
 pub(crate) fn sorted_by(
     builder: &mut FunctionBuilder,
     lowering: &Lowering,
@@ -356,7 +356,7 @@ pub(crate) fn sorted_by(
         builder.ins().store(TRUSTED, answered, to, 0);
         Ok(())
     })?;
-    if matches!(subject, Ty::Nothing { .. }) {
+    if has_no_value(subject) {
         return Ok(list);
     }
     let values = copied(builder, lowering, module, list, count);
@@ -562,6 +562,12 @@ fn merged<const LANES: usize>(
 
     builder.switch_to_block(done);
     Ok(from.map(|from| builder.use_var(from)))
+}
+
+/// Whether no value of `ty` is ever made: what has no value, and what does not answer. A list of
+/// either that the run holds is empty, since making an element would have been making one.
+fn has_no_value(ty: &Ty) -> bool {
+    matches!(ty, Ty::Nothing { .. } | Ty::Never { .. })
 }
 
 /// What a function value handed to a kernel is: the contract gave it a function's shape, and
