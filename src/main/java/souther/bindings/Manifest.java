@@ -1193,7 +1193,7 @@ public final class Manifest {
             field("takes", list(SHAPE)),
             field("answers", SHAPE)).strict(Signature::new));
 
-    /** A leaf's word, which is one of the four a value is handed over whole as. */
+    /** A leaf's word, which is one of {@link Shape.Leaf#WORDS}: what a value is handed over whole as. */
     private static final Decoder<JsonNode, Word> LEAF = WORD.flatMap(word ->
             Shape.Leaf.WORDS.contains(word)
                     ? Result.ok(word)

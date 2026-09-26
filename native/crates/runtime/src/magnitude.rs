@@ -8,6 +8,10 @@
 //! work, and a test holds every operation's `u128` path to the `BigUint` answer for the same
 //! operands, across the edge where one form gives way to the other.
 //!
+//! That a value a `u128` holds costs no `BigUint` is a property of every path and not only of the
+//! answers, so a `BigUint` is only ever made through [`wide`], which counts them in the tests: a
+//! test holds the count to nought for every operation whose operands and answer are a `u128`'s.
+//!
 //! Nothing here knows a scale, a sign or a rounding mode. It is the integer arithmetic `amount`
 //! works a `Decimal`'s operations out with, and nowhere else reads it.
 
@@ -36,13 +40,41 @@ pub(crate) enum Magnitude {
 
 use Magnitude::{Small, Wide};
 
-/// Ten to `n` as a `BigUint`, for an `n` the caller has already held to a width a value may have.
-fn big_ten_to(n: u64) -> BigUint {
-    if let Some(small) = TENS.get(n as usize) {
-        return BigUint::from(*small);
+/// Where a `BigUint` is made: nowhere else does, so that how many were made is a count the tests
+/// can ask, and a value a `u128` holds is held to costing none.
+mod wide {
+    use num_bigint::BigUint;
+
+    #[cfg(test)]
+    thread_local! {
+        /// How many `BigUint`s this thread has made.
+        pub(super) static MADE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     }
-    let n = u32::try_from(n).expect("a power of ten built here is one a value may be as wide as");
-    BigUint::from(10u8).pow(n)
+
+    fn made(big: BigUint) -> BigUint {
+        #[cfg(test)]
+        MADE.with(|it| it.set(it.get() + 1));
+        big
+    }
+
+    pub(super) fn of_u128(n: u128) -> BigUint {
+        made(BigUint::from(n))
+    }
+
+    pub(super) fn of_le_bytes(bytes: &[u8]) -> BigUint {
+        made(BigUint::from_bytes_le(bytes))
+    }
+
+    pub(super) fn of_digits(digits: &[u8]) -> BigUint {
+        made(BigUint::parse_bytes(digits, 10).expect("the digits read are ASCII digits"))
+    }
+
+    /// Ten to `n`, for an `n` the caller has already held to a width a value may have.
+    pub(super) fn ten_to(n: u64) -> BigUint {
+        let n =
+            u32::try_from(n).expect("a power of ten built here is one a value may be as wide as");
+        made(BigUint::from(10u8).pow(n))
+    }
 }
 
 impl Magnitude {
@@ -59,7 +91,7 @@ impl Magnitude {
     /// The same number as a `BigUint`, for the operations only that form answers.
     pub(crate) fn big(&self) -> BigUint {
         match self {
-            Small(small) => BigUint::from(*small),
+            Small(small) => wide::of_u128(*small),
             Wide(big) => big.clone(),
         }
     }
@@ -71,7 +103,7 @@ impl Magnitude {
             word[..bytes.len()].copy_from_slice(bytes);
             return Small(u128::from_le_bytes(word));
         }
-        Magnitude::of_big(BigUint::from_bytes_le(bytes))
+        Magnitude::of_big(wide::of_le_bytes(bytes))
     }
 
     /// The magnitude as bytes, little end first and with no zero byte at the top, none at all for
@@ -89,15 +121,17 @@ impl Magnitude {
 
     /// The whole number these ASCII digits write in decimal, leading zeros and all.
     pub(crate) fn of_digits(digits: &[u8]) -> Magnitude {
-        // Thirty-eight digits are below ten to the 38th, which a `u128` holds.
-        if digits.len() <= 38 {
-            return Small(digits.iter().fold(0u128, |so_far, digit| {
-                so_far * 10 + u128::from(digit - b'0')
-            }));
+        // A `u128` holds 39 digits and some 39-digit numbers, so the digits are read as a `u128`
+        // for as long as they stay in one, and as a `BigUint` from the digit that leaves it.
+        let small = digits.iter().try_fold(0u128, |so_far, digit| {
+            so_far
+                .checked_mul(10)?
+                .checked_add(u128::from(digit - b'0'))
+        });
+        match small {
+            Some(small) => Small(small),
+            None => Magnitude::of_big(wide::of_digits(digits)),
         }
-        Magnitude::of_big(
-            BigUint::parse_bytes(digits, 10).expect("the digits read are ASCII digits"),
-        )
     }
 
     /// The digits it is written in, in decimal, with no leading zero.
@@ -136,10 +170,10 @@ impl Magnitude {
             Small(small) => TENS.partition_point(|&ten| ten <= *small).max(1) as u64,
             Wide(big) => {
                 let mut digits = ((big.bits() - 1) as f64 * std::f64::consts::LOG10_2) as u64 + 1;
-                while digits > 1 && *big < big_ten_to(digits - 1) {
+                while digits > 1 && *big < wide::ten_to(digits - 1) {
                     digits -= 1;
                 }
-                while *big >= big_ten_to(digits) {
+                while *big >= wide::ten_to(digits) {
                     digits += 1;
                 }
                 digits
@@ -189,7 +223,7 @@ impl Magnitude {
         {
             return Small(raised);
         }
-        Magnitude::of_big(self.big() * big_ten_to(by))
+        Magnitude::of_big(self.big() * wide::ten_to(by))
     }
 
     /// The quotient and the remainder of `self` over `divisor`, which is not nought.
@@ -209,7 +243,7 @@ impl Magnitude {
     pub(crate) fn ten_to(n: u64) -> Magnitude {
         match TENS.get(n as usize) {
             Some(small) => Small(*small),
-            None => Magnitude::of_big(big_ten_to(n)),
+            None => Magnitude::of_big(wide::ten_to(n)),
         }
     }
 
@@ -221,18 +255,21 @@ impl Magnitude {
         }
         let mut magnitude = self.clone();
         let mut dropped = 0u64;
-        // Nineteen at a time while the value is wide and they are there, then one at a time,
-        // which a value a `u128` holds does as machine division.
-        let chunk = BigUint::from(10_000_000_000_000_000_000u64);
-        while let Wide(big) = &magnitude
-            && dropped + 19 <= most
-        {
-            let (quotient, remainder) = big.div_rem(&chunk);
-            if !remainder.is_zero() {
-                break;
+        // Nineteen at a time while the value is wide and they are there, then one at a time, which
+        // a value a `u128` holds does as machine division. The nineteen's divisor is made only for
+        // a value that is wide.
+        if matches!(magnitude, Wide(_)) {
+            let chunk = wide::of_u128(10_000_000_000_000_000_000);
+            while let Wide(big) = &magnitude
+                && dropped + 19 <= most
+            {
+                let (quotient, remainder) = big.div_rem(&chunk);
+                if !remainder.is_zero() {
+                    break;
+                }
+                magnitude = Magnitude::of_big(quotient);
+                dropped += 19;
             }
-            magnitude = Magnitude::of_big(quotient);
-            dropped += 19;
         }
         let ten = Small(10);
         while dropped < most {
@@ -290,7 +327,7 @@ mod tests {
             two.pow(200) - 1u8,
         ];
         for power in [18, 19, 37, 38, 39, 40, 77] {
-            let ten = big_ten_to(power);
+            let ten = wide::ten_to(power);
             every.push(ten.clone() - 1u8);
             every.push(ten.clone());
             every.push(ten + 7u8);
@@ -347,7 +384,7 @@ mod tests {
             for by in [0, 1, 2, 19, 38, 39, 60] {
                 let raised = it.times_ten_to(by);
                 assert!(normal(&raised));
-                assert_eq!(raised.big(), one * big_ten_to(by), "{one} · 10^{by}");
+                assert_eq!(raised.big(), one * wide::ten_to(by), "{one} · 10^{by}");
             }
             let (stripped, dropped) = it.without_trailing_zeros(u64::MAX);
             assert!(normal(&stripped));
@@ -358,7 +395,7 @@ mod tests {
             assert_eq!((stripped.big(), dropped), expected, "{one}");
             let (limited, dropped) = it.without_trailing_zeros(1);
             assert!(dropped <= 1);
-            assert_eq!(limited.big() * big_ten_to(dropped), *one, "{one}");
+            assert_eq!(limited.big() * wide::ten_to(dropped), *one, "{one}");
             for two in &every {
                 let other = of(two);
                 assert_eq!(it.cmp(&other), one.cmp(two), "{one} {two}");
@@ -385,8 +422,102 @@ mod tests {
             }
         }
         for power in 0..80 {
-            assert_eq!(Magnitude::ten_to(power).big(), big_ten_to(power), "{power}");
+            assert_eq!(
+                Magnitude::ten_to(power).big(),
+                wide::ten_to(power),
+                "{power}"
+            );
             assert!(normal(&Magnitude::ten_to(power)));
         }
+    }
+
+    /// A `BigUint`s made while `run` ran, and what it answered.
+    fn counted<T>(run: impl FnOnce() -> T) -> (T, usize) {
+        let before = wide::MADE.with(std::cell::Cell::get);
+        let answered = run();
+        (answered, wide::MADE.with(std::cell::Cell::get) - before)
+    }
+
+    /// A value a `u128` holds costs no `BigUint`: every operation whose operands and answer a `u128`
+    /// holds makes none, on any path through it, and not only the answers are the narrow ones. A
+    /// `BigUint` made on the way to a narrow answer is the allocation the two forms exist to avoid,
+    /// and no answer shows it.
+    #[test]
+    fn a_value_a_u128_holds_costs_no_big_integer() {
+        let smalls: Vec<BigUint> = operands()
+            .into_iter()
+            .filter(|it| it.to_u128().is_some())
+            .collect();
+        assert!(smalls.len() > 10);
+        // `Some` where the answer is narrow, which is where none may be made.
+        let clean = |what: &str, made: (bool, usize)| {
+            if made.0 {
+                assert_eq!(
+                    made.1, 0,
+                    "{what} made {} BigUint(s) for a u128's worth",
+                    made.1
+                );
+            }
+        };
+        for one in &smalls {
+            let it = of(one);
+            let text = one.to_str_radix(10);
+            let bytes = if one.is_zero() {
+                Vec::new()
+            } else {
+                one.to_bytes_le()
+            };
+            let narrow =
+                |(magnitude, made): (Magnitude, usize)| (matches!(magnitude, Small(_)), made);
+            clean(
+                "of_digits",
+                narrow(counted(|| Magnitude::of_digits(text.as_bytes()))),
+            );
+            clean(
+                "of_le_bytes",
+                narrow(counted(|| Magnitude::of_le_bytes(&bytes))),
+            );
+            clean("increment", narrow(counted(|| it.increment())));
+            for by in [0, 1, 19, 38, 39] {
+                clean("times_ten_to", narrow(counted(|| it.times_ten_to(by))));
+            }
+            clean(
+                "without_trailing_zeros",
+                narrow(counted(|| it.without_trailing_zeros(u64::MAX).0)),
+            );
+            clean(
+                "without_trailing_zeros(3)",
+                narrow(counted(|| it.without_trailing_zeros(3).0)),
+            );
+            for read in [
+                counted(|| it.digits()).1,
+                counted(|| it.precision()).1,
+                counted(|| it.bits()).1,
+                counted(|| it.is_odd()).1,
+                counted(|| it.is_zero()).1,
+                counted(|| it.with_le_bytes(<[u8]>::len)).1,
+            ] {
+                assert_eq!(read, 0, "{one}");
+            }
+            for two in &smalls {
+                let other = of(two);
+                assert_eq!(counted(|| it.cmp(&other)).1, 0, "{one} {two}");
+                clean("add", narrow(counted(|| it.add(&other))));
+                clean("mul", narrow(counted(|| it.mul(&other))));
+                if one >= two {
+                    clean("sub", narrow(counted(|| it.sub(&other))));
+                }
+                if !two.is_zero() {
+                    clean("div_rem", narrow(counted(|| it.div_rem(&other).0)));
+                }
+            }
+        }
+        for power in 0..=38 {
+            clean("ten_to", narrow_of(counted(|| Magnitude::ten_to(power))));
+        }
+    }
+
+    fn narrow_of((magnitude, made): (Magnitude, usize)) -> (bool, usize) {
+        (matches!(magnitude, Small(_)), made)
     }
 }
