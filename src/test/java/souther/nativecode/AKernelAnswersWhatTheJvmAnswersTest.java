@@ -290,6 +290,9 @@ class AKernelAnswersWhatTheJvmAnswersTest {
             behavior emptiedUpTo : (s: String) -> Bool
             let emptiedUpTo (s) = String.matches("(){0,1048576}", s)
 
+            behavior emptiedFrom : (s: String) -> Bool
+            let emptiedFrom (s) = String.matches("(){1048576,}", s)
+
             behavior counted : (s: String) -> Bool
             let counted (s) = String.matches("[ab]{300}", s)
 
@@ -313,6 +316,10 @@ class AKernelAnswersWhatTheJvmAnswersTest {
                 | "an ideographic space" : ("ab　7") -> false
 
             example emptied
+                | "nothing" : ("") -> true
+                | "something" : ("a") -> false
+
+            example emptiedFrom
                 | "nothing" : ("") -> true
                 | "something" : ("a") -> false
 

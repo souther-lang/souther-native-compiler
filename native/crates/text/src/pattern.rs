@@ -114,6 +114,11 @@ pub fn compile(parts: &[Part]) -> Result<Vec<u32>, NotAReading> {
 const WRITTEN_OUT: usize = 256;
 
 fn compile_within(parts: &[Part], written_out: usize) -> Result<Vec<u32>, NotAReading> {
+    build(parts, written_out).map(|(machine, _)| machine)
+}
+
+/// The machine, and how many times a part was asked to be emitted in writing it.
+fn build(parts: &[Part], written_out: usize) -> Result<(Vec<u32>, usize), NotAReading> {
     check(parts)?;
     let mut nullable: Vec<bool> = Vec::with_capacity(parts.len());
     let mut sizes: Vec<usize> = Vec::with_capacity(parts.len());
@@ -159,8 +164,9 @@ fn compile_within(parts: &[Part], written_out: usize) -> Result<Vec<u32>, NotARe
     building.emit(parts.len() - 1);
     building.words.push(MATCH);
     // Writing the machine is work in proportion to what it writes, and never to what a part
-    // counts: every part emitted writes a word or stands in the parts of one that does, and a part
-    // that writes none is not emitted at all.
+    // counts: every part emitted writes a word or stands in the parts of one that does, and one
+    // asked for that writes none is asked for by one that does. A repetition is written out only
+    // where its part writes words, so its copies are no more than the words they write.
     debug_assert!(
         building.emitted <= building.words.len() * (parts.len() + 1) * (parts.len() + 1),
         "{} parts emitted for {} words of {} parts",
@@ -168,12 +174,16 @@ fn compile_within(parts: &[Part], written_out: usize) -> Result<Vec<u32>, NotARe
         building.words.len(),
         parts.len()
     );
-    Ok(building.finished())
+    let emitted = building.emitted;
+    Ok((building.finished(), emitted))
 }
 
 /// How a repetition is written.
 #[derive(Clone, Copy)]
 enum Form {
+    /// Nothing: the part writes no words, so it accepts the empty string alone, and so does any
+    /// number of copies of it. Its counts are never read, so none of them is work.
+    Empty,
     /// Its part, as many times as the floor, and after that another copy or none as often as the
     /// ceiling allows, or a loop of it where there is none.
     WrittenOut { least: u32, most: Option<u32> },
@@ -183,6 +193,9 @@ enum Form {
 
 impl Form {
     fn of(least: u32, most: Option<u32>, part: usize, written_out: usize) -> Form {
+        if part == 0 {
+            return Form::Empty;
+        }
         let out = Form::WrittenOut { least, most };
         if out.size(part) <= written_out {
             out
@@ -194,6 +207,7 @@ impl Form {
     /// How many words it takes, where its part takes `part`.
     fn size(self, part: usize) -> usize {
         match self {
+            Form::Empty => 0,
             Form::WrittenOut { least, most } => {
                 let floor = (least as usize).saturating_mul(part);
                 let rest = match most {
@@ -225,7 +239,7 @@ struct Building<'a> {
     /// Which of `sets` a part's set is, once it has been met: a part inside a loop is written once
     /// however many times it is read.
     set_of: Vec<Option<usize>>,
-    /// How many times a part has been emitted, which writing out a repetition does once a copy.
+    /// How many times a part has been asked to be emitted, those writing nothing among them.
     emitted: usize,
 }
 
@@ -235,13 +249,12 @@ impl<'a> Building<'a> {
     }
 
     fn emit(&mut self, at: usize) {
+        self.emitted += 1;
         // A part writing no words accepts the empty string and nothing else, which is what writing
-        // nothing does: so it is not emitted, and a repetition of one, written out, is not a loop
-        // run as many times as it counts.
+        // nothing does, so nothing is emitted for it.
         if self.sizes[at] == 0 {
             return;
         }
-        self.emitted += 1;
         let parts = self.parts;
         match &parts[at] {
             Part::Nothing => {}
@@ -283,6 +296,7 @@ impl<'a> Building<'a> {
             Part::Repeated { what, least, most } => {
                 let form = Form::of(*least, *most, self.sizes[*what], self.written_out);
                 match form {
+                    Form::Empty => unreachable!("a repetition writing no words is not emitted"),
                     Form::WrittenOut { least, most } => {
                         for _ in 0..least {
                             self.emit(*what);
@@ -801,36 +815,37 @@ mod tests {
         }
     }
 
-    /// A repetition of what writes no words is written as nothing and at once, however much it
-    /// counts, and accepts the empty string alone: `(){1048576}`, `(){0,1048576}`, and counts of
-    /// such parts inside counts and sequences of them.
+    /// A repetition of what writes no words is nothing: written as no words, and at once, however
+    /// much it counts, with or without a ceiling, and accepting the empty string alone. Writing it
+    /// is the same work whether it counts one or a hundred million.
     #[test]
-    fn a_repetition_of_nothing_is_written_as_nothing_at_once() {
-        let huge = 1 << 20;
-        for parts in [
-            vec![Part::Nothing, counted(0, huge, Some(huge))],
-            vec![Part::Nothing, counted(0, 0, Some(huge))],
-            vec![Part::Nothing, counted(0, huge, None)],
-            vec![
-                Part::Nothing,
-                counted(0, huge, Some(huge)),
-                counted(1, huge, Some(huge)),
-            ],
-            vec![
-                Part::Nothing,
-                Part::InTurn(vec![0, 0, 0]),
-                counted(1, 3_000_000_000, Some(3_000_000_000)),
-            ],
-            vec![
-                one('a'),
-                counted(0, 0, Some(0)),
-                counted(1, huge, Some(huge)),
-            ],
-        ] {
-            let machine = compile(&parts).expect("a machine");
-            assert!(machine.len() < 16, "{parts:?} {}", machine.len());
-            assert!(matches(&machine, Text::held("")), "{parts:?}");
-            assert!(!matches(&machine, Text::held("a")), "{parts:?}");
+    fn a_repetition_of_nothing_is_nothing_whatever_it_counts() {
+        let shapes = |count: u32| {
+            [
+                vec![Part::Nothing, counted(0, count, Some(count))],
+                vec![Part::Nothing, counted(0, 0, Some(count))],
+                vec![Part::Nothing, counted(0, count, None)],
+                vec![
+                    Part::Nothing,
+                    counted(0, count, Some(count)),
+                    counted(1, count, None),
+                ],
+                vec![
+                    Part::Nothing,
+                    Part::InTurn(vec![0, 0, 0]),
+                    counted(1, count, None),
+                ],
+                vec![one('a'), counted(0, 0, Some(0)), counted(1, count, None)],
+            ]
+        };
+        let only_match = compile(&[Part::Nothing]).expect("a machine");
+        for (one_copy, many) in shapes(1).into_iter().zip(shapes(100_000_000)) {
+            let (machine, work) = build(&many, WRITTEN_OUT).expect("a machine");
+            let (_, work_of_one) = build(&one_copy, WRITTEN_OUT).expect("a machine");
+            assert_eq!(machine, only_match, "{many:?}");
+            assert_eq!(work, work_of_one, "{many:?}");
+            assert!(matches(&machine, Text::held("")), "{many:?}");
+            assert!(!matches(&machine, Text::held("a")), "{many:?}");
         }
     }
 
