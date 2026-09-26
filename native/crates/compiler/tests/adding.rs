@@ -39,7 +39,7 @@ const HARNESS: &str = r#"
 #include <stdio.h>
 #include <stdlib.h>
 
-extern uint32_t adding(const void *, int64_t, int64_t, int64_t *) __asm__("PREFIXsouther4.calculation.add");
+extern uint32_t adding(const void *, int64_t, int64_t, int64_t *) __asm__("PREFIXsouther5.calculation.add");
 
 int main(int argc, char **argv) {
     if (argc != 3) {
@@ -63,7 +63,7 @@ const BOUNDARY_HARNESS: &str = r#"
 #include <stdio.h>
 #include <stdlib.h>
 
-extern uint32_t adding(const void *, int64_t, int64_t, const uint8_t **) __asm__("PREFIXsouther4.calculation.add$boundary");
+extern uint32_t adding(const void *, int64_t, int64_t, const uint8_t **) __asm__("PREFIXsouther5.calculation.add$boundary");
 extern int64_t souther_string_length(const uint8_t *);
 extern const uint8_t *souther_string_bytes(const uint8_t *);
 

@@ -1,7 +1,7 @@
 {
   "format": "souther-native-interface",
-  "version": 9,
-  "abi": 4,
+  "version": 10,
+  "abi": 5,
   "statuses": {
     "ANSWERED": 0,
     "DIVISION_BY_ZERO": 4,
@@ -368,22 +368,39 @@
             "union": null
           },
           "call": {
-            "name": "souther4_m_shop_b_settle",
-            "takes": [
-              {
-                "given": "requirements"
+            "available": {
+              "function": {
+                "name": "souther5_m_shop_b_settle",
+                "takes": [
+                  {
+                    "given": "requirements"
+                  },
+                  {
+                    "given": "value"
+                  },
+                  {
+                    "given": "int"
+                  },
+                  {
+                    "room": "value"
+                  }
+                ],
+                "answers": "status"
               },
-              {
-                "given": "value"
-              },
-              {
-                "given": "int"
-              },
-              {
-                "room": "value"
+              "signature": {
+                "takes": [
+                  {
+                    "leaf": "value"
+                  },
+                  {
+                    "leaf": "int"
+                  }
+                ],
+                "answers": {
+                  "leaf": "value"
+                }
               }
-            ],
-            "answers": "status"
+            }
           }
         },
         {
@@ -408,19 +425,33 @@
             "union": null
           },
           "call": {
-            "name": "souther4_m_shop_b_owing",
-            "takes": [
-              {
-                "given": "requirements"
+            "available": {
+              "function": {
+                "name": "souther5_m_shop_b_owing",
+                "takes": [
+                  {
+                    "given": "requirements"
+                  },
+                  {
+                    "given": "value"
+                  },
+                  {
+                    "room": "int"
+                  }
+                ],
+                "answers": "status"
               },
-              {
-                "given": "value"
-              },
-              {
-                "room": "int"
+              "signature": {
+                "takes": [
+                  {
+                    "leaf": "value"
+                  }
+                ],
+                "answers": {
+                  "leaf": "int"
+                }
               }
-            ],
-            "answers": "status"
+            }
           }
         },
         {
@@ -446,22 +477,39 @@
             "union": null
           },
           "call": {
-            "name": "souther4_m_shop_b_stillOwing",
-            "takes": [
-              {
-                "given": "requirements"
+            "available": {
+              "function": {
+                "name": "souther5_m_shop_b_stillOwing",
+                "takes": [
+                  {
+                    "given": "requirements"
+                  },
+                  {
+                    "given": "value"
+                  },
+                  {
+                    "given": "int"
+                  },
+                  {
+                    "room": "int"
+                  }
+                ],
+                "answers": "status"
               },
-              {
-                "given": "value"
-              },
-              {
-                "given": "int"
-              },
-              {
-                "room": "int"
+              "signature": {
+                "takes": [
+                  {
+                    "leaf": "value"
+                  },
+                  {
+                    "leaf": "int"
+                  }
+                ],
+                "answers": {
+                  "leaf": "int"
+                }
               }
-            ],
-            "answers": "status"
+            }
           }
         },
         {
@@ -517,7 +565,7 @@
                 }
               ],
               "case": {
-                "name": "souther4_m_shop_b_charge_answer_case",
+                "name": "souther5_m_shop_b_charge_answer_case",
                 "takes": [
                   {
                     "given": "value"
@@ -528,19 +576,33 @@
             }
           },
           "call": {
-            "name": "souther4_m_shop_b_charge",
-            "takes": [
-              {
-                "given": "requirements"
+            "available": {
+              "function": {
+                "name": "souther5_m_shop_b_charge",
+                "takes": [
+                  {
+                    "given": "requirements"
+                  },
+                  {
+                    "given": "int"
+                  },
+                  {
+                    "room": "value"
+                  }
+                ],
+                "answers": "status"
               },
-              {
-                "given": "int"
-              },
-              {
-                "room": "value"
+              "signature": {
+                "takes": [
+                  {
+                    "leaf": "int"
+                  }
+                ],
+                "answers": {
+                  "leaf": "value"
+                }
               }
-            ],
-            "answers": "status"
+            }
           }
         },
         {
@@ -584,7 +646,7 @@
                 }
               ],
               "case": {
-                "name": "souther4_m_shop_b_quantityOf_answer_case",
+                "name": "souther5_m_shop_b_quantityOf_answer_case",
                 "takes": [
                   {
                     "given": "value"
@@ -595,19 +657,33 @@
             }
           },
           "call": {
-            "name": "souther4_m_shop_b_quantityOf",
-            "takes": [
-              {
-                "given": "requirements"
+            "available": {
+              "function": {
+                "name": "souther5_m_shop_b_quantityOf",
+                "takes": [
+                  {
+                    "given": "requirements"
+                  },
+                  {
+                    "given": "int"
+                  },
+                  {
+                    "room": "value"
+                  }
+                ],
+                "answers": "status"
               },
-              {
-                "given": "int"
-              },
-              {
-                "room": "value"
+              "signature": {
+                "takes": [
+                  {
+                    "leaf": "int"
+                  }
+                ],
+                "answers": {
+                  "leaf": "value"
+                }
               }
-            ],
-            "answers": "status"
+            }
           }
         },
         {
@@ -635,19 +711,35 @@
             "union": null
           },
           "call": {
-            "name": "souther4_m_shop_b_counted",
-            "takes": [
-              {
-                "given": "requirements"
+            "available": {
+              "function": {
+                "name": "souther5_m_shop_b_counted",
+                "takes": [
+                  {
+                    "given": "requirements"
+                  },
+                  {
+                    "given": "list"
+                  },
+                  {
+                    "room": "int"
+                  }
+                ],
+                "answers": "status"
               },
-              {
-                "given": "list"
-              },
-              {
-                "room": "int"
+              "signature": {
+                "takes": [
+                  {
+                    "list": {
+                      "leaf": "value"
+                    }
+                  }
+                ],
+                "answers": {
+                  "leaf": "int"
+                }
               }
-            ],
-            "answers": "status"
+            }
           }
         },
         {
@@ -676,19 +768,35 @@
             "union": null
           },
           "call": {
-            "name": "souther4_m_shop_b_doubled",
-            "takes": [
-              {
-                "given": "requirements"
+            "available": {
+              "function": {
+                "name": "souther5_m_shop_b_doubled",
+                "takes": [
+                  {
+                    "given": "requirements"
+                  },
+                  {
+                    "given": "value"
+                  },
+                  {
+                    "room": "list"
+                  }
+                ],
+                "answers": "status"
               },
-              {
-                "given": "value"
-              },
-              {
-                "room": "list"
+              "signature": {
+                "takes": [
+                  {
+                    "leaf": "value"
+                  }
+                ],
+                "answers": {
+                  "list": {
+                    "leaf": "value"
+                  }
+                }
               }
-            ],
-            "answers": "status"
+            }
           }
         },
         {
@@ -713,19 +821,33 @@
             "union": null
           },
           "call": {
-            "name": "souther4_m_shop_b_discounted",
-            "takes": [
-              {
-                "given": "requirements"
+            "available": {
+              "function": {
+                "name": "souther5_m_shop_b_discounted",
+                "takes": [
+                  {
+                    "given": "requirements"
+                  },
+                  {
+                    "given": "value"
+                  },
+                  {
+                    "room": "int"
+                  }
+                ],
+                "answers": "status"
               },
-              {
-                "given": "value"
-              },
-              {
-                "room": "int"
+              "signature": {
+                "takes": [
+                  {
+                    "leaf": "value"
+                  }
+                ],
+                "answers": {
+                  "leaf": "int"
+                }
               }
-            ],
-            "answers": "status"
+            }
           }
         }
       ],
@@ -739,7 +861,7 @@
             }
           ],
           "bind": {
-            "name": "souther4_m_shop_b_discounted_bind",
+            "name": "souther5_m_shop_b_discounted_bind",
             "takes": [
               {
                 "room": "capability"
@@ -769,8 +891,18 @@
             "kind": "primitive",
             "name": "Int"
           },
+          "signature": {
+            "takes": [
+              {
+                "leaf": "value"
+              }
+            ],
+            "answers": {
+              "leaf": "int"
+            }
+          },
           "implementation": {
-            "type": "souther4_m_shop_b_discountFor_implementation",
+            "type": "souther5_m_shop_b_discountFor_implementation",
             "takes": [
               {
                 "given": "userdata"
@@ -784,10 +916,170 @@
             ],
             "answers": "status"
           },
-          "implement": "souther4_m_shop_b_discountFor_implement"
+          "implement": "souther5_m_shop_b_discountFor_implement"
         }
       ],
-      "values": [],
+      "values": [
+        {
+          "name": "pair",
+          "type": {
+            "kind": "tuple",
+            "of": [
+              {
+                "kind": "primitive",
+                "name": "Int"
+              },
+              {
+                "kind": "primitive",
+                "name": "Bool"
+              }
+            ]
+          },
+          "read": {
+            "available": {
+              "function": {
+                "name": "souther5_m_shop_v_pair",
+                "takes": [
+                  {
+                    "room": "int"
+                  },
+                  {
+                    "room": "bool"
+                  }
+                ],
+                "answers": "status"
+              },
+              "signature": {
+                "takes": [],
+                "answers": {
+                  "product": [
+                    {
+                      "leaf": "int"
+                    },
+                    {
+                      "leaf": "bool"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "deep",
+          "type": {
+            "kind": "option",
+            "of": {
+              "kind": "option",
+              "of": {
+                "kind": "primitive",
+                "name": "String"
+              }
+            }
+          },
+          "read": {
+            "available": {
+              "function": {
+                "name": "souther5_m_shop_v_deep",
+                "takes": [
+                  {
+                    "room": "bool"
+                  },
+                  {
+                    "room": "bool"
+                  },
+                  {
+                    "room": "string"
+                  }
+                ],
+                "answers": "status"
+              },
+              "signature": {
+                "takes": [],
+                "answers": {
+                  "option": {
+                    "option": {
+                      "leaf": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "pairs",
+          "type": {
+            "kind": "list",
+            "of": {
+              "kind": "tuple",
+              "of": [
+                {
+                  "kind": "primitive",
+                  "name": "Int"
+                },
+                {
+                  "kind": "primitive",
+                  "name": "String"
+                }
+              ]
+            }
+          },
+          "read": {
+            "available": {
+              "function": {
+                "name": "souther5_m_shop_v_pairs",
+                "takes": [
+                  {
+                    "room": "list"
+                  }
+                ],
+                "answers": "status"
+              },
+              "signature": {
+                "takes": [],
+                "answers": {
+                  "list": {
+                    "product": [
+                      {
+                        "leaf": "int"
+                      },
+                      {
+                        "leaf": "string"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "either",
+          "type": {
+            "kind": "union",
+            "cases": [
+              {
+                "kind": "declared",
+                "module": "shop",
+                "name": "Free"
+              },
+              {
+                "kind": "primitive",
+                "name": "Int"
+              }
+            ]
+          },
+          "read": {
+            "unavailable": {
+              "reason": "no_discriminator",
+              "path": [
+                "answers"
+              ]
+            }
+          }
+        }
+      ],
       "declarations": [
         {
           "kind": "newtype",
@@ -799,29 +1091,48 @@
               "name": "Int"
             },
             "read": {
-              "name": "souther4_m_shop_t_Money_f_value",
-              "takes": [
-                {
-                  "given": "value"
+              "available": {
+                "function": {
+                  "name": "souther5_m_shop_t_Money_f_value",
+                  "takes": [
+                    {
+                      "given": "value"
+                    },
+                    {
+                      "room": "int"
+                    }
+                  ],
+                  "answers": null
+                },
+                "answers": {
+                  "leaf": "int"
                 }
-              ],
-              "answers": "int"
+              }
             }
           },
           "construct": {
-            "name": "souther4_m_shop_t_Money_construct",
-            "takes": [
-              {
-                "given": "int"
+            "available": {
+              "function": {
+                "name": "souther5_m_shop_t_Money_construct",
+                "takes": [
+                  {
+                    "given": "int"
+                  },
+                  {
+                    "room": "value"
+                  }
+                ],
+                "answers": "status"
               },
-              {
-                "room": "value"
-              }
-            ],
-            "answers": "status"
+              "takes": [
+                {
+                  "leaf": "int"
+                }
+              ]
+            }
           },
           "decode": {
-            "name": "souther4_m_shop_t_Money_decode",
+            "name": "souther5_m_shop_t_Money_decode",
             "takes": [
               {
                 "given": "bytes"
@@ -836,7 +1147,7 @@
             "answers": "status"
           },
           "decodehost": {
-            "name": "souther4_m_shop_t_Money_decode_host",
+            "name": "souther5_m_shop_t_Money_decode_host",
             "takes": [
               {
                 "given": "bytes"
@@ -851,7 +1162,7 @@
             "answers": "status"
           },
           "encode": {
-            "name": "souther4_m_shop_t_Money_encode",
+            "name": "souther5_m_shop_t_Money_encode",
             "takes": [
               {
                 "given": "value"
@@ -872,13 +1183,23 @@
                 "name": "Money"
               },
               "read": {
-                "name": "souther4_m_shop_t_Line_f_price",
-                "takes": [
-                  {
-                    "given": "value"
+                "available": {
+                  "function": {
+                    "name": "souther5_m_shop_t_Line_f_price",
+                    "takes": [
+                      {
+                        "given": "value"
+                      },
+                      {
+                        "room": "value"
+                      }
+                    ],
+                    "answers": null
+                  },
+                  "answers": {
+                    "leaf": "value"
                   }
-                ],
-                "answers": "value"
+                }
               }
             },
             {
@@ -888,13 +1209,23 @@
                 "name": "Int"
               },
               "read": {
-                "name": "souther4_m_shop_t_Line_f_quantity",
-                "takes": [
-                  {
-                    "given": "value"
+                "available": {
+                  "function": {
+                    "name": "souther5_m_shop_t_Line_f_quantity",
+                    "takes": [
+                      {
+                        "given": "value"
+                      },
+                      {
+                        "room": "int"
+                      }
+                    ],
+                    "answers": null
+                  },
+                  "answers": {
+                    "leaf": "int"
                   }
-                ],
-                "answers": "int"
+                }
               }
             },
             {
@@ -907,42 +1238,71 @@
                 }
               },
               "read": {
-                "name": "souther4_m_shop_t_Line_f_note",
+                "available": {
+                  "function": {
+                    "name": "souther5_m_shop_t_Line_f_note",
+                    "takes": [
+                      {
+                        "given": "value"
+                      },
+                      {
+                        "room": "bool"
+                      },
+                      {
+                        "room": "string"
+                      }
+                    ],
+                    "answers": null
+                  },
+                  "answers": {
+                    "option": {
+                      "leaf": "string"
+                    }
+                  }
+                }
+              }
+            }
+          ],
+          "construct": {
+            "available": {
+              "function": {
+                "name": "souther5_m_shop_t_Line_construct",
                 "takes": [
                   {
                     "given": "value"
                   },
                   {
-                    "room": "string"
+                    "given": "int"
+                  },
+                  {
+                    "given": "bool"
+                  },
+                  {
+                    "given": "string"
+                  },
+                  {
+                    "room": "value"
                   }
                 ],
-                "answers": "bool"
-              }
+                "answers": "status"
+              },
+              "takes": [
+                {
+                  "leaf": "value"
+                },
+                {
+                  "leaf": "int"
+                },
+                {
+                  "option": {
+                    "leaf": "string"
+                  }
+                }
+              ]
             }
-          ],
-          "construct": {
-            "name": "souther4_m_shop_t_Line_construct",
-            "takes": [
-              {
-                "given": "value"
-              },
-              {
-                "given": "int"
-              },
-              {
-                "given": "bool"
-              },
-              {
-                "given": "string"
-              },
-              {
-                "room": "value"
-              }
-            ],
-            "answers": "status"
           },
           "decode": {
-            "name": "souther4_m_shop_t_Line_decode",
+            "name": "souther5_m_shop_t_Line_decode",
             "takes": [
               {
                 "given": "bytes"
@@ -957,7 +1317,7 @@
             "answers": "status"
           },
           "decodehost": {
-            "name": "souther4_m_shop_t_Line_decode_host",
+            "name": "souther5_m_shop_t_Line_decode_host",
             "takes": [
               {
                 "given": "bytes"
@@ -972,7 +1332,7 @@
             "answers": "status"
           },
           "encode": {
-            "name": "souther4_m_shop_t_Line_encode",
+            "name": "souther5_m_shop_t_Line_encode",
             "takes": [
               {
                 "given": "value"
@@ -985,16 +1345,21 @@
           "kind": "unit",
           "name": "Free",
           "construct": {
-            "name": "souther4_m_shop_t_Free_construct",
-            "takes": [
-              {
-                "room": "value"
-              }
-            ],
-            "answers": "status"
+            "available": {
+              "function": {
+                "name": "souther5_m_shop_t_Free_construct",
+                "takes": [
+                  {
+                    "room": "value"
+                  }
+                ],
+                "answers": "status"
+              },
+              "takes": []
+            }
           },
           "decode": {
-            "name": "souther4_m_shop_t_Free_decode",
+            "name": "souther5_m_shop_t_Free_decode",
             "takes": [
               {
                 "given": "bytes"
@@ -1009,7 +1374,7 @@
             "answers": "status"
           },
           "decodehost": {
-            "name": "souther4_m_shop_t_Free_decode_host",
+            "name": "souther5_m_shop_t_Free_decode_host",
             "takes": [
               {
                 "given": "bytes"
@@ -1024,7 +1389,7 @@
             "answers": "status"
           },
           "encode": {
-            "name": "souther4_m_shop_t_Free_encode",
+            "name": "souther5_m_shop_t_Free_encode",
             "takes": [
               {
                 "given": "value"
@@ -1045,30 +1410,49 @@
                 "name": "Money"
               },
               "read": {
-                "name": "souther4_m_shop_t_Paid_f_amount",
-                "takes": [
-                  {
-                    "given": "value"
+                "available": {
+                  "function": {
+                    "name": "souther5_m_shop_t_Paid_f_amount",
+                    "takes": [
+                      {
+                        "given": "value"
+                      },
+                      {
+                        "room": "value"
+                      }
+                    ],
+                    "answers": null
+                  },
+                  "answers": {
+                    "leaf": "value"
                   }
-                ],
-                "answers": "value"
+                }
               }
             }
           ],
           "construct": {
-            "name": "souther4_m_shop_t_Paid_construct",
-            "takes": [
-              {
-                "given": "value"
+            "available": {
+              "function": {
+                "name": "souther5_m_shop_t_Paid_construct",
+                "takes": [
+                  {
+                    "given": "value"
+                  },
+                  {
+                    "room": "value"
+                  }
+                ],
+                "answers": "status"
               },
-              {
-                "room": "value"
-              }
-            ],
-            "answers": "status"
+              "takes": [
+                {
+                  "leaf": "value"
+                }
+              ]
+            }
           },
           "decode": {
-            "name": "souther4_m_shop_t_Paid_decode",
+            "name": "souther5_m_shop_t_Paid_decode",
             "takes": [
               {
                 "given": "bytes"
@@ -1083,7 +1467,7 @@
             "answers": "status"
           },
           "decodehost": {
-            "name": "souther4_m_shop_t_Paid_decode_host",
+            "name": "souther5_m_shop_t_Paid_decode_host",
             "takes": [
               {
                 "given": "bytes"
@@ -1098,7 +1482,7 @@
             "answers": "status"
           },
           "encode": {
-            "name": "souther4_m_shop_t_Paid_encode",
+            "name": "souther5_m_shop_t_Paid_encode",
             "takes": [
               {
                 "given": "value"
@@ -1119,13 +1503,23 @@
                 "name": "Money"
               },
               "read": {
-                "name": "souther4_m_shop_t_Owed_f_amount",
-                "takes": [
-                  {
-                    "given": "value"
+                "available": {
+                  "function": {
+                    "name": "souther5_m_shop_t_Owed_f_amount",
+                    "takes": [
+                      {
+                        "given": "value"
+                      },
+                      {
+                        "room": "value"
+                      }
+                    ],
+                    "answers": null
+                  },
+                  "answers": {
+                    "leaf": "value"
                   }
-                ],
-                "answers": "value"
+                }
               }
             },
             {
@@ -1135,33 +1529,55 @@
                 "name": "Bool"
               },
               "read": {
-                "name": "souther4_m_shop_t_Owed_f_overdue",
-                "takes": [
-                  {
-                    "given": "value"
+                "available": {
+                  "function": {
+                    "name": "souther5_m_shop_t_Owed_f_overdue",
+                    "takes": [
+                      {
+                        "given": "value"
+                      },
+                      {
+                        "room": "bool"
+                      }
+                    ],
+                    "answers": null
+                  },
+                  "answers": {
+                    "leaf": "bool"
                   }
-                ],
-                "answers": "bool"
+                }
               }
             }
           ],
           "construct": {
-            "name": "souther4_m_shop_t_Owed_construct",
-            "takes": [
-              {
-                "given": "value"
+            "available": {
+              "function": {
+                "name": "souther5_m_shop_t_Owed_construct",
+                "takes": [
+                  {
+                    "given": "value"
+                  },
+                  {
+                    "given": "bool"
+                  },
+                  {
+                    "room": "value"
+                  }
+                ],
+                "answers": "status"
               },
-              {
-                "given": "bool"
-              },
-              {
-                "room": "value"
-              }
-            ],
-            "answers": "status"
+              "takes": [
+                {
+                  "leaf": "value"
+                },
+                {
+                  "leaf": "bool"
+                }
+              ]
+            }
           },
           "decode": {
-            "name": "souther4_m_shop_t_Owed_decode",
+            "name": "souther5_m_shop_t_Owed_decode",
             "takes": [
               {
                 "given": "bytes"
@@ -1176,7 +1592,7 @@
             "answers": "status"
           },
           "decodehost": {
-            "name": "souther4_m_shop_t_Owed_decode_host",
+            "name": "souther5_m_shop_t_Owed_decode_host",
             "takes": [
               {
                 "given": "bytes"
@@ -1191,7 +1607,7 @@
             "answers": "status"
           },
           "encode": {
-            "name": "souther4_m_shop_t_Owed_encode",
+            "name": "souther5_m_shop_t_Owed_encode",
             "takes": [
               {
                 "given": "value"
@@ -1221,7 +1637,7 @@
             }
           ],
           "case": {
-            "name": "souther4_m_shop_t_Settled_case",
+            "name": "souther5_m_shop_t_Settled_case",
             "takes": [
               {
                 "given": "value"
@@ -1230,7 +1646,7 @@
             "answers": "case"
           },
           "decode": {
-            "name": "souther4_m_shop_t_Settled_decode",
+            "name": "souther5_m_shop_t_Settled_decode",
             "takes": [
               {
                 "given": "bytes"
@@ -1245,7 +1661,7 @@
             "answers": "status"
           },
           "decodehost": {
-            "name": "souther4_m_shop_t_Settled_decode_host",
+            "name": "souther5_m_shop_t_Settled_decode_host",
             "takes": [
               {
                 "given": "bytes"
@@ -1260,7 +1676,7 @@
             "answers": "status"
           },
           "encode": {
-            "name": "souther4_m_shop_t_Settled_encode",
+            "name": "souther5_m_shop_t_Settled_encode",
             "takes": [
               {
                 "given": "value"
@@ -1295,7 +1711,7 @@
             }
           ],
           "case": {
-            "name": "souther4_m_shop_t_Outcome_case",
+            "name": "souther5_m_shop_t_Outcome_case",
             "takes": [
               {
                 "given": "value"
@@ -1304,7 +1720,7 @@
             "answers": "case"
           },
           "decode": {
-            "name": "souther4_m_shop_t_Outcome_decode",
+            "name": "souther5_m_shop_t_Outcome_decode",
             "takes": [
               {
                 "given": "bytes"
@@ -1319,7 +1735,7 @@
             "answers": "status"
           },
           "decodehost": {
-            "name": "souther4_m_shop_t_Outcome_decode_host",
+            "name": "souther5_m_shop_t_Outcome_decode_host",
             "takes": [
               {
                 "given": "bytes"
@@ -1334,7 +1750,7 @@
             "answers": "status"
           },
           "encode": {
-            "name": "souther4_m_shop_t_Outcome_encode",
+            "name": "souther5_m_shop_t_Outcome_encode",
             "takes": [
               {
                 "given": "value"
@@ -1358,13 +1774,25 @@
                 }
               },
               "read": {
-                "name": "souther4_m_shop_t_Basket_f_lines",
-                "takes": [
-                  {
-                    "given": "value"
+                "available": {
+                  "function": {
+                    "name": "souther5_m_shop_t_Basket_f_lines",
+                    "takes": [
+                      {
+                        "given": "value"
+                      },
+                      {
+                        "room": "list"
+                      }
+                    ],
+                    "answers": null
+                  },
+                  "answers": {
+                    "list": {
+                      "leaf": "value"
+                    }
                   }
-                ],
-                "answers": "list"
+                }
               }
             },
             {
@@ -1380,13 +1808,27 @@
                 }
               },
               "read": {
-                "name": "souther4_m_shop_t_Basket_f_notes",
-                "takes": [
-                  {
-                    "given": "value"
+                "available": {
+                  "function": {
+                    "name": "souther5_m_shop_t_Basket_f_notes",
+                    "takes": [
+                      {
+                        "given": "value"
+                      },
+                      {
+                        "room": "list"
+                      }
+                    ],
+                    "answers": null
+                  },
+                  "answers": {
+                    "list": {
+                      "option": {
+                        "leaf": "string"
+                      }
+                    }
                   }
-                ],
-                "answers": "list"
+                }
               }
             },
             {
@@ -1402,36 +1844,75 @@
                 }
               },
               "read": {
-                "name": "souther4_m_shop_t_Basket_f_groups",
-                "takes": [
-                  {
-                    "given": "value"
+                "available": {
+                  "function": {
+                    "name": "souther5_m_shop_t_Basket_f_groups",
+                    "takes": [
+                      {
+                        "given": "value"
+                      },
+                      {
+                        "room": "list"
+                      }
+                    ],
+                    "answers": null
+                  },
+                  "answers": {
+                    "list": {
+                      "list": {
+                        "leaf": "int"
+                      }
+                    }
                   }
-                ],
-                "answers": "list"
+                }
               }
             }
           ],
           "construct": {
-            "name": "souther4_m_shop_t_Basket_construct",
-            "takes": [
-              {
-                "given": "list"
+            "available": {
+              "function": {
+                "name": "souther5_m_shop_t_Basket_construct",
+                "takes": [
+                  {
+                    "given": "list"
+                  },
+                  {
+                    "given": "list"
+                  },
+                  {
+                    "given": "list"
+                  },
+                  {
+                    "room": "value"
+                  }
+                ],
+                "answers": "status"
               },
-              {
-                "given": "list"
-              },
-              {
-                "given": "list"
-              },
-              {
-                "room": "value"
-              }
-            ],
-            "answers": "status"
+              "takes": [
+                {
+                  "list": {
+                    "leaf": "value"
+                  }
+                },
+                {
+                  "list": {
+                    "option": {
+                      "leaf": "string"
+                    }
+                  }
+                },
+                {
+                  "list": {
+                    "list": {
+                      "leaf": "int"
+                    }
+                  }
+                }
+              ]
+            }
           },
           "decode": {
-            "name": "souther4_m_shop_t_Basket_decode",
+            "name": "souther5_m_shop_t_Basket_decode",
             "takes": [
               {
                 "given": "bytes"
@@ -1446,7 +1927,7 @@
             "answers": "status"
           },
           "decodehost": {
-            "name": "souther4_m_shop_t_Basket_decode_host",
+            "name": "souther5_m_shop_t_Basket_decode_host",
             "takes": [
               {
                 "given": "bytes"
@@ -1461,7 +1942,7 @@
             "answers": "status"
           },
           "encode": {
-            "name": "souther4_m_shop_t_Basket_encode",
+            "name": "souther5_m_shop_t_Basket_encode",
             "takes": [
               {
                 "given": "value"
@@ -1469,15 +1950,73 @@
             ],
             "answers": "string"
           }
+        },
+        {
+          "kind": "product",
+          "name": "Partial",
+          "fields": [
+            {
+              "name": "count",
+              "type": {
+                "kind": "primitive",
+                "name": "Int"
+              },
+              "read": {
+                "available": {
+                  "function": {
+                    "name": "souther5_m_shop_t_Partial_f_count",
+                    "takes": [
+                      {
+                        "given": "value"
+                      },
+                      {
+                        "room": "int"
+                      }
+                    ],
+                    "answers": null
+                  },
+                  "answers": {
+                    "leaf": "int"
+                  }
+                }
+              }
+            },
+            {
+              "name": "amount",
+              "type": {
+                "kind": "primitive",
+                "name": "Decimal"
+              },
+              "read": {
+                "unavailable": {
+                  "reason": "no_representation",
+                  "path": []
+                }
+              }
+            }
+          ],
+          "construct": {
+            "unavailable": {
+              "reason": "no_representation",
+              "path": [
+                {
+                  "field": "amount"
+                }
+              ]
+            }
+          },
+          "decode": null,
+          "decodehost": null,
+          "encode": null
         }
       ],
       "lists": [
         {
           "element": {
-            "whole": "value"
+            "leaf": "value"
           },
           "construct": {
-            "name": "souther4_m_shop_l_value_construct",
+            "name": "souther5_m_shop_l_value_construct",
             "takes": [
               {
                 "given": "count"
@@ -1489,7 +2028,7 @@
             "answers": "list"
           },
           "length": {
-            "name": "souther4_m_shop_l_value_length",
+            "name": "souther5_m_shop_l_value_length",
             "takes": [
               {
                 "given": "list"
@@ -1498,7 +2037,7 @@
             "answers": "count"
           },
           "at": {
-            "name": "souther4_m_shop_l_value_at",
+            "name": "souther5_m_shop_l_value_at",
             "takes": [
               {
                 "given": "list"
@@ -1515,10 +2054,12 @@
         },
         {
           "element": {
-            "present": "string"
+            "option": {
+              "leaf": "string"
+            }
           },
           "construct": {
-            "name": "souther4_m_shop_l_present_string_construct",
+            "name": "souther5_m_shop_l_o_string_construct",
             "takes": [
               {
                 "given": "count"
@@ -1533,7 +2074,7 @@
             "answers": "list"
           },
           "length": {
-            "name": "souther4_m_shop_l_present_string_length",
+            "name": "souther5_m_shop_l_o_string_length",
             "takes": [
               {
                 "given": "list"
@@ -1542,7 +2083,7 @@
             "answers": "count"
           },
           "at": {
-            "name": "souther4_m_shop_l_present_string_at",
+            "name": "souther5_m_shop_l_o_string_at",
             "takes": [
               {
                 "given": "list"
@@ -1562,10 +2103,12 @@
         },
         {
           "element": {
-            "whole": "list"
+            "list": {
+              "leaf": "int"
+            }
           },
           "construct": {
-            "name": "souther4_m_shop_l_list_construct",
+            "name": "souther5_m_shop_l_l_int_construct",
             "takes": [
               {
                 "given": "count"
@@ -1577,7 +2120,7 @@
             "answers": "list"
           },
           "length": {
-            "name": "souther4_m_shop_l_list_length",
+            "name": "souther5_m_shop_l_l_int_length",
             "takes": [
               {
                 "given": "list"
@@ -1586,7 +2129,7 @@
             "answers": "count"
           },
           "at": {
-            "name": "souther4_m_shop_l_list_at",
+            "name": "souther5_m_shop_l_l_int_at",
             "takes": [
               {
                 "given": "list"
@@ -1603,10 +2146,10 @@
         },
         {
           "element": {
-            "whole": "int"
+            "leaf": "int"
           },
           "construct": {
-            "name": "souther4_m_shop_l_int_construct",
+            "name": "souther5_m_shop_l_int_construct",
             "takes": [
               {
                 "given": "count"
@@ -1618,7 +2161,7 @@
             "answers": "list"
           },
           "length": {
-            "name": "souther4_m_shop_l_int_length",
+            "name": "souther5_m_shop_l_int_length",
             "takes": [
               {
                 "given": "list"
@@ -1627,7 +2170,7 @@
             "answers": "count"
           },
           "at": {
-            "name": "souther4_m_shop_l_int_at",
+            "name": "souther5_m_shop_l_int_at",
             "takes": [
               {
                 "given": "list"
@@ -1641,8 +2184,63 @@
             ],
             "answers": "bool"
           }
+        },
+        {
+          "element": {
+            "product": [
+              {
+                "leaf": "int"
+              },
+              {
+                "leaf": "string"
+              }
+            ]
+          },
+          "construct": {
+            "name": "souther5_m_shop_l_t2_int_string_construct",
+            "takes": [
+              {
+                "given": "count"
+              },
+              {
+                "slice": "int"
+              },
+              {
+                "slice": "string"
+              }
+            ],
+            "answers": "list"
+          },
+          "length": {
+            "name": "souther5_m_shop_l_t2_int_string_length",
+            "takes": [
+              {
+                "given": "list"
+              }
+            ],
+            "answers": "count"
+          },
+          "at": {
+            "name": "souther5_m_shop_l_t2_int_string_at",
+            "takes": [
+              {
+                "given": "list"
+              },
+              {
+                "given": "count"
+              },
+              {
+                "room": "int"
+              },
+              {
+                "room": "string"
+              }
+            ],
+            "answers": "bool"
+          }
         }
-      ]
+      ],
+      "functions": []
     }
   ]
 }

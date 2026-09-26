@@ -61,7 +61,7 @@ fn a_published_values_entry_answers_with_what_it_names() {
         #include <stdint.h>
         #include <stdio.h>
 
-        extern uint32_t entry(int64_t *) __asm__("PREFIXsouther4.m$value$ys");
+        extern uint32_t entry(int64_t *) __asm__("PREFIXsouther5.m$value$ys");
 
         int main(void) {
             int64_t out;
@@ -136,7 +136,7 @@ fn a_local_value_reach_and_a_published_one_read_as_different_variants() {
 
 /// `reader.g` reaches `publisher.ys` across the two objects' shared boundary — here, one object
 /// holding both modules, but the call is emitted exactly as it would be split across two: `g`
-/// calls `souther4.publisher$value$ys`, the same exported entry `reader` would import from a
+/// calls `souther5.publisher$value$ys`, the same exported entry `reader` would import from a
 /// separate build of `publisher`, never a copy of `ys`'s own body inlined into `reader`'s object.
 #[test]
 fn a_behavior_answering_with_another_modules_published_value_runs_it_there() {
@@ -145,7 +145,7 @@ fn a_behavior_answering_with_another_modules_published_value_runs_it_there() {
         #include <stdint.h>
         #include <stdio.h>
 
-        extern uint32_t g(const void *, int64_t *) __asm__("PREFIXsouther4.reader.g");
+        extern uint32_t g(const void *, int64_t *) __asm__("PREFIXsouther5.reader.g");
 
         int main(void) {
             int64_t out;

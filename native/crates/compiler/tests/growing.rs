@@ -32,7 +32,7 @@ const HARNESS: &str = r#"
 #include <stdio.h>
 #include <stdlib.h>
 
-extern uint32_t grown(const void *, int64_t, int64_t *) __asm__("PREFIXsouther4.growing.grown");
+extern uint32_t grown(const void *, int64_t, int64_t *) __asm__("PREFIXsouther5.growing.grown");
 extern int64_t souther_mark(void);
 extern void souther_reset(int64_t);
 

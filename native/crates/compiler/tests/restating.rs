@@ -411,7 +411,7 @@ const HARNESS: &str = r#"
 #include <stdio.h>
 
 #define BEHAVIOR(name) \
-    extern uint32_t name(const void *, int64_t, int64_t *) __asm__("PREFIXsouther4.m." #name);
+    extern uint32_t name(const void *, int64_t, int64_t *) __asm__("PREFIXsouther5.m." #name);
 BEHAVIOR(optional)
 BEHAVIOR(absent)
 BEHAVIOR(listed)

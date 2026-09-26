@@ -355,6 +355,10 @@ fn fixtures() -> Vec<(&'static str, Value)> {
         ("ensures", read_json(include_str!("ensures.transport.json"))),
         ("folding", read_json(include_str!("folding.transport.json"))),
         ("growing", read_json(include_str!("growing.transport.json"))),
+        (
+            "functions",
+            read_json(include_str!("functions.transport.json")),
+        ),
     ];
     documents.extend(by_hand());
     documents

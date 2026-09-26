@@ -53,12 +53,12 @@ const HARNESS: &str = r#"
 #include <stdlib.h>
 #include <string.h>
 
-extern uint32_t no_capture(const void *, int8_t, int64_t, int64_t *) __asm__("PREFIXsouther4.closures.no_capture");
-extern uint32_t with_struct(const void *, int8_t, int64_t *, int64_t, int64_t *) __asm__("PREFIXsouther4.closures.with_struct");
-extern uint32_t aborting(const void *, int8_t, int64_t, int64_t *) __asm__("PREFIXsouther4.closures.aborting");
-extern uint32_t adder(const void *, int64_t, int8_t, int64_t, int64_t *) __asm__("PREFIXsouther4.closures.adder");
-extern uint32_t nested(const void *, int64_t, int8_t, int8_t, int64_t *) __asm__("PREFIXsouther4.closures.nested");
-extern uint32_t handed_over(const void *, int8_t, int64_t, int64_t *) __asm__("PREFIXsouther4.closures.handed_over");
+extern uint32_t no_capture(const void *, int8_t, int64_t, int64_t *) __asm__("PREFIXsouther5.closures.no_capture");
+extern uint32_t with_struct(const void *, int8_t, int64_t *, int64_t, int64_t *) __asm__("PREFIXsouther5.closures.with_struct");
+extern uint32_t aborting(const void *, int8_t, int64_t, int64_t *) __asm__("PREFIXsouther5.closures.aborting");
+extern uint32_t adder(const void *, int64_t, int8_t, int64_t, int64_t *) __asm__("PREFIXsouther5.closures.adder");
+extern uint32_t nested(const void *, int64_t, int8_t, int8_t, int64_t *) __asm__("PREFIXsouther5.closures.nested");
+extern uint32_t handed_over(const void *, int8_t, int64_t, int64_t *) __asm__("PREFIXsouther5.closures.handed_over");
 
 int main(int argc, char **argv) {
     if (argc != 2) {
