@@ -9,6 +9,7 @@ fn main() {
         .run(|run| {
             run.call(|| {
                 make(run);
+                0
             });
         })
         .unwrap();

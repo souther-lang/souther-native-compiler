@@ -14,17 +14,17 @@ error[E0277]: `*const ()` cannot be sent between threads safely
    = help: within `{closure@$DIR/tests/lifetimes/fail/run_to_another_thread.rs:10:31: 10:33}`, the trait `Send` is not implemented for `*const ()`
 note: required because it appears within the type `PhantomData<*const ()>`
   --> $RUST/core/src/marker.rs
-note: required because it appears within the type `Run<'_>`
-  --> src/lib.rs
+note: required because it appears within the type `Run<'_, Runtime>`
+  --> src/run.rs
    |
-   | pub struct Run<'run> {
+   | pub struct Run<'run, L> {
    |            ^^^
-note: required because it appears within the type `souther_binding_runtime::Scope<'_, '_>`
-  --> src/lib.rs
+note: required because it appears within the type `souther_binding_runtime::Scope<'_, '_, Runtime>`
+  --> src/run.rs
    |
-   | pub struct Scope<'run, 'outer> {
+   | pub struct Scope<'run, 'outer, L> {
    |            ^^^^^
-   = note: required because it appears within the type `&mut souther_binding_runtime::Scope<'_, '_>`
+   = note: required because it appears within the type `&mut souther_binding_runtime::Scope<'_, '_, Runtime>`
 note: required because it's used within this closure
   --> tests/lifetimes/fail/run_to_another_thread.rs:10:31
    |

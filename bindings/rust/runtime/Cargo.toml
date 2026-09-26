@@ -10,6 +10,10 @@ license = "Apache-2.0"
 publish = false
 
 [dependencies]
+# Loads a library by path, and looks its functions up through that handle and no other.
+libloading = "0.9"
+# The issues a reading answers are Raoh's, as every host of a Souther model reads them.
+raoh = "0.1"
 
 [dev-dependencies]
 trybuild = "1"

@@ -9,6 +9,6 @@ fn main() {
         cx.scope(|inner| {
             compute(inner, answer);
         });
-        answer.address()
+        Ok(answer.address())
     });
 }

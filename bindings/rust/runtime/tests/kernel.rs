@@ -1,11 +1,26 @@
 //! What a run does to a library's arena, over a stand-in for a library: a runtime whose arena is a
 //! count of what was made, and a native function that calls a host implementation back.
 
-use souther_binding_runtime::{AlreadyRunning, HostFailure, RawMark, Run, Runtime, Value};
+use souther_binding_runtime::{
+    AlreadyRunning, Failure, HostError, HostFailure, RawMark, Run, Runtime, Status, Statuses, Value,
+};
 use std::cell::{Cell, RefCell};
 use std::ffi::c_void;
 use std::panic::{self, AssertUnwindSafe};
 use std::ptr::NonNull;
+
+const ANSWERED: Status = 0;
+const DIVISION_BY_ZERO: Status = 4;
+const HOST_EXCEPTION: Status = 0x7fff_ffff;
+
+/// What the stand-in numbers its statuses, as a manifest says them.
+const STATUSES: &[(&str, Status)] = &[
+    ("ANSWERED", ANSWERED),
+    ("DIVISION_BY_ZERO", DIVISION_BY_ZERO),
+    ("INJECTION_UNBOUND", 0x7fff_fffd),
+    ("INJECTION_PROTOCOL_VIOLATION", 0x7fff_fffe),
+    ("HOST_EXCEPTION", HOST_EXCEPTION),
+];
 
 /// A library's runtime: its own arena, and `souther_mark` and `souther_reset` over it. Each one
 /// written out here is a different pair of functions, so a different runtime.
@@ -33,15 +48,16 @@ macro_rules! library {
             }
 
             pub fn runtime() -> Runtime {
+                let statuses = Statuses::new(STATUSES).unwrap();
                 // SAFETY: both are this library's, and are functions of this program.
-                unsafe { Runtime::new(mark, reset) }
+                unsafe { Runtime::new(mark, reset, statuses) }
             }
 
             pub fn taken() -> i64 {
                 ARENA.with(Cell::get)
             }
 
-            pub fn make<'run>(run: &mut Run<'run>) -> Value<'run> {
+            pub fn make<'run>(run: &mut Run<'run, Runtime>) -> Value<'run> {
                 let at = ARENA.with(|it| {
                     it.set(it.get() + 1);
                     it.get()
@@ -57,28 +73,36 @@ macro_rules! library {
 library!(orders);
 library!(prices);
 
-type Callback = extern "C" fn(*mut c_void) -> u32;
+type Callback = extern "C" fn(*mut c_void) -> Status;
 
 /// A native function that calls a host implementation back, as generated code does.
-extern "C" fn native(callback: Callback, userdata: *mut c_void) -> u32 {
+extern "C" fn native(callback: Callback, userdata: *mut c_void) -> Status {
     callback(userdata)
 }
 
-const ANSWERED: u32 = 0;
-const HOST_EXCEPTION: u32 = 0x7fff_ffff;
-
 /// A host implementation's trampoline: the userdata is a closure over the runtime it is lent a run
 /// of.
-extern "C" fn trampoline(userdata: *mut c_void) -> u32 {
-    // SAFETY: every caller here hands a `&mut dyn FnMut() -> u32` it holds for the call.
-    let implementation = unsafe { &mut *userdata.cast::<&mut dyn FnMut() -> u32>() };
+extern "C" fn trampoline(userdata: *mut c_void) -> Status {
+    // SAFETY: every caller here hands a `&mut dyn FnMut() -> Status` it holds for the call.
+    let implementation = unsafe { &mut *userdata.cast::<&mut dyn FnMut() -> Status>() };
     implementation()
 }
 
-fn call_back(run: &mut Run<'_>, mut implementation: impl FnMut() -> u32) -> u32 {
-    let mut implementation: &mut dyn FnMut() -> u32 = &mut implementation;
+fn call_back(
+    run: &mut Run<'_, Runtime>,
+    mut implementation: impl FnMut() -> Status,
+) -> Result<(), Failure> {
+    let mut implementation: &mut dyn FnMut() -> Status = &mut implementation;
     let userdata = (&raw mut implementation).cast::<c_void>();
     run.call(|| native(trampoline, userdata))
+}
+
+/// What a generated trampoline answers the library for what a host implementation came to.
+fn answered<R>(host: Result<R, HostFailure>) -> Status {
+    match host {
+        Ok(_) => ANSWERED,
+        Err(_) => HOST_EXCEPTION,
+    }
 }
 
 #[test]
@@ -159,20 +183,45 @@ fn a_root_run_of_another_library_is_its_own() {
 }
 
 #[test]
+fn a_status_is_answered_as_what_the_library_names_it() {
+    let runtime = orders::runtime();
+    runtime
+        .run(|run| {
+            assert!(run.call(|| ANSWERED).is_ok());
+            match run.call(|| DIVISION_BY_ZERO) {
+                Err(Failure::Abort(abort)) => {
+                    assert_eq!(abort.name(), Some("DIVISION_BY_ZERO"));
+                }
+                other => panic!("answered {other:?}"),
+            }
+            match run.call(|| 77) {
+                Err(Failure::Abort(abort)) => {
+                    assert_eq!((abort.status(), abort.name()), (77, None));
+                }
+                other => panic!("answered {other:?}"),
+            }
+            // The library says a host implementation failed, and none did here.
+            assert!(matches!(
+                run.call(|| HOST_EXCEPTION),
+                Err(Failure::ProtocolViolation)
+            ));
+        })
+        .unwrap();
+}
+
+#[test]
 fn a_host_implementation_makes_what_it_answers_in_the_run_it_was_called_from() {
     let runtime = orders::runtime();
     runtime
         .run(|run| {
             orders::make(run);
-            let status = call_back(run, || {
-                runtime
-                    .host(|cx| {
-                        orders::make(cx);
-                        ANSWERED
-                    })
-                    .unwrap()
+            let called = call_back(run, || {
+                answered(runtime.host(|cx| {
+                    orders::make(cx);
+                    Ok(())
+                }))
             });
-            assert_eq!(status, ANSWERED);
+            assert!(called.is_ok());
             // Not dropped when the implementation returned: the library still holds it.
             assert_eq!(orders::taken(), 2);
         })
@@ -189,10 +238,27 @@ fn a_host_implementation_opens_no_root_run_of_the_library_that_called_it() {
             call_back(run, || {
                 *refused.borrow_mut() = Some(runtime.run(|_| ()));
                 ANSWERED
-            });
+            })
+            .unwrap();
         })
         .unwrap();
     assert_eq!(refused.into_inner(), Some(Err(AlreadyRunning)));
+}
+
+#[test]
+fn a_host_implementations_failure_is_what_the_call_answers() {
+    let runtime = orders::runtime();
+    runtime
+        .run(|run| {
+            let called = call_back(run, || {
+                answered(runtime.host(|_| -> Result<(), HostError> { Err("no price".into()) }))
+            });
+            match called {
+                Err(Failure::Host(failure)) => assert_eq!(failure.to_string(), "no price"),
+                other => panic!("answered {other:?}"),
+            }
+        })
+        .unwrap();
 }
 
 #[test]
@@ -202,9 +268,10 @@ fn a_host_implementations_panic_is_raised_where_the_call_returns() {
     let panicked = panic::catch_unwind(AssertUnwindSafe(|| {
         runtime.run(|run| {
             call_back(run, || {
-                let answered = runtime.host(|_| -> u32 { panic!("the implementation gave up") });
-                assert_eq!(answered, Err(HostFailure::Panicked));
-                status.set(Some(HOST_EXCEPTION));
+                let host = runtime
+                    .host(|_| -> Result<(), HostError> { panic!("the implementation gave up") });
+                assert_eq!(host, Err(HostFailure::Failed));
+                status.set(Some(answered(host)));
                 HOST_EXCEPTION
             })
         })
@@ -222,14 +289,15 @@ fn a_host_implementations_panic_is_raised_where_the_call_returns() {
 fn a_host_implementation_outside_any_call_is_lent_no_run() {
     let orders = orders::runtime();
     let prices = prices::runtime();
-    assert_eq!(orders.host(|_| ()), Err(HostFailure::OutsideCall));
+    assert_eq!(orders.host(|_| Ok(())), Err(HostFailure::OutsideCall));
     orders
         .run(|run| {
             call_back(run, || {
                 // The call open is into `orders`, and `prices` has none to lend.
-                assert_eq!(prices.host(|_| ()), Err(HostFailure::OutsideCall));
+                assert_eq!(prices.host(|_| Ok(())), Err(HostFailure::OutsideCall));
                 ANSWERED
-            });
+            })
+            .unwrap();
         })
         .unwrap();
 }
