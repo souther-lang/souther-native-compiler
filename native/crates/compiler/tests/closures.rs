@@ -35,7 +35,6 @@ use std::process::{Command, Output};
 use tempfile::{TempDir, tempdir};
 
 mod support;
-use support::PREFIX;
 
 /// The document the Java half wrote, and the one its own test holds it to.
 const CLOSURES: &str = include_str!("closures.transport.json");
@@ -53,12 +52,12 @@ const HARNESS: &str = r#"
 #include <stdlib.h>
 #include <string.h>
 
-extern uint32_t no_capture(const void *, int8_t, int64_t, int64_t *) __asm__("PREFIXsouther4.closures.no_capture");
-extern uint32_t with_struct(const void *, int8_t, int64_t *, int64_t, int64_t *) __asm__("PREFIXsouther4.closures.with_struct");
-extern uint32_t aborting(const void *, int8_t, int64_t, int64_t *) __asm__("PREFIXsouther4.closures.aborting");
-extern uint32_t adder(const void *, int64_t, int8_t, int64_t, int64_t *) __asm__("PREFIXsouther4.closures.adder");
-extern uint32_t nested(const void *, int64_t, int8_t, int8_t, int64_t *) __asm__("PREFIXsouther4.closures.nested");
-extern uint32_t handed_over(const void *, int8_t, int64_t, int64_t *) __asm__("PREFIXsouther4.closures.handed_over");
+extern uint32_t no_capture(const void *, int8_t, int64_t, int64_t *) __asm__("PREFIXsouther@.closures.no_capture");
+extern uint32_t with_struct(const void *, int8_t, int64_t *, int64_t, int64_t *) __asm__("PREFIXsouther@.closures.with_struct");
+extern uint32_t aborting(const void *, int8_t, int64_t, int64_t *) __asm__("PREFIXsouther@.closures.aborting");
+extern uint32_t adder(const void *, int64_t, int8_t, int64_t, int64_t *) __asm__("PREFIXsouther@.closures.adder");
+extern uint32_t nested(const void *, int64_t, int8_t, int8_t, int64_t *) __asm__("PREFIXsouther@.closures.nested");
+extern uint32_t handed_over(const void *, int8_t, int64_t, int64_t *) __asm__("PREFIXsouther@.closures.handed_over");
 
 int main(int argc, char **argv) {
     if (argc != 2) {
@@ -220,7 +219,7 @@ fn build() -> (TempDir, PathBuf) {
     fs::write(&object, object_for(CLOSURES).expect("an object")).expect("the object written");
 
     let harness = into_path.join("harness.c");
-    fs::write(&harness, HARNESS.replace("PREFIX", PREFIX)).expect("the harness written");
+    fs::write(&harness, support::harness(HARNESS)).expect("the harness written");
 
     let executable = into_path.join("closures");
     let linked = Command::new("cc")

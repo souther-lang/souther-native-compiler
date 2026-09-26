@@ -1,5 +1,6 @@
 package souther.bindings.php;
 
+import souther.bindings.Manifest;
 import souther.nativecode.Checked;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -8,6 +9,7 @@ import souther.nativecode.NativeCompiler;
 import souther.nativecode.Php;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;
 
 import java.nio.charset.StandardCharsets;
@@ -69,6 +71,114 @@ class APhpBindingIsWrittenFromTheManifestTest {
                 .doesNotContain("M/LookupValue.php");
     }
 
+    /**
+     * A type crossing in a shape this binding knows no way to hold it in is not written, and the
+     * manifest saying so is not refused: which shape a type crosses in is the driver's, and what
+     * PHP can hold of it is this binding's own.
+     */
+    @Test
+    void aTypeInAShapeThisBindingCannotHoldIsNotWritten(@TempDir Path into) throws Exception {
+        NativeCompiler.Library library = NativeCompiler.library(Checked.of(List.of("""
+                module m exposing ( pair, other )
+
+                let pair: (Int, Bool) = (3, true)
+
+                let other: (Int, Bool) = (4, false)
+                """)), into.resolve("native"));
+
+        generatedAfter(into, library, "m", module -> ((ObjectNode) module.get("values").get(0))
+                .set("type", JSON.readTree("{\"kind\":\"primitive\",\"name\":\"Decimal\"}")));
+
+        assertThat(Files.readString(into.resolve("php").resolve("M").resolve("Values.php")))
+                .contains("function other(").doesNotContain("function pair(");
+    }
+
+    /**
+     * A leaf is held by this binding only where the type and the word are a pair it holds, which is
+     * this binding's capability and not how the model crosses: an `Int` as an `int` crossing as an
+     * `INT`, a value of a declared type or of a union as an object crossing as a `VALUE`, and a
+     * primitive case of a union likewise. A manifest pairing a type with another word is read, and
+     * what takes or answers the pair is not written; the rest is.
+     */
+    @Test
+    void aLeafThisBindingCannotHoldIsNotWritten(@TempDir Path into) throws Exception {
+        NativeCompiler.Library library = NativeCompiler.library(Checked.of(List.of("""
+                module m exposing ( Box, Found, Missing, Free, twice, find, quantityOf, kept )
+
+                data Box = { n: Int }
+                data Found = { id: Int }
+                data Missing
+                data Free
+
+                behavior twice : (n: Int) -> Int
+                let twice (n) = n * 2
+
+                behavior find : (id: Int) -> Found | Missing
+                let find (id) = if id > 0 then Found { id = id } else Missing
+
+                behavior quantityOf : (paid: Int) -> Int | Free
+                let quantityOf (paid) = if paid > 0 then paid else Free
+
+                behavior kept : (n: Int) -> Int
+                let kept (n) = n + 1
+                """)), into.resolve("native"));
+        Path behaviors = into.resolve("php").resolve("M").resolve("Behaviors.php");
+
+        // A `Decimal` said to cross as an `INT`, which the function takes as it says.
+        generatedAfter(into, library, "m", module -> ((ObjectNode) behaviorNamed(module, "twice")
+                .get("parameters").get("named").get(0))
+                .set("type", JSON.readTree("{\"kind\":\"primitive\",\"name\":\"Decimal\"}")));
+        assertThat(Files.readString(behaviors)).contains("function kept(").doesNotContain("function twice(");
+
+        // A value of a declared type said to cross as an `INT`.
+        generatedAfter(into, library, "m", module -> ((ObjectNode) behaviorNamed(module, "twice")
+                .get("parameters").get("named").get(0))
+                .set("type", JSON.readTree("{\"kind\":\"declared\",\"module\":\"m\",\"name\":\"Box\"}")));
+        assertThat(Files.readString(behaviors)).contains("function kept(").doesNotContain("function twice(");
+
+        // A union a behavior answers said to cross as an `INT`, the function writing one.
+        generatedAfter(into, library, "m", module -> {
+            ObjectNode call = (ObjectNode) behaviorNamed(module, "find").get("call").get("available");
+            ((ObjectNode) call.get("signature")).set("answers", JSON.readTree("{\"leaf\":\"int\"}"));
+            ArrayNode takes = (ArrayNode) call.get("function").get("takes");
+            takes.set(takes.size() - 1, JSON.readTree("{\"room\":\"int\"}"));
+        });
+        assertThat(Files.readString(behaviors)).contains("function kept(").doesNotContain("function find(");
+
+        // The `Int` a union carries said to be made and read as a `STRING`.
+        generatedWholeAfter(into, library, manifest -> {
+            for (JsonNode crossing : manifest.get("cases")) {
+                if (crossing.get("case").get("name").stringValue().equals("Int")) {
+                    ((ArrayNode) crossing.get("make").get("takes"))
+                            .set(0, JSON.readTree("{\"given\":\"string\"}"));
+                    ((ObjectNode) crossing.get("read")).put("answers", "string");
+                }
+            }
+        });
+        assertThat(Files.readString(behaviors)).contains("function kept(", "function find(")
+                .doesNotContain("function quantityOf(");
+    }
+
+    /** The behavior named {@code name} of {@code module}. */
+    private static ObjectNode behaviorNamed(ObjectNode module, String name) {
+        for (JsonNode it : module.get("behaviors")) {
+            if (it.get("name").stringValue().equals(name)) {
+                return (ObjectNode) it;
+            }
+        }
+        throw new IllegalArgumentException("no behavior " + name);
+    }
+
+    /** Generates from the library's manifest after {@code changing} the whole of it. */
+    private static void generatedWholeAfter(Path into, NativeCompiler.Library library,
+                                            Consumer<ObjectNode> changing) throws Exception {
+        ObjectNode manifest = (ObjectNode) JSON.readTree(library.manifest().toFile());
+        changing.accept(manifest);
+        Path changed = into.resolve("changed.json");
+        Files.writeString(changed, JSON.writeValueAsString(manifest), StandardCharsets.UTF_8);
+        PhpBindings.generate(changed, library.declarations(), into.resolve("php"), "Acme\\Billing");
+    }
+
     /** Where the manifest gives a behavior no way in, nothing is written that a caller could call. */
     @Test
     void aBehaviorTheManifestGivesNoCallIsNotWritten(@TempDir Path into) throws Exception {
@@ -81,15 +191,15 @@ class APhpBindingIsWrittenFromTheManifestTest {
                 behavior twice : (n: Int) -> Int
                 let twice (n) = n * 2
                 """)), into.resolve("native"));
-        Path manifest = into.resolve("unreachable.json");
-        String written = Files.readString(library.manifest());
-        int half = written.indexOf("\"name\": \"half\"");
-        int call = written.indexOf("\"call\": {", half);
-        int closed = written.indexOf("\n          }", call);
-        Files.writeString(manifest, written.substring(0, call) + "\"call\": null"
-                + written.substring(closed + "\n          }".length()), StandardCharsets.UTF_8);
 
-        PhpBindings.generate(manifest, library.declarations(), into.resolve("php"), "Acme\\Billing");
+        generatedAfter(into, library, "m", module -> {
+            for (JsonNode behavior : module.get("behaviors")) {
+                if (behavior.get("name").stringValue().equals("half")) {
+                    ((ObjectNode) behavior).set("call", JSON.readTree(
+                            "{\"unavailable\": {\"reason\": \"no_representation\", \"path\": []}}"));
+                }
+            }
+        });
 
         assertThat(Files.readString(into.resolve("php").resolve("M").resolve("Behaviors.php")))
                 .contains("function twice(").doesNotContain("half");
@@ -117,7 +227,7 @@ class APhpBindingIsWrittenFromTheManifestTest {
         assertThat(written).contains(
                 "find(int $id):"
                         + " \\Acme\\Billing\\M\\Found|\\Acme\\Billing\\M\\Missing",
-                "$session->ffi()->souther4_m_m_b_find_answer_case($answer)",
+                "$session->ffi()->souther" + Manifest.ABI + "_m_m_b_find_answer_case($answer)",
                 "0 => new \\Acme\\Billing\\M\\Found($session->held($answer))",
                 "1 => new \\Acme\\Billing\\M\\Missing($session->held($answer))");
         assertThat(generated.files()).extracting(it -> generated.root().relativize(it).toString())
@@ -276,10 +386,17 @@ class APhpBindingIsWrittenFromTheManifestTest {
                 let twice (n) = n * 2
                 """)), into.resolve("native"));
 
-        // What the implementation takes is made something no binding hands a host.
-        generatedAfter(into, library, "m", module -> ((ObjectNode) module.get("injections").get(0)
-                .get("parameters").get(0)).set("type", JsonMapper.builder().build()
-                .readTree("{\"kind\":\"tuple\",\"of\":[]}")));
+        // What the implementation takes is made a value of a type this binding has no class for,
+        // crossing as one: the manifest may say it crosses, and PHP has no way to hold it.
+        generatedAfter(into, library, "m", module -> {
+            ObjectNode rate = (ObjectNode) module.get("injections").get(0);
+            ((ObjectNode) rate.get("parameters").get(0)).set("type",
+                    JSON.readTree("{\"kind\":\"declared\",\"module\":\"m\",\"name\":\"Nowhere\"}"));
+            ((ArrayNode) rate.get("signature").get("takes"))
+                    .set(0, JSON.readTree("{\"leaf\":\"value\"}"));
+            ((ArrayNode) rate.get("implementation").get("takes"))
+                    .set(1, JSON.readTree("{\"given\":\"value\"}"));
+        });
 
         Path written = into.resolve("php").resolve("M");
         assertThat(written.resolve("Twice.php")).exists();
@@ -561,10 +678,10 @@ class APhpBindingIsWrittenFromTheManifestTest {
                 LibraryBinding.generated(twoModules(into), into.resolve("php"), "Acme\\Billing");
 
         assertThat(Files.readString(generated.root().resolve("Shop").resolve("Cart.php")))
-                .contains("souther4_m_shop_l_value_construct", "souther4_m_shop_l_value_at")
-                .doesNotContain("souther4_m_stock_");
+                .contains("souther" + Manifest.ABI + "_m_shop_l_value_construct", "souther" + Manifest.ABI + "_m_shop_l_value_at")
+                .doesNotContain("souther" + Manifest.ABI + "_m_stock_");
         assertThat(Files.readString(generated.root().resolve("Stock").resolve("Bin.php")))
-                .contains("souther4_m_stock_l_value_construct", "souther4_m_stock_l_value_at")
-                .doesNotContain("souther4_m_shop_");
+                .contains("souther" + Manifest.ABI + "_m_stock_l_value_construct", "souther" + Manifest.ABI + "_m_stock_l_value_at")
+                .doesNotContain("souther" + Manifest.ABI + "_m_shop_");
     }
 }

@@ -1,0 +1,974 @@
+{
+  "behaviors": [],
+  "declarations": [],
+  "modules": [
+    {
+      "definitions": [],
+      "entries": [
+        {
+          "body": {
+            "aborts": [],
+            "arguments": [],
+            "core": "call",
+            "reaches": {
+              "is": "value",
+              "module": "m",
+              "name": "bump"
+            },
+            "type": {
+              "fn": {
+                "answers": {
+                  "prim": "INT"
+                },
+                "takes": [
+                  {
+                    "prim": "INT"
+                  }
+                ]
+              }
+            }
+          },
+          "value": {
+            "module": "m",
+            "name": "bump"
+          }
+        },
+        {
+          "body": {
+            "aborts": [],
+            "arguments": [],
+            "core": "call",
+            "reaches": {
+              "is": "value",
+              "module": "m",
+              "name": "overflow"
+            },
+            "type": {
+              "fn": {
+                "answers": {
+                  "prim": "INT"
+                },
+                "takes": [
+                  {
+                    "prim": "INT"
+                  }
+                ]
+              }
+            }
+          },
+          "value": {
+            "module": "m",
+            "name": "overflow"
+          }
+        },
+        {
+          "body": {
+            "aborts": [],
+            "arguments": [],
+            "core": "call",
+            "reaches": {
+              "is": "value",
+              "module": "m",
+              "name": "twice"
+            },
+            "type": {
+              "fn": {
+                "answers": {
+                  "prim": "INT"
+                },
+                "takes": [
+                  {
+                    "fn": {
+                      "answers": {
+                        "prim": "INT"
+                      },
+                      "takes": [
+                        {
+                          "prim": "INT"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "prim": "INT"
+                  }
+                ]
+              }
+            }
+          },
+          "value": {
+            "module": "m",
+            "name": "twice"
+          }
+        },
+        {
+          "body": {
+            "aborts": [],
+            "arguments": [],
+            "core": "call",
+            "reaches": {
+              "is": "value",
+              "module": "m",
+              "name": "pairing"
+            },
+            "type": {
+              "fn": {
+                "answers": {
+                  "tuple": [
+                    {
+                      "prim": "INT"
+                    },
+                    {
+                      "prim": "BOOL"
+                    }
+                  ]
+                },
+                "takes": [
+                  {
+                    "prim": "INT"
+                  }
+                ]
+              }
+            }
+          },
+          "value": {
+            "module": "m",
+            "name": "pairing"
+          }
+        },
+        {
+          "body": {
+            "aborts": [],
+            "arguments": [],
+            "core": "call",
+            "reaches": {
+              "is": "value",
+              "module": "m",
+              "name": "deep"
+            },
+            "type": {
+              "fn": {
+                "answers": {
+                  "option": {
+                    "option": {
+                      "prim": "INT"
+                    }
+                  }
+                },
+                "takes": [
+                  {
+                    "prim": "INT"
+                  }
+                ]
+              }
+            }
+          },
+          "value": {
+            "module": "m",
+            "name": "deep"
+          }
+        },
+        {
+          "body": {
+            "aborts": [],
+            "arguments": [],
+            "core": "call",
+            "reaches": {
+              "is": "value",
+              "module": "m",
+              "name": "meet"
+            },
+            "type": {
+              "fn": {
+                "answers": {
+                  "option": {
+                    "prim": "INT"
+                  }
+                },
+                "takes": [
+                  {
+                    "tuple": [
+                      {
+                        "prim": "INT"
+                      },
+                      {
+                        "option": {
+                          "prim": "INT"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          "value": {
+            "module": "m",
+            "name": "meet"
+          }
+        },
+        {
+          "body": {
+            "aborts": [],
+            "arguments": [],
+            "core": "call",
+            "reaches": {
+              "is": "value",
+              "module": "m",
+              "name": "lifted"
+            },
+            "type": {
+              "fn": {
+                "answers": {
+                  "fn": {
+                    "answers": {
+                      "prim": "INT"
+                    },
+                    "takes": [
+                      {
+                        "prim": "INT"
+                      }
+                    ]
+                  }
+                },
+                "takes": [
+                  {
+                    "prim": "INT"
+                  }
+                ]
+              }
+            }
+          },
+          "value": {
+            "module": "m",
+            "name": "lifted"
+          }
+        }
+      ],
+      "examples": [],
+      "helpers": [],
+      "name": "m",
+      "publishes": [],
+      "values": [
+        {
+          "body": {
+            "aborts": [],
+            "binding": 0,
+            "binds": {
+              "prim": "INT"
+            },
+            "body": {
+              "aborts": [],
+              "body": {
+                "aborts": [
+                  "REQUIRED_FORM_HAS_NO_PLACE"
+                ],
+                "core": "binary",
+                "left": {
+                  "aborts": [],
+                  "binding": 1,
+                  "core": "read",
+                  "type": {
+                    "prim": "INT"
+                  }
+                },
+                "op": "ADD",
+                "reading": {
+                  "is": "astheystand"
+                },
+                "right": {
+                  "aborts": [],
+                  "binding": 0,
+                  "core": "read",
+                  "type": {
+                    "prim": "INT"
+                  }
+                },
+                "type": {
+                  "prim": "INT"
+                }
+              },
+              "core": "block",
+              "parameters": [
+                {
+                  "binding": 1,
+                  "name": "x"
+                }
+              ],
+              "site": 0,
+              "type": {
+                "fn": {
+                  "answers": {
+                    "prim": "INT"
+                  },
+                  "takes": [
+                    {
+                      "prim": "INT"
+                    }
+                  ]
+                }
+              }
+            },
+            "core": "let",
+            "type": {
+              "fn": {
+                "answers": {
+                  "prim": "INT"
+                },
+                "takes": [
+                  {
+                    "prim": "INT"
+                  }
+                ]
+              }
+            },
+            "value": {
+              "aborts": [],
+              "core": "int",
+              "type": {
+                "prim": "INT"
+              },
+              "value": 5
+            }
+          },
+          "handovers": [],
+          "module": "m",
+          "name": "bump"
+        },
+        {
+          "body": {
+            "aborts": [],
+            "binding": 2,
+            "binds": {
+              "prim": "INT"
+            },
+            "body": {
+              "aborts": [],
+              "body": {
+                "aborts": [
+                  "REQUIRED_FORM_HAS_NO_PLACE"
+                ],
+                "core": "binary",
+                "left": {
+                  "aborts": [],
+                  "binding": 3,
+                  "core": "read",
+                  "type": {
+                    "prim": "INT"
+                  }
+                },
+                "op": "ADD",
+                "reading": {
+                  "is": "astheystand"
+                },
+                "right": {
+                  "aborts": [],
+                  "binding": 2,
+                  "core": "read",
+                  "type": {
+                    "prim": "INT"
+                  }
+                },
+                "type": {
+                  "prim": "INT"
+                }
+              },
+              "core": "block",
+              "parameters": [
+                {
+                  "binding": 3,
+                  "name": "x"
+                }
+              ],
+              "site": 1,
+              "type": {
+                "fn": {
+                  "answers": {
+                    "prim": "INT"
+                  },
+                  "takes": [
+                    {
+                      "prim": "INT"
+                    }
+                  ]
+                }
+              }
+            },
+            "core": "let",
+            "type": {
+              "fn": {
+                "answers": {
+                  "prim": "INT"
+                },
+                "takes": [
+                  {
+                    "prim": "INT"
+                  }
+                ]
+              }
+            },
+            "value": {
+              "aborts": [],
+              "core": "int",
+              "type": {
+                "prim": "INT"
+              },
+              "value": 9223372036854775807
+            }
+          },
+          "handovers": [],
+          "module": "m",
+          "name": "overflow"
+        },
+        {
+          "body": {
+            "aborts": [],
+            "body": {
+              "aborts": [],
+              "arguments": [
+                {
+                  "aborts": [],
+                  "arguments": [
+                    {
+                      "aborts": [],
+                      "binding": 5,
+                      "core": "read",
+                      "type": {
+                        "prim": "INT"
+                      }
+                    }
+                  ],
+                  "core": "apply",
+                  "function": {
+                    "aborts": [],
+                    "binding": 4,
+                    "core": "read",
+                    "type": {
+                      "fn": {
+                        "answers": {
+                          "prim": "INT"
+                        },
+                        "takes": [
+                          {
+                            "prim": "INT"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  "type": {
+                    "prim": "INT"
+                  }
+                }
+              ],
+              "core": "apply",
+              "function": {
+                "aborts": [],
+                "binding": 4,
+                "core": "read",
+                "type": {
+                  "fn": {
+                    "answers": {
+                      "prim": "INT"
+                    },
+                    "takes": [
+                      {
+                        "prim": "INT"
+                      }
+                    ]
+                  }
+                }
+              },
+              "type": {
+                "prim": "INT"
+              }
+            },
+            "core": "block",
+            "parameters": [
+              {
+                "binding": 4,
+                "name": "f"
+              },
+              {
+                "binding": 5,
+                "name": "x"
+              }
+            ],
+            "site": 2,
+            "type": {
+              "fn": {
+                "answers": {
+                  "prim": "INT"
+                },
+                "takes": [
+                  {
+                    "fn": {
+                      "answers": {
+                        "prim": "INT"
+                      },
+                      "takes": [
+                        {
+                          "prim": "INT"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "prim": "INT"
+                  }
+                ]
+              }
+            }
+          },
+          "handovers": [],
+          "module": "m",
+          "name": "twice"
+        },
+        {
+          "body": {
+            "aborts": [],
+            "binding": 6,
+            "binds": {
+              "prim": "INT"
+            },
+            "body": {
+              "aborts": [],
+              "body": {
+                "aborts": [],
+                "core": "tuple",
+                "members": [
+                  {
+                    "aborts": [],
+                    "binding": 7,
+                    "core": "read",
+                    "type": {
+                      "prim": "INT"
+                    }
+                  },
+                  {
+                    "aborts": [],
+                    "core": "binary",
+                    "left": {
+                      "aborts": [],
+                      "binding": 7,
+                      "core": "read",
+                      "type": {
+                        "prim": "INT"
+                      }
+                    },
+                    "op": "GT",
+                    "reading": {
+                      "is": "astheystand"
+                    },
+                    "right": {
+                      "aborts": [],
+                      "binding": 6,
+                      "core": "read",
+                      "type": {
+                        "prim": "INT"
+                      }
+                    },
+                    "type": {
+                      "prim": "BOOL"
+                    }
+                  }
+                ],
+                "type": {
+                  "tuple": [
+                    {
+                      "prim": "INT"
+                    },
+                    {
+                      "prim": "BOOL"
+                    }
+                  ]
+                }
+              },
+              "core": "block",
+              "parameters": [
+                {
+                  "binding": 7,
+                  "name": "x"
+                }
+              ],
+              "site": 3,
+              "type": {
+                "fn": {
+                  "answers": {
+                    "tuple": [
+                      {
+                        "prim": "INT"
+                      },
+                      {
+                        "prim": "BOOL"
+                      }
+                    ]
+                  },
+                  "takes": [
+                    {
+                      "prim": "INT"
+                    }
+                  ]
+                }
+              }
+            },
+            "core": "let",
+            "type": {
+              "fn": {
+                "answers": {
+                  "tuple": [
+                    {
+                      "prim": "INT"
+                    },
+                    {
+                      "prim": "BOOL"
+                    }
+                  ]
+                },
+                "takes": [
+                  {
+                    "prim": "INT"
+                  }
+                ]
+              }
+            },
+            "value": {
+              "aborts": [],
+              "core": "int",
+              "type": {
+                "prim": "INT"
+              },
+              "value": 0
+            }
+          },
+          "handovers": [],
+          "module": "m",
+          "name": "pairing"
+        },
+        {
+          "body": {
+            "aborts": [],
+            "body": {
+              "aborts": [],
+              "cond": {
+                "aborts": [],
+                "core": "binary",
+                "left": {
+                  "aborts": [],
+                  "binding": 8,
+                  "core": "read",
+                  "type": {
+                    "prim": "INT"
+                  }
+                },
+                "op": "GT",
+                "reading": {
+                  "is": "astheystand"
+                },
+                "right": {
+                  "aborts": [],
+                  "core": "int",
+                  "type": {
+                    "prim": "INT"
+                  },
+                  "value": 0
+                },
+                "type": {
+                  "prim": "BOOL"
+                }
+              },
+              "core": "if",
+              "else": {
+                "aborts": [],
+                "cond": {
+                  "aborts": [],
+                  "core": "binary",
+                  "left": {
+                    "aborts": [],
+                    "binding": 8,
+                    "core": "read",
+                    "type": {
+                      "prim": "INT"
+                    }
+                  },
+                  "op": "GT",
+                  "reading": {
+                    "is": "astheystand"
+                  },
+                  "right": {
+                    "aborts": [],
+                    "core": "int",
+                    "type": {
+                      "prim": "INT"
+                    },
+                    "value": -1
+                  },
+                  "type": {
+                    "prim": "BOOL"
+                  }
+                },
+                "core": "if",
+                "else": {
+                  "aborts": [],
+                  "core": "none",
+                  "type": {
+                    "option": {
+                      "option": {
+                        "prim": "INT"
+                      }
+                    }
+                  }
+                },
+                "then": {
+                  "aborts": [],
+                  "core": "some",
+                  "type": {
+                    "option": {
+                      "option": {
+                        "prim": "INT"
+                      }
+                    }
+                  },
+                  "value": {
+                    "aborts": [],
+                    "core": "none",
+                    "type": {
+                      "option": {
+                        "prim": "INT"
+                      }
+                    }
+                  }
+                },
+                "type": {
+                  "option": {
+                    "option": {
+                      "prim": "INT"
+                    }
+                  }
+                }
+              },
+              "then": {
+                "aborts": [],
+                "core": "some",
+                "type": {
+                  "option": {
+                    "option": {
+                      "prim": "INT"
+                    }
+                  }
+                },
+                "value": {
+                  "aborts": [],
+                  "core": "some",
+                  "type": {
+                    "option": {
+                      "prim": "INT"
+                    }
+                  },
+                  "value": {
+                    "aborts": [],
+                    "binding": 8,
+                    "core": "read",
+                    "type": {
+                      "prim": "INT"
+                    }
+                  }
+                }
+              },
+              "type": {
+                "option": {
+                  "option": {
+                    "prim": "INT"
+                  }
+                }
+              }
+            },
+            "core": "block",
+            "parameters": [
+              {
+                "binding": 8,
+                "name": "x"
+              }
+            ],
+            "site": 4,
+            "type": {
+              "fn": {
+                "answers": {
+                  "option": {
+                    "option": {
+                      "prim": "INT"
+                    }
+                  }
+                },
+                "takes": [
+                  {
+                    "prim": "INT"
+                  }
+                ]
+              }
+            }
+          },
+          "handovers": [],
+          "module": "m",
+          "name": "deep"
+        },
+        {
+          "body": {
+            "aborts": [],
+            "body": {
+              "aborts": [],
+              "at": 1,
+              "core": "member",
+              "tuple": {
+                "aborts": [],
+                "binding": 9,
+                "core": "read",
+                "type": {
+                  "tuple": [
+                    {
+                      "prim": "INT"
+                    },
+                    {
+                      "option": {
+                        "prim": "INT"
+                      }
+                    }
+                  ]
+                }
+              },
+              "type": {
+                "option": {
+                  "prim": "INT"
+                }
+              }
+            },
+            "core": "block",
+            "parameters": [
+              {
+                "binding": 9,
+                "name": "p"
+              }
+            ],
+            "site": 5,
+            "type": {
+              "fn": {
+                "answers": {
+                  "option": {
+                    "prim": "INT"
+                  }
+                },
+                "takes": [
+                  {
+                    "tuple": [
+                      {
+                        "prim": "INT"
+                      },
+                      {
+                        "option": {
+                          "prim": "INT"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          "handovers": [],
+          "module": "m",
+          "name": "meet"
+        },
+        {
+          "body": {
+            "aborts": [],
+            "body": {
+              "aborts": [],
+              "body": {
+                "aborts": [
+                  "REQUIRED_FORM_HAS_NO_PLACE"
+                ],
+                "core": "binary",
+                "left": {
+                  "aborts": [],
+                  "binding": 11,
+                  "core": "read",
+                  "type": {
+                    "prim": "INT"
+                  }
+                },
+                "op": "ADD",
+                "reading": {
+                  "is": "astheystand"
+                },
+                "right": {
+                  "aborts": [],
+                  "binding": 10,
+                  "core": "read",
+                  "type": {
+                    "prim": "INT"
+                  }
+                },
+                "type": {
+                  "prim": "INT"
+                }
+              },
+              "core": "block",
+              "parameters": [
+                {
+                  "binding": 11,
+                  "name": "x"
+                }
+              ],
+              "site": 7,
+              "type": {
+                "fn": {
+                  "answers": {
+                    "prim": "INT"
+                  },
+                  "takes": [
+                    {
+                      "prim": "INT"
+                    }
+                  ]
+                }
+              }
+            },
+            "core": "block",
+            "parameters": [
+              {
+                "binding": 10,
+                "name": "n"
+              }
+            ],
+            "site": 6,
+            "type": {
+              "fn": {
+                "answers": {
+                  "fn": {
+                    "answers": {
+                      "prim": "INT"
+                    },
+                    "takes": [
+                      {
+                        "prim": "INT"
+                      }
+                    ]
+                  }
+                },
+                "takes": [
+                  {
+                    "prim": "INT"
+                  }
+                ]
+              }
+            }
+          },
+          "handovers": [],
+          "module": "m",
+          "name": "lifted"
+        }
+      ]
+    }
+  ],
+  "transport": 25
+}

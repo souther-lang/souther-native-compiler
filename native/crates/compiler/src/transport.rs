@@ -1870,17 +1870,6 @@ impl Ty {
         matches!(self, Ty::Nothing { .. }) || self.members().into_iter().any(Ty::writes_nothing)
     }
 
-    /// Whether this type writes, anywhere in it, a type no source writes: the type of what has no
-    /// value, or of what does not answer. The checker gives these and the model has no name for
-    /// either, so nothing that describes a type in the model's terms can describe one.
-    pub fn writes_what_no_source_writes(&self) -> bool {
-        matches!(self, Ty::Nothing { .. } | Ty::Never { .. })
-            || self
-                .members()
-                .into_iter()
-                .any(Ty::writes_what_no_source_writes)
-    }
-
     /// Whether this type writes a type variable anywhere in it.
     pub fn is_open(&self) -> bool {
         let mut numbers = std::collections::BTreeSet::new();

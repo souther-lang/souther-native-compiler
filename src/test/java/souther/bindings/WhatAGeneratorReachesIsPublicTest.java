@@ -49,7 +49,7 @@ class WhatAGeneratorReachesIsPublicTest {
             walk.visit(type, "the package");
         }
         assertThat(walk.visited).contains(Manifest.class, Manifest.Module.class,
-                CrossingShape.Told.class);
+                Manifest.Shape.class, Manifest.Reach.class);
         assertThat(walk.refused).isEmpty();
     }
 

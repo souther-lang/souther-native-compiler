@@ -1165,22 +1165,22 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
     // What a host builds, reads, decodes and encodes a value of a published type through, each
     // running on the constructors just defined and the layout they write.
     let mut surface = Surface::default();
-    let mut lists = host::Lists::default();
+    let mut crossings = host::Crossings::default();
     host::define(
         &mut emitting,
         &mut codecs,
         &mut surface,
-        &mut lists,
+        &mut crossings,
         program,
         &runs,
     )?;
     // What a host calls a behavior and reads a value through, beside what another object built by
     // this compiler calls: the two are different parties and are told different things.
-    host::define_behaviors(&mut emitting, &mut surface, &mut lists, &published)?;
+    host::define_behaviors(&mut emitting, &mut surface, &mut crossings, &published)?;
     // What a host builds the capabilities a behavior is called with out of, apart from what it
     // calls by name.
     host::define_constructions(&mut emitting, &mut surface, &constructions)?;
-    host::define_values(&mut emitting, &mut surface, &mut lists, &values)?;
+    host::define_values(&mut emitting, &mut surface, &mut crossings, &values)?;
     // What a host implements, and makes a capability of an implementation of its own through.
     let injections: Vec<host::Injected> = program
         .behaviors
@@ -1196,9 +1196,10 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
             output: &target.output,
         })
         .collect();
-    host::define_injections(&mut emitting, &mut surface, &mut lists, &injections)?;
-    // What a host builds and reads every list above through.
-    host::define_lists(&mut emitting, &mut surface, &lists)?;
+    host::define_injections(&mut emitting, &mut surface, &mut crossings, &injections)?;
+    // What a host builds and reads every list above through, and calls and makes every function
+    // value above through.
+    host::define_crossings(&mut emitting, &mut surface, &crossings)?;
     boundary::define(&mut emitting, &mut codecs, &boundaries)?;
     // Every writer and reader the entries above reached.
     codecs.define(&mut emitting)?;
@@ -2289,24 +2290,41 @@ fn behavior_signature(takes: &[Ty], answers: &Ty, call_conv: CallConv) -> Lowere
     Ok(signature)
 }
 
-/// A lifted function's signature: the same `status + out` shape [`signature_over`] gives every
-/// other generated function, with one more parameter prepended — the closure calling it, which
-/// *is* its environment (see this module's own doc on the flat-closure layout) and not a second
-/// pointer beside one.
-///
-/// Every lifted function takes this hidden parameter whether its own site captures anything or
-/// not, so a caller reaching one through `closure[0]` never has to ask which is which: the
-/// signature `call_indirect` builds and the signature this declares always agree.
+/// A lifted function's signature: how every function value is called
+/// ([`invocation_signature`]), over what the site takes, its answer held to having a
+/// representation, as every other generated function's is.
 fn lifted_signature(takes: &[Ty], answers: &Ty, call_conv: CallConv) -> Lowered<ir::Signature> {
+    // Validated for the reason `signature_over` validates it: a primitive with no representation
+    // is refused here, although its width does not decide what this function returns.
+    machine_type(answers)?;
+    let takes = takes
+        .iter()
+        .map(machine_type)
+        .collect::<Lowered<Vec<_>>>()?;
+    Ok(invocation_signature(&takes, call_conv))
+}
+
+/// How a function value is called, whoever made it and whichever object it was made in: its code
+/// ([`souther_native_abi::FUNCTION_INVOKE`]) handed the value itself, then what the function takes
+/// as the generated code holds each, then room for its answer, answering a status. The value is
+/// the code's environment, and not a second pointer beside one.
+///
+/// The one statement of it: a closure's lifted function, a restated function's wrapper, the code a
+/// host's own function value holds, and every call through a value are each declared from this, so
+/// a caller never has to ask which of them it reached.
+///
+/// Over the machine types of what the function takes rather than over their types, since the code
+/// a host's own function value holds knows only the shapes what it takes crosses in, and those say
+/// the same words.
+fn invocation_signature(takes: &[types::Type], call_conv: CallConv) -> ir::Signature {
     let mut signature = ir::Signature::new(call_conv);
     signature.params.push(AbiParam::new(POINTER));
     for taken in takes {
-        signature.params.push(AbiParam::new(machine_type(taken)?));
+        signature.params.push(AbiParam::new(*taken));
     }
-    machine_type(answers)?;
     signature.params.push(AbiParam::new(POINTER));
     signature.returns.push(AbiParam::new(types::I32));
-    Ok(signature)
+    signature
 }
 
 /// A function of the runtime's, named in the object as `souther_native_abi` says generated code
@@ -2692,16 +2710,15 @@ fn means_the_same_elsewhere(ty: &Ty) -> bool {
         // No layout, so nothing another object could read the same way.
         Ty::Set { .. } | Ty::Map { .. } => false,
         Ty::Tuple { tuple } => tuple.iter().all(means_the_same_elsewhere),
-        // Unconditionally, and not by asking whether its parameters and its answer do: what a
-        // closure's pointer holds — a code address, and after it whatever it captured — is a
-        // contract between this object's own generated code and no one else's. Nothing about a
-        // capture's own representation is why; even a closure over nothing but `Int`s carries a
-        // code address into whatever links this in, and no other object built by this compiler
-        // yet agrees on a layout to read one back from, or on what calling through one means.
-        // That is a contract to publish deliberately (a closure header and an invocation
-        // convention in `souther-native-abi`) and not one to grant by recursing into a signature
-        // that happens to be built from types that already cross.
-        Ty::Fn { .. } => false,
+        // What another object reads of a function value is its header and nothing else: the code
+        // at `FUNCTION_INVOKE`, called with the value itself and then what the function takes
+        // (`souther_native_abi::FUNCTION_INVOKE`). What the value captured is read only by that
+        // code, which the object that made the value wrote, so it is no part of the question. What
+        // is handed across is what the function takes and what it answers, and those have to mean
+        // the same on both sides.
+        Ty::Fn { fn_ } => {
+            fn_.takes.iter().all(means_the_same_elsewhere) && means_the_same_elsewhere(&fn_.answers)
+        }
         Ty::Var { var } => laid_out_nowhere(*var),
         // No value of either crosses, so none can mean something else once it has.
         Ty::Nothing { .. } | Ty::Never { .. } => true,
@@ -2761,14 +2778,12 @@ pub(crate) fn named_as_a_type<T>(ty: &Ty) -> Lowered<T> {
 /// rather than a multiplication.
 const POINTER: types::Type = types::I64;
 
-/// A function value's layout: one pointer, its slot 0 the lifted function's code address and every
-/// slot after it a capture, in the order `closures::Site::captures` gives them.
-///
-/// Compiler-private and not in the `abi` crate: nothing outside code this same compiler generates
-/// ever reads one of these — a caller across an object boundary reaches a closure at all only by
-/// refusing to, since `means_the_same_elsewhere(Ty::Fn)` is unconditionally `false`. Read the doc
-/// on that arm for why it is unconditional and not asked of the captures themselves.
-const CLOSURE_CODE: i64 = 0;
+/// Where a closure the object made holds its code: the header every function value has
+/// ([`souther_native_abi::FUNCTION_INVOKE`]), which is all another object reads of one. What
+/// follows it here — every capture, in the order `closures::Site::captures` gives them, and the
+/// environment after them where the site reaches one — is this object's own, read by the code it
+/// wrote and by nothing else, so it stays in this file and not in the `abi` crate.
+const CLOSURE_CODE: i64 = souther_native_abi::FUNCTION_INVOKE;
 
 /// Where a capture at this position among a closure's own sits, by the same one-slot-per-value
 /// convention every other layout in this file keeps.
@@ -4480,14 +4495,15 @@ fn define_rules(
     Ok(())
 }
 
-/// A function value applied, lowered as an indirect call through the code pointer its closure's
-/// own slot 0 holds, with the closure itself handed over as the hidden environment argument every
-/// lifted function's own signature reserves ([`lifted_signature`]).
+/// A function value applied, lowered as an indirect call through the code at its head
+/// ([`souther_native_abi::FUNCTION_INVOKE`]), with the value itself handed over as the hidden
+/// environment argument every function value is called with ([`invocation_signature`]).
 ///
 /// The one way a function value is called here: by `Core.Apply`, and by a kernel handed one, such
-/// as `List.find`'s predicate. How a closure is laid out and called is this object's own and
-/// crosses to nothing else (`means_the_same_elsewhere`), so a kernel calls what it is handed the
-/// way the body calls it, and never through a convention of its own that could stop agreeing.
+/// as `List.find`'s predicate. What a caller reads of a function value is its header and nothing
+/// else, whoever made it — a closure of this object's, one another object built by this compiler
+/// made, or one a host made — so a kernel calls what it is handed the way the body calls it, and
+/// never through a convention of its own that could stop agreeing.
 ///
 /// Shares [`status_or_answer`] with [`call_reached`] rather than repeating it, so an indirect call
 /// forwards a callee's abort exactly the way a direct one does — the two calling conventions differ
@@ -4502,14 +4518,12 @@ fn call_function(
     arguments: &[ir::Value],
 ) -> Lowered<ir::Value> {
     let answers = machine_type(&function.answers)?;
-    let mut signature = ir::Signature::new(call_conv);
-    signature.params.push(AbiParam::new(POINTER));
-    for taken in &function.takes {
-        signature.params.push(AbiParam::new(machine_type(taken)?));
-    }
-    signature.params.push(AbiParam::new(POINTER));
-    signature.returns.push(AbiParam::new(types::I32));
-    let sig_ref = builder.import_signature(signature);
+    let takes = function
+        .takes
+        .iter()
+        .map(machine_type)
+        .collect::<Lowered<Vec<_>>>()?;
+    let sig_ref = builder.import_signature(invocation_signature(&takes, call_conv));
 
     let code = builder
         .ins()

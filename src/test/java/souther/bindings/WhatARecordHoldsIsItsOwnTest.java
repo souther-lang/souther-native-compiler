@@ -3,26 +3,27 @@ package souther.bindings;
 import souther.nativecode.Checked;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import souther.nativecode.Documents;
 import souther.nativecode.NativeCompiler;
 
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Every record the shared package offers owns the collections it holds, so what its constructor
- * held it to holds for as long as it is held, however it was made: a manifest's parts and a
- * shape alike. Asked of a real manifest and of every shape worked out of it, and required of every
- * collection of every record the package declares, so a record added later is asked of too.
+ * held it to holds for as long as it is held, however it was made: a manifest's parts, its shapes
+ * and what it says of why nothing reaches a value alike. Asked of real manifests — one of a
+ * program, and one of the document of function values no program writes yet — and required of
+ * every collection of every record the package declares, so a record added later is asked of too.
  */
 class WhatARecordHoldsIsItsOwnTest {
 
     /** A module with something in every collection a record of a manifest or a shape holds. */
     private static final String EVERYTHING = """
             module shop exposing ( Money, Item, Cart, Free, Paid, Settled, Found, Missing,
-                                   find, settle, owing, stillOwing : Int, quote, boxed )
+                                   find, settle, owing, stillOwing : Int, quote, boxed, pair, Partial )
 
             data Money = Int
 
@@ -56,21 +57,28 @@ class WhatARecordHoldsIsItsOwnTest {
             let quote (n, priceOf) = priceOf(n) * 2
 
             let boxed = Item { n = 42 }
+
+            let pair: (Int, Bool) = (3, true)
+
+            data Partial = { count: Int, opened: Date }
             """;
 
     @Test
     void everyCollectionARecordHoldsIsItsOwn(@TempDir Path into) throws Exception {
         Manifest manifest = Manifest.read(NativeCompiler.library(
                 Checked.of(List.of(EVERYTHING)), into).manifest());
+        Manifest functions = Manifest.read(Documents.library(Documents.FUNCTIONS,
+                into.resolve("functions")).manifest());
         Owning owning = new Owning();
         owning.walk(manifest.runtime());
         owning.walk(manifest.modules());
-        owning.walk(shapesOf(manifest));
+        owning.walk(functions.modules());
 
         assertThat(owning.wrong).isEmpty();
         assertThat(Owning.collectionsIn("souther.bindings")).contains(
                 Manifest.Function.class.getName() + ".takes",
-                CrossingShape.Told.class.getName() + ".cases");
+                Manifest.Signature.class.getName() + ".takes",
+                Manifest.Refusal.class.getName() + ".path");
         assertThat(owning.asked).containsAll(Owning.collectionsIn("souther.bindings"));
     }
 
@@ -86,32 +94,5 @@ class WhatARecordHoldsIsItsOwnTest {
                 .isInstanceOf(UnsupportedOperationException.class);
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> manifest.statuses().clear())
                 .isInstanceOf(UnsupportedOperationException.class);
-    }
-
-    /** Every shape a type in the manifest crosses in, both ways, and each behavior's answer. */
-    private static List<CrossingShape> shapesOf(Manifest manifest) {
-        List<CrossingShape> shapes = new ArrayList<>();
-        for (Manifest.Module module : manifest.modules()) {
-            List<Manifest.Type> types = new ArrayList<>();
-            module.behaviors().forEach(it -> types.addAll(it.parameters().types()));
-            module.values().forEach(it -> types.add(it.type()));
-            for (Manifest.Declaration declaration : module.declarations()) {
-                switch (declaration) {
-                    case Manifest.Declaration.Product it ->
-                            it.fields().forEach(field -> types.add(field.type()));
-                    case Manifest.Declaration.Newtype it -> types.add(it.field().type());
-                    default -> {
-                    }
-                }
-            }
-            for (Manifest.Type type : types) {
-                shapes.add(CrossingShape.given(module, type));
-                shapes.add(CrossingShape.received(module, type));
-            }
-            module.behaviors().forEach(it -> shapes.add(CrossingShape.received(module,
-                    it.answers())));
-        }
-        shapes.removeIf(java.util.Objects::isNull);
-        return shapes;
     }
 }

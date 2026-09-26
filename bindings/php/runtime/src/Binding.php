@@ -16,7 +16,7 @@ abstract class Binding
      * binding generated before would call something this does not have, or call it as something it
      * is not; a binding says which it was generated for and refuses to load over any other.
      */
-    public const PROTOCOL = 7;
+    public const PROTOCOL = 9;
 
     /**
      * What each version of the protocol moved, by its number, oldest first. The versions before the
@@ -42,10 +42,18 @@ abstract class Binding
         7 => 'a behavior is called with the capabilities of what it was bound to, in the order it '
             . 'requires them, and nothing is registered: what a run is handed is what the behaviors '
             . 'it calls are constructed from (Bound, Implemented, InjectionSlot, Session)',
+        8 => 'a tuple is a PHP list of its members, an optional of what may be null holds a Some, '
+            . 'and a function value is a Closure: one the library answered is called through '
+            . 'Session::callable, and one PHP hands over is made through the FunctionSlot the '
+            . 'binding keeps for its type (Binding::hosting, FunctionSlot, Some)',
+        9 => 'a Decimal is its integer and its scale, handed over and read back through the '
+            . 'runtime (Decimal, Session::decimal, Session::amount)',
     ];
 
     /**
      * @param array<string, InjectionSlot> $slots by the declared name of the behavior each is for
+     * @param array<string, FunctionSlot> $functions by what the generated binding calls the
+     *        function type each is for
      * @param array<string, array{?string, list<string>}> $constructions by the declared name of
      *        each behavior a host constructs, whether or not it calls it by name: what makes a
      *        capability of it, where something may require it, and the declared name of each
@@ -56,6 +64,7 @@ abstract class Binding
     protected function __construct(
         private readonly NativeLibrary $library,
         private readonly array $slots,
+        private readonly array $functions,
         private readonly array $constructions,
         private readonly array $injected,
     ) {
@@ -72,11 +81,24 @@ abstract class Binding
      */
     abstract public static function in(NativeLibrary $library): static;
 
+    /**
+     * @internal The session every function of the binding is called in: the innermost run going
+     * of a library it was loaded for ({@see innermostOf()}).
+     */
+    abstract public static function session(): Session;
+
     /** @internal What `$behavior`, which a host implements, is adapted to this binding through. */
     public function slot(string $behavior): InjectionSlot
     {
         return $this->slots[$behavior]
             ?? throw new \InvalidArgumentException("this binding implements no {$behavior}");
+    }
+
+    /** @internal What a closure of the function type `$type` is handed to the library through. */
+    public function hosting(string $type): FunctionSlot
+    {
+        return $this->functions[$type]
+            ?? throw new \InvalidArgumentException("this binding hands over no function of {$type}");
     }
 
     /**

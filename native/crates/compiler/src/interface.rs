@@ -19,7 +19,7 @@
 //! type is the key the document reaches it by and never leaves it: the manifest says the module
 //! and the name apart, read off the declaration.
 
-use crate::manifest::{self, Carried, Manifest, Parameter, Word};
+use crate::manifest::{self, Carried, Manifest, Parameter, Reach, Refusal, Shape, Word};
 use crate::transport::{self, AbortKind, Case, Declaration, Prim, Ty};
 use crate::{Declared, POINTER, index, native_status};
 use anyhow::{Result, bail};
@@ -30,7 +30,7 @@ use cranelift::object::ObjectModule;
 use object::{Object, ObjectSection};
 use souther_native_abi::{
     ABI_GENERATION, ANSWERED, DECODED_ISSUES, DECODED_MALFORMED, DECODED_VALUE, HOST_CASES,
-    HOST_RUNTIME, HOST_STATUSES, HostParameter, HostWord,
+    HOST_RUNTIME, HOST_STATUSES, HostLeaf, HostParameter, HostShape, HostWord,
 };
 use std::collections::BTreeMap;
 use target_lexicon::BinaryFormat;
@@ -61,8 +61,43 @@ impl HostFunction {
     }
 }
 
-/// The type of a function a host writes to implement a behavior with no body, as it is called: what
-/// C calls a pointer to one, and what it takes and answers. Nothing is defined under the name.
+/// A behavior's or a published value's call as it is emitted, and the shape each value it takes and
+/// answers crosses in, which is what the manifest says beside it.
+#[derive(Clone, Debug)]
+pub(crate) struct HostCall {
+    pub function: HostFunction,
+    pub takes: Vec<HostShape>,
+    pub answers: HostShape,
+}
+
+impl HostCall {
+    fn described(&self) -> manifest::Call {
+        manifest::Call {
+            function: self.function.described(),
+            signature: signature(&self.takes, &self.answers),
+        }
+    }
+}
+
+/// What takes `takes` and answers `answers`, as the manifest says a signature.
+fn signature(takes: &[HostShape], answers: &HostShape) -> manifest::Signature {
+    manifest::Signature {
+        takes: takes.iter().map(|it| it.into()).collect(),
+        answers: Box::new(answers.into()),
+    }
+}
+
+/// What reaches a value as `reach` has it, or why nothing does, as the manifest says it.
+fn reach<T, U>(reach: Result<T, Refusal>, described: impl FnOnce(T) -> U) -> Reach<U> {
+    match reach {
+        Ok(it) => Reach::Available(described(it)),
+        Err(refusal) => Reach::Unavailable(refusal),
+    }
+}
+
+/// The type of a function a host writes to answer a call — a behavior with no body, or a function
+/// value of its own — as it is called: what C calls a pointer to one, and what it takes and answers.
+/// Nothing is defined under the name.
 #[derive(Clone, Debug)]
 pub(crate) struct HostImplementation {
     pub type_name: String,
@@ -120,7 +155,8 @@ pub(crate) fn machine(word: HostWord) -> types::Type {
         | HostWord::List
         | HostWord::Requirements
         | HostWord::Capability
-        | HostWord::Userdata => POINTER,
+        | HostWord::Userdata
+        | HostWord::Function => POINTER,
     }
 }
 
@@ -145,6 +181,7 @@ fn c_word(word: Word) -> &'static str {
         Word::Requirements => "const souther_capability *const *",
         Word::Capability => "souther_capability",
         Word::Userdata => "void *",
+        Word::Function => "souther_function",
     }
 }
 
@@ -210,6 +247,21 @@ fn declared_injection(injection: &manifest::Injection) -> String {
     )
 }
 
+/// What a host implements a function value of one shape as, and makes one through, as the header
+/// declares them, with what a host owes what it hands over.
+fn declared_function(making: &manifest::FunctionMaking) -> String {
+    let implementation = &making.implementation;
+    let answers = c_word(implementation.answers);
+    let pointer = &implementation.type_name;
+    format!(
+        "typedef {answers} (*{pointer})({});\n\
+         /* The room, the function and what it is handed stay as they are while the value may be called. */\n\
+         souther_function {}(souther_hosted_function *, {pointer}, void *);",
+        parameters(&implementation.takes),
+        making.implement
+    )
+}
+
 /// What one object makes reachable to a host, module by module.
 #[derive(Default)]
 pub(crate) struct Surface {
@@ -220,9 +272,9 @@ pub(crate) struct Surface {
 /// defines for it, gathered while they are emitted.
 pub(crate) struct DeclarationSurface {
     name: String,
-    shape: Shape,
-    fields: Vec<manifest::Field>,
-    construct: Option<manifest::Function>,
+    kind: Kind,
+    fields: Vec<(String, manifest::Type, Option<Reach<manifest::Read>>)>,
+    construct: Option<Reach<manifest::Construct>>,
     case: Option<manifest::Function>,
     decode: Option<manifest::Function>,
     decode_host: Option<manifest::Function>,
@@ -230,7 +282,7 @@ pub(crate) struct DeclarationSurface {
 }
 
 /// Which of the declaration's kinds it is, with what only that kind has.
-enum Shape {
+enum Kind {
     Product,
     Newtype,
     Unit,
@@ -240,24 +292,26 @@ enum Shape {
 impl DeclarationSurface {
     /// A declaration as the model says it, with none of its functions yet.
     pub(crate) fn of(declaration: &Declaration, declared: &Declared) -> DeclarationSurface {
-        let shape = match declaration {
-            Declaration::Product { .. } => Shape::Product,
-            Declaration::Newtype { .. } => Shape::Newtype,
-            Declaration::Unit { .. } => Shape::Unit,
+        let kind = match declaration {
+            Declaration::Product { .. } => Kind::Product,
+            Declaration::Newtype { .. } => Kind::Newtype,
+            Declaration::Unit { .. } => Kind::Unit,
             Declaration::Sum { cases, .. } => {
-                Shape::Sum(cases.iter().map(|case| case_of(case, declared)).collect())
+                Kind::Sum(cases.iter().map(|case| case_of(case, declared)).collect())
             }
         };
         DeclarationSurface {
             name: declaration.name().to_string(),
-            shape,
+            kind,
             fields: declaration
                 .fields()
                 .iter()
-                .map(|field| manifest::Field {
-                    name: field.name.clone(),
-                    ty: type_of(&field.codec.ty(), declared),
-                    read: None,
+                .map(|field| {
+                    (
+                        field.name.clone(),
+                        type_of(&field.codec.ty(), declared),
+                        None,
+                    )
                 })
                 .collect(),
             construct: None,
@@ -268,8 +322,17 @@ impl DeclarationSurface {
         }
     }
 
-    pub(crate) fn constructed_by(&mut self, function: &HostFunction) {
-        self.construct = Some(function.described());
+    /// A host builds it through `function`, handing over each field in the shape `takes` says.
+    pub(crate) fn constructed_by(&mut self, function: HostFunction, takes: Vec<HostShape>) {
+        self.construct = Some(Reach::Available(manifest::Construct {
+            function: function.described(),
+            takes: takes.iter().map(|it| it.into()).collect(),
+        }));
+    }
+
+    /// A host builds none, for why `refusal` says.
+    pub(crate) fn not_constructed(&mut self, refusal: Refusal) {
+        self.construct = Some(Reach::Unavailable(refusal));
     }
 
     pub(crate) fn cased_by(&mut self, function: &HostFunction) {
@@ -288,17 +351,26 @@ impl DeclarationSurface {
         self.encode = Some(function.described());
     }
 
-    /// The field at `at` is read by `function`.
-    pub(crate) fn field_read_by(&mut self, at: usize, function: &HostFunction) {
-        self.fields[at].read = Some(function.described());
+    /// The field at `at` is read by `function`, and crosses in `shape`.
+    pub(crate) fn field_read_by(&mut self, at: usize, function: HostFunction, shape: HostShape) {
+        self.fields[at].2 = Some(Reach::Available(manifest::Read {
+            function: function.described(),
+            answers: (&shape).into(),
+        }));
+    }
+
+    /// The field at `at` is read by nothing, for why `refusal` says.
+    pub(crate) fn field_not_read(&mut self, at: usize, refusal: Refusal) {
+        self.fields[at].2 = Some(Reach::Unavailable(refusal));
     }
 
     /// The declaration as the manifest says it. A function a kind has no place for is this
-    /// compiler having emitted one it should not have.
+    /// compiler having emitted one it should not have, and a field or a kind built from fields
+    /// said nothing of, one it forgot to say.
     fn described(self) -> manifest::Declaration {
         let DeclarationSurface {
             name,
-            shape,
+            kind,
             fields,
             construct,
             case,
@@ -309,43 +381,54 @@ impl DeclarationSurface {
         let no_case = |kind: &str| {
             assert!(case.is_none(), "a {kind} is not a sum and has no case");
         };
-        match shape {
-            Shape::Product => {
+        let fields: Vec<manifest::Field> = fields
+            .into_iter()
+            .map(|(field, ty, read)| manifest::Field {
+                read: read.unwrap_or_else(|| panic!("{name}.{field} was said to be read or not")),
+                name: field,
+                ty,
+            })
+            .collect();
+        let constructed = |construct: Option<Reach<manifest::Construct>>| {
+            construct.unwrap_or_else(|| panic!("{name} was said to be built or not"))
+        };
+        match kind {
+            Kind::Product => {
                 no_case("product");
                 manifest::Declaration::Product {
+                    construct: constructed(construct),
                     name,
                     fields,
-                    construct,
                     decode,
                     decode_host,
                     encode,
                 }
             }
-            Shape::Newtype => {
+            Kind::Newtype => {
                 no_case("newtype");
                 let [field] =
                     <[manifest::Field; 1]>::try_from(fields).expect("a newtype has one field");
                 manifest::Declaration::Newtype {
+                    construct: constructed(construct),
                     name,
                     field,
-                    construct,
                     decode,
                     decode_host,
                     encode,
                 }
             }
-            Shape::Unit => {
+            Kind::Unit => {
                 no_case("unit");
                 assert!(fields.is_empty(), "a unit has no field");
                 manifest::Declaration::Unit {
+                    construct: constructed(construct),
                     name,
-                    construct,
                     decode,
                     decode_host,
                     encode,
                 }
             }
-            Shape::Sum(cases) => {
+            Kind::Sum(cases) => {
                 assert!(
                     fields.is_empty() && construct.is_none(),
                     "a sum is never built"
@@ -390,7 +473,7 @@ impl Surface {
     }
 
     /// A published behavior this object defines, and what a host calls it through, where a host
-    /// can hand it what it takes and take what it answers.
+    /// can hand it what it takes and take what it answers, or why it cannot.
     ///
     /// `names` are what its declaration calls what it takes, and none for a composition. `union` is
     /// where it answers a union no declaration names: the cases that descends to, and what a host
@@ -405,7 +488,7 @@ impl Surface {
         answers: &Ty,
         union: Option<(&[transport::Case], Option<&HostFunction>)>,
         declared: &Declared,
-        call: Option<&HostFunction>,
+        call: Result<HostCall, Refusal>,
     ) {
         let behavior = manifest::Behavior {
             name: name.to_string(),
@@ -422,7 +505,7 @@ impl Surface {
                     case: case.map(HostFunction::described),
                 }),
             },
-            call: call.map(HostFunction::described),
+            call: reach(call, |it| it.described()),
         };
         self.module(module).behaviors.push(behavior);
     }
@@ -462,6 +545,7 @@ impl Surface {
         takes: &[Ty],
         answers: &Ty,
         declared: &Declared,
+        crosses: (&[HostShape], &HostShape),
         implementation: &HostImplementation,
         implement: &str,
     ) {
@@ -469,45 +553,80 @@ impl Surface {
             name: name.to_string(),
             parameters: named(names, takes, declared),
             answers: type_of(answers, declared),
+            signature: signature(crosses.0, crosses.1),
             implementation: implementation.described(),
             implement: implement.to_string(),
         };
         self.module(module).injections.push(injection);
     }
 
-    /// A value a module of this object publishes, and what a host reads it through.
+    /// A value a module of this object publishes, and what a host reads it through, or why nothing
+    /// does.
     pub(crate) fn value(
         &mut self,
         module: &str,
         name: &str,
         ty: &Ty,
         declared: &Declared,
-        read: Option<&HostFunction>,
+        read: Result<HostCall, Refusal>,
     ) {
         let value = manifest::PublishedValue {
             name: name.to_string(),
             ty: type_of(ty, declared),
-            read: read.map(HostFunction::described),
+            read: reach(read, |it| it.described()),
         };
         self.module(module).values.push(value);
     }
 
-    /// What a host builds and reads a list of `module`'s through, where its elements cross as
-    /// `element`.
+    /// What a host builds a list of `module`'s through, where its elements cross in `element`, and
+    /// reads one through, each where something crossing needs it.
     pub(crate) fn list(
         &mut self,
         module: &str,
-        element: manifest::Element,
-        construct: &HostFunction,
-        length: &HostFunction,
-        at: &HostFunction,
+        element: &HostShape,
+        construct: Option<&HostFunction>,
+        read: Option<&(HostFunction, HostFunction)>,
     ) {
+        assert!(
+            construct.is_some() || read.is_some(),
+            "a list of {element:?} is built or read, or it has no functions"
+        );
         self.module(module).lists.push(manifest::ListCrossing {
-            element,
-            construct: construct.described(),
-            length: length.described(),
-            at: at.described(),
+            element: element.into(),
+            construct: construct.map(HostFunction::described),
+            read: read.map(|(length, at)| manifest::ListRead {
+                length: length.described(),
+                at: at.described(),
+            }),
         });
+    }
+
+    /// What a host calls a function value of `module`'s crossing in `function` through, and makes
+    /// one of its own through, each where something crossing needs it.
+    pub(crate) fn function(
+        &mut self,
+        module: &str,
+        function: &HostShape,
+        call: Option<&HostFunction>,
+        make: Option<(&HostImplementation, &str)>,
+    ) {
+        let HostShape::Function { takes, answers } = function else {
+            unreachable!("{function:?} is not how a function value crosses");
+        };
+        assert!(
+            call.is_some() || make.is_some(),
+            "a function of {function:?} is called or made, or it has no functions"
+        );
+        self.module(module)
+            .functions
+            .push(manifest::FunctionCrossing {
+                signature: signature(takes, answers),
+                call: call.map(HostFunction::described),
+                make: make.map(|(implementation, implement)| manifest::FunctionMaking {
+                    implementation: implementation.described(),
+                    implement: implement.to_string(),
+                }),
+            });
     }
 
     fn module(&mut self, name: &str) -> &mut manifest::Module {
@@ -521,6 +640,7 @@ impl Surface {
                 values: Vec::new(),
                 declarations: Vec::new(),
                 lists: Vec::new(),
+                functions: Vec::new(),
             })
     }
 
@@ -738,20 +858,30 @@ fn functions(manifest: &Manifest) -> impl Iterator<Item = &manifest::Function> {
             .constructions
             .iter()
             .filter_map(|it| it.bind.as_ref());
-        let values = module.values.iter().filter_map(|it| it.read.as_ref());
+        let values = module.values.iter().filter_map(|it| available(&it.read));
         let declarations = module.declarations.iter().flat_map(declaration_functions);
         let lists = module.lists.iter().flat_map(list_functions);
+        let functions = module.functions.iter().filter_map(|it| it.call.as_ref());
         behaviors
             .chain(constructions)
             .chain(values)
             .chain(declarations)
             .chain(lists)
+            .chain(functions)
     });
     let cases = manifest
         .cases
         .iter()
         .flat_map(|it| std::iter::once(&it.make).chain(&it.read));
     manifest.runtime.iter().chain(cases).chain(modules)
+}
+
+/// The function a call reaches through, where one does.
+fn available(call: &Reach<manifest::Call>) -> Option<&manifest::Function> {
+    match call {
+        Reach::Available(call) => Some(&call.function),
+        Reach::Unavailable(_) => None,
+    }
 }
 
 /// Every function a behavior is reached through, in the order the header declares them: its call,
@@ -762,12 +892,13 @@ fn behavior_functions(behavior: &manifest::Behavior) -> impl Iterator<Item = &ma
         .union
         .as_ref()
         .and_then(|union| union.case.as_ref());
-    behavior.call.iter().chain(case)
+    available(&behavior.call).into_iter().chain(case)
 }
 
 /// Every function a list is reached through, in the order the header declares them.
-fn list_functions(list: &manifest::ListCrossing) -> [&manifest::Function; 3] {
-    [&list.construct, &list.length, &list.at]
+fn list_functions(list: &manifest::ListCrossing) -> impl Iterator<Item = &manifest::Function> {
+    let read = list.read.iter().flat_map(|it| [&it.length, &it.at]);
+    list.construct.iter().chain(read)
 }
 
 /// Every function a declaration is reached through, in the order the header declares them.
@@ -775,50 +906,66 @@ fn list_functions(list: &manifest::ListCrossing) -> [&manifest::Function; 3] {
 /// Every field of every kind is named, with no rest pattern: a function a kind gains is then one
 /// this has to be told about, rather than one the header and the exported symbols quietly leave
 /// out.
-fn declaration_functions(
-    declaration: &manifest::Declaration,
-) -> impl Iterator<Item = &manifest::Function> {
-    let (operations, fields): ([&Option<manifest::Function>; 5], &[manifest::Field]) =
-        match declaration {
-            manifest::Declaration::Product {
-                name: _,
-                fields,
-                construct,
-                decode,
-                decode_host,
-                encode,
-            } => ([construct, &None, decode, decode_host, encode], fields),
-            manifest::Declaration::Newtype {
-                name: _,
-                field,
-                construct,
-                decode,
-                decode_host,
-                encode,
-            } => (
-                [construct, &None, decode, decode_host, encode],
-                std::slice::from_ref(field),
-            ),
-            manifest::Declaration::Unit {
-                name: _,
-                construct,
-                decode,
-                decode_host,
-                encode,
-            } => ([construct, &None, decode, decode_host, encode], &[]),
-            manifest::Declaration::Sum {
-                name: _,
-                cases: _,
-                case,
-                decode,
-                decode_host,
-                encode,
-            } => ([&None, case, decode, decode_host, encode], &[]),
-        };
-    operations
+fn declaration_functions(declaration: &manifest::Declaration) -> Vec<&manifest::Function> {
+    // What builds it, where it is a kind built from fields, or which case a value is, where it is a
+    // sum; then how it is read and written; then each field's reader.
+    let (first, codec, fields) = match declaration {
+        manifest::Declaration::Product {
+            name: _,
+            fields,
+            construct,
+            decode,
+            decode_host,
+            encode,
+        } => (
+            built_by(construct),
+            [decode, decode_host, encode],
+            &fields[..],
+        ),
+        manifest::Declaration::Newtype {
+            name: _,
+            field,
+            construct,
+            decode,
+            decode_host,
+            encode,
+        } => (
+            built_by(construct),
+            [decode, decode_host, encode],
+            std::slice::from_ref(field),
+        ),
+        manifest::Declaration::Unit {
+            name: _,
+            construct,
+            decode,
+            decode_host,
+            encode,
+        } => (built_by(construct), [decode, decode_host, encode], &[][..]),
+        manifest::Declaration::Sum {
+            name: _,
+            cases: _,
+            case,
+            decode,
+            decode_host,
+            encode,
+        } => (case.as_ref(), [decode, decode_host, encode], &[][..]),
+    };
+    first
         .into_iter()
-        .flatten()
-        .chain(fields.iter().filter_map(|field| field.read.as_ref()))
+        .chain(codec.into_iter().flatten())
+        .chain(fields.iter().filter_map(|field| match &field.read {
+            Reach::Available(it) => Some(&it.function),
+            Reach::Unavailable(_) => None,
+        }))
+        .collect()
+}
+
+/// The function a value is built through, where one is.
+fn built_by(construct: &Reach<manifest::Construct>) -> Option<&manifest::Function> {
+    match construct {
+        Reach::Available(it) => Some(&it.function),
+        Reach::Unavailable(_) => None,
+    }
 }
 
 /// Every symbol a shared library with this manifest exports: what a host calls, and nothing else.
@@ -826,11 +973,14 @@ fn declaration_functions(
 /// What a host makes a capability of an implementation through is one of them. What it implements
 /// is not: that is the host's own function, named in C and defined by nobody here.
 pub(crate) fn exported(manifest: &Manifest) -> Vec<String> {
-    let implements = manifest
-        .modules
-        .iter()
-        .flat_map(|module| &module.injections)
-        .map(|injection| &injection.implement);
+    let implements = manifest.modules.iter().flat_map(|module| {
+        let injections = module.injections.iter().map(|it| &it.implement);
+        let functions = module
+            .functions
+            .iter()
+            .filter_map(|it| it.make.as_ref().map(|make| &make.implement));
+        injections.chain(functions)
+    });
     functions(manifest)
         .map(|function| &function.name)
         .chain(implements)
@@ -857,6 +1007,7 @@ pub(crate) fn declarations(manifest: &Manifest) -> String {
          typedef const struct souther_decoded_ *souther_decoded;\n\
          typedef const struct souther_issue_ *souther_issue;\n\
          typedef const struct souther_list_ *souther_list;\n\
+         typedef const struct souther_function_ *souther_function;\n\
          /* The address of code, which a host never calls or reads: what makes a capability writes it. */\n\
          typedef void (*souther_code)(void);\n\
          /* What is handed where a behavior is required: laid out by a host as room, and written by\n \
@@ -865,6 +1016,9 @@ pub(crate) fn declarations(manifest: &Manifest) -> String {
          /* What a capability of a host's own implementation reads it out of: laid out by a host as\n \
          * room, and written by what makes the capability. */\n\
          typedef struct souther_hosted {{ souther_code implementation; void *userdata; }} souther_hosted;\n\
+         /* What a function value a host made of an implementation of its own is: laid out by a host as\n \
+         * room, written by what makes the value, and its address is the value. */\n\
+         typedef struct souther_hosted_function {{ souther_code invoke; souther_hosted hosted; }} souther_hosted_function;\n\
          \n",
         manifest.abi
     );
@@ -918,14 +1072,14 @@ pub(crate) fn declarations(manifest: &Manifest) -> String {
             written.push('\n');
         }
         for value in &module.values {
-            if let Some(read) = &value.read {
+            if let Some(read) = available(&value.read) {
                 written.push_str(&format!("/* value {name}.{} */\n", value.name));
                 written.push_str(&declared(read));
                 written.push('\n');
             }
         }
         for declaration in &module.declarations {
-            let functions: Vec<&manifest::Function> = declaration_functions(declaration).collect();
+            let functions = declaration_functions(declaration);
             if functions.is_empty() {
                 continue;
             }
@@ -942,13 +1096,26 @@ pub(crate) fn declarations(manifest: &Manifest) -> String {
             }
         }
         for list in &module.lists {
-            let element = match list.element {
-                manifest::Element::Whole(word) => c_word(word).to_string(),
-                manifest::Element::Present(word) => format!("{} and its presence", c_word(word)),
-            };
-            written.push_str(&format!("/* a list of {element} */\n"));
+            written.push_str(&format!(
+                "/* a list whose element crosses as {} */\n",
+                spelt(&list.element)
+            ));
             for function in list_functions(list) {
                 written.push_str(&declared(function));
+                written.push('\n');
+            }
+        }
+        for function in &module.functions {
+            written.push_str(&format!(
+                "/* a function value crossing as {} */\n",
+                spelt(&Shape::Function(function.signature.clone()))
+            ));
+            if let Some(call) = &function.call {
+                written.push_str(&declared(call));
+                written.push('\n');
+            }
+            if let Some(make) = &function.make {
+                written.push_str(&declared_function(make));
                 written.push('\n');
             }
         }
@@ -1034,17 +1201,38 @@ fn type_of(ty: &Ty, declared: &Declared) -> manifest::Type {
             value: boxed(&map.value),
         },
         Ty::Var { var } => crate::laid_out_nowhere(*var),
-        Ty::Nothing { .. } | Ty::Never { .. } => unreachable!(
-            "no source writes {}, so a boundary is never read as one, and a published value \
-             writing one is refused before it is described (`define_values`)",
-            ty.spelt()
-        ),
+        Ty::Nothing { .. } => manifest::Type::Nothing,
+        Ty::Never { .. } => manifest::Type::Never,
         Ty::Ref {
             named: Case::Primitive { .. } | Case::Language { .. },
         } => unreachable!(
             "{} named as a type on its own is handed to no host (`whole`), since no behavior may \
              take or answer one on its own",
             ty.spelt()
+        ),
+    }
+}
+
+/// A shape, in the words a comment in the header says it in: the words of each leaf, and what an
+/// optional, a product, a list and a function are made of, between brackets.
+fn spelt(shape: &Shape) -> String {
+    match shape {
+        Shape::Leaf(leaf) => c_word(HostLeaf::from(*leaf).word().into()).to_string(),
+        Shape::Option(of) => format!("an optional ({})", spelt(of)),
+        Shape::Product(members) => format!(
+            "({})",
+            members.iter().map(spelt).collect::<Vec<_>>().join(", ")
+        ),
+        Shape::List(element) => format!("a list of ({})", spelt(element)),
+        Shape::Function(signature) => format!(
+            "a function of ({}) to ({})",
+            signature
+                .takes
+                .iter()
+                .map(spelt)
+                .collect::<Vec<_>>()
+                .join(", "),
+            spelt(&signature.answers)
         ),
     }
 }

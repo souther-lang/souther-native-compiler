@@ -15,7 +15,6 @@ use std::process::Command;
 use tempfile::tempdir;
 
 mod support;
-use support::PREFIX;
 
 /// `m.twice`, which requires `m.lookUp` and answers what it answers doubled.
 const ENSURES: &str = include_str!("ensures.transport.json");
@@ -50,9 +49,9 @@ const HARNESS: &str = r#"
 #include <stdint.h>
 #include <stdio.h>
 
-extern uint32_t stated(int64_t *) __asm__("PREFIXsouther4.m.twice$example$0");
-extern uint32_t rest(int64_t *) __asm__("PREFIXsouther4.m.twice$example$1");
-extern uint32_t unstated(int64_t *) __asm__("PREFIXsouther4.m.twice$example$2");
+extern uint32_t stated(int64_t *) __asm__("PREFIXsouther@.m.twice$example$0");
+extern uint32_t rest(int64_t *) __asm__("PREFIXsouther@.m.twice$example$1");
+extern uint32_t unstated(int64_t *) __asm__("PREFIXsouther@.m.twice$example$2");
 extern int64_t souther_mark(void);
 extern void souther_reset(int64_t);
 
@@ -82,7 +81,7 @@ fn a_row_stands_in_with_the_first_entry_stating_the_call_and_otherwise_with_the_
     let object = into.path().join("m.o");
     fs::write(&object, object_for(&document.to_string()).unwrap()).unwrap();
     let harness = into.path().join("harness.c");
-    fs::write(&harness, HARNESS.replace("PREFIX", PREFIX)).unwrap();
+    fs::write(&harness, support::harness(HARNESS)).unwrap();
     let executable = into.path().join("standing");
     let linked = Command::new("cc")
         .arg("-o")
@@ -133,7 +132,7 @@ const UNANSWERED: &str = r#"
 #include <stdint.h>
 #include <stdio.h>
 
-extern uint32_t looked(int64_t *) __asm__("PREFIXsouther4.m.lookUp$example$0");
+extern uint32_t looked(int64_t *) __asm__("PREFIXsouther@.m.lookUp$example$0");
 
 int main(void) {
     int64_t answer = -1;
@@ -167,7 +166,7 @@ fn a_row_of_what_a_host_implements_answers_unbound() {
     let object = into.path().join("m.o");
     fs::write(&object, object_for(&document.to_string()).unwrap()).unwrap();
     let harness = into.path().join("harness.c");
-    fs::write(&harness, UNANSWERED.replace("PREFIX", PREFIX)).unwrap();
+    fs::write(&harness, support::harness(UNANSWERED)).unwrap();
     let executable = into.path().join("unanswered");
     let linked = Command::new("cc")
         .arg("-o")

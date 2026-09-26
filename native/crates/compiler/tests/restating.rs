@@ -18,7 +18,6 @@ use std::process::Command;
 use tempfile::tempdir;
 
 mod support;
-use support::PREFIX;
 
 fn int_ty() -> Value {
     json!({"prim": "INT"})
@@ -411,7 +410,7 @@ const HARNESS: &str = r#"
 #include <stdio.h>
 
 #define BEHAVIOR(name) \
-    extern uint32_t name(const void *, int64_t, int64_t *) __asm__("PREFIXsouther4.m." #name);
+    extern uint32_t name(const void *, int64_t, int64_t *) __asm__("PREFIXsouther@.m." #name);
 BEHAVIOR(optional)
 BEHAVIOR(absent)
 BEHAVIOR(listed)
@@ -460,7 +459,7 @@ fn a_value_rebuilt_to_stand_wider_answers_what_went_in() {
     let object = into.path().join("m.o");
     fs::write(&object, object_for(&document()).unwrap()).unwrap();
     let harness = into.path().join("harness.c");
-    fs::write(&harness, HARNESS.replace("PREFIX", PREFIX)).unwrap();
+    fs::write(&harness, support::harness(HARNESS)).unwrap();
     let executable = into.path().join("restating");
     let linked = Command::new("cc")
         .arg("-o")
