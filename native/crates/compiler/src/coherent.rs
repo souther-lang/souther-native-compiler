@@ -62,7 +62,6 @@ use crate::transport::{
 use crate::{Declared, PairIn, Runs, Targets, departures_taken, not_lowered, says_its_case};
 use anyhow::{Result, anyhow, bail};
 use souther_native_abi::{spells_a_module, spells_a_name};
-use souther_text::pattern::Refused;
 use std::collections::HashMap;
 
 /// A document every relation of which holds, and what reading it built.
@@ -2022,10 +2021,10 @@ impl<'a> Walk<'_, 'a> {
                         );
                     }
                     // What a pattern is said to mean is a reading of some pattern: parts naming
-                    // parts before them, runs of scalar values in order. One too large for a
-                    // machine is refused where it is lowered, as this backend's limit.
+                    // parts before them, runs of scalar values in order. Every such reading is one
+                    // this backend runs, however large its counts.
                     if let KernelFact::StringMatches { written, meaning } = fact
-                        && crate::patterns::check(meaning) == Err(Refused::NotAReading)
+                        && crate::patterns::check(meaning).is_err()
                     {
                         bail!(
                             "{}: an application of {kernel} says the pattern {written:?} means \

@@ -2024,8 +2024,9 @@ fn a_kernel_settles_what_this_backend_knows_it_settles() {
 
 /// What a pattern is said to mean is what some pattern reads as: parts naming only parts written
 /// before them, and runs of scalar values in order and apart. Anything else is not a reading the
-/// checker makes, and is refused as the two halves disagreeing. One that reads but makes a machine
-/// larger than this backend builds is this backend's limit, and is refused as not lowered.
+/// checker makes, and is refused as the two halves disagreeing. Every reading is one this backend
+/// runs, whatever it counts: a count is a number the machine holds, so counts inside counts are no
+/// larger a machine than the reading they are written in.
 #[test]
 fn a_pattern_is_said_to_mean_what_a_pattern_reads_as() {
     let document = |meaning: &str| {
@@ -2056,16 +2057,19 @@ fn a_pattern_is_said_to_mean_what_a_pattern_reads_as() {
         is_the_halves_disagreeing(&document(unread), "no reading of a pattern");
     }
 
-    let counted =
-        |what: usize| format!(r#"{{"is":"repeated","what":{what},"least":1000,"most":1000}}"#);
-    let too_large = format!(
+    let counted = |what: usize, times: u32| {
+        format!(r#"{{"is":"repeated","what":{what},"least":{times},"most":{times}}}"#)
+    };
+    reads_whole(&document(&format!(
+        r#"[{{"is":"symbols","ranges":[[97,97]]}},{}]"#,
+        counted(0, 1 << 20)
+    )));
+    reads_whole(&document(&format!(
         r#"[{{"is":"symbols","ranges":[[97,97]]}},{},{},{}]"#,
-        counted(0),
-        counted(1),
-        counted(2)
-    );
-    let refused = object_for(&document(&too_large)).expect_err("a machine past the bound");
-    assert!(refused.downcast_ref::<NotLowered>().is_some(), "{refused}");
+        counted(0, 1000),
+        counted(1, 1000),
+        counted(2, 1000)
+    )));
 }
 
 /// A node names a reason to end a run without a value only where its kind has one. A literal, a

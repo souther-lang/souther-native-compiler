@@ -5091,18 +5091,14 @@ fn lower_kernel(
     // lowered: it is a string the checker folded at compile time, and nothing it would compute at
     // run time is read.
     if kernel == LoweredKernel::StringMatches {
-        let KernelFact::StringMatches { written, meaning } = fact else {
+        let KernelFact::StringMatches { meaning, .. } = fact else {
             unreachable!("`Coherent` held string.matches to the fact it settles");
         };
         let [_, text] = arguments else {
             unreachable!("`Coherent` held string.matches to the two arguments it takes");
         };
-        let machine = patterns::machine(meaning).map_err(|_| {
-            not_lowered(format!(
-                "`String.matches` with the pattern {written:?}, whose machine is larger than this \
-                 backend builds"
-            ))
-        })?;
+        let machine = patterns::machine(meaning)
+            .expect("`Coherent` held what every pattern is said to mean to a reading of one");
         let text = lower(builder, lowering, module, bindings, abort, text)?;
         let at = lowering.machines.address(builder, module, &machine);
         return Ok(runtime_call(

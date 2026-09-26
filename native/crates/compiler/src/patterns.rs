@@ -18,17 +18,18 @@ use cranelift::codegen::ir::{self, InstBuilder};
 use cranelift::frontend::FunctionBuilder;
 use cranelift::module::{DataDescription, DataId, Module};
 use cranelift::object::ObjectModule;
-use souther_text::pattern::{self, Part, Refused};
+use souther_text::pattern::{self, NotAReading, Part};
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-/// The machine what a pattern means compiles to.
-pub(crate) fn machine(meaning: &[PatternPart]) -> Result<Vec<u32>, Refused> {
+/// The machine what a pattern means compiles to: every reading of a pattern compiles, whatever
+/// it counts, so what it refuses is no reading.
+pub(crate) fn machine(meaning: &[PatternPart]) -> Result<Vec<u32>, NotAReading> {
     pattern::compile(&parts(meaning))
 }
 
-/// What [`machine`] would refuse, found without building the machine.
-pub(crate) fn check(meaning: &[PatternPart]) -> Result<usize, Refused> {
+/// Whether what a pattern is said to mean is a reading of one, found without building anything.
+pub(crate) fn check(meaning: &[PatternPart]) -> Result<(), NotAReading> {
     pattern::check(&parts(meaning))
 }
 
