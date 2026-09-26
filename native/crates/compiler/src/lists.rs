@@ -182,16 +182,30 @@ pub(crate) fn reversed(
 
 /// The longest span `List.rangeInclusive` makes a list of.
 ///
-/// The language says a span longer than a list can hold aborts, and not how long that is
-/// (souther-lang/souther#1989). The JVM carrier aborts past the largest `int`, and this is that
-/// number, so that the two abort for the same spans. It is this kernel's and not a length every
-/// list here is held to: a list is laid out with a length of sixty-four bits, and nothing else that
-/// makes one asks this. Where the language comes to say how long a list can be, that is a fact of
-/// every list and belongs where every list is made.
-const RANGE_INCLUSIVE_MOST: i64 = i32::MAX as i64;
+/// How many elements a list holds.
+///
+/// The language says a collection holds a bounded number of elements and that the bound is the
+/// carrier's (spec §what-a-collection-holds). The JVM carrier's is the largest `int`, and this is
+/// that number, so that a program aborts where it aborts on either. A list is laid out with a
+/// length of sixty-four bits, so the bound is this backend's to hold and not the layout's.
+pub(crate) const LIST_HOLDS: i64 = i32::MAX as i64;
+
+/// Ends the run for `status` where a list of `length` elements is more than a list holds, before
+/// anything is made of it. `length` is not below nought.
+pub(crate) fn abort_past_what_a_list_holds(
+    builder: &mut FunctionBuilder,
+    abort: ir::Block,
+    status: Status,
+    length: ir::Value,
+) {
+    let past = builder
+        .ins()
+        .icmp_imm_s(IntCC::SignedGreaterThan, length, LIST_HOLDS);
+    abort_where(builder, abort, status, past);
+}
 
 /// Every `Int` from `from` to `to`, both included (`List.rangeInclusive`), and none where `from` is
-/// above `to`. A span longer than [`RANGE_INCLUSIVE_MOST`] ends the run with `status` before
+/// above `to`. A span longer than [`LIST_HOLDS`] ends the run with `status` before
 /// anything is made.
 ///
 /// The span is `to - from` read without a sign: where `from` is not above `to` that is exactly how
@@ -208,11 +222,9 @@ pub(crate) fn range_inclusive(
 ) -> ir::Value {
     let above = builder.ins().icmp(IntCC::SignedGreaterThan, from, to);
     let span = builder.ins().isub(to, from);
-    let too_long = builder.ins().icmp_imm_u(
-        IntCC::UnsignedGreaterThanOrEqual,
-        span,
-        RANGE_INCLUSIVE_MOST,
-    );
+    let too_long = builder
+        .ins()
+        .icmp_imm_u(IntCC::UnsignedGreaterThanOrEqual, span, LIST_HOLDS);
     let spans = builder.ins().icmp(IntCC::SignedLessThanOrEqual, from, to);
     let past = builder.ins().band(spans, too_long);
     abort_where(builder, abort, status, past);

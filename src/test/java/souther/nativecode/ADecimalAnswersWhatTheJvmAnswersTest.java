@@ -209,6 +209,10 @@ class ADecimalAnswersWhatTheJvmAnswersTest {
                 | "nought below nought" : ("-0.00") -> "0.00"
                 | "no digits" : ("-") -> "no number"
                 | "a word" : ("ten") -> "no number"
+                | "an exponent" : ("1e5") -> "no number"
+                | "no digit before the point" : (".5") -> "no number"
+                | "no digit after the point" : ("5.") -> "no number"
+                | "digits that are not ASCII" : ("１２３") -> "no number"
 
             example amount
                 | "written as its amount" : (1.50m) -> 1.5m
@@ -284,20 +288,16 @@ class ADecimalAnswersWhatTheJvmAnswersTest {
     }
 
     /**
-     * Decimal text is the grammar the language states for it (spec §string-decimal-text): no
-     * exponent, a digit either side of a point, and ASCII digits only. The JVM this build is held
-     * to reads {@code String.toDecimal} as {@code new BigDecimal(text)}, which reads all four of
-     * these, and souther-lang/souther reads them by the grammar from f391aa62a on; so these are
-     * held to what the language says and not to a row the JVM answered.
+     * The plain notation of a value near either end of the scale range is more text than a string
+     * holds, whichever way the scale points, and ends the run before any of it is written
+     * (spec §what-a-string-holds).
      */
     @Test
-    void decimalTextIsTheGrammarTheLanguageStates() throws Exception {
+    void theTextOfAValueNearEitherEndOfTheScaleRangeEndsTheRun() throws Exception {
         Asked decimals = new Asked(DECIMALS);
-        for (String notDecimalText : List.of("1e5", ".5", "5.", "１２３")) {
-            assertThat(decimals.outcome("read", new ObservedValue.Text(notDecimalText)))
-                    .as(notDecimalText)
-                    .isEqualTo(answered(new ObservedValue.Text("no number")));
-        }
+        RunOutcome noPlace = new RunOutcome.Aborted(AbortKind.REQUIRED_FORM_HAS_NO_PLACE);
+        assertThat(decimals.outcome("negated", decimal("1E+1500000000"))).isEqualTo(noPlace);
+        assertThat(decimals.outcome("negated", decimal("1E-1500000000"))).isEqualTo(noPlace);
     }
 
     private static ObservedValue decimal(String written) {

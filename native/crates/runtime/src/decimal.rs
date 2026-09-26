@@ -352,24 +352,20 @@ pub unsafe extern "C" fn souther_string_to_decimal(s: *const Text, out: *mut *mu
     unsafe { answered(read.as_ref().map(decimal_of), out) }
 }
 
-/// `String.fromDecimal`: the plain notation, at the value's scale.
+/// `String.fromDecimal`: the plain notation, at the value's scale, written through `out` where a
+/// string holds it. A value near either end of the scale range is a couple of billion characters,
+/// which is measured before any of it is written.
 ///
 /// # Safety
 ///
-/// As [`souther_decimal_unscaled`].
-///
-/// # Panics
-///
-/// Where the text is longer than a string holds, which ends the process. The checker this build
-/// reads names no reason for `String.fromDecimal` to end a run, so there is none to answer with,
-/// and the text is a couple of billion characters that no run could go on with: the JVM the same
-/// checker compiles for runs out of memory there.
+/// As [`souther_decimal_unscaled`], and `out` is room for the address of a string.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_string_from_decimal(at: *const Decimal) -> *mut Text {
-    let written = unsafe { amount(at) }
-        .plain_text()
-        .expect("the plain notation of a Decimal is text a string holds");
-    string_of(&written)
+pub unsafe extern "C" fn souther_string_from_decimal(
+    at: *const Decimal,
+    out: *mut *mut Text,
+) -> i8 {
+    let written = unsafe { amount(at) }.plain_text();
+    unsafe { answered(written.as_deref().map(string_of), out) }
 }
 
 /// A `Decimal` at a boundary: its amount, written as `Amount::external_text` says.
@@ -525,8 +521,33 @@ mod tests {
             1
         );
         assert_eq!(parts(out), ("150".to_string(), 2));
-        let text = unsafe { souther_string_from_decimal(of("100000", 3)) };
+        let mut text = std::ptr::null_mut();
+        assert_eq!(
+            unsafe { souther_string_from_decimal(of("100000", 3), &mut text) },
+            1
+        );
         assert_eq!(said(text), "100.000");
+        souther_reset(mark);
+    }
+
+    /// A value whose plain notation is more text than a string holds is refused, before any of the
+    /// text is written, at either end of the scale range; one whose text a string holds is not.
+    #[test]
+    fn the_text_of_a_value_no_string_holds_is_not_written() {
+        let mark = souther_mark();
+        let mut text = std::ptr::null_mut();
+        for scale in [1_500_000_000, -1_500_000_000] {
+            assert_eq!(
+                unsafe { souther_string_from_decimal(of("1", scale), &mut text) },
+                0,
+                "{scale}"
+            );
+        }
+        assert_eq!(
+            unsafe { souther_string_from_decimal(of("1", -3), &mut text) },
+            1
+        );
+        assert_eq!(said(text), "1000");
         souther_reset(mark);
     }
 

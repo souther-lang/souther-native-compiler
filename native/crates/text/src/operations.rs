@@ -14,12 +14,57 @@ use crate::{Text, code_points};
 use alloc::string::String;
 use alloc::vec::Vec;
 
-/// The most copies [`repeat`] makes, and the widest [`pad_left`] and [`pad_right`] widen to.
+/// How many UTF-16 code units of text a string holds.
 ///
-/// The language says a count no string could hold aborts, and not which count that is
-/// (souther-lang/souther#1986). The JVM carrier answers with the largest `int`, and this is that
-/// number, so that the two abort for the same counts.
-pub const MOST: i64 = i32::MAX as i64;
+/// The language says a string holds a bounded amount of text and that the bound is the carrier's
+/// (spec §what-a-string-holds). The JVM carrier's is this number, whatever characters the text is
+/// made of, and it is taken here so that a program aborts where it aborts on either. A string is
+/// bounded in units and not in bytes: text longer in bytes than this and no longer in units has a
+/// place.
+pub const LONGEST: i64 = 1_073_741_819;
+
+/// How many UTF-16 code units the text is written in.
+fn units(text: &str) -> i64 {
+    if text.is_ascii() {
+        return text.len() as i64;
+    }
+    text.chars().map(|it| it.len_utf16() as i64).sum()
+}
+
+/// Whether a string holds the text.
+///
+/// A unit is a byte at least, so text of no more bytes than a string holds units has a place
+/// without a count of its units.
+pub fn holds(text: &str) -> bool {
+    text.len() as i64 <= LONGEST || units(text) <= LONGEST
+}
+
+/// Whether a string holds `pieces` joined with `separator` between each two, before any of it is
+/// built: what `String.join`, `String.concat` and `append` answer is measured and then written,
+/// and never written and then found too long.
+pub fn joined_holds(separator: Text, pieces: &[Text]) -> bool {
+    let between = pieces.len().saturating_sub(1) as i64;
+    let bytes = pieces.iter().map(|it| it.as_str().len() as i64).fold(
+        separator.as_str().len() as i64 * between,
+        i64::saturating_add,
+    );
+    bytes <= LONGEST
+        || pieces
+            .iter()
+            .map(|it| units(it.as_str()))
+            .fold(units(separator.as_str()) * between, i64::saturating_add)
+            <= LONGEST
+}
+
+/// Whether a string holds `text` with each run of `target` written as `replacement`, before it is
+/// built.
+pub fn replaced_holds(target: Text, replacement: Text, text: Text) -> bool {
+    if target.as_str().is_empty() {
+        return holds(text.as_str());
+    }
+    let pieces = split(target, text);
+    joined_holds(replacement, &pieces)
+}
 
 /// Whether a code point is String whitespace (spec §string-whitespace): the 25 code points of
 /// Unicode 18.0's `White_Space`, written out rather than read off a table, as the specification
@@ -169,23 +214,25 @@ pub fn reverse(text: Text) -> String {
 }
 
 /// `copies` copies of the text joined (`String.repeat`): nothing for a count of nought or fewer,
-/// or of the empty text, and nothing at all past [`MOST`], where the run is to end instead.
+/// or of the empty text, and nothing at all where the copies are more text than a string holds,
+/// where the run is to end instead. Measured before any of them is written.
 pub fn repeat(copies: i64, text: Text) -> Option<String> {
     if copies <= 0 || text.as_str().is_empty() {
         return Some(String::new());
     }
-    if copies > MOST {
+    let bytes = (text.as_str().len() as i64).saturating_mul(copies);
+    if bytes > LONGEST && units(text.as_str()).saturating_mul(copies) > LONGEST {
         return None;
     }
     let mut joined = Joined::new();
     for _ in 0..copies {
         joined.push(text);
     }
-    Some(joined.finished())
+    Some(joined.finished()).filter(|it| holds(it))
 }
 
 /// The text widened on the left to `width` code points with copies of `pad`
-/// (`String.padLeft`), or nothing past [`MOST`].
+/// (`String.padLeft`), or nothing where that is more text than a string holds.
 pub fn pad_left(width: i64, pad: Text, text: Text) -> Option<String> {
     widened(width, pad, text, true)
 }
@@ -207,7 +254,8 @@ fn widened(width: i64, pad: Text, text: Text, before: bool) -> Option<String> {
     if pad.as_str().is_empty() || long >= width {
         return Some(String::from(text.as_str()));
     }
-    if width > MOST {
+    // Each code point is a unit at least, so no fill for a width past what a string holds has a place.
+    if width > LONGEST {
         return None;
     }
     let pad_long = code_points(pad) as i64;
@@ -304,8 +352,27 @@ mod tests {
         assert_eq!(repeat(3, held("ab")).as_deref(), Some("ababab"));
         assert_eq!(repeat(0, held("ab")).as_deref(), Some(""));
         assert_eq!(repeat(-4, held("ab")).as_deref(), Some(""));
-        assert_eq!(repeat(MOST + 1, held("")).as_deref(), Some(""));
-        assert_eq!(repeat(MOST + 1, held("ab")), None);
+        assert_eq!(repeat(LONGEST + 1, held("")).as_deref(), Some(""));
+        assert_eq!(repeat(LONGEST + 1, held("ab")), None);
+        // What a string holds is counted in units: a code point outside the basic plane is two.
+        assert_eq!(repeat(LONGEST / 2 + 1, held("\u{10000}")), None);
+        assert!(joined_holds(held(""), &[held("\u{10000}"); 3]));
+        assert_eq!(units("a\u{e9}\u{10000}"), 4);
+    }
+
+    /// A join is measured from what it is made of, so a text no string holds is never built to be
+    /// found so, and one that is held by its units and not by its bytes is not refused.
+    #[test]
+    fn a_join_is_measured_before_it_is_built() {
+        let piece = "a".repeat(1 << 20);
+        let holds_all = alloc::vec![held(&piece); 1023];
+        assert!(joined_holds(held(""), &holds_all));
+        let too_many = alloc::vec![held(&piece); 1025];
+        assert!(!joined_holds(held(""), &too_many));
+        // The separators are text too: a thousand and more of them between empty pieces.
+        let empty = alloc::vec![held(""); 1 << 10];
+        assert!(joined_holds(held(&piece), &empty));
+        assert!(!joined_holds(held(&piece), &alloc::vec![held(""); 1030]));
     }
 
     #[test]
@@ -318,7 +385,7 @@ mod tests {
         assert_eq!(pad_left(4, held("xy"), held("a")).as_deref(), Some("xyxa"));
         assert_eq!(pad_left(2, held("0"), held("123")).as_deref(), Some("123"));
         assert_eq!(pad_left(9, held(""), held("a")).as_deref(), Some("a"));
-        assert_eq!(pad_left(MOST + 1, held("0"), held("a")), None);
+        assert_eq!(pad_left(LONGEST + 1, held("0"), held("a")), None);
         // A pad that composes into what it meets is asked for once more.
         assert_eq!(
             pad_right(2, held("\u{301}"), held("e")).as_deref(),

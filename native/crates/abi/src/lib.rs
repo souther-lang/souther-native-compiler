@@ -984,7 +984,8 @@ pub const TEXT_BYTES: i64 = SLOT;
 /// and not in what they ask, and a symbol each would be six chances to order text six ways.
 pub const STRING_COMPARE: &str = "souther_string_compare";
 
-/// The symbol two strings are joined through. Answers a new string and touches neither operand.
+/// The symbol two strings are joined through. Writes a new string through room and touches neither
+/// operand, and answers whether it wrote one: a join longer than a string holds writes none.
 pub const STRING_CONCAT: &str = "souther_string_concat";
 
 /// The symbol a string's length is counted through, in code points, which is what the language
@@ -999,7 +1000,7 @@ pub const STRING_CODE_POINTS: &str = "souther_string_code_points";
 ///
 /// The text is walked in the runtime rather than in code emitted at every call, for the reason
 /// [`STRING_COMPARE`] is. A kernel that answers a value for everything it is handed answers it. One
-/// that answers nothing for some of what it is handed — a slice the string has no room for, a count
+/// that answers nothing for some of what it is handed — a slice the string has no room for, copies
 /// no string could hold, text that is no integer — answers whether it wrote its value through room
 /// it is handed last, and says nothing of why: which reason a run ends for, or which case stands
 /// in for the value, is the kernel's contract and the caller's to read, never the runtime's.
@@ -2021,8 +2022,8 @@ pub const GENERATED_RUNTIME: &[GeneratedCall] = {
         },
         GeneratedCall {
             name: STRING_CONCAT,
-            takes: &[Given(Host(String)), Given(Host(String))],
-            answers: Some(Host(String)),
+            takes: &[Given(Host(String)), Given(Host(String)), Room(Host(String))],
+            answers: Some(Host(Bool)),
         },
         GeneratedCall {
             name: STRING_CODE_POINTS,
@@ -2036,13 +2037,13 @@ pub const GENERATED_RUNTIME: &[GeneratedCall] = {
         },
         GeneratedCall {
             name: STRING_LOWERCASE,
-            takes: &[Given(Host(String))],
-            answers: Some(Host(String)),
+            takes: &[Given(Host(String)), Room(Host(String))],
+            answers: Some(Host(Bool)),
         },
         GeneratedCall {
             name: STRING_UPPERCASE,
-            takes: &[Given(Host(String))],
-            answers: Some(Host(String)),
+            takes: &[Given(Host(String)), Room(Host(String))],
+            answers: Some(Host(Bool)),
         },
         GeneratedCall {
             name: STRING_CONTAINS,
@@ -2081,13 +2082,13 @@ pub const GENERATED_RUNTIME: &[GeneratedCall] = {
         },
         GeneratedCall {
             name: STRING_JOIN,
-            takes: &[Given(Host(String)), Given(Host(List))],
-            answers: Some(Host(String)),
+            takes: &[Given(Host(String)), Given(Host(List)), Room(Host(String))],
+            answers: Some(Host(Bool)),
         },
         GeneratedCall {
             name: STRING_CONCAT_ALL,
-            takes: &[Given(Host(List))],
-            answers: Some(Host(String)),
+            takes: &[Given(Host(List)), Room(Host(String))],
+            answers: Some(Host(Bool)),
         },
         GeneratedCall {
             name: STRING_REPLACE,
@@ -2095,8 +2096,9 @@ pub const GENERATED_RUNTIME: &[GeneratedCall] = {
                 Given(Host(String)),
                 Given(Host(String)),
                 Given(Host(String)),
+                Room(Host(String)),
             ],
-            answers: Some(Host(String)),
+            answers: Some(Host(Bool)),
         },
         GeneratedCall {
             name: STRING_WORDS,
@@ -2120,8 +2122,8 @@ pub const GENERATED_RUNTIME: &[GeneratedCall] = {
         },
         GeneratedCall {
             name: STRING_REVERSE,
-            takes: &[Given(Host(String))],
-            answers: Some(Host(String)),
+            takes: &[Given(Host(String)), Room(Host(String))],
+            answers: Some(Host(Bool)),
         },
         GeneratedCall {
             name: STRING_REPEAT,
@@ -2165,8 +2167,8 @@ pub const GENERATED_RUNTIME: &[GeneratedCall] = {
         },
         GeneratedCall {
             name: STRING_FROM_DECIMAL,
-            takes: &[Given(Host(Decimal))],
-            answers: Some(Host(String)),
+            takes: &[Given(Host(Decimal)), Room(Host(String))],
+            answers: Some(Host(Bool)),
         },
         GeneratedCall {
             name: DECIMAL_LITERAL,

@@ -515,7 +515,7 @@ impl Amount {
     /// is decided before any of it is written: the text of a value near either end of the scale
     /// range is a couple of billion characters.
     pub(crate) fn plain_text(&self) -> Option<String> {
-        if self.plain_length() > souther_text::MOST {
+        if self.plain_length() > souther_text::LONGEST {
             return None;
         }
         let digits = self.magnitude.digits();
@@ -874,10 +874,10 @@ mod tests {
         }
         assert_eq!(d("1e-2147483647").plain_text(), None);
         assert_eq!(d("1e2147483647").plain_text(), None);
-        let longest = Amount::of_parts(false, &[1], (souther_text::MOST - 2) as i32);
-        assert_eq!(longest.plain_length(), souther_text::MOST);
-        let past = Amount::of_parts(false, &[1], (souther_text::MOST - 1) as i32);
-        assert_eq!(past.plain_length(), souther_text::MOST + 1);
+        let longest = Amount::of_parts(false, &[1], (souther_text::LONGEST - 2) as i32);
+        assert_eq!(longest.plain_length(), souther_text::LONGEST);
+        let past = Amount::of_parts(false, &[1], (souther_text::LONGEST - 1) as i32);
+        assert_eq!(past.plain_length(), souther_text::LONGEST + 1);
         assert_eq!(past.plain_text(), None);
     }
 

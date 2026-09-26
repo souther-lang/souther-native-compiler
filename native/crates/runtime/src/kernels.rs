@@ -69,6 +69,22 @@ pub(crate) unsafe fn answered<T>(value: Option<T>, out: *mut T) -> i8 {
     }
 }
 
+/// A string of the text `built` where a string holds it, written through `out`.
+///
+/// Text an operation builds is measured against what a string holds (`souther_text::LONGEST`)
+/// before it is written where the operation can say what it will come to, and again once it is
+/// built, since putting text in NFC can make it a different length from what was measured.
+///
+/// # Safety
+///
+/// `out` is room for the address of a string.
+unsafe fn held_string(built: Option<String>, out: *mut *mut Text) -> i8 {
+    let held = built
+        .filter(|it| souther_text::holds(it))
+        .map(|it| string_of(&it));
+    unsafe { answered(held, out) }
+}
+
 /// `String.trim`.
 ///
 /// # Safety
@@ -85,8 +101,8 @@ pub unsafe extern "C" fn souther_string_trim(s: *const Text) -> *mut Text {
 ///
 /// As [`souther_string_trim`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_string_lowercase(s: *const Text) -> *mut Text {
-    string_of(&souther_text::lowercase(unsafe { text(&s) }))
+pub unsafe extern "C" fn souther_string_lowercase(s: *const Text, out: *mut *mut Text) -> i8 {
+    unsafe { held_string(Some(souther_text::lowercase(text(&s))), out) }
 }
 
 /// `String.uppercase`.
@@ -95,8 +111,8 @@ pub unsafe extern "C" fn souther_string_lowercase(s: *const Text) -> *mut Text {
 ///
 /// As [`souther_string_trim`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_string_uppercase(s: *const Text) -> *mut Text {
-    string_of(&souther_text::uppercase(unsafe { text(&s) }))
+pub unsafe extern "C" fn souther_string_uppercase(s: *const Text, out: *mut *mut Text) -> i8 {
+    unsafe { held_string(Some(souther_text::uppercase(text(&s))), out) }
 }
 
 /// `String.contains`.
@@ -176,9 +192,16 @@ pub unsafe extern "C" fn souther_string_split(separator: *const Text, s: *const 
 ///
 /// As [`souther_string_trim`], and `xs` is a list of strings.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_string_join(separator: *const Text, xs: *const List) -> *mut Text {
+pub unsafe extern "C" fn souther_string_join(
+    separator: *const Text,
+    xs: *const List,
+    out: *mut *mut Text,
+) -> i8 {
     let pieces = unsafe { texts(&xs) };
-    string_of(&souther_text::join(unsafe { text(&separator) }, pieces))
+    let separator = unsafe { text(&separator) };
+    let joined = souther_text::joined_holds(separator, &pieces)
+        .then(|| souther_text::join(separator, pieces));
+    unsafe { held_string(joined, out) }
 }
 
 /// `String.concat`.
@@ -187,9 +210,12 @@ pub unsafe extern "C" fn souther_string_join(separator: *const Text, xs: *const 
 ///
 /// As [`souther_string_join`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_string_concat_all(xs: *const List) -> *mut Text {
+pub unsafe extern "C" fn souther_string_concat_all(xs: *const List, out: *mut *mut Text) -> i8 {
     let pieces = unsafe { texts(&xs) };
-    string_of(&souther_text::join(Held::held(""), pieces))
+    let nothing = Held::held("");
+    let joined =
+        souther_text::joined_holds(nothing, &pieces).then(|| souther_text::join(nothing, pieces));
+    unsafe { held_string(joined, out) }
 }
 
 /// `String.replace`.
@@ -202,9 +228,12 @@ pub unsafe extern "C" fn souther_string_replace(
     target: *const Text,
     replacement: *const Text,
     s: *const Text,
-) -> *mut Text {
-    let replaced = unsafe { souther_text::replace(text(&target), text(&replacement), text(&s)) };
-    string_of(&replaced)
+    out: *mut *mut Text,
+) -> i8 {
+    let (target, replacement, s) = unsafe { (text(&target), text(&replacement), text(&s)) };
+    let replaced = souther_text::replaced_holds(target, replacement, s)
+        .then(|| souther_text::replace(target, replacement, s));
+    unsafe { held_string(replaced, out) }
 }
 
 /// `String.words`.
@@ -249,8 +278,8 @@ pub unsafe extern "C" fn souther_string_to_int(s: *const Text, out: *mut i64) ->
 ///
 /// As [`souther_string_trim`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_string_reverse(s: *const Text) -> *mut Text {
-    string_of(&souther_text::reverse(unsafe { text(&s) }))
+pub unsafe extern "C" fn souther_string_reverse(s: *const Text, out: *mut *mut Text) -> i8 {
+    unsafe { held_string(Some(souther_text::reverse(text(&s))), out) }
 }
 
 /// `String.repeat`, written through `out` where the count is one a string can hold.
@@ -265,7 +294,7 @@ pub unsafe extern "C" fn souther_string_repeat(
     out: *mut *mut Text,
 ) -> i8 {
     let repeated = souther_text::repeat(copies, unsafe { text(&s) });
-    unsafe { answered(repeated.as_deref().map(string_of), out) }
+    unsafe { held_string(repeated, out) }
 }
 
 /// `String.padLeft`, written through `out` where the width is one a string can hold.
@@ -351,9 +380,14 @@ mod tests {
         let mark = souther_mark();
         let pieces = unsafe { souther_string_split(made(","), made("a,,日")) };
         assert_eq!(strings(pieces), ["a", "", "日"]);
-        let joined = unsafe { souther_string_join(made("-"), pieces) };
+        let mut joined = ptr::null_mut();
+        assert_eq!(
+            unsafe { souther_string_join(made("-"), pieces, &mut joined) },
+            1
+        );
         assert_eq!(said(joined), "a--日");
-        assert_eq!(said(unsafe { souther_string_concat_all(pieces) }), "a日");
+        assert_eq!(unsafe { souther_string_concat_all(pieces, &mut joined) }, 1);
+        assert_eq!(said(joined), "a日");
         souther_reset(mark);
     }
 
@@ -361,7 +395,11 @@ mod tests {
     #[test]
     fn a_join_of_two_strings_is_canonical() {
         let mark = souther_mark();
-        let joined = unsafe { souther_string_concat(made("e"), made("\u{301}")) };
+        let mut joined = ptr::null_mut();
+        assert_eq!(
+            unsafe { souther_string_concat(made("e"), made("\u{301}"), &mut joined) },
+            1
+        );
         assert_eq!(said(joined), "\u{e9}");
         souther_reset(mark);
     }

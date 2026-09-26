@@ -20,8 +20,6 @@ const DATE: &str = r#"{"prim":"DATE"}"#;
 /// which asks it to be refused as not lowered on its own; a type that stopped being so would make
 /// the rest agree with themselves, so `Date` and the rest that are laid out are not used for it.
 const RATIONAL: &str = r#"{"prim":"RATIONAL"}"#;
-/// The same, for the external form a program cannot yet hold as a value: a `Raw`.
-const RAW: &str = r#"{"prim":"RAW"}"#;
 const A: &str = r#"{"ref":{"is":"declared","declared":"m.A"}}"#;
 const S: &str = r#"{"ref":{"is":"declared","declared":"m.S"}}"#;
 const P: &str = r#"{"ref":{"is":"declared","declared":"m.P"}}"#;
@@ -32,7 +30,7 @@ const P: &str = r#"{"ref":{"is":"declared","declared":"m.P"}}"#;
 fn document(behaviors: &[String], helpers: &[String], definitions: &[String]) -> String {
     format!(
         concat!(
-            r#"{{"transport":26,"declarations":["#,
+            r#"{{"transport":27,"declarations":["#,
             r#"{{"module":"m","name":"A","by":"amodule","is":"unit"}},"#,
             r#"{{"module":"m","name":"B","by":"amodule","is":"unit"}},"#,
             r#"{{"module":"m","name":"S","by":"amodule","is":"sum","#,
@@ -828,17 +826,6 @@ fn behind() -> String {
 fn a_helper_this_backend_is_behind_on_is_on_its_own_not_lowered() {
     let refused = object_for(&helpers(&[behind()])).expect_err("no layout for a Rational");
     assert!(refused.downcast_ref::<NotLowered>().is_some(), "{refused}");
-}
-
-/// A `Raw` is the external form itself, which the runtime builds to write a value and holds only
-/// until it is written, so no program holds one as a value yet. Refused as not lowered, as a
-/// `Rational` is, and not as the two halves disagreeing: the checker does write one.
-#[test]
-fn a_raw_is_not_lowered_where_a_value_of_it_is_held() {
-    let refused = object_for(&helpers(&[helper("m.raw", &[RAW], &read(0, RAW))]))
-        .expect_err("no layout for a Raw");
-    assert!(refused.downcast_ref::<NotLowered>().is_some(), "{refused}");
-    assert!(refused.to_string().contains("Raw"), "{refused}");
 }
 
 /// Two helpers one module holds under one name: whichever was read last would be checked, and
@@ -1653,12 +1640,15 @@ fn a_function_stands_as_one_taking_less_and_answering_more() {
 fn a_concat_operand_narrower_than_its_slot_without_a_widen_is_the_halves_disagreeing() {
     let b = r#"{"ref":{"is":"declared","declared":"m.B"}}"#;
     let joined = |left: &str, right: &str| {
-        node(
-            "binary",
-            &format!(
-                r#""op":"CONCAT","reading":{{"is":"astheystand"}},"left":{left},"right":{right}"#
+        with_outer_aborts(
+            &node(
+                "binary",
+                &format!(
+                    r#""op":"CONCAT","reading":{{"is":"astheystand"}},"left":{left},"right":{right}"#
+                ),
+                &list_of(S),
             ),
-            &list_of(S),
+            r#""REQUIRED_FORM_HAS_NO_PLACE""#,
         )
     };
     let takes = [list_of(A), list_of(b)];
@@ -1679,7 +1669,29 @@ fn a_concat_operand_narrower_than_its_slot_without_a_widen_is_the_halves_disagre
 /// Two strings joined are a string, and each side is one.
 #[test]
 fn a_concat_of_two_strings_reads_whole() {
-    let joined = node(
+    let no_place = r#""REQUIRED_FORM_HAS_NO_PLACE""#;
+    let join = |ty: &str| {
+        node(
+            "binary",
+            &format!(
+                r#""op":"CONCAT","reading":{{"is":"astheystand"}},"left":{},"right":{}"#,
+                read(0, STRING),
+                read(1, STRING)
+            ),
+            ty,
+        )
+    };
+    let joined = with_outer_aborts(&join(STRING), no_place);
+    reads_whole(&helpers(&[h(&[STRING, STRING], &joined)]));
+    let answered_wrong = with_outer_aborts(&join(INT), no_place);
+    is_the_halves_disagreeing(&helpers(&[h(&[STRING, STRING], &answered_wrong)]), "++");
+}
+
+/// A join can be longer than a string or a list holds, and says so: one that names no reason for
+/// ending without a value is the two halves disagreeing, as one that names another is.
+#[test]
+fn a_concat_names_the_one_reason_it_can_end_for() {
+    let join = node(
         "binary",
         &format!(
             r#""op":"CONCAT","reading":{{"is":"astheystand"}},"left":{},"right":{}"#,
@@ -1688,24 +1700,16 @@ fn a_concat_of_two_strings_reads_whole() {
         ),
         STRING,
     );
-    reads_whole(&helpers(&[h(&[STRING, STRING], &joined)]));
-    let answered_wrong = node(
-        "binary",
-        &format!(
-            r#""op":"CONCAT","reading":{{"is":"astheystand"}},"left":{},"right":{}"#,
-            read(0, STRING),
-            read(1, STRING)
-        ),
-        INT,
-    );
-    is_the_halves_disagreeing(&helpers(&[h(&[STRING, STRING], &answered_wrong)]), "++");
+    is_the_halves_disagreeing(&helpers(&[h(&[STRING, STRING], &join)]), "a join");
+    let another = with_outer_aborts(&join, r#""DIVISION_BY_ZERO""#);
+    is_the_halves_disagreeing(&helpers(&[h(&[STRING, STRING], &another)]), "a join");
 }
 
 /// The product `m.R` with the fields and clauses given, and the helpers given; one module `m`.
 fn with_clauses(fields: &str, invariants: &str, helpers: &[String]) -> String {
     format!(
         concat!(
-            r#"{{"transport":26,"declarations":["#,
+            r#"{{"transport":27,"declarations":["#,
             r#"{{"module":"m","name":"R","by":"amodule","is":"product","#,
             r#""fields":[{}],"invariants":[{}]}}],"#,
             r#""behaviors":[],"#,
@@ -2096,7 +2100,7 @@ fn a_newtype_that_wraps_itself_is_the_halves_disagreeing() {
             read(1, n)
         );
         format!(
-            r#"{{"transport":26,"declarations":[{}],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[{}],"values":[],"entries":[],"definitions":[],"examples":[]}}]}}"#,
+            r#"{{"transport":27,"declarations":[{}],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[{}],"values":[],"entries":[],"definitions":[],"examples":[]}}]}}"#,
             declarations.join(","),
             h(&[n, n], &body)
         )
@@ -2506,12 +2510,12 @@ fn only_the_kinds_that_can_end_a_run_name_a_reason_to() {
     );
 }
 
-/// What a binary operator can end a run for is decided by which operator it is: arithmetic may, and
-/// a comparison, a truth operator and a join never do. One of those naming a reason is a document
-/// the checker does not write, and is refused as that: the lowering of a comparison does not read
-/// a reason at all, so a document that got past here would be made into an object.
+/// What a binary operator can end a run for is decided by which operator it is: arithmetic and a
+/// join may, and a comparison and a truth operator never do. One of those naming a reason is a
+/// document the checker does not write, and is refused as that: the lowering of a comparison does
+/// not read a reason at all, so a document that got past here would be made into an object.
 #[test]
-fn only_arithmetic_names_a_reason_to_end_a_run() {
+fn a_comparison_and_a_truth_operator_name_no_reason_to_end_a_run() {
     let over = |op: &str, ty: &str, answers: &str| {
         node(
             "binary",
@@ -2532,7 +2536,6 @@ fn only_arithmetic_names_a_reason_to_end_a_run() {
         ("GE", INT, BOOL),
         ("AND", BOOL, BOOL),
         ("OR", BOOL, BOOL),
-        ("CONCAT", STRING, STRING),
     ] {
         reads_whole(&helpers(&[h(&[ty, ty], &over(op, ty, answers))]));
         is_the_halves_disagreeing(
@@ -2594,7 +2597,7 @@ fn a_construction_of_another_builds_type_names_the_reason_its_clauses_give() {
         );
         format!(
             concat!(
-                r#"{{"transport":26,"declarations":["#,
+                r#"{{"transport":27,"declarations":["#,
                 r#"{{"module":"m","name":"R","by":"onthepath","is":"product","#,
                 r#""fields":[{}],"headers":[{}]}}],"behaviors":[],"#,
                 r#""modules":[{{"name":"m","publishes":[],"helpers":[{}],"values":[],"#,
@@ -2780,7 +2783,7 @@ fn an_arm_binds_and_says_what_it_reads_it_as_together() {
 fn a_handover_carries_a_value_the_module_builds() {
     let value = |carries: &str| {
         format!(
-            r#"{{"transport":26,"declarations":[],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[],"values":[{{"module":"m","name":"ks","handovers":[],"body":{}}},{{"module":"m","name":"ys","handovers":[{{"parameter":"dep","type":{INT},"carries":{{"module":"m","name":"{carries}"}}}}],"body":{}}}],"entries":[],"definitions":[],"examples":[]}}]}}"#,
+            r#"{{"transport":27,"declarations":[],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[],"values":[{{"module":"m","name":"ks","handovers":[],"body":{}}},{{"module":"m","name":"ys","handovers":[{{"parameter":"dep","type":{INT},"carries":{{"module":"m","name":"{carries}"}}}}],"body":{}}}],"entries":[],"definitions":[],"examples":[]}}]}}"#,
             int(1),
             read(0, INT)
         )
@@ -3265,7 +3268,7 @@ fn what_clauses_are_answered_under_crosses_where_another_build_runs_them() {
     let declared = |by: &str, clauses: &str| {
         format!(
             concat!(
-                r#"{{"transport":26,"declarations":["#,
+                r#"{{"transport":27,"declarations":["#,
                 r#"{{"module":"m","name":"R","by":"{}","is":"product","#,
                 r#""fields":[{}]{}}}],"behaviors":[],"#,
                 r#""modules":[{{"name":"m","publishes":[],"helpers":[],"values":[],"#,

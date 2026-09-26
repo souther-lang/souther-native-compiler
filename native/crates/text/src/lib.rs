@@ -33,8 +33,9 @@ pub use case::{lowercase, uppercase};
 pub use decimal::{DecimalText, decimal_text};
 pub use integer::{integer, written};
 pub use operations::{
-    MOST, append, characters, code_points_of, contains, ends_with, is_whitespace, join, lines,
-    pad_left, pad_right, repeat, replace, reverse, slice, split, starts_with, trim, words,
+    LONGEST, append, characters, code_points_of, contains, ends_with, holds, is_whitespace, join,
+    joined_holds, lines, pad_left, pad_right, repeat, replace, replaced_holds, reverse, slice,
+    split, starts_with, trim, words,
 };
 pub use tables::UNICODE_VERSION;
 

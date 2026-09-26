@@ -172,7 +172,7 @@ fn functions() -> Vec<(&'static str, Shape)> {
         ),
         (
             "souther_string_concat",
-            shape_of(souther_string_concat as unsafe extern "C" fn(T, T) -> M),
+            shape_of(souther_string_concat as unsafe extern "C" fn(T, T, *mut M) -> i8),
         ),
         (
             "souther_string_code_points",
@@ -184,11 +184,11 @@ fn functions() -> Vec<(&'static str, Shape)> {
         ),
         (
             "souther_string_lowercase",
-            shape_of(souther_string_lowercase as unsafe extern "C" fn(T) -> M),
+            shape_of(souther_string_lowercase as unsafe extern "C" fn(T, *mut M) -> i8),
         ),
         (
             "souther_string_uppercase",
-            shape_of(souther_string_uppercase as unsafe extern "C" fn(T) -> M),
+            shape_of(souther_string_uppercase as unsafe extern "C" fn(T, *mut M) -> i8),
         ),
         (
             "souther_string_contains",
@@ -218,15 +218,15 @@ fn functions() -> Vec<(&'static str, Shape)> {
         ),
         (
             "souther_string_join",
-            shape_of(souther_string_join as unsafe extern "C" fn(T, *const List) -> M),
+            shape_of(souther_string_join as unsafe extern "C" fn(T, *const List, *mut M) -> i8),
         ),
         (
             "souther_string_concat_all",
-            shape_of(souther_string_concat_all as unsafe extern "C" fn(*const List) -> M),
+            shape_of(souther_string_concat_all as unsafe extern "C" fn(*const List, *mut M) -> i8),
         ),
         (
             "souther_string_replace",
-            shape_of(souther_string_replace as unsafe extern "C" fn(T, T, T) -> M),
+            shape_of(souther_string_replace as unsafe extern "C" fn(T, T, T, *mut M) -> i8),
         ),
         (
             "souther_string_words",
@@ -246,7 +246,7 @@ fn functions() -> Vec<(&'static str, Shape)> {
         ),
         (
             "souther_string_reverse",
-            shape_of(souther_string_reverse as unsafe extern "C" fn(T) -> M),
+            shape_of(souther_string_reverse as unsafe extern "C" fn(T, *mut M) -> i8),
         ),
         (
             "souther_string_repeat",
@@ -586,7 +586,9 @@ fn functions() -> Vec<(&'static str, Shape)> {
         ),
         (
             "souther_string_from_decimal",
-            shape_of(souther_string_from_decimal as unsafe extern "C" fn(*const Decimal) -> M),
+            shape_of(
+                souther_string_from_decimal as unsafe extern "C" fn(*const Decimal, *mut M) -> i8,
+            ),
         ),
         (
             "souther_external_decimal",

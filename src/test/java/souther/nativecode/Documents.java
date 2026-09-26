@@ -13,8 +13,8 @@ public final class Documents {
 
     /**
      * The document the driver's own tests of function values are held to, which no source writes
-     * yet (souther-lang/souther#1974, #1990): `m` publishing function values of every shape a host
-     * is handed.
+     * whole: `m` publishing function values of every shape a host is handed, among them one that
+     * answers a function and one that makes an optional, which the checker refuses to write.
      */
     public static final Path FUNCTIONS =
             Path.of("native", "crates", "compiler", "tests", "functions.transport.json");

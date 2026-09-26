@@ -294,9 +294,16 @@ pub unsafe extern "C" fn souther_string_compare(
 ///
 /// As [`souther_string_compare`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_string_concat(left: *const Text, right: *const Text) -> *mut Text {
-    let joined = unsafe { append(text(&left), text(&right)) };
-    string_of(&joined)
+pub unsafe extern "C" fn souther_string_concat(
+    left: *const Text,
+    right: *const Text,
+    out: *mut *mut Text,
+) -> i8 {
+    let (left, right) = unsafe { (text(&left), text(&right)) };
+    let joined = souther_text::joined_holds(Held::held(""), &[left, right])
+        .then(|| append(left, right))
+        .filter(|it| souther_text::holds(it));
+    unsafe { answered(joined.as_deref().map(string_of), out) }
 }
 
 /// A string holding this text, for a caller outside a Souther program.
@@ -655,7 +662,9 @@ mod tests {
     }
 
     fn joined_text(one: *const Text, other: *const Text) -> *mut Text {
-        unsafe { souther_string_concat(one, other) }
+        let mut out = std::ptr::null_mut();
+        assert_eq!(unsafe { souther_string_concat(one, other, &mut out) }, 1);
+        out
     }
 
     /// Room for `size` bytes, as generated code asks for it.

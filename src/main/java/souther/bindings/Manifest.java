@@ -58,7 +58,7 @@ public final class Manifest {
     public static final String FORMAT = "souther-native-interface";
 
     /** The version of what a manifest says that this reads. */
-    public static final int VERSION = 12;
+    public static final int VERSION = 13;
 
     /** The ABI generation the functions this binds answer to. */
     public static final int ABI = 5;
@@ -448,7 +448,7 @@ public final class Manifest {
 
     /** What stands in the way of a value crossing to a host. */
     public enum Reason {
-        /** A type with no representation for a host yet: a {@code Rational}, a {@code Raw}, a set, a map. */
+        /** A type with no representation for a host yet: a {@code Rational}, a set, a map. */
         NO_REPRESENTATION,
         /** A type with no value to hand over. */
         NO_VALUE,

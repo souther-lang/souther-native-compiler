@@ -132,16 +132,15 @@ runtime — a literal is made there from the integer and the scale the checker r
 object carries — and what each answers is the runtime's `amount` module: the scale a sum, a
 difference and a product answer at, each of `RoundingMode`'s seven cases, `Decimal.divide`
 answering `DivisionByZero` before it looks at the scale, `String.toDecimal` reading decimal text by
-the grammar the language states (souther-lang/souther f391aa62a; the JVM this build is tested
-against still reads it as `new BigDecimal`) and `String.fromDecimal` writing plain notation at the
-value's scale. Equality and order are by amount, so `1.0` and `1.00` are equal. The integer is
+the grammar the language states and `String.fromDecimal` writing plain notation at the value's
+scale. Equality and order are by amount, so `1.0` and `1.00` are equal. The integer is
 held in a `u128` where it fits, which is nearly every amount, and every operation on it is machine
 arithmetic there; `num-bigint` works it out only past that, inside the runtime's `magnitude` module,
 and a test holds every `u128` path to what `num-bigint` answers for the same operands. A result whose scale leaves the 32-bit
 range, or whose integer is wider than a JVM `BigInteger` holds, ends the run where it is computed; a
 value a long way below the unit it is rounded to is rounded from how many digits it has, without the
-power of ten its scale names. A plain notation longer than a string holds ends the process, since
-the checker this build reads names no reason for `String.fromDecimal` to end a run. A boundary
+power of ten its scale names. A plain notation longer than a string holds ends the run, measured
+before any of it is written. A boundary
 writes a `Decimal` as its amount and not at its scale — `1.50` is written `1.5` and `100.00` is
 written `100`, an exponent spelt out into at most a thousand digits — and reads one at the scale the
 number was spelt at. The cases of `RoundingMode` are declared by the language and at home in no
@@ -171,8 +170,6 @@ grammar, and only a boundary reads text by it. An instant is read from an offset
 names, a fraction of a second in a `Time` or a `DateTime` is a decode issue and never dropped, and a
 leap second is refused. `ATemporalAnswersWhatTheJvmAnswersTest` holds every kernel and comparison
 to what `java.time` answers over the ends of every range and a seeded run of the rest.
-`Raw`, the external form itself, is not laid out: the runtime builds one to write a value and
-consumes it when it is written, and no program holds one as a value yet.
 
 A value of a union says which case it is by the token at the front of it. A declared case's token is
 its declaration's; an `Int`, a `Bool`, a `String`, a `Decimal` or a temporal standing as a case, and a case the language
@@ -341,9 +338,10 @@ first, what the value was called with and room for its answer, and what it answe
 implementation of a behavior's is. Nothing is copied, so the room, the function and what it is
 handed stay the host's for as long as the value may be called. A function value of a shape is
 called by a host where one is handed to a host, and made by one where one is taken from a host, and
-the manifest says each only where it is there (`call`, `make`), for the reason a list's are. No
-source publishes a function value
-yet (souther-lang/souther#1974, #1990), so this is held by tests over a document written by hand,
+the manifest says each only where it is there (`call`, `make`), for the reason a list's are. A source
+publishes a function value, but none writes every shape a host is handed: a function that answers a
+function is refused (E1809, a block is not a value) and an optional is made nowhere but where a field
+is given a value (E1303). So this is held by tests over a document written by hand,
 `native/crates/compiler/tests/functions.transport.json`.
 
 A clause of a type the module keeps and nothing here builds or reads, or one whose fields have no
@@ -470,8 +468,8 @@ behavior's `call` takes the capabilities of what it requires first, as `requirem
 names two readings of a value: `decode`, out of text in the external form, and `decodehost`, out of
 a value a host built of ordered maps and wrote with every container as an object, in which a map
 keyed by its indices is read as an array wherever the declaration holds one. What a manifest may say
-is Rust types, and version 12
-is `native/crates/compiler/tests/interface-v12.json`: a test holds a program's manifest to it, and
+is Rust types, and version 13
+is `native/crates/compiler/tests/interface-v13.json`: a test holds a program's manifest to it, and
 another reads it with those types and writes it back unchanged. The manifest carries its own
 `version`, moved when what it says is read differently, and the `abi` its functions answer to,
 which is the generation in every symbol.
