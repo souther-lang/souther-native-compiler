@@ -9,6 +9,7 @@
 //! Hangul's syllables by the formula Unicode states for them rather than by a table.
 
 use crate::Text;
+use crate::capacity::{Capacity, units};
 use crate::tables::{COMBINING_CLASS, COMPOSITION, DECOMPOSITION, SECOND_OF_A_PAIR};
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -34,8 +35,22 @@ pub(crate) fn nfc(text: &str) -> String {
     normalized(text.chars())
 }
 
+/// Text arriving from outside in NFC, a run at a time, so that what is decomposed and reordered at
+/// once is never more than a run however long the text is. What a door is handed is held already,
+/// and so is not measured.
+pub(crate) fn nfc_of_input(text: &str) -> String {
+    if text.is_ascii() {
+        return String::from(text);
+    }
+    let mut joined = Joined::new(Capacity::UNBOUNDED);
+    joined
+        .push_unnormalized(text)
+        .expect("text with no bound to spend is never more than it");
+    joined.finished()
+}
+
 /// These characters in NFC.
-pub(crate) fn normalized(characters: impl Iterator<Item = char>) -> String {
+fn normalized(characters: impl Iterator<Item = char>) -> String {
     let mut decomposed = Vec::new();
     for character in characters {
         decompose(u32::from(character), &mut decomposed);
@@ -47,7 +62,7 @@ pub(crate) fn normalized(characters: impl Iterator<Item = char>) -> String {
         .collect()
 }
 
-/// Text in NFC made by joining runs of text each in NFC already.
+/// Text in NFC made by joining runs of text each in NFC already, within what a carrier holds.
 ///
 /// NFC is not closed under joining, but what joining two runs can change is only where they meet:
 /// the code points from the last stable starter of the first run to the first one of the second
@@ -58,31 +73,86 @@ pub(crate) fn normalized(characters: impl Iterator<Item = char>) -> String {
 /// A stable starter is one nothing written after it is reordered in front of it. The first run's text before its last one is
 /// already what NFC makes of it and nothing after can reach it. The second run's text from its
 /// first one that is also no second of a pair is out of reach of anything before it.
-pub(crate) struct Joined(String);
+///
+/// The one way text is built here, so the one place a carrier's bound is held, and it is held as a
+/// budget spent before each run is written: the runs as they were handed over are what the language
+/// defines an operation as canonicalizing (spec §what-a-string-holds), so they are what must be
+/// held. What they come to in NFC is never longer, since runs in NFC only compose where they meet,
+/// so holding the one holds the other.
+pub(crate) struct Joined {
+    text: String,
+    /// What has been handed over, in UTF-16 units.
+    handed: i64,
+    capacity: Capacity,
+}
 
 impl Joined {
-    pub(crate) fn new() -> Joined {
-        Joined(String::new())
+    pub(crate) fn new(capacity: Capacity) -> Joined {
+        Joined {
+            text: String::new(),
+            handed: 0,
+            capacity,
+        }
     }
 
-    /// `next` joined on.
-    pub(crate) fn push(&mut self, next: Text) {
+    /// `next` joined on, or nothing where what has been handed over would then be more than is
+    /// held. Nothing is written for a run that does not fit.
+    pub(crate) fn push(&mut self, next: Text) -> Option<()> {
         let next = next.as_str();
+        let handed = self.handed.saturating_add(units(next));
+        if !self.capacity.holds(handed) {
+            return None;
+        }
+        self.handed = handed;
         let reach = out_of_reach(next);
         if reach == 0 {
-            self.0.push_str(next);
-            return;
+            self.text.push_str(next);
+            return Some(());
         }
-        let from = last_stable_starter(&self.0);
-        let mut seam = self.0.split_off(from);
+        let from = last_stable_starter(&self.text);
+        let mut seam = self.text.split_off(from);
         seam.push_str(&next[..reach]);
-        self.0.push_str(&nfc(&seam));
-        self.0.push_str(&next[reach..]);
+        self.text.push_str(&nfc(&seam));
+        self.text.push_str(&next[reach..]);
+        Some(())
+    }
+
+    /// Text not yet in NFC joined on, put in NFC a run at a time, and measured as it is handed
+    /// over.
+    ///
+    /// A run is a starter and what follows it up to the next code point nothing before can compose
+    /// with, so what is decomposed and reordered at once is a run and never the whole of the text.
+    pub(crate) fn push_unnormalized(&mut self, next: &str) -> Option<()> {
+        let mut from = 0;
+        for (at, character) in next.char_indices() {
+            if at > from && starts_a_run(character) {
+                self.push(Text(&nfc(&next[from..at])))?;
+                from = at;
+            }
+        }
+        self.push(Text(&nfc(&next[from..])))
     }
 
     pub(crate) fn finished(self) -> String {
-        self.0
+        debug_assert!(
+            units(&self.text) <= self.handed,
+            "runs in NFC only compose where they meet, so what they come to is not longer than what was handed over"
+        );
+        self.text
     }
+}
+
+/// Whether text that is not in NFC can be cut before this code point: the first code point of what
+/// it decomposes to is a starter no starter before can compose with, so nothing before it reaches
+/// it and it reaches nothing before.
+fn starts_a_run(character: char) -> bool {
+    if character.is_ascii() {
+        return true;
+    }
+    let mut decomposed = Vec::new();
+    decompose(u32::from(character), &mut decomposed);
+    let head = decomposed[0];
+    stable_starter(head) && !second_of_a_pair(head)
 }
 
 /// Whether nothing written after this code point is reordered in front of it, in text in NFC.
@@ -304,13 +374,41 @@ mod tests {
                     nfc(&written)
                 })
                 .collect();
-            let mut joined = Joined::new();
+            let mut joined = Joined::new(Capacity::UNBOUNDED);
             let mut whole = String::new();
             for run in &runs {
-                joined.push(Text::held(run));
+                joined.push(Text::held(run)).unwrap();
                 whole.push_str(run);
             }
             assert_eq!(joined.finished(), nfc(&whole), "{runs:?}");
+        }
+    }
+
+    /// Text that is not in NFC, put in NFC a run at a time, answers what NFC makes of the whole, over
+    /// what is composed, reordered, excluded, precomposed and decomposed to a starter that composes
+    /// backwards: cutting it into runs is sound only where nothing before a cut reaches what is
+    /// after it, which is what a random walk over the hard cases is for.
+    #[test]
+    fn a_run_at_a_time_answers_what_nfc_of_the_whole_does() {
+        let pool: [u32; 30] = [
+            0x61, 0x65, 0x41, 0xe9, 0xc5, 0x3c9, 0x2126, 0x1100, 0x1161, 0x11a8, 0xac00, 0xac01,
+            0x301, 0x302, 0x323, 0x308, 0x345, 0x304b, 0x304c, 0x3099, 0x915, 0x958, 0x93c, 0xb47,
+            0xb3e, 0xb4b, 0xf71, 0xf72, 0xf73, 0x344,
+        ];
+        let mut seed: u64 = 0x9e37_79b9_7f4a_7c15;
+        let mut next = |bound: usize| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % bound as u64) as usize
+        };
+        for _ in 0..20_000 {
+            let written: String = (0..next(9))
+                .map(|_| char::from_u32(pool[next(pool.len())]).unwrap())
+                .collect();
+            let mut joined = Joined::new(Capacity::UNBOUNDED);
+            joined.push_unnormalized(&written).unwrap();
+            assert_eq!(joined.finished(), nfc(&written), "{written:?}");
         }
     }
 

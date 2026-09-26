@@ -282,6 +282,16 @@ pub unsafe extern "C" fn souther_string_compare(
 }
 
 /// The two strings' text, one after the other, as a string of its own: `++` over two strings, and
+/// What a string holds on this carrier: how much text, in UTF-16 code units.
+///
+/// The language says the bound is the carrier's (spec §what-a-string-holds), and this carrier's own
+/// would be what its lengths count, which is far more. It takes the JVM's number instead, so that a
+/// program ends where it ends on either: the length every `java.lang.String` holds, whichever of
+/// its two encodings the JVM keeps it in. It is decided here and handed to every operation that
+/// builds text (`souther_text`), which spends it as it builds and writes nothing past it.
+pub(crate) const STRING_HOLDS: souther_text::Capacity =
+    souther_text::Capacity::of_units(1_073_741_819);
+
 /// `String.append`.
 ///
 /// In NFC, which each of the two is and the join need not be: a letter ending the one and a mark
@@ -299,10 +309,7 @@ pub unsafe extern "C" fn souther_string_concat(
     right: *const Text,
     out: *mut *mut Text,
 ) -> i8 {
-    let (left, right) = unsafe { (text(&left), text(&right)) };
-    let joined = souther_text::joined_holds(Held::held(""), &[left, right])
-        .then(|| append(left, right))
-        .filter(|it| souther_text::holds(it));
+    let joined = unsafe { append(text(&left), text(&right), STRING_HOLDS) };
     unsafe { answered(joined.as_deref().map(string_of), out) }
 }
 

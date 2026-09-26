@@ -7,7 +7,7 @@
 //! kernel that can answer nothing says only whether it wrote its value, and what the caller makes
 //! of that is the caller's contract.
 
-use crate::{Count, List, Text, souther_alloc, string_of, text};
+use crate::{Count, List, STRING_HOLDS, Text, souther_alloc, string_of, text};
 use souther_native_abi::{LIST_LENGTH, list_at, room_for_list};
 use souther_text::Text as Held;
 use souther_text::pattern;
@@ -69,22 +69,6 @@ pub(crate) unsafe fn answered<T>(value: Option<T>, out: *mut T) -> i8 {
     }
 }
 
-/// A string of the text `built` where a string holds it, written through `out`.
-///
-/// Text an operation builds is measured against what a string holds (`souther_text::LONGEST`)
-/// before it is written where the operation can say what it will come to, and again once it is
-/// built, since putting text in NFC can make it a different length from what was measured.
-///
-/// # Safety
-///
-/// `out` is room for the address of a string.
-unsafe fn held_string(built: Option<String>, out: *mut *mut Text) -> i8 {
-    let held = built
-        .filter(|it| souther_text::holds(it))
-        .map(|it| string_of(&it));
-    unsafe { answered(held, out) }
-}
-
 /// `String.trim`.
 ///
 /// # Safety
@@ -102,7 +86,8 @@ pub unsafe extern "C" fn souther_string_trim(s: *const Text) -> *mut Text {
 /// As [`souther_string_trim`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_string_lowercase(s: *const Text, out: *mut *mut Text) -> i8 {
-    unsafe { held_string(Some(souther_text::lowercase(text(&s))), out) }
+    let lowered = souther_text::lowercase(unsafe { text(&s) }, STRING_HOLDS);
+    unsafe { answered(lowered.as_deref().map(string_of), out) }
 }
 
 /// `String.uppercase`.
@@ -112,7 +97,8 @@ pub unsafe extern "C" fn souther_string_lowercase(s: *const Text, out: *mut *mut
 /// As [`souther_string_trim`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_string_uppercase(s: *const Text, out: *mut *mut Text) -> i8 {
-    unsafe { held_string(Some(souther_text::uppercase(text(&s))), out) }
+    let raised = souther_text::uppercase(unsafe { text(&s) }, STRING_HOLDS);
+    unsafe { answered(raised.as_deref().map(string_of), out) }
 }
 
 /// `String.contains`.
@@ -198,10 +184,8 @@ pub unsafe extern "C" fn souther_string_join(
     out: *mut *mut Text,
 ) -> i8 {
     let pieces = unsafe { texts(&xs) };
-    let separator = unsafe { text(&separator) };
-    let joined = souther_text::joined_holds(separator, &pieces)
-        .then(|| souther_text::join(separator, pieces));
-    unsafe { held_string(joined, out) }
+    let joined = souther_text::join(unsafe { text(&separator) }, pieces, STRING_HOLDS);
+    unsafe { answered(joined.as_deref().map(string_of), out) }
 }
 
 /// `String.concat`.
@@ -212,10 +196,8 @@ pub unsafe extern "C" fn souther_string_join(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_string_concat_all(xs: *const List, out: *mut *mut Text) -> i8 {
     let pieces = unsafe { texts(&xs) };
-    let nothing = Held::held("");
-    let joined =
-        souther_text::joined_holds(nothing, &pieces).then(|| souther_text::join(nothing, pieces));
-    unsafe { held_string(joined, out) }
+    let joined = souther_text::join(Held::held(""), pieces, STRING_HOLDS);
+    unsafe { answered(joined.as_deref().map(string_of), out) }
 }
 
 /// `String.replace`.
@@ -230,10 +212,9 @@ pub unsafe extern "C" fn souther_string_replace(
     s: *const Text,
     out: *mut *mut Text,
 ) -> i8 {
-    let (target, replacement, s) = unsafe { (text(&target), text(&replacement), text(&s)) };
-    let replaced = souther_text::replaced_holds(target, replacement, s)
-        .then(|| souther_text::replace(target, replacement, s));
-    unsafe { held_string(replaced, out) }
+    let replaced =
+        unsafe { souther_text::replace(text(&target), text(&replacement), text(&s), STRING_HOLDS) };
+    unsafe { answered(replaced.as_deref().map(string_of), out) }
 }
 
 /// `String.words`.
@@ -279,7 +260,8 @@ pub unsafe extern "C" fn souther_string_to_int(s: *const Text, out: *mut i64) ->
 /// As [`souther_string_trim`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_string_reverse(s: *const Text, out: *mut *mut Text) -> i8 {
-    unsafe { held_string(Some(souther_text::reverse(text(&s))), out) }
+    let reversed = souther_text::reverse(unsafe { text(&s) }, STRING_HOLDS);
+    unsafe { answered(reversed.as_deref().map(string_of), out) }
 }
 
 /// `String.repeat`, written through `out` where the count is one a string can hold.
@@ -293,8 +275,8 @@ pub unsafe extern "C" fn souther_string_repeat(
     s: *const Text,
     out: *mut *mut Text,
 ) -> i8 {
-    let repeated = souther_text::repeat(copies, unsafe { text(&s) });
-    unsafe { held_string(repeated, out) }
+    let repeated = souther_text::repeat(copies, unsafe { text(&s) }, STRING_HOLDS);
+    unsafe { answered(repeated.as_deref().map(string_of), out) }
 }
 
 /// `String.padLeft`, written through `out` where the width is one a string can hold.
@@ -309,7 +291,7 @@ pub unsafe extern "C" fn souther_string_pad_left(
     s: *const Text,
     out: *mut *mut Text,
 ) -> i8 {
-    let padded = unsafe { souther_text::pad_left(width, text(&pad), text(&s)) };
+    let padded = unsafe { souther_text::pad_left(width, text(&pad), text(&s), STRING_HOLDS) };
     unsafe { answered(padded.as_deref().map(string_of), out) }
 }
 
@@ -325,7 +307,7 @@ pub unsafe extern "C" fn souther_string_pad_right(
     s: *const Text,
     out: *mut *mut Text,
 ) -> i8 {
-    let padded = unsafe { souther_text::pad_right(width, text(&pad), text(&s)) };
+    let padded = unsafe { souther_text::pad_right(width, text(&pad), text(&s), STRING_HOLDS) };
     unsafe { answered(padded.as_deref().map(string_of), out) }
 }
 
