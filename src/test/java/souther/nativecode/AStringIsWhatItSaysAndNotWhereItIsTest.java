@@ -22,7 +22,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <p>The rows are the oracle, as they are everywhere else: a row that ran and whose answer kept it
  * is one the JVM answered, so a native run put to the same row is held to what the JVM said without
  * this file writing down what either of them should say. That matters most for the order, which is
- * by UTF-16 code unit and is not the order of the bytes.
+ * by scalar value and is not the order of a JVM string's UTF-16 code units.
  */
 class AStringIsWhatItSaysAndNotWhereItIsTest {
 
@@ -67,7 +67,8 @@ class AStringIsWhatItSaysAndNotWhereItIsTest {
                 | "a prefix comes first" : ("ab", "abc") -> true
                 | "nothing comes before everything" : ("", "a") -> true
                 | "neither comes before itself" : ("a", "a") -> false
-                | "past the basic plane, and before it" : ("𠮷", "￥") -> true
+                | "before the basic plane's end, and past it" : ("￥", "𠮷") -> true
+                | "past the basic plane, and before its end" : ("𠮷", "￥") -> false
 
             example joinIs
                 | "a join against a literal" : ("ab", "cd", "abcd") -> true
@@ -77,11 +78,11 @@ class AStringIsWhatItSaysAndNotWhereItIsTest {
     /**
      * Every row, run through the entry the object carries for it.
      *
-     * <p>Which is what holds the native answers to the JVM's. The ordering row is the one to read
-     * twice: {@code 𠮷} is U+20BB7 and {@code ￥} is U+FFE5, so by code point — and by the UTF-8
-     * bytes, which are in the same order — the first is the greater. The row says it comes first,
-     * because that is what the JVM answered, and an implementation that compared bytes would fail
-     * here and nowhere else in this file.
+     * <p>Which is what holds the native answers to the JVM's. The ordering rows are the ones to read
+     * twice: {@code 𠮷} is U+20BB7 and {@code ￥} is U+FFE5, so by scalar value — and by the UTF-8
+     * bytes, which are in the same order — {@code ￥} comes first. A JVM string's own order, by
+     * UTF-16 code unit, puts {@code 𠮷} first, since it begins with the unit D842, and an
+     * implementation that compared those would fail here and nowhere else in this file.
      */
     @Test
     void everyRowOverTextHoldsWhenTheNativeObjectAnswersIt() throws Exception {

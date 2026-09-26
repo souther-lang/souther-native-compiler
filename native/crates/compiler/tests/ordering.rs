@@ -31,7 +31,7 @@ fn ordering(ty: &str) -> String {
         )
     };
     format!(
-        r#"{{"transport":22,"declarations":[{},{},{},{}],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[{helper}],"values":[],"entries":[],"definitions":[],"examples":[]}}]}}"#,
+        r#"{{"transport":23,"declarations":[{},{},{},{}],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[{helper}],"values":[],"entries":[],"definitions":[],"examples":[]}}]}}"#,
         unit("A"),
         unit("B"),
         sum("S", &["A", "B"]),

@@ -45,10 +45,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class ARowHoldsWhereverItIsRunTest {
 
     /**
-     * A behavior the module publishes, so that what the object exports is among what runs here as
-     * well as what it keeps. Every other corpus below writes no {@code exposing} clause, which is
-     * a module that publishes nothing — and a row of a name nobody outside the module may reach is
-     * run the same way as any other, through the entry the object carries for it.
+     * A behavior the module names in its clause, so that what the object exports is among what runs
+     * here as well as what it keeps. The next corpus writes {@code exposing ()}, which is a module
+     * that publishes nothing — and a row of a name nobody outside the module may reach is run the
+     * same way as any other, through the entry the object carries for it.
      */
     private static final String ARITHMETIC = """
             module calculation exposing ( add )
@@ -63,7 +63,7 @@ class ARowHoldsWhereverItIsRunTest {
             """;
 
     private static final String COMPARING = """
-            module comparing
+            module comparing exposing ()
 
             behavior less : (a: Int, b: Int) -> Int
             let less (a, b) = a - b

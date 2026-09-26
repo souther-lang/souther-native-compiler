@@ -396,7 +396,7 @@ fn document() -> String {
         })
         .collect();
     json!({
-        "transport": 22,
+        "transport": 23,
         "declarations": declarations(),
         "behaviors": targets,
         "modules": [{"name": "m", "publishes": ["m.A", "m.P", "m.R", "m.Q"], "helpers": [], "values": [],

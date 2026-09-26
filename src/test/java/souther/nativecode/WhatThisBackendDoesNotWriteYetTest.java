@@ -111,24 +111,6 @@ class WhatThisBackendDoesNotWriteYetTest {
     }
 
     /**
-     * A fold seeded with a value holding {@code []} that the checker's compiler does not rewrite
-     * hands its helper a seed and a step typed at that {@code []}, narrower than what the fold
-     * settles and with nothing saying it stands wider (souther-lang/souther#1958). Refused as not
-     * lowered, naming that, until the tree says it.
-     */
-    @Test
-    void aFoldSeededWithAnEmptyListItDoesNotGrowIsNotLoweredYet() {
-        assertThatThrownBy(() -> NativeCompiler.compile(CheckedProgram.of(List.of("""
-                module dropping exposing ( rest )
-
-                behavior rest : (a: Int) -> Int
-                let rest (a) = List.length(List.drop(a, [1, 2, 3]))
-                """))))
-                .isInstanceOf(NotLowered.class)
-                .hasMessageContaining("souther-lang/souther#1958");
-    }
-
-    /**
      * A fold over an empty list literal that is not rewritten into a walk hands its helper a
      * function over what has no value, which it never applies. The checker's backend hands
      * {@code Fn.NEVER} in its place; a copy here would have to take a function over a type nothing

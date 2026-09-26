@@ -395,7 +395,8 @@ final class Running {
                 String reached = module.name() + "." + behavior.name().name();
                 List<Type> takes = behavior.signature().takes();
                 String boundary = "souther" + ABI + "." + reached + "$boundary";
-                if (carried.contains(PREFIX + boundary) && everyOneCrosses(takes)) {
+                if (carried.contains(PREFIX + boundary) && everyOneCrosses(takes)
+                        && everyOneStandsIn(behavior.requirements())) {
                     entries.add(new Entry(reached, "souther" + ABI + "." + reached, takes,
                             behavior.requirements()));
                 }
@@ -408,6 +409,27 @@ final class Running {
             }
         }
         return entries;
+    }
+
+    /**
+     * Whether a stand-in here can be written for each of what a behavior requires: a C function
+     * taking and answering what the dependency does, which {@link #cType} spells or refuses.
+     *
+     * <p>A row's entry is not asked this. What stands in for a row's dependencies is the object's
+     * own, built from what the row states, and not a function written here.
+     */
+    private boolean everyOneStandsIn(List<ValueName.Behavior> requires) {
+        for (ValueName.Behavior dependency : requires) {
+            CheckedSignature signature = program.behavior(dependency).signature();
+            List<Type> spoken = new ArrayList<>(signature.takes());
+            spoken.add(signature.answers());
+            for (Type type : spoken) {
+                if (!(type instanceof Type.Ref) && !everyOneCrosses(List.of(type))) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     private static boolean everyOneCrosses(List<Type> takes) {

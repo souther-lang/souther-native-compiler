@@ -1035,11 +1035,6 @@ impl<'a> Walk<'_, 'a> {
             Reaches::Behavior { declared } => {
                 (declared.clone(), self.targets.named(declared)?.takes())
             }
-            // Held to nothing, and refused as not lowered (`call`).
-            Reaches::Helper { reached } if self.seeded_as_nothing(reached, arguments, answers) => (
-                spelt_declaration(reached.declaration()),
-                arguments.iter().map(|it| it.ty().clone()).collect(),
-            ),
             Reaches::Helper { reached } => {
                 let (held, bound) = self.helper_called(reached, arguments, answers)?;
                 let takes = held
@@ -1930,32 +1925,6 @@ impl<'a> Walk<'_, 'a> {
         Ok((held, bound))
     }
 
-    /// Whether a call of a helper this module holds, handed as many values as it takes, fits the
-    /// helper only where the type of what has no value stands for what the call settles.
-    ///
-    /// The checker types a fold seeded with a value holding `[]` at that seed: the seed stands as
-    /// the accumulator with no `Widen` saying so, and the step takes it at the seed's type though
-    /// it is handed the accumulator's (souther-lang/souther#1958). Reading `Nothing` here as
-    /// whatever the call settles would be the checker's rule of what may stand where, written a
-    /// second time, so such a call is refused as not lowered until the tree says it.
-    fn seeded_as_nothing(&self, reference: &Reference, arguments: &[Node], answers: &Ty) -> bool {
-        let Some(held) = self
-            .reached
-            .helpers
-            .get(&(self.carrier.module(), reference))
-        else {
-            return false;
-        };
-        let handed: Vec<&Ty> = arguments.iter().map(Node::ty).collect();
-        held.parameters.len() == arguments.len()
-            && handed
-                .iter()
-                .copied()
-                .chain([answers])
-                .any(Ty::writes_nothing)
-            && crate::specialize::called(held, &handed, answers).is_none()
-    }
-
     /// A call's type against what it reaches answers, and how many values it hands over against
     /// how many that takes. What each argument stands as is [`Walk::slots`]'s.
     fn call(
@@ -1979,16 +1948,7 @@ impl<'a> Walk<'_, 'a> {
             }
             // What it answers stands where its variables are bound from, so a call answering
             // other than what the helper answers was refused where they were bound.
-            Reaches::Helper { reached } => {
-                if self.seeded_as_nothing(reached, arguments, ty) {
-                    self.not_lowered(format!(
-                        "a call of {} handed a value typed as the `[]` it was seeded with, where \
-                         the call settles it wider (souther-lang/souther#1958)",
-                        spelt_declaration(reached.declaration())
-                    ));
-                }
-                Ok(())
-            }
+            Reaches::Helper { reached: _ } => Ok(()),
             Reaches::Value { module, name } => {
                 let joined = format!("{module}.{name}");
                 let value = self.reached.values[&(self.carrier.module(), joined.clone())];

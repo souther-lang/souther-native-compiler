@@ -53,66 +53,17 @@ pub fn code_points(text: &[u8]) -> usize {
     counted
 }
 
-/// Two runs of text, compared by UTF-16 code unit.
+/// Two runs of text, in the order the language gives text.
 ///
-/// Which is what the language says text is ordered by, and it is said there rather than worked out
-/// here: `<` `<=` `>` `>=` compare lexicographically over UTF-16 code units, and a carrier that
-/// stores a string some other way orders it as if it were that sequence regardless — the
-/// representation is this carrier's to choose and the order is not (spec §equality).
-///
-/// It is not the order the bytes are in, and not the order the code points are in either, which are
-/// the same order as each other. A code point past the basic plane is two units beginning at D800
-/// and a unit from E000 up is one, so `𠮷` (U+20BB7) comes before `￥` (U+FFE5) here and after it by
-/// either of the other two readings.
-pub fn compare_utf8_as_utf16(left: &[u8], right: &[u8]) -> Ordering {
-    let mut a = Units::over(left);
-    let mut b = Units::over(right);
-    loop {
-        match (a.next(), b.next()) {
-            (None, None) => return Ordering::Equal,
-            (None, Some(_)) => return Ordering::Less,
-            (Some(_), None) => return Ordering::Greater,
-            (Some(x), Some(y)) if x != y => return x.cmp(&y),
-            _ => {}
-        }
-    }
-}
-
-/// The UTF-16 code units a run of UTF-8 spells, one at a time.
-///
-/// A pair is answered over two turns, which is what `pending` holds: the second unit of a surrogate
-/// pair is never nought, so nought stands for there being none.
-struct Units<'a> {
-    text: &'a [u8],
-    at: usize,
-    pending: u16,
-}
-
-impl<'a> Units<'a> {
-    fn over(text: &'a [u8]) -> Units<'a> {
-        Units {
-            text,
-            at: 0,
-            pending: 0,
-        }
-    }
-
-    fn next(&mut self) -> Option<u16> {
-        if self.pending != 0 {
-            let low = self.pending;
-            self.pending = 0;
-            return Some(low);
-        }
-        let (point, width) = decoded(self.text, self.at)?;
-        self.at += width;
-        if point > 0xffff {
-            let rest = point - 0x10000;
-            self.pending = 0xdc00 + (rest & 0x3ff) as u16;
-            Some(0xd800 + (rest >> 10) as u16)
-        } else {
-            Some(point as u16)
-        }
-    }
+/// A string is a sequence of Unicode scalar values and is ordered lexicographically over them: the
+/// first value where the two differ decides, and a run that begins the other comes before it (spec
+/// §equality). UTF-8 writes scalar values in an order its bytes keep — a greater value is written
+/// with a greater first byte, or the same first byte and a greater byte after it — so the order of
+/// the bytes is that order, and nothing is decoded to answer it. A carrier holding UTF-16 would
+/// have to correct its units where a surrogate meets a unit from E000 up; this one has nothing to
+/// correct.
+pub fn compare(left: &[u8], right: &[u8]) -> Ordering {
+    left.cmp(right)
 }
 
 #[cfg(test)]
@@ -138,57 +89,46 @@ mod tests {
         }
     }
 
-    /// Text is ordered by UTF-16 code unit, which differs from the order of the code points exactly
-    /// where one is past the basic plane and the other is at E000 or above.
+    /// Text is ordered by scalar value, which puts a character past the basic plane after one from
+    /// E000 up: the order a JVM string's UTF-16 units are in is the other way round there.
     #[test]
-    fn text_is_ordered_by_utf16_code_unit() {
+    fn text_is_ordered_by_scalar_value() {
+        assert_eq!(compare("￥".as_bytes(), "𠮷".as_bytes()), Ordering::Less);
+        assert_eq!(compare("a".as_bytes(), "ab".as_bytes()), Ordering::Less);
+        assert_eq!(compare("b".as_bytes(), "ab".as_bytes()), Ordering::Greater);
         assert_eq!(
-            compare_utf8_as_utf16("𠮷".as_bytes(), "￥".as_bytes()),
-            Ordering::Less
-        );
-        assert_eq!(
-            compare_utf8_as_utf16("a".as_bytes(), "ab".as_bytes()),
-            Ordering::Less
-        );
-        assert_eq!(
-            compare_utf8_as_utf16("b".as_bytes(), "ab".as_bytes()),
-            Ordering::Greater
-        );
-        assert_eq!(
-            compare_utf8_as_utf16("日本".as_bytes(), "日本".as_bytes()),
+            compare("日本".as_bytes(), "日本".as_bytes()),
             Ordering::Equal
         );
+        assert_eq!(compare("".as_bytes(), "a".as_bytes()), Ordering::Less);
     }
 
-    /// The length and the order read ill-formed bytes the same way, because both read them through
-    /// one decoding: the length is how many code points the order walks over. A reading of its own
-    /// for either would part from the other here and nowhere a Souther string can reach.
+    /// The order of the bytes is the order of the scalar values they write, for every pair of
+    /// characters one byte-width boundary apart and on either side of the surrogates.
     #[test]
-    fn the_length_and_the_order_read_the_same_code_points() {
-        let texts: [&[u8]; 8] = [
-            b"",
-            b"plain",
-            "日本語🇯🇵".as_bytes(),
-            b"\x80",
-            b"\xe3\x81",
-            b"a\xf0\x9f",
-            b"\xc3",
-            b"\xff\xfe",
+    fn the_bytes_are_in_the_order_of_the_scalar_values_they_write() {
+        let points: [char; 12] = [
+            '\u{0}',
+            '\u{7f}',
+            '\u{80}',
+            '\u{7ff}',
+            '\u{800}',
+            '\u{d7ff}',
+            '\u{e000}',
+            '\u{ffe5}',
+            '\u{ffff}',
+            '\u{10000}',
+            '\u{20bb7}',
+            '\u{10ffff}',
         ];
-        for text in texts {
-            let mut units = Units::over(text);
-            let mut walked = 0;
-            loop {
-                // The second half of a pair is the same code point as the first.
-                let starts_one = units.pending == 0;
-                if units.next().is_none() {
-                    break;
-                }
-                if starts_one {
-                    walked += 1;
-                }
+        let mut written = [0u8; 4];
+        let mut other = [0u8; 4];
+        for one in points {
+            for another in points {
+                let a = one.encode_utf8(&mut written).as_bytes();
+                let b = another.encode_utf8(&mut other).as_bytes();
+                assert_eq!(compare(a, b), one.cmp(&another), "{one:?} {another:?}");
             }
-            assert_eq!(code_points(text), walked, "{text:?}");
         }
     }
 
@@ -199,7 +139,6 @@ mod tests {
         for cut in 1..whole.len() {
             let part: Vec<u8> = whole[..cut].to_vec();
             assert_eq!(code_points(&part), 1);
-            let _ = compare_utf8_as_utf16(&part, whole);
         }
     }
 }

@@ -62,6 +62,11 @@ pub const MOVES: &[(u32, &str)] = &[
         "what constructing a behavior requires injected, on the behavior's target wherever it is \
          reached (`requirements`), and no longer beside a definition",
     ),
+    (
+        23,
+        "what a `String.matches` pattern means as the checker read it (`meaning`), beside the text \
+         it was written as (`written`), in place of the text alone",
+    ),
 ];
 
 /// A document of [`TRANSPORT_VERSION`], and no other, read through [`Program::read`] and nothing
@@ -2247,14 +2252,45 @@ impl Emitted {
 #[serde(tag = "is", rename_all = "lowercase", deny_unknown_fields)]
 pub enum KernelFact {
     None,
-    /// The pattern `String.matches`'s first argument folds to.
+    /// What the pattern `String.matches`'s first argument folds to means, and the text it was
+    /// written as.
     StringMatches {
-        pattern: String,
+        /// The pattern as its author wrote it: said in a message, and never read as a pattern.
+        written: String,
+        /// Which strings it accepts, as the checker read the text: each part after the parts it
+        /// is made of, the whole last.
+        meaning: Vec<PatternPart>,
     },
     /// The type an ordering was checked against.
     OrderingSubject {
         #[serde(rename = "type")]
         ty: Ty,
+    },
+}
+
+/// One part of what a pattern means (`PatternMeaning`), naming the parts it is made of by where
+/// they stand in the list it is written in, which is always before it.
+///
+/// A list and not a tree because a pattern nests as deep as the checker reads one, and a document
+/// nesting as deep would be refused by the reader for its depth.
+#[derive(Debug, Deserialize, PartialEq, Eq, Clone)]
+#[serde(tag = "is", rename_all = "lowercase", deny_unknown_fields)]
+pub enum PatternPart {
+    /// The one string of no characters.
+    Nothing,
+    /// No string at all.
+    Never,
+    /// One character out of these runs, both ends in each, sorted and apart.
+    Symbols { ranges: Vec<(u32, u32)> },
+    /// One after another.
+    InTurn { parts: Vec<usize> },
+    /// Any one of them.
+    EitherOf { arms: Vec<usize> },
+    /// The same thing between `least` and `most` times, with no ceiling where `most` is absent.
+    Repeated {
+        what: usize,
+        least: u32,
+        most: Option<u32>,
     },
 }
 
@@ -2347,7 +2383,11 @@ impl KernelFact {
     /// Every type this fact writes.
     pub fn types(&self) -> Vec<&Ty> {
         match self {
-            KernelFact::None | KernelFact::StringMatches { pattern: _ } => Vec::new(),
+            KernelFact::None
+            | KernelFact::StringMatches {
+                written: _,
+                meaning: _,
+            } => Vec::new(),
             KernelFact::OrderingSubject { ty } => vec![ty],
         }
     }
@@ -2355,7 +2395,11 @@ impl KernelFact {
     /// The same types, to be rewritten in place.
     pub fn types_mut(&mut self) -> Vec<&mut Ty> {
         match self {
-            KernelFact::None | KernelFact::StringMatches { pattern: _ } => Vec::new(),
+            KernelFact::None
+            | KernelFact::StringMatches {
+                written: _,
+                meaning: _,
+            } => Vec::new(),
             KernelFact::OrderingSubject { ty } => vec![ty],
         }
     }

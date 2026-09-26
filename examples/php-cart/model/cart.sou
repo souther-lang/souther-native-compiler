@@ -1,11 +1,5 @@
-module com.example.cart.domain exposing ( Money, Quantity, TotalQuantity, Email, CartId,
-    ProductId, UserId, OrderId, QuoteId, Individual, Corporation, Orderer, Product, CartItem, Cart,
-    OrderLine, Charge, Order, Quotation, PendingItem, PricedCart, ItemAdded, OrderPlaced,
-    ProductNotFound, SaleEnded, CartFull, EmptyCart, addItemToCart, placeOrder, issueQuote )
+module com.example.cart.domain
 import List ( fold, length )
-
-// exposing を書かないモジュールはすべてを公開する。だが検査済みプログラムはそれを何も公開しないと
-// 答えるので（souther-lang/souther#1959）、PHP バインディングが空になる。直るまでは公開するものを列挙する。
 
 data Money = Int
 data Quantity = Int

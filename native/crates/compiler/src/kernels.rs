@@ -145,7 +145,10 @@ impl FactContract {
     pub(crate) fn accepts(self, fact: &KernelFact) -> bool {
         match fact {
             KernelFact::None => self == FactContract::None,
-            KernelFact::StringMatches { pattern: _ } => self == FactContract::StringMatches,
+            KernelFact::StringMatches {
+                written: _,
+                meaning: _,
+            } => self == FactContract::StringMatches,
             KernelFact::OrderingSubject { ty: _ } => self == FactContract::OrderingSubject,
         }
     }
@@ -246,10 +249,12 @@ fn int_or_division_by_zero() -> Shape {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::transport::PatternPart;
 
     fn pattern(text: &str) -> KernelFact {
         KernelFact::StringMatches {
-            pattern: text.to_string(),
+            written: text.to_string(),
+            meaning: vec![PatternPart::Nothing],
         }
     }
 

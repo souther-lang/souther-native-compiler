@@ -61,10 +61,15 @@ class AWalkGrowingAListCrossesAsTheOperationsItIsTest {
                 .doesNotContain("List.$grow");
     }
 
+    /**
+     * The {@code []} a walk is seeded with crosses at the type the walk settles, and the step is
+     * handed its accumulator at that type: no list of nothing is written for this side to read
+     * wider.
+     */
     @Test
-    void theEmptyListAWalkIsSeededWithCrossesAtItsOwnType() {
+    void theEmptyListAWalkIsSeededWithCrossesAtTheTypeTheWalkSettles() {
         String written = ProgramWriter.written(CheckedProgram.of(List.of(MODULE)));
 
-        assertThat(written).contains("{\"list\":{\"nothing\":{}}}");
+        assertThat(written).doesNotContain("{\"list\":{\"nothing\":{}}}");
     }
 }

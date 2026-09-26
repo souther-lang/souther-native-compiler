@@ -29,7 +29,7 @@ mod contract;
 mod decoding;
 mod document;
 mod external;
-use souther_text::{code_points, compare_utf8_as_utf16};
+use souther_text::{code_points, compare};
 use std::cell::RefCell;
 use std::cmp::Ordering;
 
@@ -236,7 +236,7 @@ pub unsafe extern "C" fn souther_string_compare(
     left: *const Text,
     right: *const Text,
 ) -> Comparison {
-    let ordering = unsafe { compare_utf8_as_utf16(text(left.cast()), text(right.cast())) };
+    let ordering = unsafe { compare(text(left.cast()), text(right.cast())) };
     Comparison(match ordering {
         Ordering::Less => -1,
         Ordering::Equal => 0,
@@ -729,23 +729,21 @@ mod tests {
         souther_reset(mark);
     }
 
-    /// The order is by UTF-16 code unit, which is neither the order of the bytes nor the order of
-    /// the code points.
+    /// The order is by scalar value, which is the order of the bytes and not the order of a JVM
+    /// string's UTF-16 code units.
     ///
-    /// `𠮷` is U+20BB7 and `￥` is U+FFE5. By code point — which is also what comparing the UTF-8
-    /// bytes gives — the first is the greater. As UTF-16 the first begins D842, which is below
-    /// FFE5, so the first is the smaller. Both readings are asserted here, so that an
-    /// implementation that answered by bytes would fail on the reading it agrees with rather than
-    /// on a bare expectation.
+    /// `𠮷` is U+20BB7 and `￥` is U+FFE5. By scalar value, and by the UTF-8 bytes, the first is the
+    /// greater. As UTF-16 the first begins D842, which is below FFE5, so an implementation that
+    /// read the text back as those units would answer the other way here.
     #[test]
-    fn text_is_ordered_by_utf_16_code_unit_and_not_by_code_point() {
+    fn text_is_ordered_by_scalar_value_and_not_by_utf_16_code_unit() {
         let mark = souther_mark();
         let astral = "\u{20bb7}";
         let basic = "\u{ffe5}";
 
-        assert_eq!(compared(made(astral), made(basic)), -1);
-        assert!(astral.as_bytes() > basic.as_bytes());
-        assert!(astral.chars().next() > basic.chars().next());
+        assert_eq!(compared(made(astral), made(basic)), 1);
+        assert_eq!(compared(made(basic), made(astral)), -1);
+        assert!(astral.encode_utf16().next() < basic.encode_utf16().next());
         souther_reset(mark);
     }
 
