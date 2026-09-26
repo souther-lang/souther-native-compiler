@@ -4652,6 +4652,104 @@ impl Bindings {
     }
 }
 
+/// `node` lowered where it stands as `stands`: a fork's branch at what the fork answers, or a value
+/// at what it is widened to.
+///
+/// What it answers, or, where its own type is `Never`, the run ended and nothing answered. The
+/// checker leaves an `unreachable` typed `Never` where the position it stands in states no type and
+/// a branch beside it, joined with it, gives the fork one; that is what `Type.Never` fitting every
+/// type is. So the width is the position's, as the checker's own emitter takes it (`shapeAt`), and
+/// a value of it is put where nothing reaches, for the block the fork joins at to be handed one.
+fn lower_standing(
+    builder: &mut FunctionBuilder,
+    lowering: &Lowering,
+    module: &mut ObjectModule,
+    bindings: &mut Bindings,
+    abort: ir::Block,
+    node: &Node,
+    stands: &Ty,
+) -> Lowered<ir::Value> {
+    if !matches!(node.ty(), Ty::Never { .. }) {
+        return lower(builder, lowering, module, bindings, abort, node);
+    }
+    let width = machine_type(stands)?;
+    end(builder, lowering, module, bindings, abort, node)?;
+    Ok(past_the_end(builder, width))
+}
+
+/// `node`, of the type of what does not answer, lowered as where the run ends: every block it is
+/// lowered into is left ended.
+///
+/// An `unreachable`, and a fork whose branches each are one, which the checker joins at `Never`.
+/// Nothing else is typed so with a way to end the run this side knows, and a value of it is refused
+/// as `machine_type` refuses one.
+fn end(
+    builder: &mut FunctionBuilder,
+    lowering: &Lowering,
+    module: &mut ObjectModule,
+    bindings: &mut Bindings,
+    abort: ir::Block,
+    node: &Node,
+) -> Lowered<()> {
+    match node {
+        Node::Unreachable { .. } => {
+            unreachable_reached(builder, abort);
+            Ok(())
+        }
+        Node::Let { .. } | Node::If { .. } | Node::Match { .. } | Node::Attempt { .. } => {
+            let forked = branched(
+                builder,
+                lowering,
+                module,
+                bindings,
+                abort,
+                node,
+                &mut |builder, module, bindings, branch| {
+                    end(builder, lowering, module, bindings, abort, branch)
+                },
+            )?;
+            assert!(forked, "a let, an if, a match and an attempt are forks");
+            Ok(())
+        }
+        Node::Int { ty, .. }
+        | Node::Read { ty, .. }
+        | Node::Bool { ty, .. }
+        | Node::Str { ty, .. }
+        | Node::Binary { ty, .. }
+        | Node::Neg { ty, .. }
+        | Node::Unit { ty, .. }
+        | Node::Construct { ty, .. }
+        | Node::Field { ty, .. }
+        | Node::Some { ty, .. }
+        | Node::None { ty, .. }
+        | Node::Tuple { ty, .. }
+        | Node::Member { ty, .. }
+        | Node::List { ty, .. }
+        | Node::Call { ty, .. }
+        | Node::Block { ty, .. }
+        | Node::Apply { ty, .. }
+        | Node::Widen { ty, .. } => machine_type(ty).map(|_| ()),
+    }
+}
+
+/// The run ended with the status the runtime numbers an `unreachable` by.
+fn unreachable_reached(builder: &mut FunctionBuilder, abort: ir::Block) {
+    let status = builder.ins().iconst(
+        types::I32,
+        i64::from(native_status(AbortKind::UnreachableReached)),
+    );
+    builder.ins().jump(abort, &[status.into()]);
+}
+
+/// A block nothing reaches, written to next, holding a value of `width` for what is lowered after a
+/// run that ended to be handed: the code around still asks for one, and never reads it.
+fn past_the_end(builder: &mut FunctionBuilder, width: types::Type) -> ir::Value {
+    let past = builder.create_block();
+    builder.seal_block(past);
+    builder.switch_to_block(past);
+    builder.ins().iconst(width, 0)
+}
+
 fn lower(
     builder: &mut FunctionBuilder,
     lowering: &Lowering,
@@ -4713,7 +4811,8 @@ fn lower(
                 abort,
                 node,
                 &mut |builder, module, bindings, branch| {
-                    let answered = lower(builder, lowering, module, bindings, abort, branch)?;
+                    let answered =
+                        lower_standing(builder, lowering, module, bindings, abort, branch, ty)?;
                     builder.ins().jump(after, &[answered.into()]);
                     Ok(())
                 },
@@ -4758,21 +4857,13 @@ fn lower(
                 });
             }
         },
-        // The run ends here, with the status the runtime numbers for it. What the position asks
-        // for is still asked for by the code around this, which the checker typed as the position
-        // takes: a value of that width is put where nothing reaches, so the block the fork joins
-        // at is handed one from every branch and never reads this one.
+        // The run ends here, where the checker typed it as the position it stands in. One it
+        // typed `Never` takes its width from where it stands (`lower_standing`), and one standing
+        // nowhere that gives one is refused by `machine_type`, as a value of `Never` is.
         Node::Unreachable { ty, .. } => {
             let width = machine_type(ty)?;
-            let status = builder.ins().iconst(
-                types::I32,
-                i64::from(native_status(AbortKind::UnreachableReached)),
-            );
-            builder.ins().jump(abort, &[status.into()]);
-            let past = builder.create_block();
-            builder.seal_block(past);
-            builder.switch_to_block(past);
-            builder.ins().iconst(width, 0)
+            unreachable_reached(builder, abort);
+            past_the_end(builder, width)
         }
         // The fields are worked out here, in the order they are written; whether the value is one
         // the type admits, and how one is laid out, is not this site's to say (`construct`).
@@ -4970,7 +5061,7 @@ fn lower(
             ..
         } => {
             machine_type(ty)?;
-            let held = lower(builder, lowering, module, bindings, abort, narrower)?;
+            let held = lower_standing(builder, lowering, module, bindings, abort, narrower, ty)?;
             restate(builder, lowering, module, held, narrower.ty(), ty)?
         }
         Node::Member { tuple, at, ty, .. } => {

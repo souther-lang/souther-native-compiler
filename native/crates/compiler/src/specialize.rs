@@ -68,7 +68,7 @@ impl Substitution {
                 }
             }
             (Ty::Prim { prim }, Ty::Prim { prim: also }) => prim == also,
-            (Ty::Nothing { .. }, Ty::Nothing { .. }) => true,
+            (Ty::Nothing { .. }, Ty::Nothing { .. }) | (Ty::Never { .. }, Ty::Never { .. }) => true,
             (Ty::Ref { named }, Ty::Ref { named: also }) => named == also,
             (Ty::Union { union }, Ty::Union { union: also }) => union == also,
             (Ty::Option { option: held }, Ty::Option { option: also })

@@ -1173,6 +1173,23 @@ fn an_unreachable_ends_the_run_for_the_one_reason_it_has() {
     is_the_halves_disagreeing(&helpers(&[h(&[], &unreachable(INT, ""))]), "unreachable");
 }
 
+/// A helper answering the type of what does not answer, called where that is what the call stands
+/// at, is called at its own type: not the halves disagreeing, and not lowered only because nothing
+/// of a value of it is laid out.
+#[test]
+fn a_helper_that_does_not_answer_is_called_at_its_own_type() {
+    let never = r#"{"never":{}}"#;
+    let ending = format!(
+        r#"{{"core":"unreachable","reason":"no","type":{never},"aborts":["UNREACHABLE_REACHED"]}}"#
+    );
+    let g = helper("m.g", &[], &ending);
+    let reaches = &format!(r#"{{"is":"helper","reached":{}}}"#, own("m.g"));
+    let refused = object_for(&helpers(&[g, h(&[], &call(reaches, &[], never))]))
+        .expect_err("a value of Never");
+    assert!(refused.downcast_ref::<NotLowered>().is_some(), "{refused}");
+    assert!(refused.to_string().contains("Never"), "{refused}");
+}
+
 /// The type of what does not answer is read, and nothing of it is laid out: a position the
 /// checker left typed as it is holds no value this backend could make.
 #[test]

@@ -2091,9 +2091,9 @@ pub enum Node {
         aborts: Vec<AbortKind>,
     },
     /// Where the run ends, with the reason the author wrote. `type` is what the position it stands
-    /// in takes, which the checker states; nothing is made of that type here, since nothing past
-    /// this point runs. The reason is carried though the status a run ends with has no room for
-    /// it yet.
+    /// in takes where the position states one, and `Never` where it states none and a branch
+    /// beside it gives the fork its type. Nothing is made of either here, since nothing past this
+    /// point runs. The reason is carried though the status a run ends with has no room for it yet.
     Unreachable {
         reason: String,
         #[serde(rename = "type")]

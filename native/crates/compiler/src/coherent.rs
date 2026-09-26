@@ -1190,7 +1190,8 @@ impl<'a> Walk<'_, 'a> {
                 )
             }
             // Its value is made of nothing, so there is nothing its type is held to: the type is
-            // what the position it stands in takes, which that position's own slot holds it to.
+            // what the position it stands in takes, or `Never`, and that position's own slot holds
+            // it to fitting there.
             // What it ends the run for is the one reason there is for ending it here.
             Node::Unreachable { ty, aborts, .. } => self.ends_for(
                 &format!("an unreachable standing as {}", ty.spelt()),
