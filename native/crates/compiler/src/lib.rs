@@ -1867,6 +1867,26 @@ impl<'a> Declared<'a> {
             .expect("`Coherent` held every declaration named to be one that crossed")
     }
 
+    /// What a value of `case` holds of its own, where it stands as that case.
+    ///
+    /// Which case a value is and what it holds are two questions. The first is its token, whatever
+    /// the case; this answers the second, once, for every place that reads or writes a case's
+    /// contents. A value of a declared type is its own contents. A primitive is carried and holds
+    /// itself at [`CARRIED`]; a case the language gives holds nothing.
+    fn body_of<'c>(&self, case: &'c Case) -> CaseBody<'c>
+    where
+        'a: 'c,
+    {
+        match case {
+            Case::Declared { declared } => CaseBody::Declared {
+                key: declared,
+                declaration: self.laid(declared),
+            },
+            Case::Primitive { prim } => CaseBody::Primitive(*prim),
+            Case::Language { case } => CaseBody::Empty(*case),
+        }
+    }
+
     fn shape(&self, declared: &str) -> Result<&'a Declaration> {
         self.shapes
             .get(declared)
@@ -2227,6 +2247,30 @@ fn built_in_case(case: &Case) -> Lowered<&'static str> {
     Ok(name)
 }
 
+/// What a value standing as a case holds of its own ([`Declared::body_of`]).
+pub(crate) enum CaseBody<'c> {
+    /// A value of a declared type, which is what it holds.
+    Declared {
+        key: &'c str,
+        declaration: &'c Declaration,
+    },
+    /// A primitive, carried, holding itself at [`CARRIED`].
+    Primitive(Prim),
+    /// A case the language gives, holding nothing.
+    Empty(LanguageCase),
+}
+
+impl CaseBody<'_> {
+    /// What the case is called where it is named: the name a set of alternatives is told apart by.
+    pub(crate) fn name(&self) -> &str {
+        match self {
+            CaseBody::Declared { declaration, .. } => declaration.name(),
+            CaseBody::Primitive(prim) => prim.spelt(),
+            CaseBody::Empty(case) => case.spelt(),
+        }
+    }
+}
+
 /// Whether a value of this type says which case it is, by the token at the front of it.
 ///
 /// A declared type and a union do; nothing else does. A primitive standing as one of their cases
@@ -2290,12 +2334,29 @@ fn carry(
     case: &Case,
     holds: Option<ir::Value>,
 ) -> Lowered<ir::Value> {
-    let token = token_of(builder, lowering, module, case)?;
-    let room = match holds {
-        Some(_) => room_for_carried(),
-        None => room_for_fields(0),
-    };
-    let value = lowering.room(builder, module, room);
+    let value = lowering.room(builder, module, room_to_carry(holds.is_some()));
+    carry_into(builder, lowering.declared, module, value, case, holds)
+}
+
+/// How much room [`carry_into`] is handed, by whether the case holds something.
+const fn room_to_carry(holds: bool) -> i64 {
+    if holds {
+        room_for_carried()
+    } else {
+        room_for_fields(0)
+    }
+}
+
+/// [`carry`], into room of [`room_to_carry`] bytes a caller with no [`Lowerings`] took itself.
+pub(crate) fn carry_into(
+    builder: &mut FunctionBuilder,
+    declared: &Declared,
+    module: &mut ObjectModule,
+    value: ir::Value,
+    case: &Case,
+    holds: Option<ir::Value>,
+) -> Lowered<ir::Value> {
+    let token = token_of(builder, declared, module, case)?;
     builder.ins().store(TRUSTED, token, value, WHICH as i32);
     if let Some(held) = holds {
         let held = into_slot(builder, held);
@@ -2308,12 +2369,12 @@ fn carry(
 /// runtime's for a case no declaration names.
 pub(crate) fn token_of(
     builder: &mut FunctionBuilder,
-    lowering: &Lowerings,
+    declared: &Declared,
     module: &mut ObjectModule,
     case: &Case,
 ) -> Lowered<ir::Value> {
     let token = match case {
-        Case::Declared { declared } => lowering.declared.tag(module, declared)?,
+        Case::Declared { declared: key } => declared.tag(module, key)?,
         Case::Primitive { .. } | Case::Language { .. } => accepted(module.declare_data(
             &built_in_case_symbol(built_in_case(case)?),
             Linkage::Import,
@@ -5062,7 +5123,7 @@ fn is_one_of_cases(
     let which = value.which(builder);
     let mut any: Option<ir::Value> = None;
     for case in cases {
-        let expected = token_of(builder, lowering, module, case)?;
+        let expected = token_of(builder, lowering.declared, module, case)?;
         let same = builder.ins().icmp(IntCC::Equal, which, expected);
         any = Some(match any {
             None => same,

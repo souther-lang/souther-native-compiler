@@ -1076,6 +1076,21 @@ pub enum LeafScalar {
 }
 
 impl LeafScalar {
+    /// The scalar `prim` is written as, where it is one a boundary writes.
+    pub fn of(prim: Prim) -> Option<LeafScalar> {
+        match prim {
+            Prim::String => Some(LeafScalar::String),
+            Prim::Int => Some(LeafScalar::Int),
+            Prim::Bool => Some(LeafScalar::Bool),
+            Prim::Decimal => Some(LeafScalar::Decimal),
+            Prim::Date => Some(LeafScalar::Date),
+            Prim::Time => Some(LeafScalar::Time),
+            Prim::DateTime => Some(LeafScalar::DateTime),
+            Prim::Instant => Some(LeafScalar::Instant),
+            Prim::Rational | Prim::Raw => None,
+        }
+    }
+
     pub fn prim(self) -> Prim {
         match self {
             LeafScalar::String => Prim::String,
