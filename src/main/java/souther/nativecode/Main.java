@@ -1,9 +1,10 @@
 package souther.nativecode;
 
+import souther.bindings.NotBindable;
+import souther.bindings.php.PhpBindings;
 import souther.compiler.diag.CompileException;
 import souther.compiler.meta.ModulePath;
 import souther.compiler.program.CheckedProgram;
-import souther.nativecode.php.PhpBindings;
 
 import java.io.File;
 import java.io.IOException;
@@ -137,7 +138,7 @@ public final class Main {
                         PhpBinding php = library.php().get();
                         try {
                             PhpBindings.refuseAhead(php.into(), php.namespace());
-                        } catch (PhpBindings.NotBindable e) {
+                        } catch (NotBindable e) {
                             problems.println(e.getMessage());
                             return WRONG_COMMAND;
                         }
@@ -152,8 +153,9 @@ public final class Main {
                     if (library.php().isPresent()) {
                         PhpBinding php = library.php().get();
                         try {
-                            PhpBindings.generate(built, php.into(), php.namespace());
-                        } catch (PhpBindings.NotBindable e) {
+                            PhpBindings.generate(built.manifest(), built.declarations(), php.into(),
+                                    php.namespace());
+                        } catch (NotBindable e) {
                             problems.println("the PHP binding is not written: " + e.getMessage());
                             return REFUSED;
                         }

@@ -1,7 +1,7 @@
-package souther.nativecode.php;
+package souther.bindings.php;
 
 import org.jspecify.annotations.Nullable;
-import souther.nativecode.php.Manifest.Word;
+import souther.bindings.Manifest.Word;
 
 import java.util.List;
 import java.util.stream.Collectors;

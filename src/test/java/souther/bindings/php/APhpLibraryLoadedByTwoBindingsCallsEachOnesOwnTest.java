@@ -1,4 +1,4 @@
-package souther.nativecode.php;
+package souther.bindings.php;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -95,8 +95,8 @@ class APhpLibraryLoadedByTwoBindingsCallsEachOnesOwnTest {
     void eachBindingsImplementationIsCalledThroughItsOwnAdapter(@TempDir Path into) throws Exception {
         NativeCompiler.Library library = NativeCompiler.library(
                 CheckedProgram.of(List.of(CATALOG, SHOP)), into.resolve("native"));
-        PhpBindings.Generated a = PhpBindings.generate(library, into.resolve("a"), "A");
-        PhpBindings.Generated b = PhpBindings.generate(library, into.resolve("b"), "B");
+        PhpBindings.Generated a = LibraryBinding.generated(library, into.resolve("a"), "A");
+        PhpBindings.Generated b = LibraryBinding.generated(library, into.resolve("b"), "B");
         Path host = into.resolve("host.php");
         Files.writeString(host, HOST, StandardCharsets.UTF_8);
 

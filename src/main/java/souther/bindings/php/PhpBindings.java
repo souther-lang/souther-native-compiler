@@ -1,22 +1,24 @@
-package souther.nativecode.php;
+package souther.bindings.php;
 
 import org.jspecify.annotations.Nullable;
-import souther.nativecode.NativeCompiler;
-import souther.nativecode.php.Crossing.Both;
-import souther.nativecode.php.Crossing.Given;
-import souther.nativecode.php.Crossing.Listed;
-import souther.nativecode.php.Crossing.OneOf;
-import souther.nativecode.php.Crossing.Present;
-import souther.nativecode.php.Crossing.Received;
-import souther.nativecode.php.Crossing.Single;
-import souther.nativecode.php.Crossing.Told;
-import souther.nativecode.php.Crossing.Whole;
-import souther.nativecode.php.Manifest.Case;
-import souther.nativecode.php.Manifest.Declaration;
-import souther.nativecode.php.Manifest.Function;
-import souther.nativecode.php.Manifest.Parameter;
-import souther.nativecode.php.Manifest.Type;
-import souther.nativecode.php.Manifest.Word;
+import souther.bindings.Manifest;
+import souther.bindings.NotBindable;
+import souther.bindings.Output;
+import souther.bindings.php.Crossing.Both;
+import souther.bindings.php.Crossing.Given;
+import souther.bindings.php.Crossing.Listed;
+import souther.bindings.php.Crossing.OneOf;
+import souther.bindings.php.Crossing.Present;
+import souther.bindings.php.Crossing.Received;
+import souther.bindings.php.Crossing.Single;
+import souther.bindings.php.Crossing.Told;
+import souther.bindings.php.Crossing.Whole;
+import souther.bindings.Manifest.Case;
+import souther.bindings.Manifest.Declaration;
+import souther.bindings.Manifest.Function;
+import souther.bindings.Manifest.Parameter;
+import souther.bindings.Manifest.Type;
+import souther.bindings.Manifest.Word;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -53,15 +55,11 @@ public final class PhpBindings {
     public record Generated(Path root, List<Path> files) {
     }
 
-    /** A model a PHP binding cannot be generated for as it stands, and why. */
-    public static final class NotBindable extends IllegalArgumentException {
-        NotBindable(String why) {
-            super(why);
-        }
-    }
-
     /** Where the declarations are copied to, beside the binding that loads them. */
     static final String DECLARATIONS = "souther.ffi.h";
+
+    /** What says a directory is a PHP binding this wrote, and may be replaced whole. */
+    static final String MARK = ".souther-php-binding";
 
     private static final String RUNTIME = "\\Souther\\Runtime\\";
 
@@ -134,19 +132,6 @@ public final class PhpBindings {
     }
 
     /**
-     * Writes the binding of {@code library} into {@code into}, under the namespace {@code namespace}.
-     *
-     * <p>The namespace is the binding's own, and not read off the model, so that two libraries
-     * publishing a module of the same name can stand in one application.
-     *
-     * @throws NotBindable where a name in the model is not one PHP takes
-     */
-    public static Generated generate(NativeCompiler.Library library, Path into, String namespace)
-            throws IOException {
-        return generate(library.manifest(), library.declarations(), into, namespace);
-    }
-
-    /**
      * Refuses what a generation into {@code into} under {@code namespace} would refuse whatever the
      * manifest said: a namespace PHP will not take, and a directory holding what no generation
      * wrote. For a caller that builds the library in the same step, so that a binding it was never
@@ -156,20 +141,28 @@ public final class PhpBindings {
      */
     public static void refuseAhead(Path into, String namespace) throws IOException {
         PhpNames.rootNamespace(namespace);
-        Output.replaceable(into);
+        Output.replaceable(into, MARK);
     }
 
     /**
-     * Writes the binding of what {@code manifest} describes into {@code into}, which is then that
-     * binding and nothing else: it is written beside it and put in place whole ({@link Output}), so
-     * a class the model no longer declares does not survive a generation, and a refused one leaves
-     * what was there as it was.
+     * Writes the binding of what {@code manifest} describes into {@code into}, under the namespace
+     * {@code namespace}, beside a copy of {@code declarations}, the C declarations the build wrote
+     * for an FFI to read, which the binding loads the library through.
+     *
+     * <p>The namespace is the binding's own, and not read off the model, so that two libraries
+     * publishing a module of the same name can stand in one application.
+     *
+     * <p>{@code into} is then that binding and nothing else: it is written beside it and put in
+     * place whole ({@link Output}), so a class the model no longer declares does not survive a
+     * generation, and a refused one leaves what was there as it was.
+     *
+     * @throws NotBindable where a name in the model is not one PHP takes
      */
-    static Generated generate(Path manifest, Path declarations, Path into, String namespace)
+    public static Generated generate(Path manifest, Path declarations, Path into, String namespace)
             throws IOException {
         Manifest read = Manifest.read(manifest);
         String root = PhpNames.rootNamespace(namespace);
-        Output output = Output.replacing(into);
+        Output output = Output.replacing(into, MARK);
         PhpBindings binding = new PhpBindings(read, root, output.staging());
         try {
             binding.write();

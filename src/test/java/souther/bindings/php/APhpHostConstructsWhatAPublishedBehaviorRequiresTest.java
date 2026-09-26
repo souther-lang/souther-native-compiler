@@ -1,4 +1,4 @@
-package souther.nativecode.php;
+package souther.bindings.php;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -65,7 +65,7 @@ class APhpHostConstructsWhatAPublishedBehaviorRequiresTest {
         NativeCompiler.Library library = NativeCompiler.library(
                 CheckedProgram.of(List.of(DEMO)), into.resolve("native"));
         PhpBindings.Generated binding =
-                PhpBindings.generate(library, into.resolve("php"), "Acme");
+                LibraryBinding.generated(library, into.resolve("php"), "Acme");
         Path host = into.resolve("host.php");
         Files.writeString(host, HOST, StandardCharsets.UTF_8);
 

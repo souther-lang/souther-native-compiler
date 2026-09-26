@@ -1,4 +1,4 @@
-package souther.nativecode.php;
+package souther.bindings.php;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -210,7 +210,7 @@ class APhpHostHandsOverAndReadsBackAListTest {
         NativeCompiler.Library library =
                 NativeCompiler.library(CheckedProgram.of(List.of(CART)), into.resolve("native"));
         PhpBindings.Generated binding =
-                PhpBindings.generate(library, into.resolve("php"), "Acme\\Billing");
+                LibraryBinding.generated(library, into.resolve("php"), "Acme\\Billing");
         NativeCompiler.Library again =
                 NativeCompiler.library(CheckedProgram.of(List.of(CART)), into.resolve("again"));
         Path host = into.resolve("host.php");
@@ -232,7 +232,7 @@ class APhpHostHandsOverAndReadsBackAListTest {
         NativeCompiler.Library library =
                 NativeCompiler.library(CheckedProgram.of(List.of(CART)), into.resolve("native"));
         PhpBindings.Generated binding =
-                PhpBindings.generate(library, into.resolve("php"), "Acme\\Billing");
+                LibraryBinding.generated(library, into.resolve("php"), "Acme\\Billing");
         Path cart = binding.root().resolve("Cart");
 
         assertThat(Files.readString(cart.resolve("Order.php")))
