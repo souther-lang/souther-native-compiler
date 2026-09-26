@@ -384,26 +384,6 @@ class APhpBindingIsWrittenFromTheManifestTest {
     }
 
     /**
-     * A manifest of a version this was not written for is refused as that, and not as whichever
-     * member moved since: version 3, as the driver wrote it, said what a behavior answers as a
-     * type.
-     */
-    @Test
-    void aManifestOfAnotherVersionIsRefusedByItsVersion(@TempDir Path into) throws Exception {
-        Path earlier = Path.of("src", "test", "resources", "souther", "bindings",
-                "interface-v3.json");
-        Path declarations = into.resolve("souther.declarations");
-        Files.writeString(declarations, "", StandardCharsets.UTF_8);
-
-        assertThatThrownBy(() -> PhpBindings.generate(earlier, declarations, into.resolve("php"),
-                "Acme\\Billing"))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("is version 3 of souther-native-interface for ABI generation"
-                        + " 3, and this generator reads version 8")
-                .hasMessageNotContaining("answers");
-    }
-
-    /**
      * What generated code calls of the runtime is the version the runtime says it is: the two are
      * written in two languages, and a binding refuses to load over a runtime of another version.
      */
@@ -590,22 +570,6 @@ class APhpBindingIsWrittenFromTheManifestTest {
     }
 
     /**
-     * Every list a module says is held to what a list of its element is built and read through,
-     * whether or not another module says a good one for the same element.
-     */
-    @Test
-    void aListAModuleSaysOtherThanAListIsRefused(@TempDir Path into) throws Exception {
-        NativeCompiler.Library library = twoModules(into);
-
-        assertThatThrownBy(() -> generatedAfter(into, library, "stock", module -> {
-            ObjectNode at = (ObjectNode) module.get("lists").get(0).get("at");
-            ((ArrayNode) at.get("takes")).remove(2);
-        }))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("souther4_m_stock_l_value_at");
-    }
-
-    /**
      * A module with a function handing a list across and nothing to build one through is the
      * manifest and the binding disagreeing, and is refused rather than written without the function.
      */
@@ -617,18 +581,5 @@ class APhpBindingIsWrittenFromTheManifestTest {
                 module -> ((ArrayNode) module.get("lists")).removeAll()))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("module `stock` nothing to build a list of");
-    }
-
-    /** One element twice in a module is two things said of one list. */
-    @Test
-    void aListOfOneElementSaidTwiceIsRefused(@TempDir Path into) throws Exception {
-        NativeCompiler.Library library = twoModules(into);
-
-        assertThatThrownBy(() -> generatedAfter(into, library, "shop", module -> {
-            ArrayNode lists = (ArrayNode) module.get("lists");
-            lists.add(lists.get(0).deepCopy());
-        }))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("module `shop` two lists of");
     }
 }

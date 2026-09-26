@@ -96,26 +96,11 @@ public final class PhpBindings {
         this.manifest = manifest;
         this.root = root;
         this.into = into;
-        Set<String> constructible = new HashSet<>();
         for (Manifest.Module module : manifest.modules()) {
             for (Manifest.Construction construction : module.constructions()) {
                 constructions.put(module.name() + "." + construction.name(), construction);
             }
-            for (Manifest.Injection injection : module.injections()) {
-                constructible.add(module.name() + "." + injection.name());
-            }
         }
-        constructible.addAll(constructions.keySet());
-        // What a binding constructs a call out of is closed, as the driver holds a library's
-        // surface to be: a construction naming what nothing constructs would be found out by a
-        // host, at a call, as something this binding cannot build.
-        constructions.forEach((key, construction) -> construction.requires().forEach(required -> {
-            if (!constructible.contains(required.key())) {
-                throw new IllegalStateException("the manifest says " + key + " requires "
-                        + required.key() + ", which nothing in it constructs or asks a host to"
-                        + " implement");
-            }
-        }));
     }
 
     /** What constructing {@code key} requires injected, in order, and nothing where it requires nothing. */
@@ -323,29 +308,10 @@ public final class PhpBindings {
     // ---------------------------------------------------------------------------------------------
     // What a model type crosses as.
 
-    /**
-     * Every list {@code module} says a host builds and reads through, each held to what a list of
-     * its element is built and read through, whether or not anything here goes on to use it: an
-     * entry is what the manifest says, and one this generator never read would be one nothing held
-     * to anything. One element twice is the manifest saying two things of one list.
-     */
+    /** Every list {@code module} says a host builds and reads through, by how its element crosses. */
     private static Map<Manifest.Element, Manifest.ListCrossing> listsOf(Manifest.Module module) {
         Map<Manifest.Element, Manifest.ListCrossing> own = new LinkedHashMap<>();
-        for (Manifest.ListCrossing list : module.lists()) {
-            Manifest.Element element = list.element();
-            List<Word> words = element.present()
-                    ? List.of(Word.BOOL, element.word()) : List.of(element.word());
-            List<Parameter> built = new ArrayList<>();
-            built.add(Parameter.given(Word.COUNT));
-            words.forEach(word -> built.add(Parameter.slice(word)));
-            agrees(list.construct(), built, Word.LIST);
-            agrees(list.length(), List.of(Word.LIST), List.of(), Word.COUNT);
-            agrees(list.at(), List.of(Word.LIST, Word.COUNT), words, Word.BOOL);
-            if (own.putIfAbsent(element, list) != null) {
-                throw new IllegalStateException("the manifest gives module `" + module.name()
-                        + "` two lists of " + element);
-            }
-        }
+        module.lists().forEach(list -> own.put(list.element(), list));
         return own;
     }
 

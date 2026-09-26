@@ -9,7 +9,9 @@ import tools.jackson.databind.json.JsonMapper;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -140,6 +142,11 @@ public final class Manifest {
 
     /** How an element of a list crosses: one word, or a presence beside one for an optional. */
     public record Element(boolean present, Word word) {
+
+        /** The words an element is handed over as, in order. */
+        public List<Word> words() {
+            return present ? List.of(Word.BOOL, word) : List.of(word);
+        }
     }
 
     /** A published behavior, and what a host calls it through where it can. */
@@ -307,8 +314,75 @@ public final class Manifest {
                     + says.format() + " for ABI generation " + says.abi() + ", and this generator"
                     + " reads version " + VERSION + " of " + FORMAT + " for generation " + ABI);
         }
-        return MANIFEST.decode(read).orElseThrow(issues -> new IllegalArgumentException(
+        Manifest manifest = MANIFEST.decode(read).orElseThrow(issues -> new IllegalArgumentException(
                 path + " is not a manifest this generator reads: " + issues));
+        String broken = manifest.broken();
+        if (broken != null) {
+            throw new IllegalArgumentException(path + " is not a manifest this generator reads: "
+                    + broken);
+        }
+        return manifest;
+    }
+
+    /**
+     * What this says that a manifest promises it does not, or null where it keeps every promise a
+     * generator relies on without working out how a value crosses: what constructing a behavior
+     * requires is closed, and a module says one list for each way an element crosses, built and
+     * read through functions of the shape a list of that element is.
+     *
+     * <p>What a manifest says only in agreement with how a value crosses, such as a function
+     * handing a list across with a list of that element here to build it through, is held where
+     * that is worked out.
+     */
+    private @Nullable String broken() {
+        Set<String> constructible = new HashSet<>();
+        for (Module module : modules) {
+            module.constructions().forEach(it -> constructible.add(module.name() + "." + it.name()));
+            module.injections().forEach(it -> constructible.add(module.name() + "." + it.name()));
+        }
+        for (Module module : modules) {
+            for (Construction construction : module.constructions()) {
+                for (Required required : construction.requires()) {
+                    if (!constructible.contains(required.key())) {
+                        return "it says " + module.name() + "." + construction.name() + " requires "
+                                + required.key() + ", which nothing in it constructs or asks a host"
+                                + " to implement";
+                    }
+                }
+            }
+            Set<Element> listed = new HashSet<>();
+            for (ListCrossing list : module.lists()) {
+                if (!listed.add(list.element())) {
+                    return "it gives module `" + module.name() + "` two lists of " + list.element();
+                }
+                List<Word> words = list.element().words();
+                List<Parameter> built = new ArrayList<>();
+                built.add(Parameter.given(Word.COUNT));
+                words.forEach(word -> built.add(Parameter.slice(word)));
+                List<Parameter> at = new ArrayList<>(
+                        List.of(Parameter.given(Word.LIST), Parameter.given(Word.COUNT)));
+                words.forEach(word -> at.add(Parameter.room(word)));
+                String shaped = shaped(list.construct(), built, Word.LIST);
+                if (shaped == null) {
+                    shaped = shaped(list.length(), List.of(Parameter.given(Word.LIST)), Word.COUNT);
+                }
+                if (shaped == null) {
+                    shaped = shaped(list.at(), at, Word.BOOL);
+                }
+                if (shaped != null) {
+                    return shaped + ", which a list of " + list.element() + " is built and read"
+                            + " through";
+                }
+            }
+        }
+        return null;
+    }
+
+    /** What {@code function} is said to be, where that is not {@code takes} and {@code answers}. */
+    private static @Nullable String shaped(Function function, List<Parameter> takes, Word answers) {
+        return takes.equals(function.takes()) && answers == function.answers() ? null
+                : "it says " + function.name() + " takes " + function.takes() + " and answers "
+                + function.answers() + " rather than " + takes + " and " + answers;
     }
 
     /** What a manifest says it is, read past everything else it says. */
