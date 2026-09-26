@@ -3,6 +3,7 @@
 use crate::decimal::Decimal;
 use crate::failure::{Failure, Statuses, UnnamedStatus};
 use crate::run::{Loaded, MarkFn, ResetFn, Run, Runtime};
+use crate::temporal::{Date, DateTime, Instant, Time};
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::ptr::NonNull;
@@ -146,6 +147,14 @@ pub struct Words {
     decimal_of_parts: Of2<Word, i64, Word>,
     decimal_unscaled: Of<Word, Word>,
     decimal_scale: Of<Word, i64>,
+    date_of_iso: Of<Word, Word>,
+    date_iso: Of<Word, Word>,
+    time_of_iso: Of<Word, Word>,
+    time_iso: Of<Word, Word>,
+    datetime_of_iso: Of<Word, Word>,
+    datetime_iso: Of<Word, Word>,
+    instant_of_iso: Of<Word, Word>,
+    instant_iso: Of<Word, Word>,
     decoded_outcome: Of<Word, i32>,
     decoded_value: Of<Word, Word>,
     decoded_malformed_at: Of<Word, i64>,
@@ -192,6 +201,14 @@ impl Words {
                 decimal_of_parts: library.function("souther_decimal_of_parts")?,
                 decimal_unscaled: library.function("souther_decimal_unscaled")?,
                 decimal_scale: library.function("souther_decimal_scale")?,
+                date_of_iso: library.function("souther_date_of_iso")?,
+                date_iso: library.function("souther_date_iso")?,
+                time_of_iso: library.function("souther_time_of_iso")?,
+                time_iso: library.function("souther_time_iso")?,
+                datetime_of_iso: library.function("souther_datetime_of_iso")?,
+                datetime_iso: library.function("souther_datetime_iso")?,
+                instant_of_iso: library.function("souther_instant_of_iso")?,
+                instant_iso: library.function("souther_instant_iso")?,
                 decoded_outcome: library.function("souther_decoded_outcome")?,
                 decoded_value: library.function("souther_decoded_value")?,
                 decoded_malformed_at: library.function("souther_decoded_malformed_at")?,
@@ -258,6 +275,75 @@ impl Words {
                 .expect("a Decimal's scale is a 32-bit number");
             Decimal::new(&unscaled, scale).expect("the library's Decimal is one")
         }
+    }
+
+    /// `date` as the library holds one, made in `run` of the text that names it.
+    pub fn date<L: Loaded>(&self, run: &mut Run<'_, L>, date: Date) -> Word {
+        let iso = self.string(run, &date.iso());
+        // SAFETY: the text is what `LocalDate` writes of a day a `Date` holds, which the library
+        // reads.
+        unsafe { (self.date_of_iso)(iso) }
+    }
+
+    /// A `Date` the library answered.
+    ///
+    /// # Safety
+    ///
+    /// `at` is a `Date` the library answered, in a run that is still open.
+    pub unsafe fn date_of(&self, at: Word) -> Date {
+        // SAFETY: what the caller says.
+        Date::written(&unsafe { self.text((self.date_iso)(at)) })
+    }
+
+    /// `time` as the library holds one, made in `run`.
+    pub fn time<L: Loaded>(&self, run: &mut Run<'_, L>, time: Time) -> Word {
+        let iso = self.string(run, &time.iso());
+        // SAFETY: as in `date`.
+        unsafe { (self.time_of_iso)(iso) }
+    }
+
+    /// A `Time` the library answered.
+    ///
+    /// # Safety
+    ///
+    /// As [`Words::date_of`].
+    pub unsafe fn time_of(&self, at: Word) -> Time {
+        // SAFETY: what the caller says.
+        Time::written(&unsafe { self.text((self.time_iso)(at)) })
+    }
+
+    /// `date_time` as the library holds one, made in `run`.
+    pub fn date_time<L: Loaded>(&self, run: &mut Run<'_, L>, date_time: DateTime) -> Word {
+        let iso = self.string(run, &date_time.iso());
+        // SAFETY: as in `date`.
+        unsafe { (self.datetime_of_iso)(iso) }
+    }
+
+    /// A `DateTime` the library answered.
+    ///
+    /// # Safety
+    ///
+    /// As [`Words::date_of`].
+    pub unsafe fn date_time_of(&self, at: Word) -> DateTime {
+        // SAFETY: what the caller says.
+        DateTime::written(&unsafe { self.text((self.datetime_iso)(at)) })
+    }
+
+    /// `instant` as the library holds one, made in `run`.
+    pub fn instant<L: Loaded>(&self, run: &mut Run<'_, L>, instant: Instant) -> Word {
+        let iso = self.string(run, &instant.iso());
+        // SAFETY: as in `date`.
+        unsafe { (self.instant_of_iso)(iso) }
+    }
+
+    /// An `Instant` the library answered.
+    ///
+    /// # Safety
+    ///
+    /// As [`Words::date_of`].
+    pub unsafe fn instant_of(&self, at: Word) -> Instant {
+        // SAFETY: what the caller says.
+        Instant::written(&unsafe { self.text((self.instant_iso)(at)) })
     }
 
     /// What a reading came to: the value `made` makes of what was read, the issues found in it,

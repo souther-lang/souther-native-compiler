@@ -29,6 +29,7 @@ mod failure;
 mod keep;
 mod native;
 mod run;
+mod temporal;
 
 pub use bound::{BindFn, Bound, Capability, Hosted, ImplementFn, Implemented, Made, Requirement};
 pub use decimal::{Decimal, NotADecimal};
@@ -39,6 +40,7 @@ pub use run::{
     AlreadyRunning, HostFailure, Loaded, MarkFn, RawMark, ResetFn, Run, Runtime, Scope, Value,
     host, implemented, run,
 };
+pub use temporal::{Date, DateTime, Instant, NotATemporal, Time};
 
 /// Raoh, whose issues a reading answers, as this runtime was built against it.
 pub use raoh;

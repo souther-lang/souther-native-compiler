@@ -103,7 +103,7 @@ sealed interface Crossing {
      */
     record Whole(Shape.Leaf shape, Kind kind, String type) implements Crossing {
 
-        enum Kind { INT, BOOL, STRING, DECIMAL, HANDLE }
+        enum Kind { INT, BOOL, STRING, DECIMAL, DATE, TIME, DATETIME, INSTANT, HANDLE }
 
         public Whole {
             Word is = switch (kind) {
@@ -111,6 +111,10 @@ sealed interface Crossing {
                 case BOOL -> Word.BOOL;
                 case STRING -> Word.STRING;
                 case DECIMAL -> Word.DECIMAL;
+                case DATE -> Word.DATE;
+                case TIME -> Word.TIME;
+                case DATETIME -> Word.DATETIME;
+                case INSTANT -> Word.INSTANT;
                 case HANDLE -> Word.VALUE;
             };
             if (shape.word() != is) {
@@ -135,6 +139,16 @@ sealed interface Crossing {
                         ? new Whole(new Shape.Leaf(word), Kind.STRING, "String") : null;
                 case "Decimal" -> word == Word.DECIMAL
                         ? new Whole(new Shape.Leaf(word), Kind.DECIMAL, "rt::Decimal") : null;
+                // Each of the four as the runtime's type for it, held as its numbers and handed
+                // over as the text `java.time` writes, which the library reads.
+                case "Date" -> word == Word.DATE
+                        ? new Whole(new Shape.Leaf(word), Kind.DATE, "rt::Date") : null;
+                case "Time" -> word == Word.TIME
+                        ? new Whole(new Shape.Leaf(word), Kind.TIME, "rt::Time") : null;
+                case "DateTime" -> word == Word.DATETIME
+                        ? new Whole(new Shape.Leaf(word), Kind.DATETIME, "rt::DateTime") : null;
+                case "Instant" -> word == Word.INSTANT
+                        ? new Whole(new Shape.Leaf(word), Kind.INSTANT, "rt::Instant") : null;
                 default -> null;
             };
         }
@@ -152,7 +166,7 @@ sealed interface Crossing {
         @Override
         public String view() {
             return switch (kind) {
-                case INT, BOOL -> type;
+                case INT, BOOL, DATE, TIME, DATETIME, INSTANT -> type;
                 case STRING -> "&str";
                 case DECIMAL -> "&rt::Decimal";
                 case HANDLE -> owned();
@@ -166,6 +180,10 @@ sealed interface Crossing {
                 case BOOL -> "u8::from(" + value + ")";
                 case STRING -> "library.words.string(run, " + value + ")";
                 case DECIMAL -> "library.words.decimal(run, " + value + ")";
+                case DATE -> "library.words.date(run, " + value + ")";
+                case TIME -> "library.words.time(run, " + value + ")";
+                case DATETIME -> "library.words.date_time(run, " + value + ")";
+                case INSTANT -> "library.words.instant(run, " + value + ")";
                 case HANDLE -> value + ".__word()";
             });
         }
@@ -178,6 +196,10 @@ sealed interface Crossing {
                 case BOOL -> "(" + word + " != 0)";
                 case STRING -> "library.words.text(" + word + ")";
                 case DECIMAL -> "library.words.amount(" + word + ")";
+                case DATE -> "library.words.date_of(" + word + ")";
+                case TIME -> "library.words.time_of(" + word + ")";
+                case DATETIME -> "library.words.date_time_of(" + word + ")";
+                case INSTANT -> "library.words.instant_of(" + word + ")";
                 case HANDLE -> type + "::__held(library, " + word + ")";
             };
         }
@@ -189,6 +211,10 @@ sealed interface Crossing {
                 case BOOL -> "Bool";
                 case STRING -> "String";
                 case DECIMAL -> "Decimal";
+                case DATE -> "Date";
+                case TIME -> "Time";
+                case DATETIME -> "DateTime";
+                case INSTANT -> "Instant";
                 case HANDLE -> type.substring(type.lastIndexOf(':') + 1);
             };
         }
@@ -196,7 +222,7 @@ sealed interface Crossing {
         @Override
         public String viewOf(String owned) {
             return switch (kind) {
-                case INT, BOOL, HANDLE -> "(*" + owned + ")";
+                case INT, BOOL, DATE, TIME, DATETIME, INSTANT, HANDLE -> "(*" + owned + ")";
                 case STRING -> owned + ".as_str()";
                 case DECIMAL -> owned;
             };

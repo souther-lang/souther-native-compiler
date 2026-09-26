@@ -75,8 +75,6 @@ public final class RustBindings {
             }
             functions.put(name, new Function(name, takes, (Word) words.getLast()));
         };
-        java.util.List<Object> none = new ArrayList<>();
-        none.add(null);
         functions.put("souther_mark", new Function("souther_mark", List.of(), Word.MARK));
         functions.put("souther_reset",
                 new Function("souther_reset", List.of(Parameter.given(Word.MARK)), null));
@@ -86,6 +84,14 @@ public final class RustBindings {
         add.accept("souther_decimal_of_parts", List.of(Word.STRING, Word.INT, Word.DECIMAL));
         add.accept("souther_decimal_unscaled", List.of(Word.DECIMAL, Word.STRING));
         add.accept("souther_decimal_scale", List.of(Word.DECIMAL, Word.INT));
+        add.accept("souther_date_of_iso", List.of(Word.STRING, Word.DATE));
+        add.accept("souther_date_iso", List.of(Word.DATE, Word.STRING));
+        add.accept("souther_time_of_iso", List.of(Word.STRING, Word.TIME));
+        add.accept("souther_time_iso", List.of(Word.TIME, Word.STRING));
+        add.accept("souther_datetime_of_iso", List.of(Word.STRING, Word.DATETIME));
+        add.accept("souther_datetime_iso", List.of(Word.DATETIME, Word.STRING));
+        add.accept("souther_instant_of_iso", List.of(Word.STRING, Word.INSTANT));
+        add.accept("souther_instant_iso", List.of(Word.INSTANT, Word.STRING));
         add.accept("souther_decoded_outcome", List.of(Word.DECODED, Word.OUTCOME));
         add.accept("souther_decoded_value", List.of(Word.DECODED, Word.VALUE));
         add.accept("souther_decoded_malformed_at", List.of(Word.DECODED, Word.COUNT));
@@ -101,8 +107,8 @@ public final class RustBindings {
 
     /** Every name the root of the crate declares, which no top module of the model may be. */
     private static final List<String> ROOT = List.of("Library", "Run", "Scope", "AlreadyRunning",
-            "Construction", "Decimal", "Failure", "HostError", "LoadError", "NotADecimal",
-            "Reading", "raoh", "__ffi");
+            "Construction", "Date", "DateTime", "Decimal", "Failure", "HostError", "Instant",
+            "LoadError", "NotADecimal", "NotATemporal", "Reading", "Time", "raoh", "__ffi");
 
     private final Manifest manifest;
     private final String crate;
@@ -1567,8 +1573,8 @@ public final class RustBindings {
                 #![allow(non_snake_case, non_camel_case_types, unused_unsafe, unused_parens, clippy::all)]
 
                 pub use souther_binding_runtime::{
-                    AlreadyRunning, Construction, Decimal, Failure, HostError, LoadError, NotADecimal,
-                    Reading, raoh,
+                    AlreadyRunning, Construction, Date, DateTime, Decimal, Failure, HostError, Instant,
+                    LoadError, NotADecimal, NotATemporal, Reading, Time, raoh,
                 };
 
                 mod __ffi;
