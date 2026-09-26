@@ -19,10 +19,6 @@ const ADDING: &str = include_str!("adding.transport.json");
 
 /// What the object calls that is not its own code. A published behavior is also an entry a host
 /// reaches for its answer as the language writes it, and writing that is the runtime's.
-fn runtime() -> &'static std::path::Path {
-    support::runtime()
-}
-
 /// Written in the width the object actually answers in. `long` is that width on the platforms this
 /// builds on today and is not the same thing: what the behavior takes and answers is an `Int`, and
 /// an `Int` is sixty-four bits wherever it is.
@@ -173,7 +169,7 @@ fn build_with(harness_source: &str) -> (TempDir, PathBuf) {
         .arg(&executable)
         .arg(&harness)
         .arg(&object)
-        .arg(runtime())
+        .args(support::runtime_arguments())
         .output()
         .expect("a C compiler to link with");
     assert!(

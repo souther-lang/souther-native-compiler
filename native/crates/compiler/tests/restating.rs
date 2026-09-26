@@ -466,7 +466,7 @@ fn a_value_rebuilt_to_stand_wider_answers_what_went_in() {
         .arg(&executable)
         .arg(&harness)
         .arg(&object)
-        .arg(support::runtime())
+        .args(support::runtime_arguments())
         .output()
         .unwrap();
     assert!(

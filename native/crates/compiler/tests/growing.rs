@@ -69,7 +69,7 @@ fn build() -> (TempDir, PathBuf) {
         .arg(&executable)
         .arg(&harness)
         .arg(&object)
-        .arg(support::runtime())
+        .args(support::runtime_arguments())
         .output()
         .expect("a C compiler to link with");
     assert!(

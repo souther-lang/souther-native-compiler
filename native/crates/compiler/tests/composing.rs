@@ -25,10 +25,6 @@ mod support;
 const COMPOSING: &str = include_str!("composing.transport.json");
 
 /// What generated code takes room from, needed here because `g` and `h` each construct a value.
-fn runtime() -> &'static std::path::Path {
-    support::runtime()
-}
-
 /// Reads back what `pipeline` answered: its tag, by comparing the address every value of a
 /// declared type carries against each declaration's own token, and the one field both `B` and `C`
 /// happen to share.
@@ -118,7 +114,7 @@ fn build() -> (TempDir, PathBuf) {
         .arg(&executable)
         .arg(&harness)
         .arg(&object)
-        .arg(runtime())
+        .args(support::runtime_arguments())
         .output()
         .expect("a C compiler to link with");
     assert!(

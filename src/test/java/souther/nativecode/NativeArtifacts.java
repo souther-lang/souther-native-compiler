@@ -83,6 +83,15 @@ final class NativeArtifacts {
     private static final Path RUNTIME =
             Path.of("native", "target", "debug", "libsouther_native_runtime.a");
 
+    /**
+     * What the archive needs linked after it, which the runtime's build writes beside it, one
+     * argument to a line. Not a list of libraries written here: which ones the archive needs is
+     * the target's and the toolchain's to say, and linking it without them works where the linker
+     * adds them itself and fails on the first Linux that does not.
+     */
+    private static final Path REQUIREMENTS =
+            RUNTIME.resolveSibling("libsouther_native_runtime.link");
+
     private static final Path ROOT = root();
 
     private NativeArtifacts() {}
@@ -190,8 +199,19 @@ final class NativeArtifacts {
             command.add(beside.toString());
         }
         command.add(RUNTIME.toString());
+        command.addAll(requirements());
         said(command);
         return executable;
+    }
+
+    /** The arguments the runtime's archive is linked with after it, as its build wrote them. */
+    private static List<String> requirements() throws IOException {
+        if (!Files.isRegularFile(REQUIREMENTS)) {
+            throw new IOException(REQUIREMENTS + " is not there: the runtime's build writes it"
+                    + " beside the archive, and an archive without it says nothing of what it needs");
+        }
+        return Files.readAllLines(REQUIREMENTS, StandardCharsets.UTF_8).stream()
+                .map(String::strip).filter(it -> !it.isEmpty()).toList();
     }
 
     /**

@@ -486,13 +486,22 @@ driver runs is:
 
     # macOS
     cc -dynamiclib -o libsouther.dylib -Wl,-install_name,@rpath/libsouther.dylib \
-        -Wl,-exported_symbols_list,<list> -Wl,-u,_<symbol> ... souther.o libsouther_native_runtime.a
+        -Wl,-exported_symbols_list,<list> -Wl,-u,_<symbol> ... souther.o libsouther_native_runtime.a \
+        <what the archive needs>
 
     # Linux
     cc -shared -o libsouther.so -Wl,--version-script=<script> -Wl,--no-undefined \
-        -Wl,-u,<symbol> ... souther.o libsouther_native_runtime.a
+        -Wl,-u,<symbol> ... souther.o libsouther_native_runtime.a <what the archive needs>
 
 where the list and the script name every function the header declares.
+
+What the archive needs is not written in this project. The archive carries Rust's standard library,
+and which system libraries that reaches is the target's and the toolchain's to say (`-lm`, `-lpthread`
+and `-ldl` among them on Linux, which a linker that adds them for you hides on macOS). The runtime's
+`build.rs` asks `rustc` (`--print native-static-libs`) and writes the answer beside the archive as
+`libsouther_native_runtime.link`, one argument to a line, and the driver and every test read that
+file and pass what it says after the archive. An archive with no such file beside it is refused,
+so ship the two together; the driver's `--runtime` names the archive.
 
 A library is one program, so it holds every build the program reaches: a build's object defines
 what reads and builds a value of a type it declares, and another build calls that. Those objects are

@@ -30,6 +30,7 @@ mod replaced;
 mod restating;
 mod specialize;
 pub mod transport;
+pub use link::runtime_arguments;
 mod unrun;
 mod versioned;
 
