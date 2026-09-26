@@ -15,6 +15,7 @@ use crate::decimal::*;
 use crate::decoding::*;
 use crate::document::Node;
 use crate::external::*;
+use crate::temporal::*;
 use crate::*;
 use souther_native_abi::{
     BUILT_IN_CASES, GENERATED_RUNTIME, HOST_CASES, HOST_RUNTIME, HostWord, Parameter,
@@ -69,6 +70,14 @@ words! {
     *const Text => Word::Host(HostWord::String),
     *const Decimal => Word::Host(HostWord::Decimal),
     *mut Decimal => Word::Host(HostWord::Decimal),
+    *const Date => Word::Host(HostWord::Date),
+    *mut Date => Word::Host(HostWord::Date),
+    *const Time => Word::Host(HostWord::Time),
+    *mut Time => Word::Host(HostWord::Time),
+    *const DateTime => Word::Host(HostWord::DateTime),
+    *mut DateTime => Word::Host(HostWord::DateTime),
+    *const Instant => Word::Host(HostWord::Instant),
+    *mut Instant => Word::Host(HostWord::Instant),
     *mut Text => Word::Host(HostWord::String),
     *const Value => Word::Host(HostWord::Value),
     *const List => Word::Host(HostWord::List),
@@ -87,6 +96,10 @@ rooms! {
     *mut i8 => Word::Host(HostWord::Bool),
     *mut *mut Text => Word::Host(HostWord::String),
     *mut *mut Decimal => Word::Host(HostWord::Decimal),
+    *mut *mut Date => Word::Host(HostWord::Date),
+    *mut *mut Time => Word::Host(HostWord::Time),
+    *mut *mut DateTime => Word::Host(HostWord::DateTime),
+    *mut *mut Instant => Word::Host(HostWord::Instant),
 }
 
 /// What a function takes and answers.
@@ -587,6 +600,276 @@ fn functions() -> Vec<(&'static str, Shape)> {
             ),
         ),
         (
+            "souther_case_date_make",
+            shape_of(souther_case_date_make as extern "C" fn(*const Date) -> *const Value),
+        ),
+        (
+            "souther_case_date_read",
+            shape_of(souther_case_date_read as unsafe extern "C" fn(*const Value) -> *const Date),
+        ),
+        (
+            "souther_date_of_iso",
+            shape_of(souther_date_of_iso as unsafe extern "C" fn(T) -> *mut Date),
+        ),
+        (
+            "souther_date_literal",
+            shape_of(souther_date_literal as extern "C" fn(i64) -> *mut Date),
+        ),
+        (
+            "souther_date_iso",
+            shape_of(souther_date_iso as unsafe extern "C" fn(*const Date) -> M),
+        ),
+        (
+            "souther_date_compare",
+            shape_of(
+                souther_date_compare
+                    as unsafe extern "C" fn(*const Date, *const Date) -> Comparison,
+            ),
+        ),
+        (
+            "souther_external_date",
+            shape_of(souther_external_date as unsafe extern "C" fn(*const Date) -> *mut Form),
+        ),
+        (
+            "souther_read_date",
+            shape_of(
+                souther_read_date
+                    as unsafe extern "C" fn(*const Node, *const Path, D, *mut *mut Date) -> i8,
+            ),
+        ),
+        (
+            "souther_case_time_make",
+            shape_of(souther_case_time_make as extern "C" fn(*const Time) -> *const Value),
+        ),
+        (
+            "souther_case_time_read",
+            shape_of(souther_case_time_read as unsafe extern "C" fn(*const Value) -> *const Time),
+        ),
+        (
+            "souther_time_of_iso",
+            shape_of(souther_time_of_iso as unsafe extern "C" fn(T) -> *mut Time),
+        ),
+        (
+            "souther_time_literal",
+            shape_of(souther_time_literal as extern "C" fn(i64) -> *mut Time),
+        ),
+        (
+            "souther_time_iso",
+            shape_of(souther_time_iso as unsafe extern "C" fn(*const Time) -> M),
+        ),
+        (
+            "souther_time_compare",
+            shape_of(
+                souther_time_compare
+                    as unsafe extern "C" fn(*const Time, *const Time) -> Comparison,
+            ),
+        ),
+        (
+            "souther_external_time",
+            shape_of(souther_external_time as unsafe extern "C" fn(*const Time) -> *mut Form),
+        ),
+        (
+            "souther_read_time",
+            shape_of(
+                souther_read_time
+                    as unsafe extern "C" fn(*const Node, *const Path, D, *mut *mut Time) -> i8,
+            ),
+        ),
+        (
+            "souther_case_datetime_make",
+            shape_of(souther_case_datetime_make as extern "C" fn(*const DateTime) -> *const Value),
+        ),
+        (
+            "souther_case_datetime_read",
+            shape_of(
+                souther_case_datetime_read as unsafe extern "C" fn(*const Value) -> *const DateTime,
+            ),
+        ),
+        (
+            "souther_datetime_of_iso",
+            shape_of(souther_datetime_of_iso as unsafe extern "C" fn(T) -> *mut DateTime),
+        ),
+        (
+            "souther_datetime_literal",
+            shape_of(souther_datetime_literal as extern "C" fn(i64) -> *mut DateTime),
+        ),
+        (
+            "souther_datetime_iso",
+            shape_of(souther_datetime_iso as unsafe extern "C" fn(*const DateTime) -> M),
+        ),
+        (
+            "souther_datetime_compare",
+            shape_of(
+                souther_datetime_compare
+                    as unsafe extern "C" fn(*const DateTime, *const DateTime) -> Comparison,
+            ),
+        ),
+        (
+            "souther_external_datetime",
+            shape_of(
+                souther_external_datetime as unsafe extern "C" fn(*const DateTime) -> *mut Form,
+            ),
+        ),
+        (
+            "souther_read_datetime",
+            shape_of(
+                souther_read_datetime
+                    as unsafe extern "C" fn(*const Node, *const Path, D, *mut *mut DateTime) -> i8,
+            ),
+        ),
+        (
+            "souther_case_instant_make",
+            shape_of(souther_case_instant_make as extern "C" fn(*const Instant) -> *const Value),
+        ),
+        (
+            "souther_case_instant_read",
+            shape_of(
+                souther_case_instant_read as unsafe extern "C" fn(*const Value) -> *const Instant,
+            ),
+        ),
+        (
+            "souther_instant_of_iso",
+            shape_of(souther_instant_of_iso as unsafe extern "C" fn(T) -> *mut Instant),
+        ),
+        (
+            "souther_instant_literal",
+            shape_of(souther_instant_literal as extern "C" fn(i64, i64) -> *mut Instant),
+        ),
+        (
+            "souther_instant_iso",
+            shape_of(souther_instant_iso as unsafe extern "C" fn(*const Instant) -> M),
+        ),
+        (
+            "souther_instant_compare",
+            shape_of(
+                souther_instant_compare
+                    as unsafe extern "C" fn(*const Instant, *const Instant) -> Comparison,
+            ),
+        ),
+        (
+            "souther_external_instant",
+            shape_of(souther_external_instant as unsafe extern "C" fn(*const Instant) -> *mut Form),
+        ),
+        (
+            "souther_read_instant",
+            shape_of(
+                souther_read_instant
+                    as unsafe extern "C" fn(*const Node, *const Path, D, *mut *mut Instant) -> i8,
+            ),
+        ),
+        (
+            "souther_date_add_days",
+            shape_of(
+                souther_date_add_days
+                    as unsafe extern "C" fn(i64, *const Date, *mut *mut Date) -> i8,
+            ),
+        ),
+        (
+            "souther_date_add_months",
+            shape_of(
+                souther_date_add_months
+                    as unsafe extern "C" fn(i64, *const Date, *mut *mut Date) -> i8,
+            ),
+        ),
+        (
+            "souther_date_add_years",
+            shape_of(
+                souther_date_add_years
+                    as unsafe extern "C" fn(i64, *const Date, *mut *mut Date) -> i8,
+            ),
+        ),
+        (
+            "souther_date_days_between",
+            shape_of(
+                souther_date_days_between as unsafe extern "C" fn(*const Date, *const Date) -> i64,
+            ),
+        ),
+        (
+            "souther_date_year",
+            shape_of(souther_date_year as unsafe extern "C" fn(*const Date) -> i64),
+        ),
+        (
+            "souther_date_month",
+            shape_of(souther_date_month as unsafe extern "C" fn(*const Date) -> i64),
+        ),
+        (
+            "souther_date_day",
+            shape_of(souther_date_day as unsafe extern "C" fn(*const Date) -> i64),
+        ),
+        (
+            "souther_date_from_parts",
+            shape_of(
+                souther_date_from_parts
+                    as unsafe extern "C" fn(i64, i64, i64, *mut *mut Date) -> i8,
+            ),
+        ),
+        (
+            "souther_time_from_parts",
+            shape_of(
+                souther_time_from_parts
+                    as unsafe extern "C" fn(i64, i64, i64, *mut *mut Time) -> i8,
+            ),
+        ),
+        (
+            "souther_time_hour",
+            shape_of(souther_time_hour as unsafe extern "C" fn(*const Time) -> i64),
+        ),
+        (
+            "souther_time_minute",
+            shape_of(souther_time_minute as unsafe extern "C" fn(*const Time) -> i64),
+        ),
+        (
+            "souther_time_second",
+            shape_of(souther_time_second as unsafe extern "C" fn(*const Time) -> i64),
+        ),
+        (
+            "souther_datetime_add_minutes",
+            shape_of(
+                souther_datetime_add_minutes
+                    as unsafe extern "C" fn(i64, *const DateTime, *mut *mut DateTime) -> i8,
+            ),
+        ),
+        (
+            "souther_datetime_add_hours",
+            shape_of(
+                souther_datetime_add_hours
+                    as unsafe extern "C" fn(i64, *const DateTime, *mut *mut DateTime) -> i8,
+            ),
+        ),
+        (
+            "souther_datetime_add_days",
+            shape_of(
+                souther_datetime_add_days
+                    as unsafe extern "C" fn(i64, *const DateTime, *mut *mut DateTime) -> i8,
+            ),
+        ),
+        (
+            "souther_datetime_minutes_between",
+            shape_of(
+                souther_datetime_minutes_between
+                    as unsafe extern "C" fn(*const DateTime, *const DateTime) -> i64,
+            ),
+        ),
+        (
+            "souther_datetime_to_date",
+            shape_of(
+                souther_datetime_to_date as unsafe extern "C" fn(*const DateTime) -> *mut Date,
+            ),
+        ),
+        (
+            "souther_datetime_to_time",
+            shape_of(
+                souther_datetime_to_time as unsafe extern "C" fn(*const DateTime) -> *mut Time,
+            ),
+        ),
+        (
+            "souther_datetime_from_date_and_time",
+            shape_of(
+                souther_datetime_from_date_and_time
+                    as unsafe extern "C" fn(*const Date, *const Time) -> *mut DateTime,
+            ),
+        ),
+        (
             "souther_case_some_make",
             shape_of(souther_case_some_make as extern "C" fn() -> *const Value),
         ),
@@ -699,6 +982,7 @@ fn every_function_the_runtime_defines_is_in_one_table() {
         include_str!("document.rs"),
         include_str!("kernels.rs"),
         include_str!("decimal.rs"),
+        include_str!("temporal.rs"),
     ];
     let marker = "extern \"C\" fn ";
     let mut defined = BTreeSet::new();

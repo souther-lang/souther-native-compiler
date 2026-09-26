@@ -60,7 +60,7 @@ class WhatARecordHoldsIsItsOwnTest {
 
             let pair: (Int, Bool) = (3, true)
 
-            data Partial = { count: Int, opened: Date }
+            data Partial = { count: Int, opened: Set<Int> }
             """;
 
     @Test

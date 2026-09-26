@@ -362,6 +362,44 @@ pub(crate) enum LoweredKernel {
     /// `decimal.divide`: a dividend, a divisor, a scale and a rounding mode, and the quotient at
     /// that scale, or `DivisionByZero`.
     DecimalDivide,
+    /// `date.addDays`: a count of days and a `Date`, and the `Date` that many days on. A day past the end of what a `Date` holds ends the run.
+    DateAddDays,
+    /// `date.addMonths`: a count of months and a `Date`, and the `Date` that many months on, the last day of the month where the day is past its end. A month past the end of what a `Date` holds ends the run.
+    DateAddMonths,
+    /// `date.addYears`: a count of years and a `Date`, the twenty-ninth of February becoming the twenty-eighth where the year has none. A year past the end of what a `Date` holds ends the run.
+    DateAddYears,
+    /// `date.daysBetween`: two `Date`s, and the whole days from the first to the second.
+    DateDaysBetween,
+    /// `date.year`: a `Date`, and its year.
+    DateYear,
+    /// `date.month`: a `Date`, and its month, from 1 to 12.
+    DateMonth,
+    /// `date.day`: a `Date`, and its day of the month.
+    DateDay,
+    /// `date.fromParts`: a year, a month and a day, and the `Date` they name or `NotADate`.
+    DateFromParts,
+    /// `time.fromParts`: an hour, a minute and a second, and the `Time` they name or `NotATime`.
+    TimeFromParts,
+    /// `time.hour`: a `Time`, and its hour.
+    TimeHour,
+    /// `time.minute`: a `Time`, and its minute.
+    TimeMinute,
+    /// `time.second`: a `Time`, and its second.
+    TimeSecond,
+    /// `datetime.addMinutes`: a count of minutes and a `DateTime`, and the `DateTime` that many minutes on. One past the end of what a `DateTime` holds ends the run.
+    DateTimeAddMinutes,
+    /// `datetime.addHours`: as `datetime.addMinutes`, in hours.
+    DateTimeAddHours,
+    /// `datetime.addDays`: as `datetime.addMinutes`, in days.
+    DateTimeAddDays,
+    /// `datetime.minutesBetween`: two `DateTime`s, and the whole minutes from the first to the second, the part of one that is left dropped towards nought.
+    DateTimeMinutesBetween,
+    /// `datetime.toDate`: a `DateTime`, and its `Date`.
+    DateTimeToDate,
+    /// `datetime.toTime`: a `DateTime`, and its `Time`.
+    DateTimeToTime,
+    /// `datetime.fromDateAndTime`: a `Date` and a `Time`, and the `DateTime` they make, which cannot fail.
+    DateTimeFromDateAndTime,
 }
 
 impl LoweredKernel {
@@ -421,6 +459,25 @@ impl LoweredKernel {
             "decimal.toInt" => LoweredKernel::DecimalToInt,
             "decimal.round" => LoweredKernel::DecimalRound,
             "decimal.divide" => LoweredKernel::DecimalDivide,
+            "date.addDays" => LoweredKernel::DateAddDays,
+            "date.addMonths" => LoweredKernel::DateAddMonths,
+            "date.addYears" => LoweredKernel::DateAddYears,
+            "date.daysBetween" => LoweredKernel::DateDaysBetween,
+            "date.year" => LoweredKernel::DateYear,
+            "date.month" => LoweredKernel::DateMonth,
+            "date.day" => LoweredKernel::DateDay,
+            "date.fromParts" => LoweredKernel::DateFromParts,
+            "time.fromParts" => LoweredKernel::TimeFromParts,
+            "time.hour" => LoweredKernel::TimeHour,
+            "time.minute" => LoweredKernel::TimeMinute,
+            "time.second" => LoweredKernel::TimeSecond,
+            "datetime.addMinutes" => LoweredKernel::DateTimeAddMinutes,
+            "datetime.addHours" => LoweredKernel::DateTimeAddHours,
+            "datetime.addDays" => LoweredKernel::DateTimeAddDays,
+            "datetime.minutesBetween" => LoweredKernel::DateTimeMinutesBetween,
+            "datetime.toDate" => LoweredKernel::DateTimeToDate,
+            "datetime.toTime" => LoweredKernel::DateTimeToTime,
+            "datetime.fromDateAndTime" => LoweredKernel::DateTimeFromDateAndTime,
             _ => return None,
         })
     }
@@ -432,6 +489,9 @@ impl LoweredKernel {
         let decimal = || Shape::Prim(Prim::Decimal);
         let mode = || Shape::Declared(ROUNDING_MODE);
         let bool = || Shape::Prim(Prim::Bool);
+        let date = || Shape::Prim(Prim::Date);
+        let time = || Shape::Prim(Prim::Time);
+        let datetime = || Shape::Prim(Prim::DateTime);
         let strings = || Shape::List(Box::new(string()));
         let a = || Shape::Var(0);
         let b = || Shape::Var(1);
@@ -614,6 +674,60 @@ impl LoweredKernel {
                 decimal_or_division_by_zero(),
                 vec![AbortKind::RequiredFormHasNoPlace],
             ),
+            // A shift off the end of what a temporal holds ends the run, as an `Int` overflow does
+            // (spec §a-shift-off-the-end-of-a-temporal-aborts).
+            LoweredKernel::DateAddDays
+            | LoweredKernel::DateAddMonths
+            | LoweredKernel::DateAddYears => known(
+                vec![int(), date()],
+                date(),
+                vec![AbortKind::RequiredFormHasNoPlace],
+            ),
+            LoweredKernel::DateTimeAddMinutes
+            | LoweredKernel::DateTimeAddHours
+            | LoweredKernel::DateTimeAddDays => known(
+                vec![int(), datetime()],
+                datetime(),
+                vec![AbortKind::RequiredFormHasNoPlace],
+            ),
+            LoweredKernel::DateDaysBetween => known(vec![date(), date()], int(), Vec::new()),
+            LoweredKernel::DateYear | LoweredKernel::DateMonth | LoweredKernel::DateDay => {
+                known(vec![date()], int(), Vec::new())
+            }
+            // Parts that name none are a case of the answer, and end no run.
+            LoweredKernel::DateFromParts => known(
+                vec![int(), int(), int()],
+                Shape::Cases(vec![
+                    Case::Primitive { prim: Prim::Date },
+                    Case::Language {
+                        case: LanguageCase::NotADate,
+                    },
+                ]),
+                Vec::new(),
+            ),
+            LoweredKernel::TimeFromParts => known(
+                vec![int(), int(), int()],
+                // In the order the checker writes this union in, which is by name: `NotATime` comes
+                // before `Time`, where `Date` comes before `NotADate`.
+                Shape::Cases(vec![
+                    Case::Language {
+                        case: LanguageCase::NotATime,
+                    },
+                    Case::Primitive { prim: Prim::Time },
+                ]),
+                Vec::new(),
+            ),
+            LoweredKernel::TimeHour | LoweredKernel::TimeMinute | LoweredKernel::TimeSecond => {
+                known(vec![time()], int(), Vec::new())
+            }
+            LoweredKernel::DateTimeMinutesBetween => {
+                known(vec![datetime(), datetime()], int(), Vec::new())
+            }
+            LoweredKernel::DateTimeToDate => known(vec![datetime()], date(), Vec::new()),
+            LoweredKernel::DateTimeToTime => known(vec![datetime()], time(), Vec::new()),
+            LoweredKernel::DateTimeFromDateAndTime => {
+                known(vec![date(), time()], datetime(), Vec::new())
+            }
         }
     }
 }
@@ -701,7 +815,7 @@ mod tests {
         }
     }
 
-    const LOWERED: [(&str, LoweredKernel); 53] = [
+    const LOWERED: [(&str, LoweredKernel); 72] = [
         ("int.add", LoweredKernel::IntAdd),
         ("int.subtract", LoweredKernel::IntSubtract),
         ("int.multiply", LoweredKernel::IntMultiply),
@@ -758,6 +872,31 @@ mod tests {
         ("decimal.toInt", LoweredKernel::DecimalToInt),
         ("decimal.round", LoweredKernel::DecimalRound),
         ("decimal.divide", LoweredKernel::DecimalDivide),
+        ("date.addDays", LoweredKernel::DateAddDays),
+        ("date.addMonths", LoweredKernel::DateAddMonths),
+        ("date.addYears", LoweredKernel::DateAddYears),
+        ("date.daysBetween", LoweredKernel::DateDaysBetween),
+        ("date.year", LoweredKernel::DateYear),
+        ("date.month", LoweredKernel::DateMonth),
+        ("date.day", LoweredKernel::DateDay),
+        ("date.fromParts", LoweredKernel::DateFromParts),
+        ("time.fromParts", LoweredKernel::TimeFromParts),
+        ("time.hour", LoweredKernel::TimeHour),
+        ("time.minute", LoweredKernel::TimeMinute),
+        ("time.second", LoweredKernel::TimeSecond),
+        ("datetime.addMinutes", LoweredKernel::DateTimeAddMinutes),
+        ("datetime.addHours", LoweredKernel::DateTimeAddHours),
+        ("datetime.addDays", LoweredKernel::DateTimeAddDays),
+        (
+            "datetime.minutesBetween",
+            LoweredKernel::DateTimeMinutesBetween,
+        ),
+        ("datetime.toDate", LoweredKernel::DateTimeToDate),
+        ("datetime.toTime", LoweredKernel::DateTimeToTime),
+        (
+            "datetime.fromDateAndTime",
+            LoweredKernel::DateTimeFromDateAndTime,
+        ),
     ];
 
     /// `String.matches` settles what its pattern means, and the kernels that order settle what
@@ -865,6 +1004,11 @@ mod tests {
             prim: Prim::Decimal,
         };
         let mode = Ty::declared(ROUNDING_MODE.to_string());
+        let date = Ty::Prim { prim: Prim::Date };
+        let time = Ty::Prim { prim: Prim::Time };
+        let datetime = Ty::Prim {
+            prim: Prim::DateTime,
+        };
         let strings = Ty::List {
             list: Box::new(string.clone()),
         };
@@ -947,6 +1091,49 @@ mod tests {
             LoweredKernel::DecimalToInt => vec![mode, decimal],
             LoweredKernel::DecimalRound => vec![int, mode, decimal],
             LoweredKernel::DecimalDivide => vec![decimal.clone(), decimal, int, mode],
+            LoweredKernel::DateAddDays
+            | LoweredKernel::DateAddMonths
+            | LoweredKernel::DateAddYears => vec![int, date],
+            LoweredKernel::DateTimeAddMinutes
+            | LoweredKernel::DateTimeAddHours
+            | LoweredKernel::DateTimeAddDays => vec![int, datetime],
+            LoweredKernel::DateDaysBetween => vec![date.clone(), date],
+            LoweredKernel::DateYear | LoweredKernel::DateMonth | LoweredKernel::DateDay => {
+                vec![date]
+            }
+            LoweredKernel::DateFromParts | LoweredKernel::TimeFromParts => {
+                vec![int.clone(), int.clone(), int]
+            }
+            LoweredKernel::TimeHour | LoweredKernel::TimeMinute | LoweredKernel::TimeSecond => {
+                vec![time]
+            }
+            LoweredKernel::DateTimeMinutesBetween => vec![datetime.clone(), datetime],
+            LoweredKernel::DateTimeToDate | LoweredKernel::DateTimeToTime => vec![datetime],
+            LoweredKernel::DateTimeFromDateAndTime => vec![date, time],
+        }
+    }
+
+    /// The checker writes a union's members by name, so a contract naming the members of one in
+    /// another order would be read as a union the checker never wrote. Each answer of this kind was
+    /// written by hand, and `Time | NotATime` is `NotATime | Time` for that reason: held here for
+    /// every kernel and not remembered at each.
+    #[test]
+    fn a_union_a_kernel_answers_lists_its_members_by_name() {
+        for (key, kernel) in LOWERED {
+            let Shape::Cases(cases) = kernel.contract().answers else {
+                continue;
+            };
+            let names: Vec<String> = cases
+                .iter()
+                .map(|case| match case {
+                    Case::Primitive { prim } => prim.spelt().to_string(),
+                    Case::Language { case } => case.spelt().to_string(),
+                    Case::Declared { declared } => declared.to_string(),
+                })
+                .collect();
+            let mut by_name = names.clone();
+            by_name.sort();
+            assert_eq!(names, by_name, "{key}");
         }
     }
 

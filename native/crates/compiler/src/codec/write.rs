@@ -508,6 +508,12 @@ impl<'w, 'f> Writing<'w, 'f> {
             // The amount, and not the scale it carries: two equal values are written alike
             // (spec §primitives), which the runtime settles.
             Prim::Decimal => Ok(self.call(Runtime::ExternalDecimal, &[value])),
+            // The text the value is written as, in UTC for an `Instant` whatever offset it was
+            // read from, which the runtime settles.
+            Prim::Date => Ok(self.call(Runtime::ExternalDate, &[value])),
+            Prim::Time => Ok(self.call(Runtime::ExternalTime, &[value])),
+            Prim::DateTime => Ok(self.call(Runtime::ExternalDateTime, &[value])),
+            Prim::Instant => Ok(self.call(Runtime::ExternalInstant, &[value])),
             other => Err(not_lowered(format!(
                 "a {} written at a boundary",
                 other.spelt()

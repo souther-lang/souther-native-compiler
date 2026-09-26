@@ -76,8 +76,11 @@ sealed interface Crossing {
             case LIST -> "souther_list";
             case FUNCTION -> "souther_function";
             case DECODED -> "souther_decoded";
+            // This binding holds none of the four temporals (`Whole#primitive` answers none for a
+            // pair carrying one), so no function writes one into PHP's room.
             case STATUS, CASE, OUTCOME, COUNT, MARK, BYTES, ISSUE, REQUIREMENTS, CAPABILITY,
-                 USERDATA -> throw new IllegalArgumentException("PHP holds no room for a " + word);
+                 USERDATA, DATE, TIME, DATETIME, INSTANT ->
+                    throw new IllegalArgumentException("PHP holds no room for a " + word);
         };
     }
 

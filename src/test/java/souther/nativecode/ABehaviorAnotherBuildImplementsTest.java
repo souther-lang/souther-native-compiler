@@ -44,7 +44,7 @@ class ABehaviorAnotherBuildImplementsTest {
 
     private static final String BUILT_BEFORE = """
             module lib.rates exposing ( Rate, Shape, Round, Square, spin, tally, twice, rounded,
-                                        squared, shout, Missing, sizeOf, heldOf, priced )
+                                        squared, shout, Missing, sizeOf, heldOf, priced, deadline )
 
             // `Round` first, so that this document carries it before anything else, in the order
             // the module declares it, and the one below, which carries what its bodies name in the
@@ -85,6 +85,9 @@ class ABehaviorAnotherBuildImplementsTest {
 
             behavior priced : (a: Decimal) -> Decimal | Missing
             let priced (a) = if a > 0m then a * 1.10m else Missing
+
+            behavior deadline : (a: Date) -> Date | Missing
+            let deadline (a) = if a > Date("2026-01-01") then Date.addDays(30, a) else Missing
             """;
 
     private static final String REACHING_IT = """
@@ -334,6 +337,45 @@ class ABehaviorAnotherBuildImplementsTest {
                 List.of(new ObservedValue.Decimal(java.math.BigDecimal.ZERO))))
                 .isEqualTo(new ObservedValue.Text("missing"));
         assertThat(running.answering(module, samePrice, List.of(oneFifty)))
+                .isEqualTo(new ObservedValue.Bool(true));
+    }
+
+    /**
+     * A {@code Date} made in one object, carried as a case of a union, and forked on and worked on
+     * in another, for the reason a {@code Decimal} is: an address only the runtime reads behind,
+     * and the runtime is what both objects link. A day compared here with one made there is equal
+     * where they name one day, which is not where their addresses are.
+     */
+    @Test
+    void aDateMadeInOneObjectIsWorkedOnInAnother() throws Exception {
+        CheckedProgram program = compiled("""
+                module app.deadlines exposing ( spanOf, sameDay )
+                import lib.rates ( Missing, deadline )
+
+                behavior spanOf : (a: Date) -> Int
+                let spanOf (a) = match deadline(a) with
+                    | Date as d -> Date.daysBetween(a, d)
+                    | Missing -> -1
+
+                behavior sameDay : (a: Date) -> Bool
+                let sameDay (a) = match deadline(a) with
+                    | Date as d -> d == Date.addDays(30, a)
+                    | Missing -> false
+                """);
+        byte[] before = NativeArtifacts.object(builtBefore());
+
+        Running running = Running.of(program, List.of(before));
+        CheckedModule module = program.modules().getFirst();
+        var spanOf = module.behavior(new ValueName.Behavior("app.deadlines", "spanOf"));
+        var sameDay = module.behavior(new ValueName.Behavior("app.deadlines", "sameDay"));
+        ObservedValue lateEnough = new ObservedValue.Temporal("2026-03-01");
+        ObservedValue tooEarly = new ObservedValue.Temporal("2025-12-31");
+
+        assertThat(running.answering(module, spanOf, List.of(lateEnough)))
+                .isEqualTo(new ObservedValue.Integer(30));
+        assertThat(running.answering(module, spanOf, List.of(tooEarly)))
+                .isEqualTo(new ObservedValue.Integer(-1));
+        assertThat(running.answering(module, sameDay, List.of(lateEnough)))
                 .isEqualTo(new ObservedValue.Bool(true));
     }
 

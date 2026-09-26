@@ -12,9 +12,16 @@ const INT: &str = r#"{"prim":"INT"}"#;
 const BOOL: &str = r#"{"prim":"BOOL"}"#;
 const STRING: &str = r#"{"prim":"STRING"}"#;
 const DECIMAL: &str = r#"{"prim":"DECIMAL"}"#;
-/// A primitive this backend has no layout for yet, for the tests about what is refused as not
-/// lowered rather than as the two halves disagreeing.
 const DATE: &str = r#"{"prim":"DATE"}"#;
+/// A primitive this backend has no layout for, for the tests about what is refused as not lowered
+/// rather than as the two halves disagreeing, and about a refusal of the halves that comes before
+/// lowering would refuse: a `Rational`, which no build lays out. Every test standing a type here
+/// for "no layout" is held to it by `a_helper_this_backend_is_behind_on_is_on_its_own_not_lowered`,
+/// which asks it to be refused as not lowered on its own; a type that stopped being so would make
+/// the rest agree with themselves, so `Date` and the rest that are laid out are not used for it.
+const RATIONAL: &str = r#"{"prim":"RATIONAL"}"#;
+/// The same, for the external form a program cannot yet hold as a value: a `Raw`.
+const RAW: &str = r#"{"prim":"RAW"}"#;
 const A: &str = r#"{"ref":{"is":"declared","declared":"m.A"}}"#;
 const S: &str = r#"{"ref":{"is":"declared","declared":"m.S"}}"#;
 const P: &str = r#"{"ref":{"is":"declared","declared":"m.P"}}"#;
@@ -25,7 +32,7 @@ const P: &str = r#"{"ref":{"is":"declared","declared":"m.P"}}"#;
 fn document(behaviors: &[String], helpers: &[String], definitions: &[String]) -> String {
     format!(
         concat!(
-            r#"{{"transport":25,"declarations":["#,
+            r#"{{"transport":26,"declarations":["#,
             r#"{{"module":"m","name":"A","by":"amodule","is":"unit"}},"#,
             r#"{{"module":"m","name":"B","by":"amodule","is":"unit"}},"#,
             r#"{{"module":"m","name":"S","by":"amodule","is":"sum","#,
@@ -205,11 +212,11 @@ fn a_read_typed_as_another_type_of_the_same_width_is_still_the_halves_disagreein
 }
 
 /// A binder this backend has no representation for, read as one it has, is still two statements
-/// of one type that disagree, and is refused as that before anything asks for the `Date`'s
+/// of one type that disagree, and is refused as that before anything asks for the `Rational`'s
 /// layout.
 #[test]
 fn a_read_disagreeing_with_a_binder_that_has_no_layout_is_the_halves_disagreeing() {
-    is_the_halves_disagreeing(&helpers(&[h(&[DATE], &read(0, INT))]), "m.h");
+    is_the_halves_disagreeing(&helpers(&[h(&[RATIONAL], &read(0, INT))]), "m.h");
 }
 
 /// A behavior's parameters are bound at what its target takes, and its body read one of them as
@@ -814,21 +821,32 @@ fn b() -> (String, String) {
 
 /// A helper with no layout here, which on its own is refused as not lowered.
 fn behind() -> String {
-    helper("m.behind", &[DATE], &read(0, DATE))
+    helper("m.behind", &[RATIONAL], &read(0, RATIONAL))
 }
 
 #[test]
 fn a_helper_this_backend_is_behind_on_is_on_its_own_not_lowered() {
-    let refused = object_for(&helpers(&[behind()])).expect_err("no layout for a Date");
+    let refused = object_for(&helpers(&[behind()])).expect_err("no layout for a Rational");
     assert!(refused.downcast_ref::<NotLowered>().is_some(), "{refused}");
+}
+
+/// A `Raw` is the external form itself, which the runtime builds to write a value and holds only
+/// until it is written, so no program holds one as a value yet. Refused as not lowered, as a
+/// `Rational` is, and not as the two halves disagreeing: the checker does write one.
+#[test]
+fn a_raw_is_not_lowered_where_a_value_of_it_is_held() {
+    let refused = object_for(&helpers(&[helper("m.raw", &[RAW], &read(0, RAW))]))
+        .expect_err("no layout for a Raw");
+    assert!(refused.downcast_ref::<NotLowered>().is_some(), "{refused}");
+    assert!(refused.to_string().contains("Raw"), "{refused}");
 }
 
 /// Two helpers one module holds under one name: whichever was read last would be checked, and
 /// whichever was declared first compiled. Refused as the name written twice, and not as the first
-/// copy's `Date`, which a backend reading the document in another order would never have met.
+/// copy's `Rational`, which a backend reading the document in another order would never have met.
 #[test]
 fn a_helper_written_twice_is_refused_before_either_is_lowered() {
-    let first = helper("m.g", &[DATE], &read(0, DATE));
+    let first = helper("m.g", &[RATIONAL], &read(0, RATIONAL));
     let second = helper("m.g", &[INT], &read(0, INT));
     is_the_halves_disagreeing(&helpers(&[first, second]), "m.g");
 }
@@ -911,10 +929,10 @@ fn a_row_written_twice_is_the_halves_disagreeing() {
 }
 
 /// A target saying a name is defined here, with no local definition under the name, is refused
-/// as that, and not as the target's `Date` having no layout.
+/// as that, and not as the target's `Set` having no layout.
 #[test]
 fn a_target_defined_here_with_nothing_defining_it_is_refused_before_its_signature_is_asked() {
-    let target = r#"{"module":"m","name":"b","is":"body","parameters":{"named":[]},"output":{"is":"scalar","scalar":"DATE"},"requirements":[],"ensures":{"at":"none"}}"#;
+    let target = r#"{"module":"m","name":"b","is":"body","parameters":{"named":[]},"output":{"is":"setof","element":{"is":"scalar","scalar":"INT"}},"requirements":[],"ensures":{"at":"none"}}"#;
     is_the_halves_disagreeing(&document(&[target.to_string()], &[], &[]), "m.b");
 }
 
@@ -934,7 +952,7 @@ fn another_builds_value_called_at_two_types_is_refused_before_anything_is_lowere
 }
 
 /// A quotient is a `Rational` whatever it divides, so a `/` typed as anything else is refused as
-/// that, before the `Date` elsewhere is found to have no layout.
+/// that, before the `Rational` elsewhere is found to have no layout.
 #[test]
 fn a_quotient_is_a_rational() {
     let divided = |ty: &str| {
@@ -1368,6 +1386,54 @@ fn a_decimal_literal_carries_its_integer_as_integer_text() {
     is_the_halves_disagreeing(&helpers(&[h(&[], &literal("150", INT))]), "m.h");
 }
 
+/// A temporal literal carries the count the checker read it as, and the runtime makes the value
+/// from it: a count outside what the type holds, a fraction of a second where the type holds none,
+/// and a type that is none of the four are the halves disagreeing. What a program may spell is the
+/// checker's, and nothing here reads a spelling.
+#[test]
+fn a_temporal_literal_carries_a_count_its_type_holds() {
+    let literal = |count: i64, nano: i64, ty: &str| {
+        node("temporal", &format!(r#""count":{count},"nano":{nano}"#), ty)
+    };
+    let time = r#"{"prim":"TIME"}"#;
+    let date_time = r#"{"prim":"DATETIME"}"#;
+    let instant = r#"{"prim":"INSTANT"}"#;
+    reads_whole(&helpers(&[h(&[], &literal(20_659, 0, DATE))]));
+    reads_whole(&helpers(&[h(&[], &literal(365_241_780_471, 0, DATE))]));
+    reads_whole(&helpers(&[h(&[], &literal(-365_243_219_162, 0, DATE))]));
+    reads_whole(&helpers(&[h(&[], &literal(0, 0, time))]));
+    reads_whole(&helpers(&[h(&[], &literal(86_399, 0, time))]));
+    reads_whole(&helpers(&[h(&[], &literal(1_785_000_000, 0, date_time))]));
+    reads_whole(&helpers(&[h(
+        &[],
+        &literal(1_785_000_000, 500_000_000, instant),
+    )]));
+    reads_whole(&helpers(&[h(
+        &[],
+        &literal(31_556_889_864_403_199, 999_999_999, instant),
+    )]));
+    for (count, nano, ty) in [
+        (365_241_780_472, 0, DATE),
+        (-365_243_219_163, 0, DATE),
+        (20_659, 1, DATE),
+        (-1, 0, time),
+        (86_400, 0, time),
+        (0, 1, time),
+        (365_241_780_471 * 86_400 + 86_400, 0, date_time),
+        (0, 1, date_time),
+        (31_556_889_864_403_200, 0, instant),
+        (-31_557_014_167_219_201, 0, instant),
+        (0, 1_000_000_000, instant),
+        (0, -1, instant),
+    ] {
+        is_the_halves_disagreeing(
+            &helpers(&[h(&[], &literal(count, nano, ty))]),
+            "the two halves disagree",
+        );
+    }
+    is_the_halves_disagreeing(&helpers(&[h(&[], &literal(20_659, 0, INT))]), "m.h");
+}
+
 /// A unit the language declares is at home in the runtime, which defines its token: a value of
 /// one is built where it stands and tagged by what every object links. One the runtime defines no
 /// token for is a value no object can say it is, and is not lowered.
@@ -1531,14 +1597,15 @@ fn a_union_with_an_optionals_case_among_its_cases_is_tested_by_its_token() {
 }
 
 /// A value standing as a type this backend has no representation for is not lowered, which is a
-/// different answer from the two halves disagreeing: a `Date` has no representation to carry.
+/// different answer from the two halves disagreeing: a `Rational` has no representation to carry.
 #[test]
 fn a_widen_to_a_type_with_no_representation_is_not_lowered() {
-    let date = r#"{"union":[{"is":"primitive","prim":"DATE"},{"is":"declared","declared":"m.A"}]}"#;
+    let date =
+        r#"{"union":[{"is":"primitive","prim":"RATIONAL"},{"is":"declared","declared":"m.A"}]}"#;
     let refused = object_for(&helpers(&[h(&[], &widen(&unit("m.A"), date))]))
-        .expect_err("a union with a Date among its members has no representation");
+        .expect_err("a union with a Rational among its members has no representation");
     assert!(refused.downcast_ref::<NotLowered>().is_some(), "{refused}");
-    assert!(refused.to_string().contains("Date"), "{refused}");
+    assert!(refused.to_string().contains("Rational"), "{refused}");
 }
 
 /// What holds a value stands as what holds a wider one wherever what it holds does: a list of a
@@ -1638,7 +1705,7 @@ fn a_concat_of_two_strings_reads_whole() {
 fn with_clauses(fields: &str, invariants: &str, helpers: &[String]) -> String {
     format!(
         concat!(
-            r#"{{"transport":25,"declarations":["#,
+            r#"{{"transport":26,"declarations":["#,
             r#"{{"module":"m","name":"R","by":"amodule","is":"product","#,
             r#""fields":[{}],"invariants":[{}]}}],"#,
             r#""behaviors":[],"#,
@@ -1768,10 +1835,10 @@ fn a_clause_builds_no_value() {
 /// fields have no representation is built nowhere here either. The same clause on a declaration
 /// the module publishes is run, and refused as not lowered.
 ///
-/// The clause makes a function taking a `Date`, which no lifted function here can take.
+/// The clause makes a function taking a `Rational`, which no lifted function here can take.
 #[test]
 fn a_clause_of_a_declaration_nothing_here_builds_is_not_run() {
-    let date_to_truth = fn_of(&[DATE], BOOL);
+    let date_to_truth = fn_of(&[RATIONAL], BOOL);
     let block = format!(
         r#"{{"core":"block","site":0,"parameters":[{{"binding":1,"name":"x"}}],"body":{},"type":{date_to_truth},"aborts":[]}}"#,
         truth(true)
@@ -2029,7 +2096,7 @@ fn a_newtype_that_wraps_itself_is_the_halves_disagreeing() {
             read(1, n)
         );
         format!(
-            r#"{{"transport":25,"declarations":[{}],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[{}],"values":[],"entries":[],"definitions":[],"examples":[]}}]}}"#,
+            r#"{{"transport":26,"declarations":[{}],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[{}],"values":[],"entries":[],"definitions":[],"examples":[]}}]}}"#,
             declarations.join(","),
             h(&[n, n], &body)
         )
@@ -2527,7 +2594,7 @@ fn a_construction_of_another_builds_type_names_the_reason_its_clauses_give() {
         );
         format!(
             concat!(
-                r#"{{"transport":25,"declarations":["#,
+                r#"{{"transport":26,"declarations":["#,
                 r#"{{"module":"m","name":"R","by":"onthepath","is":"product","#,
                 r#""fields":[{}],"headers":[{}]}}],"behaviors":[],"#,
                 r#""modules":[{{"name":"m","publishes":[],"helpers":[{}],"values":[],"#,
@@ -2713,7 +2780,7 @@ fn an_arm_binds_and_says_what_it_reads_it_as_together() {
 fn a_handover_carries_a_value_the_module_builds() {
     let value = |carries: &str| {
         format!(
-            r#"{{"transport":25,"declarations":[],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[],"values":[{{"module":"m","name":"ks","handovers":[],"body":{}}},{{"module":"m","name":"ys","handovers":[{{"parameter":"dep","type":{INT},"carries":{{"module":"m","name":"{carries}"}}}}],"body":{}}}],"entries":[],"definitions":[],"examples":[]}}]}}"#,
+            r#"{{"transport":26,"declarations":[],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[],"values":[{{"module":"m","name":"ks","handovers":[],"body":{}}},{{"module":"m","name":"ys","handovers":[{{"parameter":"dep","type":{INT},"carries":{{"module":"m","name":"{carries}"}}}}],"body":{}}}],"entries":[],"definitions":[],"examples":[]}}]}}"#,
             int(1),
             read(0, INT)
         )
@@ -3198,7 +3265,7 @@ fn what_clauses_are_answered_under_crosses_where_another_build_runs_them() {
     let declared = |by: &str, clauses: &str| {
         format!(
             concat!(
-                r#"{{"transport":25,"declarations":["#,
+                r#"{{"transport":26,"declarations":["#,
                 r#"{{"module":"m","name":"R","by":"{}","is":"product","#,
                 r#""fields":[{}]{}}}],"behaviors":[],"#,
                 r#""modules":[{{"name":"m","publishes":[],"helpers":[],"values":[],"#,

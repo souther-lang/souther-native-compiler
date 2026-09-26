@@ -174,12 +174,15 @@ fn planned(
             // An address a host never reads behind, made and read through the runtime's own
             // functions as its integer and its scale.
             Prim::Decimal => Ok(HostShape::Leaf(HostLeaf::Decimal)),
-            Prim::Rational
-            | Prim::Date
-            | Prim::Time
-            | Prim::DateTime
-            | Prim::Instant
-            | Prim::Raw => Err(refused(Reason::NoRepresentation)),
+            // Addresses a host never reads behind, made of the ISO 8601 text that names the value
+            // and read back as that text, through the runtime's own functions: a word each, and
+            // not a string, since a host handed a `Date` where a string was meant has been handed
+            // something else.
+            Prim::Date => Ok(HostShape::Leaf(HostLeaf::Date)),
+            Prim::Time => Ok(HostShape::Leaf(HostLeaf::Time)),
+            Prim::DateTime => Ok(HostShape::Leaf(HostLeaf::DateTime)),
+            Prim::Instant => Ok(HostShape::Leaf(HostLeaf::Instant)),
+            Prim::Rational | Prim::Raw => Err(refused(Reason::NoRepresentation)),
         },
         Ty::Ref {
             named: Case::Declared { .. },
@@ -1916,7 +1919,12 @@ mod tests {
     fn a_refusal_says_why_and_where_in_words() {
         let refusal = shape(
             &Ty::Tuple {
-                tuple: vec![int(), optional(Ty::Prim { prim: Prim::Date })],
+                tuple: vec![
+                    int(),
+                    optional(Ty::Prim {
+                        prim: Prim::Rational,
+                    }),
+                ],
             },
             Direction::Given,
         )
@@ -2035,7 +2043,12 @@ mod tests {
         assert_eq!(
             shape(
                 &Ty::Tuple {
-                    tuple: vec![int(), Ty::Prim { prim: Prim::Date }]
+                    tuple: vec![
+                        int(),
+                        Ty::Prim {
+                            prim: Prim::Rational
+                        }
+                    ]
                 },
                 Direction::Given
             ),

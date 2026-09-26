@@ -2,7 +2,7 @@
 //!
 //! Written as types and not built as JSON, so that what a manifest of one version says is a thing
 //! the compiler holds this code to. A field renamed here is a change to these types, and the
-//! fixture `tests/interface-v11.json` is what version 11 is: every manifest this writes is read
+//! fixture `tests/interface-v12.json` is what version 12 is: every manifest this writes is read
 //! back by these same types, which refuse a member they do not name.
 //!
 //! [`VERSION`] moves when what a manifest says is read differently. What the functions it names
@@ -91,6 +91,13 @@ pub(crate) const MOVES: &[(u32, &str)] = &[
          integer text, and its scale, and reads the two back, through the runtime \
          (`souther_decimal_of_parts`, `souther_decimal_unscaled`, `souther_decimal_scale`), and \
          carries one as a case of a union",
+    ),
+    (
+        12,
+        "a `Date`, a `Time`, a `DateTime` and an `Instant` cross as a leaf each (`date`, `time`, \
+         `datetime`, `instant`): a host makes one of the ISO 8601 text that names it and reads \
+         that text back, through the runtime (`souther_date_of_iso`, `souther_date_iso`, and the \
+         same for the other three), and carries one as a case of a union",
     ),
 ];
 
@@ -320,6 +327,10 @@ pub(crate) enum Leaf {
     Bool,
     String,
     Decimal,
+    Date,
+    Time,
+    DateTime,
+    Instant,
     Value,
 }
 
@@ -330,6 +341,10 @@ impl From<Leaf> for HostLeaf {
             Leaf::Bool => HostLeaf::Bool,
             Leaf::String => HostLeaf::String,
             Leaf::Decimal => HostLeaf::Decimal,
+            Leaf::Date => HostLeaf::Date,
+            Leaf::Time => HostLeaf::Time,
+            Leaf::DateTime => HostLeaf::DateTime,
+            Leaf::Instant => HostLeaf::Instant,
             Leaf::Value => HostLeaf::Value,
         }
     }
@@ -343,6 +358,10 @@ impl From<&HostShape> for Shape {
                 HostLeaf::Bool => Leaf::Bool,
                 HostLeaf::String => Leaf::String,
                 HostLeaf::Decimal => Leaf::Decimal,
+                HostLeaf::Date => Leaf::Date,
+                HostLeaf::Time => Leaf::Time,
+                HostLeaf::DateTime => Leaf::DateTime,
+                HostLeaf::Instant => Leaf::Instant,
                 HostLeaf::Value => Leaf::Value,
             }),
             HostShape::Option(of) => Shape::Option(Box::new(of.as_ref().into())),
@@ -409,7 +428,7 @@ impl std::fmt::Display for Refusal {
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Reason {
-    /// A type with no representation for a host yet: a `Decimal`, a date, a `Set`, a `Map`.
+    /// A type with no representation for a host yet: a `Rational`, a `Raw`, a `Set`, a `Map`.
     NoRepresentation,
     /// A type with no value to hand over: what an empty list holds, and what does not answer.
     NoValue,
@@ -806,6 +825,10 @@ pub(crate) enum Word {
     Value,
     String,
     Decimal,
+    Date,
+    Time,
+    DateTime,
+    Instant,
     Decoded,
     Issue,
     List,
@@ -829,6 +852,10 @@ impl From<HostWord> for Word {
             HostWord::Value => Word::Value,
             HostWord::String => Word::String,
             HostWord::Decimal => Word::Decimal,
+            HostWord::Date => Word::Date,
+            HostWord::Time => Word::Time,
+            HostWord::DateTime => Word::DateTime,
+            HostWord::Instant => Word::Instant,
             HostWord::Decoded => Word::Decoded,
             HostWord::Issue => Word::Issue,
             HostWord::List => Word::List,
@@ -854,6 +881,10 @@ impl From<Word> for HostWord {
             Word::Value => HostWord::Value,
             Word::String => HostWord::String,
             Word::Decimal => HostWord::Decimal,
+            Word::Date => HostWord::Date,
+            Word::Time => HostWord::Time,
+            Word::DateTime => HostWord::DateTime,
+            Word::Instant => HostWord::Instant,
             Word::Decoded => HostWord::Decoded,
             Word::Issue => HostWord::Issue,
             Word::List => HostWord::List,
@@ -893,19 +924,19 @@ mod tests {
         }
     }
 
-    /// What version 11 is. Read by these types, which refuse a member they do not name, and
+    /// What version 12 is. Read by these types, which refuse a member they do not name, and
     /// written back the same: a field renamed or a kind reshaped here stops matching the fixture
     /// the Java half's test also holds a written manifest to.
-    const V11: &str = include_str!("../tests/interface-v11.json");
+    const V12: &str = include_str!("../tests/interface-v12.json");
 
     #[test]
-    fn version_eleven_is_read_and_written_back_as_it_is() {
-        let read: Manifest = serde_json::from_str(V11).expect("version 11 reads");
+    fn version_twelve_is_read_and_written_back_as_it_is() {
+        let read: Manifest = serde_json::from_str(V12).expect("version 12 reads");
         assert_eq!(read.format, FORMAT);
         assert_eq!(read.version, VERSION);
         let mut written = serde_json::to_string_pretty(&read).unwrap();
         written.push('\n');
-        assert_eq!(written, V11);
+        assert_eq!(written, V12);
     }
 
     /// A surface an object of an earlier release carries is refused as that, and not as whichever

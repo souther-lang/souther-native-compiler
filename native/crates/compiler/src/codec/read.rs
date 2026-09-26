@@ -277,6 +277,12 @@ impl Reading<'_, '_> {
                     Prim::String => (Runtime::ReadString, POINTER),
                     // At the scale the number was spelt at, which the runtime reads off it.
                     Prim::Decimal => (Runtime::ReadDecimal, POINTER),
+                    // Text that names one, by the grammar of the type: what a boundary writes
+                    // and, for an `Instant`, an offset spelling of the same moment.
+                    Prim::Date => (Runtime::ReadDate, POINTER),
+                    Prim::Time => (Runtime::ReadTime, POINTER),
+                    Prim::DateTime => (Runtime::ReadDateTime, POINTER),
+                    Prim::Instant => (Runtime::ReadInstant, POINTER),
                     other => {
                         return Err(not_lowered(format!(
                             "a {} read at a boundary",

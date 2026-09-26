@@ -61,7 +61,9 @@ use crate::transport::{
 };
 use crate::{Declared, PairIn, Runs, Targets, departures_taken, not_lowered, says_its_case};
 use anyhow::{Result, anyhow, bail};
-use souther_native_abi::{spells_a_module, spells_a_name};
+use souther_native_abi::{
+    DATE_DAYS, DATE_TIME_SECONDS, INSTANT_SECONDS, SECONDS_PER_DAY, spells_a_module, spells_a_name,
+};
 use std::collections::HashMap;
 
 /// A document every relation of which holds, and what reading it built.
@@ -791,6 +793,7 @@ impl<'a> Walk<'_, 'a> {
             | Node::Bool { .. }
             | Node::Str { .. }
             | Node::Decimal { .. }
+            | Node::Temporal { .. }
             | Node::Unit { .. }
             | Node::Unreachable { .. }
             | Node::None { .. } => Vec::new(),
@@ -1168,6 +1171,48 @@ impl<'a> Walk<'_, 'a> {
                     },
                     "its kind",
                 )
+            }
+            Node::Temporal {
+                count, nano, ty, ..
+            } => {
+                // What the checker read crosses as a count, and the runtime makes the value from
+                // it, so a count outside what the type holds is a literal no run could make: the
+                // halves disagreeing. What the checker admits as spelling is not asked here, since
+                // nothing here reads spelling.
+                let (spelt, held) = match ty {
+                    Ty::Prim { prim: Prim::Date } => ("Date", DATE_DAYS.contains(count)),
+                    Ty::Prim { prim: Prim::Time } => ("Time", (0..SECONDS_PER_DAY).contains(count)),
+                    Ty::Prim {
+                        prim: Prim::DateTime,
+                    } => ("DateTime", DATE_TIME_SECONDS.contains(count)),
+                    Ty::Prim {
+                        prim: Prim::Instant,
+                    } => ("Instant", INSTANT_SECONDS.contains(count)),
+                    other => bail!(
+                        "{}: a temporal literal typed {other:?}, which is none of Date, Time, \
+                         DateTime and Instant: the two halves disagree",
+                        self.owner
+                    ),
+                };
+                // Only an `Instant` holds a fraction of a second.
+                let fraction = if matches!(
+                    ty,
+                    Ty::Prim {
+                        prim: Prim::Instant
+                    }
+                ) {
+                    (0..1_000_000_000).contains(nano)
+                } else {
+                    *nano == 0
+                };
+                if !held || !fraction {
+                    bail!(
+                        "{}: a {spelt} literal of count {count} and nanosecond {nano}, which is \
+                         none a {spelt} holds: the two halves disagree",
+                        self.owner
+                    );
+                }
+                Ok(())
             }
             Node::Read { binding, ty, .. } => {
                 let bound = self.bound.get(binding).ok_or_else(|| {

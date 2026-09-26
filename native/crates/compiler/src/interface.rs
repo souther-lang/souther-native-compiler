@@ -150,6 +150,10 @@ pub(crate) fn machine(word: HostWord) -> types::Type {
         | HostWord::Value
         | HostWord::String
         | HostWord::Decimal
+        | HostWord::Date
+        | HostWord::Time
+        | HostWord::DateTime
+        | HostWord::Instant
         | HostWord::Decoded
         | HostWord::Issue
         | HostWord::List
@@ -175,6 +179,10 @@ fn c_word(word: Word) -> &'static str {
         Word::Value => "souther_value",
         Word::String => "souther_string",
         Word::Decimal => "souther_decimal",
+        Word::Date => "souther_date",
+        Word::Time => "souther_time",
+        Word::DateTime => "souther_datetime",
+        Word::Instant => "souther_instant",
         Word::Decoded => "souther_decoded",
         Word::Issue => "souther_issue",
         Word::List => "souther_list",
@@ -1004,6 +1012,10 @@ pub(crate) fn declarations(manifest: &Manifest) -> String {
          typedef const struct souther_value_ *souther_value;\n\
          typedef const struct souther_string_ *souther_string;\n\
          typedef const struct souther_decimal_ *souther_decimal;\n\
+         typedef const struct souther_date_ *souther_date;\n\
+         typedef const struct souther_time_ *souther_time;\n\
+         typedef const struct souther_datetime_ *souther_datetime;\n\
+         typedef const struct souther_instant_ *souther_instant;\n\
          typedef const struct souther_decoded_ *souther_decoded;\n\
          typedef const struct souther_issue_ *souther_issue;\n\
          typedef const struct souther_list_ *souther_list;\n\

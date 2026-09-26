@@ -34,11 +34,13 @@ mod document;
 mod external;
 mod kernels;
 mod magnitude;
+mod temporal;
 pub use decimal::*;
 pub use kernels::*;
 use souther_text::{Text as Held, append, code_points, compare};
 use std::cell::RefCell;
 use std::cmp::Ordering;
+pub use temporal::*;
 
 /// How much room a run starts with, and how much more it takes each time it runs out.
 ///
@@ -395,6 +397,10 @@ built_in_cases! {
     "Bool" => CASE_BOOL,
     "String" => CASE_STRING,
     "Decimal" => CASE_DECIMAL,
+    "Date" => CASE_DATE,
+    "Time" => CASE_TIME,
+    "DateTime" => CASE_DATETIME,
+    "Instant" => CASE_INSTANT,
     "Some" => CASE_SOME,
     "None" => CASE_NONE,
     "DivisionByZero" => CASE_DIVISION_BY_ZERO,
@@ -506,6 +512,70 @@ pub extern "C" fn souther_case_decimal_make(value: *const Decimal) -> *const Val
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_case_decimal_read(value: *const Value) -> *const Decimal {
     (unsafe { held(value) }) as *const Decimal
+}
+
+/// A `Date` carried as a case of a union: its address in the slot, the value where it was.
+#[unsafe(no_mangle)]
+pub extern "C" fn souther_case_date_make(value: *const Date) -> *const Value {
+    carried(&CASE_DATE, Some(value as i64))
+}
+
+/// What a value of a union that is the case `Date` holds.
+///
+/// # Safety
+///
+/// `value` is one a test of which case it is said is `Date`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_case_date_read(value: *const Value) -> *const Date {
+    (unsafe { held(value) }) as *const Date
+}
+
+/// A `Time` carried as a case of a union: its address in the slot, the value where it was.
+#[unsafe(no_mangle)]
+pub extern "C" fn souther_case_time_make(value: *const Time) -> *const Value {
+    carried(&CASE_TIME, Some(value as i64))
+}
+
+/// What a value of a union that is the case `Time` holds.
+///
+/// # Safety
+///
+/// `value` is one a test of which case it is said is `Time`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_case_time_read(value: *const Value) -> *const Time {
+    (unsafe { held(value) }) as *const Time
+}
+
+/// A `DateTime` carried as a case of a union: its address in the slot, the value where it was.
+#[unsafe(no_mangle)]
+pub extern "C" fn souther_case_datetime_make(value: *const DateTime) -> *const Value {
+    carried(&CASE_DATETIME, Some(value as i64))
+}
+
+/// What a value of a union that is the case `DateTime` holds.
+///
+/// # Safety
+///
+/// `value` is one a test of which case it is said is `DateTime`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_case_datetime_read(value: *const Value) -> *const DateTime {
+    (unsafe { held(value) }) as *const DateTime
+}
+
+/// A `Instant` carried as a case of a union: its address in the slot, the value where it was.
+#[unsafe(no_mangle)]
+pub extern "C" fn souther_case_instant_make(value: *const Instant) -> *const Value {
+    carried(&CASE_INSTANT, Some(value as i64))
+}
+
+/// What a value of a union that is the case `Instant` holds.
+///
+/// # Safety
+///
+/// `value` is one a test of which case it is said is `Instant`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_case_instant_read(value: *const Value) -> *const Instant {
+    (unsafe { held(value) }) as *const Instant
 }
 
 // Each case the language gives holds nothing, so a value of it is its token alone. Written out one

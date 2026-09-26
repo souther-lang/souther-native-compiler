@@ -23,6 +23,10 @@
 use crate::amount::Amount;
 use crate::decimal::{Decimal, decimal_of};
 use crate::document::{Form, Node, parsed};
+use crate::temporal::{
+    Date, DateTime, Instant, Time, date_of, date_time_of, instant_of, parse_date, parse_date_time,
+    parse_instant, parse_time, time_of,
+};
 use crate::{Count, Text, Value, souther_alloc, string_of, text};
 use souther_native_abi::{DECODED_ISSUES, DECODED_MALFORMED, DECODED_VALUE};
 use std::ptr;
@@ -548,6 +552,117 @@ pub unsafe extern "C" fn souther_read_decimal(
             None
         }
     };
+    unsafe { answered(out, read, ptr::null_mut()) }
+}
+
+/// The text at `node`, where it is a string, which is where a temporal is written: every temporal
+/// is text at a boundary, and one that is not is a string that was not there.
+unsafe fn temporal_text<'a>(
+    node: &'a Node,
+    path: *const Path,
+    decoding: *mut Decoding,
+) -> Option<std::borrow::Cow<'a, str>> {
+    match node {
+        Node::String(written) => Some(canonical(written)),
+        other => {
+            unsafe { mismatched(decoding, path, other, "String") };
+            None
+        }
+    }
+}
+
+/// A place whose text is no value of a temporal type, or one a type held to the second would have
+/// to round.
+unsafe fn refused(decoding: *mut Decoding, path: *const Path) {
+    unsafe { found(decoding, "invalid_format", path, &[]) };
+}
+
+/// A `Date`, written through `out` as one of the runtime's in the arena, where `node` is text that
+/// names one: `yyyy-MM-dd` with the year as `LocalDate.toString` writes it. Null is written where
+/// it is not.
+///
+/// # Safety
+/// As [`souther_read_int`], and `out` is room for the address of a `Date`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_read_date(
+    node: *const Node,
+    path: *const Path,
+    decoding: *mut Decoding,
+    out: *mut *mut Date,
+) -> i8 {
+    let read = unsafe { temporal_text(&*node, path, decoding) }.and_then(|written| {
+        let day = parse_date(written.as_bytes());
+        if day.is_none() {
+            unsafe { refused(decoding, path) };
+        }
+        day.map(date_of)
+    });
+    unsafe { answered(out, read, ptr::null_mut()) }
+}
+
+/// A `Time`, as [`souther_read_date`], from `HH:mm` or `HH:mm:ss`. A fraction of a second that is
+/// not nought is refused and not dropped (spec §a-local-temporal-is-held-to-the-second).
+///
+/// # Safety
+/// As [`souther_read_date`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_read_time(
+    node: *const Node,
+    path: *const Path,
+    decoding: *mut Decoding,
+    out: *mut *mut Time,
+) -> i8 {
+    let read = unsafe { temporal_text(&*node, path, decoding) }.and_then(|written| {
+        let second = parse_time(written.as_bytes());
+        if second.is_err() {
+            unsafe { refused(decoding, path) };
+        }
+        second.ok().map(time_of)
+    });
+    unsafe { answered(out, read, ptr::null_mut()) }
+}
+
+/// A `DateTime`, as [`souther_read_time`], from a date, a `T` and a time.
+///
+/// # Safety
+/// As [`souther_read_date`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_read_datetime(
+    node: *const Node,
+    path: *const Path,
+    decoding: *mut Decoding,
+    out: *mut *mut DateTime,
+) -> i8 {
+    let read = unsafe { temporal_text(&*node, path, decoding) }.and_then(|written| {
+        let second = parse_date_time(written.as_bytes());
+        if second.is_err() {
+            unsafe { refused(decoding, path) };
+        }
+        second.ok().map(date_time_of)
+    });
+    unsafe { answered(out, read, ptr::null_mut()) }
+}
+
+/// An `Instant`, as [`souther_read_date`], from text written in UTC or from an offset, which is
+/// read as the moment it names (spec §an-instant-carries-what-a-timestamp-said). A leap second is
+/// refused.
+///
+/// # Safety
+/// As [`souther_read_date`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_read_instant(
+    node: *const Node,
+    path: *const Path,
+    decoding: *mut Decoding,
+    out: *mut *mut Instant,
+) -> i8 {
+    let read = unsafe { temporal_text(&*node, path, decoding) }.and_then(|written| {
+        let moment = parse_instant(written.as_bytes());
+        if moment.is_none() {
+            unsafe { refused(decoding, path) };
+        }
+        moment.map(|(second, nano)| instant_of(second, nano))
+    });
     unsafe { answered(out, read, ptr::null_mut()) }
 }
 

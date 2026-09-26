@@ -9,6 +9,10 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -37,7 +41,7 @@ class AnAdditionCrossesAsWhatTheCheckerSettledTest {
         String written = ProgramWriter.written(Checked.of(List.of(ADDING)));
 
         assertThat(written).isEqualTo("""
-                {"transport":25,"declarations":[],\
+                {"transport":26,"declarations":[],\
                 "behaviors":[{"module":"calculation","name":"add","is":"body",\
                 "parameters":{"named":[{"name":"a","input":{"is":"scalar","scalar":"INT"}},\
                 {"name":"b","input":{"is":"scalar","scalar":"INT"}}]},\
@@ -128,21 +132,79 @@ class AnAdditionCrossesAsWhatTheCheckerSettledTest {
     }
 
     /**
-     * A body this backend does not write yet says so. It is not a refusal of the program: the
-     * language admits this one and will compile it on another backend today.
+     * A temporal literal crosses as the count the checker's own parse read it as, and not as the
+     * text it was written as: {@code java.time} admits spellings it does not write back
+     * ({@code DateTime("2026-04-01t09:30")}, {@code Time("09:30:00.")}, {@code Date("+010000-01-01")}),
+     * and text handed over would be read again on the other side by a grammar of its own, whose
+     * refusals would be programs the checker passed. Two spellings of one value cross as one
+     * document.
      */
     @Test
-    void aBodyThisBackendDoesNotWriteYetSaysWhichItWas() {
+    void aTemporalLiteralCrossesAsTheCountTheCheckerReadItAs() {
         CheckedProgram program = Checked.of(List.of("""
                 module calculation
 
                 behavior opening : (a: Int) -> Date
 
                 let opening (a) = Date("2026-04-01")
+
+                behavior closing : (a: Int) -> Instant
+
+                let closing (a) = Instant("2026-04-01T09:30:00.5Z")
+
+                behavior clock : (a: Int) -> Time
+
+                let clock (a) = Time("09:30:15")
+
+                behavior meeting : (a: Int) -> DateTime
+
+                let meeting (a) = DateTime("2026-04-01T09:30")
                 """));
 
-        assertThatThrownBy(() -> ProgramWriter.written(program))
-                .isInstanceOf(NotLowered.class)
-                .hasMessageContaining("a temporal literal");
+        String written = ProgramWriter.written(program);
+
+        long day = LocalDate.parse("2026-04-01").toEpochDay();
+        long second = LocalDateTime.parse("2026-04-01T09:30").toEpochSecond(ZoneOffset.UTC);
+        assertThat(written).contains("{\"core\":\"temporal\",\"count\":" + day
+                + ",\"nano\":0,\"type\":{\"prim\":\"DATE\"},");
+        assertThat(written).contains("{\"core\":\"temporal\",\"count\":"
+                + Instant.parse("2026-04-01T09:30:00.5Z").getEpochSecond()
+                + ",\"nano\":500000000,\"type\":{\"prim\":\"INSTANT\"},");
+        assertThat(written).contains("{\"core\":\"temporal\",\"count\":" + (9 * 3600 + 30 * 60 + 15)
+                + ",\"nano\":0,\"type\":{\"prim\":\"TIME\"},");
+        assertThat(written).contains("{\"core\":\"temporal\",\"count\":" + second
+                + ",\"nano\":0,\"type\":{\"prim\":\"DATETIME\"},");
+    }
+
+    /** What the checker admits of a spelling is the checker's, so a spelling and the one it names
+     * are one literal by the time they cross. */
+    @Test
+    void twoSpellingsOfOneTemporalCrossAsOne() {
+        String canonical = literalsOver("""
+                let a (n) = Date("+10000-01-01")
+                let b (n) = Time("09:30")
+                let c (n) = DateTime("2026-07-01T09:30")
+                let d (n) = Instant("2026-07-01T00:00:00Z")
+                """);
+        String spelt = literalsOver("""
+                let a (n) = Date("+010000-01-01")
+                let b (n) = Time("09:30:00.")
+                let c (n) = DateTime("2026-07-01t09:30")
+                let d (n) = Instant("2026-07-01T00:00:00.Z")
+                """);
+
+        assertThat(spelt).isEqualTo(canonical);
+    }
+
+    private static String literalsOver(String definitions) {
+        return ProgramWriter.written(Checked.of(List.of("""
+                module spelling
+
+                behavior a : (n: Int) -> Date
+                behavior b : (n: Int) -> Time
+                behavior c : (n: Int) -> DateTime
+                behavior d : (n: Int) -> Instant
+
+                """ + definitions)));
     }
 }

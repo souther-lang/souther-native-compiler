@@ -78,6 +78,11 @@ pub const MOVES: &[(u32, &str)] = &[
         25,
         "a `Decimal` literal (`decimal`), as the integer and the scale the checker read it as",
     ),
+    (
+        26,
+        "a `Date`, `Time`, `DateTime` or `Instant` literal (`temporal`), as the count the checker \
+         read it as (`count`, and `nano` for an `Instant`)",
+    ),
 ];
 
 /// A document of [`TRANSPORT_VERSION`], and no other, read through [`Program::read`] and nothing
@@ -1938,6 +1943,23 @@ pub enum Node {
         ty: Ty,
         aborts: Vec<AbortKind>,
     },
+    /// A `Date`, `Time`, `DateTime` or `Instant` literal, as the checker read it, and not the text
+    /// it was written as.
+    ///
+    /// What the checker's parse answered is what crosses, for the reason a `Decimal`'s integer and
+    /// scale do: the spellings `java.time` admits are the source's grammar, which the checker has
+    /// already read, and text handed over would be read a second time here by a grammar of its own.
+    /// `count` is the day, counted from 1970-01-01, of a `Date`; the second of the day of a `Time`;
+    /// the second, counted from 1970-01-01T00:00:00 as though it were in UTC, of a `DateTime`; and
+    /// the second, counted from the epoch, of an `Instant`, whose nanosecond within it is `nano`.
+    /// `nano` is nought for the other three, which hold none.
+    Temporal {
+        count: i64,
+        nano: i64,
+        #[serde(rename = "type")]
+        ty: Ty,
+        aborts: Vec<AbortKind>,
+    },
     Binary {
         op: Op,
         /// What the operator reads its operands as, which the checker settled and the operands'
@@ -2535,6 +2557,12 @@ impl Node {
                 ty,
                 aborts: _,
             }
+            | Node::Temporal {
+                count: _,
+                nano: _,
+                ty,
+                aborts: _,
+            }
             | Node::Neg {
                 operand: _,
                 ty,
@@ -2673,6 +2701,7 @@ impl Node {
             | Node::Bool { ty, .. }
             | Node::Str { ty, .. }
             | Node::Decimal { ty, .. }
+            | Node::Temporal { ty, .. }
             | Node::Neg { ty, .. }
             | Node::If { ty, .. }
             | Node::Unit { ty, .. }
@@ -2743,6 +2772,7 @@ impl Node {
             | Node::Bool { .. }
             | Node::Str { .. }
             | Node::Decimal { .. }
+            | Node::Temporal { .. }
             | Node::Unit { .. }
             | Node::Unreachable { .. }
             | Node::None { .. } => Vec::new(),
@@ -2757,6 +2787,7 @@ impl Node {
             | Node::Bool { aborts, .. }
             | Node::Str { aborts, .. }
             | Node::Decimal { aborts, .. }
+            | Node::Temporal { aborts, .. }
             | Node::Binary { aborts, .. }
             | Node::Neg { aborts, .. }
             | Node::Let { aborts, .. }
@@ -2812,6 +2843,7 @@ impl Node {
             | Node::Bool { .. }
             | Node::Str { .. }
             | Node::Decimal { .. }
+            | Node::Temporal { .. }
             | Node::Let { .. }
             | Node::If { .. }
             | Node::Unit { .. }
@@ -2874,6 +2906,7 @@ impl Node {
             | Node::Bool { .. }
             | Node::Str { .. }
             | Node::Decimal { .. }
+            | Node::Temporal { .. }
             | Node::Unit { .. }
             | Node::Unreachable { .. }
             | Node::None { .. } => Vec::new(),
@@ -2901,6 +2934,7 @@ impl Node {
             | Node::Bool { .. }
             | Node::Str { .. }
             | Node::Decimal { .. }
+            | Node::Temporal { .. }
             | Node::Binary { .. }
             | Node::Neg { .. }
             | Node::Let { .. }
@@ -2933,6 +2967,7 @@ impl Node {
             | Node::Bool { .. }
             | Node::Str { .. }
             | Node::Decimal { .. }
+            | Node::Temporal { .. }
             | Node::Binary { .. }
             | Node::Neg { .. }
             | Node::Let { .. }
@@ -2980,6 +3015,7 @@ impl Node {
             | Node::Bool { ty, .. }
             | Node::Str { ty, .. }
             | Node::Decimal { ty, .. }
+            | Node::Temporal { ty, .. }
             | Node::Binary { ty, .. }
             | Node::Neg { ty, .. }
             | Node::Let { ty, .. }
