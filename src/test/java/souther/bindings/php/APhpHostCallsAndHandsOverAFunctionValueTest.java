@@ -18,7 +18,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * which answers one; and hands over a closure of its own where a function value is taken, which
  * the library calls. What the closure throws comes back out of the call into the library that
  * reached it, a computation that ends without a value is thrown as one, and a function value is a
- * value of the run it was handed in.
+ * value of the run it was handed in, made once for each closure however often it is handed over.
  *
  * <p>The library is built from the document the driver's own tests of function values are held to
  * ({@link Documents#FUNCTIONS}): no source publishes a function value yet.
@@ -73,6 +73,16 @@ class APhpHostCallsAndHandsOverAFunctionValueTest {
                 $meet = Values::meet();
                 echo "meet: ", said($meet([4, 7])), " ", said($meet([4, null])), "\\n";
                 echo "lifted: ", Values::lifted()(10)(1), "\\n";
+
+                // One closure handed over again and again in a run is one function value, and the
+                // run holds room for it once.
+                $same = fn (int $x): int => $x;
+                $twice($same, 0);
+                $before = memory_get_usage();
+                for ($i = 0; $i < 1000; $i++) {
+                    $twice($same, $i);
+                }
+                echo "handed over again: ", memory_get_usage() - $before < 64 * 1024 ? 'held once' : 'held each time', "\\n";
             });
 
             $kept = $binding->run(fn (): Closure => Values::bump());
@@ -111,6 +121,7 @@ class APhpHostCallsAndHandsOverAFunctionValueTest {
                 deep -1: NULL
                 meet: 7 NULL
                 lifted: 11
+                handed over again: held once
                 expired: a value was used after the run it was made in ended
                 """);
     }

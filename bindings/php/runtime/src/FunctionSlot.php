@@ -51,18 +51,21 @@ final class FunctionSlot
 
     /**
      * A function value of `$closure`, for the length of `$session`'s run: what the session keeps is
-     * what the value reads, so the library may call it until the run ends and no later.
+     * what the value reads, so the library may call it until the run ends and no later. The same
+     * one each time the closure is handed over in the run ({@see Session::functionOf()}).
      */
     public function implement(Session $session, \Closure $closure): CData
     {
-        $ffi = $session->ffi();
-        $token = $this->next++;
-        $this->closures[$token] = $closure;
-        $room = $ffi->new('souther_hosted_function');
-        $userdata = $ffi->new('int64_t');
-        $userdata->cdata = $token;
-        $session->keep(new HostedFunction($this, $token, $room, $userdata));
-        return $ffi->{$this->implement}(FFI::addr($room), $this->pointer, FFI::addr($userdata));
+        return $session->functionOf($this, $closure, function () use ($session, $closure): CData {
+            $ffi = $session->ffi();
+            $token = $this->next++;
+            $this->closures[$token] = $closure;
+            $room = $ffi->new('souther_hosted_function');
+            $userdata = $ffi->new('int64_t');
+            $userdata->cdata = $token;
+            $session->keep(new HostedFunction($this, $token, $room, $userdata));
+            return $ffi->{$this->implement}(FFI::addr($room), $this->pointer, FFI::addr($userdata));
+        });
     }
 
     /** @internal Lets go of the closure a function value made through this called. */

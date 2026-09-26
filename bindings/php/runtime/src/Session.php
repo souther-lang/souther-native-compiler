@@ -46,6 +46,12 @@ final class Session
     private array $kept = [];
 
     /**
+     * @var array<string, CData> each function value made in this run of a closure PHP handed over,
+     *      by the slot it was made through and the closure
+     */
+    private array $made = [];
+
+    /**
      * @internal
      * @param array<string, Implemented> $injected what the run was handed, by the declared name of
      *        the behavior each implements, each with the binding it was written against
@@ -80,6 +86,24 @@ final class Session
     {
         $this->active = false;
         $this->kept = [];
+        $this->made = [];
+    }
+
+    /**
+     * @internal The function value `$closure` is made into through `$slot` in this run, made by
+     * `$make` the first time it is asked for.
+     *
+     * One for each closure and not one for each time it is handed over: a function value made of a
+     * closure calls that closure whenever it is called, and lives as long as the run either way, so
+     * a second one would be the same value, and a closure handed over in a loop would hold room for
+     * every time it went round until the run ended. The closure is kept by the slot until the run
+     * ends, so no other closure is given its id before then.
+     *
+     * @param \Closure(): CData $make
+     */
+    public function functionOf(FunctionSlot $slot, \Closure $closure, \Closure $make): CData
+    {
+        return $this->made[spl_object_id($slot) . ' ' . spl_object_id($closure)] ??= $make();
     }
 
     /** @internal Keeps `$it` for as long as this run is going: a value of the run reads it. */
