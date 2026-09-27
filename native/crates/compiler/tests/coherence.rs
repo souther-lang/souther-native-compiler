@@ -470,29 +470,36 @@ fn an_arm_reads_a_present_value_as_what_the_optional_holds() {
 }
 
 /// An arm binds what each of its tests leaves to read. A test that an optional holds nothing
-/// leaves nothing, so an arm binding a value there is the two halves disagreeing, and not this
-/// backend being behind; and an arm testing for `None` among the cases of a union binds the value
-/// as one of those cases, the way an arm testing for declared cases does.
+/// leaves nothing under it, so an arm binding a value there binds the optional itself, the same as
+/// an arm naming a case it tests binds the subject rather than what a case carries; and an arm
+/// testing for `None` among the cases of a union binds the value as one of those cases, the way an
+/// arm testing for declared cases does.
 #[test]
 fn an_arm_binds_what_each_of_its_tests_leaves_to_read() {
     let optional = option_of(S);
-    let binding_nothing = node(
-        "match",
-        &format!(
-            r#""subject":{},"arms":[{},{}]"#,
-            read(0, &optional),
-            arm(r#"{"tests":"held"}"#, Some((1, S)), &read(1, S)),
-            arm(
-                r#"{"tests":"nothing"}"#,
-                Some((2, &optional)),
-                &widen(&unit("m.A"), S)
-            )
-        ),
-        S,
-    );
+    let binds_the_optional_itself = |binds: &str| {
+        node(
+            "match",
+            &format!(
+                r#""subject":{},"arms":[{},{}]"#,
+                read(0, &optional),
+                arm(r#"{"tests":"held"}"#, Some((1, S)), &read(1, S)),
+                arm(
+                    r#"{"tests":"nothing"}"#,
+                    Some((2, binds)),
+                    &widen(&unit("m.A"), S)
+                )
+            ),
+            S,
+        )
+    };
+    reads_whole(&helpers(&[h(
+        &[&optional],
+        &binds_the_optional_itself(&optional),
+    )]));
     is_the_halves_disagreeing(
-        &helpers(&[h(&[&optional], &binding_nothing)]),
-        "leaves nothing to bind",
+        &helpers(&[h(&[&optional], &binds_the_optional_itself(S))]),
+        "m.h",
     );
 
     let none = r#"{"is":"language","case":"NONE"}"#;
@@ -2234,8 +2241,11 @@ fn kernel(key: &str, takes: &[&str], fact: &str) -> String {
     )
 }
 
-fn ordering_subject(ty: &str) -> String {
-    format!(r#"{{"is":"orderingsubject","type":{ty}}}"#)
+/// An `orderingsubject` fact settling `ty` as what is ordered, ordered by `basis` — absent only
+/// where `ty` is a type no value of which is made, since there is then nothing to place.
+fn ordering_subject(ty: &str, basis: Option<&str>) -> String {
+    let ordering = basis.map_or("null".to_string(), ToString::to_string);
+    format!(r#"{{"is":"orderingsubject","type":{ty},"ordering":{ordering}}}"#)
 }
 
 const NO_FACT: &str = r#"{"is":"none"}"#;
@@ -2253,7 +2263,7 @@ fn a_list_no_value_of_whose_element_is_made_is_ordered_without_a_comparison() {
             reads_whole(&helpers(&[h(
                 &[&listed],
                 &call(
-                    &kernel(key, &[&listed], &ordering_subject(element)),
+                    &kernel(key, &[&listed], &ordering_subject(element, None)),
                     &[read(0, &listed)],
                     &answers,
                 ),
@@ -2300,7 +2310,7 @@ fn a_kernel_is_handed_a_function_that_never_runs_and_calls_none() {
             never_run(INT, int(1)),
             empty,
             list_of(nothing),
-            ordering_subject(INT),
+            ordering_subject(INT, Some(INT)),
         ),
         (
             "option.map",
@@ -2373,7 +2383,11 @@ fn what_a_kernel_orders_by_is_what_it_takes_orders() {
         h(
             &[&key, &ints],
             &call(
-                &kernel("list.sortBy", &[&key, &ints], &ordering_subject(subject)),
+                &kernel(
+                    "list.sortBy",
+                    &[&key, &ints],
+                    &ordering_subject(subject, Some(subject)),
+                ),
                 &[read(0, &key), read(1, &ints)],
                 &ints,
             ),
@@ -2394,7 +2408,7 @@ fn what_a_kernel_orders_by_is_what_it_takes_orders() {
             h(
                 &[&ints],
                 &call(
-                    &kernel(key, &[&ints], &ordering_subject(subject)),
+                    &kernel(key, &[&ints], &ordering_subject(subject, Some(subject))),
                     &[read(0, &ints)],
                     &answers,
                 ),

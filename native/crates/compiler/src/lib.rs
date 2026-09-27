@@ -1974,7 +1974,7 @@ impl<'a> Declared<'a> {
     /// to it. A newtype that comes back to itself is refused: it has no value, the checker refuses
     /// it where it is written, and [`Declared::of`] asks this of every newtype, so every other asker
     /// is handed a walk that ends.
-    fn newtype_spine(&self, ty: &Ty) -> Result<NewtypeSpine> {
+    pub(crate) fn newtype_spine(&self, ty: &Ty) -> Result<NewtypeSpine> {
         let mut worn: Vec<String> = Vec::new();
         let mut opens: Vec<Ty> = Vec::new();
         let mut at = ty.clone();
@@ -5278,16 +5278,14 @@ fn shared_field(
     ty: &Ty,
 ) -> Lowered<ir::Value> {
     let Ty::Ref {
-        named: Case::Declared { declared },
+        named: named @ Case::Declared { .. },
     } = of
     else {
         unreachable!("a field is read off a sum only where the sum is its target's type");
     };
     let cases = lowering
         .declared
-        .leaves_of(&[Case::Declared {
-            declared: declared.clone(),
-        }])
+        .leaves_of(std::slice::from_ref(named))
         .expect("`Coherent` held every case of the sum to be one a declaration crossed for");
     let which = Tagged::of(value, of).which(builder);
     let read = builder.create_block();
@@ -6683,8 +6681,8 @@ fn opened(
 
 /// The newtypes worn round a value ([`Declared::newtype_spine`]): the type of each value read out
 /// of the one before, from the outermost newtype in. Empty where the type is no newtype.
-struct NewtypeSpine {
-    opens: Vec<Ty>,
+pub(crate) struct NewtypeSpine {
+    pub(crate) opens: Vec<Ty>,
 }
 
 /// A binary operator over operands read as they stand.

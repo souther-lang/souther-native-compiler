@@ -110,3 +110,18 @@ fn a_case_ordered_with_no_basis_named_is_the_halves_disagreeing() {
         "{refused}"
     );
 }
+
+/// A basis is trusted once it is checked to be one that could place every value compared, not
+/// before: `m.A | m.B` ordered by `m.T`, which lists `m.B` alone, is a basis with no place for
+/// `m.A` in it. Read on trust, `place` would fall `m.A` to whatever position `m.T`'s leaves leave
+/// for a tag none of them names — comparing wrongly and not refusing at all — so this is refused as
+/// the two halves disagreeing before a value is ever placed.
+#[test]
+fn a_basis_that_does_not_place_every_case_compared_is_the_halves_disagreeing() {
+    let union =
+        r#"{"union":[{"is":"declared","declared":"m.A"},{"is":"declared","declared":"m.B"}]}"#;
+    let refused =
+        object_for(&ordering(union, &as_enum("T"))).expect_err("a basis with no place for m.A");
+    assert!(refused.downcast_ref::<NotLowered>().is_none(), "{refused}");
+    assert!(refused.to_string().contains("does not place"), "{refused}");
+}

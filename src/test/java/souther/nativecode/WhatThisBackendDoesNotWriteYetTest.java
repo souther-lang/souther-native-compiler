@@ -97,4 +97,28 @@ class WhatThisBackendDoesNotWriteYetTest {
                 .contains("\"selects\":[{\"tests\":\"nothing\"}],\"binding\":2,"
                         + "\"binds\":{\"option\":{\"prim\":\"INT\"}}");
     }
+
+    /**
+     * The writer's shape crosses `Coherent` and runs: {@code n}, bound to the optional itself, is
+     * read back out and answers what it was bound to, the way any other binder does. Checked here
+     * and not only above, because a shape that crosses is not yet a shape the driver accepts — the
+     * two are different questions this backend has answered wrongly apart before.
+     */
+    @Test
+    void anArmBindingANameToNothingIsRunWithTheOptionalItBoundIt() throws Exception {
+        ARowHoldsWhereverItIsRunTest.assertEveryRowHolds("""
+                module absent exposing ( counted, Held )
+
+                data Held = { o: Int? }
+
+                behavior counted : (h: Held) -> Int
+                let counted (h) = match h.o with
+                    | Some x -> x
+                    | None as n -> if n == h.o then 0 else 1
+
+                example counted
+                    | "held" : (Held { o = 5 }) -> 5
+                    | "absent" : (Held { o = None }) -> 0
+                """);
+    }
 }

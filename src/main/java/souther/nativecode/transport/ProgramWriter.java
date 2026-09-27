@@ -1245,12 +1245,12 @@ public final class ProgramWriter {
      * it: the count the value it parsed to is, and not the text it was written as.
      *
      * <p>Read by the checker's own parse ({@code CallElaborator#parseTemporal}, which is public for
-     * a backend to share the one reading of the text): {@code java.time}'s, whose spellings are more
-     * than the ones it writes back ({@code DateTime("2026-07-01t09:30")} is admitted), and which
-     * decides what a program may say. The text handed over as it stands would be read a second time
-     * on the other side by a grammar of its own, and whatever that one refused of what this one
-     * admitted would be a program the checker passed and the backend did not; so what crosses is
-     * what was read, as a {@code Decimal}'s integer and scale are. A {@code Date} crosses as its
+     * a backend to share the one reading of the text): {@code TemporalText}'s grammar decides what
+     * a program may say, and {@code java.time} only builds the value a text already admitted. The
+     * text handed over as it stands would be read a second time on the other side by a grammar of
+     * its own, and a backend's own reading of it is exactly the second language this project's
+     * design refuses to let stand — so what crosses is what was read, as a {@code Decimal}'s integer
+     * and scale are. A {@code Date} crosses as its
      * day, a {@code Time} as its second of the day, a {@code DateTime} as its second counted from
      * 1970-01-01T00:00:00 as though it were in UTC, and an {@code Instant} as its second and its
      * nanosecond; the last two are the checker's own carriers ({@code numeric.DateTimes}, {@code

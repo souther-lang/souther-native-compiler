@@ -196,12 +196,14 @@ shift (`Date.addDays`, `addMonths` and `addYears`, `DateTime.addMinutes`, `addHo
 and for a day past the end; `Date.fromParts` and `Time.fromParts` name a case for parts that name
 none and normalise nothing. A boundary writes a temporal as `toString` of its `java.time` class
 does — a time without its seconds where they are nought, an instant in UTC — and reads it by the
-same `TemporalText` grammar a literal is checked against, so a boundary and a literal admit the same
-spellings and refuse the same ones: a text held to the second refuses a fraction of one even where
-it is nought, since `09:30:00.000` and `09:30:00` name one second once the point is read past and
-only the text still says which was sent, and an instant's end of day, `24:00:00`, admits none of a
-minute, a second or a fraction after it for the same reason. An instant is read from an offset
-spelling as the moment it names, and a leap second is refused. `ATemporalAnswersWhatTheJvmAnswersTest`
+same `TemporalText` authority a literal is checked against: `atBoundary`'s grammar, which a literal
+is held to as well, plus one condition more a source `Instant` alone answers to, that its offset is
+spelled `Z` and nothing else — so the sets are not equal, only decided by the one language either
+way. A text held to the second refuses a fraction of one even where it is nought, since
+`09:30:00.000` and `09:30:00` name one second once the point is read past and only the text still
+says which was sent, and an instant's end of day, `24:00:00`, admits none of a minute, a second or a
+fraction after it for the same reason. An instant is read from an offset spelling as the moment it
+names, and a leap second is refused. `ATemporalAnswersWhatTheJvmAnswersTest`
 holds every kernel and comparison to what `java.time` answers over the ends of every range and a
 seeded run of the rest.
 
