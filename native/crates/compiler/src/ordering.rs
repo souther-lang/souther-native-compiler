@@ -152,15 +152,15 @@ pub(crate) fn place_of(
         return Ok(None);
     };
     let (opened_ty, value) = opened(builder, lowering.declared, placing.ty, value)?;
-    let leaves = lowering
-        .declared
-        .leaves_of(std::slice::from_ref(named))
-        .expect("`Coherent` held every case named to be one a declaration crossed for");
+    let Case::Declared { declared } = named else {
+        unreachable!("an enumeration is a declaration")
+    };
+    let leaves = lowering.declared.order_of(declared);
     Ok(Some(place(
         builder,
         lowering,
         module,
-        &leaves,
+        leaves,
         Tagged::of(value, &opened_ty),
     )?))
 }

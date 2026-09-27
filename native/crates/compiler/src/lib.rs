@@ -1675,6 +1675,16 @@ impl<'a> Declared<'a> {
             }
             if let Declaration::Sum { cases, form, .. } = declaration {
                 declared.settled(&key, cases, form)?;
+                // The checker answers the leaves a sum descends to each once, at the place it was
+                // first reached, which is what an enumeration's order is read off
+                // ([`Declared::order_of`]).
+                let mut seen = Vec::new();
+                for case in cases.iter() {
+                    if seen.contains(&case) {
+                        bail!("{key} lists {} twice among its cases", case.spelt());
+                    }
+                    seen.push(case);
+                }
             }
             if let Some(clauses) = declaration.clauses() {
                 projected(&key, declaration.fields(), clauses)?;
@@ -2028,6 +2038,20 @@ impl<'a> Declared<'a> {
         Ok(PairIn::Held)
     }
 
+    /// The leaves the enumeration `enumeration` places its values among, in the order it places
+    /// them: its cases, which the checker descended and `Declared::of` held to list each once. Read
+    /// off the declaration and not worked out, so asking it for every comparison costs nothing.
+    fn order_of(&self, enumeration: &str) -> &'a [Case] {
+        match self.laid(enumeration) {
+            Declaration::Sum {
+                cases,
+                form: AlternativesForm::Enumeration,
+                ..
+            } => cases,
+            _ => unreachable!("`Coherent` held {enumeration} to be an enumeration an order is of"),
+        }
+    }
+
     /// Whether `basis` is an order values of `ty` can be placed on, as the checker says they are
     /// (`Core.OrderingBasis`): `ty` opened of every newtype it wears is the basis itself where the
     /// basis is a primitive, and is an enumeration, one of its cases or a union of them where the
@@ -2058,9 +2082,7 @@ impl<'a> Declared<'a> {
                         basis.spelt()
                     ),
                 };
-                let places = self.leaves_of(std::slice::from_ref(&Case::Declared {
-                    declared: declared.clone(),
-                }))?;
+                let places = self.order_of(declared);
                 for leaf in self.leaves_of(&members)? {
                     if !places.contains(&leaf) {
                         bail!(
