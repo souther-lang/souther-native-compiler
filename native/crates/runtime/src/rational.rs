@@ -180,23 +180,12 @@ impl Ratio {
             denominator = denominator.shifted_down(by);
             twos -= i128::from(by);
         }
-        let five = Magnitude::Small(5);
-        loop {
-            let (quotient, remainder) = numerator.div_rem(&five);
-            if !remainder.is_zero() {
-                break;
-            }
-            numerator = quotient;
-            fives += 1;
-        }
-        loop {
-            let (quotient, remainder) = denominator.div_rem(&five);
-            if !remainder.is_zero() {
-                break;
-            }
-            denominator = quotient;
-            fives -= 1;
-        }
+        let (stripped, by) = numerator.without_fives();
+        numerator = stripped;
+        fives += i128::from(by);
+        let (stripped, by) = denominator.without_fives();
+        denominator = stripped;
+        fives -= i128::from(by);
         Some(Ratio {
             negative,
             numerator: held(numerator)?,
