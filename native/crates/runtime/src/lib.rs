@@ -892,20 +892,21 @@ mod tests {
     /// Text a host hands over past what a `String` holds (`souther_text::LONGEST_TEXT`, 2^28 - 1
     /// code points) has no place: `souther_string_of_utf8` answers `0` and writes nothing through
     /// `out`, the same `Bool` + room shape a generated string operation already answers by
-    /// (souther-native-compiler#109). ASCII, so code points, UTF-16 units and bytes coincide and the
-    /// allocation stays a plain memset.
+    /// (souther-native-compiler#109).
+    ///
+    /// This is the one place the real, production `STRING_HOLDS` is exercised rather than a small
+    /// stand-in — everywhere else that would ask for text this long asks `souther_text::admitted`
+    /// directly at a capacity of its own choosing, which is what pins the boundary arithmetic
+    /// itself (see `souther-text`'s own tests). What is worth pinning here, once, is only that this
+    /// FFI door is actually wired to the real constant and answers the `Bool` + room shape at that
+    /// scale — so this asks for the refusal alone, not also a success at exactly the bound, which
+    /// would cost a second quarter-gigabyte allocation to prove something every other test in this
+    /// module already exercises at ordinary sizes. ASCII, so code points, UTF-16 units and bytes
+    /// coincide and the allocation stays a plain memset.
     #[test]
     fn text_past_what_a_string_holds_has_no_place() {
         let mark = souther_mark();
         let longest = usize::try_from(souther_text::LONGEST_TEXT).unwrap();
-        let at_the_bound = "a".repeat(longest);
-        let mut out = std::ptr::null_mut();
-        let admitted = unsafe {
-            souther_string_of_utf8(at_the_bound.as_ptr(), Count(at_the_bound.len() as i64), &mut out)
-        };
-        assert_eq!(admitted, 1, "exactly what a String holds has a place");
-        assert!(!out.is_null());
-
         let past_the_bound = "a".repeat(longest + 1);
         let mut out = std::ptr::null_mut();
         let admitted = unsafe {
