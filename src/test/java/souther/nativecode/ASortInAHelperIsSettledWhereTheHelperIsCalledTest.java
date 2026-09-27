@@ -90,15 +90,24 @@ class ASortInAHelperIsSettledWhereTheHelperIsCalledTest {
         List<JsonNode> subjects = new ArrayList<>();
         collect(written, subjects);
 
-        assertThat(subjects).hasSize(4);
         assertThat(subjects).allSatisfy(it -> {
             assertThat(it.get("ordering").isNull()).as("%s says no order", it).isFalse();
             assertThat(it.get("type").findValue("var")).as("%s orders a variable", it).isNull();
         });
-        assertThat(subjects).extracting(it -> it.get("ordering").toString())
-                .contains("{\"prim\":\"INT\"}",
-                        "{\"ref\":{\"is\":\"declared\",\"declared\":\"sorting.Stage\"}}",
-                        "{\"ref\":{\"is\":\"declared\",\"declared\":\"sorting.Late\"}}");
+        // What each call sorts, and the order it is placed on: a newtype on what it wraps, and
+        // each enumeration on its own listing of the same two units.
+        assertThat(subjects).extracting(it -> it.get("type") + " by " + it.get("ordering"))
+                .containsExactlyInAnyOrder(
+                        INT + " by " + INT,
+                        declared("Amount") + " by " + INT,
+                        declared("Stage") + " by " + declared("Stage"),
+                        declared("Late") + " by " + declared("Late"));
+    }
+
+    private static final String INT = "{\"prim\":\"INT\"}";
+
+    private static String declared(String name) {
+        return "{\"ref\":{\"is\":\"declared\",\"declared\":\"sorting." + name + "\"}}";
     }
 
     private static void collect(JsonNode node, List<JsonNode> subjects) {
