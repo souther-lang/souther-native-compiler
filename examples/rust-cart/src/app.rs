@@ -29,6 +29,19 @@ pub struct App {
     database: Arc<Mutex<Connection>>,
 }
 
+/// What a request came to, and whether what was written while answering it is kept.
+///
+/// A route says which, where it knows what the domain answered. That the domain answered is not
+/// that its answer is to be kept: an injected behavior may write before the command is refused
+/// (`loadCart` makes the user's cart row), and a refused command keeps nothing it wrote on the way.
+/// There is no conversion from a `Response`, so no route commits without saying so.
+pub enum Outcome {
+    /// The command succeeded, and what it wrote is kept.
+    Commit(Response),
+    /// The command was refused, or wrote nothing worth keeping, and what it wrote is dropped.
+    Rollback(Response),
+}
+
 /// The three behaviors the routes call, bound for one request.
 pub struct Behaviors<'a> {
     pub add_item_to_cart: AddItemToCart<'a>,
@@ -52,7 +65,8 @@ impl App {
         })
     }
 
-    /// The response `work` comes to, in one run of the library and one transaction.
+    /// The response `work` comes to, in one run of the library and one transaction, which is
+    /// committed or rolled back as the [`Outcome`] says.
     ///
     /// A run is a mark on an arena that belongs to the thread it was opened on, and every value of
     /// the model made in it is good until it ends. So it cannot be held across an `.await`, which
@@ -65,7 +79,7 @@ impl App {
                 &Behaviors<'_>,
                 &mut Run<'run>,
                 &Connection,
-            ) -> Result<Response, Failure>
+            ) -> Result<Outcome, Failure>
             + Send
             + 'static,
     {
@@ -84,7 +98,7 @@ impl App {
             &Behaviors<'_>,
             &mut Run<'run>,
             &Connection,
-        ) -> Result<Response, Failure>,
+        ) -> Result<Outcome, Failure>,
     {
         // A request that panicked left no transaction open, so what it held is still whole.
         let mut connection = self.database.lock().unwrap_or_else(PoisonError::into_inner);
@@ -115,7 +129,11 @@ impl App {
         // Everything that borrowed the transaction has gone out of scope above, so it can be
         // committed. Dropped instead, it rolls back.
         match answered {
-            Ok(Ok(response)) => match transaction.commit() {
+            Ok(Ok(Outcome::Commit(response))) => match transaction.commit() {
+                Ok(()) => response,
+                Err(error) => internal(error),
+            },
+            Ok(Ok(Outcome::Rollback(response))) => match transaction.rollback() {
                 Ok(()) => response,
                 Err(error) => internal(error),
             },

@@ -13,6 +13,7 @@ use App\Database\Transaction;
 use App\Http\BadRequest;
 use App\Http\CartController;
 use App\Http\Request;
+use App\Http\Outcome;
 use App\Http\Response;
 use App\Http\Router;
 use Model\Binding;
@@ -80,7 +81,7 @@ final readonly class CartApplication
     {
         try {
             return $this->binding->run(fn (): Response =>
-                $this->tx->execute(fn (): Response => $this->router->handle($request)));
+                $this->tx->execute(fn (): Outcome => $this->router->handle($request)));
         } catch (BadRequest $bad) {
             return Response::badRequest($bad->issues);
         }

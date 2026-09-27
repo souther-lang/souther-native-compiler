@@ -9,7 +9,7 @@ pub mod app;
 pub mod db;
 pub mod http;
 
-pub use app::App;
+pub use app::{App, Outcome};
 pub use http::router;
 
 use std::env::consts::{DLL_PREFIX, DLL_SUFFIX};

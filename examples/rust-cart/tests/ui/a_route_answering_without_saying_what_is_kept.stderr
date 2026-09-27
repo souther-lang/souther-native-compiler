@@ -1,0 +1,25 @@
+error[E0308]: mismatched types
+ --> tests/ui/a_route_answering_without_saying_what_is_kept.rs:8:29
+  |
+8 |     app.handle(|_, _, _| Ok(response::created(None))).await;
+  |                          -- ^^^^^^^^^^^^^^^^^^^^^^^ expected `Outcome`, found `Response<Body>`
+  |                          |
+  |                          arguments to this enum variant are incorrect
+  |
+  = note: expected enum `Outcome`
+           found struct `http::response::Response<axum_core::body::Body>`
+help: the type constructed contains `http::response::Response<axum_core::body::Body>` due to the type of the argument passed
+ --> tests/ui/a_route_answering_without_saying_what_is_kept.rs:8:26
+  |
+8 |     app.handle(|_, _, _| Ok(response::created(None))).await;
+  |                          ^^^-----------------------^
+  |                             |
+  |                             this argument influences the type of `Ok`
+note: tuple variant defined here
+ --> $RUST/core/src/result.rs
+help: try wrapping the expression in a variant of `Outcome`
+  |
+8 |     app.handle(|_, _, _| Ok(rust_cart::Outcome::Commit(response::created(None)))).await;
+  |                             +++++++++++++++++++++++++++                       +
+8 |     app.handle(|_, _, _| Ok(rust_cart::Outcome::Rollback(response::created(None)))).await;
+  |                             +++++++++++++++++++++++++++++                       +

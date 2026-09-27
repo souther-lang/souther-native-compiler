@@ -19,6 +19,12 @@ checks these with raoh before the model's decoder reads the orderer; here the mo
 checks them itself, so no host says them again. What the model still leaves to a boundary is what
 it says it does: an email's shape, and that an id is a UUID.
 
+What the model states is whether a value holds, never how it is written: an invariant decides and
+does not rewrite. So the canonical form of a client's text stays each host's boundary, as it is the
+Java one's: a name and a company name without the spaces around them, an email trimmed and in lower
+case, an id in lower case. A host hands the model the canonical text, and the bounds above are on
+that.
+
 A rule the model states is reported by the model's decoder at the field's path. On the JVM a
 newtype's rule with a Raoh equivalent is reported with that constraint's code (`too_long`,
 `invalid_format`); a native library reports every one as `invariant_violation` for now (#97).

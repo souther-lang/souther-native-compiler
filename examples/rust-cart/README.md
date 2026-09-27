@@ -90,10 +90,11 @@ what rustc says about it:
 | a run made `async`, to wait on something inside it | lifetime may not live long enough |
 | a transaction committed while an implementation reading through it can still be called | E0505, cannot move out of `transaction` because it is borrowed |
 | a behavior bound without one of the behaviors it depends on | E0061, argument #4 of type `&SaveItemImplementation<'_>` is missing |
+| a route answering a response without saying whether what the request wrote is kept | E0308, expected `Outcome`, found `Response` |
 
 A `match` over a behavior's answer is checked in the same way. The answer is an enum of exactly the
 cases the model says it can answer, so a case added to the model stops this crate compiling until a
-route says what the case is answered with.
+route says what the case is answered with, and whether what was written on the way to it is kept.
 
 ## How a request is served
 
@@ -115,44 +116,59 @@ library.run(|run| work(&behaviors, run, &transaction))
 
 An implementation borrows the transaction, and a bound behavior borrows the implementations, so
 none of them can be called once the transaction is committed or rolled back. Binding for each
-request costs a box for each implementation. What comes back out of the run is a `Response`, whose
-body is text by then.
+request costs a box for each implementation.
 
-A request that is answered commits. One that ends without an answer, where the run ends for a reason
-the library numbers or an implementation fails, is rolled back and answered with a 500. A panic in
-an implementation does not unwind through the library: the binding catches it, and raises it again
-where the call into the library returns, which ends the blocking task, rolls the transaction back,
-and is answered with a 500 as well.
+What comes back out of the run is an `Outcome`: the response, whose body is text by then, and
+whether what the request wrote is kept. That the domain answered is not that its answer is to be
+kept. `loadCart` makes a new user's cart row before the capacity is decided, and a command the model
+then refuses (`CartFull`) must not leave that row behind. So every arm of every route says which,
+`Commit` for the answer a command succeeds with and `Rollback` for every refusal, and there is no
+conversion from a `Response` that would commit by default. A request that ends without an answer,
+where the run ends for a reason the library numbers or an implementation fails, is rolled back and
+answered with a 500. A panic in an implementation does not unwind through the library: the binding
+catches it, and raises it again where the call into the library returns, which ends the blocking
+task, rolls the transaction back, and is answered with a 500 as well.
 
 The database is one connection behind a `Mutex`. SQLite writes one transaction at a time whatever
 the application does, and a pool would not change what this example shows.
 
 ## How a request is read
 
-A request is read by the model's decoders, which know which fields a type has, every rule the type
-states, a positive quantity and a corporate number of thirteen digits among them, and which case an
-orderer is. None of that is written again in Rust. In front of them raoh does only what the model
-leaves to a boundary: that an id is a UUID, written in lower case, and that an email is trimmed,
-lowercased and shaped like one. An orderer is handed to the model whole, its email normalised in
-place, so a field the model adds to a case reaches the model without this code knowing of it.
+Two parties read a request, and each owns a different part of what it means. The model owns what a
+value is: which fields a type has, which case an orderer is, and every rule a type states, a
+positive quantity, a name that is not blank and no longer than 100, a corporate number of thirteen
+digits. None of that is written again in Rust. The boundary owns how a client's text is written:
+its canonical form (an id and an email in lower case, an email and a name without the spaces around
+them) and the forms the model leaves to it (an id is a UUID, an email is shaped like one). Trimming
+a name is not a rule the model could state instead: an invariant decides whether a value holds and
+never rewrites it, so a model asked to trim would keep `"  Taro  "` as it came.
 
-The model's step is a raoh decoder like any other. A request has no type of its own in the model,
-since a behavior takes its arguments by place, so each argument is a field read by its type's
-decoder:
+The model's decoders are reached in two ways, and which one is decided by what the boundary's step
+is about. Where the boundary checks the very value the model reads, an id, the two are piped, and
+where the boundary refuses the value the model has nothing to add at that path. Where the model
+reads a value whole, an orderer, the boundary canonicalises the members it owns each on its own,
+and the model reads the value whichever of them was refused:
 
 ```rust
-field("userId", uuid().pipe(model.of(|run, id: &String| UserId::new(run, id)))),
-field("quantity", model.of(|run, it: &Value| Quantity::decode(run, &it.to_string()))),
+field("userId", model.after(uuid(), |run, id: &String| UserId::new(run, id))),
+// ...
+model.canonicalised(
+    vec![("email", /* trimmed, lowercased, shaped like an email */), ("name", trimmed()), ("companyName", trimmed())],
+    |run, it| Orderer::decode(run, &it.to_string()),
+)
 ```
 
-Every field is read whichever of them fails, so a request answers all of its issues at once. A
-corporation whose user is no UUID and whose company name and corporate number are missing is one
-400 with three issues: raoh found the first, and the model the other two, since which fields a
-corporation has is the model's to say.
+A `pipe` from the boundary's step into the model's would stop at the first: an orderer whose email
+is refused would never reach the model, which alone can say that a corporation has no company name.
+So a request answers all of its issues at once, field by field and member by member. A corporation
+whose email is not shaped like one and whose company name and corporate number are missing is one
+400 with three issues: raoh found the first, and the model the other two. Where both find something
+wrong with one member, a name that is no text, the boundary's issue is the one kept, since it says
+what form the member was not in.
 
 ```json
 {"issues": [
-  {"path": "/userId", "code": "invalid_format", ...},
+  {"path": "/orderer/email", "code": "invalid_format", ...},
   {"path": "/orderer/companyName", "code": "missing_field", ...},
   {"path": "/orderer/corporateNumber", "code": "missing_field", ...}]}
 ```

@@ -28,9 +28,13 @@ struct Answer {
 
 impl Cart {
     fn new() -> Self {
+        Cart::over(Connection::open_in_memory().unwrap())
+    }
+
+    fn over(connection: Connection) -> Self {
         // SAFETY: the library bin/build wrote beside the binding this test was compiled against.
         let library = unsafe { Library::load(rust_cart::library()) }.expect("run bin/build first");
-        let app = App::new(library, Connection::open_in_memory().unwrap()).unwrap();
+        let app = App::new(library, connection).unwrap();
         Cart(rust_cart::router(app))
     }
 
@@ -254,6 +258,103 @@ async fn a_name_of_nothing_but_spaces_is_400() {
 
     assert_eq!(answer.status, StatusCode::BAD_REQUEST);
     assert_eq!(paths(&answer), ["/orderer/name"]);
+}
+
+#[tokio::test]
+async fn a_name_is_kept_without_the_spaces_around_it() {
+    // Trimming is how the boundary writes a name, not a rule the model states, so the model is
+    // handed the name without them and its bound is on what it keeps.
+    let cart = Cart::new();
+    let user = "11111111-1111-1111-1111-111111111119";
+    cart.add_item(user, ON_SALE, 1).await;
+    let longest = "名".repeat(100);
+
+    let answer = cart
+        .checkout(
+            "/carts/checkout",
+            user,
+            with(individual(), "name", json!(format!("  {longest}  "))),
+        )
+        .await;
+
+    assert_eq!(answer.status, StatusCode::CREATED, "{}", answer.body);
+    assert_eq!(answer.body["orderer"]["name"], json!(longest));
+}
+
+#[tokio::test]
+async fn a_company_name_is_kept_without_the_spaces_around_it() {
+    let cart = Cart::new();
+    let user = "11111111-1111-1111-1111-11111111111a";
+    cart.add_item(user, ON_SALE, 1).await;
+
+    let orderer = with(corporation(), "companyName", json!("  Acme株式会社 "));
+    let answer = cart.checkout("/carts/checkout", user, orderer).await;
+
+    assert_eq!(answer.status, StatusCode::CREATED, "{}", answer.body);
+    assert_eq!(answer.body["orderer"]["companyName"], "Acme株式会社");
+}
+
+#[tokio::test]
+async fn a_member_the_boundary_refuses_does_not_keep_the_model_from_reading_the_rest() {
+    // The email is not shaped like one, which the boundary finds; the corporation has no company
+    // name and no corporate number, which only the model can say.
+    let orderer = json!({ "type": "Corporation", "email": "not-an-email" });
+
+    let answer = Cart::new().checkout("/carts/checkout", USER, orderer).await;
+
+    assert_eq!(answer.status, StatusCode::BAD_REQUEST);
+    let mut found = paths(&answer);
+    found.sort_unstable();
+    assert_eq!(
+        found,
+        [
+            "/orderer/companyName",
+            "/orderer/corporateNumber",
+            "/orderer/email"
+        ],
+        "{}",
+        answer.body
+    );
+}
+
+#[tokio::test]
+async fn a_member_both_refuse_is_answered_once_by_the_boundary() {
+    // A name that is no text is refused by the boundary, which trims it, and by the model, which
+    // reads a PersonName. The boundary's issue says what form it was not in, and is the one kept.
+    let orderer = with(individual(), "name", json!(5));
+
+    let answer = Cart::new().checkout("/carts/checkout", USER, orderer).await;
+
+    assert_eq!(answer.status, StatusCode::BAD_REQUEST);
+    assert_eq!(paths(&answer), ["/orderer/name"], "{}", answer.body);
+}
+
+#[tokio::test]
+async fn a_refused_command_keeps_nothing_it_wrote_on_the_way() {
+    // loadCart makes a new user's cart row before the capacity is decided. A command the model
+    // refuses keeps nothing, and one it answers keeps what it wrote.
+    let database = std::env::temp_dir().join(format!("rust-cart-{}.sqlite", uuid::Uuid::new_v4()));
+    let cart = Cart::over(Connection::open(&database).unwrap());
+    let carts_of = |user: &str| -> i64 {
+        Connection::open(&database)
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM cart WHERE user_id = ?1",
+                [user],
+                |row| row.get(0),
+            )
+            .unwrap()
+    };
+    let refused = "11111111-1111-1111-1111-11111111111b";
+    let answered = "11111111-1111-1111-1111-11111111111c";
+
+    let full = cart.add_item(refused, ON_SALE, 10001).await;
+    let added = cart.add_item(answered, ON_SALE, 1).await;
+
+    assert_eq!(full.status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(added.status, StatusCode::CREATED);
+    assert_eq!((carts_of(refused), carts_of(answered)), (0, 1));
+    std::fs::remove_file(&database).unwrap();
 }
 
 #[tokio::test]

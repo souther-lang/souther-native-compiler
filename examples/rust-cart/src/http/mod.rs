@@ -4,7 +4,8 @@
 //!
 //! The answer of a behavior is an enum of exactly the cases the model says it can answer, so each
 //! `match` here is checked for the cases it leaves out when it is compiled. A case added to the
-//! model stops this compiling until a route says what it is answered with.
+//! model stops this compiling until a route says what it is answered with, and whether what was
+//! written on the way to it is kept: every arm is an [`Outcome`].
 
 pub mod request;
 pub mod response;
@@ -26,6 +27,7 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::App;
+use crate::app::Outcome::{self, Commit, Rollback};
 
 /// The routes of the cart over `app`.
 pub fn router(app: App) -> Router {
@@ -41,17 +43,17 @@ async fn add_item(State(app): State<App>, body: String) -> Response {
     app.handle(move |behaviors, run, _| {
         let (user_id, product_id, quantity) = match request::add_item(run, &body)? {
             Ok(arguments) => arguments,
-            Err(issues) => return Ok(response::bad_request(&issues)),
+            Err(issues) => return Ok(Rollback(response::bad_request(&issues))),
         };
         Ok(
             match behaviors
                 .add_item_to_cart
                 .call(run, user_id, product_id, quantity)?
             {
-                Added::ItemAdded(_) => response::created(None),
-                Added::ProductNotFound(_) => response::unprocessable("product_not_found"),
-                Added::SaleEnded(_) => response::unprocessable("sale_ended"),
-                Added::CartFull(_) => response::unprocessable("cart_full"),
+                Added::ItemAdded(_) => Commit(response::created(None)),
+                Added::ProductNotFound(_) => Rollback(response::unprocessable("product_not_found")),
+                Added::SaleEnded(_) => Rollback(response::unprocessable("sale_ended")),
+                Added::CartFull(_) => Rollback(response::unprocessable("cart_full")),
             },
         )
     })
@@ -63,20 +65,25 @@ async fn checkout(State(app): State<App>, body: String) -> Response {
     app.handle(move |behaviors, run, _| {
         let (user_id, orderer) = match request::checkout(run, &body)? {
             Ok(arguments) => arguments,
-            Err(issues) => return Ok(response::bad_request(&issues)),
+            Err(issues) => return Ok(Rollback(response::bad_request(&issues))),
         };
-        let Construction::Value(order_id) = OrderId::new(run, &Uuid::new_v4().to_string())? else {
-            unreachable!("an OrderId is any text but the empty one, and a UUID's is not empty")
+        let order_id = match OrderId::new(run, &Uuid::new_v4().to_string())? {
+            Construction::Value(order_id) => order_id,
+            Construction::Rejected(issue) => return Ok(refused_what_the_host_made(&issue)),
         };
         Ok(
             match behaviors
                 .place_order
                 .call(run, order_id, user_id, orderer)?
             {
-                Placed::OrderPlaced(placed) => response::created(Some(placed.order().encode())),
-                Placed::EmptyCart(_) => response::unprocessable("empty_cart"),
-                Placed::SaleEnded(_) => response::unprocessable("sale_ended"),
-                Placed::ProductNotFound(_) => response::unprocessable("product_not_found"),
+                Placed::OrderPlaced(placed) => {
+                    Commit(response::created(Some(placed.order().encode())))
+                }
+                Placed::EmptyCart(_) => Rollback(response::unprocessable("empty_cart")),
+                Placed::SaleEnded(_) => Rollback(response::unprocessable("sale_ended")),
+                Placed::ProductNotFound(_) => {
+                    Rollback(response::unprocessable("product_not_found"))
+                }
             },
         )
     })
@@ -88,17 +95,20 @@ async fn quote(State(app): State<App>, body: String) -> Response {
     app.handle(move |behaviors, run, _| {
         let (user_id, orderer) = match request::checkout(run, &body)? {
             Ok(arguments) => arguments,
-            Err(issues) => return Ok(response::bad_request(&issues)),
+            Err(issues) => return Ok(Rollback(response::bad_request(&issues))),
         };
         // issueQuote takes a Corporation, so the orderer is narrowed here, over both of its cases.
         let corporation = match orderer.case() {
             OrdererCase::Corporation(corporation) => corporation,
             OrdererCase::Individual(_) => {
-                return Ok(response::unprocessable("quote_for_corporations_only"));
+                return Ok(Rollback(response::unprocessable(
+                    "quote_for_corporations_only",
+                )));
             }
         };
-        let Construction::Value(quote_id) = QuoteId::new(run, &Uuid::new_v4().to_string())? else {
-            unreachable!("a QuoteId is any text but the empty one, and a UUID's is not empty")
+        let quote_id = match QuoteId::new(run, &Uuid::new_v4().to_string())? {
+            Construction::Value(quote_id) => quote_id,
+            Construction::Rejected(issue) => return Ok(refused_what_the_host_made(&issue)),
         };
         let valid_until = jiff::Zoned::now().date() + jiff::Span::new().days(30);
         Ok(
@@ -109,14 +119,24 @@ async fn quote(State(app): State<App>, body: String) -> Response {
                 corporation,
                 &valid_until.to_string(),
             )? {
-                Quoted::Quotation(quotation) => response::ok(quotation.encode()),
-                Quoted::EmptyCart(_) => response::unprocessable("empty_cart"),
-                Quoted::SaleEnded(_) => response::unprocessable("sale_ended"),
-                Quoted::ProductNotFound(_) => response::unprocessable("product_not_found"),
+                Quoted::Quotation(quotation) => Commit(response::ok(quotation.encode())),
+                Quoted::EmptyCart(_) => Rollback(response::unprocessable("empty_cart")),
+                Quoted::SaleEnded(_) => Rollback(response::unprocessable("sale_ended")),
+                Quoted::ProductNotFound(_) => {
+                    Rollback(response::unprocessable("product_not_found"))
+                }
             },
         )
     })
     .await
+}
+
+/// What a request comes to where the model refused a value this host made on its own, such as an
+/// id: the fault is the host's, not the client's, so it is a 500 and nothing is kept. Which values
+/// the model admits is the model's to say, and nothing here assumes the answer.
+fn refused_what_the_host_made(issue: &raoh::Issue) -> Outcome {
+    eprintln!("the model refused a value the host made: {issue:?}");
+    Rollback(response::internal())
 }
 
 /// `GET /carts/items?userId=…&page=…&size=…`
@@ -130,7 +150,7 @@ async fn list_items(
     app.handle(move |_, run, database| {
         let user_id = match request::user_id(run, query.get("userId").map(String::as_str))? {
             Ok(user_id) => user_id.value(),
-            Err(issues) => return Ok(response::bad_request(&issues)),
+            Err(issues) => return Ok(Rollback(response::bad_request(&issues))),
         };
         let number = |name: &str, least: i64, otherwise: i64| {
             query
@@ -140,13 +160,14 @@ async fn list_items(
                 .max(least)
         };
         let (page, size) = (number("page", 0, 0), number("size", 1, 20));
-        Ok(match listing(database, &user_id, page, size) {
+        // A listing writes nothing, so there is nothing to keep.
+        Ok(Rollback(match listing(database, &user_id, page, size) {
             Ok(listing) => response::ok(listing.to_string()),
             Err(error) => {
                 eprintln!("the listing could not be read: {error}");
                 response::internal()
             }
-        })
+        }))
     })
     .await
 }

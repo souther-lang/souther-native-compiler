@@ -9,25 +9,28 @@ use Model\Com\Example\Cart\Domain\OrdererCodec;
 use Model\Com\Example\Cart\Domain\ProductId;
 use Model\Com\Example\Cart\Domain\Quantity;
 use Model\Com\Example\Cart\Domain\UserId;
-use Raoh\CallableDecoder;
 use Raoh\Decoder;
-use Raoh\Result;
 
 use function Raoh\Boundary\Json\combine;
 use function Raoh\Boundary\Json\field;
 use function Raoh\Boundary\Json\from_json;
-use function Raoh\Boundary\Json\optional_field;
 use function Raoh\Boundary\Json\string_;
 
 /**
  * Request bodies, decoded into the arguments of a behavior.
  *
- * What a value of the model is, the model's decoders read, which the binding generates: which case
- * an orderer is, the fields each case has, and every rule a type states, a positive quantity and a
- * corporate number of thirteen digits among them. Nothing here says any of it again. What is left
- * to the boundary is what the model leaves to it: an id is a UUID, written in lower case, and an
- * email is trimmed, lowercased and shaped like one. raoh-php does that part, and pipes what it
- * hands on into the model's decoder. Either failing is an issue under the field's path.
+ * Two parties read a request, and each owns a different part of what it means. The model owns what
+ * a value is, and its decoders, which the binding generates, read it: which case an orderer is, the
+ * fields each case has, and every rule a type states, a positive quantity, a name that is not blank
+ * and a corporate number of thirteen digits among them. Nothing here says any of that again. The
+ * boundary owns how a value is written from outside: the canonical form of what a client sends (an
+ * id in lower case, an email and a name without the spaces around them, an email in lower case),
+ * and the forms the model leaves to it (an id is a UUID, an email is shaped like one). raoh-php does
+ * the boundary's part.
+ *
+ * An id's form is about the very value the model reads, so it is piped into the model's decoder.
+ * An orderer's members are canonicalised apart from the model's reading of the whole, by
+ * `Canonical`, so that a member the boundary refuses does not keep the model from reading the rest.
  */
 final class Decoders
 {
@@ -58,19 +61,19 @@ final class Decoders
     }
 
     /**
-     * An orderer in the model's own encoding of one, read whole by the model once its email is
-     * normalised. Whether the email is there at all is the model's to say, as every other field is.
+     * An orderer in the model's own encoding of one, read whole by the model once the members
+     * whose canonical form is the boundary's are in it. Whether each is there at all, and what it
+     * has to be, is the model's to say, as it is of every other member.
      *
      * @return Decoder<mixed, Orderer>
      */
     public static function orderer(): Decoder
     {
-        return combine(
-            optional_field('email', string_()->trim()->toLowerCase()->email()),
-            CallableDecoder::of(fn (mixed $given): Result => Result::ok($given)),
-        )->map(fn (?string $email, mixed $orderer): mixed =>
-            $email === null ? $orderer : ['email' => $email] + $orderer)
-            ->pipe(OrdererCodec::decoder());
+        return Canonical::of([
+            'email' => string_()->trim()->toLowerCase()->email(),
+            'name' => string_()->trim(),
+            'companyName' => string_()->trim(),
+        ], OrdererCodec::decoder());
     }
 
     /**

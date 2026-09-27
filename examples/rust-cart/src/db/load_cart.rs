@@ -9,6 +9,10 @@ use super::read;
 /// `loadCart` over SQLite. It makes sure the user has a cart row, then reads the cart with the
 /// total quantity of what is in it in one aggregate query: the items themselves are not loaded, and
 /// the total is what the capacity rule needs.
+///
+/// Making the row is a write before the command has been decided: a `Cart` has an id, and the row
+/// is where a new user's cart gets one. A command the model refuses after it (`CartFull`) keeps
+/// nothing, since its route answers [`Outcome::Rollback`](crate::Outcome::Rollback).
 pub struct SqlLoadCart<'tx>(pub &'tx Connection);
 
 impl LoadCart for SqlLoadCart<'_> {

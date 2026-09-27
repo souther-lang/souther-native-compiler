@@ -10,7 +10,8 @@ data TotalQuantity = Int
 // メールアドレスが取りうる最短の長さ（a@b の3文字）まで。
 data Email = String
     invariant String.length(value) >= 3
-// 名前は空白だけでは成り立たない。長さの上限は境界で too_long として報告される。
+// 名前は空白だけでは成り立たず、長さには上限がある。前後の空白を落とすのは値の書き方（正規化）で、
+// 成立条件ではないので境界が行う。モデルは受け取った値について判定するだけで、値を書き換えない。
 data PersonName = String
     invariant String.length(value) <= 100
     invariant notBlank = String.length(String.trim(value)) >= 1

@@ -28,10 +28,12 @@ final class CartIntegrationTest extends TestCase
 
     private CartApplication $app;
 
+    private PDO $pdo;
+
     protected function setUp(): void
     {
-        $this->app = CartApplication::create(
-            Binding::load(CartApplication::library()), new PDO('sqlite::memory:'));
+        $this->pdo = new PDO('sqlite::memory:');
+        $this->app = CartApplication::create(Binding::load(CartApplication::library()), $this->pdo);
     }
 
     #[Test]
@@ -179,6 +181,73 @@ final class CartIntegrationTest extends TestCase
     }
 
     #[Test]
+    public function aNameIsKeptWithoutTheSpacesAroundIt(): void
+    {
+        // Trimming is how the boundary writes a name, not a rule the model states, so the model is
+        // handed the name without them and its bound is on what it keeps.
+        $user = '11111111-1111-1111-1111-111111111119';
+        $this->addItem($user, self::ON_SALE, 1);
+        $longest = str_repeat('名', 100);
+
+        $response = $this->checkout('/carts/checkout', $user, ['name' => "  {$longest}  "] + self::individual());
+
+        self::assertSame(201, $response->status, (string) $response->body);
+        self::assertSame($longest, self::body($response)['orderer']['name']);
+    }
+
+    #[Test]
+    public function aCompanyNameIsKeptWithoutTheSpacesAroundIt(): void
+    {
+        $user = '11111111-1111-1111-1111-11111111111a';
+        $this->addItem($user, self::ON_SALE, 1);
+
+        $response = $this->checkout('/carts/checkout', $user, ['companyName' => '  Acme株式会社 '] + self::corporation());
+
+        self::assertSame(201, $response->status, (string) $response->body);
+        self::assertSame('Acme株式会社', self::body($response)['orderer']['companyName']);
+    }
+
+    #[Test]
+    public function aMemberTheBoundaryRefusesDoesNotKeepTheModelFromReadingTheRest(): void
+    {
+        // The email is not shaped like one, which the boundary finds; the corporation has no
+        // company name and no corporate number, which only the model can say.
+        $response = $this->checkout('/carts/checkout', self::USER,
+            ['type' => 'Corporation', 'email' => 'not-an-email']);
+
+        self::assertSame(400, $response->status);
+        $paths = array_column(self::body($response)['issues'], 'path');
+        sort($paths);
+        self::assertSame(['/orderer/companyName', '/orderer/corporateNumber', '/orderer/email'], $paths,
+            (string) $response->body);
+    }
+
+    #[Test]
+    public function aMemberBothRefuseIsAnsweredOnceByTheBoundary(): void
+    {
+        // A name that is no text is refused by the boundary, which trims it, and by the model, which
+        // reads a PersonName. The boundary's issue says what form it was not in, and is the one kept.
+        $response = $this->checkout('/carts/checkout', self::USER, ['name' => 5] + self::individual());
+
+        self::assertSame(400, $response->status);
+        self::assertSame(['/orderer/name'], array_column(self::body($response)['issues'], 'path'),
+            (string) $response->body);
+    }
+
+    #[Test]
+    public function aRefusedCommandKeepsNothingItWroteOnTheWay(): void
+    {
+        // loadCart makes a new user's cart row before the capacity is decided. A command the model
+        // refuses keeps nothing, and one it answers keeps what it wrote.
+        $refused = '11111111-1111-1111-1111-11111111111b';
+        $answered = '11111111-1111-1111-1111-11111111111c';
+
+        self::assertSame(422, $this->addItem($refused, self::ON_SALE, 10001)->status);
+        self::assertSame(201, $this->addItem($answered, self::ON_SALE, 1)->status);
+        self::assertSame([0, 1], [$this->cartsOf($refused), $this->cartsOf($answered)]);
+    }
+
+    #[Test]
     public function anOrdererOfNoKnownTypeIs400(): void
     {
         $response = $this->checkout('/carts/checkout', self::USER, ['type' => 'Robot'] + self::individual());
@@ -264,7 +333,14 @@ final class CartIntegrationTest extends TestCase
         return $this->post('/carts/items', ['userId' => $userId, 'productId' => $productId, 'quantity' => $quantity]);
     }
 
-    /** @param array<string, string> $orderer */
+    private function cartsOf(string $userId): int
+    {
+        $count = $this->pdo->prepare('SELECT COUNT(*) FROM cart WHERE user_id = ?');
+        $count->execute([$userId]);
+        return (int) $count->fetchColumn();
+    }
+
+    /** @param array<string, mixed> $orderer */
     private function checkout(string $path, string $userId, array $orderer): Response
     {
         return $this->post($path, ['userId' => $userId, 'orderer' => $orderer]);
