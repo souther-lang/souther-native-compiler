@@ -2,11 +2,13 @@
 //!
 //! A case is ordered by the one enumeration that lists it, and a union of cases by the one that
 //! lists every member (ADR-0069). A unit may be a case of two enumerations that place it
-//! differently, so it has no order of its own unless one is named for it; which one is the
-//! checker's own answer, carried on the node (`ordering`) and not something this driver works out
-//! again from the declarations it happens to carry. So `m.B`,
-//! which `m.S` and `m.T` both list, orders by whichever the checker names — this driver never
-//! finds two where the checker found one, because it is never asked to find one at all.
+//! differently — `m.B`, which both `m.S` and `m.T` list here — and then it has no order of its
+//! own: the checker never writes `m.B < m.B` on its own account, only a comparison some wider
+//! context settles one enumeration for (`m.S < m.B`, where `m.S` is a union naming the pair). What
+//! this driver reads is the checker's own answer, carried on the node (`ordering`) and not
+//! rediscovered from the declarations it happens to carry, so most of what is checked below asks
+//! whether a basis this side is handed is trusted correctly — not whether `m.B` orders against
+//! itself, which no program does.
 
 use souther_native_driver::transport::TRANSPORT_VERSION;
 use souther_native_driver::{NotLowered, object_for};
@@ -34,12 +36,23 @@ fn ordering(ty: &str, basis: &str) -> String {
             cases.join(",")
         )
     };
+    // `m.P`, a product, and `m.D`, a sum of `m.A` and `m.P` that travels discriminated because one
+    // of its cases is not a unit: neither is an enumeration, and no basis this side trusts without
+    // asking.
+    let product = r#"{"module":"m","name":"P","by":"amodule","is":"product","fields":[{"name":"n","binding":0,"codec":{"is":"scalar","scalar":"INT"}}],"invariants":[]}"#;
+    let discriminated = format!(
+        r#"{{"module":"m","name":"D","by":"amodule","is":"sum","cases":[{},{}],"form":{{"is":"discriminated","tag":"type","contents":"value"}}}}"#,
+        case("A"),
+        case("P"),
+    );
     format!(
-        r#"{{"transport":{TRANSPORT_VERSION},"declarations":[{},{},{},{}],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[{helper}],"values":[],"entries":[],"definitions":[],"examples":[]}}]}}"#,
+        r#"{{"transport":{TRANSPORT_VERSION},"declarations":[{},{},{},{},{},{}],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[{helper}],"values":[],"entries":[],"definitions":[],"examples":[]}}]}}"#,
         unit("A"),
         unit("B"),
         sum("S", &["A", "B"]),
         sum("T", &["B"]),
+        product,
+        discriminated,
     )
 }
 
@@ -84,9 +97,11 @@ fn a_union_is_ordered_by_the_enumeration_the_checker_names() {
     is_lowered(&ordering(union, &as_enum("S")));
 }
 
-/// `m.B` is a case of both `m.S` and `m.T`, so it has no order of its own — but the checker, and
-/// not this driver, is the one that would have had to choose between them, and it names whichever
-/// one a program ordered `m.B` by. This driver lowers either.
+/// `m.B` is a case of both `m.S` and `m.T`, so `m.B < m.B` is not one the checker writes on its
+/// own account — a robustness test of this driver and not of a document the checker states, since
+/// which of the two would place it is exactly what has no answer for a comparison with no wider
+/// context to settle it. What this asks is narrower: this driver trusts whichever basis a node
+/// names, S or T, and does not go looking for the other one instead once it has one that fits.
 #[test]
 fn a_case_two_enumerations_list_is_ordered_by_whichever_the_checker_names() {
     let b = r#"{"ref":{"is":"declared","declared":"m.B"}}"#;
@@ -124,4 +139,33 @@ fn a_basis_that_does_not_place_every_case_compared_is_the_halves_disagreeing() {
         object_for(&ordering(union, &as_enum("T"))).expect_err("a basis with no place for m.A");
     assert!(refused.downcast_ref::<NotLowered>().is_none(), "{refused}");
     assert!(refused.to_string().contains("does not place"), "{refused}");
+}
+
+/// `leaves_of` answers a declaration whole where it is not a sum, so a product named as its own
+/// basis would place every value of it alike and pass the coverage check above with nothing left
+/// to name: `m.P < m.P`, ordered by `m.P`, has `[m.P]` on both sides. A product has no order of its
+/// own (Souther never writes this), and `ordering::ordered` reads any declared case as an
+/// enumeration once it is trusted, so untrusted this would place every `m.P` at the one ordinal a
+/// sum of one leaf gives it — comparing wrongly rather than refusing. A basis has to be an
+/// enumeration before it is asked what it places.
+#[test]
+fn a_basis_that_is_not_a_sum_is_the_halves_disagreeing() {
+    let p = r#"{"ref":{"is":"declared","declared":"m.P"}}"#;
+    let refused = object_for(&ordering(p, p)).expect_err("a product is no enumeration");
+    assert!(refused.downcast_ref::<NotLowered>().is_none(), "{refused}");
+    assert!(refused.to_string().contains("no enumeration"), "{refused}");
+}
+
+/// A discriminated sum's cases carry more than which one they are, so a token alone does not place
+/// them the way an enumeration's leaves are placed; `m.D`, whose case `m.P` is not a unit, travels
+/// discriminated and is refused as a basis the same way a product is.
+#[test]
+fn a_basis_that_is_a_discriminated_sum_is_the_halves_disagreeing() {
+    let refused = object_for(&ordering(
+        r#"{"ref":{"is":"declared","declared":"m.A"}}"#,
+        &as_enum("D"),
+    ))
+    .expect_err("a discriminated sum is no enumeration");
+    assert!(refused.downcast_ref::<NotLowered>().is_none(), "{refused}");
+    assert!(refused.to_string().contains("no enumeration"), "{refused}");
 }

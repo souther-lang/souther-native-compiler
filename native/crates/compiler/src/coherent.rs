@@ -55,9 +55,9 @@ use crate::closures::ClosureSites;
 use crate::index;
 use crate::kernels::{Bound, LoweredKernel};
 use crate::transport::{
-    AbortKind, Answers, Carrier, Case, Cases, Declaration, Definition, Emitted, Ensures, Guard,
-    Held, KernelFact, Node, Op, Owner, Prim, Program, Reaches, Reaching, Reading, Reference,
-    Routing, Selects, Target, Ty, Value,
+    AbortKind, AlternativesForm, Answers, Carrier, Case, Cases, Declaration, Definition, Emitted,
+    Ensures, Guard, Held, KernelFact, Node, Op, Owner, Prim, Program, Reaches, Reaching, Reading,
+    Reference, Routing, Selects, Target, Ty, Value,
 };
 use crate::{Declared, PairIn, Runs, Targets, departures_taken, says_its_case};
 use anyhow::{Result, anyhow, bail};
@@ -1754,7 +1754,7 @@ impl<'a> Walk<'_, 'a> {
             _ => return Ok(()),
         };
         let Ty::Ref {
-            named: enumeration @ Case::Declared { .. },
+            named: enumeration @ Case::Declared { declared },
         } = basis
         else {
             bail!(
@@ -1765,6 +1765,24 @@ impl<'a> Walk<'_, 'a> {
                 basis.spelt()
             );
         };
+        // `leaves_of` answers a declaration whole where it is not a sum — a product or a newtype
+        // named as its own basis would place every value of it alike and pass the coverage this
+        // reads next by naming nothing further to cover. So a basis is asked to be an enumeration
+        // before it is asked what it places: a case's declaration one form of the language holds
+        // to have no order of its own (a product, a newtype), and a discriminated sum's cases carry
+        // more than which one they are, so a token alone does not place them the way this compares.
+        match self.declared.shape(declared)? {
+            Declaration::Sum {
+                form: AlternativesForm::Enumeration,
+                ..
+            } => {}
+            _ => bail!(
+                "{}: {} is ordered by {}, which is no enumeration: the two halves disagree",
+                self.owner,
+                ty.spelt(),
+                basis.spelt()
+            ),
+        }
         let places = self.declared.leaves_of(std::slice::from_ref(enumeration))?;
         for leaf in self.declared.leaves_of(subject)? {
             if !places.contains(&leaf) {
@@ -2194,6 +2212,13 @@ impl<'a> Walk<'_, 'a> {
                         // basis a written comparison would carry is asked of what this kernel
                         // orders, so a `List.sort` over a case two enumerations both list is held
                         // to the one the checker named exactly as `<` over the same case is.
+                        //
+                        // Not asked here: whether `subject` can still be a still-open type variable
+                        // with no basis, which the checker's own contract allows for and this
+                        // document's own generic helpers are transported whole enough to carry
+                        // before `specialize` ever narrows one (souther-lang/souther-native-compiler#119).
+                        // Every kernel this settles for in this document's own test suite specializes
+                        // before it orders, so this is not yet known to be reachable.
                         match ordering {
                             Some(basis) => self.orders(subject, basis)?,
                             None if subject.has_no_value() => {}
