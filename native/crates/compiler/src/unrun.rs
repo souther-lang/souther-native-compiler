@@ -2,7 +2,7 @@
 //!
 //! A body either runs or does not (`Runs::runs`), and inside one that runs this is the only code
 //! that does not. It is upstream's two answers about a function over what has no value, one whose
-//! parameters include the type of what has no value (`Core.neverRuns`, here [`never_runs`]),
+//! parameters include the type of what has no value (`Core.neverRuns`, here [`crate::transport::FnSignature::never_runs`]),
 //! transcribed and not reworked. No value of that type is ever made, so nothing can be handed to
 //! that parameter and the function is never applied. What upstream leaves out differs by the call
 //! it is handed to, and so does what is left out here.
@@ -33,18 +33,7 @@
 //! walks a call or a block itself. Whether the document is coherent is asked of all of it, run or
 //! not.
 
-use crate::transport::{Arm, FnSignature, Node, Reaches, Selects, Ty};
-
-/// Whether a function taking and answering as `function` does is never applied: one of the types
-/// it takes is the type of what has no value (`Core.neverRuns`). Only that type, as upstream asks
-/// it: the type of what does not answer is a type an answer has, and never one a function is
-/// handed.
-pub(crate) fn never_runs(function: &FnSignature) -> bool {
-    function
-        .takes
-        .iter()
-        .any(|taken| matches!(taken, Ty::Nothing { .. }))
-}
+use crate::transport::{Arm, Node, Reaches, Selects, Ty};
 
 /// Where among `node`'s arguments the functions it never applies stand, where `node` is a call
 /// that is not a kernel's. Empty for every other node.
@@ -68,7 +57,7 @@ pub(crate) fn never_applied(node: &Node) -> Vec<usize> {
         | Reaches::Behavior { .. } => arguments
             .iter()
             .enumerate()
-            .filter(|(_, argument)| matches!(argument.ty(), Ty::Fn { fn_ } if never_runs(fn_)))
+            .filter(|(_, argument)| matches!(argument.ty(), Ty::Fn { fn_ } if fn_.never_runs()))
             .map(|(at, _)| at)
             .collect(),
     }
@@ -78,7 +67,7 @@ pub(crate) fn never_applied(node: &Node) -> Vec<usize> {
 /// what has no value. An optional holding what has no value is never present, so an arm that
 /// tests only for it being present is never taken, and what it binds is never made.
 pub(crate) fn never_entered(arm: &Arm, subject: &Ty) -> bool {
-    matches!(subject, Ty::Option { option } if matches!(**option, Ty::Nothing { .. }))
+    subject.holds_no_value()
         && arm
             .selects
             .iter()
@@ -103,7 +92,7 @@ pub(crate) fn never_lowered(node: &Node) -> Vec<&Node> {
             body,
             ty: Ty::Fn { fn_ },
             ..
-        } if never_runs(fn_) => vec![&**body],
+        } if fn_.never_runs() => vec![&**body],
         _ => Vec::new(),
     }
 }
@@ -258,9 +247,6 @@ mod tests {
     /// what it binds and what it calls with it, and the arm for none is written as any is.
     #[test]
     fn an_arm_for_a_value_of_what_has_no_value_is_left_out() {
-        let nothing = json!({ "nothing": {} });
-        let held = json!({ "option": nothing });
-        let subject = json!({ "core": "none", "type": held, "aborts": [] });
         let arm = |tests: &str, body: serde_json::Value| json!({ "selects": [{ "tests": tests }], "binding": null, "binds": null, "body": body });
         let matched = |subject: serde_json::Value| -> Node {
             serde_json::from_value(json!({
@@ -270,18 +256,24 @@ mod tests {
             }))
             .expect("a node")
         };
-        let never = matched(subject);
-        let lowered = visited(&never);
-        assert!(
-            !lowered
-                .iter()
-                .any(|node| matches!(node, Node::Int { value: 1, .. }))
-        );
-        assert!(
-            lowered
-                .iter()
-                .any(|node| matches!(node, Node::Int { value: 2, .. }))
-        );
+        // Both types no value of which is made: what has none, and what does not answer.
+        for bottom in [json!({ "nothing": {} }), json!({ "never": {} })] {
+            let subject = json!({ "core": "none", "type": { "option": bottom }, "aborts": [] });
+            let unmatched = matched(subject);
+            let lowered = visited(&unmatched);
+            assert!(
+                !lowered
+                    .iter()
+                    .any(|node| matches!(node, Node::Int { value: 1, .. })),
+                "{bottom}"
+            );
+            assert!(
+                lowered
+                    .iter()
+                    .any(|node| matches!(node, Node::Int { value: 2, .. })),
+                "{bottom}"
+            );
+        }
         // An optional of what has a value is matched as it is written.
         let present = json!({ "core": "none", "type": { "option": { "prim": "INT" } },
             "aborts": [] });

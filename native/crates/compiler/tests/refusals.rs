@@ -167,15 +167,17 @@ fn equality_over_what_has_equality_and_no_order_is_lowered() {
 /// optional. Two are the one value, and no element is compared, since none is made.
 #[test]
 fn equality_over_what_holds_what_has_no_value_is_lowered() {
-    let nothing = r#"{"nothing":{}}"#;
-    let list = format!(r#"{{"list":{nothing}}}"#);
-    let held = format!(r#"{{"option":{nothing}}}"#);
-    let nested = format!(r#"{{"tuple":[{list},{held}]}}"#);
+    // Both types no value of which is made: what has none, and what does not answer.
+    for bottom in [r#"{"nothing":{}}"#, r#"{"never":{}}"#] {
+        let list = format!(r#"{{"list":{bottom}}}"#);
+        let held = format!(r#"{{"option":{bottom}}}"#);
+        let nested = format!(r#"{{"tuple":[{list},{held}]}}"#);
 
-    for ty in [&list, &held, &nested] {
-        for op in ["EQ", "NE"] {
-            if let Err(refused) = object_for(&over(op, ty, ty)) {
-                panic!("{op} over {ty} is refused: {refused}");
+        for ty in [&list, &held, &nested] {
+            for op in ["EQ", "NE"] {
+                if let Err(refused) = object_for(&over(op, ty, ty)) {
+                    panic!("{op} over {ty} is refused: {refused}");
+                }
             }
         }
     }

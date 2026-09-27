@@ -4748,7 +4748,7 @@ fn lower_standing(
     node: &Node,
     stands: &Ty,
 ) -> Lowered<ir::Value> {
-    if !matches!(node.ty(), Ty::Never { .. }) {
+    if !node.ty().does_not_answer() {
         return lower(builder, lowering, module, bindings, abort, node);
     }
     let width = machine_type(stands)?;

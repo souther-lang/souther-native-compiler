@@ -155,11 +155,7 @@ pub(crate) fn equal(
         // What holds what has no value holds nothing to compare: an optional of it is the one
         // absent value and a list of it the one empty list, so two are the one value. What is
         // compared is never an element, which no value is made of.
-        Ty::Option { option: held } | Ty::List { list: held }
-            if matches!(**held, Ty::Nothing { .. }) =>
-        {
-            Ok(builder.ins().iconst(types::I8, 1))
-        }
+        _ if ty.holds_no_value() => Ok(builder.ins().iconst(types::I8, 1)),
         Ty::Ref {
             named: Case::Declared { .. },
         }

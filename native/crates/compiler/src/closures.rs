@@ -80,7 +80,7 @@ pub struct Site<'a> {
     /// way the JVM carries the dependency instance a lambda calls. None where it reaches none, and
     /// the closure carries nothing more.
     pub environment: Option<&'a [Requirement]>,
-    /// Whether a call can reach the function: false where it never runs ([`crate::unrun::never_runs`]),
+    /// Whether a call can reach the function: false where it never runs ([`FnSignature::never_runs`]),
     /// and then the closure is made with no code, no function is lifted for it, and it carries
     /// nothing.
     pub runs: bool,
@@ -277,7 +277,7 @@ impl<'p, 'a> Planner<'p, 'a> {
                     own.insert(parameter.binding);
                 }
                 // A body that never runs reaches nothing, and the sites in it are only numbered.
-                let runs = !crate::unrun::never_runs(fn_);
+                let runs = !fn_.never_runs();
                 let reached = if runs {
                     self.free(body, &mut own)?
                 } else {

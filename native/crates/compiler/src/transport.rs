@@ -1805,7 +1805,45 @@ pub struct FnSignature {
     pub answers: Box<Ty>,
 }
 
+impl FnSignature {
+    /// Whether a function taking and answering so is never applied: one of the types it takes is
+    /// the type of what has no value (`Core.neverRuns`). Only [`Ty::Nothing`], as upstream asks it,
+    /// and so not [`Ty::has_no_value`]: the type of what does not answer is a type an answer has,
+    /// and never one a function is handed.
+    pub fn never_runs(&self) -> bool {
+        self.takes
+            .iter()
+            .any(|taken| matches!(taken, Ty::Nothing { .. }))
+    }
+}
+
 impl Ty {
+    /// Whether no value of this type is ever made: what has no value, and what does not answer.
+    ///
+    /// The one statement of it. What is asked of a type through it is what a value would be made
+    /// of, so a pass reading a type for that asks this and does not name the two types itself;
+    /// `tests/no_value.rs` holds every spelling of them to this file.
+    pub fn has_no_value(&self) -> bool {
+        matches!(self, Ty::Nothing { .. } | Ty::Never { .. })
+    }
+
+    /// Whether this is the type of what does not answer: a computation that ends the run. Only
+    /// [`Ty::Never`], and not [`Ty::has_no_value`]: what has no value answers, with a list that is
+    /// empty, where this ends.
+    pub fn does_not_answer(&self) -> bool {
+        matches!(self, Ty::Never { .. })
+    }
+
+    /// Whether the one value of this type is what holds nothing: an optional or a list of a type
+    /// no value of which is made, which is absent or empty, since making an element would have
+    /// been making one of that type.
+    pub fn holds_no_value(&self) -> bool {
+        match self {
+            Ty::Option { option: held } | Ty::List { list: held } => held.has_no_value(),
+            _ => false,
+        }
+    }
+
     /// A declaration of the document, as a type, by the key that reaches it.
     pub fn declared(key: impl Into<String>) -> Ty {
         Ty::Ref {

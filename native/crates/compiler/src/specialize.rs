@@ -49,6 +49,33 @@ const DEPTH: usize = 16;
 /// program. A chain is bounded by [`DEPTH`], but a body calling itself at two growing types makes
 /// two copies at each step, which is two to the depth of them before the chain ends.
 const REENTERED: usize = 64;
+
+/// What each helper may still spend of a count of copies: [`REENTERED`] for the copies made from
+/// a copy of the helper itself. Asked once for each copy made, so what is refused is the copy
+/// after the last the count allows, whichever calls reached it and in whatever order.
+struct Budget<'p> {
+    limit: usize,
+    spent: HashMap<HelperKey<'p>, usize>,
+}
+
+impl<'p> Budget<'p> {
+    fn of(limit: usize) -> Self {
+        Budget {
+            limit,
+            spent: HashMap::new(),
+        }
+    }
+
+    /// Spends one copy of `helper`, or says there is none left to spend.
+    fn spend(&mut self, helper: HelperKey<'p>) -> bool {
+        let spent = self.spent.entry(helper).or_insert(0);
+        if *spent >= self.limit {
+            return false;
+        }
+        *spent += 1;
+        true
+    }
+}
 use std::collections::HashMap;
 
 /// A helper, by the module holding the copy and the reference a call there reaches it by.
@@ -262,8 +289,8 @@ impl<'p> Instance<'p> {
 pub(crate) struct Specializations<'p> {
     instances: Vec<Instance<'p>>,
     by_key: HashMap<(&'p str, &'p Reference, Vec<Option<Ty>>), InstanceId>,
-    /// How many copies of each helper were made from the body of a copy of the same helper.
-    reentered: HashMap<HelperKey<'p>, usize>,
+    /// The copies of each helper made from the body of a copy of the same helper.
+    reentered: Budget<'p>,
     /// How many copies of each helper are made, which is the ordinal of the next.
     made: HashMap<HelperKey<'p>, usize>,
     /// Which copy each call reaching a helper reaches, by where the call stands.
@@ -280,7 +307,7 @@ impl<'p> Specializations<'p> {
         let mut specializations = Specializations {
             instances: Vec::new(),
             by_key: HashMap::new(),
-            reentered: HashMap::new(),
+            reentered: Budget::of(REENTERED),
             made: HashMap::new(),
             reached: HashMap::new(),
         };
@@ -375,21 +402,11 @@ impl<'p> Specializations<'p> {
             }
             at = ancestor.parent;
         }
-        if along > 0 {
-            let made = self
-                .reentered
-                .entry((carrier.module(), &held.reached))
-                .or_insert(0);
-            *made += 1;
-            if *made > REENTERED {
-                return Err(not_lowered(format!(
-                    "{}, whose copies would be made one from the body of another without end: \
-                     the types it is called at keep growing",
-                    held.reached.rendered()
-                )));
-            }
-        }
-        if along >= DEPTH {
+        // Both limits are spent by a copy made from a copy of its own helper, and either refuses it.
+        let reentering = along > 0;
+        if along >= DEPTH
+            || (reentering && !self.reentered.spend((carrier.module(), &held.reached)))
+        {
             return Err(not_lowered(format!(
                 "{}, whose copies would be made one from the body of another without end: the \
                  types it is called at keep growing",
@@ -741,10 +758,11 @@ mod tests {
         assert!(refused.to_string().contains("without end"), "{refused}");
     }
 
-    /// A body calling itself at two growing types makes two copies at each step: refused at a count
-    /// of copies and not only at a depth, which would be two to the depth of them.
+    /// A body calling itself at two growing types makes two copies at each step, which is two to
+    /// the depth of them: refused by the count of copies a helper may make of itself, and not only
+    /// by the depth the chain of them reaches.
     #[test]
-    fn a_helper_calling_itself_at_two_growing_types_is_refused_without_making_them_all() {
+    fn a_helper_calling_itself_at_two_growing_types_is_refused_by_its_count_of_copies() {
         let listed = r#"{"list":{"var":0}}"#;
         let optional = r#"{"option":{"var":0}}"#;
         let a = node("list", &format!(r#""elements":[{}]"#, read(0, VAR)), listed);
@@ -759,18 +777,34 @@ mod tests {
             INT,
         );
         let helpers = [helper("m.g", &[VAR], &both)];
-        let started = std::time::Instant::now();
         let refused = specialized(
             &holding(&helpers, &call("m.g", &[number(1)], INT)),
             |_, _| (),
         )
         .expect_err("no number of copies is enough");
-        assert!(refused.to_string().contains("without end"), "{refused}");
         assert!(
-            started.elapsed() < std::time::Duration::from_secs(2),
-            "refused after {:?}",
-            started.elapsed()
+            refused.downcast_ref::<crate::NotLowered>().is_some(),
+            "{refused}"
         );
+        assert!(refused.to_string().contains("without end"), "{refused}");
+    }
+
+    /// The count allows as many copies as it is given and refuses the next, for each helper on its
+    /// own.
+    #[test]
+    fn a_budget_of_copies_refuses_the_one_after_its_limit_for_each_helper() {
+        let own = |name: &str| Reference::Own {
+            module: "m".to_string(),
+            name: name.to_string(),
+        };
+        let (one, other) = (own("one"), own("other"));
+        let mut budget = Budget::of(3);
+        for _ in 0..3 {
+            assert!(budget.spend(("m", &one)));
+        }
+        assert!(!budget.spend(("m", &one)), "the fourth of three");
+        assert!(!budget.spend(("m", &one)), "and the ones after it");
+        assert!(budget.spend(("m", &other)), "another helper's own");
     }
 
     /// A function value written in a helper over variables is in each copy of it, at the types that
