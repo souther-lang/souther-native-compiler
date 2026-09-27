@@ -378,6 +378,67 @@ pub unsafe extern "C" fn souther_read_member(node: *const Node, key: *const Text
     }
 }
 
+/// How many members the object `node` holds, a key written twice counted twice.
+///
+/// # Safety
+/// `node` is a place in a document being read, which [`souther_read_object`] said is an object.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_read_members(node: *const Node) -> Count {
+    Count(unsafe { (*node).members() }.len() as i64)
+}
+
+/// The key of the member of the object `node` at `index`, as the place of the document it is: a
+/// string, which a map's key is read from as the key's own type.
+///
+/// # Safety
+/// As [`souther_read_members`], and `index` is below what it answered.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_read_member_key(node: *const Node, index: Count) -> *const Node {
+    let members = unsafe { (*node).members() };
+    members[index.0 as usize].0.node()
+}
+
+/// What the member of the object `node` at `index` holds.
+///
+/// # Safety
+/// As [`souther_read_member_key`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_read_member_value(node: *const Node, index: Count) -> *const Node {
+    let members = unsafe { (*node).members() };
+    &members[index.0 as usize].1
+}
+
+/// The place of the member of the object `node` at `index` below `path`, by its key as it was
+/// written.
+///
+/// # Safety
+/// `path` is null or one this answered, and the rest as [`souther_read_member_key`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_path_below_member(
+    path: *const Path,
+    node: *const Node,
+    index: Count,
+) -> *const Path {
+    let members = unsafe { (*node).members() };
+    let written = members[index.0 as usize].0.written();
+    let step = std::str::from_utf8(written).expect("a key the parser read is text");
+    held(Path {
+        above: path,
+        step: string(step),
+    })
+}
+
+/// Records that the key at `path` is, once read as the map's key type, a key the map already has:
+/// two spellings of one key, whose values would otherwise be one lost to the other with nothing
+/// said. What the JVM's reader records (`duplicate_key`).
+///
+/// # Safety
+/// As [`souther_read_missing`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_read_duplicate_key(path: *const Path, decoding: *mut Decoding) {
+    unsafe { found(decoding, "duplicate_key", path, &[]) };
+}
+
 /// Records that a field the declaration says every value has was not written, at `path`, which
 /// is where it would have been.
 ///

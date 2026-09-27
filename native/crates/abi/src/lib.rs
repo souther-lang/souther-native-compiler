@@ -853,8 +853,8 @@ pub const fn room_for_members(members: usize) -> i64 {
 /// A list is its length and then its elements, one slot each and in order, through the same slot
 /// every value is held in. Nothing else stands in it. No capacity, since a list is never grown in
 /// place; no element type, since that is the static type's; no element width, since every element
-/// is one slot. A `Set` and a `Map` are not laid out as this: how they hold their members is a
-/// question the language has not settled, and a header shared with them would be answering it.
+/// is one slot. A `Set` and a `Map` are not laid out as this, nor laid out here at all: they are
+/// the runtime's ([`SET_EMPTY`]).
 ///
 /// The empty list is a length of nought and no elements, never a null pointer, which is what an
 /// `Option` holding nothing already is.
@@ -1504,6 +1504,14 @@ pub const EXTERNAL_OBJECT: &str = "souther_external_object";
 pub const EXTERNAL_PUT: &str = "souther_external_put";
 /// `(form) -> string`: the whole tree written as JSON, and dropped.
 pub const EXTERNAL_JSON: &str = "souther_external_json";
+/// `(array)`: a set's members, which the caller still owns, put in the order a boundary writes them
+/// in, ascending by their own external representation (spec §collections), so two equal sets write
+/// one text. Asked once every member is in the array and each is in that order itself.
+pub const EXTERNAL_ORDER: &str = "souther_external_order";
+/// `(array)`: a map's entries, an array the caller still owns of pairs each of a string and a
+/// value, made the object a boundary writes, its members ascending by their keys. Asked once every
+/// entry is in it.
+pub const EXTERNAL_ENTRIES: &str = "souther_external_entries";
 
 /// Reading a document, from its bytes to what a host is answered. Generated code begins one with
 /// the bytes, `(bytes, length) -> reading`; asks for its root, `(reading) -> node`, which is null
@@ -1541,6 +1549,21 @@ pub const READ_ELEMENT: &str = "souther_read_element";
 pub const READ_MEMBER: &str = "souther_read_member";
 /// `(path, reading)`: a field every value has was not written.
 pub const READ_MISSING: &str = "souther_read_missing";
+/// `(node) -> i64`: how many members an object holds, asked of one `READ_OBJECT` said is one. A
+/// key written twice is two members: a map read from them says so where the two are one key
+/// (`READ_DUPLICATE_KEY`).
+pub const READ_MEMBERS: &str = "souther_read_members";
+/// `(node, i64) -> node`: the key of an object's member at an index below its count, as a place
+/// of the document holding the text it was written as: what a map's key is read from, as the key's
+/// type is read anywhere else.
+pub const READ_MEMBER_KEY: &str = "souther_read_member_key";
+/// `(node, i64) -> node`: what an object's member at an index below its count holds.
+pub const READ_MEMBER_VALUE: &str = "souther_read_member_value";
+/// `(path, node, i64) -> path`: the place of an object's member at an index, by its key as it was
+/// written.
+pub const PATH_BELOW_MEMBER: &str = "souther_path_below_member";
+/// `(path, reading)`: two of a map's keys are one key once each is read as the key's type.
+pub const READ_DUPLICATE_KEY: &str = "souther_read_duplicate_key";
 /// `(node) -> i8`: whether it is `null`.
 pub const READ_NULL: &str = "souther_read_null";
 /// `(node, path, reading, out) -> i8`: an `Int` written through `out`.
@@ -2788,6 +2811,16 @@ pub const GENERATED_RUNTIME: &[GeneratedCall] = {
             answers: None,
         },
         GeneratedCall {
+            name: EXTERNAL_ORDER,
+            takes: &[Given(Form)],
+            answers: None,
+        },
+        GeneratedCall {
+            name: EXTERNAL_ENTRIES,
+            takes: &[Given(Form)],
+            answers: None,
+        },
+        GeneratedCall {
             name: EXTERNAL_JSON,
             takes: &[Given(Form)],
             answers: Some(Host(String)),
@@ -2854,6 +2887,31 @@ pub const GENERATED_RUNTIME: &[GeneratedCall] = {
         },
         GeneratedCall {
             name: READ_MISSING,
+            takes: &[Given(Path), Given(Host(Decoded))],
+            answers: None,
+        },
+        GeneratedCall {
+            name: READ_MEMBERS,
+            takes: &[Given(Node)],
+            answers: Some(Host(Count)),
+        },
+        GeneratedCall {
+            name: READ_MEMBER_KEY,
+            takes: &[Given(Node), Given(Host(Count))],
+            answers: Some(Node),
+        },
+        GeneratedCall {
+            name: READ_MEMBER_VALUE,
+            takes: &[Given(Node), Given(Host(Count))],
+            answers: Some(Node),
+        },
+        GeneratedCall {
+            name: PATH_BELOW_MEMBER,
+            takes: &[Given(Path), Given(Node), Given(Host(Count))],
+            answers: Some(Path),
+        },
+        GeneratedCall {
+            name: READ_DUPLICATE_KEY,
             takes: &[Given(Path), Given(Host(Decoded))],
             answers: None,
         },

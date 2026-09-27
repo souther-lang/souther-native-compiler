@@ -357,11 +357,11 @@ fn a_transport_of_an_earlier_shape_is_refused_by_its_version() {
     );
 }
 
-/// What a behavior answers crosses whole, and a collection is one of the things it can answer.
-/// Reading it is not laying it out: a `Set` has no representation here yet, which is this backend
-/// being behind and not the document being unreadable.
+/// What a behavior answers crosses whole, and a collection is one of the things it can answer. A
+/// host a behavior is injected by hands its answer over as the list of the set's members, which the
+/// object makes a set of (`host_form`), so the behavior is lowered.
 #[test]
-fn an_answer_that_is_a_set_is_read_and_not_lowered() {
+fn an_answer_that_is_a_set_crosses_as_its_members() {
     let document = concat!(
         r#"{"transport":27,"declarations":[],"#,
         r#""behaviors":[{"module":"m","name":"many","is":"injected","parameters":{"named":[]},"#,
@@ -369,13 +369,7 @@ fn an_answer_that_is_a_set_is_read_and_not_lowered() {
         r#""modules":[{"name":"m","publishes":[],"helpers":[],"values":[],"entries":[],"definitions":[],"examples":[]}]}"#,
     );
 
-    let refused = object_for(document).expect_err("no layout for a set");
-
-    assert!(
-        refused.downcast_ref::<NotLowered>().is_some(),
-        "a set read whole and not laid out is the backend being behind: {refused}"
-    );
-    assert!(refused.to_string().contains("Set"), "{refused}");
+    object_for(document).expect("a set crosses as the list of its members");
 }
 
 /// A primitive standing as a member of an answer is a case the transport carries, and a value of

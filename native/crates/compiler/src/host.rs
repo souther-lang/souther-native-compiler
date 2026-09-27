@@ -52,6 +52,7 @@ use super::{
 };
 use crate::codec::write::Writing;
 use crate::codec::{Codecs, Runtime};
+use crate::host_form::{self, Turning};
 use crate::interface::{
     DeclarationSurface, HostCall, HostFunction, HostImplementation, Surface, machine,
 };
@@ -235,6 +236,17 @@ fn planned(
         }
         // Called by whoever holds it: what it takes is handed the other way from it. A host handed
         // one calls it, and one handing one over has made it.
+        // A set in what it takes or answers would be turned by functions that know only its shape,
+        // which is no way to build one (`host_form`).
+        Ty::Fn { fn_ }
+            if fn_
+                .takes
+                .iter()
+                .chain([fn_.answers.as_ref()])
+                .any(host_form::holds_a_collection) =>
+        {
+            Err(refused(Reason::NoRepresentation))
+        }
         Ty::Fn { fn_ } => {
             let takes = fn_
                 .takes
@@ -257,8 +269,9 @@ fn planned(
             });
             Ok(shape)
         }
-        // No layout yet, and when there is one a host reaches it through operations of its own.
-        Ty::Set { .. } | Ty::Map { .. } => Err(refused(Reason::NoRepresentation)),
+        // As the list of its members, or of its entries, which it is turned into and out of where
+        // the type is known (`host_form`).
+        Ty::Set { .. } | Ty::Map { .. } => planned(&host_form::form_of(ty), direction, services),
         // What a host is handed is a behavior's, and no behavior writes a variable, so this is
         // the one refusal there is for a type nothing is known of.
         Ty::Var { .. } => Err(refused(Reason::NoRepresentation)),
@@ -661,6 +674,9 @@ pub(crate) fn define(
                     handed.push(it.shape.clone());
                 }
                 let constructor = emitting.constructors.of(&key)?;
+                let field_types: Vec<Ty> = fields.iter().map(|it| it.codec.ty()).collect();
+                let value_ops = emitting.value_ops;
+                let call_conv = emitting.call_conv;
                 let mut takes = parameters(&handed, HostParameter::Given);
                 takes.push(HostParameter::Room(HostWord::Value));
                 let constructing = HostFunction {
@@ -669,8 +685,19 @@ pub(crate) fn define(
                     answers: Some(HostWord::Status),
                 };
                 let function = expose(emitting, constructing, &mut |builder, module, given| {
-                    build(builder, module, allocate, constructor, &handed, given);
-                    Ok(())
+                    let mut turning = Turning {
+                        module,
+                        allocate,
+                        value_ops,
+                        call_conv,
+                    };
+                    build(
+                        builder,
+                        &mut turning,
+                        constructor,
+                        (&handed, &field_types),
+                        given,
+                    )
                 })?;
                 described.constructed_by(function, handed.clone());
             }
@@ -697,9 +724,17 @@ pub(crate) fn define(
                 takes,
                 answers: None,
             };
-            let function = expose(emitting, reading, &mut |builder, _, given| {
-                read(builder, at, &shape, given);
-                Ok(())
+            let ty = field.codec.ty();
+            let value_ops = emitting.value_ops;
+            let call_conv = emitting.call_conv;
+            let function = expose(emitting, reading, &mut |builder, module, given| {
+                let mut turning = Turning {
+                    module,
+                    allocate,
+                    value_ops,
+                    call_conv,
+                };
+                read(builder, &mut turning, at, (&shape, &ty), given)
             })?;
             described.field_read_by(at, function, shape);
         }
@@ -954,6 +989,8 @@ fn forward(
     let runs = entry.runs;
     let constructed = entry.constructed;
     let allocate = emitting.allocate;
+    let value_ops = emitting.value_ops;
+    let call_conv = emitting.call_conv;
     let exposed = expose(emitting, function, &mut |builder, module, params| {
         let mut given = params.iter().copied();
         let mut arguments = Vec::with_capacity(handed.len() + 2);
@@ -964,17 +1001,43 @@ fn forward(
                     .expect("what the behavior was constructed with"),
             );
         }
-        let mut making = Making { module, allocate };
-        for shape in &handed {
-            arguments.push(take(builder, &mut making, shape, &mut given));
+        let mut turning = Turning {
+            module,
+            allocate,
+            value_ops,
+            call_conv,
+        };
+        for (shape, ty) in handed.iter().zip(&takes) {
+            let mut making = Making {
+                module: turning.module,
+                allocate,
+            };
+            let taken = take(builder, &mut making, shape, &mut given);
+            arguments.push(turning.taken(builder, ty, taken)?);
         }
         let rooms: Vec<ir::Value> = given.collect();
-        let reaching = making.module.declare_func_in_func(runs, builder.func);
-        let status = answer_into(builder, &answered, answers, &rooms, |builder, out| {
-            arguments.push(out);
-            let called = builder.ins().call(reaching, &arguments);
-            builder.inst_results(called)[0]
-        });
+        let reaching = turning.module.declare_func_in_func(runs, builder.func);
+        // A union a behavior answers crosses as the value it is, and holds no set to turn.
+        let answer_ty = if entry.cases.is_some() {
+            None
+        } else {
+            Some(&entry.answers)
+        };
+        let status = answer_into(
+            builder,
+            &answered,
+            answers,
+            &rooms,
+            |builder, out| {
+                arguments.push(out);
+                let called = builder.ins().call(reaching, &arguments);
+                builder.inst_results(called)[0]
+            },
+            |builder, value| match answer_ty {
+                Some(ty) => turning.handed(builder, ty, value),
+                None => Ok(value),
+            },
+        )?;
         builder.ins().return_(&[status]);
         Ok(())
     })?;
@@ -994,7 +1057,8 @@ fn answer_into(
     held: types::Type,
     rooms: &[ir::Value],
     calling: impl FnOnce(&mut FunctionBuilder, ir::Value) -> ir::Value,
-) -> ir::Value {
+    turned: impl FnOnce(&mut FunctionBuilder, ir::Value) -> Lowered<ir::Value>,
+) -> Lowered<ir::Value> {
     let out = out_slot(builder);
     let status = calling(builder, out);
     let there = builder.create_block();
@@ -1006,11 +1070,12 @@ fn answer_into(
 
     builder.switch_to_block(there);
     let value = builder.ins().load(held, TRUSTED, out, 0);
+    let value = turned(builder, value)?;
     write(builder, answered, value, rooms);
     builder.ins().jump(done, &[]);
 
     builder.switch_to_block(done);
-    status
+    Ok(status)
 }
 
 /// A behavior a module of this object declares with no body, which a host implements: what each
@@ -1080,6 +1145,8 @@ pub(crate) fn define_injections(
         ));
         let calling = implementation.signature(emitting.call_conv);
         let allocate = emitting.allocate;
+        let value_ops = emitting.value_ops;
+        let call_conv = emitting.call_conv;
         emitting.function(code, signature, |builder, module, given| {
             let hosted = given[0];
             let (arguments, out) = given[1..].split_at(given.len() - 2);
@@ -1095,18 +1162,27 @@ pub(crate) fn define_injections(
             builder.ins().return_(&[status]);
 
             builder.switch_to_block(laid);
-            let mut making = Making { module, allocate };
+            let mut turning = Turning {
+                module,
+                allocate,
+                value_ops,
+                call_conv,
+            };
+            let arguments = arguments
+                .iter()
+                .zip(&takes)
+                .map(|(argument, ty)| turning.handed(builder, ty, *argument))
+                .collect::<Lowered<Vec<_>>>()?;
             call_hosted(
                 builder,
-                &mut making,
+                &mut turning,
                 hosted,
-                &handed,
-                &answered,
-                arguments,
+                (&handed, &answered),
+                &arguments,
                 out,
                 calling,
-            );
-            Ok(())
+                Some(&answers),
+            )
         })?;
 
         // `(into, hosted, implementation, userdata)`: the host's function and what it is handed
@@ -1206,14 +1282,14 @@ fn lay_out_hosted(
 #[allow(clippy::too_many_arguments)]
 fn call_hosted(
     builder: &mut FunctionBuilder,
-    making: &mut Making,
+    turning: &mut Turning,
     hosted: ir::Value,
-    takes: &[HostShape],
-    answers: &HostShape,
+    (takes, answers): (&[HostShape], &HostShape),
     arguments: &[ir::Value],
     out: ir::Value,
     calling: ir::Signature,
-) {
+    answer_ty: Option<&Ty>,
+) -> Lowered<()> {
     let implemented = builder
         .ins()
         .load(POINTER, TRUSTED, hosted, HOSTED_IMPLEMENTATION as i32);
@@ -1269,10 +1345,19 @@ fn call_hosted(
         .zip(&rooms)
         .map(|(word, room)| builder.ins().load(machine(*word), TRUSTED, *room, 0))
         .collect();
-    let value = take(builder, making, answers, &mut words.into_iter());
+    let mut making = Making {
+        module: turning.module,
+        allocate: turning.allocate,
+    };
+    let value = take(builder, &mut making, answers, &mut words.into_iter());
+    let value = match answer_ty {
+        Some(ty) => turning.taken(builder, ty, value)?,
+        None => value,
+    };
     builder.ins().store(TRUSTED, value, out, 0);
     let ok = builder.ins().iconst(types::I32, i64::from(ANSWERED));
     builder.ins().return_(&[ok]);
+    Ok(())
 }
 
 /// Defines what a host builds and reads each list, and calls and makes each function value, in
@@ -1483,6 +1568,7 @@ fn function_call(
         let code = builder
             .ins()
             .load(POINTER, TRUSTED, *value, FUNCTION_INVOKE as i32);
+        // What a function value crosses in holds no set (`planned`), so nothing is turned.
         let status = answer_into(
             builder,
             answers,
@@ -1493,7 +1579,8 @@ fn function_call(
                 let called = builder.ins().call_indirect(calling, code, &arguments);
                 builder.inst_results(called)[0]
             },
-        );
+            |_, value| Ok(value),
+        )?;
         builder.ins().return_(&[status]);
         Ok(())
     })
@@ -1522,22 +1609,29 @@ fn function_making(
         &invocation,
     ));
     let calling = implementation.signature(emitting.call_conv);
+    let value_ops = emitting.value_ops;
+    let call_conv = emitting.call_conv;
     emitting.function(code, invocation, |builder, module, given| {
         let (value, rest) = given.split_first().expect("the function value first");
         let (arguments, out) = rest.split_at(rest.len() - 1);
         let hosted = builder.ins().iadd_imm_s(*value, HOSTED_FUNCTION_HOSTED);
-        let mut making = Making { module, allocate };
+        let mut turning = Turning {
+            module,
+            allocate,
+            value_ops,
+            call_conv,
+        };
+        // What a function value crosses in holds no set (`planned`), so nothing is turned.
         call_hosted(
             builder,
-            &mut making,
+            &mut turning,
             hosted,
-            takes,
-            answers,
+            (takes, answers),
             arguments,
             out[0],
             calling,
-        );
-        Ok(())
+            None,
+        )
     })?;
 
     // `(into, implementation, userdata) -> function`: the code above at the head of `into`, and the
@@ -1755,38 +1849,50 @@ fn decode(
 /// `InvariantNotHeld` was handed nothing.
 fn build(
     builder: &mut FunctionBuilder,
-    module: &mut ObjectModule,
-    allocate: FuncId,
+    turning: &mut Turning,
     constructor: FuncId,
-    handed: &[HostShape],
+    (handed, types): (&[HostShape], &[Ty]),
     params: &[ir::Value],
-) {
+) -> Lowered<()> {
     let mut given = params.iter().copied();
-    let mut making = Making { module, allocate };
     let mut fields = Vec::with_capacity(handed.len() + 1);
-    for shape in handed {
-        fields.push(take(builder, &mut making, shape, &mut given));
+    for (shape, ty) in handed.iter().zip(types) {
+        let mut making = Making {
+            module: turning.module,
+            allocate: turning.allocate,
+        };
+        let taken = take(builder, &mut making, shape, &mut given);
+        fields.push(turning.taken(builder, ty, taken)?);
     }
     let out = given.next().expect("room for the answer after the fields");
     fields.push(out);
-    let reaching = making
+    let reaching = turning
         .module
         .declare_func_in_func(constructor, builder.func);
     let called = builder.ins().call(reaching, &fields);
     let status = builder.inst_results(called)[0];
     builder.ins().return_(&[status]);
+    Ok(())
 }
 
 /// A host's reader of the field at `at`: the field written through the host's room, as every value
 /// a host is handed is.
-fn read(builder: &mut FunctionBuilder, at: usize, shape: &HostShape, given: &[ir::Value]) {
+fn read(
+    builder: &mut FunctionBuilder,
+    turning: &mut Turning,
+    at: usize,
+    (shape, ty): (&HostShape, &Ty),
+    given: &[ir::Value],
+) -> Lowered<()> {
     let (owner, rooms) = given.split_first().expect("the value a field is read off");
     let slot = builder
         .ins()
         .load(types::I64, TRUSTED, *owner, field_at(at) as i32);
     let value = out_of_slot(builder, slot, held_as(shape));
+    let value = turning.handed(builder, ty, value)?;
     write(builder, shape, value, rooms);
     builder.ins().return_(&[]);
+    Ok(())
 }
 
 /// A case reader: which of the cases the checker settled for a sum, or the boundary descended to
@@ -2038,6 +2144,32 @@ mod tests {
         );
     }
 
+    /// A set crosses as the list of its members and a map as the list of its entries, each a pair
+    /// of its key and its value, in the shapes a list and a tuple cross in.
+    #[test]
+    fn a_set_and_a_map_cross_as_lists() {
+        let set = Ty::Set {
+            set: Box::new(int()),
+        };
+        let map = Ty::Map {
+            map: MapTy {
+                key: Box::new(Ty::Prim { prim: Prim::String }),
+                value: Box::new(set.clone()),
+            },
+        };
+        let ints = HostShape::List(Box::new(HostShape::Leaf(HostLeaf::Int)));
+        for direction in [Direction::Given, Direction::Handed] {
+            assert_eq!(shape(&set, direction), Ok(ints.clone()));
+            assert_eq!(
+                shape(&map, direction),
+                Ok(HostShape::List(Box::new(HostShape::Product(vec![
+                    HostShape::Leaf(HostLeaf::String),
+                    ints.clone(),
+                ]))))
+            );
+        }
+    }
+
     /// What has no representation for a host, and what has no value, are refused where they
     /// stand, and the path says how deep that is.
     #[test]
@@ -2056,17 +2188,18 @@ mod tests {
             ),
             refused(Reason::NoRepresentation, vec![Step::Member(1)])
         );
+        // A set in what a function value takes is turned by nothing that knows its type.
+        let set = Ty::Set {
+            set: Box::new(int()),
+        };
         assert_eq!(
             shape(
-                &Ty::Map {
-                    map: MapTy {
-                        key: Box::new(int()),
-                        value: Box::new(int())
-                    }
+                &Ty::Option {
+                    option: Box::new(function(vec![set], int()))
                 },
                 Direction::Handed
             ),
-            refused(Reason::NoRepresentation, vec![])
+            refused(Reason::NoRepresentation, vec![Step::Option])
         );
         assert_eq!(
             shape(

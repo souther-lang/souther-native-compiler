@@ -7,6 +7,8 @@
 //! in `souther-native-abi`.
 
 use super::{Text, string_of, text};
+use crate::amount::Amount;
+use std::cmp::Ordering;
 
 /// One node of the external form.
 #[derive(Debug, PartialEq)]
@@ -92,6 +94,130 @@ pub unsafe extern "C" fn souther_external_put(
         Form::Object(members) => members.push((key, item)),
         other => panic!("a member put into {other:?}, which is not an object"),
     }
+}
+
+/// Puts a set's members in the order a boundary writes them in ([`order`]).
+///
+/// # Safety
+/// `array` is an array this runtime answered and the caller still owns.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_external_order(array: *mut Form) {
+    match unsafe { &mut *array } {
+        Form::Array(items) => items.sort_by(order),
+        other => panic!("{other:?} put in order, where a set's members are an array"),
+    }
+}
+
+/// Makes a map's entries, an array of pairs of a key and a value, the object a boundary writes,
+/// its members ascending by their keys as [`order`] orders two strings.
+///
+/// # Safety
+/// `array` is an array this runtime answered and the caller still owns, of arrays of two, the first
+/// of each a string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_external_entries(array: *mut Form) {
+    let entries = match unsafe { &mut *array } {
+        Form::Array(items) => std::mem::take(items),
+        other => panic!("{other:?} made an object of, where a map's entries are an array"),
+    };
+    let mut members: Vec<(Vec<u8>, Form)> = entries
+        .into_iter()
+        .map(|mut entry| match &mut entry {
+            Form::Array(pair) if pair.len() == 2 => {
+                let value = pair.pop().expect("a pair holds two");
+                match &mut pair.pop().expect("a pair holds two") {
+                    Form::String(key) => (std::mem::take(key), value),
+                    other => panic!("{other:?} as a map's key, which is written as text"),
+                }
+            }
+            other => panic!("{other:?} as a map's entry, which is a pair"),
+        })
+        .collect();
+    members.sort_by(|(one, _), (other, _)| in_units(one, other));
+    unsafe { *array = Form::Object(members) };
+}
+
+/// Two texts in the order of their UTF-16 code units, which is the order the language writes a
+/// boundary in (spec §collections) and not the order of their bytes: a unit from E000 up comes
+/// after a surrogate, where its UTF-8 comes before.
+fn in_units(one: &[u8], other: &[u8]) -> Ordering {
+    let text = |bytes| std::str::from_utf8(bytes).expect("a string form holds text");
+    text(one).encode_utf16().cmp(text(other).encode_utf16())
+}
+
+/// Two forms in the order a boundary writes a set's members in (spec §collections): `null`, then
+/// `false`, `true`, a number by its amount, a string by its UTF-16 code units, an array element by
+/// element with the shorter first where one runs out, and an object by its members read in
+/// ascending key order, each key before its value.
+///
+/// Walked with a stack of its own, as a form is written, so how deep two members are is not a
+/// question about the native stack.
+fn order(one: &Form, other: &Form) -> Ordering {
+    /// What is left to compare, taken last first.
+    enum Left<'f> {
+        Forms(&'f Form, &'f Form),
+        Keys(&'f [u8], &'f [u8]),
+        Counts(usize, usize),
+    }
+    fn rank(form: &Form) -> u8 {
+        match form {
+            Form::Null => 0,
+            Form::Bool(false) => 1,
+            Form::Bool(true) => 2,
+            Form::Number(_) | Form::Amount(_) => 3,
+            Form::String(_) => 4,
+            Form::Array(_) => 5,
+            Form::Object(_) => 6,
+        }
+    }
+    fn amount(form: &Form) -> Amount {
+        match form {
+            Form::Number(value) => Amount::of_int(*value),
+            Form::Amount(written) => Amount::of_json_number(written.as_bytes())
+                .expect("an amount is written as a JSON number"),
+            other => unreachable!("{other:?} is no number"),
+        }
+    }
+    fn by_key(members: &[(Vec<u8>, Form)]) -> Vec<&(Vec<u8>, Form)> {
+        let mut sorted: Vec<_> = members.iter().collect();
+        sorted.sort_by(|(one, _), (other, _)| in_units(one, other));
+        sorted
+    }
+    let mut left = vec![Left::Forms(one, other)];
+    while let Some(next) = left.pop() {
+        let ordered = match next {
+            Left::Counts(one, other) => one.cmp(&other),
+            Left::Keys(one, other) => in_units(one, other),
+            Left::Forms(one, other) => match (one, other) {
+                _ if rank(one) != rank(other) => rank(one).cmp(&rank(other)),
+                (Form::String(one), Form::String(other)) => in_units(one, other),
+                (Form::Array(one), Form::Array(other)) => {
+                    left.push(Left::Counts(one.len(), other.len()));
+                    for (one, other) in one.iter().zip(other).rev() {
+                        left.push(Left::Forms(one, other));
+                    }
+                    Ordering::Equal
+                }
+                (Form::Object(one), Form::Object(other)) => {
+                    left.push(Left::Counts(one.len(), other.len()));
+                    for ((one_key, one), (other_key, other)) in
+                        by_key(one).into_iter().zip(by_key(other)).rev()
+                    {
+                        left.push(Left::Forms(one, other));
+                        left.push(Left::Keys(one_key, other_key));
+                    }
+                    Ordering::Equal
+                }
+                (one, other) if rank(one) == 3 => amount(one).compare(&amount(other)),
+                // A kind with one value, or a truth, which its rank has told apart already.
+                _ => Ordering::Equal,
+            },
+        };
+        if ordered != Ordering::Equal {
+            return ordered;
+        }
+    }
+    Ordering::Equal
 }
 
 /// # Safety
@@ -202,6 +328,63 @@ mod tests {
 
     fn string(text: &str) -> *mut Text {
         unsafe { souther_string_of_utf8(text.as_ptr(), crate::Count(text.len() as i64)) }
+    }
+
+    /// A set's members in the order the language writes them: by kind, a number by its amount
+    /// whichever way it was written, text by UTF-16 code unit, and what holds others by what it
+    /// holds, an object read in the order of its keys.
+    #[test]
+    fn a_sets_members_are_written_in_the_order_of_what_they_are() {
+        let members = vec![
+            Form::Object(vec![
+                (b"b".to_vec(), Form::Number(1)),
+                (b"a".to_vec(), Form::Number(2)),
+            ]),
+            Form::Array(vec![Form::Number(1), Form::Number(2)]),
+            Form::Array(vec![Form::Number(1)]),
+            Form::String("\u{ff61}".as_bytes().to_vec()),
+            Form::String("\u{10000}".as_bytes().to_vec()),
+            Form::String(b"a".to_vec()),
+            Form::Amount("2.5".to_string()),
+            Form::Number(10),
+            Form::Number(-3),
+            Form::Bool(true),
+            Form::Bool(false),
+            Form::Null,
+            Form::Object(vec![
+                (b"a".to_vec(), Form::Number(1)),
+                (b"c".to_vec(), Form::Number(0)),
+            ]),
+        ];
+        let array = handed(Form::Array(members));
+        unsafe { souther_external_order(array) };
+        let mark = souther_mark();
+        assert_eq!(
+            json(array),
+            "[null,false,true,-3,2.5,10,\"a\",\"\u{10000}\",\"\u{ff61}\",[1],[1,2],\
+             {\"a\":1,\"c\":0},{\"b\":1,\"a\":2}]"
+        );
+        souther_reset(mark);
+    }
+
+    /// A map's entries, as the object written with its keys ascending.
+    #[test]
+    fn a_maps_entries_are_written_in_the_order_of_their_keys() {
+        let pair =
+            |key: &str, value| Form::Array(vec![Form::String(key.as_bytes().to_vec()), value]);
+        let array = handed(Form::Array(vec![
+            pair("b", Form::Number(2)),
+            pair("\u{ff61}", Form::Number(4)),
+            pair("\u{10000}", Form::Number(3)),
+            pair("a", Form::Number(1)),
+        ]));
+        unsafe { souther_external_entries(array) };
+        let mark = souther_mark();
+        assert_eq!(
+            json(array),
+            "{\"a\":1,\"b\":2,\"\u{10000}\":3,\"\u{ff61}\":4}"
+        );
+        souther_reset(mark);
     }
 
     fn json(form: *mut Form) -> String {

@@ -9,9 +9,9 @@
 //! the same way where every position is.
 //!
 //! Where one is not, the value is rebuilt. An optional, a list and a tuple are rebuilt around what
-//! they hold restated, a set and a map are built again from their members restated, and a function is wrapped: what calls it through the wider type hands the
-//! wrapper what that type takes, and the wrapper restates it, calls the function it holds, and
-//! restates what that answers. Each is a function of this object's own, one per pair of types, and
+//! they hold restated, a set and a map are built again from their members restated, and a function
+//! is wrapped: what calls it through the wider type hands the wrapper what that type takes, and the
+//! wrapper restates it, calls the function it holds, and restates what that answers. Each is a function of this object's own, one per pair of types, and
 //! written once every body is, as a comparator is (`equality`): a restatement reaches the types a
 //! value is made of only as its function is written.
 //!

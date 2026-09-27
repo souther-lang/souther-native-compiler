@@ -89,11 +89,13 @@ generated souther_external_bool [Given(Host(Bool))] -> Some(Form)
 generated souther_external_date [Given(Host(Date))] -> Some(Form)
 generated souther_external_datetime [Given(Host(DateTime))] -> Some(Form)
 generated souther_external_decimal [Given(Host(Decimal))] -> Some(Form)
+generated souther_external_entries [Given(Form)] -> None
 generated souther_external_instant [Given(Host(Instant))] -> Some(Form)
 generated souther_external_int [Given(Host(Int))] -> Some(Form)
 generated souther_external_json [Given(Form)] -> Some(Host(String))
 generated souther_external_null [] -> Some(Form)
 generated souther_external_object [] -> Some(Form)
+generated souther_external_order [Given(Form)] -> None
 generated souther_external_put [Given(Form), Given(Host(String)), Given(Form)] -> None
 generated souther_external_string [Given(Host(String))] -> Some(Form)
 generated souther_external_time [Given(Host(Time))] -> Some(Form)
@@ -115,6 +117,7 @@ generated souther_map_to_list [Given(Map)] -> Some(Host(List))
 generated souther_map_values [Given(Map)] -> Some(Host(List))
 generated souther_path_at [Given(Path), Given(Host(Count))] -> Some(Path)
 generated souther_path_below [Given(Path), Given(Host(String))] -> Some(Path)
+generated souther_path_below_member [Given(Path), Given(Node), Given(Host(Count))] -> Some(Path)
 generated souther_rational_add [Given(Rational), Given(Rational), Room(Rational)] -> Some(Host(Bool))
 generated souther_rational_compare [Given(Rational), Given(Rational)] -> Some(Comparison)
 generated souther_rational_divide [Given(Rational), Given(Rational), Room(Rational)] -> Some(Host(Bool))
@@ -138,12 +141,16 @@ generated souther_read_case [Given(Node), Given(Path), Given(Host(Decoded))] -> 
 generated souther_read_date [Given(Node), Given(Path), Given(Host(Decoded)), Room(Host(Date))] -> Some(Host(Bool))
 generated souther_read_datetime [Given(Node), Given(Path), Given(Host(Decoded)), Room(Host(DateTime))] -> Some(Host(Bool))
 generated souther_read_decimal [Given(Node), Given(Path), Given(Host(Decoded)), Room(Host(Decimal))] -> Some(Host(Bool))
+generated souther_read_duplicate_key [Given(Path), Given(Host(Decoded))] -> None
 generated souther_read_element [Given(Node), Given(Host(Count))] -> Some(Node)
 generated souther_read_instant [Given(Node), Given(Path), Given(Host(Decoded)), Room(Host(Instant))] -> Some(Host(Bool))
 generated souther_read_int [Given(Node), Given(Path), Given(Host(Decoded)), Room(Host(Int))] -> Some(Host(Bool))
 generated souther_read_invariant [Given(Path), Given(Host(Decoded)), Given(Host(String)), Given(Host(String)), Given(Host(String))] -> None
 generated souther_read_is [Given(Node), Given(Host(String))] -> Some(Host(Bool))
 generated souther_read_member [Given(Node), Given(Host(String))] -> Some(Node)
+generated souther_read_member_key [Given(Node), Given(Host(Count))] -> Some(Node)
+generated souther_read_member_value [Given(Node), Given(Host(Count))] -> Some(Node)
+generated souther_read_members [Given(Node)] -> Some(Host(Count))
 generated souther_read_missing [Given(Path), Given(Host(Decoded))] -> None
 generated souther_read_not_a_case [Given(Node), Given(Path), Given(Host(Decoded))] -> None
 generated souther_read_null [Given(Node)] -> Some(Host(Bool))

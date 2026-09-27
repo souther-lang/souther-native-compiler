@@ -47,7 +47,9 @@ use cranelift::codegen::isa::CallConv;
 use cranelift::frontend::FunctionBuilder;
 use cranelift::module::{FuncId, Linkage, Module};
 use cranelift::object::ObjectModule;
-use souther_native_abi::{CARRIED, HELD, LIST_ELEMENTS, LIST_LENGTH, NOTHING, SLOT, field_at};
+use souther_native_abi::{
+    CARRIED, HELD, LIST_ELEMENTS, LIST_LENGTH, NOTHING, SLOT, field_at, member_at,
+};
 
 /// Where a walk keeps the first record of what is left to do, the first record it can use again,
 /// and the form the last piece of work left: three words in a stack slot of the function that
@@ -131,6 +133,12 @@ pub(super) enum Continuation {
     Put,
     /// Moves the result to the end of an array.
     Append,
+    /// Puts a set's members, an array every one of which is in it, in the order a boundary writes
+    /// them in. The result is left as it is.
+    Order,
+    /// Makes a map's entries, an array of pairs every one of which is in it, the object a boundary
+    /// writes. The result is left as it is.
+    Entries,
 }
 
 impl Continuation {
@@ -139,16 +147,22 @@ impl Continuation {
             Continuation::Give => "$encoding$give",
             Continuation::Put => "$encoding$put",
             Continuation::Append => "$encoding$append",
+            Continuation::Order => "$encoding$order",
+            Continuation::Entries => "$encoding$entries",
         }
     }
 }
 
 /// What the elements of a list whose elements wait are written as: a value where it has no key of
-/// its own, or an answer.
+/// its own, an answer, or an entry of a map, a pair of its key and its value.
 #[derive(Clone)]
 pub(super) enum Element {
     Value(CodecShape),
     Output(BoundaryOutput),
+    Entry {
+        key: CodecShape,
+        value: Box<Element>,
+    },
 }
 
 impl Element {
@@ -156,6 +170,9 @@ impl Element {
         match self {
             Element::Value(shape) => shape.ty(),
             Element::Output(output) => output.ty(),
+            Element::Entry { key, value } => Ty::Tuple {
+                tuple: vec![key.ty(), value.ty()],
+            },
         }
     }
 }
@@ -228,10 +245,7 @@ pub(super) fn define_each(
         };
         scheduling.push(work, &[list, array, next]);
         scheduling.push_continuation(Continuation::Append, &[array]);
-        match element {
-            Element::Value(shape) => scheduling.value(shape, value)?,
-            Element::Output(output) => scheduling.output(output, value)?,
-        }
+        scheduling.element(element, value)?;
         writing.builder.ins().jump(done, &[]);
 
         writing.builder.switch_to_block(done);
@@ -256,6 +270,16 @@ pub(super) fn define_continuation(
             Continuation::Give => {
                 builder.ins().trapnz(result, out_of_order);
                 builder.ins().store(TRUSTED, given[1], walk, RESULT);
+            }
+            Continuation::Order | Continuation::Entries => {
+                let called = if part == Continuation::Order {
+                    Runtime::ExternalOrder
+                } else {
+                    Runtime::ExternalEntries
+                };
+                let reached = codecs.runtime(module, called);
+                let reaching = module.declare_func_in_func(reached, builder.func);
+                builder.ins().call(reaching, &[given[1]]);
             }
             Continuation::Put | Continuation::Append => {
                 builder.ins().trapz(result, out_of_order);
@@ -357,8 +381,9 @@ fn defers(shape: &CodecShape) -> bool {
     match shape {
         CodecShape::Named { .. } => true,
         CodecShape::OptionOf { present } => defers(present.shape()),
-        CodecShape::ListOf { element } => defers(element),
-        CodecShape::Scalar { .. } | CodecShape::SetOf { .. } | CodecShape::MapOf { .. } => false,
+        CodecShape::ListOf { element } | CodecShape::SetOf { element } => defers(element),
+        CodecShape::MapOf { key, value } => defers(&key.shape()) || defers(value),
+        CodecShape::Scalar { .. } => false,
     }
 }
 
@@ -367,10 +392,11 @@ fn defers(shape: &CodecShape) -> bool {
 fn output_defers(output: &BoundaryOutput) -> bool {
     match output {
         BoundaryOutput::Nominal { .. } | BoundaryOutput::Cases { .. } => true,
-        BoundaryOutput::ListOf { element } => output_defers(element),
-        BoundaryOutput::Scalar { .. }
-        | BoundaryOutput::SetOf { .. }
-        | BoundaryOutput::MapOf { .. } => false,
+        BoundaryOutput::ListOf { element } | BoundaryOutput::SetOf { element } => {
+            output_defers(element)
+        }
+        BoundaryOutput::MapOf { key, value } => defers(&key.shape()) || output_defers(value),
+        BoundaryOutput::Scalar { .. } => false,
     }
 }
 
@@ -488,10 +514,69 @@ impl<'w, 'f> Writing<'w, 'f> {
             BoundaryOutput::Nominal { .. } | BoundaryOutput::Cases { .. } => unreachable!(
                 "`output_defers` keeps what holds a declared value from being written in place"
             ),
-            BoundaryOutput::SetOf { .. } | BoundaryOutput::MapOf { .. } => Err(not_lowered(
-                format!("an answer written as {}", output.ty().spelt()),
-            )),
+            BoundaryOutput::SetOf { element } => {
+                self.members(&element.ty(), answer, |writing, value| {
+                    writing.output_in_place(element, value)
+                })
+            }
+            BoundaryOutput::MapOf { key, value } => {
+                self.entries(&key.shape(), &value.ty(), answer, |writing, held| {
+                    writing.output_in_place(value, held)
+                })
+            }
         }
+    }
+
+    /// A set written in place: its members as an array of what `write` writes each as, put in the
+    /// order a boundary writes them in once every one is there.
+    fn members(
+        &mut self,
+        element: &Ty,
+        set: ir::Value,
+        write: impl FnMut(&mut Self, ir::Value) -> Lowered<ir::Value>,
+    ) -> Lowered<ir::Value> {
+        let list = self.call(Runtime::SetToList, &[set]);
+        let array = self.array(element, list, write)?;
+        self.call_for_effect(Runtime::ExternalOrder, &[array]);
+        Ok(array)
+    }
+
+    /// A map written in place: its entries as pairs of what its key is written as and what `write`
+    /// writes its value as, made the object a boundary writes once every one is there.
+    fn entries(
+        &mut self,
+        key: &CodecShape,
+        value: &Ty,
+        map: ir::Value,
+        mut write: impl FnMut(&mut Self, ir::Value) -> Lowered<ir::Value>,
+    ) -> Lowered<ir::Value> {
+        let list = self.call(Runtime::MapToList, &[map]);
+        let pair = Ty::Tuple {
+            tuple: vec![key.ty(), value.clone()],
+        };
+        let array = self.array(&pair, list, |writing, entry| {
+            let (held_key, held) = writing.pair(entry, &key.ty(), value)?;
+            let written = writing.call(Runtime::ExternalArray, &[]);
+            let key_form = writing.value(key, held_key)?;
+            writing.call_for_effect(Runtime::ExternalAppend, &[written, key_form]);
+            let value_form = write(writing, held)?;
+            writing.call_for_effect(Runtime::ExternalAppend, &[written, value_form]);
+            Ok(written)
+        })?;
+        self.call_for_effect(Runtime::ExternalEntries, &[array]);
+        Ok(array)
+    }
+
+    /// The key and the value of a map's entry, a tuple of the two, each read out of its slot.
+    fn pair(&mut self, entry: ir::Value, key: &Ty, value: &Ty) -> Lowered<(ir::Value, ir::Value)> {
+        let mut read = |at: usize, ty: &Ty| -> Lowered<ir::Value> {
+            let slot = self
+                .builder
+                .ins()
+                .load(types::I64, TRUSTED, entry, member_at(at) as i32);
+            Ok(out_of_slot(self.builder, slot, machine_type(ty)?))
+        };
+        Ok((read(0, key)?, read(1, value)?))
     }
 
     fn scalar(&mut self, scalar: LeafScalar, value: ir::Value) -> Lowered<ir::Value> {
@@ -555,10 +640,16 @@ impl<'w, 'f> Writing<'w, 'f> {
             CodecShape::ListOf { element } => self.array(&element.ty(), value, |writing, value| {
                 writing.value(element, value)
             }),
-            CodecShape::SetOf { .. } | CodecShape::MapOf { .. } => Err(not_lowered(format!(
-                "{} written at a boundary",
-                shape.ty().spelt()
-            ))),
+            CodecShape::SetOf { element } => {
+                self.members(&element.ty(), value, |writing, value| {
+                    writing.value(element, value)
+                })
+            }
+            CodecShape::MapOf { key, value: held } => {
+                self.entries(&key.shape(), &held.ty(), value, |writing, value| {
+                    writing.value(held, value)
+                })
+            }
         }
     }
 
@@ -746,9 +837,21 @@ impl<'w, 'f> Scheduling<'_, 'w, 'f> {
                 self.array(Element::Output((**element).clone()), answer);
                 Ok(())
             }
-            BoundaryOutput::Scalar { .. }
-            | BoundaryOutput::SetOf { .. }
-            | BoundaryOutput::MapOf { .. } => {
+            BoundaryOutput::SetOf { element } => {
+                self.members(Element::Output((**element).clone()), answer);
+                Ok(())
+            }
+            BoundaryOutput::MapOf { key, value } => {
+                self.entries(
+                    Element::Entry {
+                        key: key.shape(),
+                        value: Box::new(Element::Output((**value).clone())),
+                    },
+                    answer,
+                );
+                Ok(())
+            }
+            BoundaryOutput::Scalar { .. } => {
                 unreachable!("`output_defers` holds only what holds a declared value to wait")
             }
         }
@@ -800,7 +903,21 @@ impl<'w, 'f> Scheduling<'_, 'w, 'f> {
                 self.array(Element::Value((**element).clone()), value);
                 Ok(())
             }
-            CodecShape::Scalar { .. } | CodecShape::SetOf { .. } | CodecShape::MapOf { .. } => {
+            CodecShape::SetOf { element } => {
+                self.members(Element::Value((**element).clone()), value);
+                Ok(())
+            }
+            CodecShape::MapOf { key, value: held } => {
+                self.entries(
+                    Element::Entry {
+                        key: key.shape(),
+                        value: Box::new(Element::Value((**held).clone())),
+                    },
+                    value,
+                );
+                Ok(())
+            }
+            CodecShape::Scalar { .. } => {
                 unreachable!("`defers` holds only what holds a declared value to wait")
             }
         }
@@ -810,11 +927,52 @@ impl<'w, 'f> Scheduling<'_, 'w, 'f> {
     /// holds them. What is added is the array, given once every element is in it, and the work
     /// that writes the first element, which adds the next one's only once it is done.
     fn array(&mut self, element: Element, list: ir::Value) {
+        self.array_then(element, list, None);
+    }
+
+    /// [`Scheduling::array`], with `then` done to the array once every element is in it and before
+    /// it is given.
+    fn array_then(&mut self, element: Element, list: ir::Value, then: Option<Continuation>) {
         let array = self.writing.call(Runtime::ExternalArray, &[]);
         self.give(array);
+        if let Some(then) = then {
+            self.push_continuation(then, &[array]);
+        }
         let each = self.writing.codecs.each(self.writing.module, element);
         let first = self.writing.builder.ins().iconst(types::I64, 0);
         self.push(each, &[list, array, first]);
+    }
+
+    /// A set whose members wait, as the array of its members, put in the order a boundary writes
+    /// them in once the last of them is written.
+    fn members(&mut self, element: Element, set: ir::Value) {
+        let list = self.writing.call(Runtime::SetToList, &[set]);
+        self.array_then(element, list, Some(Continuation::Order));
+    }
+
+    /// A map whose keys or values wait, as the array of its entries, each a pair, made the object
+    /// a boundary writes once the last of them is written.
+    fn entries(&mut self, entry: Element, map: ir::Value) {
+        let list = self.writing.call(Runtime::MapToList, &[map]);
+        self.array_then(entry, list, Some(Continuation::Entries));
+    }
+
+    /// What one element of a list whose elements wait leaves: a value, an answer, or a map's entry
+    /// as the pair of what its key and its value leave, the key first.
+    fn element(&mut self, element: &Element, value: ir::Value) -> Lowered<()> {
+        match element {
+            Element::Value(shape) => self.value(shape, value),
+            Element::Output(output) => self.output(output, value),
+            Element::Entry { key, value: held } => {
+                let (held_key, held_value) = self.writing.pair(value, &key.ty(), &held.ty())?;
+                let pair = self.writing.call(Runtime::ExternalArray, &[]);
+                self.give(pair);
+                self.push_continuation(Continuation::Append, &[pair]);
+                self.element(held, held_value)?;
+                self.push_continuation(Continuation::Append, &[pair]);
+                self.value(key, held_key)
+            }
+        }
     }
 
     /// A field of an object, which has a second way of holding nothing: not being there.

@@ -102,24 +102,6 @@ class AHostReachesAValueWithoutItsLayoutTest {
                 host("Waived$construct"), host("Waived$field$reason"));
     }
 
-    /**
-     * A field with no way across keeps its type from being built by a host and nothing else: the
-     * reader of a sibling is still there. Nothing here builds a value of the type, so what is asked
-     * is only what the object offers a host for it.
-     */
-    @Test
-    void aFieldWithNoWayAcrossKeepsNoSiblingFromBeingRead() throws Exception {
-        Set<String> defined = NativeArtifacts.built(Checked.of(List.of("""
-                module shop exposing ( Partial )
-
-                data Partial = { count: Int, opened: Set<Int> }
-                """))).defined();
-
-        assertThat(defined).contains(host("Partial$field$count"));
-        assertThat(defined).doesNotContain(
-                host("Partial$field$opened"), host("Partial$construct"));
-    }
-
     private static String host(String operation) {
         int at = operation.indexOf('$');
         return Running.hostSymbol("shop", operation.substring(0, at), operation.substring(at + 1));

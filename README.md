@@ -416,14 +416,17 @@ In the external form a list is an array of its elements, and a mistake inside on
 the element's index (`/lines/2/quantity`). Two values of one type compare by what they are made
 of, a list element by element, through a comparator the object holds per type.
 
-Still ahead: a `Set` and a `Map`,
-every kernel over a `Set`, a `Map` or a date, every list kernel but `List.length` and
-`List.get`, a value
-that runs in the module declaring it, and a
-behavior that declares what its answer owes, which is refused rather than answered without the
-rule being run. A set and a map are read off the program whole and refused where one would be laid
-out or written: how every carrier orders a set's members and spells a map's keys is for the language
-to state before a backend writes one.
+A `Set` and a `Map` are the runtime's: a persistent hash trie in the arena, which generated code
+holds the address of and never reads behind. What a member hashes to and what it is equal to are
+handed to the runtime by the site that asks, for the type it asks at, so a set of a sum's case read
+as a set of the sum is asked of under the sum. Two sets are equal where their members are, whatever
+order each keeps them in, which is no order the language says anything of. At a boundary a set is
+an array of its members and a map an object, each written in ascending order of what it holds, as
+the language fixes (spec §collections); a map's key is read as the key's own type, and two keys
+that are one once read are refused at the second as `duplicate_key`.
+
+Still ahead: a value that runs in the module declaring it, and a behavior that declares what its
+answer owes, which is refused rather than answered without the rule being run.
 
 
 ## What a host is handed

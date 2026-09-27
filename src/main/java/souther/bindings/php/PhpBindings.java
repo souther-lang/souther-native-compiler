@@ -393,8 +393,8 @@ public final class PhpBindings {
                         && givens(it.of(), product.of()) instanceof List<Given> members
                         ? new GivenTuple(members) : null;
                 case Shape.ListOf list -> {
-                    if (!(type instanceof Type.ListOf it)
-                            || !(given(it.of(), list.element()) instanceof Given element)) {
+                    if (!(Type.listed(type) instanceof Type listed)
+                            || !(given(listed, list.element()) instanceof Given element)) {
                         yield null;
                     }
                     Manifest.ListCrossing crossing = listOf(list.element());
@@ -439,8 +439,8 @@ public final class PhpBindings {
                         && receiveds(it.of(), product.of()) instanceof List<Received> members
                         ? new ReceivedTuple(members) : null;
                 case Shape.ListOf list -> {
-                    if (!(type instanceof Type.ListOf it)
-                            || !(received(it.of(), list.element()) instanceof Received element)) {
+                    if (!(Type.listed(type) instanceof Type listed)
+                            || !(received(listed, list.element()) instanceof Received element)) {
                         yield null;
                     }
                     Manifest.ListCrossing crossing = listOf(list.element());

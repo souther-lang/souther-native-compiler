@@ -1241,6 +1241,23 @@ pub enum MapKey {
 }
 
 impl MapKey {
+    /// The key as a value standing where it has no key of its own is written: a map's key is
+    /// written as a member's key, which is text, and read from one as the key's type is read
+    /// anywhere else.
+    pub fn shape(&self) -> CodecShape {
+        let scalar = |scalar| CodecShape::Scalar { scalar };
+        match self {
+            MapKey::Text => scalar(LeafScalar::String),
+            MapKey::Date => scalar(LeafScalar::Date),
+            MapKey::Time => scalar(LeafScalar::Time),
+            MapKey::DateTime => scalar(LeafScalar::DateTime),
+            MapKey::Instant => scalar(LeafScalar::Instant),
+            MapKey::NamedKey { named } => CodecShape::Named {
+                named: named.clone(),
+            },
+        }
+    }
+
     pub fn ty(&self) -> Ty {
         match self {
             MapKey::Text => Ty::Prim { prim: Prim::String },

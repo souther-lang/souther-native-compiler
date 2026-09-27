@@ -37,10 +37,36 @@ pub(crate) enum Node {
     Number(Box<[u8]>),
     String(Box<[u8]>),
     Array(Vec<Node>),
-    Object(Vec<(Box<[u8]>, Node)>),
+    /// Each member's key, and what it holds. A key is text the document wrote, which is a place of
+    /// the document as any string is, and read the way one is where a map's key is read as the
+    /// key's own type.
+    Object(Vec<(Key, Node)>),
     /// A host's ordered map: an object, and an array too where its keys are `0`, `1` and on, in
     /// that order. Made only by reading a [`Form::HostValue`].
-    Keyed(Vec<(Box<[u8]>, Node)>),
+    Keyed(Vec<(Key, Node)>),
+}
+
+/// A member's key, as the string it was written as: always a [`Node::String`].
+#[derive(Debug, PartialEq)]
+pub(crate) struct Key(Node);
+
+impl Key {
+    fn of(written: impl IntoIterator<Item = u8>) -> Key {
+        Key(Node::String(written.into_iter().collect()))
+    }
+
+    /// What was written, before anything was made of it.
+    pub(crate) fn written(&self) -> &[u8] {
+        match &self.0 {
+            Node::String(bytes) => bytes,
+            other => unreachable!("a key is made as a string, and this is {other:?}"),
+        }
+    }
+
+    /// The key as a place of the document.
+    pub(crate) fn node(&self) -> &Node {
+        &self.0
+    }
 }
 
 impl Node {
@@ -69,7 +95,7 @@ impl Node {
             Node::Keyed(members) => members
                 .iter()
                 .enumerate()
-                .all(|(at, (key, _))| **key == *at.to_string().as_bytes())
+                .all(|(at, (key, _))| key.written() == at.to_string().as_bytes())
                 .then_some(members.len()),
             _ => None,
         }
@@ -96,9 +122,18 @@ impl Node {
         match self {
             Node::Object(members) | Node::Keyed(members) => members
                 .iter()
-                .find(|(written, _)| **written == *key)
+                .find(|(written, _)| written.written() == key)
                 .map(|(_, value)| value),
             _ => None,
+        }
+    }
+
+    /// Every member of an object, in the order they were written, a key written twice kept twice;
+    /// none where this is not an object.
+    pub(crate) fn members(&self) -> &[(Key, Node)] {
+        match self {
+            Node::Object(members) | Node::Keyed(members) => members,
+            _ => &[],
         }
     }
 }
@@ -106,7 +141,7 @@ impl Node {
 /// A container whose closing has not been read yet, holding what it has been given so far.
 enum Open {
     Array(Vec<Node>),
-    Object(Vec<(Box<[u8]>, Node)>, Option<Box<[u8]>>),
+    Object(Vec<(Key, Node)>, Option<Key>),
 }
 
 /// The document `bytes` are, written as `form` says, or where they stopped being one.
@@ -134,7 +169,7 @@ pub(crate) fn parsed(bytes: &[u8], form: Form) -> Result<Node, Malformed> {
             }
             Event::Key(text) => {
                 match open.last_mut() {
-                    Some(Open::Object(_, key)) => *key = Some(text.bytes().collect()),
+                    Some(Open::Object(_, key)) => *key = Some(Key::of(text.bytes())),
                     _ => unreachable!("the parser answers a key only inside an object"),
                 }
                 return;
@@ -165,7 +200,7 @@ pub(crate) fn parsed(bytes: &[u8], form: Form) -> Result<Node, Malformed> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Form, Node};
+    use super::{Form, Key, Node};
 
     fn parsed(bytes: &[u8]) -> Result<Node, souther_json_syntax::Malformed> {
         super::parsed(bytes, Form::Text)
@@ -182,7 +217,7 @@ mod tests {
             read,
             Node::Object(vec![
                 (
-                    b"a".as_slice().into(),
+                    Key::of(*b"a"),
                     Node::Array(vec![
                         Node::Number(b"1".as_slice().into()),
                         Node::String(b"x".as_slice().into()),
@@ -190,8 +225,8 @@ mod tests {
                     ])
                 ),
                 (
-                    b"b".as_slice().into(),
-                    Node::Object(vec![(b"c".as_slice().into(), Node::Bool(true))])
+                    Key::of(*b"b"),
+                    Node::Object(vec![(Key::of(*b"c"), Node::Bool(true))])
                 ),
             ])
         );

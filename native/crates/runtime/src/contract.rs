@@ -1053,6 +1053,42 @@ fn functions() -> Vec<(&'static str, Shape)> {
             shape_of(souther_issue_meta_value as unsafe extern "C" fn(*const Issue, Count) -> T),
         ),
         (
+            "souther_external_order",
+            shape_of(souther_external_order as unsafe extern "C" fn(*mut Form)),
+        ),
+        (
+            "souther_external_entries",
+            shape_of(souther_external_entries as unsafe extern "C" fn(*mut Form)),
+        ),
+        (
+            "souther_read_members",
+            shape_of(souther_read_members as unsafe extern "C" fn(*const Node) -> Count),
+        ),
+        (
+            "souther_read_member_key",
+            shape_of(
+                souther_read_member_key as unsafe extern "C" fn(*const Node, Count) -> *const Node,
+            ),
+        ),
+        (
+            "souther_read_member_value",
+            shape_of(
+                souther_read_member_value
+                    as unsafe extern "C" fn(*const Node, Count) -> *const Node,
+            ),
+        ),
+        (
+            "souther_path_below_member",
+            shape_of(
+                souther_path_below_member
+                    as unsafe extern "C" fn(*const Path, *const Node, Count) -> *const Path,
+            ),
+        ),
+        (
+            "souther_read_duplicate_key",
+            shape_of(souther_read_duplicate_key as unsafe extern "C" fn(*const Path, D)),
+        ),
+        (
             "souther_set_empty",
             shape_of(souther_set_empty as extern "C" fn() -> *mut Set),
         ),

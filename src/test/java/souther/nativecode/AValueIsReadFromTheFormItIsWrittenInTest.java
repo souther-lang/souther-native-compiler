@@ -185,9 +185,9 @@ class AValueIsReadFromTheFormItIsWrittenInTest {
     }
 
     /**
-     * A decoder and an encoder for every published type with a form this backend reads and writes,
-     * and a reader of each type built from fields under the name another build reaches it by. A
-     * type holding something with no form here has neither.
+     * A decoder and an encoder for every published type, which the checker holds to having a form,
+     * and a reader of each type built from fields under the name another build reaches it by: a
+     * type holding a set and a map among them.
      */
     @Test
     void whatAHostReadsAndWritesIsWhatTheModulePublishesWithAForm() throws Exception {
@@ -195,7 +195,7 @@ class AValueIsReadFromTheFormItIsWrittenInTest {
                 module shop exposing ( Money, Partial, Kind )
 
                 data Money = Int
-                data Partial = { count: Int, opened: Set<Int> }
+                data Partial = { count: Int, opened: Set<Int>, counted: Map<String, Int> }
                 data Big
                 data Small
                 data Kind = Big | Small
@@ -204,10 +204,9 @@ class AValueIsReadFromTheFormItIsWrittenInTest {
         assertThat(defined).contains(
                 Decoding.symbol("shop", "Money", "decode"), Decoding.symbol("shop", "Money", "encode"),
                 Decoding.symbol("shop", "Kind", "decode"), Decoding.symbol("shop", "Kind", "encode"),
-                Running.PREFIX + "souther" + Running.ABI + ".shop$read$Money");
-        assertThat(defined).doesNotContain(
                 Decoding.symbol("shop", "Partial", "decode"),
                 Decoding.symbol("shop", "Partial", "encode"),
+                Running.PREFIX + "souther" + Running.ABI + ".shop$read$Money",
                 Running.PREFIX + "souther" + Running.ABI + ".shop$read$Partial");
     }
 

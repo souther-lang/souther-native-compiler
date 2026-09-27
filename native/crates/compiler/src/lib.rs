@@ -18,6 +18,7 @@ mod equality;
 mod growing;
 mod hashing;
 mod host;
+mod host_form;
 mod index;
 mod interface;
 mod kernels;

@@ -302,8 +302,8 @@ public final class RustBindings {
                 yield members == null ? null : new Crossing.Tuple(members);
             }
             case Shape.ListOf list -> {
-                if (!(type instanceof Type.ListOf it)
-                        || !(crossing(module, it.of(), list.element(), way) instanceof Crossing element)) {
+                if (!(Type.listed(type) instanceof Type of)
+                        || !(crossing(module, of, list.element(), way) instanceof Crossing element)) {
                     yield null;
                 }
                 Manifest.ListCrossing listed = module.lists().stream()

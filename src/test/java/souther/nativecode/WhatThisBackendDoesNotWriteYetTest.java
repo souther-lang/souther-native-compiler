@@ -34,6 +34,21 @@ class WhatThisBackendDoesNotWriteYetTest {
             """;
 
     /**
+     * An arm binding a name where it tests that an optional holds nothing, which the language admits
+     * with no type for the name (souther-lang/souther#1984): what this backend is behind on today.
+     */
+    private static final String BINDING_NOTHING = """
+            module absent exposing ( counted, Held )
+
+            data Held = { o: Int? }
+
+            behavior counted : (h: Held) -> Int
+            let counted (h) = match h.o with
+                | Some x -> x
+                | None as n -> 0
+            """;
+
+    /**
      * The type crosses. What a primitive is called is the language's and whether there is a
      * representation for it is the driver's, so a writer holding its own list of what the driver
      * supports would be a second copy of an answer that lives over there.
@@ -46,87 +61,10 @@ class WhatThisBackendDoesNotWriteYetTest {
      * halves meet at for it.
      */
     @Test
-    void aTypeWithNoRepresentationStillCrosses() {
+    void aSetCrossesWhole() {
         String written = ProgramWriter.written(Checked.of(List.of(OVER_A_SET)));
 
         assertThat(written).contains("\"set\":");
-    }
-
-    /**
-     * A set crosses whole: the program is read, and what is refused is laying one out, which
-     * nothing here does yet. How a set holds its members waits on the language saying how every
-     * carrier orders and spells them.
-     */
-    @Test
-    void anAnswerThatIsASetIsReadAndNotLaidOut() {
-        assertThatThrownBy(() -> NativeCompiler.compile(Checked.of(List.of("""
-                module listed exposing ( many )
-
-                behavior many : (n: Int) -> Set<Int>
-                """))))
-                .isInstanceOf(NotLowered.class)
-                .hasMessageContaining("Set");
-    }
-
-    /**
-     * The checker lets a set of a case stand where a set of its sum is answered, and this backend
-     * lays out no set. So the program is not lowered — and it is not the two halves disagreeing,
-     * which is what it would be read as if this side answered the checker's question about a
-     * collection without the checker's rules.
-     */
-    @Test
-    void aSetAnsweredCovariantlyIsNotLoweredRatherThanADisagreement() {
-        assertThatThrownBy(() -> NativeCompiler.compile(Checked.of(List.of("""
-                module demo exposing ( f, Box, A, B, S )
-
-                data A = { v: Int }
-                data B = { v: Int }
-                data S = A | B
-
-                data Box = { xs: Set<A> }
-
-                behavior f : (b: Box) -> Set<S>
-                let f (b) = b.xs
-                """))))
-                .isInstanceOf(NotLowered.class)
-                .hasMessageContaining("Set");
-    }
-
-    /**
-     * A fold accumulating a map is rewritten by the checker's compiler into a walk that builds the
-     * map, which crosses as the operations it is. No map is laid out here, so the walk is not
-     * lowered, and that is what is said: not the two halves disagreeing about an operation one of
-     * them could not read.
-     */
-    @Test
-    void aWalkBuildingAMapIsReadAndNotLowered() {
-        assertThatThrownBy(() -> NativeCompiler.compile(Checked.of(List.of("""
-                module grouping exposing ( groups )
-
-                behavior groups : (a: Int) -> Int
-                let groups (a) = Map.size(List.groupBy((x) -> x > a, [1, 2, 3]))
-                """))))
-                .isInstanceOf(NotLowered.class)
-                .hasMessageStartingWith("the operation Map.$");
-    }
-
-    /**
-     * A value only passing through is not written, so a behavior handing one back compiles; what
-     * is refused is the boundary that would have to write a {@code Set} out, which is where its
-     * external form would be decided.
-     */
-    @Test
-    void anAnswerWithASetFieldIsRefusedWhereItWouldBeWrittenOut() {
-        assertThatThrownBy(() -> NativeCompiler.compile(Checked.of(List.of("""
-                module listed exposing ( same, Listed )
-
-                data Listed = { on: Set<Int> }
-
-                behavior same : (p: Listed) -> Listed
-                let same (p) = p
-                """))))
-                .isInstanceOf(NotLowered.class)
-                .hasMessageContaining("Set");
     }
 
     /**
@@ -159,16 +97,7 @@ class WhatThisBackendDoesNotWriteYetTest {
      */
     @Test
     void anArmBindingANameToNothingIsNotLoweredYet() {
-        CheckedProgram program = Checked.of(List.of("""
-                module absent exposing ( counted, Held )
-
-                data Held = { o: Int? }
-
-                behavior counted : (h: Held) -> Int
-                let counted (h) = match h.o with
-                    | Some x -> x
-                    | None as n -> 0
-                """));
+        CheckedProgram program = Checked.of(List.of(BINDING_NOTHING));
 
         assertThatThrownBy(() -> ProgramWriter.written(program))
                 .isInstanceOf(NotLowered.class)
@@ -177,15 +106,16 @@ class WhatThisBackendDoesNotWriteYetTest {
 
     @Test
     void theDriverSaysItIsOneThisBackendHasNotGotRoundTo() {
-        assertThatThrownBy(() -> NativeCompiler.compile(Checked.of(List.of(OVER_A_SET))))
+        assertThatThrownBy(() -> NativeCompiler.compile(
+                Checked.of(List.of(BINDING_NOTHING))))
                 .isInstanceOf(NotLowered.class)
-                .hasMessageContaining("Set");
+                .hasMessageContaining("souther-lang/souther#1984");
     }
 
     @Test
     void theCommandLineSaysTheBackendIsBehindAndNotThatTheCommandWasWrong() throws Exception {
-        Path source = Files.createTempDirectory("souther-native-test").resolve("calculation.sou");
-        Files.writeString(source, OVER_A_SET, StandardCharsets.UTF_8);
+        Path source = Files.createTempDirectory("souther-native-test").resolve("absent.sou");
+        Files.writeString(source, BINDING_NOTHING, StandardCharsets.UTF_8);
         ByteArrayOutputStream problems = new ByteArrayOutputStream();
 
         int ended = Main.run(

@@ -49,6 +49,7 @@ pub(super) fn define(
     let literals = emitting.literals;
     let constructors = emitting.constructors;
     let allocate = emitting.allocate;
+    let value_ops = emitting.value_ops;
     emitting.function(id, signature, |builder, module, given| {
         let [node, path, decoding, out] = given else {
             unreachable!("a reader takes a node, a path, a reading and room for the value")
@@ -66,6 +67,7 @@ pub(super) fn define(
             literals,
             constructors,
             allocate,
+            value_ops,
             codecs,
             decoding: *decoding,
             out: *out,
@@ -96,6 +98,8 @@ struct Reading<'w, 'f> {
     literals: &'w Literals,
     constructors: &'w Constructors,
     allocate: FuncId,
+    /// The hasher and the equality of what a set or a map read here is kept over.
+    value_ops: &'w crate::hashing::ValueOps,
     codecs: &'w mut Codecs,
     /// The reading every issue is recorded in.
     decoding: ir::Value,
@@ -335,11 +339,226 @@ impl Reading<'_, '_> {
                 Ok(self.builder.block_params(read)[0])
             }
             CodecShape::ListOf { element } => self.list(node, path, element),
-            CodecShape::SetOf { .. } | CodecShape::MapOf { .. } => Err(not_lowered(format!(
-                "{} read at a boundary",
-                shape.ty().spelt()
-            ))),
+            CodecShape::SetOf { element } => self.set(node, path, element),
+            CodecShape::MapOf { key, value } => self.map(node, path, &key.shape(), value),
         }
+    }
+
+    /// What `read` reads, and whether anything below it was not what it was declared as, apart
+    /// from what was refused before it: a collection is built only of elements that were each read
+    /// whole, whatever else of the value was not.
+    fn own(
+        &mut self,
+        read: impl FnOnce(&mut Self) -> Lowered<ir::Value>,
+    ) -> Lowered<(ir::Value, ir::Value)> {
+        let before = self.builder.use_var(self.refused);
+        let nought = self.builder.ins().iconst(types::I8, 0);
+        self.builder.def_var(self.refused, nought);
+        let value = read(self)?;
+        let own = self.builder.use_var(self.refused);
+        let after = self.builder.ins().bor(before, own);
+        self.builder.def_var(self.refused, after);
+        Ok((value, own))
+    }
+
+    /// The runtime's collection `build` makes of what was read, where every part of it was read
+    /// whole, and nothing where one was not.
+    fn built_where(
+        &mut self,
+        own: ir::Value,
+        build: impl FnOnce(&mut Self) -> Lowered<ir::Value>,
+    ) -> Lowered<ir::Value> {
+        let whole = self.builder.create_block();
+        let read = self.builder.create_block();
+        self.builder.append_block_param(read, POINTER);
+        let none = self.builder.ins().iconst(POINTER, NOTHING);
+        self.builder
+            .ins()
+            .brif(own, read, &[none.into()], whole, &[]);
+
+        self.builder.switch_to_block(whole);
+        let built = build(self)?;
+        self.builder.ins().jump(read, &[built.into()]);
+
+        self.builder.switch_to_block(read);
+        Ok(self.builder.block_params(read)[0])
+    }
+
+    /// A set, from an array read as a list of its elements: the array's order says nothing and two
+    /// equal elements are one member (spec §collections), as `Set.fromList` makes of a list.
+    fn set(
+        &mut self,
+        node: ir::Value,
+        path: ir::Value,
+        element: &CodecShape,
+    ) -> Lowered<ir::Value> {
+        let (list, own) = self.own(|reading| reading.list(node, path, element))?;
+        let element = element.ty();
+        self.built_where(own, |reading| {
+            let [hasher, equality] =
+                reading
+                    .value_ops
+                    .both(reading.builder, reading.module, &element);
+            Ok(reading.asked(Runtime::SetFromList, &[list, hasher, equality]))
+        })
+    }
+
+    /// A map, from an object, as the JVM's reader reads one: every member's value first, each at
+    /// its key's place, and then, where every value was read whole, every key as the key's own type
+    /// is read anywhere else, its invariant and all. A key that is one the map already holds once
+    /// both are read is two spellings of one key, and is recorded where it stands
+    /// (`duplicate_key`) rather than have one value lost to the other with nothing said. A place
+    /// that is not an object is one issue there and no map.
+    fn map(
+        &mut self,
+        node: ir::Value,
+        path: ir::Value,
+        key: &CodecShape,
+        value: &CodecShape,
+    ) -> Lowered<ir::Value> {
+        let is_object = self.asked(Runtime::ReadObject, &[node, path, self.decoding]);
+        let object = self.builder.create_block();
+        let not_object = self.builder.create_block();
+        let read = self.builder.create_block();
+        self.builder.append_block_param(read, POINTER);
+        self.builder
+            .ins()
+            .brif(is_object, object, &[], not_object, &[]);
+
+        self.builder.switch_to_block(not_object);
+        self.refuse();
+        let none = self.builder.ins().iconst(POINTER, NOTHING);
+        self.builder.ins().jump(read, &[none.into()]);
+
+        self.builder.switch_to_block(object);
+        let count = self.asked(Runtime::ReadMembers, &[node]);
+        // The values, kept in a list in the order their members were written.
+        let (values, values_own) = self.own(|reading| {
+            let values = reading.room_for_list(count);
+            reading.each_member(count, |reading, index| {
+                let member = reading.asked(Runtime::ReadMemberValue, &[node, index]);
+                let at = reading.asked(Runtime::PathBelowMember, &[path, node, index]);
+                let held = reading.value(member, at, value)?;
+                reading.put_element(values, index, held);
+                Ok(())
+            })?;
+            Ok(values)
+        })?;
+        let key_ty = key.ty();
+        let map = self.built_where(values_own, |reading| {
+            let (map, keys_own) = reading.own(|reading| {
+                let empty = reading.asked(Runtime::MapEmpty, &[]);
+                let map = reading.builder.declare_var(POINTER);
+                reading.builder.def_var(map, empty);
+                let [hasher, equality] =
+                    reading
+                        .value_ops
+                        .both(reading.builder, reading.module, &key_ty);
+                reading.each_member(count, |reading, index| {
+                    let written = reading.asked(Runtime::ReadMemberKey, &[node, index]);
+                    let at = reading.asked(Runtime::PathBelowMember, &[path, node, index]);
+                    let (read_key, key_own) =
+                        reading.own(|reading| reading.value(written, at, key))?;
+                    let whole = reading.builder.create_block();
+                    let next = reading.builder.create_block();
+                    reading.builder.ins().brif(key_own, next, &[], whole, &[]);
+
+                    reading.builder.switch_to_block(whole);
+                    let slot = into_slot(reading.builder, read_key);
+                    let so_far = reading.builder.use_var(map);
+                    let there =
+                        reading.asked(Runtime::MapContainsKey, &[so_far, slot, hasher, equality]);
+                    let fresh = reading.builder.create_block();
+                    let twice = reading.builder.create_block();
+                    reading.builder.ins().brif(there, twice, &[], fresh, &[]);
+
+                    reading.builder.switch_to_block(twice);
+                    reading.call(Runtime::ReadDuplicateKey, &[at, reading.decoding]);
+                    reading.refuse();
+                    reading.builder.ins().jump(next, &[]);
+
+                    // One key more than the object has members, which no map is short of room
+                    // for: what the runtime answers about whether it wrote it is not read.
+                    reading.builder.switch_to_block(fresh);
+                    let along = reading.builder.ins().imul_imm_s(index, SLOT);
+                    let into = reading.builder.ins().iadd(values, along);
+                    let held =
+                        reading
+                            .builder
+                            .ins()
+                            .load(types::I64, TRUSTED, into, LIST_ELEMENTS as i32);
+                    let room = out_slot(reading.builder);
+                    reading.call(
+                        Runtime::MapInsert,
+                        &[so_far, slot, held, hasher, equality, room],
+                    );
+                    let grown = reading.builder.ins().load(POINTER, TRUSTED, room, 0);
+                    reading.builder.def_var(map, grown);
+                    reading.builder.ins().jump(next, &[]);
+
+                    reading.builder.switch_to_block(next);
+                    Ok(())
+                })?;
+                Ok(reading.builder.use_var(map))
+            })?;
+            reading.built_where(keys_own, |_| Ok(map))
+        })?;
+        self.builder.ins().jump(read, &[map.into()]);
+
+        self.builder.switch_to_block(read);
+        Ok(self.builder.block_params(read)[0])
+    }
+
+    /// Room for a list of `count` elements, its length written and its elements left to the caller.
+    fn room_for_list(&mut self, count: ir::Value) -> ir::Value {
+        let along = self.builder.ins().imul_imm_s(count, SLOT);
+        let size = self.builder.ins().iadd_imm_s(along, room_for_list(0));
+        let taking = self
+            .module
+            .declare_func_in_func(self.allocate, self.builder.func);
+        let taken = self.builder.ins().call(taking, &[size]);
+        let list = self.builder.inst_results(taken)[0];
+        self.builder
+            .ins()
+            .store(TRUSTED, count, list, LIST_LENGTH as i32);
+        list
+    }
+
+    /// `value` into the slot of `list` at `index`.
+    fn put_element(&mut self, list: ir::Value, index: ir::Value, value: ir::Value) {
+        let slot = into_slot(self.builder, value);
+        let along = self.builder.ins().imul_imm_s(index, SLOT);
+        let into = self.builder.ins().iadd(list, along);
+        self.builder
+            .ins()
+            .store(TRUSTED, slot, into, LIST_ELEMENTS as i32);
+    }
+
+    /// `each` for every index below `count`, in order.
+    fn each_member(
+        &mut self,
+        count: ir::Value,
+        mut each: impl FnMut(&mut Self, ir::Value) -> Lowered<()>,
+    ) -> Lowered<()> {
+        let head = self.builder.create_block();
+        self.builder.append_block_param(head, types::I64);
+        let step = self.builder.create_block();
+        let walked = self.builder.create_block();
+        let start = self.builder.ins().iconst(types::I64, 0);
+        self.builder.ins().jump(head, &[start.into()]);
+
+        self.builder.switch_to_block(head);
+        let index = self.builder.block_params(head)[0];
+        let inside = self.builder.ins().icmp(IntCC::SignedLessThan, index, count);
+        self.builder.ins().brif(inside, step, &[], walked, &[]);
+
+        self.builder.switch_to_block(step);
+        each(self, index)?;
+        let next = self.builder.ins().iadd_imm_s(index, 1);
+        self.builder.ins().jump(head, &[next.into()]);
+
+        self.builder.switch_to_block(walked);
+        Ok(())
     }
 
     /// A list, from an array: every element read at its own index below `path`, whatever the one
