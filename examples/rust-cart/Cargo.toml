@@ -1,0 +1,34 @@
+[package]
+name = "rust-cart"
+version = "0.0.0"
+description = "The cart example every host binding of a Souther library is shown with, as a Rust application: cart.sou behind an HTTP boundary decoded by raoh, and its injected behaviors implemented over SQLite"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+
+[dependencies]
+# The binding bin/build writes from cart.sou: a module per module of the model, and Library.
+model = { path = "build/rust" }
+# What the binding runs on, which the application reaches only through `model`. Named here by its
+# path, and not only patched in below, so that trybuild writes where rustc points into it as
+# $SOUTHER_BINDING_RUNTIME rather than as the path of this clone; it reads [dependencies] alone.
+souther-binding-runtime = { path = "../../bindings/rust/runtime" }
+axum = "0.8"
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread"] }
+# SQLite built from source, so the example needs no SQLite installed beside it.
+rusqlite = { version = "0.37", features = ["bundled"] }
+# The form of each field at the boundary. The model's own decoders answer in Raoh's issues too.
+raoh = { version = "0.1", features = ["regex", "uuid"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+# The date a quotation is valid until, thirty days from today.
+jiff = "0.2"
+
+[dev-dependencies]
+http-body-util = "0.1"
+tower = { version = "0.5", features = ["util"] }
+trybuild = "1"
+
+# Until the runtime is published, a binding reaches it from the clone.
+[patch.crates-io]
+souther-binding-runtime = { path = "../../bindings/rust/runtime" }

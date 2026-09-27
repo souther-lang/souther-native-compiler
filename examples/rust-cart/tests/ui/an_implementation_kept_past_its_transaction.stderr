@@ -1,0 +1,11 @@
+error[E0505]: cannot move out of `transaction` because it is borrowed
+  --> tests/ui/an_implementation_kept_past_its_transaction.rs:13:5
+   |
+11 |     let transaction = connection.transaction().unwrap();
+   |         ----------- binding `transaction` declared here
+12 |     let load_cart = LoadCartImplementation::new(&library, SqlLoadCart(&transaction));
+   |                                                                       ------------ borrow of `transaction` occurs here
+13 |     transaction.commit().unwrap();
+   |     ^^^^^^^^^^^ move out of `transaction` occurs here
+14 |     drop(load_cart);
+   |          --------- borrow later used here

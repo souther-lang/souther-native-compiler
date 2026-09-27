@@ -1,0 +1,15 @@
+error[E0061]: this function takes 4 arguments but 3 arguments were supplied
+  --> tests/ui/a_behavior_bound_without_what_it_requires.rs:15:16
+   |
+15 |     let _add = AddItemToCart::bind(&library, &load_product, &load_cart);
+   |                ^^^^^^^^^^^^^^^^^^^------------------------------------- argument #4 of type `&SaveItemImplementation<'_>` is missing
+   |
+note: associated function defined here
+  --> build/rust/src/com/example/cart/domain/mod.rs
+   |
+   |     pub fn bind(library: &'a crate::Library, loadProduct: &'a crate::com::example::cart::domain::LoadProductImplementation<'_>, lo...
+   |            ^^^^
+help: provide the argument
+   |
+15 |     let _add = AddItemToCart::bind(&library, &load_product, &load_cart, /* &SaveItemImplementation<'_> */);
+   |                                                                       +++++++++++++++++++++++++++++++++++
