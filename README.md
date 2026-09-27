@@ -784,6 +784,13 @@ that call as `Failure::Host`, and a panic is caught before it reaches the librar
 where the call returns. Which behaviors have a type is decided as the PHP generator decides which have
 a class. What Rust has no way to hold is not written, as in the PHP binding.
 
+`examples/rust-cart` is the cart example as a Rust application: the model every host's cart runs,
+served by axum, its HTTP boundary decoded by raoh, and its injected behaviors implemented over
+SQLite and bound, for each request, to the transaction the request runs in. Besides the HTTP
+contract, its tests hold what rustc refuses a host of the model. `scripts/rust-cart-example.sh`
+builds it and runs its tests in CI, and holds its `cart.sou` to be the same file as every other
+host's.
+
 ## Where a value lives
 
 In an arena the caller brackets. Nothing frees a Souther value on its own: what a run makes is

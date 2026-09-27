@@ -60,6 +60,7 @@ jobs:
           workspaces: |
             native
             bindings/rust/runtime
+            examples/rust-cart
 
       # --no-snapshot-updates: the pinned install above just wrote souther-compiler's own
       # 0.2.1-SNAPSHOT into this runner's local repository, and without this flag an online
@@ -90,6 +91,9 @@ jobs:
       # The cart example, built and tested the way its README says: an application's whole path
       # from HTTP JSON through raoh-php into the model and out to a database over PDO.
       - run: scripts/php-cart-example.sh
+
+      # The same cart from Rust, over raoh and SQLite, and what rustc refuses a host of the model.
+      - run: scripts/rust-cart-example.sh
 
   # Every souther issue this repository names is a premise that the pinned souther does not yet
   # answer it, and the code around the reference works around the gap. A premise the pin has
