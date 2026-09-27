@@ -2356,7 +2356,9 @@ fn word_on_the_machine(word: Word) -> types::Type {
     match word {
         Word::Host(word) => interface::machine(word),
         Word::Comparison => types::I64,
-        Word::Memory | Word::Form | Word::Node | Word::Path | Word::Machine => POINTER,
+        Word::Memory | Word::Rational | Word::Form | Word::Node | Word::Path | Word::Machine => {
+            POINTER
+        }
     }
 }
 

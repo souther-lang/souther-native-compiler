@@ -1018,12 +1018,27 @@ fn every_function_the_runtime_defines_is_in_one_table() {
     assert_eq!(written, defined);
 }
 
-/// A case a host makes a value of is a case the runtime defines a token for, and every one is:
-/// the two tables name the same cases in the same order.
+/// A case a host makes a value of is a case the runtime defines a token for. The other way about
+/// is not held: a case can have a token and no external form, and `Rational` is one.
 #[test]
-fn a_host_makes_every_case_the_runtime_has_a_token_for() {
-    let crossed: Vec<&str> = HOST_CASES.iter().map(|it| it.case).collect();
-    assert_eq!(crossed, BUILT_IN_CASES);
+fn a_host_makes_only_cases_the_runtime_has_a_token_for() {
+    let built_in: BTreeSet<&str> = BUILT_IN_CASES.iter().copied().collect();
+    for crossing in HOST_CASES {
+        assert!(
+            built_in.contains(crossing.case),
+            "{} is made by a host and has no token",
+            crossing.case
+        );
+    }
+}
+
+/// A rational is something objects share and a host never sees: it has a token, and no function a
+/// host calls makes or reads one. That none takes or answers one is the type's to say: there is
+/// no `HostWord` for it.
+#[test]
+fn a_rational_is_a_case_and_no_host_crosses_it() {
+    assert!(BUILT_IN_CASES.contains(&"Rational"));
+    assert!(HOST_CASES.iter().all(|it| it.case != "Rational"));
 }
 
 /// What a host makes of a case and what it reads back are what went in, and the value says it is

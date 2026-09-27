@@ -715,11 +715,16 @@ pub const TOKEN: &[u8] = &[0];
 /// null pointer ([`NOTHING`]) and never carries either token: which case a value is and how it is
 /// held are two questions, and an optional answers the second without a token. A union naming one
 /// of the two as a case is held the way it holds any case the language gives, by the token alone.
+///
+/// A case here is one objects of a library can tell apart, which is not the same as one a host can
+/// cross: `Rational` is a case a value of a union can be and has no external form, so it has a
+/// token and is not in [`HOST_CASES`].
 pub const BUILT_IN_CASES: &[&str] = &[
     "Int",
     "Bool",
     "String",
     "Decimal",
+    "Rational",
     "Date",
     "Time",
     "DateTime",
@@ -1851,7 +1856,7 @@ pub const HOST_RUNTIME: &[RuntimeFunction] = {
     ]
 };
 
-/// How a host makes a value of one case in [`BUILT_IN_CASES`], as a union holds one, and reads back
+/// How a host makes a value of one case in [`BUILT_IN_CASES`] that a host can cross, as a union holds one, and reads back
 /// what it holds.
 ///
 /// A property of the case and not of any union it stands in: an `Int` carried is laid out the same
@@ -1870,8 +1875,9 @@ pub struct CaseCrossing {
     pub read: Option<RuntimeFunction>,
 }
 
-/// How a host makes and reads each case in [`BUILT_IN_CASES`], in the order that names them. The
-/// runtime's own tests hold each function to the one it names, and the cases to that table.
+/// How a host makes and reads each case in [`BUILT_IN_CASES`] that has an external form, in the
+/// order that names them. The runtime's own tests hold each function to the one it names, and the
+/// cases to that table.
 pub const HOST_CASES: &[CaseCrossing] = {
     use HostParameter::Given;
     use HostWord::{Bool, Date, DateTime, Decimal, Instant, Int, String, Time, Value};
@@ -1987,6 +1993,9 @@ pub const HOST_CASES: &[CaseCrossing] = {
 pub enum Word {
     /// One a host is handed or hands over too.
     Host(HostWord),
+    /// An exact rational, which only generated code and the runtime ever hold: it has no external
+    /// form, so it is no [`HostWord`] and no function a host calls takes or answers one.
+    Rational,
     /// Room taken from the arena for generated code to write into.
     Memory,
     /// Which of two strings comes first: below, at or above nought.

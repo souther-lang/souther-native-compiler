@@ -417,6 +417,7 @@ built_in_cases! {
     "Bool" => CASE_BOOL,
     "String" => CASE_STRING,
     "Decimal" => CASE_DECIMAL,
+    "Rational" => CASE_RATIONAL,
     "Date" => CASE_DATE,
     "Time" => CASE_TIME,
     "DateTime" => CASE_DATETIME,
