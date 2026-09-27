@@ -759,15 +759,14 @@ public final class RustBindings {
      * words of it, and each written through the room the library handed over, in order.
      */
     private static String answer(Crossing answers, List<String> rooms, String indent) {
-        // Wrapped in its own closure, over Result<(), rt::Failure>, rather than propagating with
-        // `?` straight into the surrounding rt::implemented closure's Result<(), rt::HostError>:
-        // a String, Date, Time, DateTime, Instant or declared-type handle among what is answered
-        // can fail this way (souther-native-compiler#109's REQUIRED_FORM_HAS_NO_PLACE among them),
-        // and that failure is the crossing's, not the host implementation's own. Boxed as
-        // rt::CallbackFailure::Crossing so `answered` can tell it apart from
-        // rt::CallbackFailure::Host, the host implementation's own error boxed the same way just
-        // above this in the surrounding template: a host may legitimately answer a `Failure` as
-        // its own error, so which happened cannot be told apart by the payload's type alone.
+        // Handed to rt::crossing rather than declared and called where it stands (clippy's
+        // redundant_closure_call refuses a bare `(|| { ... })()`): a String, Date, Time, DateTime,
+        // Instant or declared-type handle among what is answered can fail crossing back into the
+        // library (souther-native-compiler#109's REQUIRED_FORM_HAS_NO_PLACE among them), and
+        // rt::crossing boxes that as rt::CallbackFailure::Crossing so `answered` can tell it apart
+        // from rt::CallbackFailure::Host, the host implementation's own error boxed the same way
+        // just above this in the surrounding template: a host may legitimately answer a `Failure`
+        // as its own error, so which happened cannot be told apart by the payload's type alone.
         StringBuilder body = new StringBuilder();
         body.append(indent).append("    let answer = &answer;\n");
         String view = Crossing.let("answer", answers.viewOf("answer"));
@@ -786,8 +785,7 @@ public final class RustBindings {
                     .append(" = given").append(place).append(" };\n");
         }
         body.append(indent).append("    Ok(())\n");
-        return indent + "(|| -> Result<(), rt::Failure> {\n" + body + indent + "})()\n" + indent
-                + "    .map_err(|failure| Box::new(rt::CallbackFailure::Crossing(failure)) as rt::HostError)?;\n";
+        return indent + "rt::crossing(|| {\n" + body + indent + "})?;\n";
     }
 
     /** The handle of the declared type {@code module.name}, or null where it has none. */

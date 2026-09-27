@@ -214,6 +214,25 @@ impl std::error::Error for CallbackFailure {
     }
 }
 
+/// Runs `f`, the crossing of a host implementation's answer back into the library, boxing a
+/// `Failure` it raises as [`CallbackFailure::Crossing`] rather than propagating it with `?`
+/// straight into the surrounding callback's `Result<(), HostError>`: that would leave `answered`
+/// unable to tell it apart from the implementation's own error the same way it can't tell a
+/// `Failure` a host chose as its own error apart from one a crossing raised
+/// (souther-native-compiler#109).
+///
+/// Generated code calls this rather than declaring and calling its own closure inline, which
+/// `clippy::redundant_closure_call` refuses: `f` is genuinely handed to something else here, a
+/// helper of the protocol between generated code and this crate, and not a closure declared only
+/// to be called where it stands.
+///
+/// # Errors
+///
+/// Whatever `f` answers, boxed as [`CallbackFailure::Crossing`].
+pub fn crossing(f: impl FnOnce() -> Result<(), Failure>) -> Result<(), HostError> {
+    f().map_err(|failure| Box::new(CallbackFailure::Crossing(failure)) as HostError)
+}
+
 /// A computation that ended without a value: the status, and the name the library gives it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Abort {
@@ -267,6 +286,29 @@ mod tests {
         ("HOST_EXCEPTION", 3),
         ("REQUIRED_FORM_HAS_NO_PLACE", 7),
     ];
+
+    /// `crossing` boxes what `f` raises as `CallbackFailure::Crossing`, downcastable back out
+    /// exactly as `answered` downcasts a caught one — the two ends of the same protocol, tested
+    /// without a loaded library.
+    #[test]
+    fn crossing_boxes_a_raised_failure_as_callback_failure_crossing() {
+        let statuses = Statuses::new(WITH_NO_PLACE).unwrap();
+        let no_place = statuses.no_place().unwrap();
+        let boxed = crossing(|| Err(no_place)).unwrap_err();
+        let Ok(callback) = boxed.downcast::<CallbackFailure>() else {
+            panic!("crossing boxes what f raises as CallbackFailure");
+        };
+        let CallbackFailure::Crossing(Failure::Abort(abort)) = *callback else {
+            panic!("expected CallbackFailure::Crossing(Failure::Abort(..))");
+        };
+        assert_eq!(abort.name(), Some("REQUIRED_FORM_HAS_NO_PLACE"));
+    }
+
+    /// `crossing` answers `Ok(())` unchanged where `f` does.
+    #[test]
+    fn crossing_of_a_success_is_ok() {
+        assert!(crossing(|| Ok(())).is_ok());
+    }
 
     /// `no_place` reads the manifest's own number for `REQUIRED_FORM_HAS_NO_PLACE` and names it,
     /// rather than a number this binding picks: two libraries that number their statuses
