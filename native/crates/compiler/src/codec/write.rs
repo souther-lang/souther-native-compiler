@@ -456,6 +456,15 @@ impl<'w, 'f> Writing<'w, 'f> {
         self.walked(|scheduling| scheduling.output(output, answer))
     }
 
+    /// A value of `shape`, written in place where it holds no declared value and by a walk this
+    /// function starts and finishes where it does: what a field of that shape is written as.
+    pub(crate) fn shaped(&mut self, shape: &CodecShape, value: ir::Value) -> Lowered<ir::Value> {
+        if !defers(shape) {
+            return self.value(shape, value);
+        }
+        self.walked(|scheduling| scheduling.value(shape, value))
+    }
+
     /// A value of a declared type, written by a walk this function starts at that type's step.
     pub(crate) fn declared(&mut self, declared: &str, value: ir::Value) -> ir::Value {
         self.walked(|scheduling| {

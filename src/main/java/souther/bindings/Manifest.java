@@ -58,10 +58,10 @@ public final class Manifest {
     public static final String FORMAT = "souther-native-interface";
 
     /** The version of what a manifest says that this reads. */
-    public static final int VERSION = 13;
+    public static final int VERSION = 14;
 
     /** The ABI generation the functions this binds answer to. */
-    public static final int ABI = 6;
+    public static final int ABI = 7;
 
     private final int abi;
     private final Map<String, Integer> statuses;

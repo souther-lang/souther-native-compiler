@@ -25,6 +25,6 @@ Java one's: a name and a company name without the spaces around them, an email t
 case, an id in lower case. A host hands the model the canonical text, and the bounds above are on
 that.
 
-A rule the model states is reported by the model's decoder at the field's path. On the JVM a
-newtype's rule with a Raoh equivalent is reported with that constraint's code (`too_long`,
-`invalid_format`); a native library reports every one as `invariant_violation` for now (#97).
+A rule the model states is reported by the model's decoder at the field's path. A newtype's rule
+with a Raoh equivalent is reported with that constraint's code and message key (`too_long`,
+`invalid_format`), by a native library as on the JVM; any other rule is `invariant_violation`.

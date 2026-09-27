@@ -162,7 +162,7 @@ class ARustHostCallsALibraryThroughItsBindingTest {
             standard: 3
             encoded: {"line":{"price":3,"quantity":2,"note":"gift"},"placed":true}
             read back: 2 placed true
-            wrong: invariant_violation at ["price"]
+            wrong: out_of_range at ["price"]
             wrong: missing_field at ["quantity"]
             wrong: type_mismatch at ["note"]
             broken: invalid_format

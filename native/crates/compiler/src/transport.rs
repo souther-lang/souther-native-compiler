@@ -94,6 +94,11 @@ pub const MOVES: &[(u32, &str)] = &[
          `number`, `as`), in place of a number and a type read beside what the arm tests; and \
          what a comparison or a sort places its values on (`ordering`)",
     ),
+    (
+        29,
+        "what each clause of a declaration this build runs is as standard constraints on its one \
+         field (`projection`: `constraints`, `complete`)",
+    ),
 ];
 
 /// A document of [`TRANSPORT_VERSION`], and no other, read through [`Program::read`] and nothing
@@ -1436,12 +1441,198 @@ pub struct Field {
 }
 
 /// One clause a declaration holds its values to: the name a failure is reported under, where the
-/// author gave one, and what has to hold, as the checker elaborated it over the fields' bindings.
+/// author gave one, what has to hold, as the checker elaborated it over the fields' bindings, and
+/// what the clause is as standard constraints on the declaration's one field.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Invariant {
     pub name: Option<String>,
     pub condition: Node,
+    pub projection: Projection,
+}
+
+/// What a clause is as standard constraints on the one field of the data it governs, as the
+/// checker found it (`ConstraintProjection`): the constraints parts of it are, in the order they
+/// are written, and whether they are the whole of it.
+///
+/// A fact about the clause and not an instruction about where it is checked. A newtype's decoder
+/// checks the constraints, and the clause's condition as well where they are not the whole of it;
+/// a product crosses as an object, and each of its clauses runs as the rule it is.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields, try_from = "WrittenProjection")]
+pub struct Projection {
+    constraints: Vec<BoundaryConstraint>,
+    complete: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WrittenProjection {
+    constraints: Vec<BoundaryConstraint>,
+    complete: bool,
+}
+
+impl TryFrom<WrittenProjection> for Projection {
+    type Error = String;
+
+    /// A clause is never the whole of no constraint, which `ConstraintProjection` refuses too: a
+    /// clause says something, and one said by nothing would be a clause every value meets.
+    fn try_from(written: WrittenProjection) -> Result<Self, Self::Error> {
+        let WrittenProjection {
+            constraints,
+            complete,
+        } = written;
+        if complete && constraints.is_empty() {
+            return Err("a clause said to be the whole of no constraint".to_string());
+        }
+        Ok(Projection {
+            constraints,
+            complete,
+        })
+    }
+}
+
+impl Projection {
+    /// The constraints parts of the clause are, in the order they are written.
+    pub fn constraints(&self) -> &[BoundaryConstraint] {
+        &self.constraints
+    }
+
+    /// Whether the constraints say everything the clause says, so that a value meeting them meets
+    /// the clause.
+    pub fn complete(&self) -> bool {
+        self.complete
+    }
+}
+
+/// One standard constraint a part of a clause is exactly (`BoundaryConstraint`), grouped by the type
+/// of the field it is about. Which code, message key and metadata a failure of it is reported with
+/// are not here: they are Raoh's, and the runtime says them.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(tag = "is", rename_all = "lowercase", deny_unknown_fields)]
+pub enum BoundaryConstraint {
+    /// A `String` of at least `n` characters.
+    MinLength { n: i64 },
+    /// A `String` of at most `n` characters.
+    MaxLength { n: i64 },
+    /// A `String` of exactly `n` characters.
+    FixedLength { n: i64 },
+    /// A `String` the whole of which a pattern matches: what it matches as the checker read it,
+    /// and the text it was written as, which is what a failure says the value was held to.
+    Pattern {
+        written: String,
+        meaning: Vec<PatternPart>,
+    },
+    /// An `Int` of at least `n`.
+    Min { n: i64 },
+    /// An `Int` of at most `n`.
+    Max { n: i64 },
+    /// An `Int` above nought.
+    Positive,
+    /// An `Int` not below nought.
+    NonNegative,
+    /// A `Decimal` of at least `n`.
+    DecimalMin { n: DecimalBound },
+    /// A `Decimal` of at most `n`.
+    DecimalMax { n: DecimalBound },
+    /// A `Decimal` above nought.
+    DecimalPositive,
+    /// A `Decimal` not below nought.
+    DecimalNonNegative,
+    /// A `List` of one element or more.
+    NonEmpty,
+    /// A `List` of at least `n` elements.
+    MinSize { n: i64 },
+    /// A `List` of at most `n` elements.
+    MaxSize { n: i64 },
+    /// A `List` of exactly `n` elements.
+    FixedSize { n: i64 },
+    /// A `List` no element of which appears twice.
+    Unique,
+    /// A `Map` of one entry or more.
+    MapNonEmpty,
+    /// A `Map` of at least `n` entries.
+    MapMinSize { n: i64 },
+    /// A `Map` of at most `n` entries.
+    MapMaxSize { n: i64 },
+}
+
+/// A `Decimal` bound as the checker read it: its integer, as the text of one, and its scale — the
+/// way a `Decimal` literal crosses, since the runtime makes one from the two.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields, try_from = "WrittenDecimal")]
+pub struct DecimalBound {
+    pub unscaled: String,
+    pub scale: i32,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WrittenDecimal {
+    unscaled: String,
+    scale: i32,
+}
+
+impl TryFrom<WrittenDecimal> for DecimalBound {
+    type Error = String;
+
+    fn try_from(written: WrittenDecimal) -> Result<Self, Self::Error> {
+        if !integer_text(&written.unscaled) {
+            return Err(format!(
+                "a decimal bound whose integer is written {:?}, which is no integer",
+                written.unscaled
+            ));
+        }
+        Ok(DecimalBound {
+            unscaled: written.unscaled,
+            scale: written.scale,
+        })
+    }
+}
+
+/// Whether `text` writes an integer the way the runtime reads one: digits, one or more, after an
+/// optional minus. What a `Decimal`'s integer crosses as, a literal's and a bound's alike.
+pub fn integer_text(text: &str) -> bool {
+    let digits = text.strip_prefix('-').unwrap_or(text);
+    !digits.is_empty() && digits.bytes().all(|it| it.is_ascii_digit())
+}
+
+/// Which type of field a constraint is about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConstraintOf {
+    String,
+    Int,
+    Decimal,
+    List,
+    Map,
+}
+
+impl BoundaryConstraint {
+    /// Which type of field this is about, every constraint named.
+    pub fn of(&self) -> ConstraintOf {
+        match self {
+            BoundaryConstraint::MinLength { .. }
+            | BoundaryConstraint::MaxLength { .. }
+            | BoundaryConstraint::FixedLength { .. }
+            | BoundaryConstraint::Pattern { .. } => ConstraintOf::String,
+            BoundaryConstraint::Min { .. }
+            | BoundaryConstraint::Max { .. }
+            | BoundaryConstraint::Positive
+            | BoundaryConstraint::NonNegative => ConstraintOf::Int,
+            BoundaryConstraint::DecimalMin { .. }
+            | BoundaryConstraint::DecimalMax { .. }
+            | BoundaryConstraint::DecimalPositive
+            | BoundaryConstraint::DecimalNonNegative => ConstraintOf::Decimal,
+            BoundaryConstraint::NonEmpty
+            | BoundaryConstraint::MinSize { .. }
+            | BoundaryConstraint::MaxSize { .. }
+            | BoundaryConstraint::FixedSize { .. }
+            | BoundaryConstraint::Unique => ConstraintOf::List,
+            BoundaryConstraint::MapNonEmpty
+            | BoundaryConstraint::MapMinSize { .. }
+            | BoundaryConstraint::MapMaxSize { .. } => ConstraintOf::Map,
+        }
+    }
 }
 
 /// The name one clause of a declaration another build runs is answered under, where its author

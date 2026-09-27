@@ -135,6 +135,14 @@ pub const GENERATIONS: &[(u32, &str)] = &[
          itself, and the runtime says which generation it is by a symbol every object refers to \
          (souther-native-compiler#107)",
     ),
+    (
+        7,
+        "an issue a reading found says its message key (`souther_issue_message_key`) and its \
+         metadata as the JSON object it is (`souther_issue_meta`), in place of the count, name and \
+         text of each entry; and a clause the checker states as a standard constraint is reported \
+         as that constraint by a call of its own (`souther_read_min_length` and the rest) \
+         (souther-native-compiler#97)",
+    ),
 ];
 
 /// Whether a module's name can stand in a symbol: it carries no `$`, which is what every symbol
@@ -1605,6 +1613,52 @@ pub const READ_NOT_A_CASE: &str = "souther_read_not_a_case";
 /// `(path, reading, module string, name string, clause string)`: a value read there breaks a
 /// clause, the clause's name null where it has none.
 pub const READ_INVARIANT: &str = "souther_read_invariant";
+/// `(path, reading, string, i64) -> i8`: whether the text holds at least that many characters,
+/// having recorded Raoh's `too_short` where it does not.
+pub const READ_MIN_LENGTH: &str = "souther_read_min_length";
+/// `(path, reading, string, i64) -> i8`: at most that many, `too_long`.
+pub const READ_MAX_LENGTH: &str = "souther_read_max_length";
+/// `(path, reading, string, i64) -> i8`: exactly that many, `invalid_length`.
+pub const READ_FIXED_LENGTH: &str = "souther_read_fixed_length";
+/// `(path, reading, string, machine, written string) -> i8`: whether the pattern matches the whole
+/// text, `invalid_format` with the pattern as written.
+pub const READ_PATTERN: &str = "souther_read_pattern";
+/// `(path, reading, i64, i64) -> i8`: at least the bound, `out_of_range.minimum`.
+pub const READ_INT_MIN: &str = "souther_read_int_min";
+/// `(path, reading, i64, i64) -> i8`: at most the bound, `out_of_range.maximum`.
+pub const READ_INT_MAX: &str = "souther_read_int_max";
+/// `(path, reading, i64) -> i8`: above nought, `out_of_range.positive`.
+pub const READ_INT_POSITIVE: &str = "souther_read_int_positive";
+/// `(path, reading, i64) -> i8`: not below nought, `out_of_range.non_negative`.
+pub const READ_INT_NON_NEGATIVE: &str = "souther_read_int_non_negative";
+/// `(path, reading, decimal, decimal) -> i8`: at least the bound by amount.
+pub const READ_DECIMAL_MIN: &str = "souther_read_decimal_min";
+/// `(path, reading, decimal, decimal) -> i8`: at most the bound by amount.
+pub const READ_DECIMAL_MAX: &str = "souther_read_decimal_max";
+/// `(path, reading, decimal) -> i8`: above nought.
+pub const READ_DECIMAL_POSITIVE: &str = "souther_read_decimal_positive";
+/// `(path, reading, decimal) -> i8`: not below nought.
+pub const READ_DECIMAL_NON_NEGATIVE: &str = "souther_read_decimal_non_negative";
+/// `(path, reading, list) -> i8`: one element or more, `too_small.nonempty`.
+pub const READ_LIST_NON_EMPTY: &str = "souther_read_list_non_empty";
+/// `(path, reading, list, i64) -> i8`: at least that many elements, `too_small`.
+pub const READ_LIST_MIN_SIZE: &str = "souther_read_list_min_size";
+/// `(path, reading, list, i64) -> i8`: at most that many, `too_big`.
+pub const READ_LIST_MAX_SIZE: &str = "souther_read_list_max_size";
+/// `(path, reading, list, i64) -> i8`: exactly that many, `invalid_size`.
+pub const READ_LIST_FIXED_SIZE: &str = "souther_read_list_fixed_size";
+/// `(list, hasher, equality) -> list`: the elements the list holds more than once, each once, in
+/// the order their repetition was found.
+pub const LIST_DUPLICATES: &str = "souther_list_duplicates";
+/// `(path, reading, form)`: a list held no element twice and does, `duplicate_element` with the
+/// form of the elements it repeats, which it takes.
+pub const READ_DUPLICATES: &str = "souther_read_duplicates";
+/// `(path, reading, map) -> i8`: one entry or more, `too_small.nonempty`.
+pub const READ_MAP_NON_EMPTY: &str = "souther_read_map_non_empty";
+/// `(path, reading, map, i64) -> i8`: at least that many entries, `too_small`.
+pub const READ_MAP_MIN_SIZE: &str = "souther_read_map_min_size";
+/// `(path, reading, map, i64) -> i8`: at most that many, `too_big`.
+pub const READ_MAP_MAX_SIZE: &str = "souther_read_map_max_size";
 
 /// What a host asks a reading once a decoder has answered it. `(reading) -> i32`, one of the three
 /// below.
@@ -1632,14 +1686,13 @@ pub const DECODED_ISSUE_COUNT: &str = "souther_decoded_issue_count";
 pub const DECODED_ISSUE: &str = "souther_decoded_issue";
 /// `(issue) -> string`: one of Raoh's codes.
 pub const ISSUE_CODE: &str = "souther_issue_code";
+/// `(issue) -> string`: the key a resolver picks its wording by, Raoh's, and the code where Raoh
+/// gives none of its own.
+pub const ISSUE_MESSAGE_KEY: &str = "souther_issue_message_key";
 /// `(issue) -> string`: a JSON Pointer, empty for the document's root.
 pub const ISSUE_PATH: &str = "souther_issue_path";
-/// `(issue) -> i64`: how many named entries it carries, which is what Raoh calls its metadata.
-pub const ISSUE_META_COUNT: &str = "souther_issue_meta_count";
-/// `(issue, i64) -> string`: an entry's name.
-pub const ISSUE_META_KEY: &str = "souther_issue_meta_key";
-/// `(issue, i64) -> string`: what an entry says.
-pub const ISSUE_META_VALUE: &str = "souther_issue_meta_value";
+/// `(issue) -> string`: what Raoh calls its metadata, as the JSON object it is.
+pub const ISSUE_META: &str = "souther_issue_meta";
 
 /// What a host hands over and is handed, one word at a time, as a C declaration says it.
 ///
@@ -2033,23 +2086,18 @@ pub const HOST_RUNTIME: &[RuntimeFunction] = {
             answers: Some(String),
         },
         RuntimeFunction {
+            name: ISSUE_MESSAGE_KEY,
+            takes: &[Given(Issue)],
+            answers: Some(String),
+        },
+        RuntimeFunction {
             name: ISSUE_PATH,
             takes: &[Given(Issue)],
             answers: Some(String),
         },
         RuntimeFunction {
-            name: ISSUE_META_COUNT,
+            name: ISSUE_META,
             takes: &[Given(Issue)],
-            answers: Some(Count),
-        },
-        RuntimeFunction {
-            name: ISSUE_META_KEY,
-            takes: &[Given(Issue), Given(Count)],
-            answers: Some(String),
-        },
-        RuntimeFunction {
-            name: ISSUE_META_VALUE,
-            takes: &[Given(Issue), Given(Count)],
             answers: Some(String),
         },
     ]
@@ -3040,6 +3088,177 @@ pub const GENERATED_RUNTIME: &[GeneratedCall] = {
             answers: None,
         },
         GeneratedCall {
+            name: READ_MIN_LENGTH,
+            takes: &[
+                Given(Path),
+                Given(Host(Decoded)),
+                Given(Host(String)),
+                Given(Host(Int)),
+            ],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: READ_MAX_LENGTH,
+            takes: &[
+                Given(Path),
+                Given(Host(Decoded)),
+                Given(Host(String)),
+                Given(Host(Int)),
+            ],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: READ_FIXED_LENGTH,
+            takes: &[
+                Given(Path),
+                Given(Host(Decoded)),
+                Given(Host(String)),
+                Given(Host(Int)),
+            ],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: READ_PATTERN,
+            takes: &[
+                Given(Path),
+                Given(Host(Decoded)),
+                Given(Host(String)),
+                Given(Machine),
+                Given(Host(String)),
+            ],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: READ_INT_MIN,
+            takes: &[
+                Given(Path),
+                Given(Host(Decoded)),
+                Given(Host(Int)),
+                Given(Host(Int)),
+            ],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: READ_INT_MAX,
+            takes: &[
+                Given(Path),
+                Given(Host(Decoded)),
+                Given(Host(Int)),
+                Given(Host(Int)),
+            ],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: READ_INT_POSITIVE,
+            takes: &[Given(Path), Given(Host(Decoded)), Given(Host(Int))],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: READ_INT_NON_NEGATIVE,
+            takes: &[Given(Path), Given(Host(Decoded)), Given(Host(Int))],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: READ_DECIMAL_MIN,
+            takes: &[
+                Given(Path),
+                Given(Host(Decoded)),
+                Given(Host(Decimal)),
+                Given(Host(Decimal)),
+            ],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: READ_DECIMAL_MAX,
+            takes: &[
+                Given(Path),
+                Given(Host(Decoded)),
+                Given(Host(Decimal)),
+                Given(Host(Decimal)),
+            ],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: READ_DECIMAL_POSITIVE,
+            takes: &[Given(Path), Given(Host(Decoded)), Given(Host(Decimal))],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: READ_DECIMAL_NON_NEGATIVE,
+            takes: &[Given(Path), Given(Host(Decoded)), Given(Host(Decimal))],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: READ_LIST_NON_EMPTY,
+            takes: &[Given(Path), Given(Host(Decoded)), Given(Host(List))],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: READ_LIST_MIN_SIZE,
+            takes: &[
+                Given(Path),
+                Given(Host(Decoded)),
+                Given(Host(List)),
+                Given(Host(Int)),
+            ],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: READ_LIST_MAX_SIZE,
+            takes: &[
+                Given(Path),
+                Given(Host(Decoded)),
+                Given(Host(List)),
+                Given(Host(Int)),
+            ],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: READ_LIST_FIXED_SIZE,
+            takes: &[
+                Given(Path),
+                Given(Host(Decoded)),
+                Given(Host(List)),
+                Given(Host(Int)),
+            ],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: READ_MAP_NON_EMPTY,
+            takes: &[Given(Path), Given(Host(Decoded)), Given(Map)],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: READ_MAP_MIN_SIZE,
+            takes: &[
+                Given(Path),
+                Given(Host(Decoded)),
+                Given(Map),
+                Given(Host(Int)),
+            ],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: READ_MAP_MAX_SIZE,
+            takes: &[
+                Given(Path),
+                Given(Host(Decoded)),
+                Given(Map),
+                Given(Host(Int)),
+            ],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: LIST_DUPLICATES,
+            takes: &[Given(Host(List)), Given(Hasher), Given(Equality)],
+            answers: Some(Host(List)),
+        },
+        GeneratedCall {
+            name: READ_DUPLICATES,
+            takes: &[Given(Path), Given(Host(Decoded)), Given(Form)],
+            answers: None,
+        },
+        GeneratedCall {
             name: SET_EMPTY,
             takes: &[],
             answers: Some(Set),
@@ -3351,13 +3570,13 @@ mod tests {
     fn a_behavior_is_reached_by_its_module_and_its_name() {
         assert_eq!(
             behavior_symbol("calculation", "add"),
-            "souther6.calculation.add"
+            "souther7.calculation.add"
         );
     }
 
     #[test]
     fn a_dotted_module_keeps_its_dots() {
-        assert_eq!(behavior_symbol("lib.pub", "bill"), "souther6.lib.pub.bill");
+        assert_eq!(behavior_symbol("lib.pub", "bill"), "souther7.lib.pub.bill");
     }
 
     /// What the reading rests on. Were this admitted, `a.b` / `c` and `a` / `b.c` would be spelt
@@ -3397,7 +3616,7 @@ mod tests {
     fn each_row_of_a_behavior_is_its_own_symbol() {
         assert_eq!(
             example_symbol("calculation", "add", 0),
-            "souther6.calculation.add$example$0"
+            "souther7.calculation.add$example$0"
         );
         assert_ne!(
             example_symbol("calculation", "add", 0),
@@ -3412,7 +3631,7 @@ mod tests {
     #[test]
     fn an_entry_and_its_boundary_are_two_symbols() {
         let entry = behavior_symbol("shop", "quote");
-        assert_eq!(boundary_symbol(&entry), "souther6.shop.quote$boundary");
+        assert_eq!(boundary_symbol(&entry), "souther7.shop.quote$boundary");
         assert_ne!(boundary_symbol(&entry), entry);
         assert_ne!(
             boundary_symbol(&example_symbol("shop", "quote", 0)),
@@ -3483,7 +3702,7 @@ mod tests {
     fn a_published_value_is_reached_by_its_module_and_its_name() {
         assert_eq!(
             value_symbol("pricing", "standard"),
-            "souther6.pricing$value$standard"
+            "souther7.pricing$value$standard"
         );
     }
 
@@ -3521,7 +3740,7 @@ mod tests {
     fn a_type_is_built_through_its_module_and_its_name() {
         assert_eq!(
             constructor_symbol("pricing", "Amount"),
-            "souther6.pricing$construct$Amount"
+            "souther7.pricing$construct$Amount"
         );
     }
 
@@ -3541,7 +3760,7 @@ mod tests {
     fn what_decides_a_construction_is_reached_by_the_types_module_and_name() {
         assert_eq!(
             checked_constructor_symbol("pricing", "Amount"),
-            "souther6.pricing$checked$Amount"
+            "souther7.pricing$checked$Amount"
         );
     }
 
@@ -3571,23 +3790,23 @@ mod tests {
     fn a_host_reaches_a_type_under_its_module_and_its_name() {
         assert_eq!(
             host_constructor_symbol("pricing", "Amount"),
-            "souther6_m_pricing_t_Amount_construct"
+            "souther7_m_pricing_t_Amount_construct"
         );
         assert_eq!(
             host_field_symbol("pricing", "Amount", "value"),
-            "souther6_m_pricing_t_Amount_f_value"
+            "souther7_m_pricing_t_Amount_f_value"
         );
         assert_eq!(
             host_case_symbol("pricing", "Result"),
-            "souther6_m_pricing_t_Result_case"
+            "souther7_m_pricing_t_Result_case"
         );
         assert_eq!(
             host_decode_symbol("pricing", "Amount"),
-            "souther6_m_pricing_t_Amount_decode"
+            "souther7_m_pricing_t_Amount_decode"
         );
         assert_eq!(
             host_encode_symbol("pricing", "Amount"),
-            "souther6_m_pricing_t_Amount_encode"
+            "souther7_m_pricing_t_Amount_encode"
         );
     }
 
@@ -3595,15 +3814,15 @@ mod tests {
     fn a_host_reaches_a_behavior_and_a_value_under_their_module() {
         assert_eq!(
             host_behavior_symbol("lib.shop", "quote"),
-            "souther6_m_lib_m_shop_b_quote"
+            "souther7_m_lib_m_shop_b_quote"
         );
         assert_eq!(
             host_value_symbol("lib.shop", "standard"),
-            "souther6_m_lib_m_shop_v_standard"
+            "souther7_m_lib_m_shop_v_standard"
         );
         assert_eq!(
             host_behavior_answer_case_symbol("lib.shop", "find"),
-            "souther6_m_lib_m_shop_b_find_answer_case"
+            "souther7_m_lib_m_shop_b_find_answer_case"
         );
     }
 
@@ -3616,7 +3835,7 @@ mod tests {
                 &HostShape::Leaf(Value),
                 HostListOperation::Construct
             ),
-            "souther6_m_shop_l_value_construct"
+            "souther7_m_shop_l_value_construct"
         );
         assert_eq!(
             host_list_symbol(
@@ -3624,7 +3843,7 @@ mod tests {
                 &HostShape::Option(Box::new(HostShape::Leaf(Int))),
                 HostListOperation::At
             ),
-            "souther6_m_lib_m_shop_l_o_int_at"
+            "souther7_m_lib_m_shop_l_o_int_at"
         );
         assert_eq!(
             host_list_symbol(
@@ -3635,7 +3854,7 @@ mod tests {
                 ]))),
                 HostListOperation::Length
             ),
-            "souther6_m_shop_l_l_t2_int_o_bool_length"
+            "souther7_m_shop_l_l_t2_int_o_bool_length"
         );
     }
 
@@ -3648,11 +3867,11 @@ mod tests {
         };
         assert_eq!(
             host_function_symbol("shop", &function, HostFunctionOperation::Call),
-            "souther6_m_shop_fn_f2_int_string_o_int_call"
+            "souther7_m_shop_fn_f2_int_string_o_int_call"
         );
         assert_eq!(
             host_function_symbol("shop", &function, HostFunctionOperation::Implement),
-            "souther6_m_shop_fn_f2_int_string_o_int_implement"
+            "souther7_m_shop_fn_f2_int_string_o_int_implement"
         );
     }
 
@@ -3736,11 +3955,11 @@ mod tests {
     fn a_name_that_is_not_ascii_letters_and_digits_is_escaped() {
         assert_eq!(
             host_behavior_symbol("shop", "foo_bar"),
-            "souther6_m_shop_b_foo__bar"
+            "souther7_m_shop_b_foo__bar"
         );
         assert_eq!(
             host_behavior_symbol("shop", "数量"),
-            "souther6_m_shop_b__u6570__u91cf_"
+            "souther7_m_shop_b__u6570__u91cf_"
         );
     }
 
@@ -3750,7 +3969,7 @@ mod tests {
     fn a_type_is_read_through_its_module_and_its_name() {
         assert_eq!(
             reader_symbol("pricing", "Amount"),
-            "souther6.pricing$read$Amount"
+            "souther7.pricing$read$Amount"
         );
     }
 

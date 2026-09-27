@@ -114,6 +114,12 @@ const COUNT_NO_LIST_HOLDS: u8 = 3;
 /// comes to this.
 const A_WALK_OUT_OF_ORDER: u8 = 4;
 
+/// A clause the checker states as the whole of its constraints having failed with every one of
+/// them met, where a reader reports which constraint a value broke: the checker's claim that a value
+/// meeting them meets the clause (`ConstraintProjection`) not holding. A trap for the reason
+/// [`NO_ARM`] is one: no document the checker wrote comes to this.
+const A_WHOLE_CLAUSE_MET: u8 = 5;
+
 /// Every reason a Souther computation ends without a value, mapped to the wire number a generated
 /// function's status answers with. `souther_native_abi` reserves `ANSWERED`, the `HOST_STATUSES`
 /// and the `EXAMPLE_STATUSES`, so every member here gets one of what is left, which is held below at compile
@@ -1160,6 +1166,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
         constructors: &constructors,
         allocate,
         value_ops: &value_ops,
+        machines: &machines,
     };
     let mut codecs = codec::Codecs::new(call_conv);
     // What a host builds, reads, decodes and encodes a value of a published type through, each
@@ -1342,6 +1349,8 @@ pub(crate) struct Emitting<'a> {
     /// The hasher and the equality of each type a set or a map is kept over, declared here where a
     /// reading builds one and written with the rest ([`define_owed`]).
     pub value_ops: &'a hashing::ValueOps,
+    /// What pattern machines this object already holds, for a reading that holds a value to one.
+    pub machines: &'a patterns::Machines,
 }
 
 impl Emitting<'_> {
@@ -1666,6 +1675,9 @@ impl<'a> Declared<'a> {
             }
             if let Declaration::Sum { cases, form, .. } = declaration {
                 declared.settled(&key, cases, form)?;
+            }
+            if let Some(clauses) = declaration.clauses() {
+                projected(&key, declaration.fields(), clauses)?;
             }
         }
         // Once every field is known to name a declaration, so the walk reaches only ones that are.
@@ -7573,4 +7585,58 @@ fn abort_where(
     builder.ins().jump(abort, &[code.into()]);
 
     builder.switch_to_block(ok);
+}
+
+/// What each clause of `key` is as standard constraints, held to what `ConstraintProjection` says
+/// of it: constraints about the one field of a data made of one, of that field's type, and none for
+/// a data of more than one field, which has no one field for a constraint to be about. A pattern is
+/// one the checker read, as a `String.matches` pattern is.
+fn projected(
+    key: &str,
+    fields: &[transport::Field],
+    clauses: &[transport::Invariant],
+) -> Result<()> {
+    for (at, clause) in clauses.iter().enumerate() {
+        let constraints = clause.projection.constraints();
+        if constraints.is_empty() {
+            continue;
+        }
+        let [field] = fields else {
+            bail!(
+                "clause {at} of {key} is stated as constraints on one field, and {key} has {}: \
+                 the two halves disagree",
+                fields.len()
+            );
+        };
+        let ty = field.codec.ty();
+        for constraint in constraints {
+            let fits = match constraint.of() {
+                transport::ConstraintOf::String => ty == Ty::Prim { prim: Prim::String },
+                transport::ConstraintOf::Int => ty == Ty::Prim { prim: Prim::Int },
+                transport::ConstraintOf::Decimal => {
+                    ty == Ty::Prim {
+                        prim: Prim::Decimal,
+                    }
+                }
+                transport::ConstraintOf::List => matches!(ty, Ty::List { .. }),
+                transport::ConstraintOf::Map => matches!(ty, Ty::Map { .. }),
+            };
+            if !fits {
+                bail!(
+                    "clause {at} of {key} is stated as {constraint:?}, which is not about a {}: \
+                     the two halves disagree",
+                    ty.spelt()
+                );
+            }
+            if let transport::BoundaryConstraint::Pattern { written, meaning } = constraint
+                && patterns::check(meaning).is_err()
+            {
+                bail!(
+                    "clause {at} of {key} says the pattern {written:?} means what no reading of a \
+                     pattern is: the two halves disagree"
+                );
+            }
+        }
+    }
+    Ok(())
 }

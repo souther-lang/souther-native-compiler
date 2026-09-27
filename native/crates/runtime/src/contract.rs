@@ -440,6 +440,133 @@ fn functions() -> Vec<(&'static str, Shape)> {
             shape_of(souther_read_invariant as unsafe extern "C" fn(*const Path, D, T, T, T)),
         ),
         (
+            "souther_read_min_length",
+            shape_of(souther_read_min_length as unsafe extern "C" fn(*const Path, D, T, i64) -> i8),
+        ),
+        (
+            "souther_read_max_length",
+            shape_of(souther_read_max_length as unsafe extern "C" fn(*const Path, D, T, i64) -> i8),
+        ),
+        (
+            "souther_read_fixed_length",
+            shape_of(
+                souther_read_fixed_length as unsafe extern "C" fn(*const Path, D, T, i64) -> i8,
+            ),
+        ),
+        (
+            "souther_read_pattern",
+            shape_of(
+                souther_read_pattern
+                    as unsafe extern "C" fn(*const Path, D, T, *const u32, T) -> i8,
+            ),
+        ),
+        (
+            "souther_read_int_min",
+            shape_of(souther_read_int_min as unsafe extern "C" fn(*const Path, D, i64, i64) -> i8),
+        ),
+        (
+            "souther_read_int_max",
+            shape_of(souther_read_int_max as unsafe extern "C" fn(*const Path, D, i64, i64) -> i8),
+        ),
+        (
+            "souther_read_int_positive",
+            shape_of(souther_read_int_positive as unsafe extern "C" fn(*const Path, D, i64) -> i8),
+        ),
+        (
+            "souther_read_int_non_negative",
+            shape_of(
+                souther_read_int_non_negative as unsafe extern "C" fn(*const Path, D, i64) -> i8,
+            ),
+        ),
+        (
+            "souther_read_decimal_min",
+            shape_of(
+                souther_read_decimal_min
+                    as unsafe extern "C" fn(*const Path, D, *const Decimal, *const Decimal) -> i8,
+            ),
+        ),
+        (
+            "souther_read_decimal_max",
+            shape_of(
+                souther_read_decimal_max
+                    as unsafe extern "C" fn(*const Path, D, *const Decimal, *const Decimal) -> i8,
+            ),
+        ),
+        (
+            "souther_read_decimal_positive",
+            shape_of(
+                souther_read_decimal_positive
+                    as unsafe extern "C" fn(*const Path, D, *const Decimal) -> i8,
+            ),
+        ),
+        (
+            "souther_read_decimal_non_negative",
+            shape_of(
+                souther_read_decimal_non_negative
+                    as unsafe extern "C" fn(*const Path, D, *const Decimal) -> i8,
+            ),
+        ),
+        (
+            "souther_read_list_non_empty",
+            shape_of(
+                souther_read_list_non_empty
+                    as unsafe extern "C" fn(*const Path, D, *const List) -> i8,
+            ),
+        ),
+        (
+            "souther_read_list_min_size",
+            shape_of(
+                souther_read_list_min_size
+                    as unsafe extern "C" fn(*const Path, D, *const List, i64) -> i8,
+            ),
+        ),
+        (
+            "souther_read_list_max_size",
+            shape_of(
+                souther_read_list_max_size
+                    as unsafe extern "C" fn(*const Path, D, *const List, i64) -> i8,
+            ),
+        ),
+        (
+            "souther_read_list_fixed_size",
+            shape_of(
+                souther_read_list_fixed_size
+                    as unsafe extern "C" fn(*const Path, D, *const List, i64) -> i8,
+            ),
+        ),
+        (
+            "souther_read_map_non_empty",
+            shape_of(
+                souther_read_map_non_empty
+                    as unsafe extern "C" fn(*const Path, D, *const Map) -> i8,
+            ),
+        ),
+        (
+            "souther_read_map_min_size",
+            shape_of(
+                souther_read_map_min_size
+                    as unsafe extern "C" fn(*const Path, D, *const Map, i64) -> i8,
+            ),
+        ),
+        (
+            "souther_read_map_max_size",
+            shape_of(
+                souther_read_map_max_size
+                    as unsafe extern "C" fn(*const Path, D, *const Map, i64) -> i8,
+            ),
+        ),
+        (
+            "souther_read_duplicates",
+            shape_of(souther_read_duplicates as unsafe extern "C" fn(*const Path, D, *mut Form)),
+        ),
+        (
+            "souther_list_duplicates",
+            shape_of(
+                souther_list_duplicates
+                    as unsafe extern "C" fn(*const List, Hasher, Equality) -> *const List,
+            ),
+        ),
+        (
             "souther_decoded_outcome",
             shape_of(souther_decoded_outcome as unsafe extern "C" fn(C) -> i32),
         ),
@@ -1041,16 +1168,12 @@ fn functions() -> Vec<(&'static str, Shape)> {
             shape_of(souther_issue_path as unsafe extern "C" fn(*const Issue) -> T),
         ),
         (
-            "souther_issue_meta_count",
-            shape_of(souther_issue_meta_count as unsafe extern "C" fn(*const Issue) -> Count),
+            "souther_issue_message_key",
+            shape_of(souther_issue_message_key as unsafe extern "C" fn(*const Issue) -> T),
         ),
         (
-            "souther_issue_meta_key",
-            shape_of(souther_issue_meta_key as unsafe extern "C" fn(*const Issue, Count) -> T),
-        ),
-        (
-            "souther_issue_meta_value",
-            shape_of(souther_issue_meta_value as unsafe extern "C" fn(*const Issue, Count) -> T),
+            "souther_issue_meta",
+            shape_of(souther_issue_meta as unsafe extern "C" fn(*const Issue) -> T),
         ),
         (
             "souther_external_order",

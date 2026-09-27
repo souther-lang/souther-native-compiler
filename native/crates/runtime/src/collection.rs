@@ -690,6 +690,33 @@ pub unsafe extern "C" fn souther_set_from_list(
     set.kept()
 }
 
+/// The elements `list` holds more than once, each once, in the order its repetition was found:
+/// what Raoh's `unique` reports as `duplicates`, and nothing where every element is its own.
+///
+/// # Safety
+///
+/// As [`souther_set_from_list`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_list_duplicates(
+    list: *const List,
+    hash: Hasher,
+    equal: Equality,
+) -> *const List {
+    let mut seen = Trie::EMPTY;
+    let mut again = Trie::EMPTY;
+    let mut repeated = Vec::new();
+    for element in unsafe { elements(list) } {
+        let entry = unsafe { member(element, hash) };
+        if unsafe { seen.find(entry.hash, element, equal) }.is_none() {
+            seen = unsafe { seen.with(entry, equal, OnEqual::Keep) };
+        } else if unsafe { again.find(entry.hash, element, equal) }.is_none() {
+            again = unsafe { again.with(entry, equal, OnEqual::Keep) };
+            repeated.push(element);
+        }
+    }
+    crate::kernels::list_of(&repeated, |it| *it)
+}
+
 /// Whether two sets hold equal members: as many, and each of `a`'s equal to one of `b`'s. The
 /// order either keeps them in is not asked.
 ///

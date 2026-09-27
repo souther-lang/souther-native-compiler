@@ -2,7 +2,7 @@
 //!
 //! Written as types and not built as JSON, so that what a manifest of one version says is a thing
 //! the compiler holds this code to. A field renamed here is a change to these types, and the
-//! fixture `tests/interface-v13.json` is what version 13 is: every manifest this writes is read
+//! fixture `tests/interface-v14.json` is what version 14 is: every manifest this writes is read
 //! back by these same types, which refuse a member they do not name.
 //!
 //! [`VERSION`] moves when what a manifest says is read differently. What the functions it names
@@ -103,6 +103,13 @@ pub(crate) const MOVES: &[(u32, &str)] = &[
         13,
         "no `Raw` among the primitives a type is named by (`primitive`), which the language no \
          longer has",
+    ),
+    (
+        14,
+        "an issue says the message key a resolver picks its wording by \
+         (`souther_issue_message_key`) and its metadata as the JSON object it is \
+         (`souther_issue_meta`), in place of the count, name and text of each entry, at ABI \
+         generation 7",
     ),
 ];
 
@@ -930,19 +937,19 @@ mod tests {
         }
     }
 
-    /// What version 13 is. Read by these types, which refuse a member they do not name, and
+    /// What version 14 is. Read by these types, which refuse a member they do not name, and
     /// written back the same: a field renamed or a kind reshaped here stops matching the fixture
     /// the Java half's test also holds a written manifest to.
-    const V13: &str = include_str!("../tests/interface-v13.json");
+    const V14: &str = include_str!("../tests/interface-v14.json");
 
     #[test]
-    fn version_thirteen_is_read_and_written_back_as_it_is() {
-        let read: Manifest = serde_json::from_str(V13).expect("version 13 reads");
+    fn version_fourteen_is_read_and_written_back_as_it_is() {
+        let read: Manifest = serde_json::from_str(V14).expect("version 14 reads");
         assert_eq!(read.format, FORMAT);
         assert_eq!(read.version, VERSION);
         let mut written = serde_json::to_string_pretty(&read).unwrap();
         written.push('\n');
-        assert_eq!(written, V13);
+        assert_eq!(written, V14);
     }
 
     /// A surface an object of an earlier release carries is refused as that, and not as whichever

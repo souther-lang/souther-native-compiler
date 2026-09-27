@@ -324,7 +324,7 @@ enum Step<'a> {
 
 /// The tree as JSON, walked with a stack of its own rather than a frame per level, so how deep a
 /// value may be is not a question about the native stack.
-fn write(root: &Form, out: &mut Vec<u8>) {
+pub(crate) fn write(root: &Form, out: &mut Vec<u8>) {
     let mut left = vec![Step::Form(root)];
     while let Some(step) = left.pop() {
         match step {

@@ -31,7 +31,7 @@ const P: &str = r#"{"ref":{"is":"declared","declared":"m.P"}}"#;
 fn document(behaviors: &[String], helpers: &[String], definitions: &[String]) -> String {
     format!(
         concat!(
-            r#"{{"transport":28,"declarations":["#,
+            r#"{{"transport":29,"declarations":["#,
             r#"{{"module":"m","name":"A","by":"amodule","is":"unit"}},"#,
             r#"{{"module":"m","name":"B","by":"amodule","is":"unit"}},"#,
             r#"{{"module":"m","name":"S","by":"amodule","is":"sum","#,
@@ -1725,7 +1725,7 @@ fn a_concat_names_the_one_reason_it_can_end_for() {
 fn with_clauses(fields: &str, invariants: &str, helpers: &[String]) -> String {
     format!(
         concat!(
-            r#"{{"transport":28,"declarations":["#,
+            r#"{{"transport":29,"declarations":["#,
             r#"{{"module":"m","name":"R","by":"amodule","is":"product","#,
             r#""fields":[{}],"invariants":[{}]}}],"#,
             r#""behaviors":[],"#,
@@ -1746,7 +1746,9 @@ fn field(name: &str, binding: usize, scalar: &str) -> String {
 
 fn clause(name: Option<&str>, condition: &str) -> String {
     let name = name.map_or("null".to_string(), |it| format!(r#""{it}""#));
-    format!(r#"{{"name":{name},"condition":{condition}}}"#)
+    format!(
+        r#"{{"name":{name},"condition":{condition},"projection":{{"constraints":[],"complete":false}}}}"#
+    )
 }
 
 fn at_least(left: &str, right: &str) -> String {
@@ -1757,6 +1759,103 @@ fn at_least(left: &str, right: &str) -> String {
         ),
         BOOL,
     )
+}
+
+/// A clause the checker states as `constraints`, `complete` or not.
+fn stated(condition: &str, constraints: &str, complete: bool) -> String {
+    format!(
+        r#"{{"name":null,"condition":{condition},"projection":{{"constraints":[{constraints}],"complete":{complete}}}}}"#
+    )
+}
+
+/// What a clause is as standard constraints is about the one field of a data made of one, and of
+/// that field's type (`ConstraintProjection`): a data of more than one field has no one field for
+/// a constraint to be about, an `Int`'s bound is not a `String`'s, and a clause is never the whole
+/// of no constraint. A pattern is one the checker read, and a `Decimal` bound an integer and a scale.
+#[test]
+fn what_a_clause_is_as_constraints_is_about_its_datas_one_field() {
+    let holds = at_least(&read(0, INT), &int(0));
+    let one = field("count", 0, "INT");
+    let text = field("name", 0, "STRING");
+    let money = field("amount", 0, "DECIMAL");
+    let two = [field("count", 0, "INT"), field("other", 1, "INT")].join(",");
+    let nought = r#"{"is":"nonnegative"}"#;
+    let long = r#"{"is":"minlength","n":3}"#;
+
+    reads_whole(&with_clauses(&one, &stated(&holds, nought, true), &[]));
+    reads_whole(&with_clauses(&one, &stated(&holds, nought, false), &[]));
+    is_the_halves_disagreeing(
+        &with_clauses(&two, &stated(&holds, nought, true), &[]),
+        "and m.R has 2",
+    );
+    is_the_halves_disagreeing(
+        &with_clauses(&one, &stated(&holds, long, true), &[]),
+        "which is not about a Int",
+    );
+    is_the_halves_disagreeing(
+        &with_clauses(&one, &stated(&holds, "", true), &[]),
+        "the whole of no constraint",
+    );
+    let truth = node(
+        "binary",
+        &format!(
+            r#""op":"EQ","reading":{{"is":"astheystand"}},"ordering":null,"left":{},"right":{}"#,
+            read(0, STRING),
+            read(0, STRING)
+        ),
+        BOOL,
+    );
+    reads_whole(&with_clauses(
+        &text,
+        &stated(
+            &truth,
+            r#"{"is":"pattern","written":"a","meaning":[{"is":"nothing"}]}"#,
+            false,
+        ),
+        &[],
+    ));
+    is_the_halves_disagreeing(
+        &with_clauses(
+            &text,
+            &stated(
+                &truth,
+                r#"{"is":"pattern","written":"a","meaning":[]}"#,
+                false,
+            ),
+            &[],
+        ),
+        "means what no reading of a pattern is",
+    );
+    let same = node(
+        "binary",
+        &format!(
+            r#""op":"EQ","reading":{{"is":"astheystand"}},"ordering":null,"left":{},"right":{}"#,
+            read(0, DECIMAL),
+            read(0, DECIMAL)
+        ),
+        BOOL,
+    );
+    reads_whole(&with_clauses(
+        &money,
+        &stated(
+            &same,
+            r#"{"is":"decimalmin","n":{"unscaled":"-150","scale":2}}"#,
+            false,
+        ),
+        &[],
+    ));
+    is_the_halves_disagreeing(
+        &with_clauses(
+            &money,
+            &stated(
+                &same,
+                r#"{"is":"decimalmin","n":{"unscaled":"1.5","scale":2}}"#,
+                false,
+            ),
+            &[],
+        ),
+        "which is no integer",
+    );
 }
 
 /// A clause reads each field under the binding the field is bound at, which need not be where the
@@ -2116,7 +2215,7 @@ fn a_newtype_that_wraps_itself_is_the_halves_disagreeing() {
             read(1, n)
         );
         format!(
-            r#"{{"transport":28,"declarations":[{}],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[{}],"values":[],"entries":[],"definitions":[],"examples":[]}}]}}"#,
+            r#"{{"transport":29,"declarations":[{}],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[{}],"values":[],"entries":[],"definitions":[],"examples":[]}}]}}"#,
             declarations.join(","),
             h(&[n, n], &body)
         )
@@ -2627,7 +2726,7 @@ fn a_construction_of_another_builds_type_names_the_reason_its_clauses_give() {
         );
         format!(
             concat!(
-                r#"{{"transport":28,"declarations":["#,
+                r#"{{"transport":29,"declarations":["#,
                 r#"{{"module":"m","name":"R","by":"onthepath","is":"product","#,
                 r#""fields":[{}],"headers":[{}]}}],"behaviors":[],"#,
                 r#""modules":[{{"name":"m","publishes":[],"helpers":[{}],"values":[],"#,
@@ -2810,7 +2909,7 @@ fn a_present_carrier_is_named_by_what_it_holds() {
 fn a_handover_carries_a_value_the_module_builds() {
     let value = |carries: &str| {
         format!(
-            r#"{{"transport":28,"declarations":[],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[],"values":[{{"module":"m","name":"ks","handovers":[],"body":{}}},{{"module":"m","name":"ys","handovers":[{{"parameter":"dep","type":{INT},"carries":{{"module":"m","name":"{carries}"}}}}],"body":{}}}],"entries":[],"definitions":[],"examples":[]}}]}}"#,
+            r#"{{"transport":29,"declarations":[],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[],"values":[{{"module":"m","name":"ks","handovers":[],"body":{}}},{{"module":"m","name":"ys","handovers":[{{"parameter":"dep","type":{INT},"carries":{{"module":"m","name":"{carries}"}}}}],"body":{}}}],"entries":[],"definitions":[],"examples":[]}}]}}"#,
             int(1),
             read(0, INT)
         )
@@ -3295,7 +3394,7 @@ fn what_clauses_are_answered_under_crosses_where_another_build_runs_them() {
     let declared = |by: &str, clauses: &str| {
         format!(
             concat!(
-                r#"{{"transport":28,"declarations":["#,
+                r#"{{"transport":29,"declarations":["#,
                 r#"{{"module":"m","name":"R","by":"{}","is":"product","#,
                 r#""fields":[{}]{}}}],"behaviors":[],"#,
                 r#""modules":[{{"name":"m","publishes":[],"helpers":[],"values":[],"#,

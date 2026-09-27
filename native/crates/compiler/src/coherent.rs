@@ -1119,8 +1119,7 @@ impl<'a> Walk<'_, 'a> {
             Node::Decimal { unscaled, ty, .. } => {
                 // The integer is handed to the runtime as the text it is, and the runtime reads
                 // integer text and nothing else.
-                let digits = unscaled.strip_prefix('-').unwrap_or(unscaled);
-                if digits.is_empty() || !digits.bytes().all(|it| it.is_ascii_digit()) {
+                if !crate::transport::integer_text(unscaled) {
                     bail!(
                         "{}: a decimal literal whose integer is written {unscaled:?}, which is no \
                          integer: the two halves disagree",

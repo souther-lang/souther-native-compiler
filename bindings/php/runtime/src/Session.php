@@ -394,9 +394,12 @@ final class Session
     }
 
     /**
-     * What a reading found, as Raoh's issues. The codes are Raoh's already, so this changes how
-     * they are held and not what they say. The library gives no message, so each issue's message is
-     * its code until something resolves it.
+     * What a reading found, as Raoh's issues. The codes and the metadata are Raoh's already, so
+     * this changes how they are held and not what they say: the metadata arrives as the JSON
+     * object it is, a number as a number and a list as a list. The library gives no message, so
+     * each issue's message is its code until something resolves it. The message key a resolver
+     * would word it by is the library's too (`souther_issue_message_key`), and raoh-php's `Issue`
+     * holds none yet (kawasima/raoh-php#7), so it is not handed on.
      */
     private function issues(CData $reading): Issues
     {
@@ -405,12 +408,12 @@ final class Session
         $count = $ffi->souther_decoded_issue_count($reading);
         for ($at = 0; $at < $count; $at++) {
             $issue = $ffi->souther_decoded_issue($reading, $at);
-            $meta = [];
-            $entries = $ffi->souther_issue_meta_count($issue);
-            for ($entry = 0; $entry < $entries; $entry++) {
-                $meta[$this->text($ffi->souther_issue_meta_key($issue, $entry))] =
-                    $this->text($ffi->souther_issue_meta_value($issue, $entry));
-            }
+            $meta = json_decode(
+                $this->text($ffi->souther_issue_meta($issue)),
+                true,
+                512,
+                JSON_THROW_ON_ERROR | JSON_BIGINT_AS_STRING,
+            );
             $code = $this->text($ffi->souther_issue_code($issue));
             $issues = $issues->add(Issue::of(
                 self::path($this->text($ffi->souther_issue_path($issue))), $code, $code, $meta));

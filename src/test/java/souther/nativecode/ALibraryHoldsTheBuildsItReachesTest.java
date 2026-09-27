@@ -122,7 +122,7 @@ class ALibraryHoldsTheBuildsItReachesTest {
         assertThat(said(List.of(executable.toString()))).isEqualTo("""
                 order: status 0, total 0 6, door 1
                 written: {"price":{"amount":3},"door":{"type":"Closed"},"settled":{"type":"Closed"},"count":2}
-                read: /price/amount invariant_violation
+                read: /price/amount out_of_range
                 """);
     }
 

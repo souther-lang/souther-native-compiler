@@ -68,8 +68,8 @@ class AValueOfATypeAnotherBuildDeclaresIsReadThereTest {
 
         assertThat(said).isEqualTo("""
                 whole: value {"price":{"amount":3},"door":{"type":"Open","since":2},"settled":{"type":"Waived","reason":1},"count":1}
-                theirs: issues [@/price/amount invariant_violation module=lib.money type=Money clause=notNegative] [@/door/since invariant_violation module=lib.money type=Money clause=notNegative] [@/settled/reason invariant_violation module=lib.money type=Money clause=notNegative]
-                ours: issues [@ invariant_violation module=app.order type=Order clause=counted]
+                theirs: issues [@/price/amount out_of_range key=out_of_range.non_negative {"actual":-1,"min":0}] [@/door/since out_of_range key=out_of_range.non_negative {"actual":-2,"min":0}] [@/settled/reason out_of_range key=out_of_range.non_negative {"actual":-3,"min":0}]
+                ours: issues [@ invariant_violation {"clause":"counted","module":"app.order","type":"Order"}]
                 """);
     }
 

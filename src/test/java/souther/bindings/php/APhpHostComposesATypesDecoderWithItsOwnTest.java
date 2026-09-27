@@ -140,13 +140,13 @@ class APhpHostComposesATypesDecoderWithItsOwnTest {
             individual: ok Individual
             read: a@b Taro
             corporation: ok Corporation
-            short email: [/orderer/email invariant_violation]
+            short email: [/orderer/email too_short]
             no such case: [/orderer/type not_allowed]
             missing field: [/orderer/companyName missing_field]
-            both: [/who too_short] [/individual/email invariant_violation]
-            quantity: [/n invariant_violation]
+            both: [/who too_short] [/individual/email too_short]
+            quantity: [/n out_of_range]
             a float: [/ type_mismatch]
-            lines: [/lines/1/quantity invariant_violation]
+            lines: [/lines/1/quantity out_of_range]
             no lines: ok Lines
             not json: [/ type_mismatch]
             made before the run: ok Quantity

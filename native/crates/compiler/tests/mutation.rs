@@ -48,6 +48,11 @@ fn int(value: i64) -> Value {
 }
 
 /// Two operands read as they stand, placed on the order of what the left one is where `op` orders.
+/// A clause none of whose parts is a standard constraint.
+fn none() -> Value {
+    json!({ "constraints": [], "complete": false })
+}
+
 fn binary(op: &str, left: Value, right: Value, ty: Value, aborts: Value) -> Value {
     let ordering = match op {
         "LT" | "LE" | "GT" | "GE" => left["type"].clone(),
@@ -61,7 +66,7 @@ fn binary(op: &str, left: Value, right: Value, ty: Value, aborts: Value) -> Valu
 
 fn program(declarations: Value, helpers: Value, publishes: Value) -> Value {
     json!({
-        "transport":28,
+        "transport":29,
         "declarations": declarations,
         "behaviors": [],
         "modules": [{
@@ -94,7 +99,7 @@ fn by_hand() -> Vec<(&'static str, Value)> {
         "module": "m", "name": "R", "by": "amodule", "is": "product",
         "fields": [{ "name": "count", "binding": 0,
                      "codec": { "is": "scalar", "scalar": INT } }],
-        "invariants": [{ "name": "counted", "condition": clause }]
+        "invariants": [{ "name": "counted", "condition": clause, "projection": none() }]
     }]);
     let built = json!({
         "core": "construct", "declared": "m.R", "values": [read(0, prim(INT))],
@@ -310,8 +315,8 @@ fn by_hand() -> Vec<(&'static str, Value)> {
         "amodule",
         (
             "invariants",
-            json!([{ "name": "ordered", "condition": ordered },
-                   { "name": null, "condition": bounded }]),
+            json!([{ "name": "ordered", "condition": ordered, "projection": none() },
+                   { "name": null, "condition": bounded, "projection": none() }]),
         ),
     );
     let attempting_elsewhere = spanned(
