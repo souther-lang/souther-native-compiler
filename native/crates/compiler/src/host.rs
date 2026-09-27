@@ -182,7 +182,7 @@ fn planned(
             Prim::Time => Ok(HostShape::Leaf(HostLeaf::Time)),
             Prim::DateTime => Ok(HostShape::Leaf(HostLeaf::DateTime)),
             Prim::Instant => Ok(HostShape::Leaf(HostLeaf::Instant)),
-            Prim::Rational | Prim::Raw => Err(refused(Reason::NoRepresentation)),
+            Prim::Rational => Err(refused(Reason::NoRepresentation)),
         },
         Ty::Ref {
             named: Case::Declared { .. },

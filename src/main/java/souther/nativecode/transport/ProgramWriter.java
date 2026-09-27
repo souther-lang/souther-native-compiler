@@ -95,7 +95,7 @@ public final class ProgramWriter {
      * written moves, so that a driver and a writer that disagree say so rather than producing an
      * object that is wrong quietly.
      */
-    public static final int TRANSPORT_VERSION = 26;
+    public static final int TRANSPORT_VERSION = 27;
 
     private final CheckedProgram program;
 
@@ -1840,7 +1840,6 @@ public final class ProgramWriter {
             case TIME -> "TIME";
             case DATETIME -> "DATETIME";
             case INSTANT -> "INSTANT";
-            case RAW -> "RAW";
         };
     }
 

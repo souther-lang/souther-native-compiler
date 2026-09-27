@@ -2,7 +2,7 @@
 //!
 //! Written as types and not built as JSON, so that what a manifest of one version says is a thing
 //! the compiler holds this code to. A field renamed here is a change to these types, and the
-//! fixture `tests/interface-v12.json` is what version 12 is: every manifest this writes is read
+//! fixture `tests/interface-v13.json` is what version 13 is: every manifest this writes is read
 //! back by these same types, which refuse a member they do not name.
 //!
 //! [`VERSION`] moves when what a manifest says is read differently. What the functions it names
@@ -98,6 +98,11 @@ pub(crate) const MOVES: &[(u32, &str)] = &[
          `datetime`, `instant`): a host makes one of the ISO 8601 text that names it and reads \
          that text back, through the runtime (`souther_date_of_iso`, `souther_date_iso`, and the \
          same for the other three), and carries one as a case of a union",
+    ),
+    (
+        13,
+        "no `Raw` among the primitives a type is named by (`primitive`), which the language no \
+         longer has",
     ),
 ];
 
@@ -428,7 +433,7 @@ impl std::fmt::Display for Refusal {
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Reason {
-    /// A type with no representation for a host yet: a `Rational`, a `Raw`, a `Set`, a `Map`.
+    /// A type with no representation for a host yet: a `Rational`, a `Set`, a `Map`.
     NoRepresentation,
     /// A type with no value to hand over: what an empty list holds, and what does not answer.
     NoValue,
@@ -773,7 +778,6 @@ pub(crate) enum Primitive {
     Time,
     DateTime,
     Instant,
-    Raw,
 }
 
 /// A case the language gives, by its name.
@@ -924,19 +928,19 @@ mod tests {
         }
     }
 
-    /// What version 12 is. Read by these types, which refuse a member they do not name, and
+    /// What version 13 is. Read by these types, which refuse a member they do not name, and
     /// written back the same: a field renamed or a kind reshaped here stops matching the fixture
     /// the Java half's test also holds a written manifest to.
-    const V12: &str = include_str!("../tests/interface-v12.json");
+    const V13: &str = include_str!("../tests/interface-v13.json");
 
     #[test]
-    fn version_twelve_is_read_and_written_back_as_it_is() {
-        let read: Manifest = serde_json::from_str(V12).expect("version 12 reads");
+    fn version_thirteen_is_read_and_written_back_as_it_is() {
+        let read: Manifest = serde_json::from_str(V13).expect("version 13 reads");
         assert_eq!(read.format, FORMAT);
         assert_eq!(read.version, VERSION);
         let mut written = serde_json::to_string_pretty(&read).unwrap();
         written.push('\n');
-        assert_eq!(written, V12);
+        assert_eq!(written, V13);
     }
 
     /// A surface an object of an earlier release carries is refused as that, and not as whichever

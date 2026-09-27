@@ -7,37 +7,72 @@
 //! put in NFC again, since mapping case can leave text that is not.
 
 use crate::Text;
-use crate::canonical::normalized;
+use crate::canonical::Joined;
+use crate::capacity::Capacity;
 use crate::tables::{CASE_IGNORABLE, CASED, FINAL_SIGMA, LOWERCASE, UPPERCASE};
 use alloc::string::String;
-use alloc::vec::Vec;
 
-/// The text lowercased (`String.lowercase`).
-pub fn lowercase(text: Text) -> String {
-    let points: Vec<u32> = text.as_str().chars().map(u32::from).collect();
-    let mut out = Vec::with_capacity(points.len());
-    for (at, point) in points.iter().enumerate() {
-        let mapped = mapping(FINAL_SIGMA, *point)
-            .filter(|_| final_sigma_holds(&points, at))
-            .or_else(|| mapping(LOWERCASE, *point));
-        match mapped {
-            Some(mapped) => out.extend_from_slice(mapped),
-            None => out.push(*point),
-        }
+/// The text lowercased (`String.lowercase`), or nothing where the mapping is more text than the
+/// carrier holds. Measured as each code point is mapped and not once all are, so that text no
+/// carrier holds is never made.
+pub fn lowercase(text: Text, capacity: Capacity) -> Option<String> {
+    let text = text.as_str();
+    let mut mapped = Mapped::new(capacity);
+    for (at, character) in text.char_indices() {
+        let point = u32::from(character);
+        let table = mapping(FINAL_SIGMA, point)
+            .filter(|_| final_sigma_holds(text, at, character))
+            .or_else(|| mapping(LOWERCASE, point));
+        mapped.put(table, point)?;
     }
-    normalized(out.into_iter().map(scalar))
+    mapped.in_nfc()
 }
 
-/// The text uppercased (`String.uppercase`).
-pub fn uppercase(text: Text) -> String {
-    let mut out = Vec::with_capacity(text.as_str().len());
+/// The text uppercased (`String.uppercase`), as [`lowercase`] lowercases it.
+pub fn uppercase(text: Text, capacity: Capacity) -> Option<String> {
+    let mut mapped = Mapped::new(capacity);
     for point in text.as_str().chars().map(u32::from) {
-        match mapping(UPPERCASE, point) {
-            Some(mapped) => out.extend_from_slice(mapped),
-            None => out.push(point),
+        mapped.put(mapping(UPPERCASE, point), point)?;
+    }
+    mapped.in_nfc()
+}
+
+/// What a case mapping has written so far, and what it may still write.
+struct Mapped {
+    text: String,
+    units: i64,
+    capacity: Capacity,
+}
+
+impl Mapped {
+    fn new(capacity: Capacity) -> Mapped {
+        Mapped {
+            text: String::new(),
+            units: 0,
+            capacity,
         }
     }
-    normalized(out.into_iter().map(scalar))
+
+    /// What `point` maps to, or itself where the table names nothing, unless that is more than is
+    /// held.
+    fn put(&mut self, mapped: Option<&[u32]>, point: u32) -> Option<()> {
+        for one in mapped.unwrap_or(&[point]) {
+            let character = scalar(*one);
+            self.units += character.len_utf16() as i64;
+            if !self.capacity.holds(self.units) {
+                return None;
+            }
+            self.text.push(character);
+        }
+        Some(())
+    }
+
+    /// The text in NFC, which mapping case can leave it out of, within what is held.
+    fn in_nfc(self) -> Option<String> {
+        let mut joined = Joined::new(self.capacity);
+        joined.push_unnormalized(&self.text)?;
+        Some(joined.finished())
+    }
 }
 
 /// A code point a table maps to, which is a scalar value.
@@ -62,13 +97,14 @@ fn within(runs: &[(u32, u32)], point: u32) -> bool {
     }
 }
 
-/// Whether the code point at `at` stands where `Final_Sigma` holds: a cased code point before it
-/// and none after it, each looked for past the case-ignorable code points between.
-fn final_sigma_holds(points: &[u32], at: usize) -> bool {
-    let cased = |point: &&u32| !within(CASE_IGNORABLE, **point);
-    let before = points[..at].iter().rev().find(cased);
-    let after = points[at + 1..].iter().find(cased);
-    before.is_some_and(|it| within(CASED, *it)) && !after.is_some_and(|it| within(CASED, *it))
+/// Whether the code point `character` at byte `at` stands where `Final_Sigma` holds: a cased code
+/// point before it and none after it, each looked for past the case-ignorable code points between.
+fn final_sigma_holds(text: &str, at: usize, character: char) -> bool {
+    let cased = |point: &char| !within(CASE_IGNORABLE, u32::from(*point));
+    let before = text[..at].chars().rev().find(cased);
+    let after = text[at + character.len_utf8()..].chars().find(cased);
+    before.is_some_and(|it| within(CASED, u32::from(it)))
+        && !after.is_some_and(|it| within(CASED, u32::from(it)))
 }
 
 #[cfg(test)]
@@ -78,12 +114,40 @@ mod tests {
     use super::*;
     use std::string::String;
 
+    const ROOMY: Capacity = Capacity::of_units(1 << 20);
+
     fn lower(text: &str) -> String {
-        lowercase(Text::held(text))
+        lowercase(Text::held(text), ROOMY).unwrap()
     }
 
     fn upper(text: &str) -> String {
-        uppercase(Text::held(text))
+        uppercase(Text::held(text), ROOMY).unwrap()
+    }
+
+    /// A mapping is measured as it is made: it is held exactly where every capacity from the units
+    /// it maps to up holds it, and no capacity below does, whatever it is put in NFC as after.
+    #[test]
+    fn a_mapping_is_held_by_what_it_maps_to() {
+        for (text, mapped_units) in [
+            ("straße", 7),
+            ("ﬁﬁ", 4),
+            ("\u{149}\u{149}", 4),
+            ("a\u{10428}", 3),
+        ] {
+            let mapped = upper(text);
+            for capacity in 0..=mapped_units + 2 {
+                let capacity = Capacity::of_units(capacity);
+                let held = uppercase(Text::held(text), capacity);
+                assert_eq!(
+                    held.is_some(),
+                    capacity.units() >= mapped_units,
+                    "{text:?} at {capacity:?}"
+                );
+                if let Some(held) = held {
+                    assert_eq!(held, mapped);
+                }
+            }
+        }
     }
 
     /// The full mapping widens where Unicode says it does.

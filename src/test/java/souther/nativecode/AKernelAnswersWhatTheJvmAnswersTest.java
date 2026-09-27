@@ -606,9 +606,11 @@ class AKernelAnswersWhatTheJvmAnswersTest {
     }
 
     /**
-     * An index the string has not got ends a slice, and a count or a width past what any string
-     * holds ends a repeat or a pad. Which count that is, is the JVM's
-     * (souther-lang/souther#1986).
+     * An index the string has not got ends a slice, and copies or a fill that are more text than a
+     * string holds end a repeat or a pad. How much text that is, is the carrier's; this build takes
+     * the JVM's, 1073741819 UTF-16 code units (spec §what-a-string-holds), so that a program ends
+     * where it ends on either. The text is counted in units and not in bytes or code points: a code
+     * point outside the basic plane is two.
      */
     @Test
     void aStringKernelEndsTheRunWhereItsContractSays() throws Exception {
@@ -624,6 +626,14 @@ class AKernelAnswersWhatTheJvmAnswersTest {
         assertThat(texts.outcome("paddedLeft", integer(3000000000L), text("0"), text("a")))
                 .isEqualTo(ended(AbortKind.REQUIRED_FORM_HAS_NO_PLACE));
         assertThat(texts.outcome("paddedRight", integer(3000000000L), text("0"), text("a")))
+                .isEqualTo(ended(AbortKind.REQUIRED_FORM_HAS_NO_PLACE));
+        // One unit past what a string holds, and not a copy count the carrier's int would hold.
+        assertThat(texts.outcome("repeated", integer(1073741820L), text("a")))
+                .isEqualTo(ended(AbortKind.REQUIRED_FORM_HAS_NO_PLACE));
+        assertThat(texts.outcome("paddedLeft", integer(1073741820L), text("0"), text("a")))
+                .isEqualTo(ended(AbortKind.REQUIRED_FORM_HAS_NO_PLACE));
+        // Two units each, so that half as many copies are already too many.
+        assertThat(texts.outcome("repeated", integer(536870910L), text("\uD800\uDC00")))
                 .isEqualTo(ended(AbortKind.REQUIRED_FORM_HAS_NO_PLACE));
     }
 

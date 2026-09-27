@@ -164,6 +164,18 @@ fn a_step_reading_what_it_grows_as_a_list_is_refused() {
     assert!(refused.contains("disagree"), "{refused}");
 }
 
+/// A growth can pass what a list holds, and says so: one naming no reason for ending without a
+/// value is the two halves disagreeing.
+#[test]
+fn a_growth_names_the_one_reason_it_can_end_for() {
+    let document = changed(emitted("GROW_LIST"), |grow| {
+        grow["aborts"] = json!([]);
+    });
+    let refused = refused(&document);
+    assert!(refused.contains("$grow"), "{refused}");
+    assert!(refused.contains("disagree"), "{refused}");
+}
+
 /// A growth where no step answers: here, the list a walk walks.
 #[test]
 fn a_growth_outside_a_step_is_refused() {
@@ -174,7 +186,7 @@ fn a_growth_outside_a_step_is_refused() {
             "reaches": { "is": "emitted", "operation": "GROW_LIST" },
             "arguments": [walked.clone(), walked],
             "type": { "list": { "prim": "INT" } },
-            "aborts": []
+            "aborts": ["REQUIRED_FORM_HAS_NO_PLACE"]
         });
     });
     let refused = refused(&document);

@@ -120,7 +120,7 @@ pub(crate) fn equal(
                 );
                 Ok(builder.ins().icmp_imm_s(IntCC::Equal, compared, 0))
             }
-            Prim::Rational | Prim::Raw => Err(not_lowered(format!(
+            Prim::Rational => Err(not_lowered(format!(
                 "a comparison of two values of type {}",
                 prim.spelt()
             ))),

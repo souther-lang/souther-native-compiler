@@ -281,6 +281,22 @@ pub unsafe extern "C" fn souther_string_compare(
     })
 }
 
+// The symbol that says which generation of the contract with generated code this runtime is
+// (`souther_native_abi::runtime_generation_symbol`). Written by the build from the abi crate's
+// number, so that an object of another generation has an undefined symbol and not a call answered
+// the other way.
+include!(concat!(env!("OUT_DIR"), "/runtime_generation.rs"));
+
+/// What a string holds on this carrier: how much text, in UTF-16 code units.
+///
+/// The language says the bound is the carrier's (spec §what-a-string-holds), and this carrier's own
+/// would be what its lengths count, which is far more. It takes the JVM's number instead, so that a
+/// program ends where it ends on either: the length every `java.lang.String` holds, whichever of
+/// its two encodings the JVM keeps it in. It is decided here and handed to every operation that
+/// builds text (`souther_text`), which spends it as it builds and writes nothing past it.
+pub(crate) const STRING_HOLDS: souther_text::Capacity =
+    souther_text::Capacity::of_units(1_073_741_819);
+
 /// The two strings' text, one after the other, as a string of its own: `++` over two strings, and
 /// `String.append`.
 ///
@@ -294,9 +310,13 @@ pub unsafe extern "C" fn souther_string_compare(
 ///
 /// As [`souther_string_compare`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_string_concat(left: *const Text, right: *const Text) -> *mut Text {
-    let joined = unsafe { append(text(&left), text(&right)) };
-    string_of(&joined)
+pub unsafe extern "C" fn souther_string_concat(
+    left: *const Text,
+    right: *const Text,
+    out: *mut *mut Text,
+) -> i8 {
+    let joined = unsafe { append(text(&left), text(&right), STRING_HOLDS) };
+    unsafe { answered(joined.as_deref().map(string_of), out) }
 }
 
 /// A string holding this text, for a caller outside a Souther program.
@@ -655,7 +675,9 @@ mod tests {
     }
 
     fn joined_text(one: *const Text, other: *const Text) -> *mut Text {
-        unsafe { souther_string_concat(one, other) }
+        let mut out = std::ptr::null_mut();
+        assert_eq!(unsafe { souther_string_concat(one, other, &mut out) }, 1);
+        out
     }
 
     /// Room for `size` bytes, as generated code asks for it.

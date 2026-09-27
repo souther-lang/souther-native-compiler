@@ -46,9 +46,9 @@ pub(crate) fn ordered(
                 let answered = builder.inst_results(compared)[0];
                 Ok(builder.ins().icmp_imm_s(condition, answered, 0))
             }
-            // Two truths are equal or they are not, and nothing orders them, nor raw bytes: an
-            // order over either is one the checker never writes.
-            Prim::Bool | Prim::Raw => Err(unordered(op, ty)),
+            // Two truths are equal or they are not, and nothing orders them: an order over
+            // them is one the checker never writes.
+            Prim::Bool => Err(unordered(op, ty)),
             // By amount, whatever the scales, which the runtime compares.
             Prim::Decimal => {
                 let compared =

@@ -432,11 +432,10 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
 
     let allocate = import_runtime(&mut module, ALLOCATE, call_conv);
 
-    // What two strings are compared and joined through. Neither is emitted here: a comparison of
-    // text is a walk over two runs of bytes, and one written into every site that says `==` would
-    // be the same walk written as many times as the program says it.
+    // What two strings are compared through. It is not emitted here: a comparison of text is a walk
+    // over two runs of bytes, and one written into every site that says `==` would be the same
+    // walk written as many times as the program says it.
     let compare_text = import_runtime(&mut module, STRING_COMPARE, call_conv);
-    let join_text = import_runtime(&mut module, STRING_CONCAT, call_conv);
     // And what a string's length is counted through, for the same reason: it is a walk over the
     // bytes, counting what starts a code point.
     let count_text = import_runtime(&mut module, STRING_CODE_POINTS, call_conv);
@@ -757,7 +756,6 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
         specializations: &specializations,
         allocate,
         compare_text,
-        join_text,
         count_text,
         runtime_kernels: &runtime_kernels,
         closures: &closures,
@@ -1211,6 +1209,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
     codecs.define(&mut emitting)?;
 
     surface.carry(&mut module);
+    refer_to_the_runtimes_generation(&mut module);
 
     Ok(accepted(module.finish().emit()))
 }
@@ -2177,7 +2176,6 @@ struct Lowerings<'a> {
     specializations: &'a Specializations<'a>,
     allocate: FuncId,
     compare_text: FuncId,
-    join_text: FuncId,
     count_text: FuncId,
     /// The function each of the `String` and `Decimal` modules' kernels, and each operator over a
     /// `Decimal`, is computed through, by its symbol.
@@ -2443,11 +2441,32 @@ fn machine_type(ty: &Ty) -> Lowered<types::Type> {
             // and every operation, comparison and crossing is a call into the runtime, which alone
             // knows the layout.
             Prim::Date | Prim::Time | Prim::DateTime | Prim::Instant => Ok(POINTER),
-            Prim::Rational | Prim::Raw => {
-                Err(not_lowered(format!("a value of type {}", prim.spelt())))
-            }
+            Prim::Rational => Err(not_lowered(format!("a value of type {}", prim.spelt()))),
         },
     }
+}
+
+/// Has the object refer to the symbol the runtime of this object's generation defines
+/// ([`runtime_generation_symbol`]), so that linking it with a runtime of another generation is an
+/// undefined symbol. The calls generated code makes to the runtime are to names that carry no
+/// generation, and a linker checks a name and nothing of how a call to it is made.
+///
+/// A datum the object holds and nothing reads, since a relocation is what a linker has to resolve;
+/// local, so that the objects of one library do not each define it.
+fn refer_to_the_runtimes_generation(module: &mut ObjectModule) {
+    let generation = accepted(module.declare_data(
+        &souther_native_abi::runtime_generation_symbol(),
+        Linkage::Import,
+        false,
+        false,
+    ));
+    let held =
+        accepted(module.declare_data("souther$runtime_generation", Linkage::Local, false, false));
+    let mut laid = DataDescription::new();
+    laid.define(vec![0; SLOT as usize].into_boxed_slice());
+    let named = module.declare_data_in_data(generation, &mut laid);
+    laid.write_data_addr(0, named, 0);
+    accepted(module.define_data(held, &laid));
 }
 
 /// The name the runtime's token for a case no declaration names is defined under, where there is
@@ -2470,7 +2489,7 @@ fn built_in_case(case: &Case) -> Lowered<&'static str> {
             Prim::Time => "Time",
             Prim::DateTime => "DateTime",
             Prim::Instant => "Instant",
-            Prim::Rational | Prim::Raw => {
+            Prim::Rational => {
                 return Err(not_lowered(format!(
                     "a value of the case {}, which has no representation to carry",
                     prim.spelt()
@@ -2697,7 +2716,7 @@ fn means_the_same_elsewhere(ty: &Ty) -> bool {
             Prim::Decimal => true,
             // Addresses only the runtime reads behind, for the same reason.
             Prim::Date | Prim::Time | Prim::DateTime | Prim::Instant => true,
-            Prim::Rational | Prim::Raw => false,
+            Prim::Rational => false,
         },
         Ty::Ref { named } => case_means_the_same_elsewhere(named),
         // Written nowhere at run time: what holds a union holds one of its members, and each of
@@ -5081,16 +5100,17 @@ fn lower(
                     );
                     let growing =
                         Growing(lower(builder, lowering, module, bindings, abort, grown)?);
+                    let status = one_reason_status(aborts);
                     // A list written out where it is added is added element by element, with no
                     // list made of them first: `acc ++ [y]` is what `map` and `filter` grow by.
                     if let Node::List { elements, .. } = added {
                         for element in elements {
                             let held = lower(builder, lowering, module, bindings, abort, element)?;
-                            growing.add(builder, lowering, module, held);
+                            growing.add(builder, lowering, module, (abort, status), held);
                         }
                     } else {
                         let held = lower(builder, lowering, module, bindings, abort, added)?;
-                        growing.add_all(builder, lowering, module, held);
+                        growing.add_all(builder, lowering, module, (abort, status), held);
                     }
                     growing.0
                 }
@@ -5299,6 +5319,7 @@ fn shared_field(
 /// through, imported into every object: which of them a program calls is known only once its bodies
 /// are lowered, and a function no call reaches costs the object a name.
 const RUNTIME_KERNELS: &[&str] = &[
+    STRING_CONCAT,
     STRING_TRIM,
     STRING_LOWERCASE,
     STRING_UPPERCASE,
@@ -5581,11 +5602,7 @@ fn lower_kernel(
             builder.inst_results(counted)[0]
         }
         // `String.append` and `++` over two strings are one join.
-        LoweredKernel::StringAppend => {
-            let joining = module.declare_func_in_func(lowering.join_text, builder.func);
-            let joined = builder.ins().call(joining, &values);
-            builder.inst_results(joined)[0]
-        }
+        LoweredKernel::StringAppend => join_text(builder, lowering, module, abort, &values, aborts),
         // Text that is integer text of an `Int` is the union's `Int` case, and any other is
         // `NotANumber`: the runtime says which of the two it read, and the case is made here.
         LoweredKernel::StringToInt => {
@@ -5623,11 +5640,25 @@ fn lower_kernel(
             runtime_call(builder, lowering, module, STRING_FROM_INT, &values)
         }
         LoweredKernel::StringTrim => runtime_call(builder, lowering, module, STRING_TRIM, &values),
-        LoweredKernel::StringLowercase => {
-            runtime_call(builder, lowering, module, STRING_LOWERCASE, &values)
-        }
-        LoweredKernel::StringUppercase => {
-            runtime_call(builder, lowering, module, STRING_UPPERCASE, &values)
+        LoweredKernel::StringLowercase
+        | LoweredKernel::StringUppercase
+        | LoweredKernel::StringJoin
+        | LoweredKernel::StringConcat
+        | LoweredKernel::StringReplace
+        | LoweredKernel::StringReverse
+        | LoweredKernel::StringFromDecimal => {
+            let name = match kernel {
+                LoweredKernel::StringLowercase => STRING_LOWERCASE,
+                LoweredKernel::StringUppercase => STRING_UPPERCASE,
+                LoweredKernel::StringJoin => STRING_JOIN,
+                LoweredKernel::StringConcat => STRING_CONCAT_ALL,
+                LoweredKernel::StringReplace => STRING_REPLACE,
+                LoweredKernel::StringReverse => STRING_REVERSE,
+                _ => STRING_FROM_DECIMAL,
+            };
+            written_or_ended(
+                builder, lowering, module, abort, name, &values, POINTER, aborts,
+            )
         }
         LoweredKernel::StringContains => {
             runtime_call(builder, lowering, module, STRING_CONTAINS, &values)
@@ -5641,21 +5672,11 @@ fn lower_kernel(
         LoweredKernel::StringSplit => {
             runtime_call(builder, lowering, module, STRING_SPLIT, &values)
         }
-        LoweredKernel::StringJoin => runtime_call(builder, lowering, module, STRING_JOIN, &values),
-        LoweredKernel::StringConcat => {
-            runtime_call(builder, lowering, module, STRING_CONCAT_ALL, &values)
-        }
-        LoweredKernel::StringReplace => {
-            runtime_call(builder, lowering, module, STRING_REPLACE, &values)
-        }
         LoweredKernel::StringWords => {
             runtime_call(builder, lowering, module, STRING_WORDS, &values)
         }
         LoweredKernel::StringLines => {
             runtime_call(builder, lowering, module, STRING_LINES, &values)
-        }
-        LoweredKernel::StringReverse => {
-            runtime_call(builder, lowering, module, STRING_REVERSE, &values)
         }
         LoweredKernel::StringCharacters => {
             runtime_call(builder, lowering, module, STRING_CHARACTERS, &values)
@@ -5683,9 +5704,6 @@ fn lower_kernel(
                 };
                 carry(builder, lowering, module, &no_number, None)
             })?
-        }
-        LoweredKernel::StringFromDecimal => {
-            runtime_call(builder, lowering, module, STRING_FROM_DECIMAL, &values)
         }
         LoweredKernel::DecimalAdd
         | LoweredKernel::DecimalSubtract
@@ -6407,7 +6425,7 @@ fn binary_as_they_stand(
                 // `/` answers the exact quotient, which is not a whole number and has no
                 // representation here yet.
                 Op::Div => Err(not_lowered(format!("the operator {}", op.spelt()))),
-                Op::Concat => join(builder, lowering, module, a, b),
+                Op::Concat => join(builder, lowering, module, abort, aborts, a, b),
                 Op::And | Op::Or => {
                     unreachable!("answered above, where the right side may not run")
                 }
@@ -6516,8 +6534,7 @@ fn arithmetic(
             | Prim::Date
             | Prim::Time
             | Prim::DateTime
-            | Prim::Instant
-            | Prim::Raw => Err(unlowered_operator(op, &left, &right)),
+            | Prim::Instant => Err(unlowered_operator(op, &left, &right)),
         },
         _ => Err(unlowered_operator(op, &left, &right)),
     }
@@ -6536,23 +6553,22 @@ fn unlowered_operator(op: Op, left: &Held, right: &Held) -> NotLowered {
 
 /// Two values joined, which the language writes over two strings and over two lists.
 ///
-/// Two strings are joined by the runtime, and two lists of one type here ([`joined_lists`]).
+/// Two strings are joined by the runtime, and two lists of one type here ([`joined_lists`]). Either
+/// ends the run for `aborts`' one reason where the join is longer than a string or a list holds.
 /// Anything else is refused as not lowered.
 fn join(
     builder: &mut FunctionBuilder,
     lowering: &Lowering,
     module: &mut ObjectModule,
+    abort: ir::Block,
+    aborts: &[AbortKind],
     left: Held,
     right: Held,
 ) -> Lowered<ir::Value> {
     let (a, b) = (left.value, right.value);
     match (left.ty, right.ty) {
         (Ty::Prim { prim }, Ty::Prim { prim: also }) if prim == also => match prim {
-            Prim::String => {
-                let joining = module.declare_func_in_func(lowering.join_text, builder.func);
-                let joined = builder.ins().call(joining, &[a, b]);
-                Ok(builder.inst_results(joined)[0])
-            }
+            Prim::String => Ok(join_text(builder, lowering, module, abort, &[a, b], aborts)),
             Prim::Int
             | Prim::Bool
             | Prim::Decimal
@@ -6560,18 +6576,41 @@ fn join(
             | Prim::Date
             | Prim::Time
             | Prim::DateTime
-            | Prim::Instant
-            | Prim::Raw => Err(unlowered_operator(Op::Concat, &left, &right)),
+            | Prim::Instant => Err(unlowered_operator(Op::Concat, &left, &right)),
         },
         (Ty::List { .. }, Ty::List { .. }) if left.ty == right.ty => {
-            Ok(joined_lists(builder, lowering, module, a, b))
+            Ok(joined_lists(builder, lowering, module, abort, aborts, a, b))
         }
         _ => Err(unlowered_operator(Op::Concat, &left, &right)),
     }
 }
 
+/// Two strings joined through the runtime, which ends the run for `aborts`' one reason where the
+/// text is longer than a string holds.
+fn join_text(
+    builder: &mut FunctionBuilder,
+    lowering: &Lowering,
+    module: &mut ObjectModule,
+    abort: ir::Block,
+    strings: &[ir::Value],
+    aborts: &[AbortKind],
+) -> ir::Value {
+    written_or_ended(
+        builder,
+        lowering,
+        module,
+        abort,
+        STRING_CONCAT,
+        strings,
+        POINTER,
+        aborts,
+    )
+}
+
 /// A list holding the elements of `a` and then those of `b`, as `souther-native-abi` lays a list
-/// out: new room for the two lengths together, and each list's slots copied into it in order.
+/// out: new room for the two lengths together, and each list's slots copied into it in order. The
+/// run ends for `aborts`' one reason where the two lengths together are more than a list holds,
+/// before any room is made.
 ///
 /// Neither list is changed, and nothing of either is shared with what is made: a list is a value,
 /// and so is each of the two. What an element is does not come into it, since every element is one
@@ -6580,6 +6619,8 @@ fn joined_lists(
     builder: &mut FunctionBuilder,
     lowering: &Lowering,
     module: &mut ObjectModule,
+    abort: ir::Block,
+    aborts: &[AbortKind],
     a: ir::Value,
     b: ir::Value,
 ) -> ir::Value {
@@ -6590,6 +6631,7 @@ fn joined_lists(
         .ins()
         .load(types::I64, TRUSTED, b, LIST_LENGTH as i32);
     let length = builder.ins().iadd(first, second);
+    lists::abort_past_what_a_list_holds(builder, abort, one_reason_status(aborts), length);
     let joined = lists::new_list(builder, lowering, module, length);
 
     let into = builder.ins().iadd_imm_s(joined, list_at(0));
@@ -6786,16 +6828,18 @@ impl Growing {
         Growing(growing)
     }
 
-    /// `value` added after what is there.
+    /// `value` added after what is there, or the run ended at `ends` where the list would then hold
+    /// more than a list holds.
     fn add(
         &self,
         builder: &mut FunctionBuilder,
         lowering: &Lowering,
         module: &mut ObjectModule,
+        ends: (ir::Block, Status),
         value: ir::Value,
     ) {
         let adding = builder.ins().iconst(types::I64, 1);
-        let (list, length) = self.room_for(builder, lowering, module, adding);
+        let (list, length) = self.room_for(builder, lowering, module, ends, adding);
         let value = into_slot(builder, value);
         let along = builder.ins().imul_imm_s(length, SLOT);
         let slot = builder.ins().iadd(list, along);
@@ -6806,18 +6850,20 @@ impl Growing {
             .store(TRUSTED, grown, list, LIST_LENGTH as i32);
     }
 
-    /// Every element of the list `added` added after what is there, in its order.
+    /// Every element of the list `added` added after what is there, in its order, or the run ended
+    /// as [`Growing::add`] ends it.
     fn add_all(
         &self,
         builder: &mut FunctionBuilder,
         lowering: &Lowering,
         module: &mut ObjectModule,
+        ends: (ir::Block, Status),
         added: ir::Value,
     ) {
         let adding = builder
             .ins()
             .load(types::I64, TRUSTED, added, LIST_LENGTH as i32);
-        let (list, length) = self.room_for(builder, lowering, module, adding);
+        let (list, length) = self.room_for(builder, lowering, module, ends, adding);
         let along = builder.ins().imul_imm_s(length, SLOT);
         let into = builder.ins().iadd(list, along);
         let into = builder.ins().iadd_imm_s(into, list_at(0));
@@ -6830,11 +6876,14 @@ impl Growing {
     }
 
     /// The list so far, with room for `adding` more elements after its length, and that length.
+    /// The run ends at `ends` before any room is made where the list would hold more than a list
+    /// holds.
     fn room_for(
         &self,
         builder: &mut FunctionBuilder,
         lowering: &Lowering,
         module: &mut ObjectModule,
+        (abort, status): (ir::Block, Status),
         adding: ir::Value,
     ) -> (ir::Value, ir::Value) {
         let list = builder.ins().load(POINTER, TRUSTED, self.0, GROWN);
@@ -6843,6 +6892,7 @@ impl Growing {
             .ins()
             .load(types::I64, TRUSTED, list, LIST_LENGTH as i32);
         let wanted = builder.ins().iadd(length, adding);
+        lists::abort_past_what_a_list_holds(builder, abort, status, wanted);
 
         let moving = builder.create_block();
         let ready = builder.create_block();

@@ -10,16 +10,10 @@
 //! another's, so where one text is found in another it stands at code points and nowhere else.
 
 use crate::canonical::Joined;
+use crate::capacity::{Capacity, units};
 use crate::{Text, code_points};
 use alloc::string::String;
 use alloc::vec::Vec;
-
-/// The most copies [`repeat`] makes, and the widest [`pad_left`] and [`pad_right`] widen to.
-///
-/// The language says a count no string could hold aborts, and not which count that is
-/// (souther-lang/souther#1986). The JVM carrier answers with the largest `int`, and this is that
-/// number, so that the two abort for the same counts.
-pub const MOST: i64 = i32::MAX as i64;
 
 /// Whether a code point is String whitespace (spec §string-whitespace): the 25 code points of
 /// Unicode 18.0's `White_Space`, written out rather than read off a table, as the specification
@@ -129,70 +123,85 @@ pub fn code_points_of(text: Text) -> Vec<i64> {
         .collect()
 }
 
-/// The two joined (`String.append`, and `++` over two strings).
-pub fn append(left: Text, right: Text) -> String {
-    let mut joined = Joined::new();
-    joined.push(left);
-    joined.push(right);
-    joined.finished()
+/// The two joined (`String.append`, and `++` over two strings), or nothing where they are more
+/// text than the carrier holds.
+///
+/// Every operation below that builds text answers nothing where what it builds is more than
+/// `capacity`, and says so before the text is made: it is spent as the text is built (`Joined`),
+/// and none is built past it.
+pub fn append(left: Text, right: Text, capacity: Capacity) -> Option<String> {
+    join(Text(""), [left, right], capacity)
 }
 
 /// The pieces joined with `separator` between each two (`String.join`; `String.concat` is this
 /// with no separator).
-pub fn join<'a>(separator: Text, pieces: impl IntoIterator<Item = Text<'a>>) -> String {
-    let mut joined = Joined::new();
+pub fn join<'a>(
+    separator: Text,
+    pieces: impl IntoIterator<Item = Text<'a>>,
+    capacity: Capacity,
+) -> Option<String> {
+    let mut joined = Joined::new(capacity);
     for (at, piece) in pieces.into_iter().enumerate() {
         if at > 0 {
-            joined.push(separator);
+            joined.push(separator)?;
         }
-        joined.push(piece);
+        joined.push(piece)?;
     }
-    joined.finished()
+    Some(joined.finished())
 }
 
 /// Every run of `target` replaced by `replacement`, left to right and none overlapping
 /// (`String.replace`). An empty target replaces nothing, rather than putting the replacement
 /// between every two code points.
-pub fn replace(target: Text, replacement: Text, text: Text) -> String {
+pub fn replace(target: Text, replacement: Text, text: Text, capacity: Capacity) -> Option<String> {
     if target.as_str().is_empty() {
-        return String::from(text.as_str());
+        return Some(String::from(text.as_str()));
     }
-    join(replacement, split(target, text))
+    // The pieces are walked and not collected: what is held of them is no more than the text is.
+    join(
+        replacement,
+        text.as_str().split(target.as_str()).map(Text),
+        capacity,
+    )
 }
 
 /// The code points in the opposite order (`String.reverse`). A mark reversed to stand after a
 /// letter it composes with composes, so what comes back need not be as long.
-pub fn reverse(text: Text) -> String {
-    let mut pieces = characters(text);
-    pieces.reverse();
-    join(Text(""), pieces)
+pub fn reverse(text: Text, capacity: Capacity) -> Option<String> {
+    let text = text.as_str();
+    let backwards = text
+        .char_indices()
+        .rev()
+        .map(|(at, character)| Text(&text[at..at + character.len_utf8()]));
+    join(Text(""), backwards, capacity)
 }
 
 /// `copies` copies of the text joined (`String.repeat`): nothing for a count of nought or fewer,
-/// or of the empty text, and nothing at all past [`MOST`], where the run is to end instead.
-pub fn repeat(copies: i64, text: Text) -> Option<String> {
+/// or of the empty text, and no text at all where the copies are more than the carrier holds,
+/// where the run is to end instead. Measured before the first is written.
+pub fn repeat(copies: i64, text: Text, capacity: Capacity) -> Option<String> {
     if copies <= 0 || text.as_str().is_empty() {
         return Some(String::new());
     }
-    if copies > MOST {
+    if !capacity.holds(units(text.as_str()).saturating_mul(copies)) {
         return None;
     }
-    let mut joined = Joined::new();
+    let mut joined = Joined::new(capacity);
     for _ in 0..copies {
-        joined.push(text);
+        joined.push(text)?;
     }
     Some(joined.finished())
 }
 
 /// The text widened on the left to `width` code points with copies of `pad`
-/// (`String.padLeft`), or nothing past [`MOST`].
-pub fn pad_left(width: i64, pad: Text, text: Text) -> Option<String> {
-    widened(width, pad, text, true)
+/// (`String.padLeft`), or nothing where that is more text than the carrier holds.
+pub fn pad_left(width: i64, pad: Text, text: Text, capacity: Capacity) -> Option<String> {
+    widened(width, pad, text, true, capacity)
 }
 
 /// The text widened on the right, as [`pad_left`] widens it on the left (`String.padRight`).
-pub fn pad_right(width: i64, pad: Text, text: Text) -> Option<String> {
-    widened(width, pad, text, false)
+pub fn pad_right(width: i64, pad: Text, text: Text, capacity: Capacity) -> Option<String> {
+    widened(width, pad, text, false, capacity)
 }
 
 /// The text widened to exactly `width` code points, and left alone where it is that wide already
@@ -201,25 +210,27 @@ pub fn pad_right(width: i64, pad: Text, text: Text) -> Option<String> {
 /// The fill is `pad` repeated as often as covers what is needed, cut to what is needed from its
 /// front, and joined to the text. Composing where two copies of `pad` meet, or where the fill
 /// meets the text, can take a code point away, so where the join comes up short the fill is made
-/// again one code point longer.
-fn widened(width: i64, pad: Text, text: Text, before: bool) -> Option<String> {
+/// again one code point longer. Each of them is built within what the carrier holds: the copies of
+/// `pad`, and the fill and the text together.
+fn widened(width: i64, pad: Text, text: Text, before: bool, capacity: Capacity) -> Option<String> {
     let long = code_points(text) as i64;
     if pad.as_str().is_empty() || long >= width {
         return Some(String::from(text.as_str()));
     }
-    if width > MOST {
+    // Each code point is a unit at least, so a width past what is held has no text that is held.
+    if !capacity.holds(width) {
         return None;
     }
     let pad_long = code_points(pad) as i64;
     let mut needed = width - long;
     loop {
         let copies = (needed + pad_long - 1) / pad_long;
-        let whole = repeat(copies, pad)?;
+        let whole = repeat(copies, pad, capacity)?;
         let fill = slice(0, needed, Text(&whole)).unwrap_or(Text(&whole));
         let joined = if before {
-            append(fill, text)
+            append(fill, text, capacity)?
         } else {
-            append(text, fill)
+            append(text, fill, capacity)?
         };
         if code_points(Text(&joined)) as i64 >= width {
             return Some(joined);
@@ -283,47 +294,93 @@ mod tests {
         assert_eq!(texts(lines(held(""))), [""]);
     }
 
+    /// More than any text here is long.
+    const ROOMY: Capacity = Capacity::of_units(1 << 20);
+
     #[test]
     fn what_is_built_is_put_in_nfc() {
-        assert_eq!(append(held("e"), held("\u{301}")), "\u{e9}");
-        assert_eq!(join(held(""), [held("e"), held("\u{301}")]), "\u{e9}");
-        assert_eq!(join(held("-"), [held("a"), held("b"), held("c")]), "a-b-c");
-        assert_eq!(replace(held("x"), held("\u{301}"), held("ex")), "\u{e9}");
-        assert_eq!(reverse(held("\u{301}e")), "\u{e9}");
-        assert_eq!(reverse(held("a𠮷b")), "b𠮷a");
+        let built = |it: Option<String>| it.expect("within what is held");
+        assert_eq!(built(append(held("e"), held("\u{301}"), ROOMY)), "\u{e9}");
+        assert_eq!(
+            built(join(held(""), [held("e"), held("\u{301}")], ROOMY)),
+            "\u{e9}"
+        );
+        assert_eq!(
+            built(join(held("-"), [held("a"), held("b"), held("c")], ROOMY)),
+            "a-b-c"
+        );
+        assert_eq!(
+            built(replace(held("x"), held("\u{301}"), held("ex"), ROOMY)),
+            "\u{e9}"
+        );
+        assert_eq!(built(reverse(held("\u{301}e"), ROOMY)), "\u{e9}");
+        assert_eq!(built(reverse(held("a𠮷b"), ROOMY)), "b𠮷a");
     }
 
     #[test]
     fn an_empty_target_replaces_nothing() {
-        assert_eq!(replace(held(""), held("-"), held("abc")), "abc");
-        assert_eq!(replace(held("aa"), held("b"), held("aaa")), "ba");
+        let replaced = |target, replacement, text| {
+            replace(held(target), held(replacement), held(text), ROOMY).unwrap()
+        };
+        assert_eq!(replaced("", "-", "abc"), "abc");
+        assert_eq!(replaced("aa", "b", "aaa"), "ba");
     }
 
     #[test]
-    fn a_repeat_past_the_most_copies_is_none() {
-        assert_eq!(repeat(3, held("ab")).as_deref(), Some("ababab"));
-        assert_eq!(repeat(0, held("ab")).as_deref(), Some(""));
-        assert_eq!(repeat(-4, held("ab")).as_deref(), Some(""));
-        assert_eq!(repeat(MOST + 1, held("")).as_deref(), Some(""));
-        assert_eq!(repeat(MOST + 1, held("ab")), None);
+    fn a_repeat_past_what_is_held_is_none() {
+        let held_ = Capacity::of_units(10);
+        assert_eq!(repeat(3, held("ab"), held_).as_deref(), Some("ababab"));
+        assert_eq!(repeat(5, held("ab"), held_).as_deref(), Some("ababababab"));
+        assert_eq!(repeat(6, held("ab"), held_), None);
+        assert_eq!(repeat(0, held("ab"), held_).as_deref(), Some(""));
+        assert_eq!(repeat(-4, held("ab"), held_).as_deref(), Some(""));
+        assert_eq!(repeat(i64::MAX, held(""), held_).as_deref(), Some(""));
+        assert_eq!(repeat(i64::MAX, held("ab"), held_), None);
+        // What is held is counted in units: a code point outside the basic plane is two.
+        assert_eq!(
+            repeat(5, held("\u{10000}"), held_).map(|it| it.len()),
+            Some(20)
+        );
+        assert_eq!(repeat(6, held("\u{10000}"), held_), None);
     }
 
     #[test]
     fn a_pad_widens_to_the_width_exactly() {
-        assert_eq!(pad_left(5, held("0"), held("42")).as_deref(), Some("00042"));
-        assert_eq!(
-            pad_right(5, held("xy"), held("a")).as_deref(),
-            Some("axyxy")
-        );
-        assert_eq!(pad_left(4, held("xy"), held("a")).as_deref(), Some("xyxa"));
-        assert_eq!(pad_left(2, held("0"), held("123")).as_deref(), Some("123"));
-        assert_eq!(pad_left(9, held(""), held("a")).as_deref(), Some("a"));
-        assert_eq!(pad_left(MOST + 1, held("0"), held("a")), None);
+        let pad_left = |width, pad, text| pad_left(width, held(pad), held(text), ROOMY);
+        let pad_right = |width, pad, text| pad_right(width, held(pad), held(text), ROOMY);
+        assert_eq!(pad_left(5, "0", "42").as_deref(), Some("00042"));
+        assert_eq!(pad_right(5, "xy", "a").as_deref(), Some("axyxy"));
+        assert_eq!(pad_left(4, "xy", "a").as_deref(), Some("xyxa"));
+        assert_eq!(pad_left(2, "0", "123").as_deref(), Some("123"));
+        assert_eq!(pad_left(9, "", "a").as_deref(), Some("a"));
         // A pad that composes into what it meets is asked for once more.
         assert_eq!(
-            pad_right(2, held("\u{301}"), held("e")).as_deref(),
+            pad_right(2, "\u{301}", "e").as_deref(),
             Some("\u{e9}\u{301}")
         );
+    }
+
+    /// The fill and the text together are held to what the carrier holds, in units and not in the
+    /// code points the width counts: four code points outside the basic plane are eight units, and
+    /// the two units of fill that widen them to six code points come to ten.
+    #[test]
+    fn a_pad_is_measured_with_the_text_it_widens() {
+        let astral = held("\u{10000}\u{10000}\u{10000}\u{10000}");
+        for (capacity, holds) in [(10, true), (9, false), (8, false)] {
+            let capacity = Capacity::of_units(capacity);
+            assert_eq!(
+                pad_right(6, held("a"), astral, capacity).is_some(),
+                holds,
+                "{capacity:?}"
+            );
+            assert_eq!(
+                pad_left(6, held("a"), astral, capacity).is_some(),
+                holds,
+                "{capacity:?}"
+            );
+        }
+        // A width no capacity holds is refused before anything is worked out from it.
+        assert_eq!(pad_left(i64::MAX, held("a"), held("b"), ROOMY), None);
     }
 
     #[test]

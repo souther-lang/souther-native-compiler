@@ -22,6 +22,7 @@
 extern crate alloc;
 
 mod canonical;
+mod capacity;
 mod case;
 mod decimal;
 mod integer;
@@ -29,12 +30,13 @@ mod operations;
 pub mod pattern;
 mod tables;
 
+pub use capacity::Capacity;
 pub use case::{lowercase, uppercase};
 pub use decimal::{DecimalText, decimal_text};
 pub use integer::{integer, written};
 pub use operations::{
-    MOST, append, characters, code_points_of, contains, ends_with, is_whitespace, join, lines,
-    pad_left, pad_right, repeat, replace, reverse, slice, split, starts_with, trim, words,
+    append, characters, code_points_of, contains, ends_with, is_whitespace, join, lines, pad_left,
+    pad_right, repeat, replace, reverse, slice, split, starts_with, trim, words,
 };
 pub use tables::UNICODE_VERSION;
 
@@ -84,7 +86,7 @@ pub fn admitted(bytes: &[u8]) -> Option<Cow<'_, str>> {
     Some(if text.is_ascii() {
         Cow::Borrowed(text)
     } else {
-        Cow::Owned(canonical::nfc(text))
+        Cow::Owned(canonical::nfc_of_input(text))
     })
 }
 

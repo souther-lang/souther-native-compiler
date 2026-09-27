@@ -1773,8 +1773,9 @@ impl<'a> Walk<'_, 'a> {
                 self.ends_for(&format!("a quotient of {}", left.spelt()), aborts, owed)
             }
             // Both sides stand at what it answers, which its slots hold; that is all a join says
-            // of itself.
-            Op::Concat => Ok(()),
+            // of its types. What it says of how it ends is that the text or the list it makes can
+            // be longer than a string or a list holds.
+            Op::Concat => self.ends_for("a join", aborts, &[AbortKind::RequiredFormHasNoPlace]),
             Op::Add | Op::Sub | Op::Mul => {
                 match reading {
                     Reading::AsTheyStand => {
@@ -2182,7 +2183,11 @@ impl<'a> Walk<'_, 'a> {
                         ty.spelt()
                     );
                 }
-                self.ends_for(Emitted::GrowList.spelt(), aborts, &[])
+                self.ends_for(
+                    Emitted::GrowList.spelt(),
+                    aborts,
+                    &[AbortKind::RequiredFormHasNoPlace],
+                )
             }
             // No map is laid out here, so neither the walk that builds one nor its write is
             // lowered: refused as that, and not as the two halves disagreeing about something the
