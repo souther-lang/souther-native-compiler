@@ -423,10 +423,11 @@ pub(crate) fn parse_instant(text: &[u8]) -> Option<(i64, i64)> {
     if !from.finished() || clock.minute > 59 || clock.second > 59 {
         return None;
     }
-    // 24:00:00 is the start of the next day, so nothing about it may carry: a minute, a second or
-    // a fraction — even of nought — names a different moment than the day's exact end, the same
-    // lexical fact local_time refuses a Time and a DateTime by. Reading nano == 0 here would let
-    // "T24:00:00.000Z" through as that moment, once the point that named it is gone.
+    // 24:00:00 is admitted only where nothing follows it: no minute, no second, and no written
+    // fraction, even one of nought. A fraction of nought collapses to the same moment once read,
+    // which is exactly why its presence has to be decided from the text and not from clock.nano:
+    // asking the value here would let "T24:00:00.000Z" through unable to tell it from
+    // "T24:00:00Z", the same substitution local_time refuses a Time and a DateTime for.
     let end_of_day = clock.hour == 24;
     if clock.hour > 24
         || (end_of_day && (clock.minute != 0 || clock.second != 0 || clock.has_fraction))
@@ -1403,8 +1404,8 @@ mod tests {
             "2026-07-25T25:00:00Z",
             "2026-07-25T24:00:01Z",
             "2026-07-25T24:00:00.1Z",
-            // A fraction of nought still names a different moment than the day's exact end once
-            // the point that named it is gone: the same lexical fact as a Time's or a DateTime's.
+            // A fraction of nought collapses to the day's exact end once read, and its grammar is
+            // refused for that: the same lexical fact as a Time's or a DateTime's.
             "2026-07-25T24:00:00.000Z",
             "2026-07-25T00:00:00.Z",
             "2026-07-25T00:00:00.1234567890Z",

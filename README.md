@@ -179,15 +179,21 @@ module's object: the runtime defines their tokens, and every object naming one i
 A `Date`, a `Time`, a `DateTime` and an `Instant` are addresses in the same way, and what they point
 at is the runtime's alone. Each holds what its `java.time` counterpart holds and nothing past it: a
 `Date` the years -999999999 to 999999999, a `Time` and a `DateTime` whole seconds, an `Instant`
-nanoseconds from -1000000000-01-01T00:00:00Z to +1000000000-12-31T23:59:59.999999999Z. The calendar,
-and what a temporal is as text, are the runtime's (`runtime/src/temporal.rs`) and nothing else's. A
+nanoseconds from -1000000000-01-01T00:00:00Z to +1000000000-12-31T23:59:59.999999999Z. What a
+temporal means and which text names one are the Souther specification's; the calendar and that
+grammar are implemented here, in the runtime alone (`runtime/src/temporal.rs`), and nowhere else in
+this crate reads either from scratch. A
 literal is carried as the count the checker's own parse read it as — a `Date`'s day, a `Time`'s
 second of the day, a `DateTime`'s second, an `Instant`'s second and nanosecond — and not as the
-text it was written as: the checker admits the text against the Souther specification's own
-grammar for a temporal (souther-lang/souther#2007) before `java.time` ever sees it, so what a
-program may say is the language's and not whatever `java.time`'s parsers would additionally take
-(a lower case `t`, a point with nothing after it). The driver holds the count to what the type
-holds, and the runtime makes the value from it where it is reached. Every operation is a call into
+text it was written as: which text a literal may spell is the checker's, and not read again here
+by a grammar of this crate's own. Which text that is depends on the Souther this repository is
+built against: the specification states one grammar for a temporal wherever it arrives, source
+literal included (souther-lang/souther#2007), but the checker this repository currently pins
+predates that statement and still asks `java.time`'s own leniency (a lower case `t`, a fraction of
+nought) before checking the built value, so `Time("09:30:00.000")` still compiles even though the
+boundary below refuses the same text (souther-lang/souther-native-compiler#116). The driver holds
+the count to what the type holds, and the runtime makes the value from it where it is reached.
+Every operation is a call into
 the runtime, and equality and order are by the day, the second or the moment a value names, so two
 made apart are equal where they name one. A shift (`Date.addDays`, `addMonths` and `addYears`,
 `DateTime.addMinutes`, `addHours` and `addDays`) that leaves what a type holds ends the run, the
