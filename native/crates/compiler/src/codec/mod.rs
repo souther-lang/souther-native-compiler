@@ -25,7 +25,7 @@ pub(crate) mod read;
 pub(crate) mod write;
 
 use super::{Declared, Emitting, Lowered, POINTER, accepted};
-use crate::transport::{Case, CodecShape, Declaration, DeclaredBy, Prim};
+use crate::transport::{Case, CodecShape, Declaration, DeclaredBy, MapKey, Prim};
 use cranelift::codegen::ir::{self, AbiParam, types};
 use cranelift::codegen::isa::CallConv;
 use cranelift::module::{FuncId, Linkage, Module};
@@ -39,6 +39,11 @@ use souther_native_abi::{
     READ_INVARIANT, READ_IS, READ_MEMBER, READ_MISSING, READ_NOT_A_CASE, READ_NULL, READ_OBJECT,
     READ_STRING, READ_TAG, READ_TIME, reader_symbol,
 };
+use souther_native_abi::{
+    EXTERNAL_ENTRIES, EXTERNAL_ORDER, MAP_CONTAINS_KEY, MAP_EMPTY, MAP_INSERT, MAP_TO_LIST,
+    PATH_BELOW_MEMBER, READ_DUPLICATE_KEY, READ_MEMBER_KEY, READ_MEMBER_VALUE, READ_MEMBERS,
+    SET_FROM_LIST, SET_TO_LIST,
+};
 use std::collections::{BTreeMap, BTreeSet};
 use write::{Continuation, Driver, Element, Work};
 
@@ -46,7 +51,7 @@ use write::{Continuation, Driver, Element, Work};
 /// reference to it says.
 ///
 /// A scalar it holds is an `Int`, a `Bool` or a `String`; a declared type it holds is one of these
-/// again, and so is what a list it holds holds; a set of alternatives is made of cases that are
+/// again, and so is what a list or a set it holds holds, and a map's keys and values; a set of alternatives is made of cases that are
 /// each one of these, a primitive among those scalars, or a case the language gives, which is
 /// written as its name alone. What the language declares is none: no build defines its token, so
 /// no value of it is made here.
@@ -130,8 +135,16 @@ fn shape_reaches<'s>(shape: &'s CodecShape, reached: &mut Vec<Option<&'s str>>) 
         CodecShape::Named { named } => reached.push(named.declared()),
         CodecShape::OptionOf { present } => shape_reaches(present.shape(), reached),
         // An array of its elements, each written as one would be anywhere else.
-        CodecShape::ListOf { element } => shape_reaches(element, reached),
-        CodecShape::SetOf { .. } | CodecShape::MapOf { .. } => reached.push(None),
+        CodecShape::ListOf { element } | CodecShape::SetOf { element } => {
+            shape_reaches(element, reached)
+        }
+        // An object, each key written as the key's type is and each value as the value's.
+        CodecShape::MapOf { key, value } => {
+            if let MapKey::NamedKey { named } = key {
+                reached.push(named.declared());
+            }
+            shape_reaches(value, reached);
+        }
     }
 }
 
@@ -198,6 +211,19 @@ pub(crate) enum Runtime {
     ReadIs,
     ReadNotACase,
     ReadInvariant,
+    ReadMembers,
+    ReadMemberKey,
+    ReadMemberValue,
+    PathBelowMember,
+    ReadDuplicateKey,
+    SetFromList,
+    SetToList,
+    MapToList,
+    ExternalOrder,
+    ExternalEntries,
+    MapEmpty,
+    MapContainsKey,
+    MapInsert,
 }
 
 impl Runtime {
@@ -244,6 +270,19 @@ impl Runtime {
             Runtime::ReadIs => READ_IS,
             Runtime::ReadNotACase => READ_NOT_A_CASE,
             Runtime::ReadInvariant => READ_INVARIANT,
+            Runtime::ReadMembers => READ_MEMBERS,
+            Runtime::ReadMemberKey => READ_MEMBER_KEY,
+            Runtime::ReadMemberValue => READ_MEMBER_VALUE,
+            Runtime::PathBelowMember => PATH_BELOW_MEMBER,
+            Runtime::ReadDuplicateKey => READ_DUPLICATE_KEY,
+            Runtime::SetFromList => SET_FROM_LIST,
+            Runtime::SetToList => SET_TO_LIST,
+            Runtime::MapToList => MAP_TO_LIST,
+            Runtime::ExternalOrder => EXTERNAL_ORDER,
+            Runtime::ExternalEntries => EXTERNAL_ENTRIES,
+            Runtime::MapEmpty => MAP_EMPTY,
+            Runtime::MapContainsKey => MAP_CONTAINS_KEY,
+            Runtime::MapInsert => MAP_INSERT,
         }
     }
 }

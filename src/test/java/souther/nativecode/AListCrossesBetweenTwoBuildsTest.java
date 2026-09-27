@@ -13,7 +13,6 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * A list built in one object and read in another, which is where its layout stops being one
@@ -32,7 +31,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class AListCrossesBetweenTwoBuildsTest {
 
     private static final String BUILT_BEFORE = """
-            module lib.orders exposing ( OrderLine, Order, ordered, sizes )
+            module lib.orders exposing ( OrderLine, Order, ordered, sizes, bought )
 
             data OrderLine = { sku: String, quantity: Int }
                 invariant positive = quantity > 0
@@ -40,6 +39,11 @@ class AListCrossesBetweenTwoBuildsTest {
             data Order = { number: Int, lines: List<OrderLine> }
 
             let sizes: List<Int> = [10, 20, 30]
+
+            let bought: Set<OrderLine> = Set.fromList([
+                OrderLine { sku = "a", quantity = 2 },
+                OrderLine { sku = "b", quantity = 3 }
+            ])
 
             behavior ordered : (a: Int, b: Int) -> Order
             let ordered (a, b) = Order { number = 1, lines = [
@@ -49,8 +53,8 @@ class AListCrossesBetweenTwoBuildsTest {
             """;
 
     private static final String READING_IT = """
-            module app.reads exposing ( counted, second, same, sized, Basket )
-            import lib.orders ( OrderLine, Order, ordered, sizes )
+            module app.reads exposing ( counted, second, same, sized, holding, Basket )
+            import lib.orders ( OrderLine, Order, ordered, sizes, bought )
 
             data Basket = { lines: List<OrderLine> }
 
@@ -66,6 +70,11 @@ class AListCrossesBetweenTwoBuildsTest {
             let sized (a, b) = match List.get(a, sizes) with
                 | Some size -> size + b
                 | None -> -1
+
+            behavior holding : (a: Int, b: Int) -> Bool
+            let holding (a, b) = Set.contains(OrderLine { sku = "a", quantity = a }, bought)
+                && Set.fromList([OrderLine { sku = "b", quantity = b }, OrderLine { sku = "a", quantity = 2 }])
+                    == bought
 
             behavior same : (a: Int, b: Int) -> Bool
             let same (a, b) = ordered(a, b).lines
@@ -94,27 +103,18 @@ class AListCrossesBetweenTwoBuildsTest {
     }
 
     /**
-     * A list means what its elements mean, so a list of what has no representation two objects
-     * read alike is refused where it would cross, and as that.
+     * A set that is what crosses: built there, of that build's own type, and asked here whether it
+     * holds a value built here, and whether it is equal to one built here in another order. Each
+     * member was put in under the hash that object worked out, and is asked for under the hash this
+     * one works out, which the two compose alike (`souther_native_abi::HASHING`).
      */
     @Test
-    void aListOfWhatMeansSomethingElseElsewhereDoesNotCross() {
-        Map<String, ClassFileImage> published = Compiler.compile("""
-                module lib.steps exposing ( steps )
+    void aSetBuiltThereIsAskedHereByWhatItHolds() throws Exception {
+        Running running = running();
 
-                let steps: List<Set<Int>> = [Set.singleton(1)]
-                """);
-        CheckedProgram program = Checked.of(List.of("""
-                module app.steps exposing ( counted )
-                import lib.steps ( steps )
-
-                behavior counted : (a: Int) -> Int
-                let counted (a) = List.length(steps) + a
-                """), ModulePath.of(published));
-
-        assertThatThrownBy(() -> NativeCompiler.compile(program))
-                .isInstanceOf(NotLowered.class)
-                .hasMessageContaining("reached across objects");
+        assertThat(run(running, "holding", 2, 3)).isEqualTo(answered(new ObservedValue.Bool(true)));
+        assertThat(run(running, "holding", 4, 3)).isEqualTo(answered(new ObservedValue.Bool(false)));
+        assertThat(run(running, "holding", 2, 5)).isEqualTo(answered(new ObservedValue.Bool(false)));
     }
 
     @Test

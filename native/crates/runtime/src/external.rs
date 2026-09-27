@@ -7,6 +7,9 @@
 //! in `souther-native-abi`.
 
 use super::{Text, string_of, text};
+use crate::amount::Amount;
+use std::cmp::Ordering;
+use std::collections::HashMap;
 
 /// One node of the external form.
 #[derive(Debug, PartialEq)]
@@ -92,6 +95,214 @@ pub unsafe extern "C" fn souther_external_put(
         Form::Object(members) => members.push((key, item)),
         other => panic!("a member put into {other:?}, which is not an object"),
     }
+}
+
+/// Puts a set's members in the order a boundary writes them in ([`order`]).
+///
+/// What every comparison would otherwise work out again is worked out once for every member first
+/// ([`Prepared`]), and the members are ordered as a permutation of where they stand, so nothing the
+/// preparation points at moves while they are compared.
+///
+/// # Safety
+/// `array` is an array this runtime answered and the caller still owns.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_external_order(array: *mut Form) {
+    let Form::Array(items) = (unsafe { &mut *array }) else {
+        panic!("a form put in order, where a set's members are an array");
+    };
+    let mut at: Vec<usize> = (0..items.len()).collect();
+    {
+        let prepared = Prepared::of(items);
+        at.sort_by(|one, other| order(&items[*one], &items[*other], &prepared));
+    }
+    let mut taken: Vec<Option<Form>> = std::mem::take(items).into_iter().map(Some).collect();
+    *items = at
+        .into_iter()
+        .map(|it| taken[it].take().expect("each member is placed once"))
+        .collect();
+}
+
+/// Makes a map's entries, an array of pairs of a key and a value, the object a boundary writes,
+/// its members ascending by their keys as [`order`] orders two strings.
+///
+/// # Safety
+/// `array` is an array this runtime answered and the caller still owns, of arrays of two, the first
+/// of each a string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_external_entries(array: *mut Form) {
+    let entries = match unsafe { &mut *array } {
+        Form::Array(items) => std::mem::take(items),
+        other => panic!("{other:?} made an object of, where a map's entries are an array"),
+    };
+    let mut members: Vec<(Vec<u8>, Form)> = entries
+        .into_iter()
+        .map(|mut entry| match &mut entry {
+            Form::Array(pair) if pair.len() == 2 => {
+                let value = pair.pop().expect("a pair holds two");
+                match &mut pair.pop().expect("a pair holds two") {
+                    Form::String(key) => (std::mem::take(key), value),
+                    other => panic!("{other:?} as a map's key, which is written as text"),
+                }
+            }
+            other => panic!("{other:?} as a map's entry, which is a pair"),
+        })
+        .collect();
+    members.sort_by_cached_key(|(key, _)| units(key));
+    unsafe { *array = Form::Object(members) };
+}
+
+/// A text's UTF-16 code units, whose order is the order the language writes a boundary in (spec
+/// §collections) and not the order of its bytes: a unit from E000 up comes after a surrogate, where
+/// its UTF-8 comes before.
+fn units(bytes: &[u8]) -> Vec<u16> {
+    std::str::from_utf8(bytes)
+        .expect("a string form holds text")
+        .encode_utf16()
+        .collect()
+}
+
+/// What ordering a set's members asks of each part of them, worked out once: every text's UTF-16
+/// code units, every written amount read as one, and every object's members in ascending key order.
+/// By where each part stands, which does not move while the members are ordered.
+#[derive(Default)]
+struct Prepared {
+    units: HashMap<*const Vec<u8>, Vec<u16>>,
+    amounts: HashMap<*const Form, Amount>,
+    by_key: HashMap<*const Form, Vec<usize>>,
+}
+
+impl Prepared {
+    /// What ordering `members` asks, walked with a stack of its own.
+    fn of(members: &[Form]) -> Prepared {
+        let mut prepared = Prepared::default();
+        let mut left: Vec<&Form> = members.iter().collect();
+        while let Some(form) = left.pop() {
+            match form {
+                Form::String(text) => {
+                    placed(&mut prepared.units, text, units(text));
+                }
+                Form::Amount(written) => {
+                    let amount = Amount::of_json_number(written.as_bytes())
+                        .expect("an amount is written as a JSON number");
+                    placed(&mut prepared.amounts, form, amount);
+                }
+                Form::Array(items) => left.extend(items),
+                Form::Object(members) => {
+                    for (key, item) in members {
+                        placed(&mut prepared.units, key, units(key));
+                        left.push(item);
+                    }
+                    let mut sorted: Vec<usize> = (0..members.len()).collect();
+                    sorted.sort_by(|one, other| {
+                        prepared.units[&std::ptr::from_ref(&members[*one].0)]
+                            .cmp(&prepared.units[&std::ptr::from_ref(&members[*other].0)])
+                    });
+                    placed(&mut prepared.by_key, form, sorted);
+                }
+                Form::Null | Form::Bool(_) | Form::Number(_) => {}
+            }
+        }
+        prepared
+    }
+
+    fn units(&self, text: &Vec<u8>) -> &[u16] {
+        &self.units[&std::ptr::from_ref(text)]
+    }
+
+    fn amount(&self, form: &Form) -> Amount {
+        match form {
+            Form::Number(value) => Amount::of_int(*value),
+            Form::Amount(_) => self.amounts[&std::ptr::from_ref(form)].clone(),
+            other => unreachable!("{other:?} is no number"),
+        }
+    }
+}
+
+/// `value` put in `index` under `key`, which nothing put there before: each part of a form is
+/// walked once, so a part met twice is this walk gone wrong.
+fn placed<K: std::hash::Hash + Eq + std::fmt::Debug, V>(
+    index: &mut HashMap<K, V>,
+    key: K,
+    value: V,
+) {
+    match index.entry(key) {
+        std::collections::hash_map::Entry::Vacant(it) => {
+            it.insert(value);
+        }
+        std::collections::hash_map::Entry::Occupied(it) => {
+            panic!("{:?} was prepared already", it.key())
+        }
+    }
+}
+
+/// Two forms in the order a boundary writes a set's members in (spec §collections): `null`, then
+/// `false`, `true`, a number by its amount, a string by its UTF-16 code units, an array element by
+/// element with the shorter first where one runs out, and an object by its members read in
+/// ascending key order, each key before its value. What each part is compared by is read off
+/// `prepared`, which worked it out once.
+///
+/// Walked with a stack of its own, as a form is written, so how deep two members are is not a
+/// question about the native stack.
+fn order(one: &Form, other: &Form, prepared: &Prepared) -> Ordering {
+    /// What is left to compare, taken last first.
+    enum Left<'f> {
+        Forms(&'f Form, &'f Form),
+        Keys(&'f Vec<u8>, &'f Vec<u8>),
+        Counts(usize, usize),
+    }
+    fn rank(form: &Form) -> u8 {
+        match form {
+            Form::Null => 0,
+            Form::Bool(false) => 1,
+            Form::Bool(true) => 2,
+            Form::Number(_) | Form::Amount(_) => 3,
+            Form::String(_) => 4,
+            Form::Array(_) => 5,
+            Form::Object(_) => 6,
+        }
+    }
+    let mut left = vec![Left::Forms(one, other)];
+    while let Some(next) = left.pop() {
+        let ordered = match next {
+            Left::Counts(one, other) => one.cmp(&other),
+            Left::Keys(one, other) => prepared.units(one).cmp(prepared.units(other)),
+            Left::Forms(one, other) => match (one, other) {
+                _ if rank(one) != rank(other) => rank(one).cmp(&rank(other)),
+                (Form::Number(one), Form::Number(other)) => one.cmp(other),
+                (Form::String(one), Form::String(other)) => {
+                    prepared.units(one).cmp(prepared.units(other))
+                }
+                (Form::Array(one), Form::Array(other)) => {
+                    left.push(Left::Counts(one.len(), other.len()));
+                    for (one, other) in one.iter().zip(other).rev() {
+                        left.push(Left::Forms(one, other));
+                    }
+                    Ordering::Equal
+                }
+                (Form::Object(one_members), Form::Object(other_members)) => {
+                    left.push(Left::Counts(one_members.len(), other_members.len()));
+                    let one_order = &prepared.by_key[&std::ptr::from_ref(one)];
+                    let other_order = &prepared.by_key[&std::ptr::from_ref(other)];
+                    for (at, also) in one_order.iter().zip(other_order).rev() {
+                        let (one_key, one) = &one_members[*at];
+                        let (other_key, other) = &other_members[*also];
+                        left.push(Left::Forms(one, other));
+                        left.push(Left::Keys(one_key, other_key));
+                    }
+                    Ordering::Equal
+                }
+                (one, other) if rank(one) == 3 => {
+                    prepared.amount(one).compare(&prepared.amount(other))
+                }
+                // A kind with one value, or a truth, which its rank has told apart already.
+                _ => Ordering::Equal,
+            },
+        };
+        if ordered != Ordering::Equal {
+            return ordered;
+        }
+    }
+    Ordering::Equal
 }
 
 /// # Safety
@@ -202,6 +413,63 @@ mod tests {
 
     fn string(text: &str) -> *mut Text {
         unsafe { souther_string_of_utf8(text.as_ptr(), crate::Count(text.len() as i64)) }
+    }
+
+    /// A set's members in the order the language writes them: by kind, a number by its amount
+    /// whichever way it was written, text by UTF-16 code unit, and what holds others by what it
+    /// holds, an object read in the order of its keys.
+    #[test]
+    fn a_sets_members_are_written_in_the_order_of_what_they_are() {
+        let members = vec![
+            Form::Object(vec![
+                (b"b".to_vec(), Form::Number(1)),
+                (b"a".to_vec(), Form::Number(2)),
+            ]),
+            Form::Array(vec![Form::Number(1), Form::Number(2)]),
+            Form::Array(vec![Form::Number(1)]),
+            Form::String("\u{ff61}".as_bytes().to_vec()),
+            Form::String("\u{10000}".as_bytes().to_vec()),
+            Form::String(b"a".to_vec()),
+            Form::Amount("2.5".to_string()),
+            Form::Number(10),
+            Form::Number(-3),
+            Form::Bool(true),
+            Form::Bool(false),
+            Form::Null,
+            Form::Object(vec![
+                (b"a".to_vec(), Form::Number(1)),
+                (b"c".to_vec(), Form::Number(0)),
+            ]),
+        ];
+        let array = handed(Form::Array(members));
+        unsafe { souther_external_order(array) };
+        let mark = souther_mark();
+        assert_eq!(
+            json(array),
+            "[null,false,true,-3,2.5,10,\"a\",\"\u{10000}\",\"\u{ff61}\",[1],[1,2],\
+             {\"a\":1,\"c\":0},{\"b\":1,\"a\":2}]"
+        );
+        souther_reset(mark);
+    }
+
+    /// A map's entries, as the object written with its keys ascending.
+    #[test]
+    fn a_maps_entries_are_written_in_the_order_of_their_keys() {
+        let pair =
+            |key: &str, value| Form::Array(vec![Form::String(key.as_bytes().to_vec()), value]);
+        let array = handed(Form::Array(vec![
+            pair("b", Form::Number(2)),
+            pair("\u{ff61}", Form::Number(4)),
+            pair("\u{10000}", Form::Number(3)),
+            pair("a", Form::Number(1)),
+        ]));
+        unsafe { souther_external_entries(array) };
+        let mark = souther_mark();
+        assert_eq!(
+            json(array),
+            "{\"a\":1,\"b\":2,\"\u{10000}\":3,\"\u{ff61}\":4}"
+        );
+        souther_reset(mark);
     }
 
     fn json(form: *mut Form) -> String {

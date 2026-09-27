@@ -92,6 +92,14 @@ words! {
     *mut Form => Word::Form,
     *const Node => Word::Node,
     *const Path => Word::Path,
+    *const Set => Word::Set,
+    *mut Set => Word::Set,
+    *const Map => Word::Map,
+    *mut Map => Word::Map,
+    *const HeldAt => Word::Held,
+    Hash => Word::Hash,
+    Hasher => Word::Hasher,
+    Equality => Word::Equality,
 }
 
 rooms! {
@@ -104,6 +112,8 @@ rooms! {
     *mut *mut Time => Word::Host(HostWord::Time),
     *mut *mut DateTime => Word::Host(HostWord::DateTime),
     *mut *mut Instant => Word::Host(HostWord::Instant),
+    *mut *const Set => Word::Set,
+    *mut *const Map => Word::Map,
 }
 
 /// What a function takes and answers.
@@ -145,6 +155,7 @@ shaped!(A, B);
 shaped!(A, B, C);
 shaped!(A, B, C, D);
 shaped!(A, B, C, D, E);
+shaped!(A, B, C, D, E, F);
 
 fn shape_of<F: Shaped>(_: F) -> Shape {
     F::shape()
@@ -1041,6 +1052,229 @@ fn functions() -> Vec<(&'static str, Shape)> {
             "souther_issue_meta_value",
             shape_of(souther_issue_meta_value as unsafe extern "C" fn(*const Issue, Count) -> T),
         ),
+        (
+            "souther_external_order",
+            shape_of(souther_external_order as unsafe extern "C" fn(*mut Form)),
+        ),
+        (
+            "souther_external_entries",
+            shape_of(souther_external_entries as unsafe extern "C" fn(*mut Form)),
+        ),
+        (
+            "souther_read_members",
+            shape_of(souther_read_members as unsafe extern "C" fn(*const Node) -> Count),
+        ),
+        (
+            "souther_read_member_key",
+            shape_of(
+                souther_read_member_key as unsafe extern "C" fn(*const Node, Count) -> *const Node,
+            ),
+        ),
+        (
+            "souther_read_member_value",
+            shape_of(
+                souther_read_member_value
+                    as unsafe extern "C" fn(*const Node, Count) -> *const Node,
+            ),
+        ),
+        (
+            "souther_path_below_member",
+            shape_of(
+                souther_path_below_member
+                    as unsafe extern "C" fn(*const Path, *const Node, Count) -> *const Path,
+            ),
+        ),
+        (
+            "souther_read_duplicate_key",
+            shape_of(souther_read_duplicate_key as unsafe extern "C" fn(*const Path, D)),
+        ),
+        (
+            "souther_set_empty",
+            shape_of(souther_set_empty as extern "C" fn() -> *mut Set),
+        ),
+        (
+            "souther_set_insert",
+            shape_of(
+                souther_set_insert
+                    as unsafe extern "C" fn(
+                        *const Set,
+                        i64,
+                        Hasher,
+                        Equality,
+                        *mut *const Set,
+                    ) -> i8,
+            ),
+        ),
+        (
+            "souther_set_remove",
+            shape_of(
+                souther_set_remove
+                    as unsafe extern "C" fn(*const Set, i64, Hasher, Equality) -> *const Set,
+            ),
+        ),
+        (
+            "souther_set_contains",
+            shape_of(
+                souther_set_contains
+                    as unsafe extern "C" fn(*const Set, i64, Hasher, Equality) -> i8,
+            ),
+        ),
+        (
+            "souther_set_union",
+            shape_of(
+                souther_set_union
+                    as unsafe extern "C" fn(
+                        *const Set,
+                        *const Set,
+                        Equality,
+                        *mut *const Set,
+                    ) -> i8,
+            ),
+        ),
+        (
+            "souther_set_intersection",
+            shape_of(
+                souther_set_intersection
+                    as unsafe extern "C" fn(*const Set, *const Set, Equality) -> *const Set,
+            ),
+        ),
+        (
+            "souther_set_difference",
+            shape_of(
+                souther_set_difference
+                    as unsafe extern "C" fn(*const Set, *const Set, Equality) -> *const Set,
+            ),
+        ),
+        (
+            "souther_set_size",
+            shape_of(souther_set_size as unsafe extern "C" fn(*const Set) -> i64),
+        ),
+        (
+            "souther_set_to_list",
+            shape_of(souther_set_to_list as unsafe extern "C" fn(*const Set) -> *mut List),
+        ),
+        (
+            "souther_set_from_list",
+            shape_of(
+                souther_set_from_list
+                    as unsafe extern "C" fn(*const List, Hasher, Equality) -> *const Set,
+            ),
+        ),
+        (
+            "souther_set_equal",
+            shape_of(
+                souther_set_equal as unsafe extern "C" fn(*const Set, *const Set, Equality) -> i8,
+            ),
+        ),
+        (
+            "souther_set_hash",
+            shape_of(souther_set_hash as unsafe extern "C" fn(*const Set) -> Hash),
+        ),
+        (
+            "souther_map_empty",
+            shape_of(souther_map_empty as extern "C" fn() -> *mut Map),
+        ),
+        (
+            "souther_map_get",
+            shape_of(
+                souther_map_get
+                    as unsafe extern "C" fn(*const Map, i64, Hasher, Equality) -> *const HeldAt,
+            ),
+        ),
+        (
+            "souther_map_contains_key",
+            shape_of(
+                souther_map_contains_key
+                    as unsafe extern "C" fn(*const Map, i64, Hasher, Equality) -> i8,
+            ),
+        ),
+        (
+            "souther_map_keys",
+            shape_of(souther_map_keys as unsafe extern "C" fn(*const Map) -> *mut List),
+        ),
+        (
+            "souther_map_values",
+            shape_of(souther_map_values as unsafe extern "C" fn(*const Map) -> *mut List),
+        ),
+        (
+            "souther_map_insert",
+            shape_of(
+                souther_map_insert
+                    as unsafe extern "C" fn(
+                        *const Map,
+                        i64,
+                        i64,
+                        Hasher,
+                        Equality,
+                        *mut *const Map,
+                    ) -> i8,
+            ),
+        ),
+        (
+            "souther_map_remove",
+            shape_of(
+                souther_map_remove
+                    as unsafe extern "C" fn(*const Map, i64, Hasher, Equality) -> *const Map,
+            ),
+        ),
+        (
+            "souther_map_size",
+            shape_of(souther_map_size as unsafe extern "C" fn(*const Map) -> i64),
+        ),
+        (
+            "souther_map_to_list",
+            shape_of(souther_map_to_list as unsafe extern "C" fn(*const Map) -> *mut List),
+        ),
+        (
+            "souther_map_from_list",
+            shape_of(
+                souther_map_from_list
+                    as unsafe extern "C" fn(*const List, Hasher, Equality) -> *mut Map,
+            ),
+        ),
+        (
+            "souther_map_equal",
+            shape_of(
+                souther_map_equal
+                    as unsafe extern "C" fn(*const Map, *const Map, Equality, Equality) -> i8,
+            ),
+        ),
+        (
+            "souther_map_hash",
+            shape_of(souther_map_hash as unsafe extern "C" fn(*const Map, Hasher) -> Hash),
+        ),
+        (
+            "souther_hash_combine",
+            shape_of(souther_hash_combine as extern "C" fn(Hash, i64) -> Hash),
+        ),
+        (
+            "souther_string_hash",
+            shape_of(souther_string_hash as unsafe extern "C" fn(T) -> Hash),
+        ),
+        (
+            "souther_decimal_hash",
+            shape_of(souther_decimal_hash as unsafe extern "C" fn(*const Decimal) -> Hash),
+        ),
+        (
+            "souther_rational_hash",
+            shape_of(souther_rational_hash as unsafe extern "C" fn(*const Rational) -> Hash),
+        ),
+        (
+            "souther_date_hash",
+            shape_of(souther_date_hash as unsafe extern "C" fn(*const Date) -> Hash),
+        ),
+        (
+            "souther_time_hash",
+            shape_of(souther_time_hash as unsafe extern "C" fn(*const Time) -> Hash),
+        ),
+        (
+            "souther_datetime_hash",
+            shape_of(souther_datetime_hash as unsafe extern "C" fn(*const DateTime) -> Hash),
+        ),
+        (
+            "souther_instant_hash",
+            shape_of(souther_instant_hash as unsafe extern "C" fn(*const Instant) -> Hash),
+        ),
     ]
 }
 
@@ -1096,18 +1330,35 @@ fn every_function_is_what_the_table_naming_it_says() {
 #[test]
 fn every_function_the_runtime_defines_is_in_one_table() {
     let sources = [
-        include_str!("lib.rs"),
-        include_str!("decoding.rs"),
-        include_str!("external.rs"),
-        include_str!("document.rs"),
-        include_str!("kernels.rs"),
-        include_str!("decimal.rs"),
-        include_str!("rational.rs"),
-        include_str!("temporal.rs"),
+        ("lib", include_str!("lib.rs")),
+        ("amount", include_str!("amount.rs")),
+        ("collection", include_str!("collection.rs")),
+        ("contract", include_str!("contract.rs")),
+        ("decimal", include_str!("decimal.rs")),
+        ("decoding", include_str!("decoding.rs")),
+        ("document", include_str!("document.rs")),
+        ("enclosure", include_str!("enclosure.rs")),
+        ("external", include_str!("external.rs")),
+        ("kernels", include_str!("kernels.rs")),
+        ("magnitude", include_str!("magnitude.rs")),
+        ("rational", include_str!("rational.rs")),
+        ("temporal", include_str!("temporal.rs")),
     ];
+    // Every module the crate declares is read, so a function defined in a file added later is not
+    // one this test never saw.
+    let declared: BTreeSet<&str> = include_str!("lib.rs")
+        .lines()
+        .filter_map(|line| line.strip_prefix("mod ")?.strip_suffix(';'))
+        .chain(["lib"])
+        .collect();
+    let read: BTreeSet<&str> = sources.iter().map(|(name, _)| *name).collect();
+    assert_eq!(
+        read, declared,
+        "every module of the crate is read for what it defines"
+    );
     let marker = "extern \"C\" fn ";
     let mut defined = BTreeSet::new();
-    for source in sources {
+    for (_, source) in sources {
         for (at, _) in source.match_indices(marker) {
             let rest = &source[at + marker.len()..];
             let name: String = rest

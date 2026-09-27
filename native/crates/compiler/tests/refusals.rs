@@ -72,17 +72,21 @@ fn an_operator_over_what_has_no_lowering_is_not_lowered_rather_than_unreadable()
     );
 }
 
-/// The same for a type. One with no machine representation yet is a lowering this driver has not
-/// got, not a document it failed to understand.
+/// The same for a type. One with no machine representation is a lowering this driver has not got,
+/// not a document it failed to understand: the type of what has no value, of which nothing is made
+/// to be laid out. A set has one, and two are compared by their members.
 #[test]
 fn a_type_with_no_representation_is_not_lowered() {
-    let set = r#"{"set":{"prim":"INT"}}"#;
-    let refused = object_for(&over("EQ", set, set)).expect_err("no representation for it");
+    let nothing = r#"{"nothing":{}}"#;
+    let refused = object_for(&over("EQ", nothing, nothing)).expect_err("no representation for it");
 
     assert!(
         refused.downcast_ref::<NotLowered>().is_some(),
         "read as something other than a lowering this driver has not got: {refused}"
     );
+
+    let set = r#"{"set":{"prim":"INT"}}"#;
+    object_for(&over("EQ", set, set)).expect("two sets are compared by their members");
 }
 
 /// A `Rational` is lowered, as a quotient and as what the arithmetic over it answers.
@@ -353,11 +357,11 @@ fn a_transport_of_an_earlier_shape_is_refused_by_its_version() {
     );
 }
 
-/// What a behavior answers crosses whole, and a collection is one of the things it can answer.
-/// Reading it is not laying it out: a `Set` has no representation here yet, which is this backend
-/// being behind and not the document being unreadable.
+/// What a behavior answers crosses whole, and a collection is one of the things it can answer. A
+/// host a behavior is injected by hands its answer over as the list of the set's members, which the
+/// object makes a set of (`host_form`), so the behavior is lowered.
 #[test]
-fn an_answer_that_is_a_set_is_read_and_not_lowered() {
+fn an_answer_that_is_a_set_crosses_as_its_members() {
     let document = concat!(
         r#"{"transport":27,"declarations":[],"#,
         r#""behaviors":[{"module":"m","name":"many","is":"injected","parameters":{"named":[]},"#,
@@ -365,13 +369,7 @@ fn an_answer_that_is_a_set_is_read_and_not_lowered() {
         r#""modules":[{"name":"m","publishes":[],"helpers":[],"values":[],"entries":[],"definitions":[],"examples":[]}]}"#,
     );
 
-    let refused = object_for(document).expect_err("no layout for a set");
-
-    assert!(
-        refused.downcast_ref::<NotLowered>().is_some(),
-        "a set read whole and not laid out is the backend being behind: {refused}"
-    );
-    assert!(refused.to_string().contains("Set"), "{refused}");
+    object_for(document).expect("a set crosses as the list of its members");
 }
 
 /// A primitive standing as a member of an answer is a case the transport carries, and a value of

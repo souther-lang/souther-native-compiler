@@ -23,7 +23,8 @@ class WhatARecordHoldsIsItsOwnTest {
     /** A module with something in every collection a record of a manifest or a shape holds. */
     private static final String EVERYTHING = """
             module shop exposing ( Money, Item, Cart, Free, Paid, Settled, Found, Missing,
-                                   find, settle, owing, stillOwing : Int, quote, boxed, pair, Partial )
+                                   find, settle, owing, stillOwing : Int, quote, boxed, pair, Partial,
+                                   counter )
 
             data Money = Int
 
@@ -61,6 +62,8 @@ class WhatARecordHoldsIsItsOwnTest {
             let pair: (Int, Bool) = (3, true)
 
             data Partial = { count: Int, opened: Set<Int> }
+
+            let counter: (Set<Int>) -> Int = s -> Set.size(s)
             """;
 
     @Test

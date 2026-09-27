@@ -175,8 +175,7 @@ fn every_case_the_language_gives_is_read_as_the_case_it_names() {
     );
 }
 
-/// Every operation the checker's compiler emits for a backend to lower whole, including the two
-/// this driver refuses as not lowered. Read by the member and not by what it renders as: a walk
+/// Every operation the checker's compiler emits for a backend to lower whole. Read by the member and not by what it renders as: a walk
 /// read as the growth inside it would be lowered as the other.
 #[test]
 fn every_emitted_operation_is_read_as_the_operation_it_names() {

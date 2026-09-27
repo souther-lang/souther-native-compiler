@@ -21,7 +21,9 @@
 //! arguments stand in: what it takes, and which fact it carries, are its own kernel's, and the
 //! two halves disagreeing about them is refused as this backend not lowering the kernel.
 
-use crate::transport::{AbortKind, Case, Cases, FnSignature, KernelFact, LanguageCase, Prim, Ty};
+use crate::transport::{
+    AbortKind, Case, Cases, FnSignature, KernelFact, LanguageCase, MapTy, Prim, Ty,
+};
 
 /// What this backend knows of a kernel it lowers.
 pub(crate) struct Contract {
@@ -40,10 +42,9 @@ pub(crate) struct Contract {
 /// A type a kernel is known to take or answer, where some part of it may be any type.
 ///
 /// As much of a type as a kernel's contract has needed, and no more: a primitive, a declared type
-/// by its key, a list, an optional, a function and a fixed union of cases, and a variable standing
-/// for whatever one call settles it as. It is not the language's type and does not check one; it is matched against the
-/// types the checker settled, which are concrete. A kernel answering a tuple adds its shape here
-/// when it is lowered.
+/// by its key, a list, an optional, a set, a map, a tuple, a function and a fixed union of cases,
+/// and a variable standing for whatever one call settles it as. It is not the language's type and
+/// does not check one; it is matched against the types the checker settled, which are concrete.
 ///
 /// A function is matched as the checker settled it and not as one that could stand where it is
 /// asked for: what an application takes is what each argument stands at exactly, so the parameter
@@ -58,6 +59,13 @@ pub(crate) enum Shape {
     Var(usize),
     List(Box<Shape>),
     Option(Box<Shape>),
+    Set(Box<Shape>),
+    Map {
+        key: Box<Shape>,
+        value: Box<Shape>,
+    },
+    /// A tuple of these, in order: an entry of a map as a list holds it.
+    Tuple(Vec<Shape>),
     /// A function taking these, in order, and answering that.
     Fn {
         takes: Vec<Shape>,
@@ -98,6 +106,17 @@ impl Shape {
             }
             (Shape::List(element), Ty::List { list }) => element.binds(list, bound),
             (Shape::Option(held), Ty::Option { option }) => held.binds(option, bound),
+            (Shape::Set(element), Ty::Set { set }) => element.binds(set, bound),
+            (Shape::Map { key, value }, Ty::Map { map }) => {
+                key.binds(&map.key, bound) && value.binds(&map.value, bound)
+            }
+            (Shape::Tuple(members), Ty::Tuple { tuple }) => {
+                members.len() == tuple.len()
+                    && members
+                        .iter()
+                        .zip(tuple)
+                        .all(|(shape, member)| shape.binds(member, bound))
+            }
             (Shape::Fn { takes, answers }, Ty::Fn { fn_ }) => {
                 takes.len() == fn_.takes.len()
                     && takes
@@ -112,6 +131,9 @@ impl Shape {
                 | Shape::Declared(_)
                 | Shape::List(_)
                 | Shape::Option(_)
+                | Shape::Set(_)
+                | Shape::Map { .. }
+                | Shape::Tuple(_)
                 | Shape::Fn { .. }
                 | Shape::Cases(_),
                 _,
@@ -130,6 +152,21 @@ impl Shape {
             },
             Shape::Option(held) => Ty::Option {
                 option: Box::new(held.settled(bound)?),
+            },
+            Shape::Set(element) => Ty::Set {
+                set: Box::new(element.settled(bound)?),
+            },
+            Shape::Map { key, value } => Ty::Map {
+                map: MapTy {
+                    key: Box::new(key.settled(bound)?),
+                    value: Box::new(value.settled(bound)?),
+                },
+            },
+            Shape::Tuple(members) => Ty::Tuple {
+                tuple: members
+                    .iter()
+                    .map(|member| member.settled(bound))
+                    .collect::<Option<_>>()?,
             },
             Shape::Fn { takes, answers } => Ty::Fn {
                 fn_: FnSignature {
@@ -155,6 +192,18 @@ impl Shape {
             Shape::Var(at) => format!("'{}", (b'a' + *at as u8) as char),
             Shape::List(element) => format!("a List of {}", element.spelt()),
             Shape::Option(held) => format!("an optional {}", held.spelt()),
+            Shape::Set(element) => format!("a Set of {}", element.spelt()),
+            Shape::Map { key, value } => {
+                format!("a Map from {} to {}", key.spelt(), value.spelt())
+            }
+            Shape::Tuple(members) => format!(
+                "a tuple of ({})",
+                members
+                    .iter()
+                    .map(Shape::spelt)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
             Shape::Fn { takes, answers } => format!(
                 "a function from ({}) to {}",
                 takes
@@ -429,6 +478,56 @@ pub(crate) enum LoweredKernel {
     DateTimeToTime,
     /// `datetime.fromDateAndTime`: a `Date` and a `Time`, and the `DateTime` they make, which cannot fail.
     DateTimeFromDateAndTime,
+    /// `set.empty`: the set with no members, whose element is what the call is settled as.
+    SetEmpty,
+    /// `set.singleton`: a value, and the set holding it alone.
+    SetSingleton,
+    /// `set.insert`: a value and a set, and the set holding it too. One more member than a set holds
+    /// ends the run.
+    SetInsert,
+    /// `set.remove`: a value and a set, and the set without it.
+    SetRemove,
+    /// `set.contains`: a value and a set, and whether the set holds one equal to it.
+    SetContains,
+    /// `set.union`: two sets, and every member of either. More members than a set holds ends the run.
+    SetUnion,
+    /// `set.intersection`: two sets, and the first's members the second holds too.
+    SetIntersection,
+    /// `set.difference`: two sets, and the first's members the second does not hold.
+    SetDifference,
+    /// `set.isEmpty`: a set, and whether it holds no member.
+    SetIsEmpty,
+    /// `set.size`: a set, and how many members it holds.
+    SetSize,
+    /// `set.toList`: a set, and its members as a list, in an order the language does not say.
+    SetToList,
+    /// `set.fromList`: a list, and the set of its elements.
+    SetFromList,
+    /// `map.empty`: the map with no keys, whose keys and values are what the call is settled as.
+    MapEmpty,
+    /// `map.get`: a key and a map, and the value under a key equal to it, where there is one.
+    MapGet,
+    /// `map.containsKey`: a key and a map, and whether the map holds one equal to it.
+    MapContainsKey,
+    /// `map.keys`: a map, and its keys as a list, in an order the language does not say.
+    MapKeys,
+    /// `map.values`: a map, and its values as a list, in the order `map.keys` lists their keys.
+    MapValues,
+    /// `map.singleton`: a key and a value, and the map holding the one under the other.
+    MapSingleton,
+    /// `map.insert`: a key, a value and a map, and the map holding the value under the key. One more
+    /// key than a map holds ends the run.
+    MapInsert,
+    /// `map.remove`: a key and a map, and the map without it.
+    MapRemove,
+    /// `map.isEmpty`: a map, and whether it holds no key.
+    MapIsEmpty,
+    /// `map.size`: a map, and how many keys it holds.
+    MapSize,
+    /// `map.toList`: a map, and its entries as a list of pairs.
+    MapToList,
+    /// `map.fromList`: a list of pairs, and the map of them, a later pair winning a key.
+    MapFromList,
 }
 
 impl LoweredKernel {
@@ -518,6 +617,30 @@ impl LoweredKernel {
             "datetime.toDate" => LoweredKernel::DateTimeToDate,
             "datetime.toTime" => LoweredKernel::DateTimeToTime,
             "datetime.fromDateAndTime" => LoweredKernel::DateTimeFromDateAndTime,
+            "set.empty" => LoweredKernel::SetEmpty,
+            "set.singleton" => LoweredKernel::SetSingleton,
+            "set.insert" => LoweredKernel::SetInsert,
+            "set.remove" => LoweredKernel::SetRemove,
+            "set.contains" => LoweredKernel::SetContains,
+            "set.union" => LoweredKernel::SetUnion,
+            "set.intersection" => LoweredKernel::SetIntersection,
+            "set.difference" => LoweredKernel::SetDifference,
+            "set.isEmpty" => LoweredKernel::SetIsEmpty,
+            "set.size" => LoweredKernel::SetSize,
+            "set.toList" => LoweredKernel::SetToList,
+            "set.fromList" => LoweredKernel::SetFromList,
+            "map.empty" => LoweredKernel::MapEmpty,
+            "map.get" => LoweredKernel::MapGet,
+            "map.containsKey" => LoweredKernel::MapContainsKey,
+            "map.keys" => LoweredKernel::MapKeys,
+            "map.values" => LoweredKernel::MapValues,
+            "map.singleton" => LoweredKernel::MapSingleton,
+            "map.insert" => LoweredKernel::MapInsert,
+            "map.remove" => LoweredKernel::MapRemove,
+            "map.isEmpty" => LoweredKernel::MapIsEmpty,
+            "map.size" => LoweredKernel::MapSize,
+            "map.toList" => LoweredKernel::MapToList,
+            "map.fromList" => LoweredKernel::MapFromList,
             _ => return None,
         })
     }
@@ -538,6 +661,12 @@ impl LoweredKernel {
         let b = || Shape::Var(1);
         let list = |element: Shape| Shape::List(Box::new(element));
         let optional = |held: Shape| Shape::Option(Box::new(held));
+        let set = |element: Shape| Shape::Set(Box::new(element));
+        let map = |key: Shape, value: Shape| Shape::Map {
+            key: Box::new(key),
+            value: Box::new(value),
+        };
+        let pair = || Shape::Tuple(vec![a(), b()]);
         let function = |taken: Shape, answers: Shape| Shape::Fn {
             takes: vec![taken],
             answers: Box::new(answers),
@@ -836,6 +965,46 @@ impl LoweredKernel {
             LoweredKernel::DateTimeFromDateAndTime => {
                 known(vec![date(), time()], datetime(), Vec::new())
             }
+            // What neither takes anything to bind is bound by what the call is settled as.
+            LoweredKernel::SetEmpty => known(Vec::new(), set(a()), Vec::new()),
+            LoweredKernel::SetSingleton => known(vec![a()], set(a()), Vec::new()),
+            // One more member than a set holds has no place (upstream `KernelContracts`), and a
+            // set built from one member, or from a list, never is.
+            LoweredKernel::SetInsert => known(
+                vec![a(), set(a())],
+                set(a()),
+                vec![AbortKind::RequiredFormHasNoPlace],
+            ),
+            LoweredKernel::SetRemove => known(vec![a(), set(a())], set(a()), Vec::new()),
+            LoweredKernel::SetContains => known(vec![a(), set(a())], bool(), Vec::new()),
+            LoweredKernel::SetUnion => known(
+                vec![set(a()), set(a())],
+                set(a()),
+                vec![AbortKind::RequiredFormHasNoPlace],
+            ),
+            LoweredKernel::SetIntersection | LoweredKernel::SetDifference => {
+                known(vec![set(a()), set(a())], set(a()), Vec::new())
+            }
+            LoweredKernel::SetIsEmpty => known(vec![set(a())], bool(), Vec::new()),
+            LoweredKernel::SetSize => known(vec![set(a())], int(), Vec::new()),
+            LoweredKernel::SetToList => known(vec![set(a())], list(a()), Vec::new()),
+            LoweredKernel::SetFromList => known(vec![list(a())], set(a()), Vec::new()),
+            LoweredKernel::MapEmpty => known(Vec::new(), map(a(), b()), Vec::new()),
+            LoweredKernel::MapGet => known(vec![a(), map(a(), b())], optional(b()), Vec::new()),
+            LoweredKernel::MapContainsKey => known(vec![a(), map(a(), b())], bool(), Vec::new()),
+            LoweredKernel::MapKeys => known(vec![map(a(), b())], list(a()), Vec::new()),
+            LoweredKernel::MapValues => known(vec![map(a(), b())], list(b()), Vec::new()),
+            LoweredKernel::MapSingleton => known(vec![a(), b()], map(a(), b()), Vec::new()),
+            LoweredKernel::MapInsert => known(
+                vec![a(), b(), map(a(), b())],
+                map(a(), b()),
+                vec![AbortKind::RequiredFormHasNoPlace],
+            ),
+            LoweredKernel::MapRemove => known(vec![a(), map(a(), b())], map(a(), b()), Vec::new()),
+            LoweredKernel::MapIsEmpty => known(vec![map(a(), b())], bool(), Vec::new()),
+            LoweredKernel::MapSize => known(vec![map(a(), b())], int(), Vec::new()),
+            LoweredKernel::MapToList => known(vec![map(a(), b())], list(pair()), Vec::new()),
+            LoweredKernel::MapFromList => known(vec![list(pair())], map(a(), b()), Vec::new()),
         }
     }
 }
@@ -947,7 +1116,7 @@ mod tests {
         }
     }
 
-    const LOWERED: [(&str, LoweredKernel); 83] = [
+    const LOWERED: [(&str, LoweredKernel); 107] = [
         ("int.add", LoweredKernel::IntAdd),
         ("int.subtract", LoweredKernel::IntSubtract),
         ("int.multiply", LoweredKernel::IntMultiply),
@@ -1046,6 +1215,30 @@ mod tests {
             "datetime.fromDateAndTime",
             LoweredKernel::DateTimeFromDateAndTime,
         ),
+        ("set.empty", LoweredKernel::SetEmpty),
+        ("set.singleton", LoweredKernel::SetSingleton),
+        ("set.insert", LoweredKernel::SetInsert),
+        ("set.remove", LoweredKernel::SetRemove),
+        ("set.contains", LoweredKernel::SetContains),
+        ("set.union", LoweredKernel::SetUnion),
+        ("set.intersection", LoweredKernel::SetIntersection),
+        ("set.difference", LoweredKernel::SetDifference),
+        ("set.isEmpty", LoweredKernel::SetIsEmpty),
+        ("set.size", LoweredKernel::SetSize),
+        ("set.toList", LoweredKernel::SetToList),
+        ("set.fromList", LoweredKernel::SetFromList),
+        ("map.empty", LoweredKernel::MapEmpty),
+        ("map.get", LoweredKernel::MapGet),
+        ("map.containsKey", LoweredKernel::MapContainsKey),
+        ("map.keys", LoweredKernel::MapKeys),
+        ("map.values", LoweredKernel::MapValues),
+        ("map.singleton", LoweredKernel::MapSingleton),
+        ("map.insert", LoweredKernel::MapInsert),
+        ("map.remove", LoweredKernel::MapRemove),
+        ("map.isEmpty", LoweredKernel::MapIsEmpty),
+        ("map.size", LoweredKernel::MapSize),
+        ("map.toList", LoweredKernel::MapToList),
+        ("map.fromList", LoweredKernel::MapFromList),
     ];
 
     /// `String.matches` settles what its pattern means, and the kernels that order settle what
@@ -1280,6 +1473,48 @@ mod tests {
             LoweredKernel::DateTimeMinutesBetween => vec![datetime.clone(), datetime],
             LoweredKernel::DateTimeToDate | LoweredKernel::DateTimeToTime => vec![datetime],
             LoweredKernel::DateTimeFromDateAndTime => vec![date, time],
+            LoweredKernel::SetEmpty | LoweredKernel::MapEmpty => Vec::new(),
+            LoweredKernel::SetSingleton => vec![int],
+            LoweredKernel::SetInsert | LoweredKernel::SetRemove | LoweredKernel::SetContains => {
+                vec![int.clone(), ints_set(int)]
+            }
+            LoweredKernel::SetUnion
+            | LoweredKernel::SetIntersection
+            | LoweredKernel::SetDifference => vec![ints_set(int.clone()), ints_set(int)],
+            LoweredKernel::SetIsEmpty | LoweredKernel::SetSize | LoweredKernel::SetToList => {
+                vec![ints_set(int)]
+            }
+            LoweredKernel::SetFromList => vec![Ty::List {
+                list: Box::new(int),
+            }],
+            LoweredKernel::MapGet | LoweredKernel::MapContainsKey | LoweredKernel::MapRemove => {
+                vec![string.clone(), counts(string, int)]
+            }
+            LoweredKernel::MapKeys
+            | LoweredKernel::MapValues
+            | LoweredKernel::MapIsEmpty
+            | LoweredKernel::MapSize
+            | LoweredKernel::MapToList => vec![counts(string, int)],
+            LoweredKernel::MapSingleton => vec![string, int],
+            LoweredKernel::MapInsert => vec![string.clone(), int.clone(), counts(string, int)],
+            LoweredKernel::MapFromList => vec![Ty::List {
+                list: Box::new(Ty::Tuple {
+                    tuple: vec![string, int],
+                }),
+            }],
+        }
+    }
+
+    fn ints_set(int: Ty) -> Ty {
+        Ty::Set { set: Box::new(int) }
+    }
+
+    fn counts(key: Ty, value: Ty) -> Ty {
+        Ty::Map {
+            map: MapTy {
+                key: Box::new(key),
+                value: Box::new(value),
+            },
         }
     }
 
@@ -1308,7 +1543,9 @@ mod tests {
     }
 
     /// What a kernel answers is settled by what it takes: a variable in its answer that nothing it
-    /// takes binds would leave the answer unknown however a call is settled.
+    /// takes binds would leave the answer unknown however a call is settled. A kernel that takes
+    /// nothing is the one exception, an empty collection, and what the call is typed binds the whole
+    /// of what it answers (`Coherent`).
     #[test]
     fn what_a_kernel_takes_settles_what_it_answers() {
         for (key, kernel) in LOWERED {
@@ -1316,6 +1553,13 @@ mod tests {
             let mut bound = Bound::default();
             for (shape, ty) in contract.takes.iter().zip(some_shape_of(kernel)) {
                 assert!(shape.binds(&ty, &mut bound), "{key}");
+            }
+            if contract.takes.is_empty() {
+                assert!(
+                    matches!(kernel, LoweredKernel::SetEmpty | LoweredKernel::MapEmpty),
+                    "{key}"
+                );
+                continue;
             }
             assert!(contract.answers.settled(&bound).is_some(), "{key}");
             // So is the type a fact of it has to hold, where the kind carries one.

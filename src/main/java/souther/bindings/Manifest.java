@@ -250,8 +250,8 @@ public final class Manifest {
                     }
                 }
                 case Shape.ListOf list -> {
-                    if (type instanceof Type.ListOf it) {
-                        new Crossed(it.of(), list.element()).carried(carried);
+                    if (Type.listed(type) instanceof Type element) {
+                        new Crossed(element, list.element()).carried(carried);
                     }
                 }
                 case Shape.FunctionOf function -> {
@@ -450,7 +450,7 @@ public final class Manifest {
     public enum Reason {
         /**
          * A type with no representation for a host: a {@code Rational}, which has no external
-         * form, and a set and a map, which have none yet.
+         * form, and a set or a map in what a function value takes or answers.
          */
         NO_REPRESENTATION,
         /** A type with no value to hand over. */
@@ -1032,6 +1032,22 @@ public final class Manifest {
         }
 
         record MapOf(Type key, Type value) implements Type {
+        }
+
+        /**
+         * What the elements of the list a value of {@code type} crosses as are, where it crosses as
+         * one: a list's, a set's members, and a map's entries, each the tuple of its key and its
+         * value. A set and a map cross to a host as the list of what they hold, which the library
+         * makes one of again where it is handed one, once each and the later pair's value; the
+         * order the list is in is no order the language says anything of. Null for any other type.
+         */
+        static @Nullable Type listed(Type type) {
+            return switch (type) {
+                case ListOf it -> it.of();
+                case SetOf it -> it.of();
+                case MapOf it -> new Tuple(List.of(it.key(), it.value()));
+                default -> null;
+            };
         }
 
         /** What has no value. */

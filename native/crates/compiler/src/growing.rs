@@ -17,6 +17,10 @@
 //! is lowered, which is [`unrun`](crate::unrun)'s to say and not this module's: it is a step only
 //! of a walk that runs.
 //!
+//! A fold accumulating a map is rewritten the same way, into `$build` with a step writing through
+//! `$put`, and there the map is a map: the runtime keeps it, each write makes the next one, and the
+//! step may read it. Of such a walk only the step's shape is held.
+//!
 //! That the list a walk grows goes nowhere but where it is grown ([`confined`]). While the walk
 //! runs, the accumulator is not a list but the compiler's own record of one being grown, which is
 //! laid out as nothing else is. Read as a list anywhere — its length taken, handed to a call, kept
@@ -52,10 +56,8 @@ impl<'n> Step<'n> {
     /// is written as a block taking an accumulator and an element, under any number of `let`s.
     /// `None` for any other node.
     ///
-    /// Of a list's walk the shape is held ([`confined`]), so where `node` is one, this is `Some`
-    /// for every document that got past `Coherent`. Of a map's it is not: no map has a layout
-    /// here, so such a walk is refused as not lowered, and until then its step is read as a step
-    /// where it has that shape and as ordinary code where it does not.
+    /// The shape is held of every walk ([`confined`]), so where `node` is one, this is `Some` for
+    /// every document that got past `Coherent`.
     pub(crate) fn of_walk(node: &'n Node) -> Option<Step<'n>> {
         let Node::Call {
             reaches:
@@ -113,8 +115,8 @@ impl<'n> Step<'n> {
 /// of a `let`, both branches of an `if`, every arm of a `match`, and what a `Widen` stands over. A
 /// `let` binding the accumulator names it again, and the new name is held the same way.
 ///
-/// Of a map's walk nothing is held: no map is laid out here, so one is refused as not lowered
-/// wherever it would run, and its step is read as ordinary code.
+/// Of a map's walk only that its step is a block taking an accumulator and an element: the map it
+/// builds is a map, and its step is read as ordinary code.
 pub(crate) fn confined(owner: &str, body: &Node) -> Result<()> {
     Confining {
         owner,
@@ -184,6 +186,28 @@ impl Confining<'_> {
                     self.ordinary(argument)?;
                 }
                 Ok(())
+            }
+            // A map a walk builds is a map like any other, which its step reads and answers as it
+            // likes (`Map.updateOrInsert` reads it first), so nothing of where it is read is held.
+            // What is held is that the step is one, since the walk runs it as its loop's body.
+            Node::Call {
+                reaches:
+                    Reaches::Emitted {
+                        operation: Emitted::BuildMap,
+                    },
+                ..
+            } => {
+                if Step::of_walk(node).is_none() {
+                    bail!(
+                        "{}: {} walks with a step that is not a block taking what it has built \
+                         and an element: the two halves disagree",
+                        self.owner,
+                        Emitted::BuildMap.spelt()
+                    );
+                }
+                node.children()
+                    .into_iter()
+                    .try_for_each(|child| self.ordinary(child))
             }
             // A name for the list being grown is not a read of it. Unread, it is nothing; read,
             // the read is refused where it stands.

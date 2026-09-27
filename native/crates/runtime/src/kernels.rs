@@ -13,7 +13,7 @@ use souther_text::Text as Held;
 use souther_text::pattern;
 
 /// A list of these, each written into its slot by `slot`.
-fn list_of<T>(each: &[T], slot: impl Fn(&T) -> i64) -> *mut List {
+pub(crate) fn list_of<T>(each: &[T], slot: impl Fn(&T) -> i64) -> *mut List {
     let elements = i64::try_from(each.len()).expect("a list holds fewer elements than an Int");
     let at = souther_alloc(Count(room_for_list(elements)));
     unsafe {

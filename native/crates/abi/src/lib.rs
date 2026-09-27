@@ -853,8 +853,8 @@ pub const fn room_for_members(members: usize) -> i64 {
 /// A list is its length and then its elements, one slot each and in order, through the same slot
 /// every value is held in. Nothing else stands in it. No capacity, since a list is never grown in
 /// place; no element type, since that is the static type's; no element width, since every element
-/// is one slot. A `Set` and a `Map` are not laid out as this: how they hold their members is a
-/// question the language has not settled, and a header shared with them would be answering it.
+/// is one slot. A `Set` and a `Map` are not laid out as this, nor laid out here at all: they are
+/// the runtime's ([`SET_EMPTY`]).
 ///
 /// The empty list is a length of nought and no elements, never a null pointer, which is what an
 /// `Option` holding nothing already is.
@@ -1315,6 +1315,139 @@ pub const DATETIME_TO_TIME: &str = "souther_datetime_to_time";
 /// `DateTime.fromDateAndTime`.
 pub const DATETIME_FROM_DATE_AND_TIME: &str = "souther_datetime_from_date_and_time";
 
+/// The symbols a `Set` and a `Map` are built and read through.
+///
+/// A set and a map are an address and nothing generated code reads behind, for the reason a
+/// `Decimal` is: what the runtime keeps one as is a trie of its own, and a layout stated here would
+/// make every change to how it is kept a change of this contract. A list states its layout because
+/// generated code walks one; nothing walks a set but the runtime, so none is stated.
+///
+/// What an element is equal to, and what it hashes to, is the language's and differs by type, and
+/// the runtime knows no type. So generated code hands over a function for each ([`Word::Hasher`],
+/// [`Word::Equality`]), of the element's type at the site asking, over a value as it stands in a
+/// slot. Neither is kept in the collection: an element stands as a wider type than the one it was
+/// put in as (a `Set<A>` as a `Set<S>`, spec §collections), and a value of another case of `S` is
+/// then asked for under `S`'s functions. What is kept is the hash each element was put in under,
+/// which [`HASHING`] holds to be the hash of it under any type it stands as.
+///
+/// Which member a set keeps of two equal ones, and in what order one is listed, is the runtime's
+/// and nothing else says it (spec §stdlib-set): the listing is the trie's, and it is neither the
+/// order the members were put in nor the one a boundary writes.
+pub const SET_EMPTY: &str = "souther_set_empty";
+/// A set with one more member, or the set itself where it holds one equal to it, through room for
+/// it: nothing is written where one more is more members than a set holds, and the caller ends the
+/// run for the reason the kernel names. So for [`SET_UNION`] and [`MAP_INSERT`].
+pub const SET_INSERT: &str = "souther_set_insert";
+/// A set without the member equal to this, or the set itself where it holds none.
+pub const SET_REMOVE: &str = "souther_set_remove";
+/// Whether a set holds a member equal to this.
+pub const SET_CONTAINS: &str = "souther_set_contains";
+/// Every member of either set, the larger's where both hold one.
+pub const SET_UNION: &str = "souther_set_union";
+/// The members both sets hold, the smaller's.
+pub const SET_INTERSECTION: &str = "souther_set_intersection";
+/// The first set's members the second does not hold.
+pub const SET_DIFFERENCE: &str = "souther_set_difference";
+/// How many members a set holds.
+pub const SET_SIZE: &str = "souther_set_size";
+/// A set's members as a list, in the trie's order.
+pub const SET_TO_LIST: &str = "souther_set_to_list";
+/// The set of a list's elements, one of each that are equal.
+pub const SET_FROM_LIST: &str = "souther_set_from_list";
+/// Whether two sets hold the same members, in whatever order each keeps them.
+pub const SET_EQUAL: &str = "souther_set_equal";
+/// A set's hash, which is its members' and not the order they are kept in ([`HASHING`]).
+pub const SET_HASH: &str = "souther_set_hash";
+/// The empty map.
+pub const MAP_EMPTY: &str = "souther_map_empty";
+/// The address of the value a map holds under a key equal to this, or [`NOTHING`]: what an
+/// optional of the value is, so what it answers is `Map.get`'s answer as it stands.
+pub const MAP_GET: &str = "souther_map_get";
+/// Whether a map holds a key equal to this.
+pub const MAP_CONTAINS_KEY: &str = "souther_map_contains_key";
+/// A map's keys as a list, in the trie's order.
+pub const MAP_KEYS: &str = "souther_map_keys";
+/// A map's values as a list, in the order [`MAP_KEYS`] lists their keys.
+pub const MAP_VALUES: &str = "souther_map_values";
+/// A map with this key holding this value, in place of what a key equal to it held, which stays the
+/// key the map holds.
+pub const MAP_INSERT: &str = "souther_map_insert";
+/// A map without the key equal to this, or the map itself where it holds none.
+pub const MAP_REMOVE: &str = "souther_map_remove";
+/// How many keys a map holds.
+pub const MAP_SIZE: &str = "souther_map_size";
+/// A map's entries as a list of pairs, each a tuple of the layout [`member_at`] states, in the
+/// order [`MAP_KEYS`] lists the keys.
+pub const MAP_TO_LIST: &str = "souther_map_to_list";
+/// The map of a list of pairs, a later pair's value winning where two keys are equal, under the
+/// earlier pair's key.
+pub const MAP_FROM_LIST: &str = "souther_map_from_list";
+/// Whether two maps hold equal values under the same keys.
+pub const MAP_EQUAL: &str = "souther_map_equal";
+/// A map's hash, from its keys' kept hashes and its values' hashes under the function handed over.
+pub const MAP_HASH: &str = "souther_map_hash";
+
+/// The symbols a value's hash is worked out through, where the runtime holds what decides it or
+/// where the step is one both sides have to take alike.
+///
+/// A hash is kept in a set or a map, which one object builds and another reads, so what a value
+/// hashes to is part of the contract between the objects of a generation and not only of one
+/// object's: [`HASHING`] says how generated code composes one, and these are the steps it composes
+/// with.
+pub const HASH_COMBINE: &str = "souther_hash_combine";
+/// A string's hash, from its bytes: two strings are equal where their bytes are.
+pub const STRING_HASH: &str = "souther_string_hash";
+/// A `Decimal`'s hash, from its amount and not its scale: `1.0` and `1.00` are equal.
+pub const DECIMAL_HASH: &str = "souther_decimal_hash";
+/// A `Rational`'s hash, from the one form each value is kept in.
+pub const RATIONAL_HASH: &str = "souther_rational_hash";
+/// A `Date`'s hash, from the day it names.
+pub const DATE_HASH: &str = "souther_date_hash";
+/// A `Time`'s hash, from the second of the day it names.
+pub const TIME_HASH: &str = "souther_time_hash";
+/// A `DateTime`'s hash, from the second it names.
+pub const DATETIME_HASH: &str = "souther_datetime_hash";
+/// An `Instant`'s hash, from the second and the nanosecond it names.
+pub const INSTANT_HASH: &str = "souther_instant_hash";
+
+/// How generated code composes a value's hash, which every object of a generation composes alike.
+///
+/// Each line is one kind of type, and each composes from [`HASH_START`] with [`HASH_COMBINE`]:
+///
+/// - `Int` and `Bool`: the number, combined once. A truth is 0 or 1.
+/// - `String`, `Decimal`, `Rational` and the temporals: the runtime's hash of it (above).
+/// - A value that carries its token (a declared type, a case a union carries, a case the language
+///   gives): the token's address combined first, then each field in order as its own type, or what
+///   a union's primitive case carries as that primitive. A sum and a union hash as the case the
+///   value is, so a value hashes the same as its case and as every sum it stands as: that is what
+///   lets a `Set<A>` stand as a `Set<S>` with the hashes it was built with.
+/// - An optional: [`HASH_START`] where it is absent, and what it holds combined with
+///   [`HASH_PRESENT`] where it is not.
+/// - A tuple: each member in order. A list: its length, then each element in order.
+/// - A set: [`SET_HASH`]. A map: [`MAP_HASH`], handed the values' hasher.
+/// - The type of what has no value: [`HASH_START`], which nothing asks. What holds only it hashes as
+///   what holds anything else does, since it stands as that without being rebuilt.
+///
+/// Two equal values hash alike under every line, which is what the runtime asks of a hash. A
+/// change to any line is a change of what a set built by one object is to another, and moves
+/// [`ABI_GENERATION`].
+pub const HASHING: &[&str] = &[
+    "Int, Bool: combine(START, n)",
+    "String, Decimal, Rational, Date, Time, DateTime, Instant: the runtime's hash",
+    "tagged: combine(START, token), then each field or what is carried",
+    "sum, union: as the case the value is",
+    "optional: START if absent, else combine(PRESENT, held)",
+    "tuple: each member from START; list: combine(START, length), then each element",
+    "set: souther_set_hash; map: souther_map_hash(values' hasher)",
+    "what has no value: START; what holds only it, as what holds anything",
+];
+
+/// What a hash is composed from.
+pub const HASH_START: i64 = 0;
+
+/// What an optional holding a value combines what it holds with.
+pub const HASH_PRESENT: i64 = 1;
+
 /// The symbol generated code takes room from.
 ///
 /// It answers a pointer to `size` bytes that stay valid until the mark below them is reset. A
@@ -1374,6 +1507,14 @@ pub const EXTERNAL_OBJECT: &str = "souther_external_object";
 pub const EXTERNAL_PUT: &str = "souther_external_put";
 /// `(form) -> string`: the whole tree written as JSON, and dropped.
 pub const EXTERNAL_JSON: &str = "souther_external_json";
+/// `(array)`: a set's members, which the caller still owns, put in the order a boundary writes them
+/// in, ascending by their own external representation (spec §collections), so two equal sets write
+/// one text. Asked once every member is in the array and each is in that order itself.
+pub const EXTERNAL_ORDER: &str = "souther_external_order";
+/// `(array)`: a map's entries, an array the caller still owns of pairs each of a string and a
+/// value, made the object a boundary writes, its members ascending by their keys. Asked once every
+/// entry is in it.
+pub const EXTERNAL_ENTRIES: &str = "souther_external_entries";
 
 /// Reading a document, from its bytes to what a host is answered. Generated code begins one with
 /// the bytes, `(bytes, length) -> reading`; asks for its root, `(reading) -> node`, which is null
@@ -1411,6 +1552,21 @@ pub const READ_ELEMENT: &str = "souther_read_element";
 pub const READ_MEMBER: &str = "souther_read_member";
 /// `(path, reading)`: a field every value has was not written.
 pub const READ_MISSING: &str = "souther_read_missing";
+/// `(node) -> i64`: how many members an object holds, asked of one `READ_OBJECT` said is one. A
+/// key written twice is two members: a map read from them says so where the two are one key
+/// (`READ_DUPLICATE_KEY`).
+pub const READ_MEMBERS: &str = "souther_read_members";
+/// `(node, i64) -> node`: the key of an object's member at an index below its count, as a place
+/// of the document holding the text it was written as: what a map's key is read from, as the key's
+/// type is read anywhere else.
+pub const READ_MEMBER_KEY: &str = "souther_read_member_key";
+/// `(node, i64) -> node`: what an object's member at an index below its count holds.
+pub const READ_MEMBER_VALUE: &str = "souther_read_member_value";
+/// `(path, node, i64) -> path`: the place of an object's member at an index, by its key as it was
+/// written.
+pub const PATH_BELOW_MEMBER: &str = "souther_path_below_member";
+/// `(path, reading)`: two of a map's keys are one key once each is read as the key's type.
+pub const READ_DUPLICATE_KEY: &str = "souther_read_duplicate_key";
 /// `(node) -> i8`: whether it is `null`.
 pub const READ_NULL: &str = "souther_read_null";
 /// `(node, path, reading, out) -> i8`: an `Int` written through `out`.
@@ -2053,6 +2209,20 @@ pub enum Word {
     Node,
     /// Where a place in a document is, as the reading records it.
     Path,
+    /// The address of a set, which only the runtime reads behind ([`SET_EMPTY`]).
+    Set,
+    /// The address of a map, which only the runtime reads behind ([`MAP_EMPTY`]).
+    Map,
+    /// A value's hash, as [`HASHING`] composes one: sixty-four bits.
+    Hash,
+    /// The address of the slot a value is held at, or [`NOTHING`]: an optional of that value.
+    Held,
+    /// The address of a function of generated code's taking a value as it stands in a slot and
+    /// answering its [`Word::Hash`], which the runtime calls.
+    Hasher,
+    /// The address of a function of generated code's taking two values as they stand in slots and
+    /// answering whether they are equal, one byte, which the runtime calls.
+    Equality,
 }
 
 /// One parameter of a function of the runtime's that generated code calls.
@@ -2098,7 +2268,10 @@ pub const GENERATED_RUNTIME: &[GeneratedCall] = {
         Value,
     };
     use Parameter::{Given, Room};
-    use Word::{Comparison, Form, Host, Machine, Memory, Node, Path, Rational};
+    use Word::{
+        Comparison, Equality, Form, Hash, Hasher, Held, Host, Machine, Map, Memory, Node, Path,
+        Rational, Set,
+    };
     &[
         GeneratedCall {
             name: ALLOCATE,
@@ -2641,6 +2814,16 @@ pub const GENERATED_RUNTIME: &[GeneratedCall] = {
             answers: None,
         },
         GeneratedCall {
+            name: EXTERNAL_ORDER,
+            takes: &[Given(Form)],
+            answers: None,
+        },
+        GeneratedCall {
+            name: EXTERNAL_ENTRIES,
+            takes: &[Given(Form)],
+            answers: None,
+        },
+        GeneratedCall {
             name: EXTERNAL_JSON,
             takes: &[Given(Form)],
             answers: Some(Host(String)),
@@ -2707,6 +2890,31 @@ pub const GENERATED_RUNTIME: &[GeneratedCall] = {
         },
         GeneratedCall {
             name: READ_MISSING,
+            takes: &[Given(Path), Given(Host(Decoded))],
+            answers: None,
+        },
+        GeneratedCall {
+            name: READ_MEMBERS,
+            takes: &[Given(Node)],
+            answers: Some(Host(Count)),
+        },
+        GeneratedCall {
+            name: READ_MEMBER_KEY,
+            takes: &[Given(Node), Given(Host(Count))],
+            answers: Some(Node),
+        },
+        GeneratedCall {
+            name: READ_MEMBER_VALUE,
+            takes: &[Given(Node), Given(Host(Count))],
+            answers: Some(Node),
+        },
+        GeneratedCall {
+            name: PATH_BELOW_MEMBER,
+            takes: &[Given(Path), Given(Node), Given(Host(Count))],
+            answers: Some(Path),
+        },
+        GeneratedCall {
+            name: READ_DUPLICATE_KEY,
             takes: &[Given(Path), Given(Host(Decoded))],
             answers: None,
         },
@@ -2830,6 +3038,179 @@ pub const GENERATED_RUNTIME: &[GeneratedCall] = {
                 Given(Host(String)),
             ],
             answers: None,
+        },
+        GeneratedCall {
+            name: SET_EMPTY,
+            takes: &[],
+            answers: Some(Set),
+        },
+        GeneratedCall {
+            name: SET_INSERT,
+            takes: &[
+                Given(Set),
+                Given(Host(Int)),
+                Given(Hasher),
+                Given(Equality),
+                Room(Set),
+            ],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: SET_REMOVE,
+            takes: &[Given(Set), Given(Host(Int)), Given(Hasher), Given(Equality)],
+            answers: Some(Set),
+        },
+        GeneratedCall {
+            name: SET_CONTAINS,
+            takes: &[Given(Set), Given(Host(Int)), Given(Hasher), Given(Equality)],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: SET_UNION,
+            takes: &[Given(Set), Given(Set), Given(Equality), Room(Set)],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: SET_INTERSECTION,
+            takes: &[Given(Set), Given(Set), Given(Equality)],
+            answers: Some(Set),
+        },
+        GeneratedCall {
+            name: SET_DIFFERENCE,
+            takes: &[Given(Set), Given(Set), Given(Equality)],
+            answers: Some(Set),
+        },
+        GeneratedCall {
+            name: SET_SIZE,
+            takes: &[Given(Set)],
+            answers: Some(Host(Int)),
+        },
+        GeneratedCall {
+            name: SET_TO_LIST,
+            takes: &[Given(Set)],
+            answers: Some(Host(List)),
+        },
+        GeneratedCall {
+            name: SET_FROM_LIST,
+            takes: &[Given(Host(List)), Given(Hasher), Given(Equality)],
+            answers: Some(Set),
+        },
+        GeneratedCall {
+            name: SET_EQUAL,
+            takes: &[Given(Set), Given(Set), Given(Equality)],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: SET_HASH,
+            takes: &[Given(Set)],
+            answers: Some(Hash),
+        },
+        GeneratedCall {
+            name: MAP_EMPTY,
+            takes: &[],
+            answers: Some(Map),
+        },
+        GeneratedCall {
+            name: MAP_GET,
+            takes: &[Given(Map), Given(Host(Int)), Given(Hasher), Given(Equality)],
+            answers: Some(Held),
+        },
+        GeneratedCall {
+            name: MAP_CONTAINS_KEY,
+            takes: &[Given(Map), Given(Host(Int)), Given(Hasher), Given(Equality)],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: MAP_KEYS,
+            takes: &[Given(Map)],
+            answers: Some(Host(List)),
+        },
+        GeneratedCall {
+            name: MAP_VALUES,
+            takes: &[Given(Map)],
+            answers: Some(Host(List)),
+        },
+        GeneratedCall {
+            name: MAP_INSERT,
+            takes: &[
+                Given(Map),
+                Given(Host(Int)),
+                Given(Host(Int)),
+                Given(Hasher),
+                Given(Equality),
+                Room(Map),
+            ],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: MAP_REMOVE,
+            takes: &[Given(Map), Given(Host(Int)), Given(Hasher), Given(Equality)],
+            answers: Some(Map),
+        },
+        GeneratedCall {
+            name: MAP_SIZE,
+            takes: &[Given(Map)],
+            answers: Some(Host(Int)),
+        },
+        GeneratedCall {
+            name: MAP_TO_LIST,
+            takes: &[Given(Map)],
+            answers: Some(Host(List)),
+        },
+        GeneratedCall {
+            name: MAP_FROM_LIST,
+            takes: &[Given(Host(List)), Given(Hasher), Given(Equality)],
+            answers: Some(Map),
+        },
+        GeneratedCall {
+            name: MAP_EQUAL,
+            takes: &[Given(Map), Given(Map), Given(Equality), Given(Equality)],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: MAP_HASH,
+            takes: &[Given(Map), Given(Hasher)],
+            answers: Some(Hash),
+        },
+        GeneratedCall {
+            name: HASH_COMBINE,
+            takes: &[Given(Hash), Given(Host(Int))],
+            answers: Some(Hash),
+        },
+        GeneratedCall {
+            name: STRING_HASH,
+            takes: &[Given(Host(String))],
+            answers: Some(Hash),
+        },
+        GeneratedCall {
+            name: DECIMAL_HASH,
+            takes: &[Given(Host(Decimal))],
+            answers: Some(Hash),
+        },
+        GeneratedCall {
+            name: RATIONAL_HASH,
+            takes: &[Given(Rational)],
+            answers: Some(Hash),
+        },
+        GeneratedCall {
+            name: DATE_HASH,
+            takes: &[Given(Host(Date))],
+            answers: Some(Hash),
+        },
+        GeneratedCall {
+            name: TIME_HASH,
+            takes: &[Given(Host(Time))],
+            answers: Some(Hash),
+        },
+        GeneratedCall {
+            name: DATETIME_HASH,
+            takes: &[Given(Host(DateTime))],
+            answers: Some(Hash),
+        },
+        GeneratedCall {
+            name: INSTANT_HASH,
+            takes: &[Given(Host(Instant))],
+            answers: Some(Hash),
         },
     ]
 };
