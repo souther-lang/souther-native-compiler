@@ -780,7 +780,7 @@ fn case_crossings() -> Vec<manifest::CaseCrossing> {
         .iter()
         .chain(&language)
         .filter_map(|case| {
-            let name = crate::built_in_case(case).ok()?;
+            let name = crate::built_in_case(case);
             let crossing = HOST_CASES.iter().find(|it| it.case == name)?;
             Some(manifest::CaseCrossing {
                 case: built_in(case),
@@ -1292,5 +1292,26 @@ fn language_case(case: transport::LanguageCase) -> manifest::LanguageCase {
         transport::LanguageCase::NotATime => manifest::LanguageCase::NotATime,
         transport::LanguageCase::NotWhole => manifest::LanguageCase::NotWhole,
         transport::LanguageCase::NotAFiniteDecimal => manifest::LanguageCase::NotAFiniteDecimal,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A `Rational` is a case objects tell apart and no host is handed one, so the manifest names
+    /// no way for a host to make or read it.
+    #[test]
+    fn a_rational_is_a_case_and_no_manifest_says_a_host_crosses_it() {
+        let crossings = case_crossings();
+        assert!(!crossings.iter().any(|it| matches!(
+            &it.case,
+            manifest::Case::Primitive {
+                name: manifest::Primitive::Rational
+            }
+        )));
+        assert!(!crossings.is_empty());
+        assert!(HOST_CASES.iter().all(|it| it.case != "Rational"));
+        assert!(souther_native_abi::BUILT_IN_CASES.contains(&"Rational"));
     }
 }

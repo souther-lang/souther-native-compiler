@@ -448,7 +448,10 @@ public final class Manifest {
 
     /** What stands in the way of a value crossing to a host. */
     public enum Reason {
-        /** A type with no representation for a host yet: a {@code Rational}, a set, a map. */
+        /**
+         * A type with no representation for a host: a {@code Rational}, which has no external
+         * form, and a set and a map, which have none yet.
+         */
         NO_REPRESENTATION,
         /** A type with no value to hand over. */
         NO_VALUE,

@@ -2382,11 +2382,8 @@ fn machine_type(ty: &Ty) -> Lowered<types::Type> {
         // runtime's token for the case, and nothing beside it. What an arm binding the case reads
         // is the value the union held, as it was.
         Ty::Ref {
-            named: named @ Case::Language { .. },
-        } => {
-            built_in_case(named)?;
-            Ok(POINTER)
-        }
+            named: Case::Language { .. },
+        } => Ok(POINTER),
         Ty::Ref {
             named: Case::Primitive { .. },
         } => named_as_a_type(ty),
@@ -2395,16 +2392,9 @@ fn machine_type(ty: &Ty) -> Lowered<types::Type> {
         Ty::List { .. } => Ok(POINTER),
         // What holds a union holds one of its members, and says which by the token at the front of
         // it: a value of a declared type as it is, and a primitive or a case the language gives
-        // carried with the runtime's token for it (`carry`). A member with no token is one no value
-        // of the union could say it is.
-        Ty::Union { union } => {
-            for case in union {
-                if !matches!(case, Case::Declared { .. }) {
-                    built_in_case(case)?;
-                }
-            }
-            Ok(POINTER)
-        }
+        // carried with the runtime's token for it (`carry`). Every one has a token: what a host can
+        // be handed is a narrower set than what objects can tell apart ([`built_in_case`]).
+        Ty::Union { .. } => Ok(POINTER),
         // A collection other than a list is a value with a layout to design, and none is designed
         // yet. Read whole off the wire all the same: whether a type crosses and whether it can be
         // laid out here are two questions, and only this one is this backend's.
@@ -2482,10 +2472,11 @@ fn refer_to_the_runtimes_generation(module: &mut ObjectModule) {
 /// one.
 ///
 /// Every primitive and every case the language gives is named, for the reason `machine_type` names
-/// them. A primitive has a token where it has a representation to carry, and every case the
-/// language gives has one, since it carries nothing.
-fn built_in_case(case: &Case) -> Lowered<&'static str> {
-    let name = match case {
+/// them, and each has a token: a primitive has a representation to carry, and every case the
+/// language gives carries nothing. Whether a host can be handed one is a different question, which
+/// `souther_native_abi::HOST_CASES` answers.
+fn built_in_case(case: &Case) -> &'static str {
+    match case {
         Case::Declared { declared } => unreachable!(
             "{declared} is tagged by its declaration's token, and asked for through `tag`"
         ),
@@ -2512,8 +2503,7 @@ fn built_in_case(case: &Case) -> Lowered<&'static str> {
             LanguageCase::Some => "Some",
             LanguageCase::None => "None",
         },
-    };
-    Ok(name)
+    }
 }
 
 /// What a value standing as a case holds of its own ([`Declared::body_of`]).
@@ -2650,7 +2640,7 @@ pub(crate) fn token_of(
     let token = match case {
         Case::Declared { declared: key } => declared.tag(module, key)?,
         Case::Primitive { .. } | Case::Language { .. } => accepted(module.declare_data(
-            &built_in_case_symbol(built_in_case(case)?),
+            &built_in_case_symbol(built_in_case(case)),
             Linkage::Import,
             false,
             false,
