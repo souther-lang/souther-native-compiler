@@ -305,13 +305,6 @@ impl<'p> Body<'p> {
     pub fn carrier(&self) -> Carrier<'p> {
         Carrier(self.module)
     }
-
-    /// Whether this is the body of a helper that leaves type variables open. Such a body is not
-    /// lowered as it is written, and nothing in it is planned for a function of its own: what is
-    /// lowered is its copies ([`crate::specialize`]).
-    pub fn leaves_types_open(&self) -> bool {
-        self.owner.helper().is_some_and(|held| held.variables() > 0)
-    }
 }
 
 /// The module whose copy of a helper, and whose home of a value, a call reaches: the module a body

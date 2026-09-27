@@ -74,8 +74,6 @@ pub(crate) struct Coherent<'a> {
     pub locals: HashMap<&'a str, &'a Definition>,
     /// What this object runs, which is narrower than what the document says.
     pub runs: Runs<'a>,
-    /// Every closure site under what this object runs.
-    pub closures: ClosureSites<'a>,
     /// Which object defines each behavior's symbol, and as what, by the name it is declared
     /// under. Decided here once, from what the target says it is and whether a module this
     /// document builds declares it, and read by whatever emits or describes the behavior.
@@ -110,7 +108,7 @@ impl<'a> Coherent<'a> {
         }
         // Every site the document holds is numbered once, whether or not this object runs it: a
         // number two sites share is the two halves disagreeing wherever it stands.
-        ClosureSites::of(program.bodies())?;
+        ClosureSites::numbered(program.bodies())?;
 
         let reached = Reached::of(program)?;
         for written in &program.modules {
@@ -315,15 +313,11 @@ impl<'a> Coherent<'a> {
 
         owed.settle(&declared)?;
 
-        // What a function value written in a helper over type variables carries is not laid out
-        // for the helper as it is written: nothing of it is lowered but its copies.
-        let closures = ClosureSites::of(runs.bodies().filter(|body| !body.leaves_types_open()))?;
         Ok(Coherent {
             declared,
             targets,
             locals,
             runs,
-            closures,
             defined,
         })
     }

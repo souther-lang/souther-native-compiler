@@ -35,7 +35,7 @@ mod unrun;
 mod versioned;
 
 use anyhow::{Result, anyhow, bail};
-use closures::{ClosureSites, Site};
+use closures::{ClosureId, ClosureSites, Site};
 use coherent::{Coherent, Defined};
 use cranelift::codegen::ir::condcodes::IntCC;
 use cranelift::codegen::ir::{
@@ -421,13 +421,27 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
         targets,
         locals,
         runs,
-        closures,
         defined,
     } = coherent;
     // Every copy of a helper this object defines, and which of them each call reaches, settled
     // before anything is declared: a helper that leaves type variables open is a function only once
     // a call has said what each variable is.
     let specializations = Specializations::of(&runs)?;
+
+    // What each function value carries, planned over the bodies as they are lowered: the bodies of
+    // what this object runs that are no helper, and every copy of a helper, each with the function
+    // values it holds of its own (`closures`).
+    let closures = ClosureSites::of(
+        runs.bodies()
+            .filter(|body| body.owner.helper().is_none())
+            .map(closures::Standing::from)
+            .chain(specializations.iter().map(|(_, copy)| closures::Standing {
+                carrier: copy.carrier,
+                environment: &[],
+                node: copy.body(),
+            })),
+    )
+    .expect("`Coherent` numbered every site of the document once");
 
     let mut context = Context::new();
     let mut shapes = FunctionBuilderContext::new();
@@ -479,8 +493,8 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
     // one body may be referenced from another (a closure returned from one function and applied by
     // another), so nothing about defining a body may assume every site it itself needs was already
     // declared by the time it runs; all of them are, because this runs before any of them does.
-    let mut lifted: BTreeMap<usize, FuncId> = BTreeMap::new();
-    for (&site, plan) in closures.lifted() {
+    let mut lifted: BTreeMap<ClosureId, FuncId> = BTreeMap::new();
+    for (site, plan) in closures.lifted() {
         let fn_ = plan.signature;
         let signature = lifted_signature(&fn_.takes, &fn_.answers, call_conv)?;
         let symbol = format!("$closure${site}");
@@ -994,7 +1008,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
     // a nested site, or reach one returned from elsewhere, and every one of them was declared
     // above regardless of which body it is nested under. A site stands where the body holding it
     // does.
-    for (&site, plan) in closures.lifted() {
+    for (site, plan) in closures.lifted() {
         let fn_ = plan.signature;
         let signature = lifted_signature(&fn_.takes, &fn_.answers, call_conv)?;
         let id = *lifted
@@ -2190,7 +2204,7 @@ struct Lowerings<'a> {
     closures: &'a ClosureSites<'a>,
     /// The lifted function declared for each site, by the site's own number — declared before any
     /// body is defined, the same two-phase shape every other declaration in this object keeps.
-    lifted: &'a BTreeMap<usize, FuncId>,
+    lifted: &'a BTreeMap<ClosureId, FuncId>,
     /// What string literals this object already holds.
     literals: &'a Literals,
     /// What pattern machines this object already holds.
@@ -5184,10 +5198,10 @@ fn lower(
                 .load(types::I64, flags, value, member_at(*at) as i32);
             out_of_slot(builder, held, machine_type(ty)?)
         }
-        Node::Block { site, .. } => {
-            let plan = lowering
+        Node::Block { .. } => {
+            let (site, plan) = lowering
                 .closures
-                .site(*site)
+                .at(node)
                 .expect("every closure site was planned before any body was lowered");
             let flags = TRUSTED;
             let carried = plan.captures.len() + usize::from(plan.environment.is_some());
@@ -5196,7 +5210,7 @@ fn lower(
             // A function that never runs has no code, and a closure of it holds none: nothing calls
             // it, and it carries nothing.
             let code = if plan.runs {
-                let code_id = *lowering.lifted.get(site).expect(
+                let code_id = *lowering.lifted.get(&site).expect(
                     "every closure site that runs was declared a lifted function before any was \
                      defined",
                 );

@@ -83,3 +83,53 @@ fn a_comparison_of_lists_over_a_variable_no_call_settles_is_not_lowered() {
         "refused for what it is asked of the variable, and not for something else: {refused}"
     );
 }
+
+const STRING: &str = r#"{"prim":"STRING"}"#;
+
+/// A function value written in a helper over a variable is a closure in each copy of it, with the
+/// layout and the signature that copy has: the one block, written once, is two functions.
+#[test]
+fn a_function_value_written_in_a_helper_over_a_variable_is_one_closure_in_each_copy() {
+    let made = r#"{"fn":{"takes":[],"answers":{"var":0}}}"#;
+    let held_var = node("read", r#""binding":0"#, r#"{"var":0}"#);
+    let block = node(
+        "block",
+        &format!(r#""site":0,"parameters":[],"body":{held_var}"#),
+        made,
+    );
+    let held = format!(
+        r#"{{"reached":{{"is":"own","module":"m","name":"k"}},"parameters":[{{"name":"x","type":{{"var":0}}}}],"body":{block}}}"#
+    );
+    let at = |ty: &str| format!(r#"{{"fn":{{"takes":[],"answers":{ty}}}}}"#);
+    let call = |argument: String, ty: &str| {
+        node(
+            "call",
+            &format!(
+                r#""reaches":{{"is":"helper","reached":{{"is":"own","module":"m","name":"k"}}}},"arguments":[{argument}]"#
+            ),
+            &at(ty),
+        )
+    };
+    let both = node(
+        "tuple",
+        &format!(
+            r#""members":[{},{}]"#,
+            call(node("int", r#""value":1"#, INT), INT),
+            call(node("string", r#""value":"a""#, STRING), STRING)
+        ),
+        &format!(r#"{{"tuple":[{},{}]}}"#, at(INT), at(STRING)),
+    );
+    let document = format!(
+        r#"{{"transport":27,"declarations":[],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[{held}],"values":[{{"module":"m","name":"v","handovers":[],"body":{both}}}],"entries":[],"definitions":[],"examples":[]}}]}}"#
+    );
+    let object = object_for(&document).unwrap_or_else(|refused| panic!("refused: {refused}"));
+    let has = |symbol: &str| {
+        object
+            .windows(symbol.len())
+            .any(|window| window == symbol.as_bytes())
+    };
+    assert!(
+        has("$closure$0") && has("$closure$1"),
+        "one lifted function for each copy"
+    );
+}

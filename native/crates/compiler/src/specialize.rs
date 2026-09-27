@@ -356,16 +356,6 @@ impl<'p> Specializations<'p> {
         let body = if types.is_empty() {
             Settled::AsHeld(&held.body)
         } else {
-            // A closure's layout is planned once for the block as it is written, and here that is
-            // over variables; a walk's step is no closure, and is settled with the rest of the copy.
-            let written = crate::closures::ClosureSites::any_in(carrier, &held.body)
-                .expect("`Coherent` numbered every site of the document once");
-            if written {
-                return Err(not_lowered(format!(
-                    "a function value written inside {}, which leaves type variables open",
-                    held.reached.rendered()
-                )));
-            }
             let mut body = held.body.clone();
             settle(&mut body, &Substitution::of(&types));
             Settled::Rewritten(Box::new(body))
@@ -623,6 +613,10 @@ mod tests {
     use super::*;
     use crate::transport::{FnSignature, Prim};
 
+    fn string() -> Ty {
+        Ty::Prim { prim: Prim::String }
+    }
+
     fn int() -> Ty {
         Ty::Prim { prim: Prim::Int }
     }
@@ -853,9 +847,10 @@ mod tests {
         assert!(refused.to_string().contains("other types"), "{refused}");
     }
 
-    /// What a function value written in a helper over variables carries is laid out for no copy.
+    /// A function value written in a helper over variables is in each copy of it, at the types that
+    /// copy has: two copies, and no refusal of the helper for holding one.
     #[test]
-    fn a_function_value_inside_a_helper_over_variables_is_not_lowered() {
+    fn a_function_value_inside_a_helper_over_variables_is_in_each_copy() {
         let made = r#"{"fn":{"takes":[],"answers":{"var":0}}}"#;
         let block = node(
             "block",
@@ -863,17 +858,22 @@ mod tests {
             made,
         );
         let helpers = [helper("m.k", &[VAR], &block)];
-        let settled = r#"{"fn":{"takes":[],"answers":{"prim":"INT"}}}"#;
-        let refused = specialized(
-            &holding(&helpers, &call("m.k", &[number(1)], settled)),
-            |_, _| (),
-        )
-        .expect_err("a closure over a variable");
-        assert!(
-            refused.downcast_ref::<crate::NotLowered>().is_some(),
-            "{refused}"
+        let at = |ty: &str| format!(r#"{{"fn":{{"takes":[],"answers":{ty}}}}}"#);
+        let both = tuple(
+            &[
+                call("m.k", &[number(1)], &at(INT)),
+                call("m.k", &[text("a")], &at(STRING)),
+            ],
+            &[&at(INT), &at(STRING)],
         );
-        assert!(refused.to_string().contains("function value"), "{refused}");
+        let types = specialized(&holding(&helpers, &both), |specializations, _| {
+            specializations
+                .iter()
+                .map(|(_, it)| it.types.clone())
+                .collect::<Vec<_>>()
+        })
+        .expect("a function value is no reason to refuse the helper");
+        assert_eq!(types, vec![vec![Some(int())], vec![Some(string())]]);
     }
 
     const OTHER: &str = r#"{"var":1}"#;
