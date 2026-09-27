@@ -118,7 +118,7 @@ fn primitive_reaches(prim: Prim, reached: &mut Vec<Option<&str>>) {
         | Prim::Time
         | Prim::DateTime
         | Prim::Instant => {}
-        Prim::Rational | Prim::Raw => reached.push(None),
+        Prim::Rational => reached.push(None),
     }
 }
 

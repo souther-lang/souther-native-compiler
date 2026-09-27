@@ -3,15 +3,16 @@
 //! host of an implementation of its own, and called through its header by code another object
 //! wrote.
 //!
-//! The documents are written here and not by the Java half from source: no module the checker
-//! accepts yet publishes a value whose type is a function (souther-lang/souther#1974, #1990), so
-//! no source would bring one this far. What they hold is what the Java half writes for such a value
-//! when it is kept by its module and applied there — a block, the captures it reads bound around
-//! it — with an entry beside it, which is what publishing it adds.
+//! The documents are written here and not by the Java half from source: a module publishes a value
+//! whose type is a function, but no source writes every shape a host is handed. A function that
+//! answers a function is refused (E1809, a block is not a value), and an optional is made nowhere
+//! but where a field is given a value (E1303). What they hold is what the Java half writes for such
+//! a value when it is kept by its module and applied there — a block, the captures it reads bound
+//! around it — with an entry beside it, which is what publishing it adds.
 //!
 //! `functions.transport.json` is the document [`publishing`] builds, written out for the Java half's
-//! tests of what a binding makes of it, which have no source to check either; a test here holds the
-//! two to one document.
+//! tests of what a binding makes of it, which have no source to check it against either; a test here
+//! holds the two to one document.
 
 use serde_json::{Value, json};
 use souther_native_driver::transport::TRANSPORT_VERSION;

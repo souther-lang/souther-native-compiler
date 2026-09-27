@@ -324,13 +324,14 @@ pub(crate) enum LoweredKernel {
     StringWords,
     /// `string.lines`: a string, and its lines.
     StringLines,
-    /// `string.reverse`: a string, and its code points the other way round.
-    StringReverse,
-    /// `string.repeat`: a count and a string, and that many copies. A count no string could hold
+    /// `string.reverse`: a string, and its code points the other way round. A text no string holds
     /// ends the run.
+    StringReverse,
+    /// `string.repeat`: a count and a string, and that many copies. Copies that are more text than
+    /// a string holds end the run.
     StringRepeat,
     /// `string.padLeft`: a width, a pad and a string, and the string widened on the left. A width
-    /// no string could hold ends the run.
+    /// that is more text than a string holds ends the run.
     StringPadLeft,
     /// `string.padRight`: the same, widened on the right.
     StringPadRight,
@@ -340,7 +341,8 @@ pub(crate) enum LoweredKernel {
     StringCodePoints,
     /// `string.toDecimal`: a string, and the `Decimal` it is decimal text of, or `NotANumber`.
     StringToDecimal,
-    /// `string.fromDecimal`: a `Decimal` in plain notation at its scale.
+    /// `string.fromDecimal`: a `Decimal` in plain notation at its scale. A text no string holds ends
+    /// the run.
     StringFromDecimal,
     /// `decimal.add`: two `Decimal`s, and their sum at the larger scale. A sum no `Decimal` holds
     /// ends the run.
@@ -594,10 +596,16 @@ impl LoweredKernel {
             // Text that is no integer, or one no `Int` holds, is a case of the answer.
             LoweredKernel::StringToInt => known(vec![string()], int_or_not_a_number(), Vec::new()),
             LoweredKernel::StringFromInt => known(vec![int()], string(), Vec::new()),
-            LoweredKernel::StringTrim
-            | LoweredKernel::StringLowercase
+            LoweredKernel::StringTrim => known(vec![string()], string(), Vec::new()),
+            // A text longer than a string holds has no place, and these build one from what they
+            // are given: a case mapping can be longer than its text, and a reversal is put in NFC.
+            LoweredKernel::StringLowercase
             | LoweredKernel::StringUppercase
-            | LoweredKernel::StringReverse => known(vec![string()], string(), Vec::new()),
+            | LoweredKernel::StringReverse => known(
+                vec![string()],
+                string(),
+                vec![AbortKind::RequiredFormHasNoPlace],
+            ),
             LoweredKernel::StringContains
             | LoweredKernel::StringStartsWith
             | LoweredKernel::StringEndsWith => known(vec![string(), string()], bool(), Vec::new()),
@@ -612,21 +620,35 @@ impl LoweredKernel {
                 string(),
                 vec![AbortKind::InvalidBounds],
             ),
-            LoweredKernel::StringAppend => known(vec![string(), string()], string(), Vec::new()),
+            LoweredKernel::StringAppend => known(
+                vec![string(), string()],
+                string(),
+                vec![AbortKind::RequiredFormHasNoPlace],
+            ),
             LoweredKernel::StringSplit => known(vec![string(), string()], strings(), Vec::new()),
-            LoweredKernel::StringJoin => known(vec![string(), strings()], string(), Vec::new()),
-            LoweredKernel::StringConcat => known(vec![strings()], string(), Vec::new()),
-            LoweredKernel::StringReplace => {
-                known(vec![string(), string(), string()], string(), Vec::new())
-            }
+            LoweredKernel::StringJoin => known(
+                vec![string(), strings()],
+                string(),
+                vec![AbortKind::RequiredFormHasNoPlace],
+            ),
+            LoweredKernel::StringConcat => known(
+                vec![strings()],
+                string(),
+                vec![AbortKind::RequiredFormHasNoPlace],
+            ),
+            LoweredKernel::StringReplace => known(
+                vec![string(), string(), string()],
+                string(),
+                vec![AbortKind::RequiredFormHasNoPlace],
+            ),
             LoweredKernel::StringWords
             | LoweredKernel::StringLines
             | LoweredKernel::StringCharacters => known(vec![string()], strings(), Vec::new()),
             LoweredKernel::StringCodePoints => {
                 known(vec![string()], Shape::List(Box::new(int())), Vec::new())
             }
-            // A count or a width no string could hold ends the run rather than answering fewer
-            // copies than were asked for.
+            // Copies or a fill that are more text than a string holds end the run rather than
+            // answering fewer copies than were asked for.
             LoweredKernel::StringRepeat => known(
                 vec![int(), string()],
                 string(),
@@ -641,11 +663,13 @@ impl LoweredKernel {
             LoweredKernel::StringToDecimal => {
                 known(vec![string()], decimal_or_not_a_number(), Vec::new())
             }
-            // Plain notation is as long as the scale is far from nought, and the checker this build
-            // reads names no reason for it to end: a text no string could hold is one no run
-            // answers (`souther_string_from_decimal`). The language names one later
-            // (souther-lang/souther f0d169327), and this follows it when the build follows that.
-            LoweredKernel::StringFromDecimal => known(vec![decimal()], string(), Vec::new()),
+            // Plain notation is as long as the scale is far from nought, so the text of a value near
+            // either end of the scale range is one no string holds.
+            LoweredKernel::StringFromDecimal => known(
+                vec![decimal()],
+                string(),
+                vec![AbortKind::RequiredFormHasNoPlace],
+            ),
             // A result whose scale leaves the range, or that is wider than a `Decimal` holds, ends
             // the run where it is computed.
             LoweredKernel::DecimalAdd

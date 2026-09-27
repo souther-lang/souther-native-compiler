@@ -22,7 +22,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * value of the run it was handed in, made once for each closure however often it is handed over.
  *
  * <p>The library is built from the document the driver's own tests of function values are held to
- * ({@link Documents#FUNCTIONS}): no source publishes a function value yet.
+ * ({@link Documents#FUNCTIONS}): no source writes every shape of function value a host is handed.
  */
 class APhpHostCallsAndHandsOverAFunctionValueTest {
 

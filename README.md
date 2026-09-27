@@ -132,16 +132,15 @@ runtime — a literal is made there from the integer and the scale the checker r
 object carries — and what each answers is the runtime's `amount` module: the scale a sum, a
 difference and a product answer at, each of `RoundingMode`'s seven cases, `Decimal.divide`
 answering `DivisionByZero` before it looks at the scale, `String.toDecimal` reading decimal text by
-the grammar the language states (souther-lang/souther f391aa62a; the JVM this build is tested
-against still reads it as `new BigDecimal`) and `String.fromDecimal` writing plain notation at the
-value's scale. Equality and order are by amount, so `1.0` and `1.00` are equal. The integer is
+the grammar the language states and `String.fromDecimal` writing plain notation at the value's
+scale. Equality and order are by amount, so `1.0` and `1.00` are equal. The integer is
 held in a `u128` where it fits, which is nearly every amount, and every operation on it is machine
 arithmetic there; `num-bigint` works it out only past that, inside the runtime's `magnitude` module,
 and a test holds every `u128` path to what `num-bigint` answers for the same operands. A result whose scale leaves the 32-bit
 range, or whose integer is wider than a JVM `BigInteger` holds, ends the run where it is computed; a
 value a long way below the unit it is rounded to is rounded from how many digits it has, without the
-power of ten its scale names. A plain notation longer than a string holds ends the process, since
-the checker this build reads names no reason for `String.fromDecimal` to end a run. A boundary
+power of ten its scale names. A plain notation longer than a string holds ends the run, measured
+before any of it is written. A boundary
 writes a `Decimal` as its amount and not at its scale — `1.50` is written `1.5` and `100.00` is
 written `100`, an exponent spelt out into at most a thousand digits — and reads one at the scale the
 number was spelt at. The cases of `RoundingMode` are declared by the language and at home in no
@@ -171,8 +170,6 @@ grammar, and only a boundary reads text by it. An instant is read from an offset
 names, a fraction of a second in a `Time` or a `DateTime` is a decode issue and never dropped, and a
 leap second is refused. `ATemporalAnswersWhatTheJvmAnswersTest` holds every kernel and comparison
 to what `java.time` answers over the ends of every range and a seeded run of the rest.
-`Raw`, the external form itself, is not laid out: the runtime builds one to write a value and
-consumes it when it is written, and no program holds one as a value yet.
 
 A value of a union says which case it is by the token at the front of it. A declared case's token is
 its declaration's; an `Int`, a `Bool`, a `String`, a `Decimal` or a temporal standing as a case, and a case the language
@@ -253,7 +250,7 @@ A host builds and reads a value of a type the module publishes through functions
 defines for it, and never through where the value keeps anything. A host holds a value as an
 address it does not look behind, good until the mark taken before it was made is reset, and hands
 it back to these and to the behaviors. For each published type with fields or none there is a
-constructor, `souther5_m_<module>_t_<Name>_construct`, taking the fields and answering `status +
+constructor, `souther6_m_<module>_t_<Name>_construct`, taking the fields and answering `status +
 out` the way the type's own constructor does, since it is that constructor it runs: a value whose
 clauses do not hold is answered `InvariantNotHeld` and nothing is written through `out`, and a type
 with no clause answers a status too, so a clause added later does not change how a host calls it.
@@ -271,7 +268,7 @@ manifest lists them under `cases`. A read is made only of a value `..._case` has
 and is not asked again. The case answered is the concrete one the value is, and
 whether a host can read that case further is its own publication's answer and not the sum's. A
 behavior answering a union no declaration names has the same reader beside its call,
-`souther5_m_<module>_b_<behavior>_answer_case`, counting the cases the union descends to: a member
+`souther6_m_<module>_b_<behavior>_answer_case`, counting the cases the union descends to: a member
 that is a sum counts as its own cases, since a value of it is one of them. It is the behavior's and
 not the union's, which has no name to be spelt under.
 
@@ -313,7 +310,7 @@ but what a behavior answers, whose `..._answer_case` says.
 A list crosses as an address too, of type `souther_list`, wherever its element crosses: as a field,
 as what a behavior takes or answers, and as what a behavior a host implements takes or answers. A
 host builds one and reads one through functions the object defines for each way an element crosses,
-under the module: `souther5_m_<module>_l_<element>_construct`, taking a count and a column for each
+under the module: `souther6_m_<module>_l_<element>_construct`, taking a count and a column for each
 word an element crosses as and answering the list, `..._length`, and `..._at`, taking the list, an
 index and room for the element's words and answering one where the index is inside the list and
 nought, with nothing written, where it is not. `<element>` is the shape the element crosses in: a
@@ -332,7 +329,7 @@ an element is where it would read one, so such a list is built by a host and rea
 A function value crosses as an address too, of type `souther_function`, wherever a value holding
 one is handed across: today a published value and what such a value takes and answers, since a
 behavior's boundary and a field have no function in them. A host calls one through
-`souther5_m_<module>_fn_<shape>_call`, taking the value, what it takes as a host hands each over,
+`souther6_m_<module>_fn_<shape>_call`, taking the value, what it takes as a host hands each over,
 and room for what it answers, and answering the status the function answered. A host makes one of
 its own through `..._implement`, handing room laid out as `souther_hosted_function`, a pointer to a
 function of the type `..._implementation`, and what that function is handed first, and is answered
@@ -341,9 +338,10 @@ first, what the value was called with and room for its answer, and what it answe
 implementation of a behavior's is. Nothing is copied, so the room, the function and what it is
 handed stay the host's for as long as the value may be called. A function value of a shape is
 called by a host where one is handed to a host, and made by one where one is taken from a host, and
-the manifest says each only where it is there (`call`, `make`), for the reason a list's are. No
-source publishes a function value
-yet (souther-lang/souther#1974, #1990), so this is held by tests over a document written by hand,
+the manifest says each only where it is there (`call`, `make`), for the reason a list's are. A source
+publishes a function value, but none writes every shape a host is handed: a function that answers a
+function is refused (E1809, a block is not a value) and an optional is made nowhere but where a field
+is given a value (E1303). So this is held by tests over a document written by hand,
 `native/crates/compiler/tests/functions.transport.json`.
 
 A clause of a type the module keeps and nothing here builds or reads, or one whose fields have no
@@ -375,7 +373,7 @@ being JSON and where they stopped, or every issue found in the document — not 
 one of Raoh's codes, a JSON Pointer and its metadata as named entries. A clause that does not hold is
 `invariant_violation` at the value's path, naming the type's module and name and the clause where
 it has one. A value of a type another build declares is read by that build's object, under
-`souther5.<module>$read$<Name>`, whatever kind of type it is: how a declaration is read is the
+`souther6.<module>$read$<Name>`, whatever kind of type it is: how a declaration is read is the
 declaring build's, and for a type built from fields that build is also the only one that can say
 which clause did not hold. Text read is canonicalized to NFC. What JSON is, is `souther-json-syntax`, a crate that knows
 no Souther type, no arena and no runtime, written to be what both runtimes read once #17 moves it.
@@ -412,13 +410,20 @@ object defines, to one set, reading each of them as it is.
 
 A host calls a function by a C identifier. The symbols one object built here calls in another carry
 `.` and `$`, and no C compiler or FFI that reads C declarations can name those. So what a host
-calls is spelt apart: `souther5`, the ABI generation, then the module as `_m_<segment>` per segment
+calls is spelt apart: `souther6`, the ABI generation, then the module as `_m_<segment>` per segment
 of its dotted name, then `_b_<behavior>`, `_v_<value>`, `_t_<type>`, or `_l_` and the shape a
 list's element crosses in, or `_fn_` and the shape of a function value, and what is done with it. A
 name is written as it is where it is ASCII letters and digits, with `_` doubled and any other
-character as `_u<hex>_`, its code point. So `shop.quote` is `souther5_m_shop_b_quote` and a
+character as `_u<hex>_`, its code point. So `shop.quote` is `souther6_m_shop_b_quote` and a
 behavior named `数量` is `..._b__u6570__u91cf_`, and inside a name `_` is only ever followed by `_`
 or `u`, which is what keeps every spelling readable back to the one set of names it was made from.
+
+The functions generated code calls in the runtime are the runtime's own and carry no generation, so
+a linker would resolve one to a runtime that makes the call another way. The runtime instead defines
+a symbol only its generation defines, `souther_runtime_abi_<n>`, and every object refers to the one
+of its own: an object linked with a runtime of another generation has an undefined symbol.
+`native/crates/abi/generations/<n>.txt` records the contract each generation begins from, and a test
+fails when what the current one records changes without a new generation.
 
 A published behavior and a published value have an entry of their own for a host, which converts
 what a host hands over and calls the symbol another object calls. The two are called by different
@@ -470,8 +475,8 @@ behavior's `call` takes the capabilities of what it requires first, as `requirem
 names two readings of a value: `decode`, out of text in the external form, and `decodehost`, out of
 a value a host built of ordered maps and wrote with every container as an object, in which a map
 keyed by its indices is read as an array wherever the declaration holds one. What a manifest may say
-is Rust types, and version 12
-is `native/crates/compiler/tests/interface-v12.json`: a test holds a program's manifest to it, and
+is Rust types, and version 13
+is `native/crates/compiler/tests/interface-v13.json`: a test holds a program's manifest to it, and
 another reads it with those types and writes it back unchanged. The manifest carries its own
 `version`, moved when what it says is read differently, and the `abi` its functions answer to,
 which is the generation in every symbol.
@@ -481,7 +486,7 @@ through a capability of the host's implementation and nothing else, so nothing d
 symbol of its own. A capability is two words, laid out as the header's `souther_capability`: the
 code a call through it reaches, which takes what the code is handed first and then what the behavior
 takes, and what it is handed first. The host makes one through
-`souther5_m_<module>_b_<behavior>_implement`, handing room for the capability, room laid out as
+`souther6_m_<module>_b_<behavior>_implement`, handing room for the capability, room laid out as
 `souther_hosted`, a pointer to a function of the type `..._implementation`, and what that function
 is to be handed first. The function takes that, then what the behavior takes and room for its
 answer, in the words a host hands a published behavior, and answers a status. A behavior with a body

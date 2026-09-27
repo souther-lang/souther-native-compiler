@@ -60,6 +60,17 @@
 /// list or a function value through is spelt under the shape it crosses in ([`host_list_symbol`],
 /// [`host_function_symbol`]).
 ///
+/// `6` is `souther-native-compiler#107`, and is the calling convention of eight functions moving.
+/// A string operation whose answer can be more text than a string holds no longer answers the
+/// string: it writes it through room and answers whether it wrote one, as `String.repeat` already
+/// did. The symbols are the runtime's own and carry no generation, so an object built before the
+/// move calls `souther_string_concat(a, b)` and reads a pointer back from a function that now
+/// takes a third argument for the answer, which no linker sees; what a generation is for is that
+/// such an object no longer resolves the symbols of one built after it, and that the runtime is
+/// held to the same by a symbol of its own ([`runtime_generation_symbol`]). The record of the
+/// contract each generation begins from is `generations/<n>.txt`, and `tests/generation.rs` holds
+/// the current one to it.
+///
 /// Not part of [`type_symbol`]: a declared type's token is data, not a call, and nothing about how
 /// a call is made or what its status means changes what a value of one looks like.
 ///
@@ -69,6 +80,25 @@
 ///
 /// The last of [`GENERATIONS`], and written nowhere else.
 pub const ABI_GENERATION: u32 = GENERATIONS[GENERATIONS.len() - 1].0;
+
+/// The symbol the runtime defines to say which generation it answers to, and every object generated
+/// code makes refers to.
+///
+/// A generation written into the symbols of generated code keeps two objects of different
+/// generations from resolving one another, and keeps nothing from the runtime: the functions
+/// generated code calls in it are the runtime's own, `souther_string_concat` among them, and a
+/// linker resolves such a name to whatever defines it, however differently the call is made. So
+/// the runtime states its generation in the one way a linker checks, a symbol only that generation
+/// defines, and every object refers to the one its own generation names. An object linked with a
+/// runtime of another generation then has an undefined symbol, and never a call made one way and
+/// answered the other. The runtime writes its definition from [`ABI_GENERATION`] when it is built
+/// and the driver writes the reference from it, so neither spells a number.
+///
+/// An object built before the symbol existed refers to none, and this cannot stop it: the guard
+/// is from generation 6 on.
+pub fn runtime_generation_symbol() -> String {
+    format!("souther_runtime_abi_{ABI_GENERATION}")
+}
 
 /// What each generation moved, oldest first, as the paragraphs above tell it at length.
 ///
@@ -96,6 +126,14 @@ pub const GENERATIONS: &[(u32, &str)] = &[
         "a function value called across objects through its header, and every value of the model \
          a host is handed written through room in the words of the shape it crosses in \
          (souther-native-compiler#95)",
+    ),
+    (
+        6,
+        "a generated string operation that may have no answer writes it through room and answers \
+         whether it wrote one: `souther_string_concat`, `_lowercase`, `_uppercase`, `_join`, \
+         `_concat_all`, `_replace`, `_reverse` and `_from_decimal`, where each answered the string \
+         itself, and the runtime says which generation it is by a symbol every object refers to \
+         (souther-native-compiler#107)",
     ),
 ];
 
@@ -984,7 +1022,8 @@ pub const TEXT_BYTES: i64 = SLOT;
 /// and not in what they ask, and a symbol each would be six chances to order text six ways.
 pub const STRING_COMPARE: &str = "souther_string_compare";
 
-/// The symbol two strings are joined through. Answers a new string and touches neither operand.
+/// The symbol two strings are joined through. Writes a new string through room and touches neither
+/// operand, and answers whether it wrote one: a join longer than a string holds writes none.
 pub const STRING_CONCAT: &str = "souther_string_concat";
 
 /// The symbol a string's length is counted through, in code points, which is what the language
@@ -999,7 +1038,7 @@ pub const STRING_CODE_POINTS: &str = "souther_string_code_points";
 ///
 /// The text is walked in the runtime rather than in code emitted at every call, for the reason
 /// [`STRING_COMPARE`] is. A kernel that answers a value for everything it is handed answers it. One
-/// that answers nothing for some of what it is handed — a slice the string has no room for, a count
+/// that answers nothing for some of what it is handed — a slice the string has no room for, copies
 /// no string could hold, text that is no integer — answers whether it wrote its value through room
 /// it is handed last, and says nothing of why: which reason a run ends for, or which case stands
 /// in for the value, is the kernel's contract and the caller's to read, never the runtime's.
@@ -2021,8 +2060,8 @@ pub const GENERATED_RUNTIME: &[GeneratedCall] = {
         },
         GeneratedCall {
             name: STRING_CONCAT,
-            takes: &[Given(Host(String)), Given(Host(String))],
-            answers: Some(Host(String)),
+            takes: &[Given(Host(String)), Given(Host(String)), Room(Host(String))],
+            answers: Some(Host(Bool)),
         },
         GeneratedCall {
             name: STRING_CODE_POINTS,
@@ -2036,13 +2075,13 @@ pub const GENERATED_RUNTIME: &[GeneratedCall] = {
         },
         GeneratedCall {
             name: STRING_LOWERCASE,
-            takes: &[Given(Host(String))],
-            answers: Some(Host(String)),
+            takes: &[Given(Host(String)), Room(Host(String))],
+            answers: Some(Host(Bool)),
         },
         GeneratedCall {
             name: STRING_UPPERCASE,
-            takes: &[Given(Host(String))],
-            answers: Some(Host(String)),
+            takes: &[Given(Host(String)), Room(Host(String))],
+            answers: Some(Host(Bool)),
         },
         GeneratedCall {
             name: STRING_CONTAINS,
@@ -2081,13 +2120,13 @@ pub const GENERATED_RUNTIME: &[GeneratedCall] = {
         },
         GeneratedCall {
             name: STRING_JOIN,
-            takes: &[Given(Host(String)), Given(Host(List))],
-            answers: Some(Host(String)),
+            takes: &[Given(Host(String)), Given(Host(List)), Room(Host(String))],
+            answers: Some(Host(Bool)),
         },
         GeneratedCall {
             name: STRING_CONCAT_ALL,
-            takes: &[Given(Host(List))],
-            answers: Some(Host(String)),
+            takes: &[Given(Host(List)), Room(Host(String))],
+            answers: Some(Host(Bool)),
         },
         GeneratedCall {
             name: STRING_REPLACE,
@@ -2095,8 +2134,9 @@ pub const GENERATED_RUNTIME: &[GeneratedCall] = {
                 Given(Host(String)),
                 Given(Host(String)),
                 Given(Host(String)),
+                Room(Host(String)),
             ],
-            answers: Some(Host(String)),
+            answers: Some(Host(Bool)),
         },
         GeneratedCall {
             name: STRING_WORDS,
@@ -2120,8 +2160,8 @@ pub const GENERATED_RUNTIME: &[GeneratedCall] = {
         },
         GeneratedCall {
             name: STRING_REVERSE,
-            takes: &[Given(Host(String))],
-            answers: Some(Host(String)),
+            takes: &[Given(Host(String)), Room(Host(String))],
+            answers: Some(Host(Bool)),
         },
         GeneratedCall {
             name: STRING_REPEAT,
@@ -2165,8 +2205,8 @@ pub const GENERATED_RUNTIME: &[GeneratedCall] = {
         },
         GeneratedCall {
             name: STRING_FROM_DECIMAL,
-            takes: &[Given(Host(Decimal))],
-            answers: Some(Host(String)),
+            takes: &[Given(Host(Decimal)), Room(Host(String))],
+            answers: Some(Host(Bool)),
         },
         GeneratedCall {
             name: DECIMAL_LITERAL,
@@ -2798,13 +2838,13 @@ mod tests {
     fn a_behavior_is_reached_by_its_module_and_its_name() {
         assert_eq!(
             behavior_symbol("calculation", "add"),
-            "souther5.calculation.add"
+            "souther6.calculation.add"
         );
     }
 
     #[test]
     fn a_dotted_module_keeps_its_dots() {
-        assert_eq!(behavior_symbol("lib.pub", "bill"), "souther5.lib.pub.bill");
+        assert_eq!(behavior_symbol("lib.pub", "bill"), "souther6.lib.pub.bill");
     }
 
     /// What the reading rests on. Were this admitted, `a.b` / `c` and `a` / `b.c` would be spelt
@@ -2844,7 +2884,7 @@ mod tests {
     fn each_row_of_a_behavior_is_its_own_symbol() {
         assert_eq!(
             example_symbol("calculation", "add", 0),
-            "souther5.calculation.add$example$0"
+            "souther6.calculation.add$example$0"
         );
         assert_ne!(
             example_symbol("calculation", "add", 0),
@@ -2859,7 +2899,7 @@ mod tests {
     #[test]
     fn an_entry_and_its_boundary_are_two_symbols() {
         let entry = behavior_symbol("shop", "quote");
-        assert_eq!(boundary_symbol(&entry), "souther5.shop.quote$boundary");
+        assert_eq!(boundary_symbol(&entry), "souther6.shop.quote$boundary");
         assert_ne!(boundary_symbol(&entry), entry);
         assert_ne!(
             boundary_symbol(&example_symbol("shop", "quote", 0)),
@@ -2930,7 +2970,7 @@ mod tests {
     fn a_published_value_is_reached_by_its_module_and_its_name() {
         assert_eq!(
             value_symbol("pricing", "standard"),
-            "souther5.pricing$value$standard"
+            "souther6.pricing$value$standard"
         );
     }
 
@@ -2968,7 +3008,7 @@ mod tests {
     fn a_type_is_built_through_its_module_and_its_name() {
         assert_eq!(
             constructor_symbol("pricing", "Amount"),
-            "souther5.pricing$construct$Amount"
+            "souther6.pricing$construct$Amount"
         );
     }
 
@@ -2988,7 +3028,7 @@ mod tests {
     fn what_decides_a_construction_is_reached_by_the_types_module_and_name() {
         assert_eq!(
             checked_constructor_symbol("pricing", "Amount"),
-            "souther5.pricing$checked$Amount"
+            "souther6.pricing$checked$Amount"
         );
     }
 
@@ -3018,23 +3058,23 @@ mod tests {
     fn a_host_reaches_a_type_under_its_module_and_its_name() {
         assert_eq!(
             host_constructor_symbol("pricing", "Amount"),
-            "souther5_m_pricing_t_Amount_construct"
+            "souther6_m_pricing_t_Amount_construct"
         );
         assert_eq!(
             host_field_symbol("pricing", "Amount", "value"),
-            "souther5_m_pricing_t_Amount_f_value"
+            "souther6_m_pricing_t_Amount_f_value"
         );
         assert_eq!(
             host_case_symbol("pricing", "Result"),
-            "souther5_m_pricing_t_Result_case"
+            "souther6_m_pricing_t_Result_case"
         );
         assert_eq!(
             host_decode_symbol("pricing", "Amount"),
-            "souther5_m_pricing_t_Amount_decode"
+            "souther6_m_pricing_t_Amount_decode"
         );
         assert_eq!(
             host_encode_symbol("pricing", "Amount"),
-            "souther5_m_pricing_t_Amount_encode"
+            "souther6_m_pricing_t_Amount_encode"
         );
     }
 
@@ -3042,15 +3082,15 @@ mod tests {
     fn a_host_reaches_a_behavior_and_a_value_under_their_module() {
         assert_eq!(
             host_behavior_symbol("lib.shop", "quote"),
-            "souther5_m_lib_m_shop_b_quote"
+            "souther6_m_lib_m_shop_b_quote"
         );
         assert_eq!(
             host_value_symbol("lib.shop", "standard"),
-            "souther5_m_lib_m_shop_v_standard"
+            "souther6_m_lib_m_shop_v_standard"
         );
         assert_eq!(
             host_behavior_answer_case_symbol("lib.shop", "find"),
-            "souther5_m_lib_m_shop_b_find_answer_case"
+            "souther6_m_lib_m_shop_b_find_answer_case"
         );
     }
 
@@ -3063,7 +3103,7 @@ mod tests {
                 &HostShape::Leaf(Value),
                 HostListOperation::Construct
             ),
-            "souther5_m_shop_l_value_construct"
+            "souther6_m_shop_l_value_construct"
         );
         assert_eq!(
             host_list_symbol(
@@ -3071,7 +3111,7 @@ mod tests {
                 &HostShape::Option(Box::new(HostShape::Leaf(Int))),
                 HostListOperation::At
             ),
-            "souther5_m_lib_m_shop_l_o_int_at"
+            "souther6_m_lib_m_shop_l_o_int_at"
         );
         assert_eq!(
             host_list_symbol(
@@ -3082,7 +3122,7 @@ mod tests {
                 ]))),
                 HostListOperation::Length
             ),
-            "souther5_m_shop_l_l_t2_int_o_bool_length"
+            "souther6_m_shop_l_l_t2_int_o_bool_length"
         );
     }
 
@@ -3095,11 +3135,11 @@ mod tests {
         };
         assert_eq!(
             host_function_symbol("shop", &function, HostFunctionOperation::Call),
-            "souther5_m_shop_fn_f2_int_string_o_int_call"
+            "souther6_m_shop_fn_f2_int_string_o_int_call"
         );
         assert_eq!(
             host_function_symbol("shop", &function, HostFunctionOperation::Implement),
-            "souther5_m_shop_fn_f2_int_string_o_int_implement"
+            "souther6_m_shop_fn_f2_int_string_o_int_implement"
         );
     }
 
@@ -3183,11 +3223,11 @@ mod tests {
     fn a_name_that_is_not_ascii_letters_and_digits_is_escaped() {
         assert_eq!(
             host_behavior_symbol("shop", "foo_bar"),
-            "souther5_m_shop_b_foo__bar"
+            "souther6_m_shop_b_foo__bar"
         );
         assert_eq!(
             host_behavior_symbol("shop", "数量"),
-            "souther5_m_shop_b__u6570__u91cf_"
+            "souther6_m_shop_b__u6570__u91cf_"
         );
     }
 
@@ -3197,7 +3237,7 @@ mod tests {
     fn a_type_is_read_through_its_module_and_its_name() {
         assert_eq!(
             reader_symbol("pricing", "Amount"),
-            "souther5.pricing$read$Amount"
+            "souther6.pricing$read$Amount"
         );
     }
 

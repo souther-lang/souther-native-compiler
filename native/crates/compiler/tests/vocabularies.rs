@@ -93,7 +93,6 @@ fn every_primitive_is_read_as_the_primitive_it_names() {
             Prim::Time,
             Prim::DateTime,
             Prim::Instant,
-            Prim::Raw,
         ]
     );
 }

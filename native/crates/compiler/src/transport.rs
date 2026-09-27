@@ -83,6 +83,11 @@ pub const MOVES: &[(u32, &str)] = &[
         "a `Date`, `Time`, `DateTime` or `Instant` literal (`temporal`), as the count the checker \
          read it as (`count`, and `nano` for an `Instant`)",
     ),
+    (
+        27,
+        "no `Raw` primitive: the language no longer has one, so it is no member of what a type \
+         or a case can be (`prim`)",
+    ),
 ];
 
 /// A document of [`TRANSPORT_VERSION`], and no other, read through [`Program::read`] and nothing
@@ -1109,7 +1114,7 @@ impl LeafScalar {
             Prim::Time => Some(LeafScalar::Time),
             Prim::DateTime => Some(LeafScalar::DateTime),
             Prim::Instant => Some(LeafScalar::Instant),
-            Prim::Rational | Prim::Raw => None,
+            Prim::Rational => None,
         }
     }
 
@@ -1696,8 +1701,6 @@ pub enum Prim {
     DateTime,
     #[serde(rename = "INSTANT")]
     Instant,
-    #[serde(rename = "RAW")]
-    Raw,
 }
 
 impl Prim {
@@ -1713,7 +1716,6 @@ impl Prim {
             Prim::Time => "Time",
             Prim::DateTime => "DateTime",
             Prim::Instant => "Instant",
-            Prim::Raw => "Raw",
         }
     }
 }
@@ -2811,33 +2813,39 @@ impl Node {
     }
 
     /// Whether a node of this kind is one the checker ever gives a reason to end a run without a
-    /// value: arithmetic and negation over a number, a construction of a type that states a
-    /// clause, and a call to a kernel. Every other kind is total in itself, and what a call to a
-    /// behavior, a helper or a value ends with is the callee's own. An attempted construction is
+    /// value: arithmetic and negation over a number, a join, a construction of a type that states
+    /// a clause, a call to a kernel, and the write that grows a list. Every other kind is total in
+    /// itself, and what a call to a behavior, a helper or a value ends with is the callee's own. An attempted construction is
     /// total too: a clause that does not hold takes a departure, and what a clause ends with where
     /// it does not answer is that clause's own, as a callee's is.
     ///
     /// Asked of what decides it and not of the kind alone: a binary operator by which operator it
-    /// is, since a comparison, a truth operator and a join end no run and arithmetic may, and a call
+    /// is, since a comparison and a truth operator end no run and arithmetic and a join may, and a call
     /// by what it reaches. Named for every kind and every operator, with no arm standing for the
     /// rest, so one added to the document has to be said to be one or the other.
     pub fn can_end_without_a_value(&self) -> bool {
         match self {
             Node::Binary { op, .. } => match op {
                 Op::Add | Op::Sub | Op::Mul | Op::Div => true,
-                Op::Eq
-                | Op::Ne
-                | Op::Lt
-                | Op::Le
-                | Op::Gt
-                | Op::Ge
-                | Op::And
-                | Op::Or
-                | Op::Concat => false,
+                Op::Eq | Op::Ne | Op::Lt | Op::Le | Op::Gt | Op::Ge | Op::And | Op::Or => false,
+                // A text or a list longer than one holds has no place.
+                Op::Concat => true,
             },
             // An `unreachable` is where the run ends, and ending it is all it does.
             Node::Neg { .. } | Node::Construct { .. } | Node::Unreachable { .. } => true,
-            Node::Call { reaches, .. } => matches!(reaches, Reaches::Kernel { .. }),
+            Node::Call { reaches, .. } => match reaches {
+                Reaches::Kernel { .. } => true,
+                // The walk that builds a collection ends with nothing of its own; the write its
+                // step makes is where the collection grows past what one holds.
+                Reaches::Emitted { operation } => match operation {
+                    Emitted::BuildList | Emitted::BuildMap => false,
+                    Emitted::GrowList | Emitted::PutMap => true,
+                },
+                Reaches::Behavior { .. }
+                | Reaches::Helper { .. }
+                | Reaches::Value { .. }
+                | Reaches::PublishedValue { .. } => false,
+            },
             Node::Int { .. }
             | Node::Read { .. }
             | Node::Bool { .. }

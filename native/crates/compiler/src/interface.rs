@@ -761,7 +761,6 @@ fn case_crossings() -> Vec<manifest::CaseCrossing> {
         P::Time,
         P::DateTime,
         P::Instant,
-        P::Raw,
     ]
     .map(|prim| transport::Case::Primitive { prim });
     let language = [
@@ -1262,7 +1261,6 @@ fn primitive(prim: Prim) -> manifest::Primitive {
         Prim::Time => manifest::Primitive::Time,
         Prim::DateTime => manifest::Primitive::DateTime,
         Prim::Instant => manifest::Primitive::Instant,
-        Prim::Raw => manifest::Primitive::Raw,
     }
 }
 
