@@ -69,7 +69,10 @@ fn a_join_holds_what_is_handed_over_and_what_it_comes_to() {
                 let pieces = [held(one), held(other), held(third)];
                 every_capacity_answers_as_the_oracle_says(
                     &format!("join {one:?} {other:?} {third:?}"),
-                    code_points(one) + code_points(other) + code_points(third) + 2 * code_points("-"),
+                    code_points(one)
+                        + code_points(other)
+                        + code_points(third)
+                        + 2 * code_points("-"),
                     |capacity| join(held("-"), pieces, capacity),
                 );
             }
@@ -85,7 +88,8 @@ fn a_replace_holds_what_it_writes() {
             let pieces = text.split(target).count() as i64;
             every_capacity_answers_as_the_oracle_says(
                 &format!("replace {text:?} {replacement:?}"),
-                code_points(text) - (pieces - 1) * code_points(target) + (pieces - 1) * code_points(replacement),
+                code_points(text) - (pieces - 1) * code_points(target)
+                    + (pieces - 1) * code_points(replacement),
                 |capacity| replace(held(target), held(replacement), held(text), capacity),
             );
         }
@@ -142,8 +146,12 @@ fn a_pad_holds_the_fill_and_the_text_together() {
                     let whole = build(width, held(pad), held(text), PLENTY).unwrap();
                     let needs = code_points(&whole);
                     for capacity in 0..=needs + code_points(pad) * 2 + 2 {
-                        let built =
-                            build(width, held(pad), held(text), Capacity::of_code_points(capacity));
+                        let built = build(
+                            width,
+                            held(pad),
+                            held(text),
+                            Capacity::of_code_points(capacity),
+                        );
                         if capacity >= needs + code_points(pad) * 2 {
                             assert_eq!(built.as_deref(), Some(whole.as_str()));
                         }
@@ -160,7 +168,12 @@ fn a_pad_holds_the_fill_and_the_text_together() {
                     // One unit short of what the answer is written in is never an answer.
                     if needs > 0 && width > text.chars().count() as i64 {
                         assert_eq!(
-                            build(width, held(pad), held(text), Capacity::of_code_points(needs - 1)),
+                            build(
+                                width,
+                                held(pad),
+                                held(text),
+                                Capacity::of_code_points(needs - 1)
+                            ),
                             None,
                             "pad {name} {width} {pad:?} {text:?}"
                         );

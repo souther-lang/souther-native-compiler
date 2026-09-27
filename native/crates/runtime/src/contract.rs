@@ -289,7 +289,9 @@ fn functions() -> Vec<(&'static str, Shape)> {
         ),
         (
             "souther_string_of_utf8",
-            shape_of(souther_string_of_utf8 as unsafe extern "C" fn(*const u8, Count, *mut M) -> i8),
+            shape_of(
+                souther_string_of_utf8 as unsafe extern "C" fn(*const u8, Count, *mut M) -> i8,
+            ),
         ),
         (
             "souther_string_length",
@@ -623,7 +625,8 @@ fn functions() -> Vec<(&'static str, Shape)> {
         (
             "souther_decimal_of_parts",
             shape_of(
-                souther_decimal_of_parts as unsafe extern "C" fn(*const u8, Count, i64) -> *mut Decimal,
+                souther_decimal_of_parts
+                    as unsafe extern "C" fn(*const u8, Count, i64) -> *mut Decimal,
             ),
         ),
         (

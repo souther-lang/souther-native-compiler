@@ -439,9 +439,7 @@ mod tests {
     }
 
     fn of(unscaled: &str, scale: i64) -> *mut Decimal {
-        unsafe {
-            souther_decimal_of_parts(unscaled.as_ptr(), Count(unscaled.len() as i64), scale)
-        }
+        unsafe { souther_decimal_of_parts(unscaled.as_ptr(), Count(unscaled.len() as i64), scale) }
     }
 
     fn parts(at: *const Decimal) -> (String, i64) {

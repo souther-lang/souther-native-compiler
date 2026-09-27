@@ -222,7 +222,10 @@ mod tests {
     #[test]
     fn a_shrinking_combining_form_is_admitted_within_the_composed_capacity() {
         let one = Capacity::of_code_points(1);
-        assert_eq!(admitted("e\u{301}".as_bytes(), one).as_deref(), Ok("\u{e9}"));
+        assert_eq!(
+            admitted("e\u{301}".as_bytes(), one).as_deref(),
+            Ok("\u{e9}")
+        );
     }
 
     /// U+0344 (COMBINING GREEK DIALYTIKA TONOS) is one code point that decomposes under NFC to two
