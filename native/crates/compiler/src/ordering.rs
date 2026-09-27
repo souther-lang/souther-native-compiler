@@ -98,7 +98,7 @@ pub(crate) fn ordered(
         }
         | Ty::Union { .. } => {
             let Some(Ty::Ref {
-                named: Case::Declared { declared },
+                named: enumeration @ Case::Declared { .. },
             }) = basis
             else {
                 return Err(not_lowered(format!(
@@ -109,9 +109,7 @@ pub(crate) fn ordered(
             };
             let leaves = lowering
                 .declared
-                .leaves_of(&[Case::Declared {
-                    declared: declared.clone(),
-                }])
+                .leaves_of(std::slice::from_ref(enumeration))
                 .expect("`Coherent` held every case named to be one a declaration crossed for");
             let one = place(builder, lowering, module, &leaves, Tagged::of(a, ty))?;
             let other = place(builder, lowering, module, &leaves, Tagged::of(b, ty))?;
