@@ -602,7 +602,7 @@ sealed interface Crossing {
 
         @Override
         public String of(List<String> words) {
-            return bare(type) + "::Library(unsafe { rt::Held::new(library, " + words.getFirst() + ") })";
+            return "unsafe { " + bare(type) + "::__held(library, " + words.getFirst() + ") }";
         }
 
         @Override

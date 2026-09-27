@@ -182,4 +182,66 @@ class ARustHostHandsNoLibraryWhatAnotherMadeTest {
                 in a: Ok(6)
                 """);
     }
+
+    /**
+     * A function value the library made cannot be put under another function type. What the
+     * library answered is one address, and the code it holds first is of the type it was made
+     * for: a call through another type's function would run that code with words it does not
+     * take. The address is therefore held where only the library's own conversions reach it, and
+     * what a caller sees of a function value is a type of its own, made by the library or from a
+     * function of the host's.
+     *
+     * <p>Two host programs, one for each way to reach it: reading the address out of one type, and
+     * putting one into another. Each is refused for that reason and not for a name that is not
+     * there, which the reason each names holds them to; the same programs built against a crate that
+     * had the address public are the ones this test exists to refuse.
+     */
+    @Test
+    void aFunctionValueCannotBeUnderAnotherFunctionType(@TempDir Path into) throws Exception {
+        NativeCompiler.Library library = Documents.library(Documents.FUNCTIONS, into.resolve("a"));
+        RustBindings.Generated binding = RustHost.generated(library, into.resolve("binding"),
+                "calling");
+        String reading = """
+                use calling::m::{self, FnIntToInt};
+                use calling::Library;
+
+                fn main() {
+                    let path = std::env::args().nth(1).unwrap();
+                    // SAFETY: the library the binding was generated from.
+                    let library = unsafe { Library::load(path) }.unwrap();
+                    library.run(|run| {
+                        let bump: FnIntToInt<'_> = m::bump(run).unwrap();
+                        let FnIntToInt(_held) = bump;
+                    }).unwrap();
+                }
+                """;
+        String putting = """
+                use calling::m::{self, FnIntToInt, FnIntToFnIntToInt};
+                use calling::Library;
+
+                fn main() {
+                    let path = std::env::args().nth(1).unwrap();
+                    // SAFETY: the library the binding was generated from.
+                    let library = unsafe { Library::load(path) }.unwrap();
+                    library.run(|run| {
+                        let bump: FnIntToInt<'_> = m::bump(run).unwrap();
+                        let _ = FnIntToFnIntToInt(bump.0);
+                    }).unwrap();
+                }
+                """;
+
+        // The names exist: the same programs without the reach into the value build, so what is
+        // refused below is the reach and not a name.
+        RustHost.ran(into, binding, "calling", reading.replace("let FnIntToInt(_held) = bump;",
+                "let _ = &bump;"), List.of(library.library().toString()));
+        RustHost.ran(into, binding, "calling", putting
+                .replace("use calling::m::{self, FnIntToInt, FnIntToFnIntToInt};",
+                        "use calling::m::{self, FnIntToInt};")
+                .replace("let _ = FnIntToFnIntToInt(bump.0);", "let _ = &bump;"),
+                List.of(library.library().toString()));
+
+        assertThat(RustHost.refused(into, binding, "calling", reading)).contains("private fields");
+        assertThat(RustHost.refused(into, binding, "calling", putting))
+                .contains("field `0` of struct `FnIntToInt` is private");
+    }
 }

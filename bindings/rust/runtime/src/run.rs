@@ -86,12 +86,20 @@ impl Runtime {
 }
 
 /// A library a binding loaded: what has a runtime, and what a run of it hands generated code.
-pub trait Loaded {
+///
+/// # Safety
+///
+/// [`Loaded::runtime`] is the runtime of the library loaded, always the same one: a value is told
+/// to be of a library by comparing what this answers, and a `Loaded` answering another's would
+/// have a value of the one handed to the other's computation. A type answering it is one a binding
+/// wrote around a loaded library, and nothing a caller implements.
+pub unsafe trait Loaded {
     /// The runtime the library was built with.
     fn runtime(&self) -> &Runtime;
 }
 
-impl Loaded for Runtime {
+// SAFETY: a runtime is its own.
+unsafe impl Loaded for Runtime {
     fn runtime(&self) -> &Runtime {
         self
     }

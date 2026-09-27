@@ -546,6 +546,8 @@ public final class RustBindings {
             return null;
         }
         at.types.claim(name, "the enum of a function type");
+        at.types.claim(name + "Kind", "the private enum of a function type");
+        int before = at.items.length();
         String typed = "crate::" + String.join("::", path) + "::" + name + "<'run>";
         FunctionEnum made = new FunctionEnum(typed, called, hosted);
         functions.put(key, made);
@@ -553,6 +555,7 @@ public final class RustBindings {
         List<String> inputs = java.util.stream.IntStream.range(0, takes.size())
                 .mapToObj(it -> "input" + it).toList();
         String host = name + "Host";
+        String kind = name + "Kind";
         at.types.claim(host, "the type of a host's function of " + name);
         String signed = "dyn for<'x> Fn(&mut crate::Run<'x>" + takes.stream()
                 .map(it -> ", " + it.owned().replace("'run", "'x")).collect(Collectors.joining())
@@ -565,7 +568,7 @@ public final class RustBindings {
 
         StringBuilder callArm = new StringBuilder();
         if (called) {
-            callArm.append("            Self::Library(held) => {\n")
+            callArm.append("            " + kind + "::Library(held) => {\n")
                     .append("                let function = held.word_in(run)?;\n")
                     .append("                let library = run.library();\n");
             List<String> given = new ArrayList<>(List.of("function"));
@@ -591,7 +594,7 @@ public final class RustBindings {
                     .append("                Ok(").append(answered.of(rooms)).append(")\n")
                     .append("            }\n");
         } else {
-            callArm.append("            Self::Library(_) => unreachable!(\"the library hands over no ")
+            callArm.append("            " + kind + "::Library(_) => unreachable!(\"the library hands over no ")
                     .append(what).append(" it offers no way to call\"),\n");
         }
 
@@ -603,7 +606,7 @@ public final class RustBindings {
             Manifest.FunctionMaking making = Objects.requireNonNull(crossing.make());
             symbols.putIfAbsent(making.implement(), "rt::FunctionImplementFn");
             wordArm.append("""
-                            Self::Host(function) => {
+                            @KIND@::Host(function) => {
                                 let library = run.library();
                                 let key = std::rc::Rc::as_ptr(function).cast::<()>() as usize;
                                 let hosted = %s { library, function: function.clone() };
@@ -664,7 +667,7 @@ public final class RustBindings {
                             .collect(Collectors.joining()),
                     answer(answering, roomWords, "        ")));
         } else {
-            wordArm.append("            Self::Host(_) => panic!(\"the library offers no way to make ")
+            wordArm.append("            " + kind + "::Host(_) => panic!(\"the library offers no way to make ")
                     .append(what).append(" of a host's own function\"),\n");
         }
 
@@ -674,8 +677,15 @@ public final class RustBindings {
                 pub type %s = %s;
 
                 /// %s: one the library made, or a function of the host's own.
+                ///
+                /// What the library made is held as the value it answered and nothing here says
+                /// which function type it is of but this type, so it is made only by the library and
+                /// never by a caller: a value of another function type could not be put in one.
                 #[derive(Clone)]
-                pub enum %s<'run> {
+                pub struct %s<'run>(@KIND@<'run>);
+
+                #[derive(Clone)]
+                enum @KIND@<'run> {
                     /// One the library made, called through the library.
                     Library(rt::Held<'run, crate::Library>),
                     /// A function of the host's own, which the library calls in the run of the call
@@ -686,7 +696,7 @@ public final class RustBindings {
                 impl<'run> %s<'run> {
                     /// A function of the host's own.
                     pub fn host(function: impl for<'x> Fn(&mut crate::Run<'x>%s) -> Result<%s, crate::HostError> + 'static) -> Self {
-                        %s::Host(std::rc::Rc::new(function))
+                        %s(@KIND@::Host(std::rc::Rc::new(function)))
                     }
 
                     /// Calls it in `run`, with what it takes.
@@ -696,9 +706,21 @@ public final class RustBindings {
                     /// What the call comes to where it answers no value; [`crate::Failure::Foreign`]
                     /// where another library made it.
                     pub fn call(&self, run: &mut crate::Run<'run>%s) -> Result<%s, crate::Failure> {
-                        match self {
-                            Self::Host(function) => function(run%s).map_err(crate::Failure::Host),
+                        match &self.0 {
+                            @KIND@::Host(function) => function(run%s).map_err(crate::Failure::Host),
                 %s        }
+                    }
+
+                    /// The function value the library answered at `at`.
+                    ///
+                    /// # Safety
+                    ///
+                    /// `at` is a function value of this type `library` answered that is good for
+                    /// `'run`.
+                    #[doc(hidden)]
+                    pub unsafe fn __held(library: &'run crate::Library, at: rt::Word) -> Self {
+                        // SAFETY: what the caller says.
+                        %s(@KIND@::Library(unsafe { rt::Held::new(library, at) }))
                     }
 
                     /// The value, as the library of `run` is handed it: one another library made is
@@ -706,8 +728,8 @@ public final class RustBindings {
                     /// handed over.
                     #[doc(hidden)]
                     pub fn __word(&self, run: &mut crate::Run<'_>) -> Result<rt::Word, crate::Failure> {
-                        match self {
-                            Self::Library(held) => held.word_in(run),
+                        match &self.0 {
+                            @KIND@::Library(held) => held.word_in(run),
                 %s        }
                     }
                 }
@@ -716,7 +738,10 @@ public final class RustBindings {
                 name, takes.stream().map(it -> ", " + it.owned().replace("'run", "'x"))
                         .collect(Collectors.joining()), answers.owned().replace("'run", "'x"), name,
                 parameters, answers.owned(), inputs.stream().map(it -> ", " + it)
-                        .collect(Collectors.joining()), callArm, wordArm, entry));
+                        .collect(Collectors.joining()), callArm, name, wordArm, entry));
+        // The one name the private enum has, filled into everything written above.
+        at.items.replace(before, at.items.length(),
+                at.items.substring(before).replace("@KIND@", kind));
         return made;
     }
 
@@ -1488,7 +1513,8 @@ public final class RustBindings {
                     }
                 }
 
-                impl rt::Requirement for %s<'_> {
+                // SAFETY: the capability and the runtime are those of what it wraps.
+                unsafe impl rt::Requirement for %s<'_> {
                     fn capability(&self) -> std::ptr::NonNull<rt::Capability> {
                         rt::Requirement::capability(&self.implemented)
                     }
@@ -1589,7 +1615,8 @@ public final class RustBindings {
         at.items.append("""
                 }
 
-                impl rt::Requirement for %s<'_> {
+                // SAFETY: the capability and the runtime are those of what it wraps.
+                unsafe impl rt::Requirement for %s<'_> {
                     fn capability(&self) -> std::ptr::NonNull<rt::Capability> {
                         rt::Requirement::capability(&self.bound)
                     }
@@ -1691,7 +1718,8 @@ public final class RustBindings {
                     }
                 }
 
-                impl souther_binding_runtime::Loaded for Library {
+                // SAFETY: `runtime` is made of the library `_native` loaded, and is never replaced.
+                unsafe impl souther_binding_runtime::Loaded for Library {
                     fn runtime(&self) -> &souther_binding_runtime::Runtime {
                         &self.runtime
                     }

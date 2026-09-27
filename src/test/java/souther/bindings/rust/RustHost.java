@@ -51,6 +51,20 @@ final class RustHost {
     static String ran(Path into, RustBindings.Generated binding, String crate, String main,
                       List<String> arguments) throws IOException, InterruptedException {
         handsOverOnlyWhatItChecks(binding);
+        exposesNoNativeWord(binding);
+        workspace(into, binding, crate, main);
+        String manifest = into.resolve("Cargo.toml").toString();
+        cargo(List.of("clippy", "--quiet", "--manifest-path", manifest, "-p", crate, "--",
+                "-D", "warnings"));
+        List<String> run = new ArrayList<>(List.of("run", "--quiet", "--manifest-path", manifest,
+                "-p", "host", "--"));
+        run.addAll(arguments);
+        return cargo(run);
+    }
+
+    /** Writes the workspace of the generated crate and a host whose {@code main.rs} is {@code main}. */
+    private static void workspace(Path into, RustBindings.Generated binding, String crate,
+                                  String main) throws IOException {
         Path host = into.resolve("host");
         Files.createDirectories(host.resolve("src"));
         Files.writeString(into.resolve("Cargo.toml"), """
@@ -73,13 +87,6 @@ final class RustHost {
                 %s = { path = "%s" }
                 """.formatted(crate, toml(binding.root())), StandardCharsets.UTF_8);
         Files.writeString(host.resolve("src").resolve("main.rs"), main, StandardCharsets.UTF_8);
-        String manifest = into.resolve("Cargo.toml").toString();
-        cargo(List.of("clippy", "--quiet", "--manifest-path", manifest, "-p", crate, "--",
-                "-D", "warnings"));
-        List<String> run = new ArrayList<>(List.of("run", "--quiet", "--manifest-path", manifest,
-                "-p", "host", "--"));
-        run.addAll(arguments);
-        return cargo(run);
     }
 
     /** Where a function of the generated crate starts. */
@@ -113,6 +120,70 @@ final class RustHost {
                             + " reads a value's address unchecked:\n" + body);
                 }
             }
+        }
+    }
+
+    /**
+     * What a public item of the generated crate is written with: a line declaring one, up to where
+     * its body or its fields begin. A native word or a handle the runtime made ({@code rt::Held},
+     * {@code rt::Word}) written in one is a way for safe Rust to hold a native value under a type
+     * that says nothing of what it is, and to put it under another: a value of one function type
+     * in another's variant, an address of one type where a call reads another. What is public says
+     * what a value is; the words stay in what is {@code pub(crate)} or hidden.
+     */
+    private static final java.util.regex.Pattern PUBLIC_ITEM = java.util.regex.Pattern.compile(
+            "(?m)^(?<attributes>(?:\\s*#\\[[^\\n]*\\]\\n)*)\\s*pub (?!\\(crate\\))(?<head>[^\\n{;]*)");
+
+    /**
+     * Refuses a public item of a generated crate that names {@code rt::Held} or {@code rt::Word}
+     * and is not hidden from the documentation, which is where a name for what the crate itself
+     * calls (a constructor the library answers through) is kept out of what a host is told of.
+     */
+    private static void exposesNoNativeWord(RustBindings.Generated binding) throws IOException {
+        for (Path file : binding.files()) {
+            if (!file.toString().endsWith(".rs")) {
+                continue;
+            }
+            java.util.regex.Matcher item =
+                    PUBLIC_ITEM.matcher(Files.readString(file, StandardCharsets.UTF_8));
+            while (item.find()) {
+                String head = item.group("head");
+                boolean hidden = item.group("attributes").contains("doc(hidden)");
+                if (!hidden && (head.contains("rt::Held") || head.contains("rt::Word"))) {
+                    throw new AssertionError(file + " shows a native value in what a host reads: "
+                            + item.group().strip());
+                }
+            }
+        }
+    }
+
+    /**
+     * What rustc said of a host that must not build, built beside {@code binding} the way
+     * {@link #ran} builds one: where it built, the test fails, since what it asserts is that the
+     * crate refuses it.
+     *
+     * @return what Cargo said, for the test to hold to the reason
+     */
+    static String refused(Path into, RustBindings.Generated binding, String crate, String main)
+            throws IOException, InterruptedException {
+        workspace(into, binding, crate, main);
+        String manifest = into.resolve("Cargo.toml").toString();
+        Path said = Files.createTempFile("cargo-", ".said");
+        try {
+            ProcessBuilder builder = new ProcessBuilder("cargo", "build", "--quiet",
+                    "--manifest-path", manifest, "-p", "host").redirectError(said.toFile())
+                    .redirectOutput(ProcessBuilder.Redirect.DISCARD);
+            builder.environment().put("CARGO_TARGET_DIR", TARGET.toString());
+            builder.environment().remove("RUSTFLAGS");
+            builder.environment().put("CARGO_TERM_COLOR", "never");
+            int status = builder.start().waitFor();
+            String saidThere = Files.readString(said, StandardCharsets.UTF_8);
+            if (status == 0) {
+                throw new AssertionError("a host that must not build built, beside " + binding.root());
+            }
+            return saidThere;
+        } finally {
+            Files.deleteIfExists(said);
         }
     }
 

@@ -92,7 +92,15 @@ impl Made {
 
 /// What stands for a behavior another requires: a behavior bound in turn, or a host's own
 /// implementation of one.
-pub trait Requirement {
+///
+/// # Safety
+///
+/// The library calls through the capability this answers, and reads what it points at, for as long
+/// as anything bound to it lives: so it is one a library wrote (or one of a host's own
+/// implementation, made through the library), where it stays; and [`Requirement::made`] is the
+/// runtime that wrote it and everything it stands on. Neither is something a caller can be told
+/// by a type, which is why implementing this is `unsafe` and only what this crate makes does.
+pub unsafe trait Requirement {
     /// Its capability, as the library reads it for as long as `self` lives.
     fn capability(&self) -> NonNull<Capability>;
 
@@ -181,7 +189,9 @@ impl<'a> Bound<'a> {
     }
 }
 
-impl Requirement for Bound<'_> {
+// SAFETY: the capability is the one `bind` wrote, kept where it does not move, and `made` is the
+// runtime of it and of everything it was bound to.
+unsafe impl Requirement for Bound<'_> {
     fn capability(&self) -> NonNull<Capability> {
         let capability = self
             .capability
@@ -243,7 +253,9 @@ impl<D> Implemented<D> {
     }
 }
 
-impl<D> Requirement for Implemented<D> {
+// SAFETY: the capability is the one the library wrote for this implementation, kept where it does
+// not move, and `made` is the runtime that wrote it.
+unsafe impl<D> Requirement for Implemented<D> {
     fn capability(&self) -> NonNull<Capability> {
         self.capability.0
     }

@@ -747,7 +747,7 @@ address of its `souther_mark`, which whatever works on one arena shares, so two 
 one file are one runtime, and a second root run of it on a thread with one open is refused where it
 is opened (`AlreadyRunning`).
 
-A product, a newtype and a unit are each a `Copy` handle with a reader for each field, `new`
+A product, a newtype and a unit are each a `Copy` handle, whose native value is not public either, with a reader for each field, `new`
 answering a `Construction` (the value, or an `invariant_violation` Raoh issue), `decode` answering a
 `Reading` (the value, or Raoh's issues, or `invalid_format`) and `encode`. A sum is a handle too, with
 `case` answering an enum of its cases, a case the model keeps being `Kept`, and `From` each of its
@@ -759,9 +759,12 @@ process on text that names none; they cross as the text `java.time` writes. An o
 `Option` at every depth, a tuple a Rust tuple, a list a slice handed over and a `Vec` handed back. A
 union no declaration names is an enum with a variant for each member, named after them in the
 manifest's order (`FreeOrInt`), handed over by reference and handed back where the library says its
-case, as a behavior's answer. A function value is an enum of its type (`FnIntToInt`): `Library`, one
-the library made, or `Host`, an `Rc` of a `'static` Rust function, which the library calls through an
-entry the crate writes. Both are called with `call`, and both are handed over; a host's function is
+case, as a behavior's answer. A function value is a type of its own (`FnIntToInt`), made by the library
+or by `FnIntToInt::host` of an `Rc`'d `'static` Rust function, which the library calls through an
+entry the crate writes. What the library made is held where only the crate reaches it: the address
+says nothing of which function it is, and one put under another function type would run the code of
+the one with the words of the other, so what a caller sees is a type it cannot take apart and put
+together otherwise. Both are called with `call`, and both are handed over; a host's function is
 kept, with the room it is made into, by the run it is handed over in until that run ends, and one
 handed over again is the value it was made into before.
 
