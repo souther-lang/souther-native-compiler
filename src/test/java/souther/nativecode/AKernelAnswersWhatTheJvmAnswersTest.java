@@ -346,7 +346,14 @@ class AKernelAnswersWhatTheJvmAnswersTest {
             data Prospecting
             data Open = Prospecting | Qualified
             data Stage = Open | Won | Lost
+            data Late = Lost | Won
             data Sku = String
+
+            let late (n: Int): Late = if n == 0 then Lost else Won
+
+            let lateNamed (s: Late): Int = match s with
+                | Lost -> 0
+                | Won -> 1
 
             let stage (n: Int): Stage =
                 if n == 0 then Lost
@@ -373,6 +380,17 @@ class AKernelAnswersWhatTheJvmAnswersTest {
 
             behavior sortedStages : (ns: List<Int>) -> List<Int>
             let sortedStages (ns) = List.map(s -> named(s), List.sort(List.map(n -> stage(n), ns)))
+
+            behavior leastStage : (ns: List<Int>) -> Int
+            let leastStage (ns) = match List.min(List.map(n -> stage(n), ns)) with
+                | Some s -> named(s)
+                | None -> -1
+
+            behavior sortedLate : (ns: List<Int>) -> List<Int>
+            let sortedLate (ns) = List.map(s -> lateNamed(s), List.sort(List.map(n -> late(n), ns)))
+
+            behavior byStage : (ns: List<Int>) -> List<Int>
+            let byStage (ns) = List.sortBy(n -> stage(n), ns)
 
             behavior byLength : (xs: List<String>) -> List<String>
             let byLength (xs) = List.sortBy(s -> String.length(s), xs)
@@ -473,6 +491,19 @@ class AKernelAnswersWhatTheJvmAnswersTest {
 
             example sortedStages
                 | "as the enumeration lists them" : ([0, 3, 1, 2, 3]) -> [3, 3, 2, 1, 0]
+                | "a unit another enumeration lists the other way" : ([1, 0, 1]) -> [1, 1, 0]
+
+            example leastStage
+                | "as the enumeration lists them" : ([0, 1, 2]) -> 2
+                | "the first it lists" : ([1, 3, 0]) -> 3
+                | "none" : ([]) -> -1
+
+            example sortedLate
+                | "as this enumeration lists the same units" : ([1, 0, 1]) -> [0, 1, 1]
+
+            example byStage
+                | "by where each key stands, equal keys in the order they came" : ([0, 3, 1, 2, 3, 0]) -> [3, 3, 2, 1, 0, 0]
+                | "none" : ([]) -> []
 
             example byLength
                 | "equal keys in the order they came" : (["dd", "a", "ccc", "b", "ee", "c", "ff", "gg", "h", "iii", "j"]) -> ["a", "b", "c", "h", "j", "dd", "ee", "ff", "gg", "ccc", "iii"]

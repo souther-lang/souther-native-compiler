@@ -33,6 +33,19 @@ pub(crate) struct Placing<'t> {
     pub(crate) basis: Option<&'t Ty>,
 }
 
+impl<'t> Placing<'t> {
+    /// The enumeration whose leaves the values are placed among, where the order is one; none
+    /// where it is a primitive's, whose values are compared as they are.
+    pub(crate) fn enumeration(&self) -> Option<&'t Case> {
+        match self.basis {
+            Some(Ty::Ref {
+                named: named @ Case::Declared { .. },
+            }) => Some(named),
+            _ => None,
+        }
+    }
+}
+
 /// Whether `a` and `b`, two values `placing` says how to order, stand as `op` asks: a truth, as `<`
 /// answers one.
 pub(crate) fn ordered(
@@ -44,13 +57,24 @@ pub(crate) fn ordered(
     a: ir::Value,
     b: ir::Value,
 ) -> Lowered<ir::Value> {
+    let condition = as_a_whole_number(op);
+    // A value of an enumeration, of one of its cases, or of a union of them, placed among the
+    // enumeration's leaves (ADR-0069). `Coherent` held the basis to be an enumeration that lists
+    // every leaf of what the values are (`Declared::orders`).
+    if placing.enumeration().is_some() {
+        let one = place_of(builder, lowering, module, placing, a)?;
+        let other = place_of(builder, lowering, module, placing, b)?;
+        let (Some(one), Some(other)) = (one, other) else {
+            unreachable!("an enumeration's order places each of its values")
+        };
+        return Ok(builder.ins().icmp(condition, one, other));
+    }
     let Placing { ty, basis } = placing;
     let Some(basis) = basis else {
         return Err(unordered(op, ty));
     };
-    let (opened_ty, a) = opened(builder, lowering.declared, ty, a)?;
+    let (_, a) = opened(builder, lowering.declared, ty, a)?;
     let (_, b) = opened(builder, lowering.declared, ty, b)?;
-    let condition = as_a_whole_number(op);
     let ty = basis;
     match ty {
         // Every primitive is named, for the reason `machine_type` names them.
@@ -92,35 +116,12 @@ pub(crate) fn ordered(
                 Ok(builder.ins().icmp_imm_s(condition, compared, 0))
             }
         },
-        // A value of an enumeration, of one of its cases, or of a union of them, placed among
-        // the enumeration's leaves (ADR-0069). `Coherent` held the basis to be an enumeration that
-        // lists every leaf of what the values are (`Declared::orders`).
         Ty::Ref {
             named: Case::Primitive { .. } | Case::Language { .. },
         } => crate::named_as_a_type(ty),
         Ty::Ref {
-            named: named @ Case::Declared { .. },
-        } => {
-            let leaves = lowering
-                .declared
-                .leaves_of(std::slice::from_ref(named))
-                .expect("`Coherent` held every case named to be one a declaration crossed for");
-            let one = place(
-                builder,
-                lowering,
-                module,
-                &leaves,
-                Tagged::of(a, &opened_ty),
-            )?;
-            let other = place(
-                builder,
-                lowering,
-                module,
-                &leaves,
-                Tagged::of(b, &opened_ty),
-            )?;
-            Ok(builder.ins().icmp(condition, one, other))
-        }
+            named: Case::Declared { .. },
+        } => unreachable!("placed above, on the enumeration's order"),
         Ty::Union { .. } => Err(unordered(op, ty)),
         Ty::Option { .. }
         | Ty::Tuple { .. }
@@ -132,6 +133,36 @@ pub(crate) fn ordered(
         | Ty::Never { .. } => Err(unordered(op, ty)),
         Ty::Var { var } => Err(crate::open_type(*var)),
     }
+}
+
+/// Where `value`, a value `placing` says how to order, stands on that order where the order is an
+/// enumeration's: its place among the enumeration's leaves, an `Int` that orders as the value does.
+/// None where the order is a primitive's, which values are compared as they are.
+///
+/// Worked out once for a value that is compared many times, as a sort compares each element, so
+/// that each comparison is of two whole numbers and not a walk over the enumeration's leaves.
+pub(crate) fn place_of(
+    builder: &mut FunctionBuilder,
+    lowering: &Lowerings,
+    module: &mut ObjectModule,
+    placing: Placing,
+    value: ir::Value,
+) -> Lowered<Option<ir::Value>> {
+    let Some(named) = placing.enumeration() else {
+        return Ok(None);
+    };
+    let (opened_ty, value) = opened(builder, lowering.declared, placing.ty, value)?;
+    let leaves = lowering
+        .declared
+        .leaves_of(std::slice::from_ref(named))
+        .expect("`Coherent` held every case named to be one a declaration crossed for");
+    Ok(Some(place(
+        builder,
+        lowering,
+        module,
+        &leaves,
+        Tagged::of(value, &opened_ty),
+    )?))
 }
 
 /// Where the case `value` is stands among `leaves`, counted from nought.

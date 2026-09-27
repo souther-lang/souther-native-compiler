@@ -28,7 +28,7 @@ use souther_native_abi::{
     RATIONAL_FROM_INT, RATIONAL_MULTIPLY, SLOT, Status, list_at, room_for_held, room_for_list,
 };
 
-use crate::ordering::{Placing, ordered};
+use crate::ordering::{Placing, ordered, place_of};
 use crate::transport::{AbortKind, FnSignature, Op, Prim, Ty};
 use crate::{
     Held, Lowered, Lowering, POINTER, TRUSTED, abort_where, call_function, into_slot, machine_type,
@@ -366,17 +366,38 @@ pub(crate) fn extreme(
     let start = builder.ins().select(empty, nothing, first);
     let chosen = builder.declare_var(POINTER);
     builder.def_var(chosen, start);
+    // Where the one chosen so far stands, for an enumeration's order, whose values are placed once
+    // each rather than at every comparison ([`placed`]).
+    let places = placed(builder, lowering, module, subject, list, count)?;
+    let chosen_at = builder.declare_var(types::I64);
+    builder.def_var(chosen_at, nought);
     let rest = builder.ins().iadd_imm_s(count, -1);
     let rest = builder.ins().smax(rest, nought);
     each(builder, rest, |builder, at| {
         let along = builder.ins().iadd_imm_s(at, 1);
         let slot = element_at(builder, list, along);
         let so_far = builder.use_var(chosen);
-        let candidate = read(builder, slot, machine);
-        let best = read(builder, so_far, machine);
-        let beyond = ordered(builder, lowering, module, op, subject, candidate, best)?;
+        let so_far_at = builder.use_var(chosen_at);
+        let beyond = match places {
+            Some(places) => {
+                let at_candidate = element_at(builder, places, along);
+                let candidate = read(builder, at_candidate, types::I64);
+                let at_best = element_at(builder, places, so_far_at);
+                let best = read(builder, at_best, types::I64);
+                builder
+                    .ins()
+                    .icmp(crate::as_a_whole_number(op), candidate, best)
+            }
+            None => {
+                let candidate = read(builder, slot, machine);
+                let best = read(builder, so_far, machine);
+                ordered(builder, lowering, module, op, subject, candidate, best)?
+            }
+        };
         let now = builder.ins().select(beyond, slot, so_far);
         builder.def_var(chosen, now);
+        let now_at = builder.ins().select(beyond, along, so_far_at);
+        builder.def_var(chosen_at, now_at);
         Ok(())
     })?;
     Ok(builder.use_var(chosen))
@@ -397,6 +418,27 @@ pub(crate) fn sorted(
     let count = length(builder, list);
     let values = copied(builder, lowering, module, list, count);
     let spare = new_list(builder, lowering, module, count);
+    if let Some(places) = placed(builder, lowering, module, subject, list, count)? {
+        let spare_places = new_list(builder, lowering, module, count);
+        let [_, values] = merged(
+            builder,
+            lowering,
+            module,
+            PLACES,
+            count,
+            [
+                Lane {
+                    from: places,
+                    to: spare_places,
+                },
+                Lane {
+                    from: values,
+                    to: spare,
+                },
+            ],
+        )?;
+        return Ok(values);
+    }
     let [values] = merged(
         builder,
         lowering,
@@ -409,6 +451,44 @@ pub(crate) fn sorted(
         }],
     )?;
     Ok(values)
+}
+
+/// A place on an enumeration's order, which is a whole number.
+const PLACES: Placing = Placing {
+    ty: &Ty::Prim { prim: Prim::Int },
+    basis: Some(&Ty::Prim { prim: Prim::Int }),
+};
+
+/// Where each of the `count` values `list` holds stands on `subject`'s order, as a list of `Int`s
+/// in the order the values are, where that order is an enumeration's; none where it is a
+/// primitive's.
+///
+/// A sort compares each value many times, and placing a value of an enumeration is a walk over its
+/// leaves, so each is placed once here and the places are what is compared: a sort of `n` values
+/// of an enumeration of `L` cases does `n` walks and not `n log n` of them.
+fn placed(
+    builder: &mut FunctionBuilder,
+    lowering: &Lowering,
+    module: &mut ObjectModule,
+    subject: Placing,
+    list: ir::Value,
+    count: ir::Value,
+) -> Lowered<Option<ir::Value>> {
+    if subject.enumeration().is_none() {
+        return Ok(None);
+    }
+    let machine = machine_type(subject.ty)?;
+    let places = new_list(builder, lowering, module, count);
+    each(builder, count, |builder, at| {
+        let slot = element_at(builder, list, at);
+        let value = read(builder, slot, machine);
+        let place = place_of(builder, lowering, module, subject, value)?
+            .expect("an enumeration's order places each of its values");
+        let to = element_at(builder, places, at);
+        builder.ins().store(TRUSTED, place, to, 0);
+        Ok(())
+    })?;
+    Ok(Some(places))
 }
 
 /// `list` ordered by what `key` answers for each element, ordered as `subject` (`List.sortBy`),
@@ -451,6 +531,12 @@ pub(crate) fn sorted_by(
     let values = copied(builder, lowering, module, list, count);
     let spare_keys = new_list(builder, lowering, module, count);
     let spare_values = new_list(builder, lowering, module, count);
+    // Keys placed on an enumeration's order are sorted by their places, and the keys are not
+    // needed past that.
+    let (keys, subject) = match placed(builder, lowering, module, subject, keys, count)? {
+        Some(places) => (places, PLACES),
+        None => (keys, subject),
+    };
     let [_, values] = merged(
         builder,
         lowering,
