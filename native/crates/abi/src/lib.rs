@@ -1342,9 +1342,9 @@ pub const SET_INSERT: &str = "souther_set_insert";
 pub const SET_REMOVE: &str = "souther_set_remove";
 /// Whether a set holds a member equal to this.
 pub const SET_CONTAINS: &str = "souther_set_contains";
-/// Every member of either set, the first's where both hold one.
+/// Every member of either set, the larger's where both hold one.
 pub const SET_UNION: &str = "souther_set_union";
-/// The first set's members the second holds too.
+/// The members both sets hold, the smaller's.
 pub const SET_INTERSECTION: &str = "souther_set_intersection";
 /// The first set's members the second does not hold.
 pub const SET_DIFFERENCE: &str = "souther_set_difference";
@@ -1369,7 +1369,8 @@ pub const MAP_CONTAINS_KEY: &str = "souther_map_contains_key";
 pub const MAP_KEYS: &str = "souther_map_keys";
 /// A map's values as a list, in the order [`MAP_KEYS`] lists their keys.
 pub const MAP_VALUES: &str = "souther_map_values";
-/// A map with this key holding this value, in place of what a key equal to it held.
+/// A map with this key holding this value, in place of what a key equal to it held, which stays the
+/// key the map holds.
 pub const MAP_INSERT: &str = "souther_map_insert";
 /// A map without the key equal to this, or the map itself where it holds none.
 pub const MAP_REMOVE: &str = "souther_map_remove";
@@ -1378,7 +1379,8 @@ pub const MAP_SIZE: &str = "souther_map_size";
 /// A map's entries as a list of pairs, each a tuple of the layout [`member_at`] states, in the
 /// order [`MAP_KEYS`] lists the keys.
 pub const MAP_TO_LIST: &str = "souther_map_to_list";
-/// The map of a list of pairs, a later pair's value winning where two keys are equal.
+/// The map of a list of pairs, a later pair's value winning where two keys are equal, under the
+/// earlier pair's key.
 pub const MAP_FROM_LIST: &str = "souther_map_from_list";
 /// Whether two maps hold equal values under the same keys.
 pub const MAP_EQUAL: &str = "souther_map_equal";

@@ -14,6 +14,14 @@
 //! changed once made and nothing here is ever freed on its own: the arena drops a run's values in
 //! one go (`souther_reset`).
 //!
+//! A key the collection holds is never replaced by one equal to it. Two keys equal under the
+//! language's equality can still be told apart (`1.0` and `1.00` are one `Decimal` key, written at
+//! two scales), and which of them a collection holds is what `Map.keys` and `Set.toList` answer. So
+//! the one a collection already holds stays: `Map.insert` under an equal key takes the new value
+//! and keeps the key, as the JVM's map does, and `Set.insert` of an equal member leaves the set as
+//! it is. Nothing that puts an entry in can write the arriving key where an equal one stands
+//! ([`OnEqual`]).
+//!
 //! What an entry is kept under is the hash it was put in with, and it is never asked for again: a
 //! set built as a `Set<A>` and read as a `Set<S>` has the hashes it was built with, which
 //! `souther_native_abi::HASHING` holds to be what `S` hashes each of them to. The hash of the key
@@ -167,14 +175,14 @@ impl Trie {
         found
     }
 
-    /// This collection with `entry`, in place of an entry under an equal key where `replace` says
-    /// so, and left as it is where it does not.
+    /// This collection with `entry` put in, or, where it holds an entry under an equal key, that
+    /// entry as `on_equal` says.
     ///
     /// # Safety
     ///
     /// As [`Trie::find`].
-    unsafe fn with(&self, entry: Entry, equal: Equality, replace: bool) -> Trie {
-        match unsafe { put(self.root, 0, entry, equal, replace) } {
+    unsafe fn with(&self, entry: Entry, equal: Equality, on_equal: OnEqual) -> Trie {
+        match unsafe { put(self.root, 0, entry, equal, on_equal) } {
             Put::Kept => *self,
             Put::Replaced(root) => Trie {
                 size: self.size,
@@ -284,10 +292,41 @@ unsafe fn words_of(at: *const u64, header: u64) -> Vec<u64> {
 enum Put {
     /// An entry under an equal key was there and is kept: the node is the one it was.
     Kept,
-    /// An entry under an equal key was there and this one stands in its place: the new node.
+    /// An entry under an equal key was there and holds the arriving value now: the new node.
     Replaced(u64),
     /// No entry was under an equal key: the new node, holding one entry more.
     Added(u64),
+}
+
+/// What an entry arriving under a key equal to one the collection holds does to the entry there.
+/// Neither writes the arriving key: the key a collection holds is the one it keeps.
+#[derive(Clone, Copy)]
+enum OnEqual {
+    /// Nothing: a member equal to one a set holds is that member already.
+    Keep,
+    /// The entry there holds the arriving value, under the key it held: a map's insertion.
+    TakeValue,
+}
+
+/// What the entry at `word`, under a key equal to `arriving`'s, becomes as `on_equal` says: the
+/// word of an entry of its own hash and key and the arriving value, or none where it is kept. The
+/// one place an entry an equal key arrives at is written, so no other can write the arriving key
+/// there.
+///
+/// # Safety
+///
+/// `word` is an entry this file wrote.
+unsafe fn arrived_at(word: u64, arriving: &Entry, on_equal: OnEqual) -> Option<u64> {
+    match on_equal {
+        OnEqual::Keep => None,
+        OnEqual::TakeValue => {
+            let there = unsafe { read_entry(word as *const u64) };
+            Some(write_entry(Entry {
+                value: arriving.value,
+                ..there
+            }))
+        }
+    }
 }
 
 /// The node at `node` (none where it is nought), `shift` bits down, with `entry` put in.
@@ -295,7 +334,7 @@ enum Put {
 /// # Safety
 ///
 /// As [`Trie::find`].
-unsafe fn put(node: u64, shift: u32, entry: Entry, equal: Equality, replace: bool) -> Put {
+unsafe fn put(node: u64, shift: u32, entry: Entry, equal: Equality, on_equal: OnEqual) -> Put {
     if node == 0 {
         return Put::Added(write_node(bit_of(entry.hash, shift), &[write_entry(entry)]) & !BELOW);
     }
@@ -307,11 +346,13 @@ unsafe fn put(node: u64, shift: u32, entry: Entry, equal: Equality, replace: boo
             .iter()
             .position(|word| unsafe { same(*word as *const u64, entry.hash, entry.key, equal) });
         return match equal_at {
-            Some(_) if !replace => Put::Kept,
-            Some(index) => {
-                words[index] = write_entry(entry);
-                Put::Replaced(write_node(header, &words) & !BELOW)
-            }
+            Some(index) => match unsafe { arrived_at(words[index], &entry, on_equal) } {
+                None => Put::Kept,
+                Some(arrived) => {
+                    words[index] = arrived;
+                    Put::Replaced(write_node(header, &words) & !BELOW)
+                }
+            },
             None => {
                 words.push(write_entry(entry));
                 Put::Added(write_node(SIDE_BY_SIDE | words.len() as u64, &words) & !BELOW)
@@ -326,7 +367,7 @@ unsafe fn put(node: u64, shift: u32, entry: Entry, equal: Equality, replace: boo
     }
     let word = words[index];
     if word & BELOW != 0 {
-        return match unsafe { put(word & !BELOW, shift + BITS, entry, equal, replace) } {
+        return match unsafe { put(word & !BELOW, shift + BITS, entry, equal, on_equal) } {
             Put::Kept => Put::Kept,
             Put::Replaced(below) => {
                 words[index] = below | BELOW;
@@ -340,11 +381,13 @@ unsafe fn put(node: u64, shift: u32, entry: Entry, equal: Equality, replace: boo
     }
     let there = unsafe { read_entry(word as *const u64) };
     if there.hash == entry.hash && unsafe { equal(there.key, entry.key) } != 0 {
-        if !replace {
-            return Put::Kept;
-        }
-        words[index] = write_entry(entry);
-        return Put::Replaced(write_node(header, &words) & !BELOW);
+        return match unsafe { arrived_at(word, &entry, on_equal) } {
+            None => Put::Kept,
+            Some(arrived) => {
+                words[index] = arrived;
+                Put::Replaced(write_node(header, &words) & !BELOW)
+            }
+        };
     }
     words[index] = apart(
         shift + BITS,
@@ -477,7 +520,7 @@ pub unsafe extern "C" fn souther_set_insert(
 ) -> i8 {
     let trie = unsafe { Trie::at(set) };
     let entry = unsafe { member(element, hash) };
-    let with = unsafe { trie.with(entry, equal, false) };
+    let with = unsafe { trie.with(entry, equal, OnEqual::Keep) };
     let made = if with.size == trie.size {
         Some(set)
     } else {
@@ -530,8 +573,11 @@ pub unsafe extern "C" fn souther_set_contains(
         .into()
 }
 
-/// `Set.union`: `a`'s members, and `b`'s where `a` holds none equal, written through `out` where
-/// that is no more members than a set holds.
+/// `Set.union`: every member of either, written through `out` where that is no more members than a
+/// set holds. The smaller set's members are put into the larger, `a` counting as the larger where
+/// the two are as large, so where both hold a member the larger's is the one kept: which member a
+/// set keeps of two equal ones is the language's to leave open (spec §stdlib-set), and this is the
+/// one the JVM's `PersistentHashSet.union` keeps.
 ///
 /// # Safety
 ///
@@ -543,14 +589,17 @@ pub unsafe extern "C" fn souther_set_union(
     equal: Equality,
     out: *mut *const Set,
 ) -> i8 {
-    let mut union = unsafe { Trie::at(a) };
-    for entry in unsafe { Trie::at(b).entries() } {
-        union = unsafe { union.with(entry, equal, false) };
+    let (larger, smaller) = unsafe { larger_first(a, b) };
+    let mut union = larger;
+    for entry in unsafe { smaller.entries() } {
+        union = unsafe { union.with(entry, equal, OnEqual::Keep) };
     }
     unsafe { answered(held(union), out) }
 }
 
-/// `Set.intersection`: `a`'s members that `b` holds one equal to.
+/// `Set.intersection`: the members both hold. The smaller set's are walked and kept where the larger
+/// holds one equal, `a` counting as the larger where the two are as large, so the member kept is the
+/// smaller's, as the JVM's `PersistentHashSet.intersect` keeps it.
 ///
 /// # Safety
 ///
@@ -561,7 +610,14 @@ pub unsafe extern "C" fn souther_set_intersection(
     b: *const Set,
     equal: Equality,
 ) -> *const Set {
-    unsafe { kept_where(a, b, equal, true) }
+    let (larger, smaller) = unsafe { larger_first(a, b) };
+    let mut kept = Trie::EMPTY;
+    for entry in unsafe { smaller.entries() } {
+        if unsafe { larger.find(entry.hash, entry.key, equal) }.is_some() {
+            kept = unsafe { kept.with(entry, equal, OnEqual::Keep) };
+        }
+    }
+    kept.kept()
 }
 
 /// `Set.difference`: `a`'s members that `b` holds none equal to.
@@ -575,24 +631,24 @@ pub unsafe extern "C" fn souther_set_difference(
     b: *const Set,
     equal: Equality,
 ) -> *const Set {
-    unsafe { kept_where(a, b, equal, false) }
-}
-
-/// `a`'s entries whose key `b` holds one equal to, where `held` says so, and does not where it does
-/// not.
-///
-/// # Safety
-///
-/// As [`souther_set_union`], of two sets or two maps.
-unsafe fn kept_where<T>(a: *const T, b: *const T, equal: Equality, held: bool) -> *const T {
-    let other = unsafe { Trie::at(b) };
+    let (a, b) = unsafe { (Trie::at(a), Trie::at(b)) };
     let mut kept = Trie::EMPTY;
-    for entry in unsafe { Trie::at(a).entries() } {
-        if unsafe { other.find(entry.hash, entry.key, equal) }.is_some() == held {
-            kept = unsafe { kept.with(entry, equal, false) };
+    for entry in unsafe { a.entries() } {
+        if unsafe { b.find(entry.hash, entry.key, equal) }.is_none() {
+            kept = unsafe { kept.with(entry, equal, OnEqual::Keep) };
         }
     }
     kept.kept()
+}
+
+/// The two sets, the one holding more first, and `a` first where they hold as many.
+///
+/// # Safety
+///
+/// As [`souther_set_union`].
+unsafe fn larger_first(a: *const Set, b: *const Set) -> (Trie, Trie) {
+    let (a, b) = unsafe { (Trie::at(a), Trie::at(b)) };
+    if a.size >= b.size { (a, b) } else { (b, a) }
 }
 
 /// `Set.size`.
@@ -629,7 +685,7 @@ pub unsafe extern "C" fn souther_set_from_list(
 ) -> *const Set {
     let mut set = Trie::EMPTY;
     for element in unsafe { elements(list) } {
-        set = unsafe { set.with(member(element, hash), equal, false) };
+        set = unsafe { set.with(member(element, hash), equal, OnEqual::Keep) };
     }
     set.kept()
 }
@@ -730,8 +786,8 @@ pub unsafe extern "C" fn souther_map_values(map: *const Map) -> *mut List {
     list_of(&unsafe { Trie::at(map).entries() }, |entry| entry.value)
 }
 
-/// `Map.insert`: `value` under `key`, in place of what a key equal to it held, written through
-/// `out` where that is no more keys than a map holds.
+/// `Map.insert`: `value` under `key`, in place of what a key equal to it held, which stays the key
+/// the map holds, written through `out` where that is no more keys than a map holds.
 ///
 /// # Safety
 ///
@@ -751,7 +807,7 @@ pub unsafe extern "C" fn souther_map_insert(
         key,
         value,
     };
-    unsafe { answered(held(trie.with(entry, equal, true)), out) }
+    unsafe { answered(held(trie.with(entry, equal, OnEqual::TakeValue)), out) }
 }
 
 /// `Map.remove`: the map itself where it holds no key equal to `key`.
@@ -807,7 +863,8 @@ pub unsafe extern "C" fn souther_map_to_list(map: *const Map) -> *mut List {
     })
 }
 
-/// `Map.fromList`: a list of pairs, a later pair's value winning where two keys are equal.
+/// `Map.fromList`: a list of pairs, a later pair's value winning where two keys are equal, under
+/// the earlier pair's key.
 ///
 /// # Safety
 ///
@@ -833,7 +890,7 @@ pub unsafe extern "C" fn souther_map_from_list(
             key,
             value,
         };
-        map = unsafe { map.with(entry, equal, true) };
+        map = unsafe { map.with(entry, equal, OnEqual::TakeValue) };
     }
     map.kept()
 }
@@ -1086,6 +1143,69 @@ mod tests {
         assert_eq!(ratio(1, 2), ratio(2, 4));
         assert_ne!(ratio(1, 2), ratio(1, 3));
         assert_ne!(ratio(1, 2), ratio(-1, 2));
+        souther_reset(mark);
+    }
+
+    /// Keys equal where their last digits are, as `1.0` and `1.00` are one `Decimal`: equal, and
+    /// told apart by what they are.
+    unsafe extern "C" fn by_last_digit(a: i64, b: i64) -> i8 {
+        (a.rem_euclid(10) == b.rem_euclid(10)).into()
+    }
+
+    unsafe extern "C" fn last_digit(key: i64) -> Hash {
+        Hash(mix(key.rem_euclid(10) as u64) as i64)
+    }
+
+    unsafe extern "C" fn last_digit_clashing(key: i64) -> Hash {
+        Hash(key.rem_euclid(10) & 1)
+    }
+
+    /// A key a collection holds stays the key it holds when an equal one arrives: a map takes the
+    /// arriving value under the key it had, and a set keeps the member it had, whether the two were
+    /// told apart at the top of the trie or side by side at its bottom.
+    #[test]
+    fn a_key_held_is_not_replaced_by_an_equal_one() {
+        let mark = souther_mark();
+        for hash in [last_digit as Hasher, last_digit_clashing as Hasher] {
+            let mut map = souther_map_empty().cast_const();
+            for (key, value) in [(1, 10), (2, 20), (11, 110), (21, 210)] {
+                let mut out = std::ptr::null();
+                let wrote =
+                    unsafe { souther_map_insert(map, key, value, hash, by_last_digit, &mut out) };
+                assert_eq!(wrote, 1);
+                map = out;
+            }
+            let mut keys = unsafe { elements(souther_map_keys(map)) };
+            keys.sort();
+            assert_eq!(keys, vec![1, 2], "the keys first put in");
+            let held = unsafe { souther_map_get(map, 31, hash, by_last_digit) };
+            assert_eq!(
+                unsafe { held.cast::<i64>().read() },
+                210,
+                "the value last put in"
+            );
+
+            let pairs = [(3, 30), (13, 130)].map(|(key, value)| {
+                let pair = souther_alloc(Count(room_for_members(2)));
+                unsafe {
+                    pair.cast::<i64>().write(key);
+                    pair.cast::<i64>().add(1).write(value);
+                }
+                pair as i64
+            });
+            let listed = list_of(&pairs, |it| *it);
+            let built = unsafe { souther_map_from_list(listed, hash, by_last_digit) };
+            let pair = unsafe { elements(souther_map_to_list(built)) }[0] as *const i64;
+            assert_eq!(unsafe { (pair.read(), pair.add(1).read()) }, (3, 130));
+
+            let listed = list_of(&[1, 11, 2], |it| *it);
+            let set = unsafe { souther_set_from_list(listed, hash, by_last_digit) };
+            let mut out = std::ptr::null();
+            unsafe { souther_set_insert(set, 21, hash, by_last_digit, &mut out) };
+            let mut members = unsafe { elements(souther_set_to_list(out)) };
+            members.sort();
+            assert_eq!(members, vec![1, 2], "the members first put in");
+        }
         souther_reset(mark);
     }
 

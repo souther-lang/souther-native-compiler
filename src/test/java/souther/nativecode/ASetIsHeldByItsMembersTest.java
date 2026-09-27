@@ -106,6 +106,26 @@ class ASetIsHeldByItsMembersTest {
                 Set.contains(none, sets) && Set.contains([inner], lists)
             }
 
+            behavior keptMember : (n: Int) -> String
+            let keptMember (n) = {
+                let built = Set.fromList([1.0m, 1.00m, 2.00m])
+                let grown = Set.insert(2.0m, built)
+                String.join(",", List.map(k -> String.fromDecimal(k), List.sort(Set.toList(grown))))
+            }
+
+            let scaled (s: Set<Decimal>): String =
+                String.join(",", List.map(k -> String.fromDecimal(k), List.sort(Set.toList(s))))
+
+            behavior keptJoined : (n: Int) -> String
+            let keptJoined (n) =
+                if n == 0 then scaled(Set.union(Set.fromList([1.0m]), Set.fromList([1.00m, 2m])))
+                else scaled(Set.union(Set.fromList([1.0m]), Set.fromList([1.00m])))
+
+            behavior keptShared : (n: Int) -> String
+            let keptShared (n) =
+                if n == 0 then scaled(Set.intersection(Set.fromList([1.0m, 2m]), Set.fromList([1.00m])))
+                else scaled(Set.intersection(Set.fromList([1.0m]), Set.fromList([1.00m])))
+
             behavior parities : (xs: List<Int>) -> Int
             let parities (xs) = Set.size(Set.map(x -> Int.floorMod(x, 2), Set.fromList(xs)))
 
@@ -196,6 +216,17 @@ class ASetIsHeldByItsMembersTest {
             example emptyWidened
                 | "an empty set and list built of nothing, asked of as sets of Int" : (0) -> true
                 | "something else" : (1) -> false
+
+            example keptMember
+                | "the members first put in" : (0) -> "1.0,2.00"
+
+            example keptJoined
+                | "the larger's" : (0) -> "1.00,2"
+                | "the first's where the two are as large" : (1) -> "1.0"
+
+            example keptShared
+                | "the smaller's" : (0) -> "1.00"
+                | "the second's where the two are as large" : (1) -> "1.00"
 
             example parities
                 | "odd and even" : ([1, 2, 3, 4, 5]) -> 2
@@ -288,6 +319,39 @@ class ASetIsHeldByItsMembersTest {
             let grouped (xs) =
                 List.sort(List.map(g -> List.sum(g), Map.values(List.groupBy(x -> Int.floorMod(x, 3), xs))))
 
+            let written (keys: List<Decimal>): String =
+                String.join(",", List.map(k -> String.fromDecimal(k), List.sort(keys)))
+
+            let heldAtTwoScales: Map<Decimal, Int> = Map.fromList([(1.0m, 1), (2.00m, 2), (1.00m, 3)])
+
+            behavior keptOnInsert : (n: Int) -> String
+            let keptOnInsert (n) = {
+                let inserted = Map.insert(2.0m, n, heldAtTwoScales)
+                match Map.get(2m, inserted) with
+                    | Some v -> String.append(written(Map.keys(inserted)), String.append(":", String.fromInt(v)))
+                    | None -> "none"
+            }
+
+            behavior keptFromList : (n: Int) -> String
+            let keptFromList (n) = match Map.get(1m, heldAtTwoScales) with
+                | Some v -> String.append(written(Map.keys(heldAtTwoScales)), String.append(":", String.fromInt(v)))
+                | None -> "none"
+
+            behavior keptOnUpdate : (n: Int) -> String
+            let keptOnUpdate (n) = {
+                let updated = Map.updateOrInsert(1.000m, n, v -> v + n, heldAtTwoScales)
+                let bumped = Map.updateIfPresent(2.0m, v -> v * 10, updated)
+                written(Map.keys(bumped))
+            }
+
+            behavior keptGrouped : (xs: List<Int>) -> String
+            let keptGrouped (xs) =
+                written(Map.keys(List.groupBy(x -> if x > 1 then 1.00m else 1.0m, xs)))
+
+            behavior keptIndexed : (xs: List<Int>) -> String
+            let keptIndexed (xs) =
+                written(Map.keys(List.indexBy(x -> if x > 1 then 1.00m else 1.0m, xs)))
+
             behavior indexed : (xs: List<Int>, at: Int) -> Int
             let indexed (xs, at) = match Map.get(at, List.indexBy(x -> Int.floorMod(x, 10), xs)) with
                 | Some x -> x
@@ -356,6 +420,22 @@ class ASetIsHeldByItsMembersTest {
 
             example grouped
                 | "by remainder" : ([1, 2, 3, 4, 5, 6]) -> [5, 7, 9]
+
+            example keptOnInsert
+                | "the key held, the value put" : (7) -> "1.0,2.00:7"
+
+            example keptFromList
+                | "the earlier key, the later value" : (0) -> "1.0,2.00:3"
+
+            example keptOnUpdate
+                | "updated and bumped under the keys held" : (5) -> "1.0,2.00"
+
+            example keptGrouped
+                | "the first key the group was made under" : ([1, 2, 3]) -> "1.0"
+                | "only the larger" : ([2, 3]) -> "1.00"
+
+            example keptIndexed
+                | "the first key the entry was made under" : ([2, 1, 3]) -> "1.00"
 
             example indexed
                 | "the last of each" : ([1, 11, 2], 1) -> 11
