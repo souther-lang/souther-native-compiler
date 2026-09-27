@@ -19,6 +19,10 @@ const VALUES: &str = include_str!("values.transport.json");
 /// A behavior in one module answering with a value another module publishes.
 const PUBLISHED_VALUE: &str = include_str!("published_value.transport.json");
 
+/// Two values that fold to constants, `limit` and `doubled`, published with no value built for
+/// either: each entry answers what the value folds to.
+const CONSTANTS: &str = include_str!("constants.transport.json");
+
 /// What generated code takes room from, needed here because both documents construct a value.
 #[test]
 fn a_value_and_its_handover_read_back_as_the_checker_wrote_them() {
@@ -75,6 +79,36 @@ fn a_published_values_entry_answers_with_what_it_names() {
 
     assert!(answered.status.success(), "the run ended: {answered:?}");
     assert_eq!(String::from_utf8_lossy(&answered.stdout).trim(), "42");
+}
+
+/// A constant has no place to run and is still published (ADR-0074): its entry is called as any
+/// other value's is, and answers what the value folds to.
+#[test]
+fn a_published_constants_entry_answers_what_it_folds_to() {
+    let program = Program::read(CONSTANTS).expect("every field this carries reads");
+    assert!(program.modules[0].values.is_empty(), "no value is built");
+    let harness: &str = r#"
+        #include <inttypes.h>
+        #include <stdint.h>
+        #include <stdio.h>
+
+        extern uint32_t limit(int64_t *) __asm__("PREFIXsouther@.k$value$limit");
+        extern uint32_t doubled(int64_t *) __asm__("PREFIXsouther@.k$value$doubled");
+
+        int main(void) {
+            int64_t a;
+            int64_t b;
+            uint32_t first = limit(&a);
+            uint32_t second = doubled(&b);
+            printf("%u %" PRId64 " %u %" PRId64 "\n", first, a, second, b);
+            return 0;
+        }
+    "#;
+    let (_swept, built) = build("k.o", CONSTANTS, harness);
+    let answered = run(&built, &[]);
+
+    assert!(answered.status.success(), "the run ended: {answered:?}");
+    assert_eq!(String::from_utf8_lossy(&answered.stdout).trim(), "0 5 0 10");
 }
 
 /// A call reaching a value declared in the same module, and a call reaching one published by

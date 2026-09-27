@@ -46,7 +46,9 @@
 
 use crate::growing::Step;
 use crate::index;
-use crate::transport::{Body, Carrier, FnSignature, Node, Parameter, Reaches, Requirement, Ty};
+use crate::transport::{
+    ArmBinding, Body, Carrier, FnSignature, Node, Parameter, Reaches, Requirement, Ty,
+};
 use anyhow::{Result, bail};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -355,7 +357,7 @@ impl<'p, 'a> Planner<'p, 'a> {
                             .free(&arm.body, &mut HashSet::new())?;
                         continue;
                     }
-                    match arm.binding {
+                    match arm.binding.as_ref().map(ArmBinding::number) {
                         Some(binding) => {
                             let added = bound.insert(binding);
                             self.walk(&arm.body, bound, acc)?;

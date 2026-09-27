@@ -55,9 +55,9 @@ use crate::closures::ClosureSites;
 use crate::index;
 use crate::kernels::{Bound, LoweredKernel};
 use crate::transport::{
-    AbortKind, Answers, Carrier, Case, Cases, Declaration, Definition, Emitted, Ensures, Guard,
-    Held, KernelFact, Node, Op, Owner, Prim, Program, Reaches, Reaching, Reading, Reference,
-    Routing, Selects, Target, Ty, Value,
+    AbortKind, Answers, ArmBinding, Carrier, Case, Cases, Declaration, Definition, Emitted,
+    Ensures, Guard, Held, KernelFact, Node, Op, Owner, Prim, Program, Reaches, Reaching, Reading,
+    Reference, Routing, Selects, Target, Ty, Value,
 };
 use crate::{Declared, PairIn, Runs, Targets, departures_taken, says_its_case};
 use anyhow::{Result, anyhow, bail};
@@ -300,10 +300,13 @@ impl<'a> Coherent<'a> {
             };
             // A rule over a case tests the answer the way an arm tests what it forks on, and reads
             // it as an arm reads what it binds.
-            if let Some((Guard::Case { selects, binds }, answers)) = guarded {
+            if let Some((guard @ Guard::Case { selects, .. }, answers)) = guarded {
                 let selects = std::slice::from_ref(selects);
                 walk.tests("a rule", &answers, selects)?;
-                walk.arm_binds(&answers, selects, binds)?;
+                let binding = guard
+                    .reads(0)
+                    .expect("a rule over a case reads the answer under a name");
+                walk.arm_binds(&answers, selects, &binding)?;
             }
             walk.under(bound, body.node)?;
             crate::growing::confined(&walk.owner, body.node)?;
@@ -475,12 +478,16 @@ impl<'a> Reached<'a> {
                     }
                 }
             }
+            // An entry is for a value the module declares, which is not always one it builds: a
+            // constant folds into what reads it and has no place to run, and its entry answers what
+            // it folds to (ADR-0074). So what is held here is that the entry is this module's, and
+            // the body is whatever the checker wrote for it, walked as any other.
             for entry in &written.entries {
                 let declared = entry.value.declared();
-                if !reached.values.contains_key(&(module, declared.clone())) {
+                if entry.value.module != module {
                     bail!(
-                        "{module} publishes an entry for {declared}, which is not a value it \
-                         builds"
+                        "{module} publishes an entry for {declared}, which another module \
+                         declares"
                     );
                 }
                 index::once(
@@ -1392,6 +1399,7 @@ impl<'a> Walk<'_, 'a> {
             Node::Binary {
                 op,
                 reading,
+                ordering,
                 left,
                 right,
                 ty,
@@ -1400,6 +1408,7 @@ impl<'a> Walk<'_, 'a> {
                 self.node(left)?;
                 self.node(right)?;
                 self.reading(*op, reading, left.ty(), right.ty())?;
+                self.ordered_by(*op, reading, ordering.as_ref(), left.ty(), right.ty())?;
                 self.operator(*op, reading, (left.ty(), right.ty()), ty, aborts)
             }
             Node::Neg {
@@ -1458,23 +1467,14 @@ impl<'a> Walk<'_, 'a> {
                         bail!("{}: an arm tests for nothing", self.owner);
                     }
                     self.tests("an arm", subject.ty(), &arm.selects)?;
-                    match (arm.binding, &arm.binds) {
-                        (None, None) => self.node(&arm.body)?,
-                        // The writer says both or neither, so an arm saying one is a statement
-                        // the lowering would drop: it reads what an arm binds only from an arm
-                        // that binds.
-                        (None, Some(_)) => bail!(
-                            "{}: an arm binds nothing and says what it reads it as: the two \
-                             halves disagree",
-                            self.owner
-                        ),
-                        (Some(_), None) => bail!(
-                            "{}: an arm binds a value and does not say what it reads it as",
-                            self.owner
-                        ),
-                        (Some(binding), Some(binds)) => {
-                            self.arm_binds(subject.ty(), &arm.selects, binds)?;
-                            self.under(vec![(binding, binds.clone())], &arm.body)?;
+                    match &arm.binding {
+                        None => self.node(&arm.body)?,
+                        Some(binding) => {
+                            self.arm_binds(subject.ty(), &arm.selects, binding)?;
+                            self.under(
+                                vec![(binding.number(), binding.read_as().clone())],
+                                &arm.body,
+                            )?;
                         }
                     }
                 }
@@ -1674,6 +1674,57 @@ impl<'a> Walk<'_, 'a> {
         }
     }
 
+    /// What an operator places its operands on an order by, which it says exactly where it orders
+    /// them (`Core.Binary`): a comparison `<`, `<=`, `>` or `>=`, and no other. Read at their exact
+    /// values, the pair is placed as the `Rational`s they are; otherwise the order is one values of
+    /// what the operands are compared as can be placed on ([`Declared::orders`]), which is the
+    /// reading's answer and not an operand's.
+    fn ordered_by(
+        &mut self,
+        op: Op,
+        reading: &Reading,
+        ordering: Option<&Ty>,
+        left: &Ty,
+        right: &Ty,
+    ) -> Result<()> {
+        let orders = matches!(op, Op::Lt | Op::Le | Op::Gt | Op::Ge);
+        let basis = match (orders, ordering) {
+            (false, None) => return Ok(()),
+            (true, Some(basis)) => basis,
+            (false, Some(_)) => bail!(
+                "{}: {} says what it orders its operands by, and orders nothing: the two halves \
+                 disagree",
+                self.owner,
+                op.spelt()
+            ),
+            (true, None) => bail!(
+                "{}: {} does not say what it orders its operands by: the two halves disagree",
+                self.owner,
+                op.spelt()
+            ),
+        };
+        let compared = match reading {
+            Reading::ExactNumbers => {
+                return self.same(
+                    &format!("what {} orders two exact values by", op.spelt()),
+                    basis,
+                    &Ty::Prim {
+                        prim: Prim::Rational,
+                    },
+                    "a Rational",
+                );
+            }
+            Reading::AsTheyStand => left.clone(),
+            Reading::In { ty } => match self.declared.pair_in(ty, left, right)? {
+                PairIn::Opened(inner) => inner,
+                PairIn::Held => ty.clone(),
+            },
+        };
+        self.declared
+            .orders(basis, &compared)
+            .map_err(|it| anyhow!("{}: {it}", self.owner))
+    }
+
     /// An operator against what it says it answers. Where its operands stand is [`Walk::slots`]'s,
     /// and what its reading says of them is [`Walk::reading`]'s.
     ///
@@ -1834,35 +1885,13 @@ impl<'a> Walk<'_, 'a> {
     /// where one of its selectors is that test is not an arm the checker writes, whatever else it
     /// tests; nor is one whose selectors read the value two ways, since nothing tells at run time
     /// which of the two the arm was reached by. Neither is this backend being behind.
-    fn arm_binds(&mut self, subject: &Ty, selects: &[Selects], binds: &Ty) -> Result<()> {
-        let mut read_out = None;
-        let mut tested = Vec::new();
-        for selector in selects {
-            let holds_it = match selector {
-                Selects::Nothing => bail!(
-                    "{}: an arm binds a value where it tests that {} holds nothing, which leaves \
-                     nothing to bind: the two halves disagree",
-                    self.owner,
-                    subject.spelt()
-                ),
-                Selects::Held => true,
-                Selects::Which { atoms } => {
-                    tested.extend(atoms.iter().cloned());
-                    false
-                }
-            };
-            if *read_out.get_or_insert(holds_it) != holds_it {
-                bail!(
-                    "{}: an arm binds {} as what it holds under one of its tests and as itself \
-                     under another: the two halves disagree",
-                    self.owner,
-                    subject.spelt()
-                );
-            }
-        }
-        match read_out {
-            None => bail!("{}: an arm binds a value and tests nothing", self.owner),
-            Some(true) => {
+    /// What an arm's name stands for is one its tests leave there, read as what it can be read as
+    /// (`Core.Case.nameableBy`): what an optional's present carrier holds where the name is for
+    /// that, and otherwise the matched value — the case a single test selected, the subject where
+    /// the arm tests several, and the optional itself where it tests that one holds nothing.
+    fn arm_binds(&mut self, subject: &Ty, selects: &[Selects], binding: &ArmBinding) -> Result<()> {
+        match (binding, selects) {
+            (ArmBinding::Payload { read_as, .. }, [Selects::Held]) => {
                 let Ty::Option { option } = subject else {
                     bail!(
                         "{}: an arm reads a present value out of {}, which is not optional",
@@ -1872,27 +1901,42 @@ impl<'a> Walk<'_, 'a> {
                 };
                 self.same(
                     "what an arm binds",
-                    binds,
+                    read_as,
                     option,
                     "what the optional holds",
                 )
             }
-            Some(false) => {
+            (ArmBinding::Payload { .. }, _) => bail!(
+                "{}: an arm names what a carrier holds and does not test for one present carrier: \
+                 the two halves disagree",
+                self.owner
+            ),
+            (ArmBinding::Selected { .. }, [Selects::Held]) => bail!(
+                "{}: an arm names an optional's present carrier itself, which is named only by \
+                 what it holds: the two halves disagree",
+                self.owner
+            ),
+            (ArmBinding::Selected { read_as, .. }, [Selects::Which { atoms }]) => {
                 self.fits(
                     "a case an arm tests is read as what it binds",
                     &Ty::Union {
-                        union: Cases::one_or_more(tested)
-                            .expect("an arm reading its value as itself tests a case or more"),
+                        union: atoms.clone(),
                     },
-                    binds,
+                    read_as,
                 );
                 self.fits(
                     "what an arm binds is read out of its subject",
-                    binds,
+                    read_as,
                     subject,
                 );
                 Ok(())
             }
+            (ArmBinding::Selected { read_as, .. }, _) => self.same(
+                "what an arm binds",
+                read_as,
+                subject,
+                "the value the match is over",
+            ),
         }
     }
 
@@ -2067,8 +2111,13 @@ impl<'a> Walk<'_, 'a> {
                     // What an ordering was checked against is what the lowering compares by, so it
                     // is held to the one type the kernel orders: the element of the list a sort
                     // takes, and what the key a `sortBy` takes answers.
-                    if let (Some(known_to_hold), KernelFact::OrderingSubject { ty: subject }) =
-                        (contract.fact.holds(&bound), fact)
+                    if let (
+                        Some(known_to_hold),
+                        KernelFact::OrderingSubject {
+                            ty: subject,
+                            ordering,
+                        },
+                    ) = (contract.fact.holds(&bound), fact)
                     {
                         self.same(
                             &format!("what an application of {kernel} orders by"),
@@ -2076,6 +2125,23 @@ impl<'a> Walk<'_, 'a> {
                             &known_to_hold,
                             "what it takes orders",
                         )?;
+                        // The order its values are placed on is the checker's, and is none only
+                        // where there is no value to place: a type no value of which is made, or
+                        // one a helper leaves open until it is copied.
+                        match ordering {
+                            Some(basis) => self
+                                .declared
+                                .orders(basis, subject)
+                                .map_err(|it| anyhow!("{}: {it}", self.owner))?,
+                            None if subject.has_no_value() || matches!(subject, Ty::Var { .. }) => {
+                            }
+                            None => bail!(
+                                "{}: an application of {kernel} orders {} and says by no order: \
+                                 the two halves disagree",
+                                self.owner,
+                                subject.spelt()
+                            ),
+                        }
                     }
                     self.ends_for(&format!("a call of {kernel}"), aborts, &contract.aborts)?;
                     // What it answers is the one type what it takes bound. A kernel that takes

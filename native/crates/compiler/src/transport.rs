@@ -88,6 +88,12 @@ pub const MOVES: &[(u32, &str)] = &[
         "no `Raw` primitive: the language no longer has one, so it is no member of what a type \
          or a case can be (`prim`)",
     ),
+    (
+        28,
+        "which value an arm's name stands for, as the checker says (`binding`: `stands`, \
+         `number`, `as`), in place of a number and a type read beside what the arm tests; and \
+         what a comparison or a sort places its values on (`ordering`)",
+    ),
 ];
 
 /// A document of [`TRANSPORT_VERSION`], and no other, read through [`Program::read`] and nothing
@@ -1072,6 +1078,21 @@ impl Guard {
             Guard::Case { binds, .. } => binds,
         }
     }
+
+    /// The name a rule over a case reads the answer under, as an arm would name it: what the
+    /// case's refinement reads (`Contract.Guard.Case`, which types it by the refinement's `bound()`)
+    /// — what an optional's present carrier holds, and otherwise the answer as the case. `None` for
+    /// a rule over every answer, which reads it as it is.
+    pub fn reads(&self, number: usize) -> Option<ArmBinding> {
+        let Guard::Case { selects, binds } = self else {
+            return None;
+        };
+        let read_as = binds.clone();
+        Some(match selects {
+            Selects::Held => ArmBinding::Payload { number, read_as },
+            Selects::Which { .. } | Selects::Nothing => ArmBinding::Selected { number, read_as },
+        })
+    }
 }
 
 /// One of the closed set of scalars a boundary writes as themselves.
@@ -2001,10 +2022,9 @@ pub enum Node {
     /// it was written as.
     ///
     /// What the checker's parse answered is what crosses, for the reason a `Decimal`'s integer and
-    /// scale do: which text a literal may spell is the checker's own grammar to say (the
-    /// specification's, as of souther-lang/souther#2007, once the checker this repository builds
-    /// against reads it — souther-lang/souther-native-compiler#116), and text handed over would be
-    /// read a second time here by a grammar of its own.
+    /// scale do: which text a literal may spell is the checker's to say, which is the
+    /// specification's one grammar for a temporal, and text handed over would be read a second
+    /// time here by a grammar of its own.
     /// `count` is the day, counted from 1970-01-01, of a `Date`; the second of the day of a `Time`;
     /// the second, counted from 1970-01-01T00:00:00 as though it were in UTC, of a `DateTime`; and
     /// the second, counted from the epoch, of an `Instant`, whose nanosecond within it is `nano`.
@@ -2021,6 +2041,11 @@ pub enum Node {
         /// What the operator reads its operands as, which the checker settled and the operands'
         /// types do not say.
         reading: Reading,
+        /// The type whose order the operands are placed on, for an operator that orders them and
+        /// for no other (`Core.OrderingBasis`): the enumeration for a case of it, `Int` for a
+        /// quantity over one. Not the reading, which says what the operands are read as, and not
+        /// anything an operand's type says: which enumeration places a case is the checker's.
+        ordering: Option<Ty>,
         left: Box<Node>,
         right: Box<Node>,
         #[serde(rename = "type")]
@@ -2405,10 +2430,12 @@ pub enum KernelFact {
         /// is made of, the whole last.
         meaning: Vec<PatternPart>,
     },
-    /// The type an ordering was checked against.
+    /// The type an ordering was checked against, and the type whose order its values are placed
+    /// on (`Core.OrderingBasis`), which is none exactly where there is no value to place.
     OrderingSubject {
         #[serde(rename = "type")]
         ty: Ty,
+        ordering: Option<Ty>,
     },
 }
 
@@ -2461,15 +2488,56 @@ pub enum Reading {
 #[serde(deny_unknown_fields)]
 pub struct Arm {
     pub selects: Vec<Selects>,
-    /// The number the body reads the value under, where the arm binds it at all.
-    pub binding: Option<usize>,
-    /// What the value is read as inside the arm.
-    ///
-    /// Carried rather than worked out from what the arm tests, because the test does not say it:
-    /// an optional's present carrier is tested the same way whatever it holds, so a reader that
-    /// took the type from the test would read every optional's value at one width.
-    pub binds: Option<Ty>,
+    /// The name the arm introduces, where it introduces one.
+    pub binding: Option<ArmBinding>,
     pub body: Node,
+}
+
+/// The name an arm introduces: the number the body reads it under, which value it stands for, and
+/// what it is read as — the checker's `Core.ArmBinding`, which says all three.
+///
+/// Which value is carried rather than worked out from what the arm tests, because the test does not
+/// say it: `None as n` names the optional itself, `Some v` what the optional holds, and an optional's
+/// present carrier is tested the same way whatever it holds. A name always comes with what it is
+/// read as, so there is no arm with one of the two and not the other.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(tag = "stands", rename_all = "lowercase", deny_unknown_fields)]
+pub enum ArmBinding {
+    /// The value that was matched: the case a single case selected, the subject for several, the
+    /// optional itself for its absent carrier.
+    Selected {
+        number: usize,
+        #[serde(rename = "as")]
+        read_as: Ty,
+    },
+    /// What lies under the optional's present carrier the arm selects.
+    Payload {
+        number: usize,
+        #[serde(rename = "as")]
+        read_as: Ty,
+    },
+}
+
+impl ArmBinding {
+    /// The number the body reads the name under.
+    pub fn number(&self) -> usize {
+        match self {
+            ArmBinding::Selected { number, .. } | ArmBinding::Payload { number, .. } => *number,
+        }
+    }
+
+    /// What the name is read as inside the arm.
+    pub fn read_as(&self) -> &Ty {
+        match self {
+            ArmBinding::Selected { read_as, .. } | ArmBinding::Payload { read_as, .. } => read_as,
+        }
+    }
+
+    fn read_as_mut(&mut self) -> &mut Ty {
+        match self {
+            ArmBinding::Selected { read_as, .. } | ArmBinding::Payload { read_as, .. } => read_as,
+        }
+    }
 }
 
 /// What one case of an arm tests for.
@@ -2532,7 +2600,9 @@ impl KernelFact {
                 written: _,
                 meaning: _,
             } => Vec::new(),
-            KernelFact::OrderingSubject { ty } => vec![ty],
+            KernelFact::OrderingSubject { ty, ordering } => {
+                std::iter::once(ty).chain(ordering.as_ref()).collect()
+            }
         }
     }
 
@@ -2544,7 +2614,9 @@ impl KernelFact {
                 written: _,
                 meaning: _,
             } => Vec::new(),
-            KernelFact::OrderingSubject { ty } => vec![ty],
+            KernelFact::OrderingSubject { ty, ordering } => {
+                std::iter::once(ty).chain(ordering.as_mut()).collect()
+            }
         }
     }
 }
@@ -2696,11 +2768,15 @@ impl Node {
             Node::Binary {
                 op: _,
                 reading,
+                ordering,
                 left: _,
                 right: _,
                 ty,
                 aborts: _,
-            } => std::iter::once(ty).chain(reading.types()).collect(),
+            } => std::iter::once(ty)
+                .chain(reading.types())
+                .chain(ordering.as_ref())
+                .collect(),
             Node::Let {
                 binding: _,
                 binds,
@@ -2729,11 +2805,10 @@ impl Node {
                 .chain(arms.iter().filter_map(|arm| {
                     let Arm {
                         selects: _,
-                        binding: _,
-                        binds,
+                        binding,
                         body: _,
                     } = arm;
-                    binds.as_ref()
+                    binding.as_ref().map(ArmBinding::read_as)
                 }))
                 .collect(),
             Node::Call {
@@ -2772,12 +2847,21 @@ impl Node {
             | Node::Widen { ty, .. }
             | Node::Unreachable { ty, .. }
             | Node::Apply { ty, .. } => vec![ty],
-            Node::Binary { reading, ty, .. } => {
-                std::iter::once(ty).chain(reading.types_mut()).collect()
-            }
+            Node::Binary {
+                reading,
+                ordering,
+                ty,
+                ..
+            } => std::iter::once(ty)
+                .chain(reading.types_mut())
+                .chain(ordering.as_mut())
+                .collect(),
             Node::Let { binds, ty, .. } | Node::Attempt { binds, ty, .. } => vec![ty, binds],
             Node::Match { arms, ty, .. } => std::iter::once(ty)
-                .chain(arms.iter_mut().filter_map(|arm| arm.binds.as_mut()))
+                .chain(
+                    arms.iter_mut()
+                        .filter_map(|arm| arm.binding.as_mut().map(ArmBinding::read_as_mut)),
+                )
                 .collect(),
             Node::Call { reaches, ty, .. } => {
                 std::iter::once(ty).chain(reaches.types_mut()).collect()

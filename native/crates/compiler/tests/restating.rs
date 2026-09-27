@@ -133,12 +133,13 @@ fn apply(function: Value, argument: Value) -> Value {
     )
 }
 
-fn arm(selects: Value, binding: Option<(usize, Value)>, body: Value) -> Value {
-    let (binding, binds) = match binding {
-        Some((number, ty)) => (json!(number), ty),
-        None => (Value::Null, Value::Null),
-    };
-    json!({"selects": [selects], "binding": binding, "binds": binds, "body": body})
+/// An arm testing `selects`, naming what `binding` says (`{"stands": ..}`, or `null` for none).
+fn arm(selects: Value, binding: Value, body: Value) -> Value {
+    json!({"selects": [selects], "binding": binding, "body": body})
+}
+
+fn named(stands: &str, number: usize, ty: Value) -> Value {
+    json!({"stands": stands, "number": number, "as": ty})
 }
 
 fn match_(subject: Value, arms: Vec<Value>) -> Value {
@@ -152,8 +153,12 @@ fn held(optional: Value, binding: usize, then: Value) -> Value {
     match_(
         optional,
         vec![
-            arm(json!({"tests": "held"}), Some((binding, holds)), then),
-            arm(json!({"tests": "nothing"}), None, int(-1)),
+            arm(
+                json!({"tests": "held"}),
+                named("payload", binding, holds),
+                then,
+            ),
+            arm(json!({"tests": "nothing"}), Value::Null, int(-1)),
         ],
     )
 }
@@ -165,12 +170,12 @@ fn opened(value: Value, binding: usize) -> Value {
         vec![
             arm(
                 json!({"tests": "which", "atoms": [{"is": "primitive", "prim": "INT"}]}),
-                Some((binding, int_ty())),
+                named("selected", binding, int_ty()),
                 read(binding, int_ty()),
             ),
             arm(
                 json!({"tests": "which", "atoms": [{"is": "declared", "declared": "m.A"}]}),
-                None,
+                Value::Null,
                 int(-2),
             ),
         ],
@@ -395,7 +400,7 @@ fn document() -> String {
         })
         .collect();
     json!({
-        "transport":27,
+        "transport":28,
         "declarations": declarations(),
         "behaviors": targets,
         "modules": [{"name": "m", "publishes": ["m.A", "m.P", "m.R", "m.Q"], "helpers": [], "values": [],

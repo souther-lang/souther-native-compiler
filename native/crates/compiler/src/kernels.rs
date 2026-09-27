@@ -262,7 +262,7 @@ impl FactContract {
                 written: _,
                 meaning: _,
             } => *self == FactContract::StringMatches,
-            KernelFact::OrderingSubject { ty: _ } => {
+            KernelFact::OrderingSubject { .. } => {
                 matches!(self, FactContract::OrderingSubject(_))
             }
         }
@@ -1109,6 +1109,7 @@ mod tests {
         for ty in [Prim::Int, Prim::String] {
             let fact = KernelFact::OrderingSubject {
                 ty: Ty::Prim { prim: ty },
+                ordering: Some(Ty::Prim { prim: ty }),
             };
             assert!(FactContract::OrderingSubject(Shape::Var(0)).accepts(&fact));
             assert!(!FactContract::StringMatches.accepts(&fact));

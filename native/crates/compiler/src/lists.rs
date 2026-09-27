@@ -28,7 +28,7 @@ use souther_native_abi::{
     RATIONAL_FROM_INT, RATIONAL_MULTIPLY, SLOT, Status, list_at, room_for_held, room_for_list,
 };
 
-use crate::ordering::ordered;
+use crate::ordering::{Placing, ordered};
 use crate::transport::{AbortKind, FnSignature, Op, Prim, Ty};
 use crate::{
     Held, Lowered, Lowering, POINTER, TRUSTED, abort_where, call_function, into_slot, machine_type,
@@ -351,13 +351,13 @@ pub(crate) fn extreme(
     lowering: &Lowering,
     module: &mut ObjectModule,
     op: Op,
-    subject: &Ty,
+    subject: Placing,
     list: ir::Value,
 ) -> Lowered<ir::Value> {
-    if subject.has_no_value() {
+    if subject.ty.has_no_value() {
         return Ok(builder.ins().iconst(POINTER, NOTHING));
     }
-    let machine = machine_type(subject)?;
+    let machine = machine_type(subject.ty)?;
     let count = length(builder, list);
     let nought = builder.ins().iconst(types::I64, 0);
     let first = element_at(builder, list, nought);
@@ -388,10 +388,10 @@ pub(crate) fn sorted(
     builder: &mut FunctionBuilder,
     lowering: &Lowering,
     module: &mut ObjectModule,
-    subject: &Ty,
+    subject: Placing,
     list: ir::Value,
 ) -> Lowered<ir::Value> {
-    if subject.has_no_value() {
+    if subject.ty.has_no_value() {
         return Ok(list);
     }
     let count = length(builder, list);
@@ -425,7 +425,7 @@ pub(crate) fn sorted_by(
     module: &mut ObjectModule,
     abort: ir::Block,
     key: Held,
-    subject: &Ty,
+    subject: Placing,
     list: ir::Value,
 ) -> Lowered<ir::Value> {
     let function = signature(key.ty);
@@ -445,7 +445,7 @@ pub(crate) fn sorted_by(
         builder.ins().store(TRUSTED, answered, to, 0);
         Ok(())
     })?;
-    if subject.has_no_value() {
+    if subject.ty.has_no_value() {
         return Ok(list);
     }
     let values = copied(builder, lowering, module, list, count);
@@ -489,11 +489,11 @@ fn merged<const LANES: usize>(
     builder: &mut FunctionBuilder,
     lowering: &Lowering,
     module: &mut ObjectModule,
-    subject: &Ty,
+    subject: Placing,
     count: ir::Value,
     lanes: [Lane; LANES],
 ) -> Lowered<[ir::Value; LANES]> {
-    let machine = machine_type(subject)?;
+    let machine = machine_type(subject.ty)?;
     let from = lanes.each_ref().map(|_| builder.declare_var(POINTER));
     let to = lanes.each_ref().map(|_| builder.declare_var(POINTER));
     for (lane, (from, to)) in lanes.iter().zip(from.iter().zip(&to)) {

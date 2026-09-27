@@ -4,24 +4,21 @@ import org.junit.jupiter.api.Test;
 import souther.compiler.program.CheckedProgram;
 import souther.nativecode.transport.ProgramWriter;
 
-import java.io.ByteArrayOutputStream;
-import java.io.OutputStream;
-import java.io.PrintStream;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * A program the language admits that this backend does not write yet, followed all the way out.
+ * What this backend does not write yet, and that it is told apart from a document the two halves
+ * disagree about.
  *
  * <p>Three answers are possible at the end of this path and only one of them is right: the program
  * is refused by the language, this backend has not got round to it, or the command was wrong.
- * Which one a reader is told decides whether they go and change their program. So the test is the
- * whole way through rather than at any one of the places the answer could be lost.
+ * Which one a reader is told decides whether they go and change their program. No program the
+ * checker accepts reaches a refusal of the writer's today (the last, an arm naming an absent
+ * optional, went once the checker said what such a name stands for), so the driver's half is asked
+ * of a document.
  */
 class WhatThisBackendDoesNotWriteYetTest {
 
@@ -34,19 +31,21 @@ class WhatThisBackendDoesNotWriteYetTest {
             """;
 
     /**
-     * An arm binding a name where it tests that an optional holds nothing, which the language admits
-     * with no type for the name (souther-lang/souther#1984): what this backend is behind on today.
+     * The smallest document that reaches a lowering this driver does not have: two values of the
+     * type of what has no value, compared. No program the checker accepts is refused as not lowered
+     * by the writer today, so the driver's half of the path is asked with a document written by
+     * hand, the one `native/crates/compiler/tests/refusals.rs` refuses the same way.
      */
-    private static final String BINDING_NOTHING = """
-            module absent exposing ( counted, Held )
-
-            data Held = { o: Int? }
-
-            behavior counted : (h: Held) -> Int
-            let counted (h) = match h.o with
-                | Some x -> x
-                | None as n -> 0
-            """;
+    private static final String COMPARING_NOTHING = ("{\"transport\":" + ProgramWriter.TRANSPORT_VERSION
+            + ",\"declarations\":[],\"behaviors\":[],\"modules\":[{\"name\":\"calculation\","
+            + "\"publishes\":[],\"helpers\":[{\"reached\":{\"is\":\"own\",\"module\":\"calculation\","
+            + "\"name\":\"f\"},\"parameters\":[{\"name\":\"a\",\"type\":{\"nothing\":{}}},"
+            + "{\"name\":\"b\",\"type\":{\"nothing\":{}}}],\"body\":{\"core\":\"binary\",\"op\":\"EQ\","
+            + "\"reading\":{\"is\":\"astheystand\"},"
+            + "\"left\":{\"core\":\"read\",\"binding\":0,\"type\":{\"nothing\":{}},\"aborts\":[]},"
+            + "\"right\":{\"core\":\"read\",\"binding\":1,\"type\":{\"nothing\":{}},\"aborts\":[]},"
+            + "\"type\":{\"prim\":\"BOOL\"},\"aborts\":[]}}],\"values\":[],\"entries\":[],"
+            + "\"definitions\":[],\"examples\":[]}]}");
 
     /**
      * The type crosses. What a primitive is called is the language's and whether there is a
@@ -90,41 +89,11 @@ class WhatThisBackendDoesNotWriteYetTest {
                         + java.time.LocalDate.parse("2026-07-25").toEpochDay() + ",\"nano\":0");
     }
 
-    /**
-     * An arm binding a name where it tests that an optional holds nothing is admitted with no type
-     * for the name (souther-lang/souther#1984), and there is nothing to write it as. Refused as not
-     * lowered, naming that, rather than written with a type this side made up.
-     */
-    @Test
-    void anArmBindingANameToNothingIsNotLoweredYet() {
-        CheckedProgram program = Checked.of(List.of(BINDING_NOTHING));
-
-        assertThatThrownBy(() -> ProgramWriter.written(program))
-                .isInstanceOf(NotLowered.class)
-                .hasMessageContaining("souther-lang/souther#1984");
-    }
-
+    /** What the driver has no lowering for arrives as that, and not as a document it could not read. */
     @Test
     void theDriverSaysItIsOneThisBackendHasNotGotRoundTo() {
-        assertThatThrownBy(() -> NativeCompiler.compile(
-                Checked.of(List.of(BINDING_NOTHING))))
+        assertThatThrownBy(() -> NativeCompiler.driven(COMPARING_NOTHING))
                 .isInstanceOf(NotLowered.class)
-                .hasMessageContaining("souther-lang/souther#1984");
-    }
-
-    @Test
-    void theCommandLineSaysTheBackendIsBehindAndNotThatTheCommandWasWrong() throws Exception {
-        Path source = Files.createTempDirectory("souther-native-test").resolve("absent.sou");
-        Files.writeString(source, BINDING_NOTHING, StandardCharsets.UTF_8);
-        ByteArrayOutputStream problems = new ByteArrayOutputStream();
-
-        int ended = Main.run(
-                new String[]{"-o", source.resolveSibling("out.o").toString(), source.toString()},
-                new PrintStream(OutputStream.nullOutputStream(), true, StandardCharsets.UTF_8),
-                new PrintStream(problems, true, StandardCharsets.UTF_8));
-
-        assertThat(ended).isEqualTo(1);
-        assertThat(problems.toString(StandardCharsets.UTF_8))
-                .contains("this backend does not write that yet");
+                .hasMessageContaining("Nothing");
     }
 }
