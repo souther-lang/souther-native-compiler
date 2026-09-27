@@ -30,7 +30,7 @@ mod operations;
 pub mod pattern;
 mod tables;
 
-pub use capacity::Capacity;
+pub use capacity::{Capacity, LONGEST_TEXT};
 pub use case::{lowercase, uppercase};
 pub use decimal::{DecimalText, decimal_text};
 pub use integer::{integer, written};
@@ -75,19 +75,36 @@ impl<'a> Text<'a> {
     }
 }
 
-/// Text arriving from outside, as a string holds it: in NFC, or nothing where it is not UTF-8.
+/// Why text handed to [`admitted`] is not a string.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AdmissionRefusal {
+    /// The bytes are not a sequence of Unicode scalar values.
+    NotText,
+    /// The text is scalar values, but its canonical value is longer than a string holds
+    /// (spec §what-a-string-holds).
+    NoPlace,
+}
+
+/// Text arriving from outside, as a string holds it: in NFC and within `capacity`, or refused.
 ///
 /// The one way text becomes a string, whichever door it came through — a decoder's string leaf, a
 /// host handing text in. The doors differ in how they say no and not in what they refuse. Refused
 /// and not repaired: bytes that are not UTF-8 are no text, and reading them as U+FFFD would make
-/// them and U+FFFD itself one value.
-pub fn admitted(bytes: &[u8]) -> Option<Cow<'_, str>> {
-    let text = core::str::from_utf8(bytes).ok()?;
-    Some(if text.is_ascii() {
-        Cow::Borrowed(text)
-    } else {
-        Cow::Owned(canonical::nfc_of_input(text))
-    })
+/// them and U+FFFD itself one value. It is the canonical value that is measured against
+/// `capacity`, and not how long the text arrived, since that is the string the text would be
+/// (spec §what-a-string-holds): admission establishes every representation invariant a `String`
+/// holds at once — scalar values, NFC, within capacity — so nothing after it needs to ask again.
+pub fn admitted(bytes: &[u8], capacity: Capacity) -> Result<Cow<'_, str>, AdmissionRefusal> {
+    let text = core::str::from_utf8(bytes).map_err(|_| AdmissionRefusal::NotText)?;
+    if text.is_ascii() {
+        return capacity
+            .holds(text.len() as i64)
+            .then(|| Cow::Borrowed(text))
+            .ok_or(AdmissionRefusal::NoPlace);
+    }
+    canonical::nfc_of_input(text, capacity)
+        .map(Cow::Owned)
+        .ok_or(AdmissionRefusal::NoPlace)
 }
 
 /// How long the text is as the language counts it, in code points (`String.length`).
@@ -181,13 +198,84 @@ mod tests {
         }
     }
 
-    /// Bytes that are not UTF-8 are refused and not repaired, and what is admitted is in NFC.
+    const PLENTY: Capacity = Capacity::of_code_points(1 << 20);
+
+    /// Bytes that are not UTF-8 are refused as `NotText` and not repaired, and what is admitted is
+    /// in NFC.
     #[test]
     fn what_is_admitted_is_utf_8_put_in_nfc() {
-        assert_eq!(admitted(b"\xff").as_deref(), None);
-        assert_eq!(admitted(b"a\xed\xa0\x80").as_deref(), None);
-        assert_eq!(admitted("e\u{301}".as_bytes()).as_deref(), Some("\u{e9}"));
-        assert_eq!(admitted(b"plain").as_deref(), Some("plain"));
+        assert_eq!(admitted(b"\xff", PLENTY), Err(AdmissionRefusal::NotText));
+        assert_eq!(
+            admitted(b"a\xed\xa0\x80", PLENTY),
+            Err(AdmissionRefusal::NotText)
+        );
+        assert_eq!(
+            admitted("e\u{301}".as_bytes(), PLENTY).as_deref(),
+            Ok("\u{e9}")
+        );
+        assert_eq!(admitted(b"plain", PLENTY).as_deref(), Ok("plain"));
+    }
+
+    /// Capacity is measured against the canonical value, not the input: `e` + a combining acute (2
+    /// code points) composes to `é` (1 code point), which fits a capacity the input alone would
+    /// not (spec §what-a-string-holds).
+    #[test]
+    fn a_shrinking_combining_form_is_admitted_within_the_composed_capacity() {
+        let one = Capacity::of_code_points(1);
+        assert_eq!(admitted("e\u{301}".as_bytes(), one).as_deref(), Ok("\u{e9}"));
+    }
+
+    /// U+0344 (COMBINING GREEK DIALYTIKA TONOS) is one code point that decomposes under NFC to two
+    /// (U+0308 U+0301), so a capacity that holds the input does not hold its canonical value.
+    #[test]
+    fn an_expanding_combining_form_is_refused_where_the_canonical_value_has_no_place() {
+        let one = Capacity::of_code_points(1);
+        assert_eq!(
+            admitted("\u{344}".as_bytes(), one),
+            Err(AdmissionRefusal::NoPlace)
+        );
+        assert!(admitted("\u{344}".as_bytes(), Capacity::of_code_points(2)).is_ok());
+    }
+
+    /// The ASCII fast path still spends the capacity: it does not build text past what is held
+    /// just because normalization is skipped.
+    #[test]
+    fn ascii_past_capacity_is_refused_too() {
+        assert_eq!(
+            admitted(b"abcd", Capacity::of_code_points(3)),
+            Err(AdmissionRefusal::NoPlace)
+        );
+        assert_eq!(
+            admitted(b"abc", Capacity::of_code_points(3)).as_deref(),
+            Ok("abc")
+        );
+    }
+
+    /// What admission establishes is not only that a text is a `String`, but that `""` is
+    /// `append`'s identity for it at the same capacity: the root cause `souther-native-compiler#109`
+    /// fixes is that this law did not hold for every successfully admitted string. This is the
+    /// executable specification of the fix, not a regression example.
+    #[test]
+    fn admission_establishes_the_append_identity_law() {
+        for (text, capacity) in [
+            (b"plain".as_slice(), Capacity::of_code_points(5)),
+            ("café".as_bytes(), Capacity::of_code_points(4)),
+            ("e\u{301}".as_bytes(), Capacity::of_code_points(1)),
+            ("\u{344}".as_bytes(), Capacity::of_code_points(2)),
+        ] {
+            let admitted_text = admitted(text, capacity).expect("within capacity");
+            let admitted_text = admitted_text.as_ref();
+            assert_eq!(
+                append(held(""), held(admitted_text), capacity).as_deref(),
+                Some(admitted_text),
+                "append(\"\", {admitted_text:?})"
+            );
+            assert_eq!(
+                append(held(admitted_text), held(""), capacity).as_deref(),
+                Some(admitted_text),
+                "append({admitted_text:?}, \"\")"
+            );
+        }
     }
 
     /// A text a string holds is in NFC, which a debug build holds it to.

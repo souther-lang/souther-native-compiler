@@ -303,15 +303,14 @@ pub unsafe extern "C" fn souther_string_hash(at: *const Text) -> Hash {
 // the other way.
 include!(concat!(env!("OUT_DIR"), "/runtime_generation.rs"));
 
-/// What a string holds on this carrier: how much text, in UTF-16 code units.
+/// What a string holds: how much text, in Unicode code points.
 ///
-/// The language says the bound is the carrier's (spec §what-a-string-holds), and this carrier's own
-/// would be what its lengths count, which is far more. It takes the JVM's number instead, so that a
-/// program ends where it ends on either: the length every `java.lang.String` holds, whichever of
-/// its two encodings the JVM keeps it in. It is decided here and handed to every operation that
-/// builds text (`souther_text`), which spends it as it builds and writes nothing past it.
+/// The bound is the language's and not this carrier's own (spec §what-a-string-holds, ADR-0096):
+/// every carrier holds the same `souther_text::LONGEST_TEXT`, so whether a text has a place does
+/// not depend on which carrier answers. It is handed to every operation that builds text
+/// (`souther_text`), which spends it as it builds and writes nothing past it.
 pub(crate) const STRING_HOLDS: souther_text::Capacity =
-    souther_text::Capacity::of_units(1_073_741_819);
+    souther_text::Capacity::of_code_points(souther_text::LONGEST_TEXT);
 
 /// The two strings' text, one after the other, as a string of its own: `++` over two strings, and
 /// `String.append`.
@@ -367,8 +366,8 @@ pub unsafe extern "C" fn souther_string_of_utf8(bytes: *const u8, length: Count)
     } else {
         unsafe { std::slice::from_raw_parts(bytes, held) }
     };
-    let admitted =
-        souther_text::admitted(bytes).expect("text handed to a Souther library is UTF-8");
+    let admitted = souther_text::admitted(bytes, STRING_HOLDS)
+        .expect("text handed to a Souther library is UTF-8");
     string_of(&admitted)
 }
 

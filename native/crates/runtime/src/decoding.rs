@@ -29,7 +29,7 @@ use crate::temporal::{
     Date, DateTime, Instant, Time, date_of, date_time_of, instant_of, parse_date, parse_date_time,
     parse_instant, parse_time, time_of,
 };
-use crate::{Count, Text, Value, souther_alloc, string_of, text};
+use crate::{Count, STRING_HOLDS, Text, Value, souther_alloc, string_of, text};
 use souther_native_abi::{DECODED_ISSUES, DECODED_MALFORMED, DECODED_VALUE};
 use std::ptr;
 
@@ -186,7 +186,7 @@ unsafe fn mismatched(decoding: *mut Decoding, path: *const Path, node: &Node, wa
 /// (spec §string-canonical). What most documents write is ASCII, which is NFC already and is taken
 /// as it is.
 fn canonical(written: &[u8]) -> std::borrow::Cow<'_, str> {
-    souther_text::admitted(written).expect("the parser holds a string to be UTF-8")
+    souther_text::admitted(written, STRING_HOLDS).expect("the parser holds a string to be UTF-8")
 }
 
 /// Begins reading `length` bytes at `bytes` as a document in the external form.

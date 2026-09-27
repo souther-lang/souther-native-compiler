@@ -10,7 +10,7 @@
 //! another's, so where one text is found in another it stands at code points and nowhere else.
 
 use crate::canonical::Joined;
-use crate::capacity::{Capacity, units};
+use crate::capacity::{Capacity, code_points as capacity_code_points};
 use crate::{Text, code_points};
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -183,7 +183,7 @@ pub fn repeat(copies: i64, text: Text, capacity: Capacity) -> Option<String> {
     if copies <= 0 || text.as_str().is_empty() {
         return Some(String::new());
     }
-    if !capacity.holds(units(text.as_str()).saturating_mul(copies)) {
+    if !capacity.holds(capacity_code_points(text.as_str()).saturating_mul(copies)) {
         return None;
     }
     let mut joined = Joined::new(capacity);
@@ -295,7 +295,7 @@ mod tests {
     }
 
     /// More than any text here is long.
-    const ROOMY: Capacity = Capacity::of_units(1 << 20);
+    const ROOMY: Capacity = Capacity::of_code_points(1 << 20);
 
     #[test]
     fn what_is_built_is_put_in_nfc() {
@@ -328,7 +328,7 @@ mod tests {
 
     #[test]
     fn a_repeat_past_what_is_held_is_none() {
-        let held_ = Capacity::of_units(10);
+        let held_ = Capacity::of_code_points(10);
         assert_eq!(repeat(3, held("ab"), held_).as_deref(), Some("ababab"));
         assert_eq!(repeat(5, held("ab"), held_).as_deref(), Some("ababababab"));
         assert_eq!(repeat(6, held("ab"), held_), None);
@@ -336,12 +336,17 @@ mod tests {
         assert_eq!(repeat(-4, held("ab"), held_).as_deref(), Some(""));
         assert_eq!(repeat(i64::MAX, held(""), held_).as_deref(), Some(""));
         assert_eq!(repeat(i64::MAX, held("ab"), held_), None);
-        // What is held is counted in units: a code point outside the basic plane is two.
+        // What is held is counted in code points: a code point outside the basic plane is still
+        // one, though it is two UTF-16 units and four bytes.
         assert_eq!(
-            repeat(5, held("\u{10000}"), held_).map(|it| it.len()),
-            Some(20)
+            repeat(5, held("\u{10000}"), held_).map(|it| it.chars().count()),
+            Some(5)
         );
-        assert_eq!(repeat(6, held("\u{10000}"), held_), None);
+        assert_eq!(
+            repeat(10, held("\u{10000}"), held_).map(|it| it.chars().count()),
+            Some(10)
+        );
+        assert_eq!(repeat(11, held("\u{10000}"), held_), None);
     }
 
     #[test]
@@ -366,8 +371,8 @@ mod tests {
     #[test]
     fn a_pad_is_measured_with_the_text_it_widens() {
         let astral = held("\u{10000}\u{10000}\u{10000}\u{10000}");
-        for (capacity, holds) in [(10, true), (9, false), (8, false)] {
-            let capacity = Capacity::of_units(capacity);
+        for (capacity, holds) in [(6, true), (5, false), (4, false)] {
+            let capacity = Capacity::of_code_points(capacity);
             assert_eq!(
                 pad_right(6, held("a"), astral, capacity).is_some(),
                 holds,

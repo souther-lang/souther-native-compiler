@@ -70,7 +70,7 @@ fn spending<T>(operation: impl FnOnce() -> T) -> (usize, T) {
 
 #[test]
 fn what_no_carrier_holds_is_never_built() {
-    let capacity = Capacity::of_units(HELD);
+    let capacity = Capacity::of_code_points(HELD);
     // Made before anything is measured: the operands are text already held, and are not what is
     // asked about.
     let big = "a".repeat(1 << 22);
@@ -148,7 +148,9 @@ fn what_no_carrier_holds_is_never_built() {
         (
             "padRight, a fill of astral characters",
             BEFORE_ANY,
-            Box::new(|| pad_right(HELD - 1, plane, b, capacity)),
+            // The width alone is past what `capacity` holds — every code point of the fill is
+            // still one code point, however many bytes or UTF-16 units it takes.
+            Box::new(|| pad_right(HELD + 1, plane, b, capacity)),
         ),
     ];
     for (name, at_most, operation) in cases {
