@@ -1,6 +1,6 @@
 package souther.bindings.rust;
 
-import souther.bindings.Manifest;
+import org.jspecify.annotations.Nullable;
 import souther.bindings.Manifest.ListCrossing;
 import souther.bindings.Manifest.Shape;
 import souther.bindings.Manifest.Word;
@@ -22,10 +22,20 @@ import java.util.stream.IntStream;
  * {@link #view}, which borrows what it can ({@code &str} for a {@code String}, a slice for a list).
  * Every view is {@code Copy}, so what hands one over can read it as often as it has words to write.
  *
- * <p>Generated code names three things this writes against: {@code run}, the run a value is handed
- * over in, taken mutably; {@code library}, the {@code &'run Library} it is a run of; and the
- * {@code rt} alias of the runtime crate. What is handed to Rust is made in an {@code unsafe}
- * context the caller opens, since every word it reads is one the library answered.
+ * <p>What is written here is held to three rules, so that what the crate is made of is Rust a lint
+ * has nothing to say about:
+ *
+ * <ul>
+ *   <li>{@link #given} is handed a place expression of the view and writes one expression for each
+ *       word, which may name {@code run} (the run the value is handed over in), {@code library}
+ *       (what it is a run of) and {@code ?}, in a function answering what a {@code Failure}
+ *       becomes. A value of a declared type and a function value are handed over only through
+ *       what checks the runtime that made them is {@code run}'s ({@code __word}).
+ *   <li>{@link #of} is handed an identifier for each word and writes one expression standing on
+ *       its own: {@code unsafe} around exactly what of it reads what the library answered, and
+ *       never around what another crossing wrote, so no block is inside another.
+ *   <li>{@link #viewOf} is handed an identifier of a reference to the owned value.
+ * </ul>
  */
 sealed interface Crossing {
 
@@ -43,19 +53,13 @@ sealed interface Crossing {
         return shape().words();
     }
 
-    /**
-     * The Rust expressions handing {@code value}, an expression of {@link #view}, over, one for
-     * each of {@link #words()}.
-     */
+    /** The expressions handing {@code value}, a place of {@link #view}, over, one for each word. */
     List<String> given(String value);
 
-    /**
-     * The Rust expression of this crossing's {@link #owned} value made of {@code words}, one
-     * expression of each word the library answered.
-     */
+    /** The expression of this crossing's {@link #owned} value made of {@code words}, identifiers. */
     String of(List<String> words);
 
-    /** The Rust expression of {@link #view} of {@code owned}, an expression of {@code &owned()}. */
+    /** The expression of {@link #view} of {@code owned}, an identifier of {@code &owned()}. */
     String viewOf(String owned);
 
     /**
@@ -96,10 +100,31 @@ sealed interface Crossing {
     }
 
     /**
+     * {@code let name = expression;}, or nothing where the expression is the name itself: what is
+     * written binds only what it changes, since a binding that changes nothing is one a lint
+     * refuses and a reader reads twice.
+     */
+    static String let(String name, String expression) {
+        return expression.equals(name) ? "" : "let " + name + " = " + expression + ";";
+    }
+
+    /** {@code path} without the lifetime a type is written with. */
+    private static String bare(String path) {
+        int at = path.indexOf('<');
+        return at < 0 ? path : path.substring(0, at);
+    }
+
+    /** The last segment of {@code path}, without its lifetime. */
+    private static String last(String path) {
+        String bare = bare(path);
+        return bare.substring(bare.lastIndexOf(':') + 1);
+    }
+
+    /**
      * One word of the library's that is the value itself: a primitive, or a value of a declared
      * type as the handle generated for it. Held the same way both ways.
      *
-     * @param type the handle's type, where it is one, as {@code crate::m::Name}
+     * @param type Rust's type of it, and for a handle its path as {@code crate::m::Name}
      */
     record Whole(Shape.Leaf shape, Kind kind, String type) implements Crossing {
 
@@ -123,34 +148,39 @@ sealed interface Crossing {
         }
 
         /**
-         * A value of the primitive {@code name} crossing as {@code word}, as Rust's own type for it,
-         * or null where this binding has no way to hold that pair: an {@code Int} as an {@code i64}
-         * crossing as an {@code INT}, a {@code Bool} as a {@code bool} crossing as a {@code BOOL}, a
-         * {@code String} as a {@code String} crossing as a {@code STRING}, and a {@code Decimal} as
-         * the runtime's {@code Decimal} crossing as a {@code DECIMAL}. Both are asked, the name and
-         * the word, as the PHP binding asks them.
+         * A value of the primitive {@code name} crossing as {@code word}, as Rust's own type for it
+         * or the runtime's, or null where this binding has no way to hold that pair. Both are
+         * asked, the name and the word, as the PHP binding asks them.
          */
-        static Whole primitive(String name, Word word) {
-            return switch (name) {
-                case "Int" -> word == Word.INT ? new Whole(new Shape.Leaf(word), Kind.INT, "i64") : null;
-                case "Bool" -> word == Word.BOOL
-                        ? new Whole(new Shape.Leaf(word), Kind.BOOL, "bool") : null;
-                case "String" -> word == Word.STRING
-                        ? new Whole(new Shape.Leaf(word), Kind.STRING, "String") : null;
-                case "Decimal" -> word == Word.DECIMAL
-                        ? new Whole(new Shape.Leaf(word), Kind.DECIMAL, "rt::Decimal") : null;
+        static @Nullable Whole primitive(String name, Word word) {
+            Kind kind = switch (name) {
+                case "Int" -> word == Word.INT ? Kind.INT : null;
+                case "Bool" -> word == Word.BOOL ? Kind.BOOL : null;
+                case "String" -> word == Word.STRING ? Kind.STRING : null;
+                case "Decimal" -> word == Word.DECIMAL ? Kind.DECIMAL : null;
                 // Each of the four as the runtime's type for it, held as its numbers and handed
                 // over as the text `java.time` writes, which the library reads.
-                case "Date" -> word == Word.DATE
-                        ? new Whole(new Shape.Leaf(word), Kind.DATE, "rt::Date") : null;
-                case "Time" -> word == Word.TIME
-                        ? new Whole(new Shape.Leaf(word), Kind.TIME, "rt::Time") : null;
-                case "DateTime" -> word == Word.DATETIME
-                        ? new Whole(new Shape.Leaf(word), Kind.DATETIME, "rt::DateTime") : null;
-                case "Instant" -> word == Word.INSTANT
-                        ? new Whole(new Shape.Leaf(word), Kind.INSTANT, "rt::Instant") : null;
+                case "Date" -> word == Word.DATE ? Kind.DATE : null;
+                case "Time" -> word == Word.TIME ? Kind.TIME : null;
+                case "DateTime" -> word == Word.DATETIME ? Kind.DATETIME : null;
+                case "Instant" -> word == Word.INSTANT ? Kind.INSTANT : null;
                 default -> null;
             };
+            if (kind == null) {
+                return null;
+            }
+            String type = switch (kind) {
+                case INT -> "i64";
+                case BOOL -> "bool";
+                case STRING -> "String";
+                case DECIMAL -> "rt::Decimal";
+                case DATE -> "rt::Date";
+                case TIME -> "rt::Time";
+                case DATETIME -> "rt::DateTime";
+                case INSTANT -> "rt::Instant";
+                case HANDLE -> throw new IllegalStateException("a primitive is no handle");
+            };
+            return new Whole(new Shape.Leaf(word), kind, type);
         }
 
         /** A value of a declared type, as the handle generated for it. */
@@ -184,7 +214,7 @@ sealed interface Crossing {
                 case TIME -> "library.words.time(run, " + value + ")";
                 case DATETIME -> "library.words.date_time(run, " + value + ")";
                 case INSTANT -> "library.words.instant(run, " + value + ")";
-                case HANDLE -> value + ".__word()";
+                case HANDLE -> type + "::__word(" + value + ", run)?";
             });
         }
 
@@ -193,14 +223,23 @@ sealed interface Crossing {
             String word = words.getFirst();
             return switch (kind) {
                 case INT -> word;
-                case BOOL -> "(" + word + " != 0)";
-                case STRING -> "library.words.text(" + word + ")";
-                case DECIMAL -> "library.words.amount(" + word + ")";
-                case DATE -> "library.words.date_of(" + word + ")";
-                case TIME -> "library.words.time_of(" + word + ")";
-                case DATETIME -> "library.words.date_time_of(" + word + ")";
-                case INSTANT -> "library.words.instant_of(" + word + ")";
-                case HANDLE -> type + "::__held(library, " + word + ")";
+                case BOOL -> word + " != 0";
+                case STRING -> "unsafe { library.words.text(" + word + ") }";
+                case DECIMAL -> "unsafe { library.words.amount(" + word + ") }";
+                case DATE -> "unsafe { library.words.date_of(" + word + ") }";
+                case TIME -> "unsafe { library.words.time_of(" + word + ") }";
+                case DATETIME -> "unsafe { library.words.date_time_of(" + word + ") }";
+                case INSTANT -> "unsafe { library.words.instant_of(" + word + ") }";
+                case HANDLE -> "unsafe { " + type + "::__held(library, " + word + ") }";
+            };
+        }
+
+        @Override
+        public String viewOf(String owned) {
+            return switch (kind) {
+                case INT, BOOL, DATE, TIME, DATETIME, INSTANT, HANDLE -> "*" + owned;
+                case STRING -> owned + ".as_str()";
+                case DECIMAL -> owned;
             };
         }
 
@@ -215,16 +254,7 @@ sealed interface Crossing {
                 case TIME -> "Time";
                 case DATETIME -> "DateTime";
                 case INSTANT -> "Instant";
-                case HANDLE -> type.substring(type.lastIndexOf(':') + 1);
-            };
-        }
-
-        @Override
-        public String viewOf(String owned) {
-            return switch (kind) {
-                case INT, BOOL, DATE, TIME, DATETIME, INSTANT, HANDLE -> "(*" + owned + ")";
-                case STRING -> owned + ".as_str()";
-                case DECIMAL -> owned;
+                case HANDLE -> last(type);
             };
         }
     }
@@ -253,7 +283,11 @@ sealed interface Crossing {
             List<String> inner = of.given("held");
             List<Word> innerWords = of.words();
             for (int at = 0; at < inner.size(); at++) {
-                words.add("match " + value + " { Some(held) => " + inner.get(at) + ", None => "
+                // What an optional holding nothing leaves is the word's default where the word is
+                // what it holds as it is.
+                words.add(inner.get(at).equals("held") && Crossing.nothing(innerWords.get(at))
+                        .equals("0") ? value + ".unwrap_or_default()"
+                        : "match " + value + " { Some(held) => " + inner.get(at) + ", None => "
                         + Crossing.nothing(innerWords.get(at)) + " }");
             }
             return words;
@@ -265,9 +299,19 @@ sealed interface Crossing {
                     + ") } else { None }";
         }
 
+        /**
+         * The view of what it holds, written the way Rust writes each: an optional of a {@code Copy}
+         * view is one itself, one of a reference is {@code as_ref}, one of text {@code as_deref}.
+         */
         @Override
         public String viewOf(String owned) {
-            return owned + ".as_ref().map(|held| " + of.viewOf("held") + ")";
+            String inner = of.viewOf("held");
+            return switch (inner) {
+                case "*held" -> "*" + owned;
+                case "held" -> owned + ".as_ref()";
+                case "held.as_str()" -> owned + ".as_deref()";
+                default -> owned + ".as_ref().map(|held| " + inner + ")";
+            };
         }
 
         @Override
@@ -319,10 +363,14 @@ sealed interface Crossing {
             return tuple(made);
         }
 
+        /** Each member opened out of the reference by a pattern, as a reference of its own. */
         @Override
         public String viewOf(String owned) {
-            return tuple(IntStream.range(0, members.size())
-                    .mapToObj(at -> members.get(at).viewOf("(&" + owned + "." + at + ")")).toList());
+            List<String> names = IntStream.range(0, members.size()).mapToObj(at -> "member" + at)
+                    .toList();
+            return "{ let " + tuple(names) + " = " + owned + "; " + tuple(IntStream
+                    .range(0, members.size()).mapToObj(at -> members.get(at).viewOf(names.get(at)))
+                    .toList()) + " }";
         }
 
         @Override
@@ -345,8 +393,8 @@ sealed interface Crossing {
      * @param length    the field reading how many elements one holds, or null where nothing does
      * @param at        the field reading one element, or null where nothing does
      */
-    record Listed(Crossing element, ListCrossing crossing, String construct, String length,
-                  String at) implements Crossing {
+    record Listed(Crossing element, ListCrossing crossing, @Nullable String construct,
+                  @Nullable String length, @Nullable String at) implements Crossing {
 
         public Listed {
             if (!crossing.element().equals(element.shape())) {
@@ -384,8 +432,8 @@ sealed interface Crossing {
                         .append(Crossing.word(words.get(column)))
                         .append("> = Vec::with_capacity(elements.len());");
             }
-            block.append(" for element in elements { let element = ")
-                    .append(element.viewOf("element")).append(";");
+            block.append(" for element in elements { ")
+                    .append(Crossing.let("element", element.viewOf("element")));
             List<String> handed = element.given("element");
             for (int column = 0; column < handed.size(); column++) {
                 block.append(" column").append(column).append(".push(").append(handed.get(column))
@@ -407,8 +455,8 @@ sealed interface Crossing {
             Objects.requireNonNull(at, "a list handed over is read by something");
             List<Word> rooms = element.words();
             StringBuilder block = new StringBuilder("{ let list = ").append(words.getFirst())
-                    .append("; let count = (library.symbols.").append(length)
-                    .append(")(list); let mut elements = Vec::with_capacity(usize::try_from(count)"
+                    .append("; let count = unsafe { (library.symbols.").append(length)
+                    .append(")(list) }; let mut elements = Vec::with_capacity(usize::try_from(count)"
                             + ".expect(\"a list's length is never below nought\")); for index in"
                             + " 0..count {");
             List<String> held = new ArrayList<>();
@@ -418,11 +466,11 @@ sealed interface Crossing {
                         .append(Crossing.nothing(rooms.get(room))).append(";");
                 held.add("room" + room);
             }
-            block.append(" let inside = (library.symbols.").append(at).append(")(list, index");
+            block.append(" let inside = unsafe { (library.symbols.").append(at).append(")(list, index");
             for (String room : held) {
                 block.append(", &mut ").append(room);
             }
-            block.append("); assert!(inside != 0, \"the library answers every element of a list"
+            block.append(") }; assert!(inside != 0, \"the library answers every element of a list"
                     + " below its length\"); elements.push(").append(element.of(held))
                     .append("); } elements }");
             return block.toString();
@@ -450,15 +498,13 @@ sealed interface Crossing {
      * @param told    how each case the library counts is made, in its order, and what counts it;
      *                null where the library says nothing of which case a value is
      */
-    record OneOf(String type, List<Member> members, @org.jspecify.annotations.Nullable Told told)
-            implements Crossing {
+    record OneOf(String type, List<Member> members, @Nullable Told told) implements Crossing {
 
         /**
          * One member: the variant it is, how Rust holds its value, and where it is a primitive, the
          * fields of the symbol table carrying a value of it into the union and reading it back out.
          */
-        record Member(String variant, Whole whole, @org.jspecify.annotations.Nullable String make,
-                      @org.jspecify.annotations.Nullable String read) {
+        record Member(String variant, Whole whole, @Nullable String make, @Nullable String read) {
         }
 
         /**
@@ -468,7 +514,7 @@ sealed interface Crossing {
         record Told(String which, List<Arm> arms) {
         }
 
-        /** One case the library counts: the member it is made as, and how. */
+        /** One case the library counts: the member it is made as, and how, of {@code value}. */
         record Arm(Member member, String made) {
         }
 
@@ -493,14 +539,13 @@ sealed interface Crossing {
 
         @Override
         public List<String> given(String value) {
-            String name = type.replaceAll("<.*", "");
             StringBuilder arms = new StringBuilder("match " + value + " {");
             for (Member member : members) {
                 String word = member.whole().given(member.whole().viewOf("held")).getFirst();
-                arms.append(" ").append(name).append("::").append(member.variant())
+                arms.append(" ").append(bare(type)).append("::").append(member.variant())
                         .append("(held) => ").append(member.make() == null ? word
-                                : "unsafe { (library.symbols." + member.make() + ")(" + word + ") }")
-                        .append(",");
+                                : "{ let word = " + word + "; unsafe { (library.symbols."
+                                + member.make() + ")(word) } }").append(",");
             }
             return List.of(arms.append(" }").toString());
         }
@@ -508,13 +553,11 @@ sealed interface Crossing {
         @Override
         public String of(List<String> words) {
             Objects.requireNonNull(told, "a union is handed to Rust only where it is told its case");
-            String name = type.replaceAll("<.*", "");
-            String value = words.getFirst();
-            StringBuilder arms = new StringBuilder("{ let value = " + value + "; match (library"
-                    + ".symbols." + told.which() + ")(value) {");
+            StringBuilder arms = new StringBuilder("{ let value = " + words.getFirst() + "; match"
+                    + " unsafe { (library.symbols." + told.which() + ")(value) } {");
             for (int place = 0; place < told.arms().size(); place++) {
                 Arm arm = told.arms().get(place);
-                arms.append(" ").append(place).append(" => ").append(name).append("::")
+                arms.append(" ").append(place).append(" => ").append(bare(type)).append("::")
                         .append(arm.member().variant()).append("(").append(arm.made()).append("),");
             }
             return arms.append(" _ => unreachable!(\"the library answered a case the union does not"
@@ -528,7 +571,7 @@ sealed interface Crossing {
 
         @Override
         public String label() {
-            return type.replaceAll("<.*", "").substring(type.replaceAll("<.*", "").lastIndexOf(':') + 1);
+            return last(type);
         }
     }
 
@@ -554,13 +597,12 @@ sealed interface Crossing {
 
         @Override
         public List<String> given(String value) {
-            return List.of(value + ".__word(run)");
+            return List.of(bare(type) + "::__word(" + value + ", run)?");
         }
 
         @Override
         public String of(List<String> words) {
-            return type.replaceAll("<.*", "") + "::Library(rt::Held::new(library, " + words.getFirst()
-                    + "))";
+            return bare(type) + "::Library(unsafe { rt::Held::new(library, " + words.getFirst() + ") })";
         }
 
         @Override
@@ -570,7 +612,7 @@ sealed interface Crossing {
 
         @Override
         public String label() {
-            return type.replaceAll("<.*", "").substring(type.replaceAll("<.*", "").lastIndexOf(':') + 1);
+            return last(type);
         }
     }
 

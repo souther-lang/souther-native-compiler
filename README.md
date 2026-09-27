@@ -736,17 +736,24 @@ is answered out of it. A value is a handle of that lifetime (`Line<'run>`), neit
 opens a run inside it and borrows it until that one ends, so nothing is made through the outer run
 meanwhile. The `Scope` a closure is handed says the run outside outlives it, so a value made outside
 is handed to a computation inside, and one made inside cannot be kept outside; the runtime crate's
-tests hold each of these to what rustc accepts and refuses (`trybuild`). The one thing the types
-cannot see is two `Library` values over one file, two handles on one arena: a second root run of it
-on a thread with one open is refused where it is opened (`AlreadyRunning`). A library is told apart by
-the address of its `souther_mark`, which whatever works on one arena shares.
+tests hold each of these to what rustc accepts and refuses (`trybuild`). What the types cannot see
+is which library a value is of: a lifetime says for how long a value is good and not which arena it
+stands in, and a root run of one library opened inside a root run of another relates the two by
+lifetimes as a run and a run inside it are related. So every handle holds the library that made it,
+its address is reached only through what checks that the run a computation is started in is of
+the same runtime, and one another library made is refused before the call as `Failure::Foreign`;
+so is a behavior bound, at any depth, to what another library made. A library is told apart by the
+address of its `souther_mark`, which whatever works on one arena shares, so two `Library` values over
+one file are one runtime, and a second root run of it on a thread with one open is refused where it
+is opened (`AlreadyRunning`).
 
 A product, a newtype and a unit are each a `Copy` handle with a reader for each field, `new`
 answering a `Construction` (the value, or an `invariant_violation` Raoh issue), `decode` answering a
 `Reading` (the value, or Raoh's issues, or `invalid_format`) and `encode`. A sum is a handle too, with
 `case` answering an enum of its cases, a case the model keeps being `Kept`, and `From` each of its
 cases and each narrower sum. An `Int`, a `Bool` and a `String` are Rust's own, a `Decimal` the
-runtime's integer and scale as PHP's is, and a `Date`, a `Time`, a `DateTime` and an `Instant` the
+runtime's integer and scale as PHP's is, equal, ordered and hashed by amount as Souther compares two
+(`1.5 == 1.50`) while it keeps the scale it was written with, and a `Date`, a `Time`, a `DateTime` and an `Instant` the
 runtime's types, held as their numbers and checked where they are made, since the library ends the
 process on text that names none; they cross as the text `java.time` writes. An optional is an
 `Option` at every depth, a tuple a Rust tuple, a list a slice handed over and a `Vec` handed back. A

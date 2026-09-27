@@ -41,12 +41,27 @@ final class RustHost {
 
     /**
      * What a host whose {@code main.rs} is {@code main} printed, built beside {@code binding} in
-     * {@code into} and run with {@code arguments}, where it built and ran with nothing said.
+     * {@code into} and run with {@code arguments}, where the binding passes Clippy with every
+     * warning an error and the host built and ran with nothing said.
+     *
+     * <p>The two are one Cargo workspace, which is where the runtime crate is patched in, so that
+     * Clippy reads what the generator wrote as a crate of the workspace's own: a lint it finds there
+     * is the generator's to answer for, and none is allowed but the ones the crate says it allows.
      */
     static String ran(Path into, RustBindings.Generated binding, String crate, String main,
                       List<String> arguments) throws IOException, InterruptedException {
+        handsOverOnlyWhatItChecks(binding);
         Path host = into.resolve("host");
         Files.createDirectories(host.resolve("src"));
+        Files.writeString(into.resolve("Cargo.toml"), """
+                [workspace]
+                resolver = "3"
+                members = ["host", "%s"]
+
+                [patch.crates-io]
+                souther-binding-runtime = { path = "%s" }
+                """.formatted(toml(into.relativize(binding.root())), toml(RUNTIME)),
+                StandardCharsets.UTF_8);
         Files.writeString(host.resolve("Cargo.toml"), """
                 [package]
                 name = "host"
@@ -56,13 +71,54 @@ final class RustHost {
 
                 [dependencies]
                 %s = { path = "%s" }
-
-                [patch.crates-io]
-                souther-binding-runtime = { path = "%s" }
-                """.formatted(crate, toml(binding.root()), toml(RUNTIME)), StandardCharsets.UTF_8);
+                """.formatted(crate, toml(binding.root())), StandardCharsets.UTF_8);
         Files.writeString(host.resolve("src").resolve("main.rs"), main, StandardCharsets.UTF_8);
-        List<String> command = new ArrayList<>(List.of("cargo", "run", "--quiet",
-                "--manifest-path", host.resolve("Cargo.toml").toString(), "--"));
+        String manifest = into.resolve("Cargo.toml").toString();
+        cargo(List.of("clippy", "--quiet", "--manifest-path", manifest, "-p", crate, "--",
+                "-D", "warnings"));
+        List<String> run = new ArrayList<>(List.of("run", "--quiet", "--manifest-path", manifest,
+                "-p", "host", "--"));
+        run.addAll(arguments);
+        return cargo(run);
+    }
+
+    /** Where a function of the generated crate starts. */
+    private static final java.util.regex.Pattern FUNCTION = java.util.regex.Pattern.compile(
+            "(?m)^\\s*(?:pub(?:\\(crate\\))? )?(?:unsafe )?(?:extern \"C\" )?fn ");
+
+    /**
+     * Refuses a generated function that calls into the library and reaches a value's address
+     * through what reads a value ({@code own()}): what a computation is handed goes through what
+     * checks the runtime that made it ({@code word_in}), and a function doing both is one that
+     * could hand over what it read without the check. Held here, on every crate a test generates,
+     * so that the generator cannot come to write one without a test saying so.
+     */
+    private static void handsOverOnlyWhatItChecks(RustBindings.Generated binding)
+            throws IOException {
+        for (Path file : binding.files()) {
+            if (!file.toString().endsWith(".rs")) {
+                continue;
+            }
+            String written = Files.readString(file, StandardCharsets.UTF_8);
+            java.util.regex.Matcher starts = FUNCTION.matcher(written);
+            List<Integer> at = new ArrayList<>();
+            while (starts.find()) {
+                at.add(starts.start());
+            }
+            at.add(written.length());
+            for (int one = 0; one + 1 < at.size(); one++) {
+                String body = written.substring(at.get(one), at.get(one + 1));
+                if (body.contains(".own()") && body.contains("run.call(")) {
+                    throw new AssertionError(file + " calls into the library in a function that"
+                            + " reads a value's address unchecked:\n" + body);
+                }
+            }
+        }
+    }
+
+    /** What Cargo printed, run with {@code arguments}, where it ended well and said nothing else. */
+    private static String cargo(List<String> arguments) throws IOException, InterruptedException {
+        List<String> command = new ArrayList<>(List.of("cargo"));
         command.addAll(arguments);
         // What it says goes to a file rather than to a pipe read second: two pipes read one after
         // the other deadlock where the one not being read fills up first.
@@ -80,8 +136,8 @@ final class RustHost {
             int status = process.waitFor();
             String saidThere = Files.readString(said, StandardCharsets.UTF_8);
             if (status != 0 || !saidThere.isEmpty()) {
-                throw new AssertionError("cargo run in " + host + " ended with " + status
-                        + "\nprinted:\n" + printed + "\nsaid:\n" + saidThere);
+                throw new AssertionError(command + " ended with " + status + "\nprinted:\n"
+                        + printed + "\nsaid:\n" + saidThere);
             }
             return printed;
         } finally {

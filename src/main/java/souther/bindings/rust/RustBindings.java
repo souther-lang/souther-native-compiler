@@ -419,7 +419,7 @@ public final class RustBindings {
             if (each.equals(of)) {
                 return new Crossing.OneOf.Arm(member, member.read() == null
                         ? member.whole().of(List.of("value"))
-                        : member.whole().of(List.of("(library.symbols." + member.read() + ")(value)")));
+                        : carried(member.read(), member.whole()));
             }
         }
         if (of instanceof Case.Declared leaf) {
@@ -552,6 +552,8 @@ public final class RustBindings {
 
         List<String> inputs = java.util.stream.IntStream.range(0, takes.size())
                 .mapToObj(it -> "input" + it).toList();
+        String host = name + "Host";
+        at.types.claim(host, "the type of a host's function of " + name);
         String signed = "dyn for<'x> Fn(&mut crate::Run<'x>" + takes.stream()
                 .map(it -> ", " + it.owned().replace("'run", "'x")).collect(Collectors.joining())
                 + ") -> Result<" + answers.owned().replace("'run", "'x") + ", crate::HostError>";
@@ -564,13 +566,17 @@ public final class RustBindings {
         StringBuilder callArm = new StringBuilder();
         if (called) {
             callArm.append("            Self::Library(held) => {\n")
-                    .append("                let library = run.library();\n")
-                    .append("                let function = held.word();\n");
+                    .append("                let function = held.word_in(run)?;\n")
+                    .append("                let library = run.library();\n");
             List<String> given = new ArrayList<>(List.of("function"));
             int word = 0;
             for (int place = 0; place < takes.size(); place++) {
-                for (String expression : handedOver.get(place).given(handedOver.get(place)
-                        .viewOf("(&" + inputs.get(place) + ")"))) {
+                String input = inputs.get(place);
+                callArm.append("                let ").append(input).append(" = &").append(input)
+                        .append(";\n")
+                        .append("                let view").append(place).append(" = ")
+                        .append(handedOver.get(place).viewOf(input)).append(";\n");
+                for (String expression : handedOver.get(place).given("view" + place)) {
                     String local = "given" + word++;
                     callArm.append("                let ").append(local).append(" = ")
                             .append(expression).append(";\n");
@@ -582,8 +588,7 @@ public final class RustBindings {
             callArm.append("                run.call(|| unsafe { (library.symbols.")
                     .append(symbol(Objects.requireNonNull(crossing.call()))).append(")(")
                     .append(String.join(", ", given)).append(") })?;\n")
-                    .append("                // SAFETY: the library answered what it wrote in this run.\n")
-                    .append("                Ok(unsafe { ").append(answered.of(rooms)).append(" })\n")
+                    .append("                Ok(").append(answered.of(rooms)).append(")\n")
                     .append("            }\n");
         } else {
             callArm.append("            Self::Library(_) => unreachable!(\"the library hands over no ")
@@ -600,13 +605,13 @@ public final class RustBindings {
             wordArm.append("""
                             Self::Host(function) => {
                                 let library = run.library();
-                                let key = std::rc::Rc::as_ptr(function) as *const () as usize;
+                                let key = std::rc::Rc::as_ptr(function).cast::<()>() as usize;
                                 let hosted = %s { library, function: function.clone() };
                                 // SAFETY: the function is the library's making a value of this shape,
                                 // and the entry below is of the type it calls, reading the dispatch.
-                                unsafe {
+                                Ok(unsafe {
                                     run.host_function(library.symbols.%s, %s as *const std::ffi::c_void, key, hosted)
-                                }
+                                })
                             }
                     """.formatted(dispatch, making.implement(), function));
             List<String> cParameters = new ArrayList<>();
@@ -629,24 +634,15 @@ public final class RustBindings {
             int word = 0;
             for (int place = 0; place < handed.size(); place++) {
                 int wide = handed.get(place).words().size();
-                made2.append("        let ").append(inputs.get(place)).append(" = unsafe { ")
+                made2.append("        let ").append(inputs.get(place)).append(" = ")
                         .append(handed.get(place).of(handedWords.subList(word, word + wide)))
-                        .append(" };\n");
+                        .append(";\n");
                 word += wide;
-            }
-            StringBuilder written = new StringBuilder();
-            List<String> answerWords = answering.given("answer");
-            for (int place = 0; place < answerWords.size(); place++) {
-                written.append("        let given").append(place).append(" = ")
-                        .append(answerWords.get(place)).append(";\n");
-            }
-            for (int place = 0; place < answerWords.size(); place++) {
-                written.append("        unsafe { *").append(roomWords.get(place)).append(" = given")
-                        .append(place).append(" };\n");
             }
             entry.append("""
 
-                    struct %s {
+                    #[doc(hidden)]
+                    pub struct %s {
                         library: *const crate::Library,
                         function: std::rc::Rc<%s>,
                     }
@@ -659,21 +655,23 @@ public final class RustBindings {
                         let library = unsafe { &*hosted.library };
                         rt::implemented(library, |run| {
                             let run: &mut crate::Run<'_> = run;
-                            // SAFETY: the library handed these over in the run of the call reaching this.
                     %s        let answer = (hosted.function)(run%s)?;
-                            let answer = %s;
                     %s        Ok(())
                         })
                     }
-                    """.formatted(dispatch, signed, function, String.join(", ", cParameters),
+                    """.formatted(dispatch, host, function, String.join(", ", cParameters),
                     dispatch, made2, inputs.stream().map(it -> ", " + it)
-                            .collect(Collectors.joining()), answering.viewOf("(&answer)"), written));
+                            .collect(Collectors.joining()),
+                    answer(answering, roomWords, "        ")));
         } else {
             wordArm.append("            Self::Host(_) => panic!(\"the library offers no way to make ")
                     .append(what).append(" of a host's own function\"),\n");
         }
 
         at.items.append("""
+
+                /// A function of the host's own that is %s.
+                pub type %s = %s;
 
                 /// %s: one the library made, or a function of the host's own.
                 #[derive(Clone)]
@@ -692,27 +690,58 @@ public final class RustBindings {
                     }
 
                     /// Calls it in `run`, with what it takes.
+                    ///
+                    /// # Errors
+                    ///
+                    /// What the call comes to where it answers no value; [`crate::Failure::Foreign`]
+                    /// where another library made it.
                     pub fn call(&self, run: &mut crate::Run<'run>%s) -> Result<%s, crate::Failure> {
                         match self {
                             Self::Host(function) => function(run%s).map_err(crate::Failure::Host),
                 %s        }
                     }
 
-                    /// The value, as the library is handed it in `run`: a host's function is made into
-                    /// one there the first time it is handed over.
-                    #[allow(dead_code, unused_variables)]
-                    pub(crate) fn __word(&self, run: &mut crate::Run<'_>) -> rt::Word {
+                    /// The value, as the library of `run` is handed it: one another library made is
+                    /// refused, and a host's function is made into one there the first time it is
+                    /// handed over.
+                    #[doc(hidden)]
+                    pub fn __word(&self, run: &mut crate::Run<'_>) -> Result<rt::Word, crate::Failure> {
                         match self {
-                            Self::Library(held) => held.word(),
+                            Self::Library(held) => held.word_in(run),
                 %s        }
                     }
                 }
-                %s""".formatted(what.substring(0, 1).toUpperCase() + what.substring(1), name, signed,
+                %s""".formatted(what, host, signed,
+                what.substring(0, 1).toUpperCase() + what.substring(1), name, host,
                 name, takes.stream().map(it -> ", " + it.owned().replace("'run", "'x"))
                         .collect(Collectors.joining()), answers.owned().replace("'run", "'x"), name,
                 parameters, answers.owned(), inputs.stream().map(it -> ", " + it)
                         .collect(Collectors.joining()), callArm, wordArm, entry));
         return made;
+    }
+
+    /**
+     * What an implementation's entry writes once the host answered {@code answer}: its view, the
+     * words of it, and each written through the room the library handed over, in order.
+     */
+    private static String answer(Crossing answers, List<String> rooms, String indent) {
+        StringBuilder written = new StringBuilder();
+        written.append(indent).append("let answer = &answer;\n");
+        String view = Crossing.let("answer", answers.viewOf("answer"));
+        if (!view.isEmpty()) {
+            written.append(indent).append(view).append("\n");
+        }
+        List<String> given = answers.given("answer");
+        for (int place = 0; place < given.size(); place++) {
+            written.append(indent).append("let given").append(place).append(" = ")
+                    .append(given.get(place)).append(";\n");
+        }
+        for (int place = 0; place < given.size(); place++) {
+            written.append(indent).append("// SAFETY: the room is the library's, handed over for this.\n")
+                    .append(indent).append("unsafe { *").append(rooms.get(place)).append(" = given")
+                    .append(place).append(" };\n");
+        }
+        return written.toString();
     }
 
     /** The handle of the declared type {@code module.name}, or null where it has none. */
@@ -784,22 +813,30 @@ public final class RustBindings {
                 /// %s
                 #[derive(Clone, Copy)]
                 pub struct %s<'run> {
-                    pub(crate) value: rt::Value<'run>,
-                    pub(crate) library: &'run crate::Library,
+                    pub(crate) held: rt::Held<'run, crate::Library>,
                 }
 
                 impl<'run> %s<'run> {
-                    /// The value at `at`, which the library answered and is good for `'run`.
-                    pub(crate) unsafe fn __held(library: &'run crate::Library, at: rt::Word) -> Self {
-                        let at = std::ptr::NonNull::new(at.cast_mut())
-                            .expect("the library answers a value's address");
+                    /// The value at `at`, which `library` answered.
+                    ///
+                    /// # Safety
+                    ///
+                    /// `at` is a value of this type `library` answered that is good for `'run`.
+                    #[doc(hidden)]
+                    pub unsafe fn __held(library: &'run crate::Library, at: rt::Word) -> Self {
                         // SAFETY: what the caller says.
-                        %s { value: unsafe { rt::Value::from_address(at) }, library }
+                        %s { held: unsafe { rt::Held::new(library, at) } }
                     }
 
-                    /// Where the value stands, to hand to the library.
-                    pub(crate) fn __word(self) -> rt::Word {
-                        self.value.address().as_ptr().cast_const()
+                    /// Where the value stands, as a computation started in `run` is handed it: one
+                    /// another library made is refused.
+                    ///
+                    /// # Errors
+                    ///
+                    /// [`crate::Failure::Foreign`] where another library made it.
+                    #[doc(hidden)]
+                    pub fn __word(self, run: &crate::Run<'_>) -> Result<rt::Word, crate::Failure> {
+                        self.held.word_in(run)
                     }
                 """.formatted(doc, it.name(), it.name(), it.name()));
     }
@@ -864,6 +901,11 @@ public final class RustBindings {
 
                     /// A value of `%s`, or an `invariant_violation` where what is handed over does
                     /// not hold what the type states.
+                    ///
+                    /// # Errors
+                    ///
+                    /// What the call comes to where it answers neither; [`crate::Failure::Foreign`]
+                    /// where another library made a value handed over.
                     pub fn new(%s) -> Result<crate::Construction<Self>, crate::Failure> {
                 %s    }
                 """.formatted(it.key(), String.join(", ", parameters), body));
@@ -877,6 +919,10 @@ public final class RustBindings {
         at.items.append("""
 
                     /// A value of `%s` read out of its external form, or the issues found in it.
+                    ///
+                    /// # Errors
+                    ///
+                    /// What the call comes to where it answers neither.
                     pub fn decode(run: &mut crate::Run<'run>, json: &str)
                         -> Result<crate::Reading<Self>, crate::Failure> {
                         let library = run.library();
@@ -904,10 +950,10 @@ public final class RustBindings {
 
                     /// This value in the external form of `%s`.
                     pub fn encode(&self) -> String {
-                        let library = self.library;
-                        // SAFETY: the value is good for `'run`, and the text is read before anything
-                        // else is made.
-                        unsafe { library.words.text((library.symbols.%s)(self.__word())) }
+                        let (library, value) = self.held.own();
+                        // SAFETY: the value is its library's and good for `'run`, and the text is
+                        // read before anything else is made.
+                        unsafe { library.words.text((library.symbols.%s)(value)) }
                     }
                 """.formatted(it.key(), symbol(encode)));
     }
@@ -922,14 +968,15 @@ public final class RustBindings {
         if (crossing == null) {
             return;
         }
-        StringBuilder body = new StringBuilder("        let library = self.library;\n");
+        StringBuilder body = new StringBuilder("        let (library, value) = self.held.own();\n");
         List<String> rooms = rooms(body, "        ", crossing.words());
-        List<String> handed = new ArrayList<>(List.of("self.__word()"));
+        List<String> handed = new ArrayList<>(List.of("value"));
         rooms.forEach(room -> handed.add("&mut " + room));
-        body.append("        // SAFETY: the value is good for `'run`, and so is what it holds.\n");
+        body.append("        // SAFETY: the value is its library's and good for `'run`, and so is what it"
+                + " holds.\n");
         body.append("        unsafe { (library.symbols.").append(symbol(read.function())).append(")(")
                 .append(String.join(", ", handed)).append(") };\n");
-        body.append("        unsafe { ").append(crossing.of(rooms)).append(" }\n");
+        body.append("        ").append(crossing.of(rooms)).append("\n");
         at.items.append("""
 
                     /// The `%s` of this value.
@@ -957,15 +1004,14 @@ public final class RustBindings {
                 CaseArm arm = arms.get(place);
                 matched.append("            ").append(place).append(" => ").append(it.name())
                         .append("Case::").append(arm.variant()).append(arm.made().isEmpty() ? ""
-                                : "(unsafe { " + arm.made() + " })").append(",\n");
+                                : "(" + arm.made() + ")").append(",\n");
             }
             at.items.append("""
 
                         /// Which case this value is, as the value of that case.
                         pub fn case(&self) -> %sCase%s {
-                            let library = self.library;
-                            let value = self.__word();
-                            // SAFETY: the value is good for `'run`, and so is what it is of each case.
+                            let (library, value) = self.held.own();
+                            // SAFETY: the value is its library's and good for `'run`.
                             match unsafe { (library.symbols.%s)(value) } {
                     %s            _ => unreachable!("the library answered a case `%s` does not have"),
                             }
@@ -1000,7 +1046,7 @@ public final class RustBindings {
 
                         impl<'run> From<%s<'run>> for %s<'run> {
                             fn from(it: %s<'run>) -> Self {
-                                %s { value: it.value, library: it.library }
+                                %s { held: it.held }
                             }
                         }
                         """.formatted(other.type(), it.name(), other.type(), it.name()));
@@ -1039,15 +1085,14 @@ public final class RustBindings {
                 case Case.Declared d -> {
                     Declared it = declared.get(d.module() + "." + d.name());
                     yield it == null ? kept : new CaseArm(it.name(), it.type() + "<'run>",
-                            it.type() + "::__held(library, value)");
+                            "unsafe { " + it.type() + "::__held(library, value) }");
                 }
                 case Case.Primitive p -> {
                     Manifest.CaseCrossing crossing = manifest.crossing(p);
                     Word held = crossing.holds();
                     Crossing.Whole whole = held == null ? null : Crossing.Whole.primitive(p.name(), held);
-                    yield whole == null ? null : new CaseArm(p.name(), whole.owned(), whole.of(
-                            List.of("(library.symbols." + symbol(Objects.requireNonNull(
-                                    crossing.read())) + ")(value)")));
+                    yield whole == null ? null : new CaseArm(p.name(), whole.owned(),
+                            carried(symbol(Objects.requireNonNull(crossing.read())), whole));
                 }
                 case Case.Language l -> RustNames.takes(RustNames.capitalized(l.name()))
                         ? new CaseArm(RustNames.capitalized(l.name()), "", "") : null;
@@ -1063,6 +1108,17 @@ public final class RustBindings {
             return null;
         }
         return arms;
+    }
+
+    /**
+     * What a value of a union or a sum that is a primitive holds, read out through {@code read}
+     * and made as {@code whole} makes one: the word read first, so that what reads it and what
+     * makes of it are two blocks and not one inside the other.
+     */
+    private static String carried(String read, Crossing.Whole whole) {
+        String word = "unsafe { (library.symbols." + read + ")(value) }";
+        String made = whole.of(List.of("held"));
+        return made.equals("held") ? word : "{ let held = " + word + "; " + made + " }";
     }
 
     private static Set<String> cases(Declaration.Sum sum) {
@@ -1176,8 +1232,7 @@ public final class RustBindings {
         rooms.forEach(room -> handed.add("&mut " + room));
         body.append(inner).append("run.call(|| unsafe { (library.symbols.").append(symbol(function))
                 .append(")(").append(String.join(", ", handed)).append(") })?;\n");
-        body.append(inner).append("// SAFETY: the library answered what it wrote in this run.\n");
-        body.append(inner).append("Ok(unsafe { ").append(answers.of(rooms)).append(" })\n");
+        body.append(inner).append("Ok(").append(answers.of(rooms)).append(")\n");
         return "\n" + indent + "/// " + doc + "\n" + indent + declared + "("
                 + String.join(", ", parameters) + ") -> Result<" + answers.owned()
                 + ", crate::Failure> {\n" + body + indent + "}\n";
@@ -1387,21 +1442,12 @@ public final class RustBindings {
         List<String> arguments = new ArrayList<>();
         for (int place = 0; place < takes.size(); place++) {
             int wide = takes.get(place).words().size();
-            made.append("        let ").append(names.get(place)).append(" = unsafe { ")
-                    .append(takes.get(place).of(handed.subList(word, word + wide))).append(" };\n");
+            made.append("        let ").append(names.get(place)).append(" = ")
+                    .append(takes.get(place).of(handed.subList(word, word + wide))).append(";\n");
             word += wide;
             arguments.add(names.get(place));
         }
-        StringBuilder written = new StringBuilder();
-        List<String> given = answers.given("answer");
-        for (int place = 0; place < given.size(); place++) {
-            written.append("        let given").append(place).append(" = ").append(given.get(place))
-                    .append(";\n");
-        }
-        for (int place = 0; place < given.size(); place++) {
-            written.append("        unsafe { *").append(rooms.get(place)).append(" = given")
-                    .append(place).append(" };\n");
-        }
+        String written = answer(answers, rooms, "        ");
         at.items.append("""
 
                 /// What implements `%s`, which the library asks a host to implement. Made into a
@@ -1413,7 +1459,8 @@ public final class RustBindings {
                     fn apply<'run>(&self, run: &mut crate::Run<'run>%s) -> Result<%s, crate::HostError>;
                 }
 
-                struct %s<'a> {
+                #[doc(hidden)]
+                pub struct %s<'a> {
                     library: &'a crate::Library,
                     implementation: Box<dyn %s + 'a>,
                 }
@@ -1446,7 +1493,7 @@ public final class RustBindings {
                         rt::Requirement::capability(&self.implemented)
                     }
 
-                    fn made(&self) -> rt::Made {
+                    fn made(&self) -> Option<rt::Made> {
                         rt::Requirement::made(&self.implemented)
                     }
                 }
@@ -1457,9 +1504,7 @@ public final class RustBindings {
                     let dispatch = unsafe { &*userdata.cast::<%s<'_>>() };
                     let library = dispatch.library;
                     rt::implemented(library, |run| {
-                        // SAFETY: the library handed these over in the run of the call reaching this.
                 %s        let answer = dispatch.implementation.apply(run%s)?;
-                        let answer = %s;
                 %s        Ok(())
                     })
                 }
@@ -1469,7 +1514,7 @@ public final class RustBindings {
                 implementation, trait, dispatch, it.key(), injection.implement(), entry,
                 implementation, implementation, entry, String.join(", ", cParameters), dispatch,
                 made, arguments.stream().map(a -> ", " + a).collect(Collectors.joining()),
-                answers.viewOf("(&answer)"), written));
+                written));
     }
 
     /**
@@ -1539,7 +1584,7 @@ public final class RustBindings {
                 String.join(", ", requirementNames), it.key(), bind, it.type()));
         at.items.append(call("Calls `" + it.key() + "` with what this was bound to.", "    ",
                 "pub fn call<'run>", "&self, ",
-                "let requirements = self.bound.requirements(rt::Loaded::runtime(library));",
+                "let requirements = self.bound.requirements(rt::Loaded::runtime(library))?;",
                 names, takes, answers, call.function(), "requirements"));
         at.items.append("""
                 }
@@ -1549,7 +1594,7 @@ public final class RustBindings {
                         rt::Requirement::capability(&self.bound)
                     }
 
-                    fn made(&self) -> rt::Made {
+                    fn made(&self) -> Option<rt::Made> {
                         rt::Requirement::made(&self.bound)
                     }
                 }
@@ -1559,18 +1604,29 @@ public final class RustBindings {
     // ---------------------------------------------------------------------------------------------
     // The crate.
 
+    /** Everything written in the crate's modules, which what the crate root holds is asked of. */
+    private String modulesWritten() {
+        return tree.values().stream().map(it -> it.items.toString()).collect(Collectors.joining());
+    }
+
     private void library() throws IOException {
         RustModule root = tree.get(List.of());
         StringBuilder modules = new StringBuilder();
         for (String child : root.children) {
             modules.append("pub mod ").append(child).append(";\n");
         }
+        // The runtime's own functions for text, a Decimal, a temporal and a reading are loaded
+        // where something reads them, and a binding whose values hold none of them has no field
+        // nothing reads.
+        boolean words = modulesWritten().contains("library.words.");
         String rust = header() + """
                 //! The Rust binding of a Souther library built by souther-native-compiler: a module for
                 //! each module of the model, and `Library`, which loads the library and opens a run
                 //! of it.
 
-                #![allow(non_snake_case, non_camel_case_types, unused_unsafe, unused_parens, clippy::all)]
+                // The model's names are written as the model spells them, which is not always the
+                // case Rust asks for, and a constructor takes as many fields as the type has.
+                #![allow(non_snake_case, non_camel_case_types, clippy::too_many_arguments)]
 
                 pub use souther_binding_runtime::{
                     AlreadyRunning, Construction, Date, DateTime, Decimal, Failure, HostError, Instant,
@@ -1588,16 +1644,11 @@ public final class RustBindings {
                 /// What the library numbers the statuses its functions answer.
                 const STATUSES: &[(&str, u32)] = &[%s];
 
-                /// What the library numbers the outcomes a reading comes to.
-                const OUTCOMES: &[(&str, i32)] = &[%s];
-
+                %s
                 /// The library this binding was generated for, loaded from a path.
                 pub struct Library {
                     pub(crate) symbols: __ffi::Symbols,
-                    // Unread by a binding whose values hold no text, no Decimal and no reading.
-                    #[allow(dead_code)]
-                    pub(crate) words: souther_binding_runtime::Words,
-                    runtime: souther_binding_runtime::Runtime,
+                %s    runtime: souther_binding_runtime::Runtime,
                     // Dropped last, unloading the library once nothing above can be called.
                     _native: souther_binding_runtime::NativeLibrary,
                 }
@@ -1620,9 +1671,8 @@ public final class RustBindings {
                         unsafe {
                             let native = souther_binding_runtime::NativeLibrary::load(path)?;
                             let runtime = native.runtime(STATUSES)?;
-                            let words = souther_binding_runtime::Words::load(&native, OUTCOMES)?;
-                            let symbols = __ffi::Symbols::load(&native)?;
-                            Ok(Library { symbols, words, runtime, _native: native })
+                %s                let symbols = __ffi::Symbols::load(&native)?;
+                            Ok(Library { symbols, %sruntime, _native: native })
                         }
                     }
 
@@ -1646,7 +1696,14 @@ public final class RustBindings {
                         &self.runtime
                     }
                 }
-                """.formatted(modules, numbers(manifest.statuses()), numbers(manifest.outcomes()));
+                """.formatted(modules, numbers(manifest.statuses()),
+                words ? "/// What the library numbers the outcomes a reading comes to.\n"
+                        + "const OUTCOMES: &[(&str, i32)] = &[" + numbers(manifest.outcomes()) + "];\n"
+                        : "",
+                words ? "    pub(crate) words: souther_binding_runtime::Words,\n" : "",
+                words ? "                let words = souther_binding_runtime::Words::load(&native,"
+                        + " OUTCOMES)?;\n" : "",
+                words ? "words, " : "");
         file(List.of("src", "lib.rs"), rust);
     }
 
@@ -1656,10 +1713,32 @@ public final class RustBindings {
                 .collect(Collectors.joining(", "));
     }
 
+    /**
+     * The table of every function the crate calls, and of nothing else: what is written is read for
+     * each field it calls through, so a function asked for and never called (one way of the two a
+     * union is carried through, say) is not looked up.
+     *
+     * @throws IllegalStateException where the crate calls through a field no function was asked for
+     */
     private void ffi() throws IOException {
+        java.util.regex.Matcher called = java.util.regex.Pattern.compile("symbols\\.([A-Za-z0-9_]+)")
+                .matcher(modulesWritten());
+        Set<String> calls = new LinkedHashSet<>();
+        while (called.find()) {
+            calls.add(called.group(1));
+        }
+        for (String name : calls) {
+            if (!symbols.containsKey(name)) {
+                throw new IllegalStateException("the crate calls " + name + ", which nothing asked"
+                        + " the table for");
+            }
+        }
         StringBuilder fields = new StringBuilder();
         StringBuilder loads = new StringBuilder();
         for (Map.Entry<String, String> it : symbols.entrySet()) {
+            if (!calls.contains(it.getKey())) {
+                continue;
+            }
             fields.append("    pub(crate) ").append(it.getKey()).append(": ").append(it.getValue())
                     .append(",\n");
             loads.append("                ").append(it.getKey()).append(": library.function(\"")
@@ -1670,9 +1749,6 @@ public final class RustBindings {
 
                 use souther_binding_runtime as rt;
 
-                // What carries a value into a union and reads it back out is looked up with the
-                // union, and a binding may call one way of the two only.
-                #[allow(dead_code)]
                 pub(crate) struct Symbols {
                 %s}
 
@@ -1683,15 +1759,18 @@ public final class RustBindings {
                     ///
                     /// `library` is the one the binding was generated from, and stays loaded for as
                     /// long as anything here is called.
-                    pub(crate) unsafe fn load(library: &rt::NativeLibrary) -> Result<Self, rt::LoadError> {
+                    pub(crate) unsafe fn load(%s: &rt::NativeLibrary) -> Result<Self, rt::LoadError> {
+                %s    }
+                }
+                """.formatted(fields, loads.isEmpty() ? "_library" : "library", loads.isEmpty()
+                ? "        Ok(Symbols {})\n"
+                : """
                         // SAFETY: what the caller says; each is of the type the manifest says.
                         unsafe {
                             Ok(Symbols {
                 %s            })
                         }
-                    }
-                }
-                """.formatted(fields, loads);
+                """.formatted(loads));
         file(List.of("src", "__ffi.rs"), rust);
     }
 
@@ -1699,7 +1778,9 @@ public final class RustBindings {
         StringBuilder rust = new StringBuilder(header());
         rust.append("//! Module `").append(String.join(".", path.stream()
                 .map(RustNames::fileName).toList())).append("` of the model.\n\n");
-        rust.append("#[allow(unused_imports)]\nuse souther_binding_runtime as rt;\n");
+        if (module.items.indexOf("rt::") >= 0) {
+            rust.append("use souther_binding_runtime as rt;\n");
+        }
         for (String child : module.children) {
             rust.append("pub mod ").append(child).append(";\n");
         }
