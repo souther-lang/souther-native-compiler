@@ -264,6 +264,8 @@ pub(crate) struct Specializations<'p> {
     by_key: HashMap<(&'p str, &'p Reference, Vec<Option<Ty>>), InstanceId>,
     /// How many copies of each helper were made from the body of a copy of the same helper.
     reentered: HashMap<HelperKey<'p>, usize>,
+    /// How many copies of each helper are made, which is the ordinal of the next.
+    made: HashMap<HelperKey<'p>, usize>,
     /// Which copy each call reaching a helper reaches, by where the call stands.
     reached: HashMap<*const Node, InstanceId>,
 }
@@ -279,6 +281,7 @@ impl<'p> Specializations<'p> {
             instances: Vec::new(),
             by_key: HashMap::new(),
             reentered: HashMap::new(),
+            made: HashMap::new(),
             reached: HashMap::new(),
         };
         let mut helpers: HashMap<HelperKey<'p>, Body<'p>> = HashMap::new();
@@ -400,11 +403,14 @@ impl<'p> Specializations<'p> {
             settle(&mut body, &Substitution::of(&types));
             Settled::Rewritten(Box::new(body))
         };
-        let ordinal = self
-            .instances
-            .iter()
-            .filter(|it| it.carrier == carrier && std::ptr::eq(it.held, held))
-            .count();
+        let ordinal = {
+            let made = self
+                .made
+                .entry((carrier.module(), &held.reached))
+                .or_insert(0);
+            *made += 1;
+            *made - 1
+        };
         let id = InstanceId(self.instances.len());
         self.instances.push(Instance {
             carrier,
