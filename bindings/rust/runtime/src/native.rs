@@ -137,14 +137,15 @@ impl std::error::Error for LoadError {}
 
 type Of<A, R> = unsafe extern "C" fn(A) -> R;
 type Of2<A, B, R> = unsafe extern "C" fn(A, B) -> R;
+type Of3<A, B, C, R> = unsafe extern "C" fn(A, B, C) -> R;
 
 /// The runtime's functions a binding reads and makes the words of a value through that are not
 /// the model's own: text, a `Decimal`, and what a reading came to.
 pub struct Words {
-    string_of_utf8: Of2<*const u8, i64, Word>,
+    string_of_utf8: Of3<*const u8, i64, *mut Word, i8>,
     string_length: Of<Word, i64>,
     string_bytes: Of<Word, *const u8>,
-    decimal_of_parts: Of2<Word, i64, Word>,
+    decimal_of_parts: Of3<*const u8, i64, i64, Word>,
     decimal_unscaled: Of<Word, Word>,
     decimal_scale: Of<Word, i64>,
     date_of_iso: Of<Word, Word>,
@@ -227,11 +228,27 @@ impl Words {
     ///
     /// The library puts text in NFC where it takes it, by the Unicode version the language names,
     /// and a Rust string is always UTF-8, which is all it asks.
-    pub fn string<L: Loaded>(&self, _run: &mut Run<'_, L>, text: &str) -> Word {
+    ///
+    /// # Errors
+    ///
+    /// [`Failure::Abort`] of `REQUIRED_FORM_HAS_NO_PLACE` where `text`'s canonical value is longer
+    /// than a `String` holds (spec §what-a-string-holds).
+    pub fn string<L: Loaded>(&self, run: &mut Run<'_, L>, text: &str) -> Result<Word, Failure> {
         let length = i64::try_from(text.len()).expect("a string's length is a 64-bit count");
-        // SAFETY: the bytes are `length` bytes that may be read, and UTF-8; the function is the
-        // library's, loaded while `self` is.
-        unsafe { (self.string_of_utf8)(text.as_ptr(), length) }
+        let mut word = std::ptr::null();
+        // SAFETY: the bytes are `length` bytes that may be read, and UTF-8; `word` is room for a
+        // `Word`; the function is the library's, loaded while `self` is.
+        let admitted = unsafe { (self.string_of_utf8)(text.as_ptr(), length, &mut word) };
+        if admitted != 0 {
+            Ok(word)
+        } else {
+            Err(run
+                .library()
+                .runtime()
+                .statuses()
+                .no_place()
+                .unwrap_or(Failure::ProtocolViolation))
+        }
     }
 
     /// The text of a string the library answered.
@@ -253,11 +270,16 @@ impl Words {
     }
 
     /// `decimal` as the library holds one, made in `run`.
-    pub fn decimal<L: Loaded>(&self, run: &mut Run<'_, L>, decimal: &Decimal) -> Word {
-        let unscaled = self.string(run, decimal.unscaled());
-        // SAFETY: the integer text is one `Decimal` has held to what the library takes, and the
-        // scale is a 32-bit number.
-        unsafe { (self.decimal_of_parts)(unscaled, i64::from(decimal.scale())) }
+    ///
+    /// The unscaled digits are handed over as bytes, not a `String`: they are the integer's text
+    /// and never the value's written form, so they are not measured against what a `String` holds
+    /// (souther-native-compiler#109) and this cannot fail the way [`Words::string`] can.
+    pub fn decimal<L: Loaded>(&self, _run: &mut Run<'_, L>, decimal: &Decimal) -> Word {
+        let unscaled = decimal.unscaled();
+        let length = i64::try_from(unscaled.len()).expect("an integer's length is a 64-bit count");
+        // SAFETY: the bytes are `length` bytes that may be read, and ASCII integer text, which is
+        // one `Decimal` has held to what the library takes; the scale is a 32-bit number.
+        unsafe { (self.decimal_of_parts)(unscaled.as_ptr(), length, i64::from(decimal.scale())) }
     }
 
     /// A `Decimal` the library answered.
@@ -276,11 +298,15 @@ impl Words {
     }
 
     /// `date` as the library holds one, made in `run` of the text that names it.
-    pub fn date<L: Loaded>(&self, run: &mut Run<'_, L>, date: Date) -> Word {
-        let iso = self.string(run, &date.iso());
+    ///
+    /// # Errors
+    ///
+    /// As [`Words::string`], though a `Date`'s ISO text never comes near what a `String` holds.
+    pub fn date<L: Loaded>(&self, run: &mut Run<'_, L>, date: Date) -> Result<Word, Failure> {
+        let iso = self.string(run, &date.iso())?;
         // SAFETY: the text is what `LocalDate` writes of a day a `Date` holds, which the library
         // reads.
-        unsafe { (self.date_of_iso)(iso) }
+        Ok(unsafe { (self.date_of_iso)(iso) })
     }
 
     /// A `Date` the library answered.
@@ -294,10 +320,14 @@ impl Words {
     }
 
     /// `time` as the library holds one, made in `run`.
-    pub fn time<L: Loaded>(&self, run: &mut Run<'_, L>, time: Time) -> Word {
-        let iso = self.string(run, &time.iso());
+    ///
+    /// # Errors
+    ///
+    /// As [`Words::date`].
+    pub fn time<L: Loaded>(&self, run: &mut Run<'_, L>, time: Time) -> Result<Word, Failure> {
+        let iso = self.string(run, &time.iso())?;
         // SAFETY: as in `date`.
-        unsafe { (self.time_of_iso)(iso) }
+        Ok(unsafe { (self.time_of_iso)(iso) })
     }
 
     /// A `Time` the library answered.
@@ -311,10 +341,18 @@ impl Words {
     }
 
     /// `date_time` as the library holds one, made in `run`.
-    pub fn date_time<L: Loaded>(&self, run: &mut Run<'_, L>, date_time: DateTime) -> Word {
-        let iso = self.string(run, &date_time.iso());
+    ///
+    /// # Errors
+    ///
+    /// As [`Words::date`].
+    pub fn date_time<L: Loaded>(
+        &self,
+        run: &mut Run<'_, L>,
+        date_time: DateTime,
+    ) -> Result<Word, Failure> {
+        let iso = self.string(run, &date_time.iso())?;
         // SAFETY: as in `date`.
-        unsafe { (self.datetime_of_iso)(iso) }
+        Ok(unsafe { (self.datetime_of_iso)(iso) })
     }
 
     /// A `DateTime` the library answered.
@@ -328,10 +366,18 @@ impl Words {
     }
 
     /// `instant` as the library holds one, made in `run`.
-    pub fn instant<L: Loaded>(&self, run: &mut Run<'_, L>, instant: Instant) -> Word {
-        let iso = self.string(run, &instant.iso());
+    ///
+    /// # Errors
+    ///
+    /// As [`Words::date`].
+    pub fn instant<L: Loaded>(
+        &self,
+        run: &mut Run<'_, L>,
+        instant: Instant,
+    ) -> Result<Word, Failure> {
+        let iso = self.string(run, &instant.iso())?;
         // SAFETY: as in `date`.
-        unsafe { (self.instant_of_iso)(iso) }
+        Ok(unsafe { (self.instant_of_iso)(iso) })
     }
 
     /// An `Instant` the library answered.

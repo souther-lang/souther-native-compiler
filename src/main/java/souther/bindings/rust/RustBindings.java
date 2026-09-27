@@ -78,10 +78,19 @@ public final class RustBindings {
         functions.put("souther_mark", new Function("souther_mark", List.of(), Word.MARK));
         functions.put("souther_reset",
                 new Function("souther_reset", List.of(Parameter.given(Word.MARK)), null));
-        add.accept("souther_string_of_utf8", List.of(Word.BYTES, Word.COUNT, Word.STRING));
+        // A String has no place for text past what the language bounds it to
+        // (souther-native-compiler#109), so this answers whether it wrote one, as a generated
+        // string operation already does, in place of always answering a String.
+        functions.put("souther_string_of_utf8", new Function("souther_string_of_utf8",
+                List.of(Parameter.given(Word.BYTES), Parameter.given(Word.COUNT),
+                        Parameter.room(Word.STRING)),
+                Word.BOOL));
         add.accept("souther_string_length", List.of(Word.STRING, Word.COUNT));
         add.accept("souther_string_bytes", List.of(Word.STRING, Word.BYTES));
-        add.accept("souther_decimal_of_parts", List.of(Word.STRING, Word.INT, Word.DECIMAL));
+        // The unscaled digits as bytes and a count, not a String: they are the integer's text and
+        // never the value's written form, so they are never fallible on what a String holds
+        // (souther-native-compiler#109).
+        add.accept("souther_decimal_of_parts", List.of(Word.BYTES, Word.COUNT, Word.INT, Word.DECIMAL));
         add.accept("souther_decimal_unscaled", List.of(Word.DECIMAL, Word.STRING));
         add.accept("souther_decimal_scale", List.of(Word.DECIMAL, Word.INT));
         add.accept("souther_date_of_iso", List.of(Word.STRING, Word.DATE));
@@ -657,7 +666,8 @@ public final class RustBindings {
                         let library = unsafe { &*hosted.library };
                         rt::implemented(library, |run| {
                             let run: &mut crate::Run<'_> = run;
-                    %s        let answer = (hosted.function)(run%s)?;
+                    %s        let answer = (hosted.function)(run%s)
+                                .map_err(|error| Box::new(rt::CallbackFailure::Host(error)) as rt::HostError)?;
                     %s        Ok(())
                         })
                     }
@@ -749,23 +759,33 @@ public final class RustBindings {
      * words of it, and each written through the room the library handed over, in order.
      */
     private static String answer(Crossing answers, List<String> rooms, String indent) {
-        StringBuilder written = new StringBuilder();
-        written.append(indent).append("let answer = &answer;\n");
+        // Handed to rt::crossing rather than declared and called where it stands (clippy's
+        // redundant_closure_call refuses a bare `(|| { ... })()`): a String, Date, Time, DateTime,
+        // Instant or declared-type handle among what is answered can fail crossing back into the
+        // library (souther-native-compiler#109's REQUIRED_FORM_HAS_NO_PLACE among them), and
+        // rt::crossing boxes that as rt::CallbackFailure::Crossing so `answered` can tell it apart
+        // from rt::CallbackFailure::Host, the host implementation's own error boxed the same way
+        // just above this in the surrounding template: a host may legitimately answer a `Failure`
+        // as its own error, so which happened cannot be told apart by the payload's type alone.
+        StringBuilder body = new StringBuilder();
+        body.append(indent).append("    let answer = &answer;\n");
         String view = Crossing.let("answer", answers.viewOf("answer"));
         if (!view.isEmpty()) {
-            written.append(indent).append(view).append("\n");
+            body.append(indent).append("    ").append(view).append("\n");
         }
         List<String> given = answers.given("answer");
         for (int place = 0; place < given.size(); place++) {
-            written.append(indent).append("let given").append(place).append(" = ")
+            body.append(indent).append("    let given").append(place).append(" = ")
                     .append(given.get(place)).append(";\n");
         }
         for (int place = 0; place < given.size(); place++) {
-            written.append(indent).append("// SAFETY: the room is the library's, handed over for this.\n")
-                    .append(indent).append("unsafe { *").append(rooms.get(place)).append(" = given")
-                    .append(place).append(" };\n");
+            body.append(indent)
+                    .append("    // SAFETY: the room is the library's, handed over for this.\n")
+                    .append(indent).append("    unsafe { *").append(rooms.get(place))
+                    .append(" = given").append(place).append(" };\n");
         }
-        return written.toString();
+        body.append(indent).append("    Ok(())\n");
+        return indent + "rt::crossing(|| {\n" + body + indent + "})?;\n";
     }
 
     /** The handle of the declared type {@code module.name}, or null where it has none. */
@@ -1529,7 +1549,8 @@ public final class RustBindings {
                     let dispatch = unsafe { &*userdata.cast::<%s<'_>>() };
                     let library = dispatch.library;
                     rt::implemented(library, |run| {
-                %s        let answer = dispatch.implementation.apply(run%s)?;
+                %s        let answer = dispatch.implementation.apply(run%s)
+                            .map_err(|error| Box::new(rt::CallbackFailure::Host(error)) as rt::HostError)?;
                 %s        Ok(())
                     })
                 }

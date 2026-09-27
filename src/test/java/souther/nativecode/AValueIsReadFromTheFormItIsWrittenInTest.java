@@ -148,13 +148,14 @@ class AValueIsReadFromTheFormItIsWrittenInTest {
                     extern uint32_t money(int64_t, Value *) __asm__("%1$s");
                     extern uint32_t line(Value, int64_t, uint8_t, Value, uint8_t, uint8_t, Value *)
                             __asm__("%2$s");
-                    extern Value souther_string_of_utf8(const uint8_t *, int64_t);
+                    extern uint8_t souther_string_of_utf8(const uint8_t *, int64_t, Value *);
                     extern void lineQuantity(Value, int64_t *) __asm__("%3$s");
                     {
                         int64_t mark = souther_mark();
                         Value three = 0;
                         money(3, &three);
-                        Value note = souther_string_of_utf8((const uint8_t *) "gift wrap", 9);
+                        Value note = 0;
+                        souther_string_of_utf8((const uint8_t *) "gift wrap", 9, &note);
                         Value bought = 0;
                         line(three, 2, 1, note, 1, 1, &bought);
                         printf("built: ");

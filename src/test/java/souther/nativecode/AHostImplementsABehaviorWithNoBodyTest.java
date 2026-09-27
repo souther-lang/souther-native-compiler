@@ -238,7 +238,8 @@ class AHostImplementsABehaviorWithNoBodyTest {
             static const souther_capability *isCheap[1];
 
             static int64_t quoted(const char *sku, uint8_t gift, int64_t count, souther_status *status) {
-                souther_string text = souther_string_of_utf8((const uint8_t *) sku, (int64_t) strlen(sku));
+                souther_string text = NULL;
+                souther_string_of_utf8((const uint8_t *) sku, (int64_t) strlen(sku), &text);
                 int64_t answer = -1;
                 *status = souther@_m_shop_b_quote(priceOf, text, gift, count, &answer);
                 return answer;

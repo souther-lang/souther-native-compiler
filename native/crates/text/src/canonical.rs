@@ -9,7 +9,7 @@
 //! Hangul's syllables by the formula Unicode states for them rather than by a table.
 
 use crate::Text;
-use crate::capacity::{Capacity, units};
+use crate::capacity::{Capacity, code_points};
 use crate::tables::{COMBINING_CLASS, COMPOSITION, DECOMPOSITION, SECOND_OF_A_PAIR};
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -36,17 +36,14 @@ pub(crate) fn nfc(text: &str) -> String {
 }
 
 /// Text arriving from outside in NFC, a run at a time, so that what is decomposed and reordered at
-/// once is never more than a run however long the text is. What a door is handed is held already,
-/// and so is not measured.
-pub(crate) fn nfc_of_input(text: &str) -> String {
-    if text.is_ascii() {
-        return String::from(text);
-    }
-    let mut joined = Joined::new(Capacity::UNBOUNDED);
-    joined
-        .push_unnormalized(text)
-        .expect("text with no bound to spend is never more than it");
-    joined.finished()
+/// once is never more than a run however long the text is, and within `capacity`: text that comes
+/// in from outside is a `String` only where its canonical value has a place (spec
+/// §what-a-string-holds), so admission measures the same way every other operation that builds a
+/// string does.
+pub(crate) fn nfc_of_input(text: &str, capacity: Capacity) -> Option<String> {
+    let mut joined = Joined::new(capacity);
+    joined.push_unnormalized(text)?;
+    Some(joined.finished())
 }
 
 /// These characters in NFC.
@@ -81,7 +78,7 @@ fn normalized(characters: impl Iterator<Item = char>) -> String {
 /// so holding the one holds the other.
 pub(crate) struct Joined {
     text: String,
-    /// What has been handed over, in UTF-16 units.
+    /// What has been handed over, in code points.
     handed: i64,
     capacity: Capacity,
 }
@@ -99,7 +96,7 @@ impl Joined {
     /// held. Nothing is written for a run that does not fit.
     pub(crate) fn push(&mut self, next: Text) -> Option<()> {
         let next = next.as_str();
-        let handed = self.handed.saturating_add(units(next));
+        let handed = self.handed.saturating_add(code_points(next));
         if !self.capacity.holds(handed) {
             return None;
         }
@@ -135,7 +132,7 @@ impl Joined {
 
     pub(crate) fn finished(self) -> String {
         debug_assert!(
-            units(&self.text) <= self.handed,
+            code_points(&self.text) <= self.handed,
             "runs in NFC only compose where they meet, so what they come to is not longer than what was handed over"
         );
         self.text
@@ -301,6 +298,7 @@ mod tests {
     extern crate std;
 
     use super::*;
+    use crate::capacity::LONGEST_TEXT;
     use crate::tables::UNICODE_VERSION;
     use std::string::String;
     use std::vec::Vec;
@@ -374,7 +372,7 @@ mod tests {
                     nfc(&written)
                 })
                 .collect();
-            let mut joined = Joined::new(Capacity::UNBOUNDED);
+            let mut joined = Joined::new(Capacity::of_code_points(LONGEST_TEXT));
             let mut whole = String::new();
             for run in &runs {
                 joined.push(Text::held(run)).unwrap();
@@ -406,7 +404,7 @@ mod tests {
             let written: String = (0..next(9))
                 .map(|_| char::from_u32(pool[next(pool.len())]).unwrap())
                 .collect();
-            let mut joined = Joined::new(Capacity::UNBOUNDED);
+            let mut joined = Joined::new(Capacity::of_code_points(LONGEST_TEXT));
             joined.push_unnormalized(&written).unwrap();
             assert_eq!(joined.finished(), nfc(&written), "{written:?}");
         }

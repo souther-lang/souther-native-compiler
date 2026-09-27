@@ -425,7 +425,12 @@ mod tests {
     };
 
     fn string(text: &str) -> *mut Text {
-        unsafe { souther_string_of_utf8(text.as_ptr(), crate::Count(text.len() as i64)) }
+        let mut out = std::ptr::null_mut();
+        let admitted = unsafe {
+            souther_string_of_utf8(text.as_ptr(), crate::Count(text.len() as i64), &mut out)
+        };
+        assert_eq!(admitted, 1, "test text has a place");
+        out
     }
 
     /// A set's members in the order the language writes them: by kind, a number by its amount

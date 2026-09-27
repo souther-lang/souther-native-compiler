@@ -303,15 +303,14 @@ pub unsafe extern "C" fn souther_string_hash(at: *const Text) -> Hash {
 // the other way.
 include!(concat!(env!("OUT_DIR"), "/runtime_generation.rs"));
 
-/// What a string holds on this carrier: how much text, in UTF-16 code units.
+/// What a string holds: how much text, in Unicode code points.
 ///
-/// The language says the bound is the carrier's (spec §what-a-string-holds), and this carrier's own
-/// would be what its lengths count, which is far more. It takes the JVM's number instead, so that a
-/// program ends where it ends on either: the length every `java.lang.String` holds, whichever of
-/// its two encodings the JVM keeps it in. It is decided here and handed to every operation that
-/// builds text (`souther_text`), which spends it as it builds and writes nothing past it.
+/// The bound is the language's and not this carrier's own (spec §what-a-string-holds, ADR-0096):
+/// every carrier holds the same `souther_text::LONGEST_TEXT`, so whether a text has a place does
+/// not depend on which carrier answers. It is handed to every operation that builds text
+/// (`souther_text`), which spends it as it builds and writes nothing past it.
 pub(crate) const STRING_HOLDS: souther_text::Capacity =
-    souther_text::Capacity::of_units(1_073_741_819);
+    souther_text::Capacity::of_code_points(souther_text::LONGEST_TEXT);
 
 /// The two strings' text, one after the other, as a string of its own: `++` over two strings, and
 /// `String.append`.
@@ -343,23 +342,31 @@ pub unsafe extern "C" fn souther_string_concat(
 /// states it.
 ///
 /// A door, as a decoder's string leaf is: text arriving from outside is admitted here, put in NFC
-/// by the language's Unicode version, whatever the host's own is, and refused where it is not
-/// UTF-8 (`souther_text::admitted`). So every string holds text as the language says a string is,
-/// whoever made it.
+/// by the language's Unicode version, whatever the host's own is, and within what a `String` holds
+/// (`souther_text::admitted`). So every string holds text as the language says a string is,
+/// whoever made it. `out` is written and `1` answered where it is; nothing is written and `0` is
+/// answered where its canonical value has no place a `String` holds — a binding turns that into
+/// whatever it calls `RequiredFormHasNoPlace`.
 ///
 /// # Safety
 ///
-/// `bytes` points at `length` bytes that may be read.
+/// `bytes` points at `length` bytes that may be read, and `out` is room for the address of a
+/// `Text`.
 ///
 /// # Panics
 ///
 /// Where the length is below nought, or the bytes are not UTF-8, which ends the process: a panic
 /// does not leave a function a C caller called. A host that hands over what is no text has no
-/// string to be answered with, and this answers nothing rather than something that is not one
-/// (`souther_text::admitted` refuses it). A binding says so first in its own terms, as the PHP
-/// binding does.
+/// string to be answered with, and Rust's own `&str` and PHP's own UTF-8 check already hold a
+/// binding to handing over text before it calls this, so an invalid byte sequence reaching here is
+/// a binding's own contract violated and not a value this answers `0` for: `0` means only that the
+/// text's canonical value has no place, never that it was not text.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_string_of_utf8(bytes: *const u8, length: Count) -> *mut Text {
+pub unsafe extern "C" fn souther_string_of_utf8(
+    bytes: *const u8,
+    length: Count,
+    out: *mut *mut Text,
+) -> i8 {
     let held =
         usize::try_from(length.0).expect("text is handed over as bytes, and never fewer than 0");
     let bytes = if held == 0 {
@@ -367,9 +374,16 @@ pub unsafe extern "C" fn souther_string_of_utf8(bytes: *const u8, length: Count)
     } else {
         unsafe { std::slice::from_raw_parts(bytes, held) }
     };
-    let admitted =
-        souther_text::admitted(bytes).expect("text handed to a Souther library is UTF-8");
-    string_of(&admitted)
+    let admitted = match souther_text::admitted(bytes, STRING_HOLDS) {
+        Ok(admitted) => admitted,
+        Err(souther_text::AdmissionRefusal::NotText) => {
+            panic!("text handed to a Souther library is UTF-8")
+        }
+        Err(souther_text::AdmissionRefusal::NoPlace) => {
+            return unsafe { answered(None, out) };
+        }
+    };
+    unsafe { answered(Some(string_of(&admitted)), out) }
 }
 
 /// How many bytes of text the string carries, for the same caller.
@@ -683,7 +697,11 @@ mod tests {
     /// there are as many of them as this says and they are valid UTF-8; and every string these
     /// tests make is given back before the mark they were made under is reset.
     fn made(text: &str) -> *mut Text {
-        unsafe { souther_string_of_utf8(text.as_ptr(), Count(text.len() as i64)) }
+        let mut out = std::ptr::null_mut();
+        let admitted =
+            unsafe { souther_string_of_utf8(text.as_ptr(), Count(text.len() as i64), &mut out) };
+        assert_eq!(admitted, 1, "test text has a place");
+        out
     }
 
     /// The two compared, and the two joined, under what [`made`] already owes.
@@ -868,6 +886,38 @@ mod tests {
         assert_eq!(said(made("hello")), "hello");
         assert_eq!(said(made("")), "");
         assert_eq!(said(made("\u{0}after a nought")), "\u{0}after a nought");
+        souther_reset(mark);
+    }
+
+    /// Text a host hands over past what a `String` holds (`souther_text::LONGEST_TEXT`, 2^28 - 1
+    /// code points) has no place: `souther_string_of_utf8` answers `0` and writes nothing through
+    /// `out`, the same `Bool` + room shape a generated string operation already answers by
+    /// (souther-native-compiler#109).
+    ///
+    /// This is the one place the real, production `STRING_HOLDS` is exercised rather than a small
+    /// stand-in — everywhere else that would ask for text this long asks `souther_text::admitted`
+    /// directly at a capacity of its own choosing, which is what pins the boundary arithmetic
+    /// itself (see `souther-text`'s own tests). What is worth pinning here, once, is only that this
+    /// FFI door is actually wired to the real constant and answers the `Bool` + room shape at that
+    /// scale — so this asks for the refusal alone, not also a success at exactly the bound, which
+    /// would cost a second quarter-gigabyte allocation to prove something every other test in this
+    /// module already exercises at ordinary sizes. ASCII, so code points, UTF-16 units and bytes
+    /// coincide and the allocation stays a plain memset.
+    #[test]
+    fn text_past_what_a_string_holds_has_no_place() {
+        let mark = souther_mark();
+        let longest = usize::try_from(souther_text::LONGEST_TEXT).unwrap();
+        let past_the_bound = "a".repeat(longest + 1);
+        let mut out = std::ptr::null_mut();
+        let admitted = unsafe {
+            souther_string_of_utf8(
+                past_the_bound.as_ptr(),
+                Count(past_the_bound.len() as i64),
+                &mut out,
+            )
+        };
+        assert_eq!(admitted, 0, "one code point more has no place");
+        assert!(out.is_null(), "nothing is written where there is no place");
         souther_reset(mark);
     }
 

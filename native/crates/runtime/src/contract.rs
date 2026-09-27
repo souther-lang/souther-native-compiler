@@ -289,7 +289,9 @@ fn functions() -> Vec<(&'static str, Shape)> {
         ),
         (
             "souther_string_of_utf8",
-            shape_of(souther_string_of_utf8 as unsafe extern "C" fn(*const u8, Count) -> M),
+            shape_of(
+                souther_string_of_utf8 as unsafe extern "C" fn(*const u8, Count, *mut M) -> i8,
+            ),
         ),
         (
             "souther_string_length",
@@ -622,7 +624,10 @@ fn functions() -> Vec<(&'static str, Shape)> {
         ),
         (
             "souther_decimal_of_parts",
-            shape_of(souther_decimal_of_parts as unsafe extern "C" fn(T, i64) -> *mut Decimal),
+            shape_of(
+                souther_decimal_of_parts
+                    as unsafe extern "C" fn(*const u8, Count, i64) -> *mut Decimal,
+            ),
         ),
         (
             "souther_decimal_literal",
@@ -1549,7 +1554,9 @@ fn a_case_a_host_makes_reads_back_as_what_it_holds() {
         assert_eq!(unsafe { souther_case_bool_read(bool) }, truth);
     }
     // SAFETY: three bytes of UTF-8 at the address handed over.
-    let text = unsafe { souther_string_of_utf8("hé".as_ptr(), Count(3)) };
+    let mut text = std::ptr::null_mut();
+    let admitted = unsafe { souther_string_of_utf8("hé".as_ptr(), Count(3), &mut text) };
+    assert_eq!(admitted, 1, "test text has a place");
     let string = souther_case_string_make(text);
     assert_eq!(which(string), CASE_STRING.as_ptr());
     assert_eq!(

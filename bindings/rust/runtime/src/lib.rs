@@ -37,7 +37,9 @@ mod temporal;
 
 pub use bound::{BindFn, Bound, Capability, Hosted, ImplementFn, Implemented, Made, Requirement};
 pub use decimal::{Decimal, NotADecimal};
-pub use failure::{Abort, Failure, HostError, Status, Statuses, UnnamedStatus};
+pub use failure::{
+    Abort, CallbackFailure, Failure, HostError, Status, Statuses, UnnamedStatus, crossing,
+};
 pub use keep::{FunctionImplementFn, HostedFunction};
 pub use native::{Construction, LoadError, NativeLibrary, Reading, Word, Words};
 pub use run::{

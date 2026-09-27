@@ -11,10 +11,10 @@ use souther_text::{
     uppercase,
 };
 
-const PLENTY: Capacity = Capacity::of_units(1 << 30);
+const PLENTY: Capacity = Capacity::of_code_points(1 << 30);
 
-fn units(text: &str) -> i64 {
-    text.encode_utf16().count() as i64
+fn code_points(text: &str) -> i64 {
+    text.chars().count() as i64
 }
 
 fn held(text: &str) -> Text<'_> {
@@ -41,9 +41,9 @@ fn every_capacity_answers_as_the_oracle_says(
     build: impl Fn(Capacity) -> Option<String>,
 ) {
     let whole = build(PLENTY).expect("a capacity of a billion units holds every text here");
-    let needs = handed_over.max(units(&whole));
+    let needs = handed_over.max(code_points(&whole));
     for capacity in 0..=needs + 2 {
-        let built = build(Capacity::of_units(capacity));
+        let built = build(Capacity::of_code_points(capacity));
         if capacity >= needs {
             assert_eq!(
                 built.as_deref(),
@@ -62,14 +62,17 @@ fn a_join_holds_what_is_handed_over_and_what_it_comes_to() {
         for other in CORPUS {
             every_capacity_answers_as_the_oracle_says(
                 &format!("append {one:?} {other:?}"),
-                units(one) + units(other),
+                code_points(one) + code_points(other),
                 |capacity| append(held(one), held(other), capacity),
             );
             for third in CORPUS {
                 let pieces = [held(one), held(other), held(third)];
                 every_capacity_answers_as_the_oracle_says(
                     &format!("join {one:?} {other:?} {third:?}"),
-                    units(one) + units(other) + units(third) + 2 * units("-"),
+                    code_points(one)
+                        + code_points(other)
+                        + code_points(third)
+                        + 2 * code_points("-"),
                     |capacity| join(held("-"), pieces, capacity),
                 );
             }
@@ -85,7 +88,8 @@ fn a_replace_holds_what_it_writes() {
             let pieces = text.split(target).count() as i64;
             every_capacity_answers_as_the_oracle_says(
                 &format!("replace {text:?} {replacement:?}"),
-                units(text) - (pieces - 1) * units(target) + (pieces - 1) * units(replacement),
+                code_points(text) - (pieces - 1) * code_points(target)
+                    + (pieces - 1) * code_points(replacement),
                 |capacity| replace(held(target), held(replacement), held(text), capacity),
             );
         }
@@ -97,17 +101,17 @@ fn a_reverse_and_a_case_mapping_hold_what_they_come_to() {
     for text in CORPUS {
         every_capacity_answers_as_the_oracle_says(
             &format!("reverse {text:?}"),
-            units(text),
+            code_points(text),
             |capacity| reverse(held(text), capacity),
         );
         every_capacity_answers_as_the_oracle_says(
             &format!("lowercase {text:?}"),
-            units(text),
+            code_points(text),
             |capacity| lowercase(held(text), capacity),
         );
     }
     // Uppercasing writes more than it was handed: `ß` is `SS`.
-    every_capacity_answers_as_the_oracle_says("uppercase", units("STRASSE"), |capacity| {
+    every_capacity_answers_as_the_oracle_says("uppercase", code_points("STRASSE"), |capacity| {
         uppercase(held("straße"), capacity)
     });
 }
@@ -118,7 +122,7 @@ fn a_repeat_holds_the_copies() {
         for copies in 0..5 {
             every_capacity_answers_as_the_oracle_says(
                 &format!("repeat {copies} {text:?}"),
-                units(text) * copies,
+                code_points(text) * copies,
                 |capacity| repeat(copies, held(text), capacity),
             );
         }
@@ -140,11 +144,15 @@ fn a_pad_holds_the_fill_and_the_text_together() {
                     ("right", pad_right),
                 ] {
                     let whole = build(width, held(pad), held(text), PLENTY).unwrap();
-                    let needs = units(&whole);
-                    for capacity in 0..=needs + units(pad) * 2 + 2 {
-                        let built =
-                            build(width, held(pad), held(text), Capacity::of_units(capacity));
-                        if capacity >= needs + units(pad) * 2 {
+                    let needs = code_points(&whole);
+                    for capacity in 0..=needs + code_points(pad) * 2 + 2 {
+                        let built = build(
+                            width,
+                            held(pad),
+                            held(text),
+                            Capacity::of_code_points(capacity),
+                        );
+                        if capacity >= needs + code_points(pad) * 2 {
                             assert_eq!(built.as_deref(), Some(whole.as_str()));
                         }
                         // Never a text no capacity holds that the operation made: what it hands back
@@ -152,7 +160,7 @@ fn a_pad_holds_the_fill_and_the_text_together() {
                         let widens = width > text.chars().count() as i64;
                         if let (true, Some(built)) = (widens, built) {
                             assert!(
-                                units(&built) <= capacity,
+                                code_points(&built) <= capacity,
                                 "pad {name} {width} {pad:?} {text:?} at {capacity}"
                             );
                         }
@@ -160,7 +168,12 @@ fn a_pad_holds_the_fill_and_the_text_together() {
                     // One unit short of what the answer is written in is never an answer.
                     if needs > 0 && width > text.chars().count() as i64 {
                         assert_eq!(
-                            build(width, held(pad), held(text), Capacity::of_units(needs - 1)),
+                            build(
+                                width,
+                                held(pad),
+                                held(text),
+                                Capacity::of_code_points(needs - 1)
+                            ),
                             None,
                             "pad {name} {width} {pad:?} {text:?}"
                         );
@@ -177,7 +190,7 @@ fn a_pad_holds_the_fill_and_the_text_together() {
 /// what is already held: a number's digits, and text put in NFC where it comes in.
 #[test]
 fn every_function_that_builds_text_takes_a_capacity() {
-    let allowed = ["written", "admitted"];
+    let allowed = ["written"];
     let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut refused = Vec::new();
     let mut seen = 0;

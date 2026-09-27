@@ -40,7 +40,7 @@ pub fn uppercase(text: Text, capacity: Capacity) -> Option<String> {
 /// What a case mapping has written so far, and what it may still write.
 struct Mapped {
     text: String,
-    units: i64,
+    code_points: i64,
     capacity: Capacity,
 }
 
@@ -48,7 +48,7 @@ impl Mapped {
     fn new(capacity: Capacity) -> Mapped {
         Mapped {
             text: String::new(),
-            units: 0,
+            code_points: 0,
             capacity,
         }
     }
@@ -58,8 +58,8 @@ impl Mapped {
     fn put(&mut self, mapped: Option<&[u32]>, point: u32) -> Option<()> {
         for one in mapped.unwrap_or(&[point]) {
             let character = scalar(*one);
-            self.units += character.len_utf16() as i64;
-            if !self.capacity.holds(self.units) {
+            self.code_points += 1;
+            if !self.capacity.holds(self.code_points) {
                 return None;
             }
             self.text.push(character);
@@ -114,7 +114,7 @@ mod tests {
     use super::*;
     use std::string::String;
 
-    const ROOMY: Capacity = Capacity::of_units(1 << 20);
+    const ROOMY: Capacity = Capacity::of_code_points(1 << 20);
 
     fn lower(text: &str) -> String {
         lowercase(Text::held(text), ROOMY).unwrap()
@@ -124,23 +124,26 @@ mod tests {
         uppercase(Text::held(text), ROOMY).unwrap()
     }
 
-    /// A mapping is measured as it is made: it is held exactly where every capacity from the units
-    /// it maps to up holds it, and no capacity below does, whatever it is put in NFC as after.
+    /// A mapping is measured as it is made: it is held exactly where every capacity from the code
+    /// points it maps to up holds it, and no capacity below does, whatever it is put in NFC as
+    /// after. `a\u{10428}` uppercases to `A\u{10400}`, two code points that are four UTF-16 units
+    /// (each outside the basic plane), which is why this bound is counted in code points and not
+    /// units (spec §what-a-string-holds, ADR-0096).
     #[test]
     fn a_mapping_is_held_by_what_it_maps_to() {
-        for (text, mapped_units) in [
+        for (text, mapped_code_points) in [
             ("straße", 7),
             ("ﬁﬁ", 4),
             ("\u{149}\u{149}", 4),
-            ("a\u{10428}", 3),
+            ("a\u{10428}", 2),
         ] {
             let mapped = upper(text);
-            for capacity in 0..=mapped_units + 2 {
-                let capacity = Capacity::of_units(capacity);
+            for capacity in 0..=mapped_code_points + 2 {
+                let capacity = Capacity::of_code_points(capacity);
                 let held = uppercase(Text::held(text), capacity);
                 assert_eq!(
                     held.is_some(),
-                    capacity.units() >= mapped_units,
+                    capacity.code_points() >= mapped_code_points,
                     "{text:?} at {capacity:?}"
                 );
                 if let Some(held) = held {

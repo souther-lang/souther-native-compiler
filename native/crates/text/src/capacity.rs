@@ -1,48 +1,58 @@
-//! How much text a carrier holds, as a budget a construction spends and not a check made on what
+//! How much text a `String` holds, as a budget a construction spends and not a check made on what
 //! was built.
 //!
-//! The language says a string holds a bounded amount of text and that the bound is the carrier's
-//! (spec §what-a-string-holds). So the bound is not written here: text semantics is shared by every
-//! target, and a number that comes from one target's array limit belongs to that target. Whoever
-//! calls an operation that builds text says how much its carrier holds, in UTF-16 code units, and
-//! the operation spends that as it builds, so that text no carrier holds is
-//! never made: an operation ends as soon as what it would go on to write is more than is left.
+//! The language says a string holds at most [`LONGEST_TEXT`] code points (spec
+//! §what-a-string-holds, ADR-0096): a number of the language, not a carrier's, counted in what
+//! `String.length` counts, so it is the same on every carrier. Whoever calls an operation that
+//! builds text spends that budget as it builds, so that text no `String` holds is never made: an
+//! operation ends as soon as what it would go on to write is more than is left.
 
-/// A budget of UTF-16 code units of text.
-///
-/// The measure is UTF-16 units and not something every target shares: it is the unit the language
-/// states the JVM's bound in (spec §what-a-string-holds), and what lets a target answer where the
-/// JVM answers is counting in it, whatever it keeps text in itself. A text longer in bytes than the
-/// budget and no longer in units has a place. A target that means to hold a bound of another kind
-/// (code points, bytes) is not served by this type, and would be a different one.
+/// A budget of Unicode code points of text.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Capacity(i64);
 
 impl Capacity {
-    /// A carrier that holds this many units.
-    pub const fn of_units(units: i64) -> Capacity {
-        Capacity(units)
+    /// A carrier that holds this many code points.
+    pub const fn of_code_points(code_points: i64) -> Capacity {
+        Capacity(code_points)
     }
 
-    /// For text that is already held, put in NFC where it comes in: a door builds nothing a
-    /// carrier has not been handed.
-    pub(crate) const UNBOUNDED: Capacity = Capacity(i64::MAX);
-
-    /// How many units.
-    pub const fn units(self) -> i64 {
+    /// How many code points.
+    pub const fn code_points(self) -> i64 {
         self.0
     }
 
-    /// Whether this many units are held.
-    pub(crate) const fn holds(self, units: i64) -> bool {
-        units <= self.0
+    /// Whether this many code points are held.
+    pub(crate) const fn holds(self, code_points: i64) -> bool {
+        code_points <= self.0
     }
 }
 
-/// How many UTF-16 code units the text is written in.
-pub(crate) fn units(text: &str) -> i64 {
+/// The longest text, in code points, a Souther `String` holds (spec §what-a-string-holds): a
+/// number of the language, not a carrier's, so it is the same on every carrier and does not
+/// depend on which characters a text holds (ADR-0096).
+pub const LONGEST_TEXT: i64 = (1 << 28) - 1;
+
+/// How many Unicode code points the text is written in.
+pub(crate) fn code_points(text: &str) -> i64 {
     if text.is_ascii() {
         return text.len() as i64;
     }
-    text.chars().map(|it| it.len_utf16() as i64).sum()
+    text.chars().count() as i64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The bound is a number of the language and not this carrier's own, so every carrier states
+    /// the same one: the JVM's `souther.runtime.Strings.LONGEST_TEXT` is `(1L << 28) - 1`
+    /// (souther-lang/souther PR #2022, ADR-0096), and the specification's own
+    /// `what-a-string-holds` paragraph states `268435455` — the two crates agree by stating the
+    /// same arithmetic rather than by copying one crate's decimal literal into the other's.
+    #[test]
+    fn the_bound_is_the_languages_own_and_not_this_carriers() {
+        assert_eq!(LONGEST_TEXT, (1i64 << 28) - 1);
+        assert_eq!(LONGEST_TEXT, 268_435_455);
+    }
 }
