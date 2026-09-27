@@ -5,14 +5,19 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 import net.unit8.raoh.Err;
 import net.unit8.raoh.Issue;
+import net.unit8.raoh.Ok;
 import net.unit8.raoh.Result;
 import net.unit8.raoh.decode.Decoder;
+import net.unit8.raoh.encode.Encoder;
+import souther.compiler.program.CheckedData;
+import tools.jackson.core.JsonParser;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import souther.compiler.Compiler;
 import souther.compiler.generated.MemoryClassLoader;
 
 import java.math.BigDecimal;
+import java.lang.reflect.RecordComponent;
 import java.math.BigInteger;
 import java.util.List;
 import java.util.Map;
@@ -27,9 +32,11 @@ import static org.assertj.core.api.Assertions.assertThat;
  * and where it found none, or not the whole clause, as {@code invariant_violation}.
  *
  * <p>The JVM is the oracle. The same module is compiled to classes and each document decoded by the
- * generated {@code jsonDecoder()}, and what its issues say is held to what the native decoder of the
- * same type answers: the path, the code, the message key, and the metadata, numbers compared as the
- * numbers they are. So every constraint the checker has a form for is here once, beside the shapes
+ * generated {@code jsonDecoder()}, and what it answers is held to what the native decoder of the
+ * same type answers: a value as the JVM's {@code encoder()} writes it, and an issue's path, code,
+ * message key and metadata. Nothing of the JVM's answer is brought to the native one's form: each
+ * side is read into one written form, a number as the decimal it is, scale and all, so {@code 1.50}
+ * and {@code 1.5} are two answers. So every constraint the checker has a form for is here once, beside the shapes
  * where the order of what is reported matters: two constraints in one clause, a constraint and a
  * rule no constraint states in one clause, a constraint declared after a clause stated as none, and
  * a product of one field, whose clauses run whole whatever they are as constraints.
@@ -38,8 +45,8 @@ class ABrokenClauseIsReportedAsTheJvmReportsItTest {
 
     private static final String MODULE = """
             module held exposing ( Short, Long, Exact, Coded, Positive, Counted, AtLeast, Below, \
-            Price, Capped, Charge, Owed, Tags, Several, Few, Pair, Distinct, Words, Keyed, Filled, \
-            Sparse, Ranged, Partly, Digits, Box )
+            Price, Floor, Capped, Charge, Owed, Tags, Several, Few, Pair, Distinct, Words, Line, \
+            Lines, Keyed, Filled, Sparse, Ranged, Partly, Digits, Box, Amounts, Grid )
 
             data Short = String
                 invariant String.length(value) > 0
@@ -68,6 +75,9 @@ class ABrokenClauseIsReportedAsTheJvmReportsItTest {
             data Price = Decimal
                 invariant value >= 1.5m
 
+            data Floor = Decimal
+                invariant value >= 1.50m
+
             data Capped = Decimal
                 invariant value <= 99.99m
 
@@ -95,6 +105,11 @@ class ABrokenClauseIsReportedAsTheJvmReportsItTest {
             data Words = List<String>
                 invariant List.allDistinctBy(x -> x, value)
 
+            data Line = { amount: Decimal }
+
+            data Lines = List<Line>
+                invariant List.allDistinctBy(x -> x, value)
+
             data Keyed = Map<String, Int>
                 invariant Map.size(value) >= 2
 
@@ -116,6 +131,12 @@ class ABrokenClauseIsReportedAsTheJvmReportsItTest {
 
             data Box = { n: Int }
                 invariant n >= 0
+
+            data Amounts = List<Decimal>
+                invariant List.allDistinctBy(x -> x, value)
+
+            data Grid = List<List<Decimal>>
+                invariant List.allDistinctBy(x -> x, value)
             """;
 
     /** Every document, under a label, read as a type. */
@@ -132,6 +153,8 @@ class ABrokenClauseIsReportedAsTheJvmReportsItTest {
             new Decoding.Row("below", "Below", "10"),
             new Decoding.Row("price", "Price", "1.49"),
             new Decoding.Row("price at its scale", "Price", "1.50"),
+            new Decoding.Row("floor", "Floor", "1.49"),
+            new Decoding.Row("floor held at its scale", "Floor", "1.500"),
             new Decoding.Row("capped", "Capped", "100.00"),
             new Decoding.Row("charge", "Charge", "0.00"),
             new Decoding.Row("owed", "Owed", "-0.5"),
@@ -142,6 +165,8 @@ class ABrokenClauseIsReportedAsTheJvmReportsItTest {
             new Decoding.Row("distinct", "Distinct", "[3, 1, 3, 2, 1, 3]"),
             new Decoding.Row("distinct held", "Distinct", "[1, 2]"),
             new Decoding.Row("words", "Words", "[\"a\", \"b\", \"a\"]"),
+            new Decoding.Row("lines", "Lines", "[{\"amount\": 1.0}, {\"amount\": 1.00}]"),
+            new Decoding.Row("amounts twice", "Amounts", "[1.0, 1.0, 2.50]"),
             new Decoding.Row("keyed", "Keyed", "{\"a\": 1}"),
             new Decoding.Row("filled", "Filled", "{}"),
             new Decoding.Row("sparse", "Sparse", "{\"a\": 1, \"b\": 2, \"c\": 3}"),
@@ -168,7 +193,7 @@ class ABrokenClauseIsReportedAsTheJvmReportsItTest {
     }
 
     @Test
-    void everyIssueIsTheOneTheJvmsDecoderReports() throws Exception {
+    void everyAnswerIsTheOneTheJvmsDecoderGives() throws Exception {
         Decoding decoding = new Decoding();
         for (Decoding.Row row : ROWS) {
             decoding.type("held", row.type());
@@ -182,7 +207,30 @@ class ABrokenClauseIsReportedAsTheJvmReportsItTest {
         String answered = AValueIsReadFromTheFormItIsWrittenInTest.run(
                 Checked.of(List.of(MODULE)), decoding.harness());
 
-        assertThat(valuesUnwritten(answered)).isEqualTo(expected.toString());
+        assertThat(read(answered)).isEqualTo(expected.toString());
+    }
+
+    /**
+     * Where the JVM's decoder compares a list's elements by Java's {@code equals} and not as
+     * Souther compares (souther-lang/souther#2033): a {@code BigDecimal} reads its scale, so
+     * {@code [1.0, 1.00]} passes Raoh's {@code unique()} there and is refused by the construction
+     * after it, as {@code invariant_violation}. The clause states {@code Unique}, which compares as
+     * Souther does, and the native reader reports the constraint. Held here to that answer until the
+     * JVM gives it too, when these rows go among the others.
+     */
+    @Test
+    void aListOfDecimalsIsUniqueAsSoutherComparesThem() throws Exception {
+        Decoding decoding = new Decoding().type("held", "Amounts").type("held", "Grid")
+                .row("amounts", "Amounts", "[1.0, 1.00]")
+                .row("grid", "Grid", "[[1.0], [1.00]]");
+
+        String answered = AValueIsReadFromTheFormItIsWrittenInTest.run(
+                Checked.of(List.of(MODULE)), decoding.harness());
+
+        assertThat(answered).isEqualTo("""
+                amounts: issues [@ duplicate_element {"duplicates":[1.00]}]
+                grid: issues [@ duplicate_element {"duplicates":[[1.00]]}]
+                """);
     }
 
     private static final String DECLARED = """
@@ -221,69 +269,155 @@ class ABrokenClauseIsReportedAsTheJvmReportsItTest {
                 """);
     }
 
-    /** What the JVM's decoder says of the document, in the words the native harness writes. */
+    /** What the JVM's decoder says of the document, in the one written form both sides are read
+     *  into ({@link #written}). */
     private static String jvmRead(Decoding.Row row) throws Exception {
+        Class<?> type = jvm.loadClass("held." + row.type());
         @SuppressWarnings("unchecked")
-        Decoder<JsonNode, ?> decoder = (Decoder<JsonNode, ?>) jvm.loadClass("held." + row.type())
-                .getMethod("jsonDecoder").invoke(null);
+        Decoder<JsonNode, ?> decoder = (Decoder<JsonNode, ?>) type.getMethod("jsonDecoder")
+                .invoke(null);
         Result<?> result = decoder.decode(JSON.readTree(row.document()), net.unit8.raoh.Path.ROOT);
-        if (!(result instanceof Err<?> refused)) {
-            return "value";
+        if (result instanceof Ok<?> read) {
+            @SuppressWarnings("unchecked")
+            Encoder<Object, ?> encoder = (Encoder<Object, ?>) type.getMethod("encoder").invoke(null);
+            return "value " + written(encoder.encode(read.value()));
         }
         StringBuilder said = new StringBuilder("issues");
-        for (Issue issue : refused.issues().asList()) {
+        for (Issue issue : ((Err<?>) result).issues().asList()) {
             said.append(" [@").append(issue.path().toJsonPointer()).append(' ').append(issue.code());
             if (!issue.messageKey().equals(issue.code())) {
                 said.append(" key=").append(issue.messageKey());
             }
             if (!issue.meta().isEmpty()) {
-                said.append(' ').append(json(issue.meta()));
+                said.append(' ').append(written(issue.meta()));
             }
             said.append(']');
         }
         return said.toString();
     }
 
-    /** The native lines with what a value is written back as left out: the JVM half says only that
-     *  it read one. */
-    private static String valuesUnwritten(String answered) {
+    /**
+     * The native harness's lines, each value and each issue's metadata read as JSON and written in
+     * the one form {@link #written} writes: what the JVM's answer is written in too.
+     */
+    private static String read(String answered) throws Exception {
         StringBuilder out = new StringBuilder();
         for (String line : answered.split("\n")) {
-            int at = line.indexOf(": value ");
-            out.append(at < 0 ? line : line.substring(0, at) + ": value").append('\n');
+            int value = line.indexOf(": value ");
+            if (value >= 0) {
+                out.append(line, 0, value).append(": value ")
+                        .append(written(JSON.readTree(line.substring(value + ": value ".length()))))
+                        .append('\n');
+                continue;
+            }
+            StringBuilder rewritten = new StringBuilder();
+            int at = 0;
+            while (at < line.length()) {
+                char c = line.charAt(at);
+                if (c == '{') {
+                    try (JsonParser parser = JSON.createParser(line.substring(at))) {
+                        JsonNode meta = parser.readValueAsTree();
+                        rewritten.append(written(meta));
+                        at += (int) parser.currentLocation().getCharOffset();
+                    }
+                    continue;
+                }
+                rewritten.append(c);
+                at++;
+            }
+            out.append(rewritten).append('\n');
         }
         return out.toString();
     }
 
     /**
-     * Metadata as the native runtime writes it: an object's entries in the order of their names, a
-     * number as the amount it is, a string escaped as JSON escapes one.
+     * A JSON value in one written form: an object's entries in the order of their names, and a
+     * number as the decimal it is, {@code BigDecimal.toString} of its value at its own scale, so
+     * {@code 2}, {@code 2.00} and {@code 2E+1} are three answers and not one.
      */
-    private static String json(Object said) throws Exception {
+    private static String written(JsonNode said) {
+        if (said.isObject()) {
+            StringJoiner entries = new StringJoiner(",", "{", "}");
+            new TreeMap<>(said.properties().stream()
+                    .collect(java.util.stream.Collectors.toMap(Map.Entry::getKey,
+                            Map.Entry::getValue)))
+                    .forEach((name, value) -> entries.add(quoted(name) + ":" + written(value)));
+            return entries.toString();
+        }
+        if (said.isArray()) {
+            StringJoiner items = new StringJoiner(",", "[", "]");
+            said.values().forEach(item -> items.add(written(item)));
+            return items.toString();
+        }
+        if (said.isNumber()) {
+            return said.decimalValue().toString();
+        }
+        if (said.isString()) {
+            return quoted(said.stringValue());
+        }
+        return said.toString();
+    }
+
+    /**
+     * What the JVM answered, in the same written form: a value of the model as the checker says it
+     * crosses, a newtype as what it holds and a product as an object of its fields, and a number as
+     * the decimal it is.
+     */
+    private static String written(Object said) {
         return switch (said) {
+            case null -> "null";
             case Map<?, ?> map -> {
                 StringJoiner entries = new StringJoiner(",", "{", "}");
-                for (Map.Entry<?, ?> entry : new TreeMap<>(map).entrySet()) {
-                    entries.add(JSON.writeValueAsString(entry.getKey().toString()) + ":"
-                            + json(entry.getValue()));
-                }
+                new TreeMap<>(map).forEach((name, value) ->
+                        entries.add(quoted(name.toString()) + ":" + written(value)));
                 yield entries.toString();
             }
             case List<?> list -> {
                 StringJoiner items = new StringJoiner(",", "[", "]");
-                for (Object item : list) {
-                    items.add(json(item));
-                }
+                list.forEach(item -> items.add(written(item)));
                 yield items.toString();
             }
-            case String text -> JSON.writeValueAsString(text);
-            case Integer number -> number.toString();
-            case Long number -> number.toString();
-            case BigInteger number -> number.toString();
-            case BigDecimal number -> number.signum() == 0
-                    ? "0" : number.stripTrailingZeros().toPlainString();
+            case String text -> quoted(text);
+            case Boolean truth -> truth.toString();
+            case Integer number -> new BigDecimal(number).toString();
+            case Long number -> new BigDecimal(number).toString();
+            case BigInteger number -> new BigDecimal(number).toString();
+            case BigDecimal number -> number.toString();
+            case Record value -> modelValue(value);
             default -> throw new IllegalArgumentException(
-                    "metadata this test has no written form for: " + said.getClass());
+                    "an answer this test has no written form for: " + said.getClass());
         };
+    }
+
+    /** A value of a type the module declares, written as the checker says it crosses. */
+    private static String modelValue(Record value) {
+        String name = value.getClass().getSimpleName();
+        CheckedData data = Checked.of(List.of(MODULE)).modules().getFirst().data().stream()
+                .filter(it -> it.name().name().equals(name))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException(name + " is no type of held"));
+        RecordComponent[] fields = value.getClass().getRecordComponents();
+        try {
+            return switch (data) {
+                case CheckedData.Newtype it -> written(fields[0].getAccessor().invoke(value));
+                case CheckedData.Product it -> {
+                    StringJoiner entries = new StringJoiner(",", "{", "}");
+                    TreeMap<String, Object> named = new TreeMap<>();
+                    for (RecordComponent field : fields) {
+                        named.put(field.getName(), field.getAccessor().invoke(value));
+                    }
+                    named.forEach((field, held) ->
+                            entries.add(quoted(field) + ":" + written(held)));
+                    yield entries.toString();
+                }
+                default -> throw new IllegalArgumentException(name + " is not built from fields");
+            };
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    private static String quoted(String text) {
+        return JSON.writeValueAsString(text);
     }
 }

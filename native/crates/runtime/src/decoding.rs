@@ -114,7 +114,8 @@ fn string(text: &str) -> *const u8 {
 }
 
 /// The metadata of an issue as the JSON object it is written as: its entries in the order of their
-/// names, one entry to a name, so one issue's metadata is written one way wherever it is read.
+/// names, one entry to a name, so one issue's metadata is written one way wherever it is read, and
+/// each value as the value it is — a `Decimal` at its scale, where a boundary writes its amount.
 fn metadata(entries: Vec<(&str, Said)>) -> String {
     let mut members: Vec<(Vec<u8>, Said)> = entries
         .into_iter()
@@ -126,7 +127,11 @@ fn metadata(entries: Vec<(&str, Said)>) -> String {
         "an issue says one thing under a name"
     );
     let mut written = Vec::new();
-    crate::external::write(&Said::Object(members), &mut written);
+    crate::external::write(
+        &Said::Object(members),
+        &mut written,
+        crate::external::Written::AsMetadata,
+    );
     String::from_utf8(written).expect("JSON written of text is text")
 }
 
@@ -1081,9 +1086,10 @@ pub unsafe extern "C" fn souther_read_int_non_negative(
     }
 }
 
-/// A `Decimal` as metadata says it: its amount, as a boundary writes one.
+/// A `Decimal` as metadata holds it: the value, scale and all, which [`metadata`] writes at its
+/// scale.
 unsafe fn amount_said(at: *const Decimal) -> Said {
-    Said::Amount(unsafe { amount(at) }.external_text())
+    Said::Amount(unsafe { amount(at) })
 }
 
 /// `DecimalDecoder.min(n)`: `out_of_range` under `out_of_range.minimum`, with `min` and `actual`,
@@ -1703,7 +1709,7 @@ mod tests {
 
     /// Each constraint answers whether the value meets it, and where it does not records what
     /// Raoh's own constraint reports: its code, its message key where it has one of its own, and
-    /// its metadata with numbers as numbers — a `Decimal` as its amount, as a boundary writes one.
+    /// its metadata with numbers as numbers — a `Decimal` at its scale, as Raoh's own holds it.
     #[test]
     fn a_constraint_a_value_breaks_is_reported_as_raohs() {
         let mark = souther_mark();
@@ -1742,9 +1748,9 @@ mod tests {
                 r#"/e out_of_range key=out_of_range.maximum {"actual":4,"max":3}"#,
                 r#"/f out_of_range key=out_of_range.positive {"actual":0,"min":1}"#,
                 r#"/g out_of_range key=out_of_range.non_negative {"actual":-1,"min":0}"#,
-                r#"/h out_of_range key=out_of_range.minimum {"actual":1.5,"min":2}"#,
-                r#"/i out_of_range key=out_of_range.maximum {"actual":2.5,"max":2}"#,
-                r#"/j out_of_range key=out_of_range.positive {"actual":0,"min":0}"#,
+                r#"/h out_of_range key=out_of_range.minimum {"actual":1.50,"min":2.00}"#,
+                r#"/i out_of_range key=out_of_range.maximum {"actual":2.50,"max":2}"#,
+                r#"/j out_of_range key=out_of_range.positive {"actual":0.00,"min":0}"#,
                 r#"/k out_of_range key=out_of_range.non_negative {"actual":-0.1,"min":0}"#,
                 r#"/l too_small key=too_small.nonempty {"actual":0,"min":1}"#,
                 r#"/m too_small {"actual":1,"min":2}"#,
