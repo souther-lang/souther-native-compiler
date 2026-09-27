@@ -53,7 +53,9 @@ class AHostHandsOverATemporalAsTheTextThatNamesItTest {
             #include "souther.h"
 
             static souther_string made(const char *text) {
-                return souther_string_of_utf8((const uint8_t *) text, (int64_t) strlen(text));
+                souther_string held = NULL;
+                souther_string_of_utf8((const uint8_t *) text, (int64_t) strlen(text), &held);
+                return held;
             }
 
             static void text(souther_string said) {

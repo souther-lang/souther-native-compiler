@@ -121,7 +121,7 @@ class AHostReachesAValueWithoutItsLayoutTest {
 
                 extern int64_t souther_mark(void);
                 extern void souther_reset(int64_t);
-                extern Value souther_string_of_utf8(const uint8_t *, int64_t);
+                extern uint8_t souther_string_of_utf8(const uint8_t *, int64_t, Value *);
                 extern int64_t souther_string_length(Value);
                 extern const uint8_t *souther_string_bytes(Value);
 
@@ -196,7 +196,8 @@ class AHostReachesAValueWithoutItsLayoutTest {
                     printf("money -1: status %%u, untouched %%d\\n", status, below == untouched);
 
                     const char *wrap = "gift wrap";
-                    Value note = souther_string_of_utf8((const uint8_t *) wrap, (int64_t) strlen(wrap));
+                    Value note = untouched;
+                    souther_string_of_utf8((const uint8_t *) wrap, (int64_t) strlen(wrap), &note);
                     Value bought = untouched;
                     status = line(three, 2, 1, note, 0, 0, &bought);
                     printf("line: status %%u\\n", status);

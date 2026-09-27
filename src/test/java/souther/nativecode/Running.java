@@ -920,7 +920,7 @@ final class Running {
      * is the one place besides the {@code abi} crate that says what one is made of.
      */
     private static final String TEXT_CROSSING = """
-            extern const uint8_t *souther_string_of_utf8(const uint8_t *, int64_t);
+            extern uint8_t souther_string_of_utf8(const uint8_t *, int64_t, const uint8_t **);
 
             static const uint8_t *readText(const char *hex) {
                 size_t length = strlen(hex) / 2;
@@ -930,20 +930,21 @@ final class Running {
                     sscanf(hex + 2 * at, "%2x", &byte);
                     bytes[at] = (uint8_t) byte;
                 }
-                const uint8_t *held = souther_string_of_utf8(bytes, (int64_t) length);
+                const uint8_t *held = NULL;
+                souther_string_of_utf8(bytes, (int64_t) length, &held);
                 free(bytes);
                 return held;
             }
 
-            extern const void *souther_decimal_of_parts(const uint8_t *, int64_t);
+            extern const void *souther_decimal_of_parts(const uint8_t *, int64_t, int64_t);
 
             /* A Decimal handed over as its integer, a colon and its scale, made through the runtime
-               as a host makes one. */
+               as a host makes one: the unscaled digits are bytes and a count, not a String, since
+               they are never fallible on what a String holds. */
             static const void *readDecimal(const char *written) {
                 const char *colon = strchr(written, ':');
-                const uint8_t *unscaled = souther_string_of_utf8(
-                        (const uint8_t *) written, (int64_t) (colon - written));
-                return souther_decimal_of_parts(unscaled, strtoll(colon + 1, NULL, 10));
+                return souther_decimal_of_parts((const uint8_t *) written,
+                        (int64_t) (colon - written), strtoll(colon + 1, NULL, 10));
             }
 
             extern const void *souther_date_of_iso(const uint8_t *);

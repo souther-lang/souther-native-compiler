@@ -42,9 +42,12 @@
         },
         {
           "given": "count"
+        },
+        {
+          "room": "string"
         }
       ],
-      "answers": "string"
+      "answers": "bool"
     },
     {
       "name": "souther_string_length",
@@ -68,7 +71,10 @@
       "name": "souther_decimal_of_parts",
       "takes": [
         {
-          "given": "string"
+          "given": "bytes"
+        },
+        {
+          "given": "count"
         },
         {
           "given": "int"

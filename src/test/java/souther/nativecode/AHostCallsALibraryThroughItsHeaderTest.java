@@ -183,8 +183,8 @@ class AHostCallsALibraryThroughItsHeaderTest {
                 printf("below: %d\\n", status == SOUTHER_INVARIANT_NOT_HELD && below == NULL);
 
                 const char *wrap = "gift wrap";
-                souther_string note = souther_string_of_utf8((const uint8_t *) wrap,
-                                                             (int64_t) strlen(wrap));
+                souther_string note = NULL;
+                souther_string_of_utf8((const uint8_t *) wrap, (int64_t) strlen(wrap), &note);
                 souther_value line = NULL;
                 status = souther@_m_shop_t_Line_construct(three, 2, 1, note, &line);
                 souther_string noted = NULL;
@@ -295,12 +295,12 @@ class AHostCallsALibraryThroughItsHeaderTest {
                 decoded("read wrong", "{\\"price\\": -1, \\"quantity\\": 5}");
                 decoded("not json", "{\\"price\\"");
 
-                souther_decimal price = souther_decimal_of_parts(
-                        souther_string_of_utf8((const uint8_t *) "1999", 4), 2);
-                souther_decimal rate = souther_decimal_of_parts(
-                        souther_string_of_utf8((const uint8_t *) "150", 3), 3);
-                souther_decimal nought = souther_decimal_of_parts(
-                        souther_string_of_utf8((const uint8_t *) "-0", 2), 7);
+                souther_decimal price =
+                        souther_decimal_of_parts((const uint8_t *) "1999", 4, 2);
+                souther_decimal rate =
+                        souther_decimal_of_parts((const uint8_t *) "150", 3, 3);
+                souther_decimal nought =
+                        souther_decimal_of_parts((const uint8_t *) "-0", 2, 7);
                 souther_value rated = NULL;
                 status = souther@_m_shop_b_rated(NULL, price, rate, &rated);
                 souther_decimal product = souther_case_decimal_read(rated);
@@ -376,7 +376,8 @@ class AHostCallsALibraryThroughItsHeaderTest {
                     "\n";
 
             $wrap = "gift wrap";
-            $note = $ffi->souther_string_of_utf8(bytes($ffi, $wrap), strlen($wrap));
+            $note = $ffi->new("souther_string");
+            $ffi->souther_string_of_utf8(bytes($ffi, $wrap), strlen($wrap), FFI::addr($note));
             $line = $ffi->new("souther_value");
             $status = $ffi->souther@_m_shop_t_Line_construct($three, 2, 1, $note, FFI::addr($line));
             $noted = $ffi->new("souther_string");
@@ -491,9 +492,9 @@ class AHostCallsALibraryThroughItsHeaderTest {
             decoded($ffi, "read wrong", '{"price": -1, "quantity": 5}');
             decoded($ffi, "not json", '{"price"');
 
-            $price = $ffi->souther_decimal_of_parts($ffi->souther_string_of_utf8(bytes($ffi, "1999"), 4), 2);
-            $rate = $ffi->souther_decimal_of_parts($ffi->souther_string_of_utf8(bytes($ffi, "150"), 3), 3);
-            $nought = $ffi->souther_decimal_of_parts($ffi->souther_string_of_utf8(bytes($ffi, "-0"), 2), 7);
+            $price = $ffi->souther_decimal_of_parts(bytes($ffi, "1999"), 4, 2);
+            $rate = $ffi->souther_decimal_of_parts(bytes($ffi, "150"), 3, 3);
+            $nought = $ffi->souther_decimal_of_parts(bytes($ffi, "-0"), 2, 7);
             $rated = $ffi->new("souther_value");
             $status = $ffi->souther@_m_shop_b_rated(null, $price, $rate, FFI::addr($rated));
             $product = $ffi->souther_case_decimal_read($rated);
