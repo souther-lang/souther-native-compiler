@@ -167,6 +167,8 @@ class ABrokenClauseIsReportedAsTheJvmReportsItTest {
             new Decoding.Row("words", "Words", "[\"a\", \"b\", \"a\"]"),
             new Decoding.Row("lines", "Lines", "[{\"amount\": 1.0}, {\"amount\": 1.00}]"),
             new Decoding.Row("amounts twice", "Amounts", "[1.0, 1.0, 2.50]"),
+            new Decoding.Row("amounts at two scales", "Amounts", "[1.0, 1.00]"),
+            new Decoding.Row("grid at two scales", "Grid", "[[1.0], [1.00]]"),
             new Decoding.Row("keyed", "Keyed", "{\"a\": 1}"),
             new Decoding.Row("filled", "Filled", "{}"),
             new Decoding.Row("sparse", "Sparse", "{\"a\": 1, \"b\": 2, \"c\": 3}"),
@@ -208,29 +210,6 @@ class ABrokenClauseIsReportedAsTheJvmReportsItTest {
                 Checked.of(List.of(MODULE)), decoding.harness());
 
         assertThat(read(answered)).isEqualTo(expected.toString());
-    }
-
-    /**
-     * Where the JVM's decoder compares a list's elements by Java's {@code equals} and not as
-     * Souther compares (souther-lang/souther#2033): a {@code BigDecimal} reads its scale, so
-     * {@code [1.0, 1.00]} passes Raoh's {@code unique()} there and is refused by the construction
-     * after it, as {@code invariant_violation}. The clause states {@code Unique}, which compares as
-     * Souther does, and the native reader reports the constraint. Held here to that answer until the
-     * JVM gives it too, when these rows go among the others.
-     */
-    @Test
-    void aListOfDecimalsIsUniqueAsSoutherComparesThem() throws Exception {
-        Decoding decoding = new Decoding().type("held", "Amounts").type("held", "Grid")
-                .row("amounts", "Amounts", "[1.0, 1.00]")
-                .row("grid", "Grid", "[[1.0], [1.00]]");
-
-        String answered = AValueIsReadFromTheFormItIsWrittenInTest.run(
-                Checked.of(List.of(MODULE)), decoding.harness());
-
-        assertThat(answered).isEqualTo("""
-                amounts: issues [@ duplicate_element {"duplicates":[1.00]}]
-                grid: issues [@ duplicate_element {"duplicates":[[1.00]]}]
-                """);
     }
 
     private static final String DECLARED = """
