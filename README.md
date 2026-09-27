@@ -116,8 +116,10 @@ that reads its operands at their exact values (`Int + Rational`, `Decimal < Rati
 the `Rational` it stands for, which is the operator's reading and not a conversion any position
 that asks for a `Rational` gets. `/` reads its operands so whatever it divides. A zero divisor ends
 the run, and so does an answer that has no place: an exponent past sixty-four bits, or a part wider
-than a `Decimal`'s integer. Two `Rational`s whose order needs more room than the run has end it as
-an arena that has run out does.
+than a `Decimal`'s integer, asked of the answer once it is in its one form and not of what was
+worked with on the way to it. An order or a rounding of values at exponents nothing can be built at
+is answered from what is known of them, to as many bits as it takes. Two `Rational`s whose order
+needs more room than the run has end it as an arena that has run out does.
 
 An operation the language implements as a kernel, over `Int`, `String` and `Decimal`, every one the
 language declares. `Int.add`, `Int.subtract` and

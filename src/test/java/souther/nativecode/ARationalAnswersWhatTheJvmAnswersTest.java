@@ -396,6 +396,12 @@ class ARationalAnswersWhatTheJvmAnswersTest {
         assertThat(rationals.outcome("lesser", decimal("1E+2147483647"), decimal("2E+2147483647")))
                 .isEqualTo(yes);
         // The plain notation of what it reads back as is more text than a string holds.
+        // Two that differ in the twenty-fifth digit at the largest exponent, which no bound tells
+        // apart, and one that is a decimal's smallest step from the other.
+        assertThat(rationals.outcome("lesser", decimal("1E+2147483647"),
+                decimal("10000000000000000000000001E+2147483622"))).isEqualTo(yes);
+        assertThat(rationals.outcome("lesser", decimal("10000000000000000000000001E+2147483622"),
+                decimal("1E+2147483647"))).isEqualTo(no);
         assertThat(rationals.outcome("widenedDecimal", decimal("1E-1500000000")))
                 .isEqualTo(new RunOutcome.Aborted(AbortKind.REQUIRED_FORM_HAS_NO_PLACE));
     }

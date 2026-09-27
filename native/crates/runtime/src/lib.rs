@@ -31,6 +31,7 @@ mod contract;
 mod decimal;
 mod decoding;
 mod document;
+mod enclosure;
 mod external;
 mod kernels;
 mod magnitude;

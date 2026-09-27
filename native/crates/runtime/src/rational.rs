@@ -15,17 +15,27 @@
 //! decimal at a scale of a billion is as small here as it is there, and equal values have equal
 //! parts.
 //!
-//! An operation answers nothing where its answer has no place: an exponent past sixty-four bits, a
-//! numerator or a denominator wider than a `Decimal`'s integer may be ([`WIDEST`]), or a
-//! comparison whose working width is past that.
+//! Two limits are kept apart, because confusing them answers a value wrongly. What a value may be
+//! is a limit of the carrier: an exponent past sixty-four bits, or a numerator or a denominator
+//! wider than a `Decimal`'s integer may be ([`WIDEST`]). It is asked of the parts an answer is
+//! made of, once they are in their one form, and never of what was worked with on the way to
+//! them: the sum of two numbers of the widest width is one bit wider than any number may be and
+//! is an ordinary value once its factor of two is an exponent. What an operation has room for is
+//! the run's: a comparison or a rounding of values that stand a billion exponents from one
+//! another is answered without building either, by knowing each as well as the answer needs
+//! ([`Enclosure`]), and it is only where that has to be known to more bits than the run can hold
+//! that the run is out of room, which ends it as an arena that has run out does and is not a
+//! value with no place. A [`Failure`] says which of the two it was, so that neither can be taken
+//! for the other.
 //!
 //! The layout, in the arena and aligned to a slot as everything there is: the power of two in the
 //! first slot, the power of five in the second, the sign times how many bytes the numerator is in
 //! the third, how many bytes the denominator is in the fourth, and the numerator's bytes and then
 //! the denominator's after them, each little end first and with no zero byte at the top.
 
-use crate::amount::{Amount, Dropped, Rounding, WIDEST, dropped, held, rounded};
+use crate::amount::{Amount, Dropped, Rounding, WIDEST, dropped, rounded};
 use crate::decimal::{Decimal, amount, decimal_of, rounding};
+use crate::enclosure::Enclosure;
 use crate::kernels::answered;
 use crate::magnitude::Magnitude;
 use crate::{Comparison, Count, Value, souther_alloc};
@@ -57,6 +67,48 @@ const LOG2_5_BELOW: i128 = 23_219_280_948_873_623;
 const LOG2_5_ABOVE: i128 = 23_219_280_948_873_624;
 const PLACES: i128 = 10_000_000_000_000_000;
 
+/// How many bits an order or a rounding may know a value to before the run is out of room for it.
+/// A near tie needs as many bits as the two values are close to one another, and no pair of
+/// values a program makes is anywhere near as close as this asks.
+const MOST_PRECISION: u64 = 1 << 24;
+
+/// The bits of working room a comparison or a rounding builds in, beyond what the parts it works
+/// from are wide, before it knows its values instead: a value at ordinary exponents is built and
+/// compared exactly, which is cheaper than knowing it, and one at exponents past this is not
+/// built at all.
+const WORKING_ROOM: i128 = 1 << 16;
+
+/// Why an operation answered nothing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Failure {
+    /// The answer has no place: a form the carrier does not hold. The run ends for it, as an
+    /// `Int` that overflows does.
+    NoPlace,
+    /// The run has no room for what the answer needed, which is a fact about the run and none
+    /// about the value.
+    NoRoom,
+}
+
+/// What an operation answers, or why it did not.
+type Exact<T> = Result<T, Failure>;
+
+/// The answer, where there is one, for the caller that ends the run for a value with no place: and
+/// the end of the run, where there was no room, for the one that has nothing to say for a shortage
+/// but that it happened.
+///
+/// # Panics
+///
+/// Where the run had no room, as an arena that has run out does.
+fn settled<T>(result: Exact<T>) -> Option<T> {
+    match result {
+        Ok(answer) => Some(answer),
+        Err(Failure::NoPlace) => None,
+        Err(Failure::NoRoom) => {
+            panic!("no room for the working width this answer is worked out at")
+        }
+    }
+}
+
 /// An exact rational, in the form that has each value once.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Ratio {
@@ -71,16 +123,25 @@ fn one() -> Magnitude {
     Magnitude::Small(1)
 }
 
-/// `left · right`, where that is no wider than a `Decimal`'s integer may be. Refused before it is
-/// built where it could not be: the product is at least as wide as its factors' widths less one.
-fn product(left: &Magnitude, right: &Magnitude) -> Option<Magnitude> {
+/// The number, where it is no wider than `limit` bits.
+fn held(magnitude: Magnitude, limit: u64) -> Exact<Magnitude> {
+    if magnitude.bits() > limit {
+        Err(Failure::NoPlace)
+    } else {
+        Ok(magnitude)
+    }
+}
+
+/// `left · right`, where that is no wider than `limit` bits. Refused before it is built where it
+/// could not be: the product is at least as wide as its factors' widths less one.
+fn product(left: &Magnitude, right: &Magnitude, limit: u64) -> Exact<Magnitude> {
     if left.is_zero() || right.is_zero() {
-        return Some(Magnitude::ZERO);
+        return Ok(Magnitude::ZERO);
     }
-    if left.bits() + right.bits() - 1 > WIDEST {
-        return None;
+    if left.bits() + right.bits() - 1 > limit {
+        return Err(Failure::NoPlace);
     }
-    held(left.mul(right))
+    held(left.mul(right), limit)
 }
 
 /// `left / right`, for a `right` that divides it.
@@ -88,21 +149,49 @@ fn over(left: &Magnitude, right: &Magnitude) -> Magnitude {
     left.div_rem(right).0
 }
 
-/// `whole × 2^twos × 5^fives`, both exponents being at least nought, where that is no wider than a
-/// `Decimal`'s integer may be. Asked before it is built, and by the count a factor of five is two
-/// bits under, so that nothing a `Decimal` would hold is refused here.
-fn written(whole: &Magnitude, twos: i128, fives: i128) -> Option<Magnitude> {
+/// Between which two counts of bits five to `fives`, which is not below nought, is wide.
+fn power_bits(fives: i128) -> (i128, i128) {
+    (
+        fives * LOG2_5_BELOW / PLACES + 1,
+        fives * LOG2_5_ABOVE / PLACES + 1,
+    )
+}
+
+/// The bits `whole × 2^twos × 5^fives` is at most wide, without building it.
+fn working_bits(whole: &Magnitude, twos: i128, fives: i128) -> i128 {
+    whole.bits() as i128 + twos + power_bits(fives).1
+}
+
+/// `whole × 2^twos × 5^fives`, both exponents being at least nought, where that is no wider than
+/// `limit` bits: exactly where it is not, and not by a count that is nearly it.
+///
+/// A number's width is the width of what it is made of, to within a bit, and a power of five is
+/// `floor(fives · log2 5) + 1` bits, which is known to within a bit from a `log2 5` known to sixteen
+/// places. So a number that is surely too wide is refused before it is built, one that is surely
+/// not is built, and the few in between are built and asked: what is built is never more than
+/// `limit` bits and the few the estimate could not tell apart, since nothing that is not too wide
+/// by the estimate is built.
+fn written(whole: &Magnitude, twos: i128, fives: i128, limit: u64) -> Exact<Magnitude> {
     assert!(
         twos >= 0 && fives >= 0,
         "only a power above nought is written out"
     );
     if whole.is_zero() {
-        return Some(Magnitude::ZERO);
+        return Ok(Magnitude::ZERO);
     }
-    if whole.bits() as i128 + twos + 2 * fives > i128::from(WIDEST) {
-        return None;
+    let base = whole.bits() as i128 + twos;
+    if base + power_bits(fives).0 - 1 > i128::from(limit) {
+        return Err(Failure::NoPlace);
     }
-    Some(whole.times_two_to(twos as u64).times_five_to(fives as u64))
+    held(built(whole, twos, fives), limit)
+}
+
+/// `whole × 2^twos × 5^fives`, built, for a caller that has settled that it is a width the run has
+/// room for.
+fn built(whole: &Magnitude, twos: i128, fives: i128) -> Magnitude {
+    whole
+        .times_two_to(u64::try_from(twos).expect("a width the run has room for"))
+        .times_five_to(u64::try_from(fives).expect("a width the run has room for"))
 }
 
 /// A sign and a magnitude that are the sum of two of them.
@@ -150,18 +239,21 @@ impl Ratio {
     };
 
     /// The one form of `numerator × 2^twos × 5^fives / denominator`, which is not over nought.
-    /// Nothing where an exponent it comes to is past sixty-four bits, or a part is wider than a
-    /// `Decimal`'s integer may be.
+    ///
+    /// The limit is asked of what comes out and not of what went in: a numerator of a width `limit`
+    /// bits and no more, doubled, is a bit wider than that and has a factor of two in it, and its
+    /// answer is the numerator and one more power of two.
     fn canonical(
         negative: bool,
         numerator: Magnitude,
         denominator: Magnitude,
         mut twos: i128,
         mut fives: i128,
-    ) -> Option<Ratio> {
+        limit: u64,
+    ) -> Exact<Ratio> {
         assert!(!denominator.is_zero(), "a rational is not over nought");
         if numerator.is_zero() {
-            return Some(Ratio::ZERO);
+            return Ok(Ratio::ZERO);
         }
         let common = numerator.gcd(&denominator);
         let (mut numerator, mut denominator) = if common == one() {
@@ -186,12 +278,12 @@ impl Ratio {
         let (stripped, by) = denominator.without_fives();
         denominator = stripped;
         fives -= i128::from(by);
-        Some(Ratio {
+        Ok(Ratio {
             negative,
-            numerator: held(numerator)?,
-            denominator: held(denominator)?,
-            twos: i64::try_from(twos).ok()?,
-            fives: i64::try_from(fives).ok()?,
+            numerator: held(numerator, limit)?,
+            denominator: held(denominator, limit)?,
+            twos: i64::try_from(twos).map_err(|_| Failure::NoPlace)?,
+            fives: i64::try_from(fives).map_err(|_| Failure::NoPlace)?,
         })
     }
 
@@ -203,6 +295,7 @@ impl Ratio {
             one(),
             0,
             0,
+            WIDEST,
         )
         .expect("every Int has a rational")
     }
@@ -212,8 +305,15 @@ impl Ratio {
     pub(crate) fn of_decimal(value: &Amount) -> Ratio {
         let (negative, magnitude, scale) = value.split();
         let exponent = -i128::from(scale);
-        Ratio::canonical(negative, magnitude.clone(), one(), exponent, exponent)
-            .expect("every Decimal has a rational")
+        Ratio::canonical(
+            negative,
+            magnitude.clone(),
+            one(),
+            exponent,
+            exponent,
+            WIDEST,
+        )
+        .expect("every Decimal has a rational")
     }
 
     pub(crate) fn is_zero(&self) -> bool {
@@ -248,9 +348,9 @@ impl Ratio {
         }
     }
 
-    pub(crate) fn multiply(&self, other: &Ratio) -> Option<Ratio> {
+    fn multiply_within(&self, other: &Ratio, limit: u64) -> Exact<Ratio> {
         if self.is_zero() || other.is_zero() {
-            return Some(Ratio::ZERO);
+            return Ok(Ratio::ZERO);
         }
         let across_one = self.numerator.gcd(&other.denominator);
         let across_two = other.numerator.gcd(&self.denominator);
@@ -259,24 +359,30 @@ impl Ratio {
             product(
                 &over(&self.numerator, &across_one),
                 &over(&other.numerator, &across_two),
+                limit,
             )?,
             product(
                 &over(&self.denominator, &across_two),
                 &over(&other.denominator, &across_one),
+                limit,
             )?,
             i128::from(self.twos) + i128::from(other.twos),
             i128::from(self.fives) + i128::from(other.fives),
+            limit,
         )
     }
 
-    /// `/`, over a divisor that is not nought.
-    pub(crate) fn divide(&self, divisor: &Ratio) -> Option<Ratio> {
+    pub(crate) fn multiply(&self, other: &Ratio) -> Option<Ratio> {
+        settled(self.multiply_within(other, WIDEST))
+    }
+
+    fn divide_within(&self, divisor: &Ratio, limit: u64) -> Exact<Ratio> {
         assert!(
             !divisor.is_zero(),
             "a zero divisor is answered as an abort and never divided by"
         );
         if self.is_zero() {
-            return Some(Ratio::ZERO);
+            return Ok(Ratio::ZERO);
         }
         let across_one = self.numerator.gcd(&divisor.numerator);
         let across_two = self.denominator.gcd(&divisor.denominator);
@@ -285,63 +391,122 @@ impl Ratio {
             product(
                 &over(&self.numerator, &across_one),
                 &over(&divisor.denominator, &across_two),
+                limit,
             )?,
             product(
                 &over(&self.denominator, &across_two),
                 &over(&divisor.numerator, &across_one),
+                limit,
             )?,
             i128::from(self.twos) - i128::from(divisor.twos),
             i128::from(self.fives) - i128::from(divisor.fives),
+            limit,
         )
     }
 
-    pub(crate) fn add(&self, other: &Ratio) -> Option<Ratio> {
+    /// `/`, over a divisor that is not nought.
+    pub(crate) fn divide(&self, divisor: &Ratio) -> Option<Ratio> {
+        settled(self.divide_within(divisor, WIDEST))
+    }
+
+    fn add_within(&self, other: &Ratio, limit: u64) -> Exact<Ratio> {
         if self.is_zero() {
-            return Some(other.clone());
+            return Ok(other.clone());
         }
         if other.is_zero() {
-            return Some(self.clone());
+            return Ok(self.clone());
         }
         // The lesser of each pair of exponents is common to both terms and stays an exponent. What
         // is left is the distance between them, and that is built: the exact sum is a number with
-        // that many digits in it.
+        // that many digits in it, which the sum of a `Rational` is defined to write out in full.
         let twos = self.twos.min(other.twos);
         let fives = self.fives.min(other.fives);
         let here = written(
             &self.numerator,
             i128::from(self.twos) - i128::from(twos),
             i128::from(self.fives) - i128::from(fives),
+            limit,
         )?;
         let there = written(
             &other.numerator,
             i128::from(other.twos) - i128::from(twos),
             i128::from(other.fives) - i128::from(fives),
+            limit,
         )?;
         let shared = self.denominator.gcd(&other.denominator);
         let over_this = over(&self.denominator, &shared);
-        let here = product(&here, &over(&other.denominator, &shared))?;
-        let there = product(&there, &over_this)?;
+        let here = product(&here, &over(&other.denominator, &shared), limit)?;
+        let there = product(&there, &over_this, limit)?;
+        // The sum may be a bit wider than either term, and is not asked for its width until it is
+        // in its one form, where a factor of two it has is an exponent.
         let (negative, sum) = signed_sum((self.negative, &here), (other.negative, &there));
         Ratio::canonical(
             negative,
-            held(sum)?,
-            product(&over_this, &other.denominator)?,
+            sum,
+            product(&over_this, &other.denominator, limit)?,
             i128::from(twos),
             i128::from(fives),
+            limit,
         )
+    }
+
+    pub(crate) fn add(&self, other: &Ratio) -> Option<Ratio> {
+        settled(self.add_within(other, WIDEST))
     }
 
     pub(crate) fn subtract(&self, other: &Ratio) -> Option<Ratio> {
         self.add(&other.negated())
     }
 
-    /// Where the magnitude stands against `other`'s. Nothing where the pair needs a working width
-    /// past what a `Decimal`'s integer may be.
-    ///
-    /// Two magnitudes whose logarithms are apart are ordered by them and nothing is built, which is
-    /// nearly every pair. The rest are cross-multiplied, with the powers each side has in excess
-    /// of the other's on the side that has them.
-    fn compare_magnitudes(&self, other: &Ratio) -> Option<Ordering> {
+    /// This value's magnitude at exponents other than its own, known to `precision` bits, which is
+    /// how it is worked with where it is not built. Nothing where that precision is too little to
+    /// have a divisor above nought.
+    fn enclosed(&self, twos: i128, fives: i128, precision: u64) -> Option<Enclosure> {
+        let mut above = Enclosure::of(&self.numerator, precision);
+        let mut below = Enclosure::of(&self.denominator, precision);
+        let power = Enclosure::five_to(fives.unsigned_abs(), precision);
+        if fives >= 0 {
+            above = above.times(&power, precision);
+        } else {
+            below = below.times(&power, precision);
+        }
+        Some(above.over(&below, precision)?.times_two_to(twos))
+    }
+
+    /// How many bits the parts of the two are, which is what an order of them is a work of at the
+    /// least, and so what it may be given room for beyond the room ordinary exponents need.
+    fn parts_bits(&self, other: &Ratio) -> i128 {
+        (self.numerator.bits()
+            + self.denominator.bits()
+            + other.numerator.bits()
+            + other.denominator.bits()) as i128
+    }
+
+    /// Where the magnitude stands against `other`'s, by knowing each of the two to more bits until
+    /// that says. Never by building either: this is what answers the pair no exponents the run can
+    /// build are close enough to answer, and the pair every other is answered by cheaper.
+    fn compare_by_enclosure(&self, other: &Ratio) -> Exact<Ordering> {
+        let most = MOST_PRECISION + self.parts_bits(other) as u64;
+        let mut precision = 256;
+        loop {
+            let here = self.enclosed(i128::from(self.twos), i128::from(self.fives), precision);
+            let there = other.enclosed(i128::from(other.twos), i128::from(other.fives), precision);
+            if let (Some(here), Some(there)) = (here, there)
+                && let Some(ordering) = here.against(&there)
+            {
+                return Ok(ordering);
+            }
+            precision *= 2;
+            if precision > most {
+                return Err(Failure::NoRoom);
+            }
+        }
+    }
+
+    /// Where the magnitude stands against `other`'s, by the cross product of the two where that is
+    /// a width the pair is worked at as a matter of course, and by [`Ratio::compare_by_enclosure`]
+    /// where it is not.
+    fn compare_magnitudes(&self, other: &Ratio) -> Exact<Ordering> {
         let (low, high) = log_bounds(
             &self.numerator,
             &self.denominator,
@@ -355,75 +520,136 @@ impl Ratio {
             i128::from(other.fives),
         );
         if high < other_low {
-            return Some(Ordering::Less);
+            return Ok(Ordering::Less);
         }
         if low > other_high {
-            return Some(Ordering::Greater);
+            return Ok(Ordering::Greater);
         }
         let twos = i128::from(self.twos) - i128::from(other.twos);
         let fives = i128::from(self.fives) - i128::from(other.fives);
-        let left = written(
-            &product(&self.numerator, &other.denominator)?,
+        let here = working_bits(&self.numerator, twos.max(0), fives.max(0))
+            + other.denominator.bits() as i128;
+        let there = working_bits(&other.numerator, (-twos).max(0), (-fives).max(0))
+            + self.denominator.bits() as i128;
+        let room = WORKING_ROOM + self.parts_bits(other);
+        if here > room || there > room {
+            return self.compare_by_enclosure(other);
+        }
+        let left = built(
+            &self.numerator.mul(&other.denominator),
             twos.max(0),
             fives.max(0),
-        )?;
-        let right = written(
-            &product(&other.numerator, &self.denominator)?,
+        );
+        let right = built(
+            &other.numerator.mul(&self.denominator),
             (-twos).max(0),
             (-fives).max(0),
-        )?;
-        Some(left.cmp(&right))
+        );
+        Ok(left.cmp(&right))
     }
 
-    /// Where this stands against `other` by exact value. Nothing where the pair needs a working
-    /// width past what a `Decimal`'s integer may be.
-    pub(crate) fn compare(&self, other: &Ratio) -> Option<Ordering> {
+    /// Where this stands against `other` by exact value.
+    fn compare_within(&self, other: &Ratio) -> Exact<Ordering> {
         if self == other {
-            return Some(Ordering::Equal);
+            return Ok(Ordering::Equal);
         }
         let by_sign = self.signum().cmp(&other.signum());
         if by_sign != Ordering::Equal {
-            return Some(by_sign);
+            return Ok(by_sign);
         }
         let by_magnitude = self.compare_magnitudes(other)?;
-        Some(if self.negative {
+        Ok(if self.negative {
             by_magnitude.reverse()
         } else {
             by_magnitude
         })
     }
 
+    /// Where this stands against `other` by exact value.
+    ///
+    /// # Panics
+    ///
+    /// Where the pair is so close, at exponents so far apart, that ordering them needs more room
+    /// than a run has: no value with no place, since both are values.
+    pub(crate) fn compare(&self, other: &Ratio) -> Ordering {
+        settled(self.compare_within(other)).expect("an order has an answer for every pair")
+    }
+
+    /// The whole number of the value at exponents `twos` and `fives` rounds to, and what rounding
+    /// dropped, from what the two parts of it are built to: the numerator over the denominator,
+    /// each with the powers that are not below nought.
+    fn rounded_exactly(&self, twos: i128, fives: i128) -> (Magnitude, Dropped) {
+        let up = built(&self.numerator, twos.max(0), fives.max(0));
+        let down = built(&self.denominator, (-twos).max(0), (-fives).max(0));
+        let (quotient, remainder) = up.div_rem(&down);
+        let left = dropped(&remainder, &down);
+        (quotient, left)
+    }
+
+    /// The same, without building the two parts: by knowing the value to more bits until the half
+    /// of a whole number it stands in is settled. A value a whole number or a half exactly is
+    /// never one this is asked of, since building it is no wider than it is, and the value itself
+    /// is not settled by any number of bits.
+    fn rounded_by_enclosure(
+        &self,
+        twos: i128,
+        fives: i128,
+        answer_bits: u64,
+    ) -> Exact<(Magnitude, Dropped)> {
+        let most = MOST_PRECISION + answer_bits + self.parts_bits(self) as u64;
+        let mut precision = answer_bits + 192;
+        loop {
+            if let Some(enclosed) = self.enclosed(twos, fives, precision)
+                && let Some(halves) = enclosed.halves()
+            {
+                let dropped = if halves.is_odd() {
+                    Dropped::AboveHalf
+                } else {
+                    Dropped::BelowHalf
+                };
+                return Ok((halves.shifted_down(1), dropped));
+            }
+            precision *= 2;
+            if precision > most {
+                return Err(Failure::NoRoom);
+            }
+        }
+    }
+
     /// The whole number the magnitude of the value at `scale` rounds to by `mode`, where that is
-    /// no wider than `widest` bits. The scale goes to the exponents and nothing is built from it,
-    /// so a value far below the unit rounds to nought without the power that would have said so.
-    fn rounded_at(&self, scale: i32, mode: Rounding, widest: u64) -> Option<Magnitude> {
+    /// no wider than `limit` bits. The scale goes to the exponents and nothing is built from it,
+    /// so a value far below the unit rounds to nought without the power that would have said so,
+    /// and one that stands at exponents nothing can be built at is rounded from what is known of it.
+    fn rounded_at(&self, scale: i32, mode: Rounding, limit: u64) -> Exact<Magnitude> {
         if self.is_zero() {
-            return Some(Magnitude::ZERO);
+            return Ok(Magnitude::ZERO);
         }
         let twos = i128::from(self.twos) + i128::from(scale);
         let fives = i128::from(self.fives) + i128::from(scale);
         let (low, high) = log_bounds(&self.numerator, &self.denominator, twos, fives);
         // Below an eighth of the unit, which is below half of it.
         if high < -3 {
-            return held(rounded(
-                Magnitude::ZERO,
-                self.negative,
-                Dropped::BelowHalf,
-                mode,
-            ));
+            return held(
+                rounded(Magnitude::ZERO, self.negative, Dropped::BelowHalf, mode),
+                limit,
+            );
         }
-        if low > i128::from(widest) + 1 {
-            return None;
+        if low > i128::from(limit) + 1 {
+            return Err(Failure::NoPlace);
         }
-        let up = written(&self.numerator, twos.max(0), fives.max(0))?;
-        let down = written(&self.denominator, (-twos).max(0), (-fives).max(0))?;
-        let (quotient, remainder) = up.div_rem(&down);
-        held(rounded(
-            quotient,
-            self.negative,
-            dropped(&remainder, &down),
-            mode,
-        ))
+        // What the answer is wide enough to be, and so what building the two parts may be as wide
+        // as before the value is known instead: the answer has to be written out whatever is done.
+        let answer = high.max(0);
+        let room =
+            answer + WORKING_ROOM + (self.numerator.bits() + self.denominator.bits()) as i128;
+        let up = working_bits(&self.numerator, twos.max(0), fives.max(0));
+        let down = working_bits(&self.denominator, (-twos).max(0), (-fives).max(0));
+        let (quotient, left) = if up <= room && down <= room {
+            self.rounded_exactly(twos, fives)
+        } else {
+            self.rounded_by_enclosure(twos, fives, answer as u64)?
+        };
+        held(rounded(quotient, self.negative, left, mode), limit)
     }
 
     /// An `Int`, where a magnitude and a sign name one.
@@ -458,7 +684,9 @@ impl Ratio {
             &self.numerator,
             i128::from(self.twos),
             i128::from(self.fives),
-        )?;
+            WIDEST,
+        )
+        .ok()?;
         self.as_int(&whole)
     }
 
@@ -483,14 +711,16 @@ impl Ratio {
             &self.numerator,
             i128::from(self.twos) + i128::from(scale),
             i128::from(self.fives) + i128::from(scale),
-        )?;
+            WIDEST,
+        )
+        .ok()?;
         Amount::of_magnitude(self.negative, digits, scale)
     }
 
     /// `Rational.toInt`: the whole number the value rounds to by `mode`. Nothing where that is not
     /// an `Int`.
     pub(crate) fn to_int(&self, mode: Rounding) -> Option<i64> {
-        let whole = self.rounded_at(0, mode, 64)?;
+        let whole = settled(self.rounded_at(0, mode, 64))?;
         self.as_int(&whole)
     }
 
@@ -498,7 +728,7 @@ impl Ratio {
     /// scale is not one a `Decimal` has or the value at it is wider than a `Decimal` holds.
     pub(crate) fn to_decimal(&self, scale: i64, mode: Rounding) -> Option<Amount> {
         let scale = i32::try_from(scale).ok()?;
-        let magnitude = self.rounded_at(scale, mode, WIDEST)?;
+        let magnitude = settled(self.rounded_at(scale, mode, WIDEST))?;
         Amount::of_magnitude(self.negative && !magnitude.is_zero(), magnitude, scale)
     }
 }
@@ -624,8 +854,8 @@ pub unsafe extern "C" fn souther_rational_has_finite_decimal(at: *const Rational
 ///
 /// # Panics
 ///
-/// Where the pair needs a working width past what a `Decimal`'s integer may be to be ordered: two
-/// values that close, at exponents that far from one another. That is a run with no room for what
+/// Where the pair needs more room to be ordered than a run has: two values that close, at
+/// exponents that far from one another. That is a run with no room for what
 /// the answer wanted and not a value with no place, so it ends as an arena that has run out does
 /// and not as an abort of the program: which of the two it is decides which of the two it ends as.
 #[unsafe(no_mangle)]
@@ -633,8 +863,7 @@ pub unsafe extern "C" fn souther_rational_compare(
     left: *const Rational,
     right: *const Rational,
 ) -> Comparison {
-    let ordering = unsafe { ratio(left).compare(&ratio(right)) }
-        .expect("no room for the working width this pair of rationals is ordered at");
+    let ordering = unsafe { ratio(left).compare(&ratio(right)) };
     Comparison(ordering as i64)
 }
 
@@ -819,30 +1048,15 @@ mod tests {
 
     #[test]
     fn an_order_is_by_exact_value() {
-        assert_eq!(
-            ratio_of(1, 3).compare(&ratio_of(1, 2)),
-            Some(Ordering::Less)
-        );
-        assert_eq!(
-            ratio_of(-1, 2).compare(&ratio_of(-1, 3)),
-            Some(Ordering::Less)
-        );
-        assert_eq!(
-            ratio_of(-1, 2).compare(&ratio_of(1, 3)),
-            Some(Ordering::Less)
-        );
-        assert_eq!(
-            ratio_of(2, 4).compare(&ratio_of(1, 2)),
-            Some(Ordering::Equal)
-        );
-        assert_eq!(
-            Ratio::ZERO.compare(&ratio_of(-1, 9)),
-            Some(Ordering::Greater)
-        );
+        assert_eq!(ratio_of(1, 3).compare(&ratio_of(1, 2)), Ordering::Less);
+        assert_eq!(ratio_of(-1, 2).compare(&ratio_of(-1, 3)), Ordering::Less);
+        assert_eq!(ratio_of(-1, 2).compare(&ratio_of(1, 3)), Ordering::Less);
+        assert_eq!(ratio_of(2, 4).compare(&ratio_of(1, 2)), Ordering::Equal);
+        assert_eq!(Ratio::ZERO.compare(&ratio_of(-1, 9)), Ordering::Greater);
         // Close enough that no logarithm settles it.
         let near = whole(i64::MAX).divide(&whole(i64::MAX - 1)).unwrap();
-        assert_eq!(near.compare(&whole(1)), Some(Ordering::Greater));
-        assert_eq!(whole(1).compare(&near), Some(Ordering::Less));
+        assert_eq!(near.compare(&whole(1)), Ordering::Greater);
+        assert_eq!(whole(1).compare(&near), Ordering::Less);
     }
 
     #[test]
@@ -854,9 +1068,9 @@ mod tests {
         );
         let most = Ratio::of_decimal(&decimal(false, 1, i32::MIN));
         assert_eq!((most.twos, most.fives), (1 << 31, 1 << 31));
-        assert_eq!(least.compare(&whole(1)), Some(Ordering::Less));
-        assert_eq!(most.compare(&whole(1)), Some(Ordering::Greater));
-        assert_eq!(most.negated().compare(&least), Some(Ordering::Less));
+        assert_eq!(least.compare(&whole(1)), Ordering::Less);
+        assert_eq!(most.compare(&whole(1)), Ordering::Greater);
+        assert_eq!(most.negated().compare(&least), Ordering::Less);
         // A scale's negation reaches one further than its own end, so this is ten and not one.
         assert_eq!(least.multiply(&most), Some(whole(10)));
         assert_eq!(least.divide(&least), Some(whole(1)));
@@ -1044,5 +1258,221 @@ mod tests {
         assert_eq!(unsafe { souther_rational_to_whole(third, &mut whole) }, 1);
         assert_eq!(whole, 3);
         souther_reset(mark);
+    }
+
+    /// The digits as a `Decimal` at `scale`.
+    fn digits_at(digits: &str, scale: i32) -> Amount {
+        Magnitude::of_digits(digits.as_bytes())
+            .with_le_bytes(|bytes| Amount::of_parts(false, bytes, scale))
+    }
+
+    /// `2^2147483648 / 5^924870866`, which is 1.06569530465881019317…: a value whose parts are one
+    /// and one and whose two powers no run can write down. It is a value with a place, and is
+    /// ordered and rounded as one, from what is known of it.
+    #[test]
+    fn a_value_at_exponents_nothing_is_built_at_is_ordered_and_rounded_by_what_is_known_of_it() {
+        let close = Ratio::canonical(false, one(), one(), 2_147_483_648, -924_870_866, WIDEST)
+            .expect("a value whose parts are one and one and whose exponents are Ints");
+        assert_eq!(close.compare(&whole(1)), Ordering::Greater);
+        assert_eq!(whole(1).compare(&close), Ordering::Less);
+        assert_eq!(close.compare(&whole(2)), Ordering::Less);
+        assert_eq!(close.negated().compare(&whole(-1)), Ordering::Less);
+        assert_eq!(
+            close.compare(&close.multiply(&whole(1)).unwrap()),
+            Ordering::Equal
+        );
+        assert_eq!(close.to_int(Rounding::HalfEven), Some(1));
+        assert_eq!(close.to_int(Rounding::Up), Some(2));
+        assert_eq!(close.to_int(Rounding::Down), Some(1));
+        assert_eq!(close.negated().to_int(Rounding::Floor), Some(-2));
+        assert_eq!(
+            close.to_decimal(10, Rounding::HalfEven),
+            Some(digits_at("10656953047", 10))
+        );
+        assert_eq!(
+            close.to_decimal(20, Rounding::HalfEven),
+            Some(digits_at("106569530465881019317", 20))
+        );
+        // Ordered against a decimal that is close to it too: 1.0656953046588101931 is below, and
+        // 1.0656953046588101932 above.
+        let below = Ratio::of_decimal(&digits_at("10656953046588101931", 19));
+        let above = Ratio::of_decimal(&digits_at("10656953046588101932", 19));
+        assert_eq!(close.compare(&below), Ordering::Greater);
+        assert_eq!(close.compare(&above), Ordering::Less);
+    }
+
+    /// The sum of two numbers as wide as a number may be is a bit wider than any may be and an
+    /// ordinary value once its factor of two is an exponent: the limit is asked of the answer, and
+    /// not of what was worked with.
+    #[test]
+    fn a_sum_a_bit_wider_than_a_part_may_be_is_a_value_where_a_factor_of_two_is_an_exponent() {
+        let limit = 64;
+        let widest = Magnitude::Small(u128::from(u64::MAX) - 2);
+        let made = |numerator: Magnitude| {
+            Ratio::canonical(false, numerator, one(), 0, 0, limit).expect("in its limit")
+        };
+        let odd = made(widest.clone());
+        let doubled = odd
+            .add_within(&odd, limit)
+            .expect("twice a number is a number");
+        assert_eq!(
+            (doubled.numerator.clone(), doubled.twos),
+            (widest.clone(), 1)
+        );
+        // 2^64 - 3 and 2^64 - 5 come to 8 × (2^62 - 1).
+        let other = made(Magnitude::Small(u128::from(u64::MAX) - 4));
+        let summed = odd
+            .add_within(&other, limit)
+            .expect("its parts are in the limit");
+        assert_eq!(
+            (summed.numerator, summed.twos),
+            (Magnitude::Small((1 << 62) - 1), 3)
+        );
+        // An odd sum of that width has no factor of two to give, and no place.
+        let four = made(Magnitude::Small(4)).add_within(&odd, limit);
+        assert_eq!(four, Err(Failure::NoPlace));
+        // And a product a bit wider does not.
+        assert_eq!(odd.multiply_within(&odd, limit), Err(Failure::NoPlace));
+    }
+
+    /// What a power is written out as is refused exactly where it is too wide, and not by a count
+    /// that is nearly the width.
+    #[test]
+    fn a_power_is_written_out_where_it_is_no_wider_than_the_limit() {
+        for whole in [1u128, 3, 1000] {
+            for twos in [0i128, 1, 7, 70] {
+                for fives in 0..130i128 {
+                    let made = built(&Magnitude::Small(whole), twos, fives);
+                    for limit in made.bits().saturating_sub(3)..made.bits() + 3 {
+                        let written = written(&Magnitude::Small(whole), twos, fives, limit);
+                        assert_eq!(
+                            written.is_ok(),
+                            made.bits() <= limit,
+                            "{whole} × 2^{twos} × 5^{fives} at {limit}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// A small deterministic source of numbers, which is all a differential test needs.
+    struct Lcg(u64);
+
+    impl Lcg {
+        fn next(&mut self) -> u64 {
+            self.0 = self
+                .0
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            self.0 >> 11
+        }
+
+        fn below(&mut self, n: u64) -> u64 {
+            self.next() % n
+        }
+
+        fn ratio(&mut self, bits: u32) -> Ratio {
+            let numerator = 1 + self.below((1u64 << bits) - 1);
+            let denominator = 1 + self.below((1u64 << bits) - 1);
+            Ratio::canonical(
+                self.below(2) == 1,
+                Magnitude::Small(u128::from(numerator)),
+                Magnitude::Small(u128::from(denominator)),
+                i128::from(self.below(161)) - 80,
+                i128::from(self.below(161)) - 80,
+                WIDEST,
+            )
+            .expect("small parts and exponents")
+        }
+    }
+
+    /// The order of two magnitudes by building both, which is what the enclosures are held to.
+    fn built_order(one: &Ratio, other: &Ratio) -> Ordering {
+        let twos = i128::from(one.twos) - i128::from(other.twos);
+        let fives = i128::from(one.fives) - i128::from(other.fives);
+        let left = built(
+            &one.numerator.mul(&other.denominator),
+            twos.max(0),
+            fives.max(0),
+        );
+        let right = built(
+            &other.numerator.mul(&one.denominator),
+            (-twos).max(0),
+            (-fives).max(0),
+        );
+        left.cmp(&right)
+    }
+
+    /// An order by what is known of two values is the order of the values, which building them
+    /// answers: over pairs at random and over pairs that are a part apart, and across the sizes
+    /// at which the enclosures need one precision and the next.
+    #[test]
+    fn an_order_by_enclosure_is_the_order_by_building() {
+        let mut random = Lcg(7);
+        for round in 0..1500 {
+            let one = random.ratio(if round % 3 == 0 { 62 } else { 12 });
+            let other = if round % 2 == 0 {
+                random.ratio(12)
+            } else {
+                // The same value with one part a step off, which no coarse bound tells apart.
+                let step = Magnitude::Small(1 + u128::from(random.below(3)));
+                Ratio::canonical(
+                    one.negative,
+                    one.numerator.add(&step),
+                    one.denominator.clone(),
+                    i128::from(one.twos),
+                    i128::from(one.fives),
+                    WIDEST,
+                )
+                .expect("a part a step off")
+            };
+            if one.negative != other.negative || one == other {
+                continue;
+            }
+            assert_eq!(
+                one.compare_by_enclosure(&other),
+                Ok(built_order(&one, &other)),
+                "{one:?} against {other:?}"
+            );
+            assert_eq!(
+                one.compare_magnitudes(&other),
+                Ok(built_order(&one, &other)),
+                "{one:?} against {other:?}"
+            );
+        }
+    }
+
+    /// A rounding from what is known of the value is the rounding of building it, for every value
+    /// that is not a whole number or a half exactly, which is never asked of it.
+    #[test]
+    fn a_rounding_by_enclosure_is_the_rounding_by_building() {
+        let mut random = Lcg(11);
+        for round in 0..1500 {
+            let value = random.ratio(if round % 3 == 0 { 62 } else { 12 });
+            let scale = random.below(9) as i128 - 4;
+            let twos = i128::from(value.twos) + scale;
+            let fives = i128::from(value.fives) + scale;
+            let (quotient, left) = value.rounded_exactly(twos, fives);
+            if matches!(left, Dropped::Nothing | Dropped::Half) {
+                continue;
+            }
+            let (low, high) = log_bounds(&value.numerator, &value.denominator, twos, fives);
+            let _ = low;
+            let answer = high.max(0) as u64;
+            assert_eq!(
+                value.rounded_by_enclosure(twos, fives, answer),
+                Ok((quotient, left)),
+                "{value:?} at {scale}"
+            );
+        }
+    }
+
+    /// The two limits are two: a value with no place says so, and the run being out of room is not
+    /// that.
+    #[test]
+    fn what_has_no_place_is_not_what_there_was_no_room_for() {
+        assert_eq!(settled::<u8>(Err(Failure::NoPlace)), None);
+        assert!(std::panic::catch_unwind(|| settled::<u8>(Err(Failure::NoRoom))).is_err());
     }
 }

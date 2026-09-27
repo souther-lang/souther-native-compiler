@@ -260,24 +260,31 @@ impl Magnitude {
 
     /// The greatest whole number dividing both.
     ///
-    /// A wide number beside one a `u128` holds is first taken down to what the narrow one leaves of
-    /// it, and the rest is machine arithmetic. The `BigUint`'s own algorithm subtracts the wide
-    /// number once for each bit it has, which is a wait of minutes for a number of millions of bits
-    /// and a denominator of one, the pair nearly every value here is made of.
+    /// The `BigUint`'s own algorithm subtracts the wider number once for each bit it has, so a pair
+    /// of very different widths is a wait of minutes at a few million bits, and the pair nearly
+    /// every value here is made of has a denominator of one. So the wider number is first taken
+    /// down by division for as long as it is more than a word wider than the other, which is the
+    /// whole of the work where the narrower is small; the two that are left of a width are what
+    /// the `BigUint`'s algorithm is fast at.
     pub(crate) fn gcd(&self, other: &Magnitude) -> Magnitude {
-        match (self, other) {
-            (Small(one), Small(two)) => Small(u128_gcd(*one, *two)),
-            (Small(small), Wide(wide)) | (Wide(wide), Small(small)) => {
-                if *small == 0 {
-                    return Wide(wide.clone());
-                }
-                let left = wide.mod_floor(&wide::of_u128(*small));
-                Small(u128_gcd(
-                    *small,
-                    left.to_u128().expect("a remainder is below its divisor"),
-                ))
+        let (mut wider, mut narrower) = if self >= other {
+            (self.clone(), other.clone())
+        } else {
+            (other.clone(), self.clone())
+        };
+        loop {
+            if narrower.is_zero() {
+                return wider;
             }
-            (Wide(one), Wide(two)) => Magnitude::of_big(one.gcd(two)),
+            if let (Small(one), Small(two)) = (&wider, &narrower) {
+                return Small(u128_gcd(*one, *two));
+            }
+            if wider.bits() <= narrower.bits() + 64 {
+                return Magnitude::of_big(wider.big().gcd(&narrower.big()));
+            }
+            let (_, left) = wider.div_rem(&narrower);
+            wider = narrower;
+            narrower = left;
         }
     }
 
@@ -322,10 +329,14 @@ impl Magnitude {
         }
     }
 
-    /// Divided by two to `by`, which the magnitude is a multiple of.
+    /// Divided by two to `by`, rounded down.
     pub(crate) fn shifted_down(&self, by: u64) -> Magnitude {
         match self {
-            Small(small) => Small(small >> by.min(127)),
+            Small(small) if by >= 128 => {
+                let _ = small;
+                Magnitude::ZERO
+            }
+            Small(small) => Small(small >> by),
             Wide(big) => Magnitude::of_big(big >> by),
         }
     }
