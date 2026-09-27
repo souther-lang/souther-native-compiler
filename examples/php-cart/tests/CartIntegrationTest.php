@@ -202,6 +202,21 @@ final class CartIntegrationTest extends TestCase
     }
 
     #[Test]
+    public function everyIssueOfARequestIsAnsweredAtOnceWhicheverStepFoundIt(): void
+    {
+        // raoh-php finds that the user is no UUID. The model finds that a corporation has a company
+        // name and a corporate number, which raoh-php, reading only the email, has no way to know.
+        $response = $this->checkout('/carts/checkout', 'not-a-uuid',
+            ['type' => 'Corporation', 'email' => 'info@acme.co.jp']);
+
+        self::assertSame(400, $response->status);
+        $paths = array_column(self::body($response)['issues'], 'path');
+        sort($paths);
+        self::assertSame(['/orderer/companyName', '/orderer/corporateNumber', '/userId'], $paths,
+            (string) $response->body);
+    }
+
+    #[Test]
     public function anEmptyCartDoesNotCheckOut(): void
     {
         $response = $this->checkout('/carts/checkout', '11111111-1111-1111-1111-111111111113', self::individual());

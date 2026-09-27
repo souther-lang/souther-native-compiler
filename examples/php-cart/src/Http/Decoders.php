@@ -34,7 +34,7 @@ final class Decoders
     /** @return Decoder<mixed, UserId> */
     public static function userId(): Decoder
     {
-        return string_()->uuid()->map(strtolower(...))->pipe(UserId::decoder());
+        return self::uuid()->pipe(UserId::decoder());
     }
 
     /** `{"userId":"…","productId":"…","quantity":n}` as the arguments of addItemToCart. */
@@ -42,7 +42,7 @@ final class Decoders
     {
         return from_json(combine(
             field('userId', self::userId()),
-            field('productId', string_()->uuid()->map(strtolower(...))->pipe(ProductId::decoder())),
+            field('productId', self::uuid()->pipe(ProductId::decoder())),
             field('quantity', Quantity::decoder()),
         )->map(fn (UserId $userId, ProductId $productId, Quantity $quantity): array =>
             [$userId, $productId, $quantity]));
@@ -71,5 +71,15 @@ final class Decoders
         )->map(fn (?string $email, mixed $orderer): mixed =>
             $email === null ? $orderer : ['email' => $email] + $orderer)
             ->pipe(OrdererCodec::decoder());
+    }
+
+    /**
+     * A UUID's text, as the database keeps one: in lower case, with its hyphens.
+     *
+     * @return Decoder<mixed, string>
+     */
+    private static function uuid(): Decoder
+    {
+        return string_()->uuid()->map(strtolower(...));
     }
 }
