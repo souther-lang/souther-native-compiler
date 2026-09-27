@@ -4,20 +4,20 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "239c3de1e836d075b0f5788e5da6130c",
+    "content-hash": "c393bff0fb1472c705510733785c02a8",
     "packages": [
         {
             "name": "raoh/raoh",
-            "version": "v0.5.0",
+            "version": "dev-develop",
             "source": {
                 "type": "git",
                 "url": "https://github.com/kawasima/raoh-php.git",
-                "reference": "c40a368bf832bb0f6e9a62c27c710faddc73209e"
+                "reference": "693eb0ebb4c59d3660aac7d08126c57d1041f780"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/kawasima/raoh-php/zipball/c40a368bf832bb0f6e9a62c27c710faddc73209e",
-                "reference": "c40a368bf832bb0f6e9a62c27c710faddc73209e",
+                "url": "https://api.github.com/repos/kawasima/raoh-php/zipball/693eb0ebb4c59d3660aac7d08126c57d1041f780",
+                "reference": "693eb0ebb4c59d3660aac7d08126c57d1041f780",
                 "shasum": ""
             },
             "require": {
@@ -28,6 +28,11 @@
                 "phpunit/phpunit": "^11.0"
             },
             "type": "library",
+            "extra": {
+                "branch-alias": {
+                    "dev-develop": "0.8.x-dev"
+                }
+            },
             "autoload": {
                 "files": [
                     "src/Boundary/Array_/functions.php",
@@ -63,15 +68,17 @@
             ],
             "support": {
                 "issues": "https://github.com/kawasima/raoh-php/issues",
-                "source": "https://github.com/kawasima/raoh-php/tree/v0.5.0"
+                "source": "https://github.com/kawasima/raoh-php/tree/develop"
             },
-            "time": "2026-05-28T14:55:34+00:00"
+            "time": "2026-09-27T13:59:53+00:00"
         }
     ],
     "packages-dev": [],
     "aliases": [],
     "minimum-stability": "stable",
-    "stability-flags": {},
+    "stability-flags": {
+        "raoh/raoh": 20
+    },
     "prefer-stable": false,
     "prefer-lowest": false,
     "platform": {

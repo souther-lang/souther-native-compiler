@@ -397,9 +397,9 @@ final class Session
      * What a reading found, as Raoh's issues. The codes and the metadata are Raoh's already, so
      * this changes how they are held and not what they say: the metadata arrives as the JSON
      * object it is, a number as a number and a list as a list. The library gives no message, so
-     * each issue's message is its code until something resolves it. The message key a resolver
-     * would word it by is the library's too (`souther_issue_message_key`), and raoh-php's `Issue`
-     * holds none yet (kawasima/raoh-php#7), so it is not handed on.
+     * each issue's message is its code until something resolves it, by the message key the library
+     * answers (`souther_issue_message_key`): Raoh's own where it gives the issue one
+     * (`out_of_range.minimum`), and the code where it gives none.
      */
     private function issues(CData $reading): Issues
     {
@@ -415,8 +415,9 @@ final class Session
                 JSON_THROW_ON_ERROR | JSON_BIGINT_AS_STRING,
             );
             $code = $this->text($ffi->souther_issue_code($issue));
+            $key = $this->text($ffi->souther_issue_message_key($issue));
             $issues = $issues->add(Issue::of(
-                self::path($this->text($ffi->souther_issue_path($issue))), $code, $code, $meta));
+                self::path($this->text($ffi->souther_issue_path($issue))), $code, $code, $meta, $key));
         }
         return $issues;
     }

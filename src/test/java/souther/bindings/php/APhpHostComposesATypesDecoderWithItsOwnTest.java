@@ -72,7 +72,8 @@ class APhpHostComposesATypesDecoderWithItsOwnTest {
                 return $result->fold(
                     fn (mixed $value): string => 'ok ' . (new ReflectionClass($value))->getShortName(),
                     fn ($issues): string => implode(' ', array_map(
-                        fn (Issue $it): string => '[' . ($it->path->toJsonPointer() ?: '/') . ' ' . $it->code . ']',
+                        fn (Issue $it): string => '[' . ($it->path->toJsonPointer() ?: '/') . ' ' . $it->code
+                            . ($it->messageKey === $it->code ? '' : ' key=' . $it->messageKey) . ']',
                         $issues->toArray())));
             }
 
@@ -144,9 +145,9 @@ class APhpHostComposesATypesDecoderWithItsOwnTest {
             no such case: [/orderer/type not_allowed]
             missing field: [/orderer/companyName missing_field]
             both: [/who too_short] [/individual/email too_short]
-            quantity: [/n out_of_range]
+            quantity: [/n out_of_range key=out_of_range.positive]
             a float: [/ type_mismatch]
-            lines: [/lines/1/quantity out_of_range]
+            lines: [/lines/1/quantity out_of_range key=out_of_range.positive]
             no lines: ok Lines
             not json: [/ type_mismatch]
             made before the run: ok Quantity

@@ -6,7 +6,7 @@
     "require": {
         "php": "^8.2",
         "ext-ffi": "*",
-        "raoh/raoh": "^0.5"
+        "raoh/raoh": "0.8.x-dev"
     },
     "autoload": {
         "psr-4": {
