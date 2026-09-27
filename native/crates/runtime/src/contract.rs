@@ -15,6 +15,7 @@ use crate::decimal::*;
 use crate::decoding::*;
 use crate::document::Node;
 use crate::external::*;
+use crate::rational::*;
 use crate::temporal::*;
 use crate::*;
 use souther_native_abi::{
@@ -70,6 +71,8 @@ words! {
     *const Text => Word::Host(HostWord::String),
     *const Decimal => Word::Host(HostWord::Decimal),
     *mut Decimal => Word::Host(HostWord::Decimal),
+    *const Rational => Word::Rational,
+    *mut Rational => Word::Rational,
     *const Date => Word::Host(HostWord::Date),
     *mut Date => Word::Host(HostWord::Date),
     *const Time => Word::Host(HostWord::Time),
@@ -96,6 +99,7 @@ rooms! {
     *mut i8 => Word::Host(HostWord::Bool),
     *mut *mut Text => Word::Host(HostWord::String),
     *mut *mut Decimal => Word::Host(HostWord::Decimal),
+    *mut *mut Rational => Word::Rational,
     *mut *mut Date => Word::Host(HostWord::Date),
     *mut *mut Time => Word::Host(HostWord::Time),
     *mut *mut DateTime => Word::Host(HostWord::DateTime),
@@ -499,6 +503,120 @@ fn functions() -> Vec<(&'static str, Shape)> {
             shape_of(
                 souther_decimal_compare
                     as unsafe extern "C" fn(*const Decimal, *const Decimal) -> Comparison,
+            ),
+        ),
+        (
+            "souther_rational_from_int",
+            shape_of(souther_rational_from_int as extern "C" fn(i64) -> *mut Rational),
+        ),
+        (
+            "souther_rational_from_decimal",
+            shape_of(
+                souther_rational_from_decimal
+                    as unsafe extern "C" fn(*const Decimal) -> *mut Rational,
+            ),
+        ),
+        (
+            "souther_rational_negate",
+            shape_of(
+                souther_rational_negate as unsafe extern "C" fn(*const Rational) -> *mut Rational,
+            ),
+        ),
+        (
+            "souther_rational_is_zero",
+            shape_of(souther_rational_is_zero as unsafe extern "C" fn(*const Rational) -> i8),
+        ),
+        (
+            "souther_rational_is_whole",
+            shape_of(souther_rational_is_whole as unsafe extern "C" fn(*const Rational) -> i8),
+        ),
+        (
+            "souther_rational_has_finite_decimal",
+            shape_of(
+                souther_rational_has_finite_decimal as unsafe extern "C" fn(*const Rational) -> i8,
+            ),
+        ),
+        (
+            "souther_rational_compare",
+            shape_of(
+                souther_rational_compare
+                    as unsafe extern "C" fn(*const Rational, *const Rational) -> Comparison,
+            ),
+        ),
+        (
+            "souther_rational_add",
+            shape_of(
+                souther_rational_add
+                    as unsafe extern "C" fn(
+                        *const Rational,
+                        *const Rational,
+                        *mut *mut Rational,
+                    ) -> i8,
+            ),
+        ),
+        (
+            "souther_rational_subtract",
+            shape_of(
+                souther_rational_subtract
+                    as unsafe extern "C" fn(
+                        *const Rational,
+                        *const Rational,
+                        *mut *mut Rational,
+                    ) -> i8,
+            ),
+        ),
+        (
+            "souther_rational_multiply",
+            shape_of(
+                souther_rational_multiply
+                    as unsafe extern "C" fn(
+                        *const Rational,
+                        *const Rational,
+                        *mut *mut Rational,
+                    ) -> i8,
+            ),
+        ),
+        (
+            "souther_rational_divide",
+            shape_of(
+                souther_rational_divide
+                    as unsafe extern "C" fn(
+                        *const Rational,
+                        *const Rational,
+                        *mut *mut Rational,
+                    ) -> i8,
+            ),
+        ),
+        (
+            "souther_rational_to_whole",
+            shape_of(
+                souther_rational_to_whole as unsafe extern "C" fn(*const Rational, *mut i64) -> i8,
+            ),
+        ),
+        (
+            "souther_rational_to_finite_decimal",
+            shape_of(
+                souther_rational_to_finite_decimal
+                    as unsafe extern "C" fn(*const Rational, *mut *mut Decimal) -> i8,
+            ),
+        ),
+        (
+            "souther_rational_to_int",
+            shape_of(
+                souther_rational_to_int
+                    as unsafe extern "C" fn(*const Value, *const Rational, *mut i64) -> i8,
+            ),
+        ),
+        (
+            "souther_rational_to_decimal",
+            shape_of(
+                souther_rational_to_decimal
+                    as unsafe extern "C" fn(
+                        i64,
+                        *const Value,
+                        *const Rational,
+                        *mut *mut Decimal,
+                    ) -> i8,
             ),
         ),
         (
@@ -984,6 +1102,7 @@ fn every_function_the_runtime_defines_is_in_one_table() {
         include_str!("document.rs"),
         include_str!("kernels.rs"),
         include_str!("decimal.rs"),
+        include_str!("rational.rs"),
         include_str!("temporal.rs"),
     ];
     let marker = "extern \"C\" fn ";
@@ -1018,12 +1137,27 @@ fn every_function_the_runtime_defines_is_in_one_table() {
     assert_eq!(written, defined);
 }
 
-/// A case a host makes a value of is a case the runtime defines a token for, and every one is:
-/// the two tables name the same cases in the same order.
+/// A case a host makes a value of is a case the runtime defines a token for. The other way about
+/// is not held: a case can have a token and no external form, and `Rational` is one.
 #[test]
-fn a_host_makes_every_case_the_runtime_has_a_token_for() {
-    let crossed: Vec<&str> = HOST_CASES.iter().map(|it| it.case).collect();
-    assert_eq!(crossed, BUILT_IN_CASES);
+fn a_host_makes_only_cases_the_runtime_has_a_token_for() {
+    let built_in: BTreeSet<&str> = BUILT_IN_CASES.iter().copied().collect();
+    for crossing in HOST_CASES {
+        assert!(
+            built_in.contains(crossing.case),
+            "{} is made by a host and has no token",
+            crossing.case
+        );
+    }
+}
+
+/// A rational is something objects share and a host never sees: it has a token, and no function a
+/// host calls makes or reads one. That none takes or answers one is the type's to say: there is
+/// no `HostWord` for it.
+#[test]
+fn a_rational_is_a_case_and_no_host_crosses_it() {
+    assert!(BUILT_IN_CASES.contains(&"Rational"));
+    assert!(HOST_CASES.iter().all(|it| it.case != "Rational"));
 }
 
 /// What a host makes of a case and what it reads back are what went in, and the value says it is

@@ -24,8 +24,8 @@ use cranelift::frontend::FunctionBuilder;
 use cranelift::module::Module;
 use cranelift::object::ObjectModule;
 use souther_native_abi::{
-    DECIMAL_ADD, DECIMAL_FROM_INT, DECIMAL_MULTIPLY, HELD, LIST_LENGTH, NOTHING, SLOT, Status,
-    list_at, room_for_held, room_for_list,
+    DECIMAL_ADD, DECIMAL_FROM_INT, DECIMAL_MULTIPLY, HELD, LIST_LENGTH, NOTHING, RATIONAL_ADD,
+    RATIONAL_FROM_INT, RATIONAL_MULTIPLY, SLOT, Status, list_at, room_for_held, room_for_list,
 };
 
 use crate::ordering::ordered;
@@ -266,7 +266,7 @@ pub(crate) fn total(
     match element {
         Ty::Prim { prim: Prim::Int } => {}
         Ty::Prim {
-            prim: Prim::Decimal,
+            prim: prim @ (Prim::Decimal | Prim::Rational),
         } => {
             let seed = builder.ins().iconst(
                 types::I64,
@@ -275,12 +275,16 @@ pub(crate) fn total(
                     _ => 1,
                 },
             );
-            let seed = runtime_call(builder, lowering, module, DECIMAL_FROM_INT, &[seed]);
+            let (from_int, add, multiply) = match prim {
+                Prim::Decimal => (DECIMAL_FROM_INT, DECIMAL_ADD, DECIMAL_MULTIPLY),
+                _ => (RATIONAL_FROM_INT, RATIONAL_ADD, RATIONAL_MULTIPLY),
+            };
+            let seed = runtime_call(builder, lowering, module, from_int, &[seed]);
             let running = builder.declare_var(POINTER);
             builder.def_var(running, seed);
             let name = match op {
-                Op::Add => DECIMAL_ADD,
-                _ => DECIMAL_MULTIPLY,
+                Op::Add => add,
+                _ => multiply,
             };
             let count = length(builder, list);
             each(builder, count, |builder, at| {

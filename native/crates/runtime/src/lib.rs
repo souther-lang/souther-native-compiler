@@ -31,12 +31,15 @@ mod contract;
 mod decimal;
 mod decoding;
 mod document;
+mod enclosure;
 mod external;
 mod kernels;
 mod magnitude;
+mod rational;
 mod temporal;
 pub use decimal::*;
 pub use kernels::*;
+pub use rational::*;
 use souther_text::{Text as Held, append, code_points, compare};
 use std::cell::RefCell;
 use std::cmp::Ordering;
@@ -417,6 +420,7 @@ built_in_cases! {
     "Bool" => CASE_BOOL,
     "String" => CASE_STRING,
     "Decimal" => CASE_DECIMAL,
+    "Rational" => CASE_RATIONAL,
     "Date" => CASE_DATE,
     "Time" => CASE_TIME,
     "DateTime" => CASE_DATETIME,

@@ -61,27 +61,35 @@ fn over_answering(op: &str, left: &str, right: &str, answers: &str) -> String {
 /// An operator crosses whether or not there is a lowering for it. What it means is the language's
 /// and the writer's business; whether this can write it is this driver's, and it is answered here.
 #[test]
-fn an_operator_with_no_lowering_is_not_lowered_rather_than_unreadable() {
-    let refused = object_for(&document("DIV", "INT")).expect_err("no lowering for it");
+fn an_operator_over_what_has_no_lowering_is_not_lowered_rather_than_unreadable() {
+    let set = r#"{"set":{"prim":"INT"}}"#;
+    let refused = over("DIV", set, set);
+    let refused = object_for(&refused).expect_err("no lowering for it");
 
     assert!(
         refused.downcast_ref::<NotLowered>().is_some(),
         "read as something other than a lowering this driver has not got: {refused}"
     );
-    assert!(refused.to_string().contains("Rational"), "{refused}");
 }
 
-/// The same for a primitive. A type with no machine representation yet is a lowering this driver
-/// has not got, not a document it failed to understand.
+/// The same for a type. One with no machine representation yet is a lowering this driver has not
+/// got, not a document it failed to understand.
 #[test]
-fn a_primitive_with_no_representation_is_not_lowered() {
-    let refused = object_for(&document("ADD", "RATIONAL")).expect_err("no representation for it");
+fn a_type_with_no_representation_is_not_lowered() {
+    let set = r#"{"set":{"prim":"INT"}}"#;
+    let refused = object_for(&over("EQ", set, set)).expect_err("no representation for it");
 
     assert!(
         refused.downcast_ref::<NotLowered>().is_some(),
         "read as something other than a lowering this driver has not got: {refused}"
     );
-    assert!(refused.to_string().contains("Rational"), "{refused}");
+}
+
+/// A `Rational` is lowered, as a quotient and as what the arithmetic over it answers.
+#[test]
+fn a_rational_is_lowered() {
+    object_for(&document("ADD", "RATIONAL")).expect("a sum of two rationals is lowered");
+    object_for(&document("DIV", "INT")).expect("a quotient of two Ints is lowered");
 }
 
 /// Refused, and refused as not lowered: what is under test is that nothing is emitted for it.

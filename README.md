@@ -121,9 +121,22 @@ macOS and Linux, since what it asks of the linker is said only for those two.
 ## What compiles today
 
 Over `Int` and `Bool`: `+`, `-`, `*`, the six comparisons, `&&` and `||`, `if`, and a name for a
-value. `/` answers the exact quotient, which is a `Rational` and has no representation here. Unary
-`-` of a literal is folded at compile time, and of anything else ends the run where it leaves the
-range, the way `+`, `-` and `*` do.
+value. `/` answers the exact quotient, which is a `Rational`. Unary `-` of a literal is folded at
+compile time, and of anything else ends the run where it leaves the range, the way `+`, `-` and `*`
+do.
+
+A `Rational` is numerator × 2^twos × 5^fives / denominator, held by the runtime behind an address
+that only it reads, so a `Decimal` enters by its scale and nothing is built from it. It is a value
+a computation holds and a case a union can be, and no host is handed one: it has no external form,
+so no behavior takes or answers one and the manifest names no way to make or read one. An operator
+that reads its operands at their exact values (`Int + Rational`, `Decimal < Rational`) takes each as
+the `Rational` it stands for, which is the operator's reading and not a conversion any position
+that asks for a `Rational` gets. `/` reads its operands so whatever it divides. A zero divisor ends
+the run, and so does an answer that has no place: an exponent past sixty-four bits, or a part wider
+than a `Decimal`'s integer, asked of the answer once it is in its one form and not of what was
+worked with on the way to it. An order or a rounding of values at exponents nothing can be built at
+is answered from what is known of them, to as many bits as it takes. Two `Rational`s whose order
+needs more room than the run has end it as an arena that has run out does.
 
 An operation the language implements as a kernel, over `Int`, `String` and `Decimal`, every one the
 language declares. `Int.add`, `Int.subtract` and
@@ -403,8 +416,8 @@ In the external form a list is an array of its elements, and a mistake inside on
 the element's index (`/lines/2/quantity`). Two values of one type compare by what they are made
 of, a list element by element, through a comparator the object holds per type.
 
-Still ahead: a `Rational`, a `Set` and a `Map`,
-every kernel over a `Rational`, a `Set`, a `Map` or a date, every list kernel but `List.length` and
+Still ahead: a `Set` and a `Map`,
+every kernel over a `Set`, a `Map` or a date, every list kernel but `List.length` and
 `List.get`, a value
 that runs in the module declaring it, and a
 behavior that declares what its answer owes, which is refused rather than answered without the

@@ -35,9 +35,9 @@ use souther_native_abi::{
 
 use crate::transport::{Case, FnSignature, Prim, Ty};
 use crate::{
-    CLOSURE_CODE, Lowered, Lowerings, POINTER, TRUSTED, accepted, built_in_case, capture_at, carry,
-    into_slot, laid_out_nowhere, lifted_signature, machine_type, not_lowered, out_of_slot,
-    out_slot, room_for_closure, says_its_case,
+    CLOSURE_CODE, Lowered, Lowerings, POINTER, TRUSTED, accepted, capture_at, carry, into_slot,
+    laid_out_nowhere, lifted_signature, machine_type, not_lowered, out_of_slot, out_slot,
+    room_for_closure, says_its_case,
 };
 
 /// What holding a value of one type as a value of another takes, position by position.
@@ -107,10 +107,7 @@ pub(crate) fn restatement(from: &Ty, to: &Ty) -> Lowered<Restatement> {
     };
     Ok(match (from, to) {
         (Ty::Nothing { .. } | Ty::Never { .. }, _) => Restatement::Same,
-        (Ty::Prim { prim }, _) if says_its_case(to) => {
-            built_in_case(&Case::Primitive { prim: *prim })?;
-            Restatement::Carry(*prim)
-        }
+        (Ty::Prim { prim }, _) if says_its_case(to) => Restatement::Carry(*prim),
         (_, Ty::Prim { prim }) if says_its_case(from) => {
             machine_type(to)?;
             Restatement::Uncarry(*prim)

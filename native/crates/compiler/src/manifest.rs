@@ -433,7 +433,8 @@ impl std::fmt::Display for Refusal {
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Reason {
-    /// A type with no representation for a host yet: a `Rational`, a `Set`, a `Map`.
+    /// A type with no representation for a host: a `Rational`, which has no external form, and a
+    /// `Set` and a `Map`, which have none yet.
     NoRepresentation,
     /// A type with no value to hand over: what an empty list holds, and what does not answer.
     NoValue,

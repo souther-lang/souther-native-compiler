@@ -20,6 +20,17 @@ use num_integer::Integer;
 use num_traits::{ToPrimitive, Zero};
 use std::cmp::Ordering;
 
+/// Five to the twenty-seventh, the most a `u64` holds of them: what a wide value is divided by
+/// while it is a multiple of it.
+const FIVE_TO_27: u128 = 7_450_580_596_923_828_125;
+
+fn u128_gcd(mut one: u128, mut two: u128) -> u128 {
+    while two != 0 {
+        (one, two) = (two, one % two);
+    }
+    one
+}
+
 /// Ten to each power a `u128` holds, from nought to 38.
 pub(crate) const TENS: [u128; 39] = {
     let mut tens = [1u128; 39];
@@ -67,6 +78,10 @@ mod wide {
 
     pub(super) fn of_digits(digits: &[u8]) -> BigUint {
         made(BigUint::parse_bytes(digits, 10).expect("the digits read are ASCII digits"))
+    }
+
+    pub(super) fn five_to(n: u32) -> BigUint {
+        made(BigUint::from(5u8).pow(n))
     }
 
     /// Ten to `n`, for an `n` the caller has already held to a width a value may have.
@@ -232,11 +247,121 @@ impl Magnitude {
             (Small(one), Small(two)) => (Small(one / two), Small(one % two)),
             // A dividend a `u128` holds over one it does not is nought, all of it left over.
             (Small(_), Wide(_)) => (Magnitude::ZERO, self.clone()),
-            _ => {
-                let (quotient, remainder) = self.big().div_rem(&divisor.big());
+            (Wide(dividend), Small(small)) => {
+                let (quotient, remainder) = dividend.div_rem(&wide::of_u128(*small));
+                (Magnitude::of_big(quotient), Magnitude::of_big(remainder))
+            }
+            (Wide(dividend), Wide(divisor)) => {
+                let (quotient, remainder) = dividend.div_rem(divisor);
                 (Magnitude::of_big(quotient), Magnitude::of_big(remainder))
             }
         }
+    }
+
+    /// The greatest whole number dividing both.
+    ///
+    /// The `BigUint`'s own algorithm subtracts the wider number once for each bit it has, so a pair
+    /// of very different widths is a wait of minutes at a few million bits, and the pair nearly
+    /// every value here is made of has a denominator of one. So the wider number is first taken
+    /// down by division for as long as it is more than a word wider than the other, which is the
+    /// whole of the work where the narrower is small; the two that are left of a width are what
+    /// the `BigUint`'s algorithm is fast at.
+    pub(crate) fn gcd(&self, other: &Magnitude) -> Magnitude {
+        let (mut wider, mut narrower) = if self >= other {
+            (self.clone(), other.clone())
+        } else {
+            (other.clone(), self.clone())
+        };
+        loop {
+            if narrower.is_zero() {
+                return wider;
+            }
+            if let (Small(one), Small(two)) = (&wider, &narrower) {
+                return Small(u128_gcd(*one, *two));
+            }
+            if wider.bits() <= narrower.bits() + 64 {
+                return Magnitude::of_big(wider.big().gcd(&narrower.big()));
+            }
+            let (_, left) = wider.div_rem(&narrower);
+            wider = narrower;
+            narrower = left;
+        }
+    }
+
+    /// The magnitude with every factor of five taken off, and how many there were. Twenty-seven
+    /// at a time while the value is wide and they are there, then one at a time, for the reason
+    /// [`Magnitude::without_trailing_zeros`] takes nineteen.
+    pub(crate) fn without_fives(&self) -> (Magnitude, u64) {
+        if self.is_zero() {
+            return (self.clone(), 0);
+        }
+        let mut magnitude = self.clone();
+        let mut dropped = 0u64;
+        if matches!(magnitude, Wide(_)) {
+            let chunk = wide::of_u128(FIVE_TO_27);
+            while let Wide(big) = &magnitude {
+                let (quotient, remainder) = big.div_rem(&chunk);
+                if !remainder.is_zero() {
+                    break;
+                }
+                magnitude = Magnitude::of_big(quotient);
+                dropped += 27;
+            }
+        }
+        let five = Small(5);
+        loop {
+            let (quotient, remainder) = magnitude.div_rem(&five);
+            if !remainder.is_zero() {
+                break;
+            }
+            magnitude = quotient;
+            dropped += 1;
+        }
+        (magnitude, dropped)
+    }
+
+    /// How many two's it is a multiple of, nought for nought.
+    pub(crate) fn twos(&self) -> u64 {
+        match self {
+            Small(0) => 0,
+            Small(small) => u64::from(small.trailing_zeros()),
+            Wide(big) => big.trailing_zeros().unwrap_or(0),
+        }
+    }
+
+    /// Divided by two to `by`, rounded down.
+    pub(crate) fn shifted_down(&self, by: u64) -> Magnitude {
+        match self {
+            Small(small) if by >= 128 => {
+                let _ = small;
+                Magnitude::ZERO
+            }
+            Small(small) => Small(small >> by),
+            Wide(big) => Magnitude::of_big(big >> by),
+        }
+    }
+
+    /// Times two to `by`, for a `by` the caller has already held to a width a value may have.
+    pub(crate) fn times_two_to(&self, by: u64) -> Magnitude {
+        if self.is_zero() || by == 0 {
+            return self.clone();
+        }
+        if let Small(small) = self
+            && by < 128
+            && small.leading_zeros() as u64 >= by
+        {
+            return Small(small << by);
+        }
+        Magnitude::of_big(self.big() << by)
+    }
+
+    /// Times five to `by`, for a `by` the caller has already held to a width a value may have.
+    pub(crate) fn times_five_to(&self, by: u64) -> Magnitude {
+        if self.is_zero() || by == 0 {
+            return self.clone();
+        }
+        let by = u32::try_from(by).expect("a power built here is one a value may be as wide as");
+        Magnitude::of_big(self.big() * wide::five_to(by))
     }
 
     /// Ten to `n`, for an `n` the caller has already held to a width a value may have.
@@ -519,5 +644,39 @@ mod tests {
 
     fn narrow_of((magnitude, made): (Magnitude, usize)) -> (bool, usize) {
         (matches!(magnitude, Small(_)), made)
+    }
+
+    /// A wide number beside a narrow one is worked out from the narrow one's remainder, and is
+    /// the same answer the `BigUint` gives, across the edge where a `u128` gives way. A number of
+    /// millions of bits beside one is not a wait, which the `BigUint`'s own gcd would make it.
+    #[test]
+    fn a_gcd_of_a_wide_number_beside_a_narrow_one_is_the_big_integers() {
+        for one in operands() {
+            for two in operands() {
+                let (a, b) = (of(&one), of(&two));
+                assert_eq!(a.gcd(&b), of(&one.gcd(&two)), "{one} and {two}");
+            }
+        }
+        let wide = Small(1).times_two_to(4_000_000).sub(&Small(1));
+        assert_eq!(wide.gcd(&Small(1)), Small(1));
+        assert_eq!(Small(1).gcd(&wide), Small(1));
+        assert_eq!(wide.gcd(&Small(0)), wide);
+        // 2^4000000 - 1 is a multiple of 2^2 - 1 and of 2^5 - 1 (four million is one of five).
+        assert_eq!(wide.gcd(&Small(15)), Small(15));
+    }
+
+    /// The factors of five come off a wide number in chunks and a narrow one singly, and each is
+    /// counted once whichever way it went.
+    #[test]
+    fn every_factor_of_five_comes_off_and_is_counted() {
+        let seven = Small(7);
+        for fives in [0u64, 1, 26, 27, 28, 54, 100, 1000] {
+            let made = seven.times_five_to(fives);
+            assert_eq!(made.without_fives(), (seven.clone(), fives), "{fives}");
+        }
+        let wide = Small(3).times_two_to(300).times_five_to(200);
+        let (rest, by) = wide.without_fives();
+        assert_eq!((rest, by), (Small(3).times_two_to(300), 200));
+        assert_eq!(Magnitude::ZERO.without_fives(), (Magnitude::ZERO, 0));
     }
 }

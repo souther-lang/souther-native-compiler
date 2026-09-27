@@ -188,8 +188,8 @@ fn by_hand() -> Vec<(&'static str, Value)> {
         "else": int(2),
         "type": prim(INT), "aborts": []
     });
-    // A quotient answers a `Rational`, which nothing here lays out, so it stands in a document of
-    // its own: read, and refused as not lowered, which is a different thing for a change to hit.
+    // A quotient answers a `Rational` and ends a run for a zero divisor, which is a site of its own
+    // to change: it stands in a document of its own.
     let dividing = program(
         json!([]),
         json!([helper(
