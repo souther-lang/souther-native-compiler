@@ -28,7 +28,8 @@
 //! calling one another, and `f<'a>` calling `f<Int>` is at most two, so any recursion that reaches
 //! finitely many sets of types closes by itself. What does not is `f<'a>` calling `f<List<'a>>`,
 //! which needs a copy after every copy. A copy remembers the copy whose body made it, and one that
-//! would be the [`DEPTH`]th of its helper along that chain is refused as not converging. That is a
+//! would be the [`DEPTH`]th of its helper along that chain, or the [`REENTERED`]th made from a copy
+//! of its own helper anywhere, is refused as not converging. That is a
 //! limit of this backend on what it spends and no statement about the language: what a copy is
 //! made for is not affected by it, and a program under it is lowered the same at any other bound.
 //!
@@ -43,6 +44,11 @@ use crate::{Lowered, Runs, not_lowered};
 /// How many copies of one helper may be made one from the body of another before the making is
 /// taken not to converge.
 const DEPTH: usize = 16;
+
+/// How many copies of one helper may be made from the body of a copy of itself, over the whole
+/// program. A chain is bounded by [`DEPTH`], but a body calling itself at two growing types makes
+/// two copies at each step, which is two to the depth of them before the chain ends.
+const REENTERED: usize = 64;
 use std::collections::HashMap;
 
 /// A helper, by the module holding the copy and the reference a call there reaches it by.
@@ -256,6 +262,8 @@ impl<'p> Instance<'p> {
 pub(crate) struct Specializations<'p> {
     instances: Vec<Instance<'p>>,
     by_key: HashMap<(&'p str, &'p Reference, Vec<Option<Ty>>), InstanceId>,
+    /// How many copies of each helper were made from the body of a copy of the same helper.
+    reentered: HashMap<HelperKey<'p>, usize>,
     /// Which copy each call reaching a helper reaches, by where the call stands.
     reached: HashMap<*const Node, InstanceId>,
 }
@@ -270,6 +278,7 @@ impl<'p> Specializations<'p> {
         let mut specializations = Specializations {
             instances: Vec::new(),
             by_key: HashMap::new(),
+            reentered: HashMap::new(),
             reached: HashMap::new(),
         };
         let mut helpers: HashMap<HelperKey<'p>, Body<'p>> = HashMap::new();
@@ -362,6 +371,20 @@ impl<'p> Specializations<'p> {
                 along += 1;
             }
             at = ancestor.parent;
+        }
+        if along > 0 {
+            let made = self
+                .reentered
+                .entry((carrier.module(), &held.reached))
+                .or_insert(0);
+            *made += 1;
+            if *made > REENTERED {
+                return Err(not_lowered(format!(
+                    "{}, whose copies would be made one from the body of another without end: \
+                     the types it is called at keep growing",
+                    held.reached.rendered()
+                )));
+            }
         }
         if along >= DEPTH {
             return Err(not_lowered(format!(
@@ -710,6 +733,38 @@ mod tests {
             "{refused}"
         );
         assert!(refused.to_string().contains("without end"), "{refused}");
+    }
+
+    /// A body calling itself at two growing types makes two copies at each step: refused at a count
+    /// of copies and not only at a depth, which would be two to the depth of them.
+    #[test]
+    fn a_helper_calling_itself_at_two_growing_types_is_refused_without_making_them_all() {
+        let listed = r#"{"list":{"var":0}}"#;
+        let optional = r#"{"option":{"var":0}}"#;
+        let a = node("list", &format!(r#""elements":[{}]"#, read(0, VAR)), listed);
+        let b = node("some", &format!(r#""value":{}"#, read(0, VAR)), optional);
+        let both = node(
+            "let",
+            &format!(
+                r#""binding":9,"binds":{INT},"value":{},"body":{}"#,
+                call("m.g", &[a], INT),
+                call("m.g", &[b], INT)
+            ),
+            INT,
+        );
+        let helpers = [helper("m.g", &[VAR], &both)];
+        let started = std::time::Instant::now();
+        let refused = specialized(
+            &holding(&helpers, &call("m.g", &[number(1)], INT)),
+            |_, _| (),
+        )
+        .expect_err("no number of copies is enough");
+        assert!(refused.to_string().contains("without end"), "{refused}");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(2),
+            "refused after {:?}",
+            started.elapsed()
+        );
     }
 
     /// A function value written in a helper over variables is in each copy of it, at the types that
