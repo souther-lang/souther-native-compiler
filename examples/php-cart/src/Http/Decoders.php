@@ -14,25 +14,31 @@ use Raoh\Decoder;
 use function Raoh\Boundary\Json\combine;
 use function Raoh\Boundary\Json\field;
 use function Raoh\Boundary\Json\from_json;
-use function Raoh\Boundary\Json\int_;
-use function Raoh\Boundary\Json\optional_field;
 use function Raoh\Boundary\Json\string_;
 
 /**
- * Request bodies, decoded into the arguments of a behavior in two steps, as the Java example does.
+ * Request bodies, decoded into the arguments of a behavior.
  *
- * raoh-php checks the form of each field and normalises it: a UUID in lower case, a positive
- * quantity, an email trimmed, lowercased and shaped like one, a corporate number of thirteen
- * digits, which the model has no regular expression to say. What it hands on is read by the model's
- * own decoder, which the binding generates: which case an orderer is, the fields each case has, and
- * what each type states. Either failing is an issue under the field's path.
+ * Two parties read a request, and each owns a different part of what it means. The model owns what
+ * a value is, and its decoders, which the binding generates, read it: which case an orderer is, the
+ * fields each case has, and every rule a type states, a positive quantity, a name that is not blank
+ * and a corporate number of thirteen digits among them. Nothing here says any of that again. The
+ * boundary owns how a client writes a value: an id is a UUID in lower case, an email is trimmed,
+ * lowercased and shaped like one, a name is trimmed. Each of those is a raoh-php decoder, which
+ * writes the value in its form and refuses what cannot be written so, as one step.
+ *
+ * Where the boundary owns the value the model reads, an id, the two are piped: the model reads what
+ * the boundary answered, and nothing where it refused, since its issue would be at the same path.
+ * Where the model reads a value whole and the boundary owns some of its members, an orderer, the
+ * two are put together by `Members`, so that a member the boundary refuses does not keep the model
+ * from reading the rest.
  */
 final class Decoders
 {
     /** @return Decoder<mixed, UserId> */
     public static function userId(): Decoder
     {
-        return string_()->uuid()->map(strtolower(...))->pipe(UserId::decoder());
+        return self::uuid()->pipe(UserId::decoder());
     }
 
     /** `{"userId":"…","productId":"…","quantity":n}` as the arguments of addItemToCart. */
@@ -40,8 +46,8 @@ final class Decoders
     {
         return from_json(combine(
             field('userId', self::userId()),
-            field('productId', string_()->uuid()->map(strtolower(...))->pipe(ProductId::decoder())),
-            field('quantity', int_()->positive()->pipe(Quantity::decoder())),
+            field('productId', self::uuid()->pipe(ProductId::decoder())),
+            field('quantity', Quantity::decoder()),
         )->map(fn (UserId $userId, ProductId $productId, Quantity $quantity): array =>
             [$userId, $productId, $quantity]));
     }
@@ -56,23 +62,29 @@ final class Decoders
     }
 
     /**
-     * An orderer, `{"type":"Individual","email":"…","name":"…"}` or
-     * `{"type":"Corporation","email":"…","companyName":"…","corporateNumber":"…"}`: the model's own
-     * encoding of one. raoh-php checks the fields that are there, and the model reads the whole.
+     * An orderer in the model's own encoding of one, read whole by the model once the members the
+     * boundary owns are decoded. Whether each is there at all, and what it has to be, is the
+     * model's to say, as it is of every other member.
      *
      * @return Decoder<mixed, Orderer>
      */
     public static function orderer(): Decoder
     {
-        return combine(
-            field('type', string_()),
-            field('email', string_()->trim()->toLowerCase()->email()),
-            optional_field('name', string_()->trim()->nonBlank()->maxLength(100)),
-            optional_field('companyName', string_()->trim()->nonBlank()->maxLength(200)),
-            optional_field('corporateNumber', string_()->pattern('/^\d{13}$/')),
-        )->map(fn (string $type, string $email, ?string $name, ?string $companyName, ?string $corporateNumber): array =>
-            array_filter(compact('type', 'email', 'name', 'companyName', 'corporateNumber'),
-                fn (?string $given): bool => $given !== null))
-            ->pipe(OrdererCodec::decoder());
+        return Members::of([
+            'email' => string_()->trim()->toLowerCase()->email(),
+            'name' => string_()->trim(),
+            'companyName' => string_()->trim(),
+        ], OrdererCodec::decoder());
+    }
+
+    /**
+     * A UUID as this API writes one, and as the database keeps it: in lower case, with its hyphens.
+     * Another notation of one (braced, a URN, without hyphens) is not how a client writes an id here.
+     *
+     * @return Decoder<mixed, string>
+     */
+    private static function uuid(): Decoder
+    {
+        return string_()->uuid()->map(strtolower(...));
     }
 }

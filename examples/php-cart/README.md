@@ -2,14 +2,14 @@
 
 The PHP counterpart of
 [`boundaries-not-layers/examples/raoh-souther`](https://github.com/kawasima/boundaries-not-layers/tree/main/examples/raoh-souther).
-The domain is the same `cart.sou`, compiled by this repository into a shared library and its PHP
-binding. What is written in PHP is the boundaries around it: HTTP JSON decoded with
+The domain is `examples/cart-model`, the model every host's cart runs, compiled by this repository
+into a shared library and its PHP binding. What is written in PHP is the boundaries around it: HTTP JSON decoded with
 [raoh-php](https://github.com/kawasima/raoh-php) into the model's values, and the behaviors the
 model asks a host for implemented over PDO and SQLite.
 
 ## What is in it
 
-The rules of the cart are in `model/cart.sou` and nowhere else: the capacity of 10000, which a
+The rules of the cart are in `examples/cart-model/cart.sou` and nowhere else: the capacity of 10000, which a
 `PendingItem` holds or is not built; the 10% discount at 5000 and above; that an empty cart is not
 ordered and a quotation is for a corporation. Its `example` rows state what each behavior answers,
 and they run when it is built, so a rule that stopped holding stops the build.
@@ -37,12 +37,27 @@ arguments, calls the behavior as it would call any PHP function, and picks the r
 `issueQuote`) to those once, routes the requests, and answers a request that does not decode with a
 400.
 
-A request is decoded in two steps, as in the Java example. raoh-php checks the form of each field
-and normalises it: a UUID, a positive quantity, an email trimmed and lowercased, a corporate number
-of thirteen digits. What it hands on is read by the decoder the binding generates for the type,
-`UserId::decoder()` where the Java example calls `UserId.decoder()`, and that decoder is the
-model's: it knows which fields a type has, what the type states, and which case an orderer is.
-None of that is written again in PHP.
+A request is decoded by the decoders the binding generates for the model's types,
+`UserId::decoder()` where the Java example calls `UserId.decoder()`, and those decoders are the
+model's: they know which fields a type has, every rule the type states, a positive quantity, a name
+that is not blank and a corporate number of thirteen digits among them, and which case an orderer
+is. None of that is written again in PHP. raoh-php does the boundary's part in front of them: the
+canonical form of what a client sends (an id and an email in lower case, an email and a name
+without the spaces around them), and the forms the model leaves to a boundary (an id is a UUID, an
+email is shaped like one). Trimming is not a rule the model could state instead, since an invariant
+decides whether a value holds and never rewrites it.
+
+Each of the boundary's steps is a raoh-php decoder, which writes the value in its form and refuses
+what cannot be written so, as one step. An id's decoder is piped into the model's, since both are
+about one value. An orderer's members are decoded each on their own, and the model reads the whole
+whichever of them was refused (`Members`): of a refused member it is handed nothing, never the text
+the boundary refused. So an email the boundary refuses does not keep the model from saying that a
+company name is missing, and a request answers all of its issues at once.
+
+Each handler answers an `Outcome`: the response, and whether what the request wrote is kept. That the
+model answered is not that its answer is to be kept. `loadCart` makes a new user's cart row before the
+capacity is decided, and a command the model then refuses rolls it back; only the answer a command
+succeeds with commits.
 
 There is no entity, no DTO, no repository and no view model. The classes of the model's types are
 the binding's, and what a request is decoded into is a value of one of them. What an order or a
@@ -66,7 +81,7 @@ with the `ffi` and `pdo_sqlite` extensions.
 `bin/build` runs the command line from #57 at the root of the clone:
 
     mvn -q process-classes exec:java \
-        -Dargs='--library <here>/build/native --php <here>/build/php --namespace Model <here>/model'
+        -Dargs='--library <here>/build/native --php <here>/build/php --namespace Model examples/cart-model'
 
 It writes the library into `build/native` and its binding into `build/php`, under the namespace
 `Model`, which `composer.json` maps as it maps the application's own classes. The module is
@@ -121,10 +136,9 @@ the request as in the response, where the Java example spells it in lower case. 
 also reads the cart's listing into `CartItem` values through a repository; here it is rows, for the
 reason above.
 
-The model is the Java example's `cart.sou` with one change: the discount, which
-is `sub * 10 / 100` in the source. Since `/` answers the exact quotient, a `Rational`, the model says
-it as `Int.truncatingDivide(sub * 10, 100)` and matches its `DivisionByZero` case, which the divisor
-of 100 never takes.
+The model differs from the Java example's `cart.sou` in the discount, which it says as an integer
+quotient, and in stating what an orderer's fields are, which the Java example leaves to raoh at its
+boundary. `examples/cart-model/README.md` says both.
 
 The answers keep the unnamed unions the model writes, such as `Product | ProductNotFound`. The PHP
 binding types them as a union of case classes, so there is no `LoadProductResult` as there is in Java,
@@ -134,10 +148,11 @@ where it throws `UnhandledMatchError`; the Java `switch` over a sealed type is c
 compiled.
 
 On the way in, the Java example tells an orderer's case apart with raoh's `discriminate` and a
-decoder for each case. Here raoh-php checks whichever of the orderer's fields are present, and the
-orderer as a whole goes to `OrdererCodec::decoder()`, which reads its `type` and the fields
-that case has, as the model's encoding of an orderer says. A type's generated decoder is chained
-with raoh-php's `pipe`, where the Java one is reached with `flatMap`. The database implementations
+decoder for each case. Here raoh-php writes the members whose canonical form is the boundary's (the
+email and the names), and the orderer as a whole goes to `OrdererCodec::decoder()`, which reads its
+`type`, the fields that case has and what each of them states, as the model's encoding of an orderer
+says. An id's generated decoder is chained with raoh-php's `pipe`, where the Java one is reached with
+`flatMap`. The database implementations
 read a row back through the same decoder, handed the row as an array keyed by the type's field
 names, as the Java ones hand the generated `decoder()` a map.
 

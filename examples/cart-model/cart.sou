@@ -10,6 +10,17 @@ data TotalQuantity = Int
 // メールアドレスが取りうる最短の長さ（a@b の3文字）まで。
 data Email = String
     invariant String.length(value) >= 3
+// 名前は空白だけでは成り立たず、長さには上限がある。前後の空白を落とすのは値の書き方（正規化）で、
+// 成立条件ではないので境界が行う。モデルは受け取った値について判定するだけで、値を書き換えない。
+data PersonName = String
+    invariant String.length(value) <= 100
+    invariant notBlank = String.length(String.trim(value)) >= 1
+data CompanyName = String
+    invariant String.length(value) <= 200
+    invariant notBlank = String.length(String.trim(value)) >= 1
+// 法人番号は13桁の数字。
+data CorporateNumber = String
+    invariant String.matches("[0-9]{13}", value)
 data CartId = String
     invariant String.length(value) > 0
 data ProductId = String
@@ -21,8 +32,8 @@ data OrderId = String
 data QuoteId = String
     invariant String.length(value) > 0
 
-data Individual = { email: Email, name: String }
-data Corporation = { email: Email, companyName: String, corporateNumber: String }
+data Individual = { email: Email, name: PersonName }
+data Corporation = { email: Email, companyName: CompanyName, corporateNumber: CorporateNumber }
 data Orderer = Individual | Corporation
 
 data Product = { id: ProductId, onSale: Bool, price: Money }
@@ -128,26 +139,26 @@ fake priceCart
     | _ -> ProductNotFound
 
 fake saveOrder
-    | (Order { id = OrderId("o"), userId = UserId("u"), orderer = Individual { email = Email("a@b"), name = "Taro" }, lines = [ OrderLine { productId = ProductId("p"), quantity = Quantity(1), unitPrice = Money(1000) } ], charge = Charge { subtotal = Money(1000), discount = Money(0), total = Money(1000) } })
-        -> OrderPlaced { order = Order { id = OrderId("o"), userId = UserId("u"), orderer = Individual { email = Email("a@b"), name = "Taro" }, lines = [ OrderLine { productId = ProductId("p"), quantity = Quantity(1), unitPrice = Money(1000) } ], charge = Charge { subtotal = Money(1000), discount = Money(0), total = Money(1000) } } }
-    | (Order { id = OrderId("o-1"), userId = UserId("u-1"), orderer = Individual { email = Email("taro@example.com"), name = "Taro" }, lines = [ OrderLine { productId = ProductId("p-1"), quantity = Quantity(3), unitPrice = Money(2000) } ], charge = Charge { subtotal = Money(6000), discount = Money(600), total = Money(5400) } })
-        -> OrderPlaced { order = Order { id = OrderId("o-1"), userId = UserId("u-1"), orderer = Individual { email = Email("taro@example.com"), name = "Taro" }, lines = [ OrderLine { productId = ProductId("p-1"), quantity = Quantity(3), unitPrice = Money(2000) } ], charge = Charge { subtotal = Money(6000), discount = Money(600), total = Money(5400) } } }
-    | (Order { id = OrderId("o"), userId = UserId("u-small"), orderer = Corporation { email = Email("sales@example.com"), companyName = "Example Corp", corporateNumber = "1234567890123" }, lines = [ OrderLine { productId = ProductId("p-1"), quantity = Quantity(1), unitPrice = Money(1000) } ], charge = Charge { subtotal = Money(1000), discount = Money(0), total = Money(1000) } })
-        -> OrderPlaced { order = Order { id = OrderId("o"), userId = UserId("u-small"), orderer = Corporation { email = Email("sales@example.com"), companyName = "Example Corp", corporateNumber = "1234567890123" }, lines = [ OrderLine { productId = ProductId("p-1"), quantity = Quantity(1), unitPrice = Money(1000) } ], charge = Charge { subtotal = Money(1000), discount = Money(0), total = Money(1000) } } }
+    | (Order { id = OrderId("o"), userId = UserId("u"), orderer = Individual { email = Email("a@b"), name = PersonName("Taro") }, lines = [ OrderLine { productId = ProductId("p"), quantity = Quantity(1), unitPrice = Money(1000) } ], charge = Charge { subtotal = Money(1000), discount = Money(0), total = Money(1000) } })
+        -> OrderPlaced { order = Order { id = OrderId("o"), userId = UserId("u"), orderer = Individual { email = Email("a@b"), name = PersonName("Taro") }, lines = [ OrderLine { productId = ProductId("p"), quantity = Quantity(1), unitPrice = Money(1000) } ], charge = Charge { subtotal = Money(1000), discount = Money(0), total = Money(1000) } } }
+    | (Order { id = OrderId("o-1"), userId = UserId("u-1"), orderer = Individual { email = Email("taro@example.com"), name = PersonName("Taro") }, lines = [ OrderLine { productId = ProductId("p-1"), quantity = Quantity(3), unitPrice = Money(2000) } ], charge = Charge { subtotal = Money(6000), discount = Money(600), total = Money(5400) } })
+        -> OrderPlaced { order = Order { id = OrderId("o-1"), userId = UserId("u-1"), orderer = Individual { email = Email("taro@example.com"), name = PersonName("Taro") }, lines = [ OrderLine { productId = ProductId("p-1"), quantity = Quantity(3), unitPrice = Money(2000) } ], charge = Charge { subtotal = Money(6000), discount = Money(600), total = Money(5400) } } }
+    | (Order { id = OrderId("o"), userId = UserId("u-small"), orderer = Corporation { email = Email("sales@example.com"), companyName = CompanyName("Example Corp"), corporateNumber = CorporateNumber("1234567890123") }, lines = [ OrderLine { productId = ProductId("p-1"), quantity = Quantity(1), unitPrice = Money(1000) } ], charge = Charge { subtotal = Money(1000), discount = Money(0), total = Money(1000) } })
+        -> OrderPlaced { order = Order { id = OrderId("o"), userId = UserId("u-small"), orderer = Corporation { email = Email("sales@example.com"), companyName = CompanyName("Example Corp"), corporateNumber = CorporateNumber("1234567890123") }, lines = [ OrderLine { productId = ProductId("p-1"), quantity = Quantity(1), unitPrice = Money(1000) } ], charge = Charge { subtotal = Money(1000), discount = Money(0), total = Money(1000) } } }
 
 example placeOrder
     | "カートの内容で注文が確定し、5000円以上は割引が適用される" :
-        (OrderId("o-1"), UserId("u-1"), Individual { email = Email("taro@example.com"), name = "Taro" })
-            -> OrderPlaced { order = Order { id = OrderId("o-1"), userId = UserId("u-1"), orderer = Individual { email = Email("taro@example.com"), name = "Taro" }, lines = [ OrderLine { productId = ProductId("p-1"), quantity = Quantity(3), unitPrice = Money(2000) } ], charge = Charge { subtotal = Money(6000), discount = Money(600), total = Money(5400) } } }
+        (OrderId("o-1"), UserId("u-1"), Individual { email = Email("taro@example.com"), name = PersonName("Taro") })
+            -> OrderPlaced { order = Order { id = OrderId("o-1"), userId = UserId("u-1"), orderer = Individual { email = Email("taro@example.com"), name = PersonName("Taro") }, lines = [ OrderLine { productId = ProductId("p-1"), quantity = Quantity(3), unitPrice = Money(2000) } ], charge = Charge { subtotal = Money(6000), discount = Money(600), total = Money(5400) } } }
     | "カートが空なら注文できない" :
-        (OrderId("o-2"), UserId("u-empty"), Individual { email = Email("taro@example.com"), name = "Taro" }) -> EmptyCart
+        (OrderId("o-2"), UserId("u-empty"), Individual { email = Email("taro@example.com"), name = PersonName("Taro") }) -> EmptyCart
     | "セール終了なら注文できない" :
-        (OrderId("o-3"), UserId("u-sale-ended"), Individual { email = Email("taro@example.com"), name = "Taro" }) -> SaleEnded
+        (OrderId("o-3"), UserId("u-sale-ended"), Individual { email = Email("taro@example.com"), name = PersonName("Taro") }) -> SaleEnded
     | "商品が見つからなければ注文できない" :
-        (OrderId("o-4"), UserId("u-404"), Individual { email = Email("taro@example.com"), name = "Taro" }) -> ProductNotFound
+        (OrderId("o-4"), UserId("u-404"), Individual { email = Email("taro@example.com"), name = PersonName("Taro") }) -> ProductNotFound
     | "5000円未満なら割引はつかない。法人も同じ注文ができる" :
-        (OrderId("o"), UserId("u-small"), Corporation { email = Email("sales@example.com"), companyName = "Example Corp", corporateNumber = "1234567890123" })
-            -> OrderPlaced { order = Order { id = OrderId("o"), userId = UserId("u-small"), orderer = Corporation { email = Email("sales@example.com"), companyName = "Example Corp", corporateNumber = "1234567890123" }, lines = [ OrderLine { productId = ProductId("p-1"), quantity = Quantity(1), unitPrice = Money(1000) } ], charge = Charge { subtotal = Money(1000), discount = Money(0), total = Money(1000) } } }
+        (OrderId("o"), UserId("u-small"), Corporation { email = Email("sales@example.com"), companyName = CompanyName("Example Corp"), corporateNumber = CorporateNumber("1234567890123") })
+            -> OrderPlaced { order = Order { id = OrderId("o"), userId = UserId("u-small"), orderer = Corporation { email = Email("sales@example.com"), companyName = CompanyName("Example Corp"), corporateNumber = CorporateNumber("1234567890123") }, lines = [ OrderLine { productId = ProductId("p-1"), quantity = Quantity(1), unitPrice = Money(1000) } ], charge = Charge { subtotal = Money(1000), discount = Money(0), total = Money(1000) } } }
 
 // 見積は法人限定。それを実行時の判定ではなく、注文者の型で表す。
 behavior issueQuote : (quoteId: QuoteId, userId: UserId, orderer: Corporation, validUntil: String) -> Quotation | EmptyCart | SaleEnded | ProductNotFound
@@ -164,20 +175,20 @@ let issueQuote (quoteId, userId, orderer, validUntil, priceCart) =
 // priceCart の fake は placeOrder の example で定義済みのものを流用する。
 example issueQuote
     | "見積を発行できる" :
-        (QuoteId("q-1"), UserId("u-1"), Corporation { email = Email("sales@example.com"), companyName = "Example Corp", corporateNumber = "1234567890123" }, "2026-08-31")
-            -> Quotation { id = QuoteId("q-1"), userId = UserId("u-1"), orderer = Corporation { email = Email("sales@example.com"), companyName = "Example Corp", corporateNumber = "1234567890123" }, lines = [ OrderLine { productId = ProductId("p-1"), quantity = Quantity(3), unitPrice = Money(2000) } ], charge = Charge { subtotal = Money(6000), discount = Money(600), total = Money(5400) }, validUntil = "2026-08-31" }
+        (QuoteId("q-1"), UserId("u-1"), Corporation { email = Email("sales@example.com"), companyName = CompanyName("Example Corp"), corporateNumber = CorporateNumber("1234567890123") }, "2026-08-31")
+            -> Quotation { id = QuoteId("q-1"), userId = UserId("u-1"), orderer = Corporation { email = Email("sales@example.com"), companyName = CompanyName("Example Corp"), corporateNumber = CorporateNumber("1234567890123") }, lines = [ OrderLine { productId = ProductId("p-1"), quantity = Quantity(3), unitPrice = Money(2000) } ], charge = Charge { subtotal = Money(6000), discount = Money(600), total = Money(5400) }, validUntil = "2026-08-31" }
     | "カートが空なら見積を発行できない" :
-        (QuoteId("q-2"), UserId("u-empty"), Corporation { email = Email("sales@example.com"), companyName = "Example Corp", corporateNumber = "1234567890123" }, "2026-08-31") -> EmptyCart
+        (QuoteId("q-2"), UserId("u-empty"), Corporation { email = Email("sales@example.com"), companyName = CompanyName("Example Corp"), corporateNumber = CorporateNumber("1234567890123") }, "2026-08-31") -> EmptyCart
     | "セール終了なら見積を発行できない" :
-        (QuoteId("q-3"), UserId("u-sale-ended"), Corporation { email = Email("sales@example.com"), companyName = "Example Corp", corporateNumber = "1234567890123" }, "2026-08-31") -> SaleEnded
+        (QuoteId("q-3"), UserId("u-sale-ended"), Corporation { email = Email("sales@example.com"), companyName = CompanyName("Example Corp"), corporateNumber = CorporateNumber("1234567890123") }, "2026-08-31") -> SaleEnded
     | "商品が見つからなければ見積を発行できない" :
-        (QuoteId("q-4"), UserId("u-404"), Corporation { email = Email("sales@example.com"), companyName = "Example Corp", corporateNumber = "1234567890123" }, "2026-08-31") -> ProductNotFound
+        (QuoteId("q-4"), UserId("u-404"), Corporation { email = Email("sales@example.com"), companyName = CompanyName("Example Corp"), corporateNumber = CorporateNumber("1234567890123") }, "2026-08-31") -> ProductNotFound
     | "メールアドレスは最短の3文字でも見積を発行できる" :
-        (QuoteId("q-5"), UserId("u-1"), Corporation { email = Email("a@b"), companyName = "Example Corp", corporateNumber = "1234567890123" }, "2026-08-31")
-            -> Quotation { id = QuoteId("q-5"), userId = UserId("u-1"), orderer = Corporation { email = Email("a@b"), companyName = "Example Corp", corporateNumber = "1234567890123" }, lines = [ OrderLine { productId = ProductId("p-1"), quantity = Quantity(3), unitPrice = Money(2000) } ], charge = Charge { subtotal = Money(6000), discount = Money(600), total = Money(5400) }, validUntil = "2026-08-31" }
+        (QuoteId("q-5"), UserId("u-1"), Corporation { email = Email("a@b"), companyName = CompanyName("Example Corp"), corporateNumber = CorporateNumber("1234567890123") }, "2026-08-31")
+            -> Quotation { id = QuoteId("q-5"), userId = UserId("u-1"), orderer = Corporation { email = Email("a@b"), companyName = CompanyName("Example Corp"), corporateNumber = CorporateNumber("1234567890123") }, lines = [ OrderLine { productId = ProductId("p-1"), quantity = Quantity(3), unitPrice = Money(2000) } ], charge = Charge { subtotal = Money(6000), discount = Money(600), total = Money(5400) }, validUntil = "2026-08-31" }
     | "5000円未満なら割引はつかない" :
-        (QuoteId("q"), UserId("u-small"), Corporation { email = Email("sales@example.com"), companyName = "Example Corp", corporateNumber = "1234567890123" }, "2026-08-31")
-            -> Quotation { id = QuoteId("q"), userId = UserId("u-small"), orderer = Corporation { email = Email("sales@example.com"), companyName = "Example Corp", corporateNumber = "1234567890123" }, lines = [ OrderLine { productId = ProductId("p-1"), quantity = Quantity(1), unitPrice = Money(1000) } ], charge = Charge { subtotal = Money(1000), discount = Money(0), total = Money(1000) }, validUntil = "2026-08-31" }
+        (QuoteId("q"), UserId("u-small"), Corporation { email = Email("sales@example.com"), companyName = CompanyName("Example Corp"), corporateNumber = CorporateNumber("1234567890123") }, "2026-08-31")
+            -> Quotation { id = QuoteId("q"), userId = UserId("u-small"), orderer = Corporation { email = Email("sales@example.com"), companyName = CompanyName("Example Corp"), corporateNumber = CorporateNumber("1234567890123") }, lines = [ OrderLine { productId = ProductId("p-1"), quantity = Quantity(1), unitPrice = Money(1000) } ], charge = Charge { subtotal = Money(1000), discount = Money(0), total = Money(1000) }, validUntil = "2026-08-31" }
 
 // 注入する behavior にも例を書いておくと、Java 実装が何を返すべきかがモデルに残る。
 // 実装はモデルの外にあるので、これらの行は pending（実装待ち）として数えられる。
@@ -205,12 +216,12 @@ example priceCart
     | "識別子は1文字でもよい" : (UserId("u")) -> ProductNotFound
 
 example saveOrder
-    | "個人の注文を保存する" : (Order { id = OrderId("o-1"), userId = UserId("u-1"), orderer = Individual { email = Email("taro@example.com"), name = "Taro" }, lines = [ OrderLine { productId = ProductId("p-1"), quantity = Quantity(3), unitPrice = Money(2000) } ], charge = Charge { subtotal = Money(6000), discount = Money(600), total = Money(5400) } })
-        -> OrderPlaced { order = Order { id = OrderId("o-1"), userId = UserId("u-1"), orderer = Individual { email = Email("taro@example.com"), name = "Taro" }, lines = [ OrderLine { productId = ProductId("p-1"), quantity = Quantity(3), unitPrice = Money(2000) } ], charge = Charge { subtotal = Money(6000), discount = Money(600), total = Money(5400) } } }
-    | "法人の注文を保存する" : (Order { id = OrderId("o"), userId = UserId("u-small"), orderer = Corporation { email = Email("sales@example.com"), companyName = "Example Corp", corporateNumber = "1234567890123" }, lines = [ OrderLine { productId = ProductId("p-1"), quantity = Quantity(1), unitPrice = Money(1000) } ], charge = Charge { subtotal = Money(1000), discount = Money(0), total = Money(1000) } })
-        -> OrderPlaced { order = Order { id = OrderId("o"), userId = UserId("u-small"), orderer = Corporation { email = Email("sales@example.com"), companyName = "Example Corp", corporateNumber = "1234567890123" }, lines = [ OrderLine { productId = ProductId("p-1"), quantity = Quantity(1), unitPrice = Money(1000) } ], charge = Charge { subtotal = Money(1000), discount = Money(0), total = Money(1000) } } }
-    | "識別子は1文字でもよい" : (Order { id = OrderId("o"), userId = UserId("u"), orderer = Individual { email = Email("a@b"), name = "Taro" }, lines = [ OrderLine { productId = ProductId("p"), quantity = Quantity(1), unitPrice = Money(1000) } ], charge = Charge { subtotal = Money(1000), discount = Money(0), total = Money(1000) } })
-        -> OrderPlaced { order = Order { id = OrderId("o"), userId = UserId("u"), orderer = Individual { email = Email("a@b"), name = "Taro" }, lines = [ OrderLine { productId = ProductId("p"), quantity = Quantity(1), unitPrice = Money(1000) } ], charge = Charge { subtotal = Money(1000), discount = Money(0), total = Money(1000) } } }
+    | "個人の注文を保存する" : (Order { id = OrderId("o-1"), userId = UserId("u-1"), orderer = Individual { email = Email("taro@example.com"), name = PersonName("Taro") }, lines = [ OrderLine { productId = ProductId("p-1"), quantity = Quantity(3), unitPrice = Money(2000) } ], charge = Charge { subtotal = Money(6000), discount = Money(600), total = Money(5400) } })
+        -> OrderPlaced { order = Order { id = OrderId("o-1"), userId = UserId("u-1"), orderer = Individual { email = Email("taro@example.com"), name = PersonName("Taro") }, lines = [ OrderLine { productId = ProductId("p-1"), quantity = Quantity(3), unitPrice = Money(2000) } ], charge = Charge { subtotal = Money(6000), discount = Money(600), total = Money(5400) } } }
+    | "法人の注文を保存する" : (Order { id = OrderId("o"), userId = UserId("u-small"), orderer = Corporation { email = Email("sales@example.com"), companyName = CompanyName("Example Corp"), corporateNumber = CorporateNumber("1234567890123") }, lines = [ OrderLine { productId = ProductId("p-1"), quantity = Quantity(1), unitPrice = Money(1000) } ], charge = Charge { subtotal = Money(1000), discount = Money(0), total = Money(1000) } })
+        -> OrderPlaced { order = Order { id = OrderId("o"), userId = UserId("u-small"), orderer = Corporation { email = Email("sales@example.com"), companyName = CompanyName("Example Corp"), corporateNumber = CorporateNumber("1234567890123") }, lines = [ OrderLine { productId = ProductId("p-1"), quantity = Quantity(1), unitPrice = Money(1000) } ], charge = Charge { subtotal = Money(1000), discount = Money(0), total = Money(1000) } } }
+    | "識別子は1文字でもよい" : (Order { id = OrderId("o"), userId = UserId("u"), orderer = Individual { email = Email("a@b"), name = PersonName("Taro") }, lines = [ OrderLine { productId = ProductId("p"), quantity = Quantity(1), unitPrice = Money(1000) } ], charge = Charge { subtotal = Money(1000), discount = Money(0), total = Money(1000) } })
+        -> OrderPlaced { order = Order { id = OrderId("o"), userId = UserId("u"), orderer = Individual { email = Email("a@b"), name = PersonName("Taro") }, lines = [ OrderLine { productId = ProductId("p"), quantity = Quantity(1), unitPrice = Money(1000) } ], charge = Charge { subtotal = Money(1000), discount = Money(0), total = Money(1000) } } }
 
 let lineAmount (l: OrderLine) = l.quantity.value * l.unitPrice.value
 let subtotalOf (lines: List<OrderLine>) = fold((acc, l) -> acc + lineAmount(l), 0, lines)

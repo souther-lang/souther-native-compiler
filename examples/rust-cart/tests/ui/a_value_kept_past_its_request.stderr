@@ -1,0 +1,11 @@
+error[E0521]: borrowed data escapes outside of closure
+  --> tests/ui/a_value_kept_past_its_request.rs:12:17
+   |
+ 8 |     let mut last = None;
+   |         -------- `last` declared here, outside of the closure body
+ 9 |     library
+10 |         .run(|run| {
+   |               --- `run` is a reference that is only valid in the closure body
+11 |             if let Ok(Construction::Value(user)) = UserId::new(run, "u") {
+12 |                 last = Some(user);
+   |                 ^^^^^^^^^^^^^^^^^ `run` escapes the closure body here

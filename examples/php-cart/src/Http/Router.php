@@ -10,26 +10,26 @@ namespace App\Http;
  */
 final class Router
 {
-    /** @var array<string, array<string, \Closure(Request): Response>> */
+    /** @var array<string, array<string, \Closure(Request): Outcome>> */
     private array $routes = [];
 
-    /** @param \Closure(Request): Response $handler */
+    /** @param \Closure(Request): Outcome $handler */
     public function get(string $path, \Closure $handler): self
     {
         $this->routes['GET'][$path] = $handler;
         return $this;
     }
 
-    /** @param \Closure(Request): Response $handler */
+    /** @param \Closure(Request): Outcome $handler */
     public function post(string $path, \Closure $handler): self
     {
         $this->routes['POST'][$path] = $handler;
         return $this;
     }
 
-    public function handle(Request $request): Response
+    public function handle(Request $request): Outcome
     {
         $handler = $this->routes[$request->method][$request->path] ?? null;
-        return $handler === null ? Response::notFound() : $handler($request);
+        return $handler === null ? Outcome::rollback(Response::notFound()) : $handler($request);
     }
 }

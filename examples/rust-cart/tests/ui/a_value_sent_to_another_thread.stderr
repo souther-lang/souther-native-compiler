@@ -1,0 +1,28 @@
+error[E0277]: `NonNull<u8>` cannot be sent between threads safely
+  --> tests/ui/a_value_sent_to_another_thread.rs:11:31
+   |
+11 |                 threads.spawn(move || user.value());
+   |                         ----- -------^^^^^^^^^^^^^
+   |                         |     |
+   |                         |     `NonNull<u8>` cannot be sent between threads safely
+   |                         |     within this `{closure@$DIR/tests/ui/a_value_sent_to_another_thread.rs:11:31: 11:38}`
+   |                         required by a bound introduced by this call
+   |
+   = help: within `{closure@$DIR/tests/ui/a_value_sent_to_another_thread.rs:11:31: 11:38}`, the trait `Send` is not implemented for `NonNull<u8>`
+note: required because it appears within the type `souther_binding_runtime::run::Held<'_, Library>`
+  --> $SOUTHER_BINDING_RUNTIME/src/run.rs
+   |
+   | pub struct Held<'run, L> {
+   |            ^^^^
+note: required because it appears within the type `UserId<'_>`
+  --> build/rust/src/com/example/cart/domain/mod.rs
+   |
+   | pub struct UserId<'run> {
+   |            ^^^^^^
+note: required because it's used within this closure
+  --> tests/ui/a_value_sent_to_another_thread.rs:11:31
+   |
+11 |                 threads.spawn(move || user.value());
+   |                               ^^^^^^^
+note: required by a bound in `Scope::<'scope, 'env>::spawn`
+  --> $RUST/std/src/thread/scoped.rs

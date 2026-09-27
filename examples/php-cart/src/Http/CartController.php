@@ -26,7 +26,10 @@ use PDO;
  * like any PHP function, and a `match` on the class of what it answered picks the response. What an
  * order or a quotation is written as is the model's own encoding of it.
  *
- * A body that does not decode throws `BadRequest`, which the application answers with a 400.
+ * Every handler answers an `Outcome`, which says with the response whether what the request wrote
+ * is kept: a command the model answered with success commits, and one it refused rolls back. A body
+ * that does not decode throws `BadRequest`, which rolls the transaction back and which the
+ * application answers with a 400.
  */
 final readonly class CartController
 {
@@ -39,7 +42,7 @@ final readonly class CartController
     }
 
     /** `POST /carts/items` */
-    public function addItem(Request $request): Response
+    public function addItem(Request $request): Outcome
     {
         [$userId, $productId, $quantity] = Decoders::addItem()
             ->decode($request->body)
@@ -48,15 +51,15 @@ final readonly class CartController
         $answer = ($this->addItemToCart)($userId, $productId, $quantity);
 
         return match ($answer::class) {
-            ItemAdded::class => Response::created(),
-            ProductNotFound::class => Response::unprocessable('product_not_found'),
-            SaleEnded::class => Response::unprocessable('sale_ended'),
-            CartFull::class => Response::unprocessable('cart_full'),
+            ItemAdded::class => Outcome::commit(Response::created()),
+            ProductNotFound::class => Outcome::rollback(Response::unprocessable('product_not_found')),
+            SaleEnded::class => Outcome::rollback(Response::unprocessable('sale_ended')),
+            CartFull::class => Outcome::rollback(Response::unprocessable('cart_full')),
         };
     }
 
     /** `POST /carts/checkout` */
-    public function checkout(Request $request): Response
+    public function checkout(Request $request): Outcome
     {
         [$userId, $orderer] = Decoders::checkout()
             ->decode($request->body)
@@ -65,15 +68,15 @@ final readonly class CartController
         $answer = ($this->placeOrder)(OrderId::of(Uuid::v4())->getOrThrow(), $userId, $orderer);
 
         return match ($answer::class) {
-            OrderPlaced::class => Response::created($answer->order()->encode()),
-            EmptyCart::class => Response::unprocessable('empty_cart'),
-            SaleEnded::class => Response::unprocessable('sale_ended'),
-            ProductNotFound::class => Response::unprocessable('product_not_found'),
+            OrderPlaced::class => Outcome::commit(Response::created($answer->order()->encode())),
+            EmptyCart::class => Outcome::rollback(Response::unprocessable('empty_cart')),
+            SaleEnded::class => Outcome::rollback(Response::unprocessable('sale_ended')),
+            ProductNotFound::class => Outcome::rollback(Response::unprocessable('product_not_found')),
         };
     }
 
     /** `POST /carts/quote`, for a corporation only. */
-    public function quote(Request $request): Response
+    public function quote(Request $request): Outcome
     {
         [$userId, $orderer] = Decoders::checkout()
             ->decode($request->body)
@@ -81,17 +84,17 @@ final readonly class CartController
 
         // issueQuote takes a Corporation, so the orderer is narrowed here.
         if (!$orderer instanceof Corporation) {
-            return Response::unprocessable('quote_for_corporations_only');
+            return Outcome::rollback(Response::unprocessable('quote_for_corporations_only'));
         }
         $validUntil = (new \DateTimeImmutable('+30 days'))->format('Y-m-d');
 
         $answer = ($this->issueQuote)(QuoteId::of(Uuid::v4())->getOrThrow(), $userId, $orderer, $validUntil);
 
         return match ($answer::class) {
-            Quotation::class => Response::ok($answer->encode()),
-            EmptyCart::class => Response::unprocessable('empty_cart'),
-            SaleEnded::class => Response::unprocessable('sale_ended'),
-            ProductNotFound::class => Response::unprocessable('product_not_found'),
+            Quotation::class => Outcome::commit(Response::ok($answer->encode())),
+            EmptyCart::class => Outcome::rollback(Response::unprocessable('empty_cart')),
+            SaleEnded::class => Outcome::rollback(Response::unprocessable('sale_ended')),
+            ProductNotFound::class => Outcome::rollback(Response::unprocessable('product_not_found')),
         };
     }
 
@@ -101,7 +104,7 @@ final readonly class CartController
      * A listing for a screen, which the model has no behavior for and needs none: the rows are read
      * and written out as they are. Only the user is the model's, checked as every other input is.
      */
-    public function listItems(Request $request): Response
+    public function listItems(Request $request): Outcome
     {
         $userId = Decoders::userId()
             ->decode($request->query['userId'] ?? null)
@@ -122,11 +125,12 @@ final readonly class CartController
             SQL);
         $items->execute([$userId->value(), $size, $page * $size]);
 
-        return Response::ok(Response::json([
+        // A listing writes nothing, so there is nothing to keep.
+        return Outcome::rollback(Response::ok(Response::json([
             'total' => (int) $count->fetchColumn(),
             'page' => $page,
             'size' => $size,
             'items' => $items->fetchAll(PDO::FETCH_ASSOC),
-        ]));
+        ])));
     }
 }

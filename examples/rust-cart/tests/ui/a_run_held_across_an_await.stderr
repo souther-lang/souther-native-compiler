@@ -1,0 +1,27 @@
+error: lifetime may not live long enough
+  --> tests/ui/a_run_held_across_an_await.rs:9:20
+   |
+ 9 |           .run(|run| async move {
+   |  _______________----_^
+   | |               |  |
+   | |               |  return type of closure `{async block@$DIR/tests/ui/a_run_held_across_an_await.rs:9:20: 9:30}` contains a lifetime `'2`
+   | |               has type `&'1 mut souther_binding_runtime::run::Scope<'_, '_, Library>`
+10 | |             let _user = UserId::new(run, "u");
+11 | |         })
+   | |_________^ returning this value requires that `'1` must outlive `'2`
+
+error: lifetime may not live long enough
+  --> tests/ui/a_run_held_across_an_await.rs:9:20
+   |
+ 9 |           .run(|run| async move {
+   |  _______________----_^
+   | |               |  |
+   | |               |  return type of closure `{async block@$DIR/tests/ui/a_run_held_across_an_await.rs:9:20: 9:30}` contains a lifetime `'4`
+   | |               has type `&mut souther_binding_runtime::run::Scope<'3, '_, Library>`
+10 | |             let _user = UserId::new(run, "u");
+11 | |         })
+   | |_________^ returning this value requires that `'3` must outlive `'4`
+   |
+   = note: requirement occurs because of a mutable reference to `souther_binding_runtime::run::Scope<'_, '_, Library>`
+   = note: mutable references are invariant over their type parameter
+   = help: see <https://doc.rust-lang.org/nomicon/subtyping.html> for more information about variance

@@ -26,9 +26,9 @@ final class PdoSaveOrder extends SaveOrder
         $orderId = $order->id()->value();
         $orderer = $order->orderer();
         [$type, $email, $name, $companyName, $corporateNumber] = match ($orderer::class) {
-            Individual::class => ['individual', $orderer->email()->value(), $orderer->name(), null, null],
+            Individual::class => ['individual', $orderer->email()->value(), $orderer->name()->value(), null, null],
             Corporation::class => ['corporation', $orderer->email()->value(), null,
-                $orderer->companyName(), $orderer->corporateNumber()],
+                $orderer->companyName()->value(), $orderer->corporateNumber()->value()],
         };
         $charge = $order->charge();
 
