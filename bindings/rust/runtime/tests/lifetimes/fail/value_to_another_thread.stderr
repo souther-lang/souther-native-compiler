@@ -1,9 +1,27 @@
 error[E0277]: `NonNull<u8>` cannot be sent between threads safely
-  --> tests/lifetimes/fail/value_to_another_thread.rs:11:25
+  --> tests/lifetimes/fail/value_to_another_thread.rs:11:31
    |
-11 |                 threads.spawn(move || made.address());
-   |                         ^^^^^ `NonNull<u8>` cannot be sent between threads safely
+11 |                   threads.spawn(move || {
+   |                           ----- ^------
+   |                           |     |
+   |  _________________________|_____within this `{closure@$DIR/tests/lifetimes/fail/value_to_another_thread.rs:11:31: 11:38}`
+   | |                         |
+   | |                         required by a bound introduced by this call
+12 | |                     let moved = made;
+13 | |                     moved.library();
+14 | |                 });
+   | |_________________^ `NonNull<u8>` cannot be sent between threads safely
    |
-   = help: the trait `Send` is not implemented for `NonNull<u8>`
+   = help: within `{closure@$DIR/tests/lifetimes/fail/value_to_another_thread.rs:11:31: 11:38}`, the trait `Send` is not implemented for `NonNull<u8>`
+note: required because it appears within the type `Held<'_, Runtime>`
+  --> src/run.rs
+   |
+   | pub struct Held<'run, L> {
+   |            ^^^^
+note: required because it's used within this closure
+  --> tests/lifetimes/fail/value_to_another_thread.rs:11:31
+   |
+11 |                 threads.spawn(move || {
+   |                               ^^^^^^^
 note: required by a bound in `std::thread::Scope::<'scope, 'env>::spawn`
   --> $RUST/std/src/thread/scoped.rs

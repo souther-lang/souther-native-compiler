@@ -2,12 +2,13 @@
 //! count of what was made, and a native function that calls a host implementation back.
 
 use souther_binding_runtime::{
-    AlreadyRunning, Failure, HostError, HostFailure, RawMark, Run, Runtime, Status, Statuses, Value,
+    AlreadyRunning, Bound, Capability, Failure, Held, HostError, HostFailure, Hosted, Implemented,
+    RawMark, Requirement, Run, Runtime, Status, Statuses,
 };
 use std::cell::{Cell, RefCell};
 use std::ffi::c_void;
 use std::panic::{self, AssertUnwindSafe};
-use std::ptr::NonNull;
+use std::ptr;
 
 const ANSWERED: Status = 0;
 const DIVISION_BY_ZERO: Status = 4;
@@ -57,14 +58,13 @@ macro_rules! library {
                 ARENA.with(Cell::get)
             }
 
-            pub fn make<'run>(run: &mut Run<'run, Runtime>) -> Value<'run> {
+            pub fn make<'run>(run: &mut Run<'run, Runtime>) -> Held<'run, Runtime> {
                 let at = ARENA.with(|it| {
                     it.set(it.get() + 1);
                     it.get()
                 });
-                let at = NonNull::new(at as usize as *mut u8).expect("the arena counts from one");
                 // SAFETY: the arena answered it just now, after the run was opened.
-                unsafe { run.value(at) }
+                unsafe { run.held(at as usize as *const u8) }
             }
         }
     };
@@ -128,7 +128,7 @@ fn a_nested_run_drops_what_it_made_and_nothing_made_outside_it() {
             let inside = run.scope(|inner| {
                 orders::make(inner);
                 // A value made outside, handed to a computation inside.
-                let _ = outer.address();
+                assert!(outer.word_in(inner).is_ok());
                 orders::taken()
             });
             assert_eq!(inside, 2);
@@ -300,4 +300,64 @@ fn a_host_implementation_outside_any_call_is_lent_no_run() {
             .unwrap();
         })
         .unwrap();
+}
+
+#[test]
+fn a_value_another_runtime_made_is_handed_to_no_computation() {
+    let orders = orders::runtime();
+    let again = orders::runtime();
+    let prices = prices::runtime();
+    orders
+        .run(|outer| {
+            let made = orders::make(outer);
+            again
+                .run(|_| unreachable!("a second root run of one library is refused"))
+                .unwrap_err();
+            prices
+                .run(|run| {
+                    assert!(matches!(made.word_in(run), Err(Failure::Foreign)));
+                })
+                .unwrap();
+            // Another handle on the same library is the same runtime.
+            let (library, word) = made.own();
+            assert!(std::ptr::eq(library, &orders));
+            assert_eq!(made.word_in(outer).unwrap(), word);
+        })
+        .unwrap();
+    let _ = again;
+}
+
+unsafe extern "C" fn bind(into: *mut Capability, _requirements: *const *const Capability) {
+    // What a library writes is its own; a stand-in writes nothing, and nothing reads it.
+    let _ = into;
+}
+
+unsafe extern "C" fn implement(
+    _into: *mut Capability,
+    _hosted: *mut Hosted,
+    _implementation: *const c_void,
+    _userdata: *mut c_void,
+) {
+}
+
+#[test]
+fn a_behavior_bound_to_what_another_runtime_made_is_refused_at_any_depth() {
+    let orders = orders::runtime();
+    let prices = prices::runtime();
+    // SAFETY: the stand-ins read nothing and write nothing.
+    unsafe {
+        let own = Implemented::new(&orders, implement, ptr::null(), ());
+        let foreign = Implemented::new(&prices, implement, ptr::null(), ());
+        let fine = Bound::new(&orders, Some(bind), &[&own]);
+        assert!(fine.requirements(&orders).is_ok());
+        assert!(matches!(fine.requirements(&prices), Err(Failure::Foreign)));
+
+        let mixed = Bound::new(&orders, Some(bind), &[&own, &foreign]);
+        assert!(matches!(mixed.requirements(&orders), Err(Failure::Foreign)));
+        // Bound in turn to the one bound to what another runtime made.
+        let above = Bound::new(&orders, None, &[&mixed as &dyn Requirement]);
+        assert!(matches!(above.requirements(&orders), Err(Failure::Foreign)));
+        let clean = Bound::new(&orders, None, &[&fine as &dyn Requirement]);
+        assert!(clean.requirements(&orders).is_ok());
+    }
 }

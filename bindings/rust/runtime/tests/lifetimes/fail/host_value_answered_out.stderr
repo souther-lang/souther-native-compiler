@@ -4,5 +4,5 @@ error: lifetime may not live long enough
 7 |     let made = runtime.host(|cx| Ok(make(cx))).unwrap();
   |                              --- ^^^^^^^^^^^^ returning this value requires that `'1` must outlive `'2`
   |                              | |
-  |                              | return type of closure is Result<souther_binding_runtime::Value<'2>, Box<dyn std::error::Error + Send + Sync>>
+  |                              | return type of closure is Result<Held<'2, Runtime>, Box<dyn std::error::Error + Send + Sync>>
   |                              has type `&mut souther_binding_runtime::Scope<'1, '_, Runtime>`

@@ -203,7 +203,7 @@ impl<'run, L: Loaded> Run<'run, L> {
     /// answered, or has panicked.
     ///
     /// This run is borrowed until then, so nothing is made through it while the one inside is
-    /// open. A [`Value`] made in this run is still one `f` can read and hand to a computation it
+    /// open. A [`Held`] value made in this run is still one `f` can read and hand to a computation it
     /// starts; one made inside cannot be answered out of `f`.
     pub fn scope<R>(&mut self, f: impl for<'inner> FnOnce(&mut Scope<'inner, 'run, L>) -> R) -> R {
         let keeper = Keeper::default();
@@ -254,17 +254,15 @@ impl<'run, L: Loaded> Run<'run, L> {
         }
     }
 
-    /// The value at `at`, as one made in this run.
+    /// The value at `at`, as one this run's library made in this run.
     ///
     /// # Safety
     ///
     /// `at` is an address this library's arena answered after this run was opened, or one that
     /// was already good before it was and still is.
-    pub unsafe fn value(&self, at: NonNull<u8>) -> Value<'run> {
-        Value {
-            at,
-            _made_in: PhantomData,
-        }
+    pub unsafe fn held(&self, at: Word) -> Held<'run, L> {
+        // SAFETY: what the caller says.
+        unsafe { Held::new(self.library, at) }
     }
 }
 
@@ -308,34 +306,67 @@ impl<'run, L> DerefMut for Scope<'run, '_, L> {
     }
 }
 
-/// An address in a library's arena, good for as long as `'run`.
+/// A value in a library's arena: where it stands, good for as long as `'run`, and the library that
+/// made it.
 ///
-/// Covariant in `'run`: a value made in a run is good in every run inside it.
-#[derive(Clone, Copy, Debug)]
-pub struct Value<'run> {
+/// Covariant in `'run`: a value made in a run is good in every run inside it. A lifetime says for
+/// how long a value is good and not which arena it stands in, and two libraries' runs can be
+/// related by lifetimes as well as two runs of one: a value is handed to a computation only through
+/// [`Held::word_in`], which refuses one another runtime made, and read only through the library
+/// that made it ([`Held::own`]). There is no other way to the address.
+pub struct Held<'run, L> {
     at: NonNull<u8>,
-    _made_in: PhantomData<&'run ()>,
+    library: &'run L,
 }
 
-impl<'run> Value<'run> {
-    /// The value at `at`, good for as long as `'run`.
-    ///
-    /// # Safety
-    ///
-    /// `at` is an address the library answered that stays good for as long as `'run`: made in
-    /// a run open for that long, or read out of a value that is good for that long.
-    pub unsafe fn from_address(at: NonNull<u8>) -> Self {
-        Value {
-            at,
-            _made_in: PhantomData,
-        }
+impl<L> Clone for Held<'_, L> {
+    fn clone(&self) -> Self {
+        *self
     }
 }
 
-impl Value<'_> {
-    /// Where the value stands, to hand to the library.
-    pub fn address(self) -> NonNull<u8> {
-        self.at
+impl<L> Copy for Held<'_, L> {}
+
+impl<'run, L: Loaded> Held<'run, L> {
+    /// The value at `at`, which `library` answered.
+    ///
+    /// # Safety
+    ///
+    /// `at` is an address `library` answered that stays good for as long as `'run`: made in a run
+    /// open for that long, or read out of a value that is good for that long.
+    ///
+    /// # Panics
+    ///
+    /// Where `at` is null, which the library answers for no value.
+    pub unsafe fn new(library: &'run L, at: Word) -> Self {
+        let at = NonNull::new(at.cast_mut()).expect("the library answers a value's address");
+        Held { at, library }
+    }
+
+    /// The library that made it.
+    pub fn library(&self) -> &'run L {
+        self.library
+    }
+
+    /// The library that made it and where the value stands, to read it through that library and
+    /// no other: a field, a case, its external form.
+    pub fn own(&self) -> (&'run L, Word) {
+        (self.library, self.at.as_ptr().cast_const())
+    }
+
+    /// Where the value stands, to hand to a computation started in `run`.
+    ///
+    /// # Errors
+    ///
+    /// [`Failure::Foreign`] where another runtime than `run`'s made it: its address is one of
+    /// another arena, which the computation would read as its own. Two handles on one library are
+    /// one runtime, and a value one made is the other's.
+    pub fn word_in(&self, run: &Run<'_, L>) -> Result<Word, Failure> {
+        if self.library.runtime().identity() == run.library().runtime().identity() {
+            Ok(self.at.as_ptr().cast_const())
+        } else {
+            Err(Failure::Foreign)
+        }
     }
 }
 

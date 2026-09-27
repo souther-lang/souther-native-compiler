@@ -5,5 +5,5 @@ include!("../library.rs");
 fn main() {
     let runtime = runtime();
     let made = runtime.run(|run| make(run)).unwrap();
-    let _ = made.address();
+    let _ = made.own();
 }

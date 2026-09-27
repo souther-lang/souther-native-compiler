@@ -8,7 +8,10 @@ fn main() {
         .run(|run| {
             let made = make(run);
             std::thread::scope(|threads| {
-                threads.spawn(move || made.address());
+                threads.spawn(move || {
+                    let moved = made;
+                    moved.library();
+                });
             });
         })
         .unwrap();

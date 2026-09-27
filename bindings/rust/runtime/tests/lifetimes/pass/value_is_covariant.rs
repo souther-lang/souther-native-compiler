@@ -2,7 +2,7 @@
 
 include!("../library.rs");
 
-fn shorten<'long: 'short, 'short>(value: Value<'long>) -> Value<'short> {
+fn shorten<'long: 'short, 'short>(value: Held<'long, Runtime>) -> Held<'short, Runtime> {
     value
 }
 
@@ -12,7 +12,7 @@ fn main() {
         .run(|run| {
             let outer = make(run);
             run.scope(|inner| {
-                let _: Value<'_> = shorten(outer);
+                let _: Held<'_, Runtime> = shorten(outer);
                 let _ = inner;
             });
         })

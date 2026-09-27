@@ -1,8 +1,7 @@
 // A library as far as the compiler sees one: a runtime, something that makes a value, and a
 // computation that takes one. Included by every case, none of which runs.
 
-use souther_binding_runtime::{RawMark, Run, Runtime, Statuses, Value};
-use std::ptr::NonNull;
+use souther_binding_runtime::{Held, RawMark, Run, Runtime, Statuses};
 
 extern "C" fn mark() -> RawMark {
     RawMark(0)
@@ -22,11 +21,11 @@ fn runtime() -> Runtime {
 }
 
 #[allow(dead_code)]
-fn make<'run>(run: &mut Run<'run, Runtime>) -> Value<'run> {
-    unsafe { run.value(NonNull::dangling()) }
+fn make<'run>(run: &mut Run<'run, Runtime>) -> Held<'run, Runtime> {
+    unsafe { run.held(std::ptr::NonNull::dangling().as_ptr()) }
 }
 
 #[allow(dead_code)]
-fn compute<'run>(_run: &mut Run<'run, Runtime>, value: Value<'run>) -> Value<'run> {
+fn compute<'run>(_run: &mut Run<'run, Runtime>, value: Held<'run, Runtime>) -> Held<'run, Runtime> {
     value
 }

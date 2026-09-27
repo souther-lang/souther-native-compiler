@@ -13,12 +13,16 @@
 //!   ([`Run::scope`]), which borrows it for as long as the nested one is open, so nothing is made
 //!   through a run while a run inside it is the innermost.
 //! - A nested run is handed as a [`Scope`], whose type says the run outside outlives it. A
-//!   [`Value`] made outside is taken as one made inside, and never the other way.
+//!   [`Held`] value made outside is taken as one made inside, and never the other way.
 //! - A host implementation called back from the library does not open a run. It borrows the
 //!   innermost one, the one the call it was called back from was made in ([`host`]).
 //!
-//! The one thing the types cannot see is two handles on one library: two handles on one arena,
-//! each able to open a root run. That is refused when the run is opened ([`AlreadyRunning`]).
+//! What the types cannot see is which library a value is of: a lifetime says for how long a value
+//! is good and not which arena it stands in, and runs of two libraries can be related by lifetimes
+//! as two runs of one can. So a value holds the library that made it, and handing one to a
+//! computation of another runtime is refused before the call ([`Failure::Foreign`]), as handing it
+//! what stands for a behavior bound by another is. Two handles on one library are one runtime,
+//! and a second root run of it on a thread is refused where it is opened ([`AlreadyRunning`]).
 //!
 //! A library is loaded by path at run time ([`NativeLibrary`]) and every function is looked up
 //! through its handle, since every Souther library exports the same runtime functions.
@@ -34,11 +38,11 @@ mod temporal;
 pub use bound::{BindFn, Bound, Capability, Hosted, ImplementFn, Implemented, Made, Requirement};
 pub use decimal::{Decimal, NotADecimal};
 pub use failure::{Abort, Failure, HostError, Status, Statuses, UnnamedStatus};
-pub use keep::{FunctionImplementFn, Held, HostedFunction};
+pub use keep::{FunctionImplementFn, HostedFunction};
 pub use native::{Construction, LoadError, NativeLibrary, Reading, Word, Words};
 pub use run::{
-    AlreadyRunning, HostFailure, Loaded, MarkFn, RawMark, ResetFn, Run, Runtime, Scope, Value,
-    host, implemented, run,
+    AlreadyRunning, Held, HostFailure, Loaded, MarkFn, RawMark, ResetFn, Run, Runtime, Scope, host,
+    implemented, run,
 };
 pub use temporal::{Date, DateTime, Instant, NotATemporal, Time};
 

@@ -3,7 +3,6 @@
 
 use crate::bound::{Hosted, Room};
 use crate::native::Word;
-use crate::run::Value;
 use std::any::Any;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -68,46 +67,5 @@ impl Keeper {
         kept.rooms.push(Box::new(room));
         kept.made.insert(at, made);
         made
-    }
-}
-
-/// A value the library made that the host holds by its address alone: a function value it
-/// answered, which a host calls through the library of `L`.
-pub struct Held<'run, L> {
-    value: Value<'run>,
-    library: &'run L,
-}
-
-impl<L> Clone for Held<'_, L> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<L> Copy for Held<'_, L> {}
-
-impl<'run, L> Held<'run, L> {
-    /// The value at `at`, which `library` answered.
-    ///
-    /// # Safety
-    ///
-    /// `at` is an address `library` answered that stays good for as long as `'run`.
-    pub unsafe fn new(library: &'run L, at: Word) -> Self {
-        let at = ptr::NonNull::new(at.cast_mut()).expect("the library answers a value's address");
-        Held {
-            // SAFETY: what the caller says.
-            value: unsafe { Value::from_address(at) },
-            library,
-        }
-    }
-
-    /// Where the value stands, to hand to the library.
-    pub fn word(&self) -> Word {
-        self.value.address().as_ptr().cast_const()
-    }
-
-    /// The library that made it.
-    pub fn library(&self) -> &'run L {
-        self.library
     }
 }

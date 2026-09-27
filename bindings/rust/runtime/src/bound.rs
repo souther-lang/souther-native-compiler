@@ -1,6 +1,7 @@
 //! What a behavior is bound to: the capabilities of what it requires, laid out as the library
 //! reads them.
 
+use crate::failure::Failure;
 use crate::run::Runtime;
 use std::ffi::c_void;
 use std::marker::PhantomData;
@@ -95,8 +96,9 @@ pub trait Requirement {
     /// Its capability, as the library reads it for as long as `self` lives.
     fn capability(&self) -> NonNull<Capability>;
 
-    /// The runtime that made it.
-    fn made(&self) -> Made;
+    /// The runtime that made it and everything it stands on, or none where they are more than
+    /// one: a behavior bound to what another runtime made, at any depth.
+    fn made(&self) -> Option<Made>;
 }
 
 /// A behavior bound to what stands for each behavior it requires, in the order it requires them,
@@ -105,7 +107,7 @@ pub trait Requirement {
 /// Borrows what it is bound to for `'a`: the library reads their capabilities wherever the
 /// behavior runs, and never copies them.
 pub struct Bound<'a> {
-    made: Made,
+    made: Option<Made>,
     requirements: Room<[*const Capability]>,
     capability: Option<Room<Capability>>,
     _requires: PhantomData<&'a ()>,
@@ -120,23 +122,19 @@ impl<'a> Bound<'a> {
     /// `bind` is the library's function making the capability of this behavior, and `requires`
     /// stands for what it requires, in order.
     ///
-    /// # Panics
-    ///
-    /// Where something in `requires` was made by another library's runtime, whose capability this
-    /// library would call into.
+    /// What another runtime made may be among `requires`: binding only lays out addresses and
+    /// calls nothing, and a call is what refuses it ([`Bound::requirements`]), as a call is what
+    /// refuses a value another runtime made.
     pub unsafe fn new(
         runtime: &Runtime,
         bind: Option<BindFn>,
         requires: &[&'a dyn Requirement],
     ) -> Self {
         let made = Made::by(runtime);
-        for required in requires {
-            assert_eq!(
-                required.made(),
-                made,
-                "a behavior is bound to what the same library made"
-            );
-        }
+        let made = requires
+            .iter()
+            .all(|required| required.made() == Some(made))
+            .then_some(made);
         let requirements = Room::of_slice(
             requires
                 .iter()
@@ -159,19 +157,19 @@ impl<'a> Bound<'a> {
         }
     }
 
-    /// What a call of the behavior is handed first: the address of the capabilities of what it
-    /// requires, or null where it requires nothing.
+    /// What a call of the behavior into `runtime`'s library is handed first: the address of the
+    /// capabilities of what it requires, or null where it requires nothing.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Where the call is into another library than the one that bound it.
-    pub fn requirements(&self, runtime: &Runtime) -> *const *const Capability {
-        assert_eq!(
-            Made::by(runtime),
-            self.made,
-            "a bound behavior is called in a run of the library that bound it"
-        );
-        Self::first(&self.requirements)
+    /// [`Failure::Foreign`] where another runtime bound it, or bound anything it stands on: the
+    /// call would run another library's code over this one's arena.
+    pub fn requirements(&self, runtime: &Runtime) -> Result<*const *const Capability, Failure> {
+        if self.made == Some(Made::by(runtime)) {
+            Ok(Self::first(&self.requirements))
+        } else {
+            Err(Failure::Foreign)
+        }
     }
 
     fn first(requirements: &Room<[*const Capability]>) -> *const *const Capability {
@@ -192,7 +190,7 @@ impl Requirement for Bound<'_> {
         capability.0
     }
 
-    fn made(&self) -> Made {
+    fn made(&self) -> Option<Made> {
         self.made
     }
 }
@@ -250,7 +248,7 @@ impl<D> Requirement for Implemented<D> {
         self.capability.0
     }
 
-    fn made(&self) -> Made {
-        self.made
+    fn made(&self) -> Option<Made> {
+        Some(self.made)
     }
 }

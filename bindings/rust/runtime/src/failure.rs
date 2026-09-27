@@ -99,6 +99,9 @@ pub enum Failure {
     Unbound,
     /// A host implementation answered what it may not, or said it failed and nothing was kept.
     ProtocolViolation,
+    /// A value, a function value or what stands for a required behavior that another library's
+    /// runtime made was handed to this one's, and the call was not made.
+    Foreign,
 }
 
 impl fmt::Display for Failure {
@@ -111,6 +114,9 @@ impl fmt::Display for Failure {
             }
             Failure::ProtocolViolation => f.write_str(
                 "a host implementation answered something other than a value or a failure",
+            ),
+            Failure::Foreign => f.write_str(
+                "what another library made was handed to a call into this one, which was not made",
             ),
         }
     }
