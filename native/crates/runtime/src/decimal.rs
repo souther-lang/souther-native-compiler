@@ -135,8 +135,8 @@ pub(crate) unsafe fn rounding(mode: *const Value) -> Rounding {
     .expect("a RoundingMode is tagged by one of the tokens the runtime defines for its cases")
 }
 
-/// The value integer text and a scale write, as [`souther_decimal_of_parts`] and
-/// [`souther_decimal_literal`] both read them.
+/// The value integer text and a scale write, as [`souther_decimal_literal`] reads them: a `String`
+/// of the runtime's layout, which a literal the compiler wrote always is.
 ///
 /// # Safety
 ///
@@ -151,22 +151,44 @@ unsafe fn of_parts(unscaled: *const Text, scale: i64) -> *mut Decimal {
 }
 
 /// A `Decimal` of this integer and scale, for a caller outside a Souther program: the integer as
-/// integer text (an optional sign and ASCII digits) and the scale as a number a scale may be.
+/// integer text (an optional sign and ASCII digits, `length` bytes at `unscaled`) and the scale as
+/// a number a scale may be.
+///
+/// Bytes and a count, and not a `String` of the runtime's layout: the unscaled digits are the
+/// integer's text and not the value's written form (spec §what-a-string-holds says what a
+/// `String` is measured against, and an integer's digits are never that — they are always ASCII,
+/// so they always fit, and routing them through String admission would make a `Decimal` a caller
+/// otherwise has fallible on a capacity that has nothing to do with it).
 ///
 /// # Safety
 ///
-/// `unscaled` is a string of the runtime's layout.
+/// `unscaled` points at `length` bytes that may be read.
 ///
 /// # Panics
 ///
-/// Where the text is not integer text or the scale is outside the 32-bit range, which ends the
-/// process as a string of bytes that are not UTF-8 does: a binding says so first in its own terms.
+/// Where the bytes are not UTF-8, are not integer text, or the scale is outside the 32-bit range,
+/// which ends the process as a string of bytes that are not UTF-8 does: a binding says so first in
+/// its own terms.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_decimal_of_parts(
-    unscaled: *const Text,
+    unscaled: *const u8,
+    length: Count,
     scale: i64,
 ) -> *mut Decimal {
-    unsafe { of_parts(unscaled, scale) }
+    let held =
+        usize::try_from(length.0).expect("text is handed over as bytes, and never fewer than 0");
+    let bytes = if held == 0 {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(unscaled, held) }
+    };
+    let written =
+        std::str::from_utf8(bytes).expect("a Decimal's integer is handed over as UTF-8 text");
+    let scale = i32::try_from(scale).expect("a Decimal is handed over at a scale a Decimal has");
+    let amount = souther_text::decimal_text(souther_text::Text::held(written))
+        .and_then(|it| Amount::of_integer_text(it, scale))
+        .expect("a Decimal's integer is handed over as integer text");
+    decimal_of(&amount)
 }
 
 /// A `Decimal` literal: the integer the checker read it as, which the object carries as a string,
@@ -174,7 +196,8 @@ pub unsafe extern "C" fn souther_decimal_of_parts(
 ///
 /// # Safety
 ///
-/// As [`souther_decimal_of_parts`], which a literal the compiler wrote meets.
+/// `unscaled` is a string of the runtime's layout, as a literal the compiler wrote always is, and
+/// `scale` is one a `Decimal` has.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_decimal_literal(
     unscaled: *const Text,
@@ -404,7 +427,11 @@ mod tests {
     use std::collections::BTreeSet;
 
     fn made(text: &str) -> *mut Text {
-        unsafe { souther_string_of_utf8(text.as_ptr(), Count(text.len() as i64)) }
+        let mut out = std::ptr::null_mut();
+        let admitted =
+            unsafe { souther_string_of_utf8(text.as_ptr(), Count(text.len() as i64), &mut out) };
+        assert_eq!(admitted, 1, "test text has a place");
+        out
     }
 
     fn said(at: *const Text) -> String {
@@ -412,7 +439,9 @@ mod tests {
     }
 
     fn of(unscaled: &str, scale: i64) -> *mut Decimal {
-        unsafe { souther_decimal_of_parts(made(unscaled), scale) }
+        unsafe {
+            souther_decimal_of_parts(unscaled.as_ptr(), Count(unscaled.len() as i64), scale)
+        }
     }
 
     fn parts(at: *const Decimal) -> (String, i64) {

@@ -143,6 +143,15 @@ pub const GENERATIONS: &[(u32, &str)] = &[
          as that constraint by a call of its own (`souther_read_min_length` and the rest) \
          (souther-native-compiler#97)",
     ),
+    (
+        8,
+        "a host handing text in may have no place for it as a `String`: `souther_string_of_utf8` \
+         writes the string through room and answers whether it wrote one, as a generated string \
+         operation already does, in place of always answering one; and `souther_decimal_of_parts` \
+         takes the integer's digits as bytes and a count in place of a `String`, since they are \
+         never the value's written form and were never fallible on a String's own bound \
+         (souther-native-compiler#109)",
+    ),
 ];
 
 /// Whether a module's name can stand in a symbol: it carries no `$`, which is what every symbol
@@ -1969,10 +1978,10 @@ pub struct RuntimeFunction {
 /// and neither says anything of the rest. The runtime's own tests hold each of these to the
 /// function it names.
 pub const HOST_RUNTIME: &[RuntimeFunction] = {
-    use HostParameter::Given;
+    use HostParameter::{Given, Room};
     use HostWord::{
-        Bytes, Count, Date, DateTime, Decimal, Decoded, Instant, Int, Issue, Mark, Outcome, String,
-        Time, Value,
+        Bool, Bytes, Count, Date, DateTime, Decimal, Decoded, Instant, Int, Issue, Mark, Outcome,
+        String, Time, Value,
     };
     &[
         RuntimeFunction {
@@ -1987,8 +1996,8 @@ pub const HOST_RUNTIME: &[RuntimeFunction] = {
         },
         RuntimeFunction {
             name: STRING_OF_UTF8,
-            takes: &[Given(Bytes), Given(Count)],
-            answers: Some(String),
+            takes: &[Given(Bytes), Given(Count), Room(String)],
+            answers: Some(Bool),
         },
         RuntimeFunction {
             name: STRING_LENGTH,
@@ -2002,7 +2011,7 @@ pub const HOST_RUNTIME: &[RuntimeFunction] = {
         },
         RuntimeFunction {
             name: DECIMAL_OF_PARTS,
-            takes: &[Given(String), Given(Int)],
+            takes: &[Given(Bytes), Given(Count), Given(Int)],
             answers: Some(Decimal),
         },
         RuntimeFunction {
@@ -3570,13 +3579,13 @@ mod tests {
     fn a_behavior_is_reached_by_its_module_and_its_name() {
         assert_eq!(
             behavior_symbol("calculation", "add"),
-            "souther7.calculation.add"
+            "souther8.calculation.add"
         );
     }
 
     #[test]
     fn a_dotted_module_keeps_its_dots() {
-        assert_eq!(behavior_symbol("lib.pub", "bill"), "souther7.lib.pub.bill");
+        assert_eq!(behavior_symbol("lib.pub", "bill"), "souther8.lib.pub.bill");
     }
 
     /// What the reading rests on. Were this admitted, `a.b` / `c` and `a` / `b.c` would be spelt
@@ -3616,7 +3625,7 @@ mod tests {
     fn each_row_of_a_behavior_is_its_own_symbol() {
         assert_eq!(
             example_symbol("calculation", "add", 0),
-            "souther7.calculation.add$example$0"
+            "souther8.calculation.add$example$0"
         );
         assert_ne!(
             example_symbol("calculation", "add", 0),
@@ -3631,7 +3640,7 @@ mod tests {
     #[test]
     fn an_entry_and_its_boundary_are_two_symbols() {
         let entry = behavior_symbol("shop", "quote");
-        assert_eq!(boundary_symbol(&entry), "souther7.shop.quote$boundary");
+        assert_eq!(boundary_symbol(&entry), "souther8.shop.quote$boundary");
         assert_ne!(boundary_symbol(&entry), entry);
         assert_ne!(
             boundary_symbol(&example_symbol("shop", "quote", 0)),
@@ -3702,7 +3711,7 @@ mod tests {
     fn a_published_value_is_reached_by_its_module_and_its_name() {
         assert_eq!(
             value_symbol("pricing", "standard"),
-            "souther7.pricing$value$standard"
+            "souther8.pricing$value$standard"
         );
     }
 
@@ -3740,7 +3749,7 @@ mod tests {
     fn a_type_is_built_through_its_module_and_its_name() {
         assert_eq!(
             constructor_symbol("pricing", "Amount"),
-            "souther7.pricing$construct$Amount"
+            "souther8.pricing$construct$Amount"
         );
     }
 
@@ -3760,7 +3769,7 @@ mod tests {
     fn what_decides_a_construction_is_reached_by_the_types_module_and_name() {
         assert_eq!(
             checked_constructor_symbol("pricing", "Amount"),
-            "souther7.pricing$checked$Amount"
+            "souther8.pricing$checked$Amount"
         );
     }
 
@@ -3790,23 +3799,23 @@ mod tests {
     fn a_host_reaches_a_type_under_its_module_and_its_name() {
         assert_eq!(
             host_constructor_symbol("pricing", "Amount"),
-            "souther7_m_pricing_t_Amount_construct"
+            "souther8_m_pricing_t_Amount_construct"
         );
         assert_eq!(
             host_field_symbol("pricing", "Amount", "value"),
-            "souther7_m_pricing_t_Amount_f_value"
+            "souther8_m_pricing_t_Amount_f_value"
         );
         assert_eq!(
             host_case_symbol("pricing", "Result"),
-            "souther7_m_pricing_t_Result_case"
+            "souther8_m_pricing_t_Result_case"
         );
         assert_eq!(
             host_decode_symbol("pricing", "Amount"),
-            "souther7_m_pricing_t_Amount_decode"
+            "souther8_m_pricing_t_Amount_decode"
         );
         assert_eq!(
             host_encode_symbol("pricing", "Amount"),
-            "souther7_m_pricing_t_Amount_encode"
+            "souther8_m_pricing_t_Amount_encode"
         );
     }
 
@@ -3814,15 +3823,15 @@ mod tests {
     fn a_host_reaches_a_behavior_and_a_value_under_their_module() {
         assert_eq!(
             host_behavior_symbol("lib.shop", "quote"),
-            "souther7_m_lib_m_shop_b_quote"
+            "souther8_m_lib_m_shop_b_quote"
         );
         assert_eq!(
             host_value_symbol("lib.shop", "standard"),
-            "souther7_m_lib_m_shop_v_standard"
+            "souther8_m_lib_m_shop_v_standard"
         );
         assert_eq!(
             host_behavior_answer_case_symbol("lib.shop", "find"),
-            "souther7_m_lib_m_shop_b_find_answer_case"
+            "souther8_m_lib_m_shop_b_find_answer_case"
         );
     }
 
@@ -3835,7 +3844,7 @@ mod tests {
                 &HostShape::Leaf(Value),
                 HostListOperation::Construct
             ),
-            "souther7_m_shop_l_value_construct"
+            "souther8_m_shop_l_value_construct"
         );
         assert_eq!(
             host_list_symbol(
@@ -3843,7 +3852,7 @@ mod tests {
                 &HostShape::Option(Box::new(HostShape::Leaf(Int))),
                 HostListOperation::At
             ),
-            "souther7_m_lib_m_shop_l_o_int_at"
+            "souther8_m_lib_m_shop_l_o_int_at"
         );
         assert_eq!(
             host_list_symbol(
@@ -3854,7 +3863,7 @@ mod tests {
                 ]))),
                 HostListOperation::Length
             ),
-            "souther7_m_shop_l_l_t2_int_o_bool_length"
+            "souther8_m_shop_l_l_t2_int_o_bool_length"
         );
     }
 
@@ -3867,11 +3876,11 @@ mod tests {
         };
         assert_eq!(
             host_function_symbol("shop", &function, HostFunctionOperation::Call),
-            "souther7_m_shop_fn_f2_int_string_o_int_call"
+            "souther8_m_shop_fn_f2_int_string_o_int_call"
         );
         assert_eq!(
             host_function_symbol("shop", &function, HostFunctionOperation::Implement),
-            "souther7_m_shop_fn_f2_int_string_o_int_implement"
+            "souther8_m_shop_fn_f2_int_string_o_int_implement"
         );
     }
 
@@ -3955,11 +3964,11 @@ mod tests {
     fn a_name_that_is_not_ascii_letters_and_digits_is_escaped() {
         assert_eq!(
             host_behavior_symbol("shop", "foo_bar"),
-            "souther7_m_shop_b_foo__bar"
+            "souther8_m_shop_b_foo__bar"
         );
         assert_eq!(
             host_behavior_symbol("shop", "数量"),
-            "souther7_m_shop_b__u6570__u91cf_"
+            "souther8_m_shop_b__u6570__u91cf_"
         );
     }
 
@@ -3969,7 +3978,7 @@ mod tests {
     fn a_type_is_read_through_its_module_and_its_name() {
         assert_eq!(
             reader_symbol("pricing", "Amount"),
-            "souther7.pricing$read$Amount"
+            "souther8.pricing$read$Amount"
         );
     }
 

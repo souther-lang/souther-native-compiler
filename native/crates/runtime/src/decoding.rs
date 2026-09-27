@@ -1507,7 +1507,11 @@ mod tests {
     }
 
     fn literal(value: &str) -> *mut Text {
-        unsafe { souther_string_of_utf8(value.as_ptr(), Count(value.len() as i64)) }
+        let mut out = ptr::null_mut();
+        let admitted =
+            unsafe { souther_string_of_utf8(value.as_ptr(), Count(value.len() as i64), &mut out) };
+        assert_eq!(admitted, 1, "test text has a place");
+        out
     }
 
     fn begun(document: &str) -> *mut Decoding {
@@ -1752,7 +1756,9 @@ mod tests {
     }
 
     fn decimal(unscaled: &str, scale: i64) -> *mut Decimal {
-        unsafe { crate::souther_decimal_of_parts(literal(unscaled), scale) }
+        unsafe {
+            crate::souther_decimal_of_parts(unscaled.as_ptr(), Count(unscaled.len() as i64), scale)
+        }
     }
 
     fn ints(values: &[i64]) -> *mut crate::List {

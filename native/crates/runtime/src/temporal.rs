@@ -1095,7 +1095,11 @@ mod tests {
     use crate::{souther_mark, souther_reset, souther_string_of_utf8};
 
     fn made(text: &str) -> *mut Text {
-        unsafe { souther_string_of_utf8(text.as_ptr(), Count(text.len() as i64)) }
+        let mut out = std::ptr::null_mut();
+        let admitted =
+            unsafe { souther_string_of_utf8(text.as_ptr(), Count(text.len() as i64), &mut out) };
+        assert_eq!(admitted, 1, "test text has a place");
+        out
     }
 
     fn said(at: *const Text) -> String {

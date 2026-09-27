@@ -206,23 +206,42 @@ final class Session
      * The library admits text where it comes in: it puts it in NFC by the Unicode version the
      * language names, which PHP's own normalizer, reading whichever ICU it was built with, need not
      * be. What the library cannot answer is bytes that are not UTF-8, which end the process there,
-     * so a PHP string, which is any bytes, is asked here and refused as an exception instead.
+     * so a PHP string, which is any bytes, is asked here and refused as an exception instead — a
+     * violation of this binding's own contract, and not a Souther computation refusing a value.
+     *
+     * A canonical value longer than a `String` holds (spec §what-a-string-holds) is different: it
+     * is text this binding correctly handed over, that the language refuses. The library answers
+     * whether it wrote one (souther-native-compiler#109), and where it did not, this throws what
+     * the library calls `REQUIRED_FORM_HAS_NO_PLACE` — a Souther refusal, and so `$this->library
+     * ->failure(...)`, not an `\InvalidArgumentException` beside the UTF-8 one above.
      */
     public function string(string $text): CData
     {
         if (preg_match('//u', $text) !== 1) {
             throw new \InvalidArgumentException('text handed to a Souther library is not UTF-8');
         }
-        return $this->ffi()->souther_string_of_utf8($this->bytes($text), strlen($text));
+        $ffi = $this->ffi();
+        $room = $ffi->new('souther_string');
+        $admitted = $ffi->souther_string_of_utf8($this->bytes($text), strlen($text), FFI::addr($room));
+        if ($admitted === 0) {
+            throw $this->library->failure($this->library->status('REQUIRED_FORM_HAS_NO_PLACE'));
+        }
+        return $room;
     }
 
     /**
      * @internal A `Decimal` as the library holds it, made of its integer and its scale, which
      * `Decimal` has already held to what the library takes.
+     *
+     * The unscaled digits are handed over as bytes, not a `String`: they are the integer's text and
+     * never the value's written form, so they are never asked through `string()` and cannot fail
+     * the way it can (souther-native-compiler#109).
      */
     public function decimal(Decimal $decimal): CData
     {
-        return $this->ffi()->souther_decimal_of_parts($this->string($decimal->unscaled), $decimal->scale);
+        $unscaled = $decimal->unscaled;
+        return $this->ffi()->souther_decimal_of_parts(
+            $this->bytes($unscaled), strlen($unscaled), $decimal->scale);
     }
 
     /** @internal A `Decimal` the library answered, as its integer and its scale. */

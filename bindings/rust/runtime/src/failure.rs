@@ -48,6 +48,24 @@ impl Statuses {
         self.host_exception
     }
 
+    /// [`Failure::Abort`] for `REQUIRED_FORM_HAS_NO_PLACE`, the status a library answers where
+    /// text a host hands it has no place as a `String` (spec §what-a-string-holds) — what
+    /// `souther_string_of_utf8` and `Words::string` answer `false`/`Err` for, in place of a raw
+    /// status number that call site would otherwise have to name by hand.
+    ///
+    /// # Errors
+    ///
+    /// [`UnnamedStatus`] where the library's manifest does not name it. Every library a host asks
+    /// to build a `String` from bytes has to; where it does not, that is itself a manifest that
+    /// does not match what this binding calls, the same as any other [`UnnamedStatus`].
+    pub fn no_place(&self) -> Result<Failure, UnnamedStatus> {
+        self.named
+            .iter()
+            .find(|(name, _)| *name == "REQUIRED_FORM_HAS_NO_PLACE")
+            .map(|&(name, status)| Failure::Abort(Abort { status, name: Some(name) }))
+            .ok_or(UnnamedStatus("REQUIRED_FORM_HAS_NO_PLACE"))
+    }
+
     /// What a host implementation that answered answers the library.
     pub fn answered_status(&self) -> Status {
         self.answered

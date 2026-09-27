@@ -78,10 +78,19 @@ public final class RustBindings {
         functions.put("souther_mark", new Function("souther_mark", List.of(), Word.MARK));
         functions.put("souther_reset",
                 new Function("souther_reset", List.of(Parameter.given(Word.MARK)), null));
-        add.accept("souther_string_of_utf8", List.of(Word.BYTES, Word.COUNT, Word.STRING));
+        // A String has no place for text past what the language bounds it to
+        // (souther-native-compiler#109), so this answers whether it wrote one, as a generated
+        // string operation already does, in place of always answering a String.
+        functions.put("souther_string_of_utf8", new Function("souther_string_of_utf8",
+                List.of(Parameter.given(Word.BYTES), Parameter.given(Word.COUNT),
+                        Parameter.room(Word.STRING)),
+                Word.BOOL));
         add.accept("souther_string_length", List.of(Word.STRING, Word.COUNT));
         add.accept("souther_string_bytes", List.of(Word.STRING, Word.BYTES));
-        add.accept("souther_decimal_of_parts", List.of(Word.STRING, Word.INT, Word.DECIMAL));
+        // The unscaled digits as bytes and a count, not a String: they are the integer's text and
+        // never the value's written form, so they are never fallible on what a String holds
+        // (souther-native-compiler#109).
+        add.accept("souther_decimal_of_parts", List.of(Word.BYTES, Word.COUNT, Word.INT, Word.DECIMAL));
         add.accept("souther_decimal_unscaled", List.of(Word.DECIMAL, Word.STRING));
         add.accept("souther_decimal_scale", List.of(Word.DECIMAL, Word.INT));
         add.accept("souther_date_of_iso", List.of(Word.STRING, Word.DATE));
