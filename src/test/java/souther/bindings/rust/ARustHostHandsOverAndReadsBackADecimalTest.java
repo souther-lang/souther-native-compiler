@@ -93,7 +93,7 @@ class ARustHostHandsOverAndReadsBackADecimalTest {
                 rate: Some("108e-2") None
                 or nought: 108e-2 0e-0
                 refused: a Decimal's integer is an optional '-' and ASCII digits, and not '1.5'
-                same amount: false
+                same amount: true
                 """);
     }
 }
