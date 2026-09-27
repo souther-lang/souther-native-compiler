@@ -9,6 +9,11 @@
 //! of a union of them, where one enumeration and no other places them. The token a value carries says which
 //! case it is and nothing about where that case stands, so it is looked up among the leaves and
 //! never compared as an address. Where two tokens were put is the linker's to decide.
+//!
+//! Which enumeration places a case or a union is the checker's own answer, carried on the node
+//! (`ordering`) and not worked out again here: a unit may be a case of two enumerations that place
+//! it differently, and only the checker, reading every declaration and not only what this document
+//! carries, ever finds one where there is one.
 
 use cranelift::codegen::ir::condcodes::IntCC;
 use cranelift::codegen::ir::{self, InstBuilder, types};
@@ -21,12 +26,19 @@ use crate::{Lowered, Lowerings, Tagged, as_a_whole_number, not_lowered, opened, 
 use souther_native_abi::{DECIMAL_COMPARE, RATIONAL_COMPARE};
 
 /// Whether `a` and `b`, two values of `ty`, stand as `op` asks: a truth, as `<` answers one.
+///
+/// `basis` is what the checker settled the operands are ordered by (`Core.OrderingBasis`): the one
+/// enumeration that places a case or a union of cases, or itself for a number or text. Read from
+/// the node and not rediscovered from `ty` — the same answer this document's declarations alone
+/// cannot always give, since a unit may be a case of two enumerations that place it differently.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn ordered(
     builder: &mut FunctionBuilder,
     lowering: &Lowerings,
     module: &mut ObjectModule,
     op: Op,
     ty: &Ty,
+    basis: Option<&Ty>,
     a: ir::Value,
     b: ir::Value,
 ) -> Lowered<ir::Value> {
@@ -85,14 +97,12 @@ pub(crate) fn ordered(
             named: Case::Declared { .. },
         }
         | Ty::Union { .. } => {
-            let Some(enumeration) = lowering
-                .declared
-                .enumeration_of(ty)
-                .expect("`Coherent` held every case named to be one a declaration crossed for")
+            let Some(Ty::Ref {
+                named: Case::Declared { declared },
+            }) = basis
             else {
                 return Err(not_lowered(format!(
-                    "{} over two values of {}, which no one enumeration this document carries \
-                     places",
+                    "{} over two values of {}, which the checker gives no ordering enumeration for",
                     op.spelt(),
                     ty.spelt()
                 )));
@@ -100,7 +110,7 @@ pub(crate) fn ordered(
             let leaves = lowering
                 .declared
                 .leaves_of(&[Case::Declared {
-                    declared: enumeration,
+                    declared: declared.clone(),
                 }])
                 .expect("`Coherent` held every case named to be one a declaration crossed for");
             let one = place(builder, lowering, module, &leaves, Tagged::of(a, ty))?;

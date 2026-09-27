@@ -54,14 +54,14 @@ fn number(value: i64) -> Value {
 
 fn added(left: Value, right: Value) -> Value {
     json!({
-        "core": "binary", "op": "ADD", "reading": {"is": "astheystand"},
+        "core": "binary", "op": "ADD", "reading": {"is": "astheystand"}, "ordering": null,
         "left": left, "right": right, "type": int(), "aborts": ["REQUIRED_FORM_HAS_NO_PLACE"]
     })
 }
 
 fn above(left: Value, right: Value) -> Value {
     json!({
-        "core": "binary", "op": "GT", "reading": {"is": "astheystand"},
+        "core": "binary", "op": "GT", "reading": {"is": "astheystand"}, "ordering": int(),
         "left": left, "right": right, "type": truth(), "aborts": []
     })
 }

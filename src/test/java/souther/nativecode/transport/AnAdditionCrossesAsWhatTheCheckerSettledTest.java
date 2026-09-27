@@ -41,7 +41,7 @@ class AnAdditionCrossesAsWhatTheCheckerSettledTest {
         String written = ProgramWriter.written(Checked.of(List.of(ADDING)));
 
         assertThat(written).isEqualTo("""
-                {"transport":27,"declarations":[],\
+                {"transport":28,"declarations":[],\
                 "behaviors":[{"module":"calculation","name":"add","is":"body",\
                 "parameters":{"named":[{"name":"a","input":{"is":"scalar","scalar":"INT"}},\
                 {"name":"b","input":{"is":"scalar","scalar":"INT"}}]},\
@@ -49,7 +49,7 @@ class AnAdditionCrossesAsWhatTheCheckerSettledTest {
                 "modules":[{"name":"calculation","publishes":[],"helpers":[],"values":[],"entries":[],\
                 "definitions":[{"is":"body","declared":"calculation.add","parameters":["a","b"],\
                 "publication":"published",\
-                "body":{"core":"binary","op":"ADD","reading":{"is":"astheystand"},\
+                "body":{"core":"binary","op":"ADD","reading":{"is":"astheystand"},"ordering":null,\
                 "left":{"core":"read","binding":0,"type":{"prim":"INT"},"aborts":[]},\
                 "right":{"core":"read","binding":1,"type":{"prim":"INT"},"aborts":[]},\
                 "type":{"prim":"INT"},"aborts":["REQUIRED_FORM_HAS_NO_PLACE"]}}],"examples":[]}]}""");
@@ -176,35 +176,4 @@ class AnAdditionCrossesAsWhatTheCheckerSettledTest {
                 + ",\"nano\":0,\"type\":{\"prim\":\"DATETIME\"},");
     }
 
-    /** What the checker admits of a spelling is the checker's, so a spelling and the one it names
-     * are one literal by the time they cross. */
-    @Test
-    void twoSpellingsOfOneTemporalCrossAsOne() {
-        String canonical = literalsOver("""
-                let a (n) = Date("+10000-01-01")
-                let b (n) = Time("09:30")
-                let c (n) = DateTime("2026-07-01T09:30")
-                let d (n) = Instant("2026-07-01T00:00:00Z")
-                """);
-        String spelt = literalsOver("""
-                let a (n) = Date("+010000-01-01")
-                let b (n) = Time("09:30:00.")
-                let c (n) = DateTime("2026-07-01t09:30")
-                let d (n) = Instant("2026-07-01T00:00:00.Z")
-                """);
-
-        assertThat(spelt).isEqualTo(canonical);
-    }
-
-    private static String literalsOver(String definitions) {
-        return ProgramWriter.written(Checked.of(List.of("""
-                module spelling
-
-                behavior a : (n: Int) -> Date
-                behavior b : (n: Int) -> Time
-                behavior c : (n: Int) -> DateTime
-                behavior d : (n: Int) -> Instant
-
-                """ + definitions)));
-    }
 }

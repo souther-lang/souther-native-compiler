@@ -4,24 +4,23 @@ import org.junit.jupiter.api.Test;
 import souther.compiler.program.CheckedProgram;
 import souther.nativecode.transport.ProgramWriter;
 
-import java.io.ByteArrayOutputStream;
-import java.io.OutputStream;
-import java.io.PrintStream;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * A program the language admits that this backend does not write yet, followed all the way out.
  *
  * <p>Three answers are possible at the end of this path and only one of them is right: the program
  * is refused by the language, this backend has not got round to it, or the command was wrong.
- * Which one a reader is told decides whether they go and change their program. So the test is the
- * whole way through rather than at any one of the places the answer could be lost.
+ * Which one a reader is told decides whether they go and change their program.
+ *
+ * <p>The middle answer has no example here today: `Set` and `Map` (`ASetIsHeldByItsMembersTest`)
+ * closed the gaps this class held open for them, and the arm this class once refused a binder over
+ * crosses now too. What a reader is told when this backend really is behind — {@code NotLowered},
+ * and {@code Main}'s "this backend does not write that yet" over it — is still
+ * {@code NativeCompiler}'s and {@code Main}'s own contract, and the next gap this class finds
+ * should hold that path to it again.
  */
 class WhatThisBackendDoesNotWriteYetTest {
 
@@ -31,21 +30,6 @@ class WhatThisBackendDoesNotWriteYetTest {
             behavior widen : (a: Set<Int>) -> Set<Int>
 
             let widen (a) = a
-            """;
-
-    /**
-     * An arm binding a name where it tests that an optional holds nothing, which the language admits
-     * with no type for the name (souther-lang/souther#1984): what this backend is behind on today.
-     */
-    private static final String BINDING_NOTHING = """
-            module absent exposing ( counted, Held )
-
-            data Held = { o: Int? }
-
-            behavior counted : (h: Held) -> Int
-            let counted (h) = match h.o with
-                | Some x -> x
-                | None as n -> 0
             """;
 
     /**
@@ -91,40 +75,26 @@ class WhatThisBackendDoesNotWriteYetTest {
     }
 
     /**
-     * An arm binding a name where it tests that an optional holds nothing is admitted with no type
-     * for the name (souther-lang/souther#1984), and there is nothing to write it as. Refused as not
-     * lowered, naming that, rather than written with a type this side made up.
+     * An arm binding a name where it tests that an optional holds nothing is read as the optional
+     * itself ({@link souther.compiler.core.Core.Case#bindType()}), which is the type
+     * {@code n} stands as. The checker never admits such a binder without settling its type, so
+     * this crosses like any other arm.
      */
     @Test
-    void anArmBindingANameToNothingIsNotLoweredYet() {
-        CheckedProgram program = Checked.of(List.of(BINDING_NOTHING));
+    void anArmBindingANameToNothingCrossesAsTheOptionalItself() {
+        CheckedProgram program = Checked.of(List.of("""
+                module absent exposing ( counted, Held )
 
-        assertThatThrownBy(() -> ProgramWriter.written(program))
-                .isInstanceOf(NotLowered.class)
-                .hasMessageContaining("souther-lang/souther#1984");
-    }
+                data Held = { o: Int? }
 
-    @Test
-    void theDriverSaysItIsOneThisBackendHasNotGotRoundTo() {
-        assertThatThrownBy(() -> NativeCompiler.compile(
-                Checked.of(List.of(BINDING_NOTHING))))
-                .isInstanceOf(NotLowered.class)
-                .hasMessageContaining("souther-lang/souther#1984");
-    }
+                behavior counted : (h: Held) -> Int
+                let counted (h) = match h.o with
+                    | Some x -> x
+                    | None as n -> 0
+                """));
 
-    @Test
-    void theCommandLineSaysTheBackendIsBehindAndNotThatTheCommandWasWrong() throws Exception {
-        Path source = Files.createTempDirectory("souther-native-test").resolve("absent.sou");
-        Files.writeString(source, BINDING_NOTHING, StandardCharsets.UTF_8);
-        ByteArrayOutputStream problems = new ByteArrayOutputStream();
-
-        int ended = Main.run(
-                new String[]{"-o", source.resolveSibling("out.o").toString(), source.toString()},
-                new PrintStream(OutputStream.nullOutputStream(), true, StandardCharsets.UTF_8),
-                new PrintStream(problems, true, StandardCharsets.UTF_8));
-
-        assertThat(ended).isEqualTo(1);
-        assertThat(problems.toString(StandardCharsets.UTF_8))
-                .contains("this backend does not write that yet");
+        assertThat(ProgramWriter.written(program))
+                .contains("\"selects\":[{\"tests\":\"nothing\"}],\"binding\":2,"
+                        + "\"binds\":{\"option\":{\"prim\":\"INT\"}}");
     }
 }

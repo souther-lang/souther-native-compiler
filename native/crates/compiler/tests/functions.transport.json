@@ -273,6 +273,7 @@
                   }
                 },
                 "op": "ADD",
+                "ordering": null,
                 "reading": {
                   "is": "astheystand"
                 },
@@ -358,6 +359,7 @@
                   }
                 },
                 "op": "ADD",
+                "ordering": null,
                 "reading": {
                   "is": "astheystand"
                 },
@@ -557,6 +559,9 @@
                       }
                     },
                     "op": "GT",
+                    "ordering": {
+                      "prim": "INT"
+                    },
                     "reading": {
                       "is": "astheystand"
                     },
@@ -662,6 +667,9 @@
                   }
                 },
                 "op": "GT",
+                "ordering": {
+                  "prim": "INT"
+                },
                 "reading": {
                   "is": "astheystand"
                 },
@@ -692,6 +700,9 @@
                     }
                   },
                   "op": "GT",
+                  "ordering": {
+                    "prim": "INT"
+                  },
                   "reading": {
                     "is": "astheystand"
                   },
@@ -897,6 +908,7 @@
                   }
                 },
                 "op": "ADD",
+                "ordering": null,
                 "reading": {
                   "is": "astheystand"
                 },
@@ -970,5 +982,5 @@
       ]
     }
   ],
-  "transport":27
+  "transport":28
 }

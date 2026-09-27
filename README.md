@@ -185,27 +185,23 @@ grammar are implemented here, in the runtime alone (`runtime/src/temporal.rs`), 
 this crate reads either from scratch. A
 literal is carried as the count the checker's own parse read it as — a `Date`'s day, a `Time`'s
 second of the day, a `DateTime`'s second, an `Instant`'s second and nanosecond — and not as the
-text it was written as: which text a literal may spell is the checker's, and not read again here
-by a grammar of this crate's own. Which text that is depends on the Souther this repository is
-built against: the specification states one grammar for a temporal wherever it arrives, source
-literal included (souther-lang/souther#2007), but the checker this repository currently pins
-predates that statement and still asks `java.time`'s own leniency (a lower case `t`, a fraction of
-nought) before checking the built value, so `Time("09:30:00.000")` still compiles even though the
-boundary below refuses the same text (souther-lang/souther-native-compiler#116). The driver holds
-the count to what the type holds, and the runtime makes the value from it where it is reached.
-Every operation is a call into
-the runtime, and equality and order are by the day, the second or the moment a value names, so two
-made apart are equal where they name one. A shift (`Date.addDays`, `addMonths` and `addYears`,
-`DateTime.addMinutes`, `addHours` and `addDays`) that leaves what a type holds ends the run, the
-one reason for a count too large to add and for a day past the end; `Date.fromParts` and
-`Time.fromParts` name a case for parts that name none and normalise nothing. A boundary writes a
-temporal as `toString` of its `java.time` class does — a time without its seconds where they are
-nought, an instant in UTC — and reads it by the same specification's grammar, over a text of its
-own with no `java.time` or Raoh behind it: a text held to the second refuses a fraction of one even
-where it is nought, since `09:30:00.000` and `09:30:00` name one second once the point is read past
-and only the text still says which was sent. An instant is read from an offset spelling as the
-moment it names, and its end of day, `24:00:00`, admits none of a minute, a second or a fraction
-after it for the same reason. A leap second is refused. `ATemporalAnswersWhatTheJvmAnswersTest`
+text it was written as: what admits a spelling is `TemporalText`'s grammar, read the same way for a
+literal the checker elaborates and for a text a boundary is handed, and `java.time` only builds a
+value from a text that grammar already admitted, rather than deciding on its own what a program may
+say. The driver holds the count to what the type holds, and the runtime makes the value from it
+where it is reached. Every operation is a call into the runtime, and equality and order are by the
+day, the second or the moment a value names, so two made apart are equal where they name one. A
+shift (`Date.addDays`, `addMonths` and `addYears`, `DateTime.addMinutes`, `addHours` and
+`addDays`) that leaves what a type holds ends the run, the one reason for a count too large to add
+and for a day past the end; `Date.fromParts` and `Time.fromParts` name a case for parts that name
+none and normalise nothing. A boundary writes a temporal as `toString` of its `java.time` class
+does — a time without its seconds where they are nought, an instant in UTC — and reads it by the
+same `TemporalText` grammar a literal is checked against, so a boundary and a literal admit the same
+spellings and refuse the same ones: a text held to the second refuses a fraction of one even where
+it is nought, since `09:30:00.000` and `09:30:00` name one second once the point is read past and
+only the text still says which was sent, and an instant's end of day, `24:00:00`, admits none of a
+minute, a second or a fraction after it for the same reason. An instant is read from an offset
+spelling as the moment it names, and a leap second is refused. `ATemporalAnswersWhatTheJvmAnswersTest`
 holds every kernel and comparison to what `java.time` answers over the ends of every range and a
 seeded run of the rest.
 

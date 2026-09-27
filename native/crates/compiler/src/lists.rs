@@ -352,6 +352,7 @@ pub(crate) fn extreme(
     module: &mut ObjectModule,
     op: Op,
     subject: &Ty,
+    basis: Option<&Ty>,
     list: ir::Value,
 ) -> Lowered<ir::Value> {
     if subject.has_no_value() {
@@ -374,7 +375,9 @@ pub(crate) fn extreme(
         let so_far = builder.use_var(chosen);
         let candidate = read(builder, slot, machine);
         let best = read(builder, so_far, machine);
-        let beyond = ordered(builder, lowering, module, op, subject, candidate, best)?;
+        let beyond = ordered(
+            builder, lowering, module, op, subject, basis, candidate, best,
+        )?;
         let now = builder.ins().select(beyond, slot, so_far);
         builder.def_var(chosen, now);
         Ok(())
@@ -389,6 +392,7 @@ pub(crate) fn sorted(
     lowering: &Lowering,
     module: &mut ObjectModule,
     subject: &Ty,
+    basis: Option<&Ty>,
     list: ir::Value,
 ) -> Lowered<ir::Value> {
     if subject.has_no_value() {
@@ -402,6 +406,7 @@ pub(crate) fn sorted(
         lowering,
         module,
         subject,
+        basis,
         count,
         [Lane {
             from: values,
@@ -419,6 +424,7 @@ pub(crate) fn sorted(
 /// out again at each comparison would be called as many times as the sort compares. Where no value
 /// of what the key answers is made, no key is ever answered, so a list the walk gets past is empty
 /// and nothing is compared.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn sorted_by(
     builder: &mut FunctionBuilder,
     lowering: &Lowering,
@@ -426,6 +432,7 @@ pub(crate) fn sorted_by(
     abort: ir::Block,
     key: Held,
     subject: &Ty,
+    basis: Option<&Ty>,
     list: ir::Value,
 ) -> Lowered<ir::Value> {
     let function = signature(key.ty);
@@ -456,6 +463,7 @@ pub(crate) fn sorted_by(
         lowering,
         module,
         subject,
+        basis,
         count,
         [
             Lane {
@@ -490,6 +498,7 @@ fn merged<const LANES: usize>(
     lowering: &Lowering,
     module: &mut ObjectModule,
     subject: &Ty,
+    basis: Option<&Ty>,
     count: ir::Value,
     lanes: [Lane; LANES],
 ) -> Lowered<[ir::Value; LANES]> {
@@ -588,12 +597,12 @@ fn merged<const LANES: usize>(
     builder.seal_block(compared);
 
     builder.switch_to_block(compared);
-    let ordering = builder.use_var(from[0]);
+    let being_ordered = builder.use_var(from[0]);
     let i = builder.use_var(left);
     let j = builder.use_var(right);
-    let on_the_left = element_at(builder, ordering, i);
+    let on_the_left = element_at(builder, being_ordered, i);
     let on_the_left = read(builder, on_the_left, machine);
-    let on_the_right = element_at(builder, ordering, j);
+    let on_the_right = element_at(builder, being_ordered, j);
     let on_the_right = read(builder, on_the_right, machine);
     let before = ordered(
         builder,
@@ -601,6 +610,7 @@ fn merged<const LANES: usize>(
         module,
         Op::Lt,
         subject,
+        basis,
         on_the_right,
         on_the_left,
     )?;

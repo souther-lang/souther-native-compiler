@@ -1392,6 +1392,7 @@ impl<'a> Walk<'_, 'a> {
             Node::Binary {
                 op,
                 reading,
+                ordering,
                 left,
                 right,
                 ty,
@@ -1400,6 +1401,7 @@ impl<'a> Walk<'_, 'a> {
                 self.node(left)?;
                 self.node(right)?;
                 self.reading(*op, reading, left.ty(), right.ty())?;
+                self.ordering(*op, ordering.as_ref())?;
                 self.operator(*op, reading, (left.ty(), right.ty()), ty, aborts)
             }
             Node::Neg {
@@ -1671,6 +1673,37 @@ impl<'a> Walk<'_, 'a> {
                 }
                 Ok(())
             }
+        }
+    }
+
+    /// What an operator's `ordering` says: present for the four that order their operands, and for
+    /// no other, the same rule the checker's own node holds itself to. What the type it names
+    /// actually orders is asked where the ordering is read
+    /// ([`ordering::ordered`](crate::ordering::ordered)), and not here.
+    fn ordering(&self, op: Op, ordering: Option<&Ty>) -> Result<()> {
+        match (op, ordering) {
+            (Op::Lt | Op::Le | Op::Gt | Op::Ge, None) => bail!(
+                "{}: {} orders its operands and settles no basis for it: the two halves disagree",
+                self.owner,
+                op.spelt()
+            ),
+            (
+                Op::Eq
+                | Op::Ne
+                | Op::And
+                | Op::Or
+                | Op::Add
+                | Op::Sub
+                | Op::Mul
+                | Op::Div
+                | Op::Concat,
+                Some(_),
+            ) => bail!(
+                "{}: {} orders nothing and settles a basis for it: the two halves disagree",
+                self.owner,
+                op.spelt()
+            ),
+            _ => Ok(()),
         }
     }
 
@@ -2067,8 +2100,13 @@ impl<'a> Walk<'_, 'a> {
                     // What an ordering was checked against is what the lowering compares by, so it
                     // is held to the one type the kernel orders: the element of the list a sort
                     // takes, and what the key a `sortBy` takes answers.
-                    if let (Some(known_to_hold), KernelFact::OrderingSubject { ty: subject }) =
-                        (contract.fact.holds(&bound), fact)
+                    if let (
+                        Some(known_to_hold),
+                        KernelFact::OrderingSubject {
+                            ty: subject,
+                            ordering: _,
+                        },
+                    ) = (contract.fact.holds(&bound), fact)
                     {
                         self.same(
                             &format!("what an application of {kernel} orders by"),

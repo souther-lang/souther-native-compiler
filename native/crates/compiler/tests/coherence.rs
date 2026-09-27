@@ -6,6 +6,7 @@
 //! and the same document with one of those two statements changed, which is refused as the two
 //! halves disagreeing and not as something this backend is behind on.
 
+use souther_native_driver::transport::TRANSPORT_VERSION;
 use souther_native_driver::{NotLowered, object_for};
 
 const INT: &str = r#"{"prim":"INT"}"#;
@@ -31,7 +32,7 @@ const P: &str = r#"{"ref":{"is":"declared","declared":"m.P"}}"#;
 fn document(behaviors: &[String], helpers: &[String], definitions: &[String]) -> String {
     format!(
         concat!(
-            r#"{{"transport":27,"declarations":["#,
+            r#"{{"transport":{},"declarations":["#,
             r#"{{"module":"m","name":"A","by":"amodule","is":"unit"}},"#,
             r#"{{"module":"m","name":"B","by":"amodule","is":"unit"}},"#,
             r#"{{"module":"m","name":"S","by":"amodule","is":"sum","#,
@@ -45,6 +46,7 @@ fn document(behaviors: &[String], helpers: &[String], definitions: &[String]) ->
             r#""modules":[{{"name":"m","publishes":[],"helpers":[{}],"values":[],"entries":[],"definitions":[{}],"#,
             r#""examples":[]}}]}}"#
         ),
+        TRANSPORT_VERSION,
         behaviors.join(","),
         helpers.join(","),
         definitions.join(",")
@@ -1700,13 +1702,14 @@ fn a_concat_names_the_one_reason_it_can_end_for() {
 fn with_clauses(fields: &str, invariants: &str, helpers: &[String]) -> String {
     format!(
         concat!(
-            r#"{{"transport":27,"declarations":["#,
+            r#"{{"transport":{},"declarations":["#,
             r#"{{"module":"m","name":"R","by":"amodule","is":"product","#,
             r#""fields":[{}],"invariants":[{}]}}],"#,
             r#""behaviors":[],"#,
             r#""modules":[{{"name":"m","publishes":[],"helpers":[{}],"values":[],"entries":[],"definitions":[],"#,
             r#""examples":[]}}]}}"#
         ),
+        TRANSPORT_VERSION,
         fields,
         invariants,
         helpers.join(",")
@@ -1727,7 +1730,9 @@ fn clause(name: Option<&str>, condition: &str) -> String {
 fn at_least(left: &str, right: &str) -> String {
     node(
         "binary",
-        &format!(r#""op":"GE","reading":{{"is":"astheystand"}},"left":{left},"right":{right}"#),
+        &format!(
+            r#""op":"GE","reading":{{"is":"astheystand"}},"ordering":{INT},"left":{left},"right":{right}"#
+        ),
         BOOL,
     )
 }
@@ -2084,12 +2089,12 @@ fn a_newtype_that_wraps_itself_is_the_halves_disagreeing() {
     let compared = |declarations: &[String], reading: &str| {
         let n = r#"{"ref":{"is":"declared","declared":"m.N"}}"#;
         let body = format!(
-            r#"{{"core":"binary","op":"LE","reading":{reading},"left":{},"right":{},"type":{BOOL},"aborts":[]}}"#,
+            r#"{{"core":"binary","op":"LE","reading":{reading},"ordering":{n},"left":{},"right":{},"type":{BOOL},"aborts":[]}}"#,
             read(0, n),
             read(1, n)
         );
         format!(
-            r#"{{"transport":27,"declarations":[{}],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[{}],"values":[],"entries":[],"definitions":[],"examples":[]}}]}}"#,
+            r#"{{"transport":{TRANSPORT_VERSION},"declarations":[{}],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[{}],"values":[],"entries":[],"definitions":[],"examples":[]}}]}}"#,
             declarations.join(","),
             h(&[n, n], &body)
         )
@@ -2506,10 +2511,16 @@ fn only_the_kinds_that_can_end_a_run_name_a_reason_to() {
 #[test]
 fn a_comparison_and_a_truth_operator_name_no_reason_to_end_a_run() {
     let over = |op: &str, ty: &str, answers: &str| {
+        let orders = matches!(op, "LT" | "LE" | "GT" | "GE");
+        let ordering = if orders {
+            ty.to_string()
+        } else {
+            "null".to_string()
+        };
         node(
             "binary",
             &format!(
-                r#""op":"{op}","reading":{{"is":"astheystand"}},"left":{},"right":{}"#,
+                r#""op":"{op}","reading":{{"is":"astheystand"}},"ordering":{ordering},"left":{},"right":{}"#,
                 read(0, ty),
                 read(1, ty)
             ),
@@ -2586,12 +2597,13 @@ fn a_construction_of_another_builds_type_names_the_reason_its_clauses_give() {
         );
         format!(
             concat!(
-                r#"{{"transport":27,"declarations":["#,
+                r#"{{"transport":{},"declarations":["#,
                 r#"{{"module":"m","name":"R","by":"onthepath","is":"product","#,
                 r#""fields":[{}],"headers":[{}]}}],"behaviors":[],"#,
                 r#""modules":[{{"name":"m","publishes":[],"helpers":[{}],"values":[],"#,
                 r#""entries":[],"definitions":[],"examples":[]}}]}}"#
             ),
+            TRANSPORT_VERSION,
             field("count", 0, "INT"),
             headers,
             h(&[], &built)
@@ -2772,7 +2784,7 @@ fn an_arm_binds_and_says_what_it_reads_it_as_together() {
 fn a_handover_carries_a_value_the_module_builds() {
     let value = |carries: &str| {
         format!(
-            r#"{{"transport":27,"declarations":[],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[],"values":[{{"module":"m","name":"ks","handovers":[],"body":{}}},{{"module":"m","name":"ys","handovers":[{{"parameter":"dep","type":{INT},"carries":{{"module":"m","name":"{carries}"}}}}],"body":{}}}],"entries":[],"definitions":[],"examples":[]}}]}}"#,
+            r#"{{"transport":{TRANSPORT_VERSION},"declarations":[],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[],"values":[{{"module":"m","name":"ks","handovers":[],"body":{}}},{{"module":"m","name":"ys","handovers":[{{"parameter":"dep","type":{INT},"carries":{{"module":"m","name":"{carries}"}}}}],"body":{}}}],"entries":[],"definitions":[],"examples":[]}}]}}"#,
             int(1),
             read(0, INT)
         )
@@ -2825,7 +2837,7 @@ fn answer_at_least_a(value: usize) -> String {
     node(
         "binary",
         &format!(
-            r#""op":"GE","reading":{{"is":"astheystand"}},"left":{},"right":{}"#,
+            r#""op":"GE","reading":{{"is":"astheystand"}},"ordering":{INT},"left":{},"right":{}"#,
             read(value, INT),
             read(0, INT)
         ),
@@ -3257,12 +3269,13 @@ fn what_clauses_are_answered_under_crosses_where_another_build_runs_them() {
     let declared = |by: &str, clauses: &str| {
         format!(
             concat!(
-                r#"{{"transport":27,"declarations":["#,
+                r#"{{"transport":{},"declarations":["#,
                 r#"{{"module":"m","name":"R","by":"{}","is":"product","#,
                 r#""fields":[{}]{}}}],"behaviors":[],"#,
                 r#""modules":[{{"name":"m","publishes":[],"helpers":[],"values":[],"#,
                 r#""entries":[],"definitions":[],"examples":[]}}]}}"#
             ),
+            TRANSPORT_VERSION,
             by,
             field("count", 0, "INT"),
             clauses

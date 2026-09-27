@@ -45,8 +45,12 @@ fn over_answering(op: &str, left: &str, right: &str, answers: &str) -> String {
         "DIV" => r#""DIVISION_BY_ZERO""#,
         _ => "",
     };
+    let ordering = match op {
+        "LT" | "LE" | "GT" | "GE" => left.to_string(),
+        _ => "null".to_string(),
+    };
     let body = format!(
-        r#"{{"core":"binary","op":"{op}","reading":{{"is":"astheystand"}},"left":{},"right":{},"type":{answers},"aborts":[{owes}]}}"#,
+        r#"{{"core":"binary","op":"{op}","reading":{{"is":"astheystand"}},"ordering":{ordering},"left":{},"right":{},"type":{answers},"aborts":[{owes}]}}"#,
         read(0, left),
         read(1, right)
     );
@@ -54,7 +58,7 @@ fn over_answering(op: &str, left: &str, right: &str, answers: &str) -> String {
         r#"{{"reached":{{"is":"own","module":"calculation","name":"f"}},"parameters":[{{"name":"a","type":{left}}},{{"name":"b","type":{right}}}],"body":{body}}}"#
     );
     format!(
-        r#"{{"transport":27,"declarations":[{{"module":"counting","name":"Amount","by":"amodule","is":"newtype","field":{{"name":"value","binding":0,"codec":{{"is":"scalar","scalar":"INT"}}}},"invariants":[]}}],"behaviors":[],"modules":[{{"name":"calculation","publishes":[],"helpers":[{held}],"values":[],"entries":[],"definitions":[],"examples":[]}}]}}"#
+        r#"{{"transport":{TRANSPORT_VERSION},"declarations":[{{"module":"counting","name":"Amount","by":"amodule","is":"newtype","field":{{"name":"value","binding":0,"codec":{{"is":"scalar","scalar":"INT"}}}},"invariants":[]}}],"behaviors":[],"modules":[{{"name":"calculation","publishes":[],"helpers":[{held}],"values":[],"entries":[],"definitions":[],"examples":[]}}]}}"#
     )
 }
 
@@ -237,15 +241,18 @@ fn a_transport_from_another_version_is_refused() {
 /// driver does not read.
 #[test]
 fn a_function_at_a_behaviors_boundary_is_not_a_document_this_driver_reads() {
-    let document = concat!(
-        r#"{"transport":27,"declarations":[],"#,
-        r#""behaviors":[{"module":"m","name":"choose","is":"injected","parameters":{"named":[{"name":"f","input":"#,
-        r#"{"fn":{"takes":[{"prim":"INT"}],"answers":{"prim":"INT"}}}}]},"#,
-        r#""output":{"is":"scalar","scalar":"INT"},"requirements":[],"ensures":{"at":"none"}}],"#,
-        r#""modules":[{"name":"m","publishes":[],"helpers":[],"values":[],"entries":[],"definitions":[],"examples":[]}]}"#,
+    let document = format!(
+        concat!(
+            r#"{{"transport":{},"declarations":[],"#,
+            r#""behaviors":[{{"module":"m","name":"choose","is":"injected","parameters":{{"named":[{{"name":"f","input":"#,
+            r#"{{"fn":{{"takes":[{{"prim":"INT"}}],"answers":{{"prim":"INT"}}}}}}}}]}},"#,
+            r#""output":{{"is":"scalar","scalar":"INT"}},"requirements":[],"ensures":{{"at":"none"}}}}],"#,
+            r#""modules":[{{"name":"m","publishes":[],"helpers":[],"values":[],"entries":[],"definitions":[],"examples":[]}}]}}"#,
+        ),
+        TRANSPORT_VERSION
     );
 
-    let refused = object_for(document).expect_err("a function at a behavior's boundary");
+    let refused = object_for(&document).expect_err("a function at a behavior's boundary");
 
     assert!(
         refused.downcast_ref::<NotLowered>().is_none(),
@@ -271,12 +278,12 @@ fn what_a_behavior_takes_is_named_as_its_kind_of_answer_declares() {
         for (parameters, reads) in [(named, reads_named), (positional, reads_positional)] {
             let document = format!(
                 concat!(
-                    r#"{{"transport":27,"declarations":[],"#,
+                    r#"{{"transport":{},"declarations":[],"#,
                     r#""behaviors":[{{"module":"m","name":"f","is":"{}","parameters":{},"#,
                     r#""output":{{"is":"scalar","scalar":"INT"}},"requirements":[],"ensures":{{"at":"none"}}}}],"#,
                     r#""modules":[]}}"#,
                 ),
-                is, parameters
+                TRANSPORT_VERSION, is, parameters
             );
             let read = Program::read(&document);
             assert_eq!(
@@ -305,12 +312,12 @@ fn an_ensures_relates_the_parameters_the_behavior_declares() {
     let document = |parameters: &str, ensures: &str| {
         format!(
             concat!(
-                r#"{{"transport":27,"declarations":[],"#,
+                r#"{{"transport":{},"declarations":[],"#,
                 r#""behaviors":[{{"module":"m","name":"f","is":"injected","parameters":{},"#,
                 r#""output":{{"is":"scalar","scalar":"INT"}},"requirements":[],"ensures":{}}}],"#,
                 r#""modules":[]}}"#,
             ),
-            parameters, ensures
+            TRANSPORT_VERSION, parameters, ensures
         )
     };
     let named = r#"{"named":[{"name":"n","input":{"is":"scalar","scalar":"INT"}}]}"#;
@@ -362,14 +369,17 @@ fn a_transport_of_an_earlier_shape_is_refused_by_its_version() {
 /// object makes a set of (`host_form`), so the behavior is lowered.
 #[test]
 fn an_answer_that_is_a_set_crosses_as_its_members() {
-    let document = concat!(
-        r#"{"transport":27,"declarations":[],"#,
-        r#""behaviors":[{"module":"m","name":"many","is":"injected","parameters":{"named":[]},"#,
-        r#""output":{"is":"setof","element":{"is":"scalar","scalar":"INT"}},"requirements":[],"ensures":{"at":"none"}}],"#,
-        r#""modules":[{"name":"m","publishes":[],"helpers":[],"values":[],"entries":[],"definitions":[],"examples":[]}]}"#,
+    let document = format!(
+        concat!(
+            r#"{{"transport":{},"declarations":[],"#,
+            r#""behaviors":[{{"module":"m","name":"many","is":"injected","parameters":{{"named":[]}},"#,
+            r#""output":{{"is":"setof","element":{{"is":"scalar","scalar":"INT"}}}},"requirements":[],"ensures":{{"at":"none"}}}}],"#,
+            r#""modules":[{{"name":"m","publishes":[],"helpers":[],"values":[],"entries":[],"definitions":[],"examples":[]}}]}}"#,
+        ),
+        TRANSPORT_VERSION
     );
 
-    object_for(document).expect("a set crosses as the list of its members");
+    object_for(&document).expect("a set crosses as the list of its members");
 }
 
 /// A primitive standing as a member of an answer is a case the transport carries, and a value of
@@ -379,18 +389,21 @@ fn an_answer_that_is_a_set_crosses_as_its_members() {
 /// for its answer anywhere.
 #[test]
 fn an_answer_with_a_primitive_among_its_cases_is_lowered() {
-    let document = concat!(
-        r#"{"transport":27,"declarations":["#,
-        r#"{"module":"m","name":"NotFound","by":"amodule","is":"unit"}],"#,
-        r#""behaviors":[{"module":"m","name":"lengthOf","is":"injected","parameters":{"named":[]},"#,
-        r#""output":{"is":"cases","type":{"union":[{"is":"primitive","prim":"INT"},"#,
-        r#"{"is":"declared","declared":"m.NotFound"}]},"#,
-        r#""cases":[{"is":"primitive","prim":"INT"},{"is":"declared","declared":"m.NotFound"}],"#,
-        r#""form":{"is":"discriminated","tag":"type","contents":"value"}},"requirements":[],"ensures":{"at":"none"}}],"#,
-        r#""modules":[{"name":"m","publishes":[],"helpers":[],"values":[],"entries":[],"definitions":[],"examples":[]}]}"#,
+    let document = format!(
+        concat!(
+            r#"{{"transport":{},"declarations":["#,
+            r#"{{"module":"m","name":"NotFound","by":"amodule","is":"unit"}}],"#,
+            r#""behaviors":[{{"module":"m","name":"lengthOf","is":"injected","parameters":{{"named":[]}},"#,
+            r#""output":{{"is":"cases","type":{{"union":[{{"is":"primitive","prim":"INT"}},"#,
+            r#"{{"is":"declared","declared":"m.NotFound"}}]}},"#,
+            r#""cases":[{{"is":"primitive","prim":"INT"}},{{"is":"declared","declared":"m.NotFound"}}],"#,
+            r#""form":{{"is":"discriminated","tag":"type","contents":"value"}}}},"requirements":[],"ensures":{{"at":"none"}}}}],"#,
+            r#""modules":[{{"name":"m","publishes":[],"helpers":[],"values":[],"entries":[],"definitions":[],"examples":[]}}]}}"#,
+        ),
+        TRANSPORT_VERSION
     );
 
-    if let Err(refused) = object_for(document) {
+    if let Err(refused) = object_for(&document) {
         panic!("a union a host makes through the runtime is refused: {refused}");
     }
 }
@@ -402,21 +415,24 @@ fn an_answer_with_a_primitive_among_its_cases_is_lowered() {
 /// declared a symbol for.
 #[test]
 fn a_published_value_reached_at_two_different_types_is_the_halves_disagreeing() {
-    let document = concat!(
-        r#"{"transport":27,"declarations":[],"#,
-        r#""behaviors":[{"module":"m","name":"f","is":"body","parameters":{"named":[]},"output":{"is":"scalar","scalar":"INT"},"requirements":[],"ensures":{"at":"none"}},"#,
-        r#"{"module":"m","name":"g","is":"body","parameters":{"named":[]},"output":{"is":"scalar","scalar":"BOOL"},"requirements":[],"ensures":{"at":"none"}}],"#,
-        r#""modules":[{"name":"m","publishes":[],"helpers":[],"values":[],"entries":[],"definitions":["#,
-        r#"{"is":"body","declared":"m.f","parameters":[],"publication":"kept","#,
-        r#""body":{"core":"call","reaches":{"is":"publishedvalue","module":"other","name":"x"},"#,
-        r#""arguments":[],"type":{"prim":"INT"},"aborts":[]}},"#,
-        r#"{"is":"body","declared":"m.g","parameters":[],"publication":"kept","#,
-        r#""body":{"core":"call","reaches":{"is":"publishedvalue","module":"other","name":"x"},"#,
-        r#""arguments":[],"type":{"prim":"BOOL"},"aborts":[]}}"#,
-        r#"],"examples":[]}]}"#,
+    let document = format!(
+        concat!(
+            r#"{{"transport":{},"declarations":[],"#,
+            r#""behaviors":[{{"module":"m","name":"f","is":"body","parameters":{{"named":[]}},"output":{{"is":"scalar","scalar":"INT"}},"requirements":[],"ensures":{{"at":"none"}}}},"#,
+            r#"{{"module":"m","name":"g","is":"body","parameters":{{"named":[]}},"output":{{"is":"scalar","scalar":"BOOL"}},"requirements":[],"ensures":{{"at":"none"}}}}],"#,
+            r#""modules":[{{"name":"m","publishes":[],"helpers":[],"values":[],"entries":[],"definitions":["#,
+            r#"{{"is":"body","declared":"m.f","parameters":[],"publication":"kept","#,
+            r#""body":{{"core":"call","reaches":{{"is":"publishedvalue","module":"other","name":"x"}},"#,
+            r#""arguments":[],"type":{{"prim":"INT"}},"aborts":[]}}}},"#,
+            r#"{{"is":"body","declared":"m.g","parameters":[],"publication":"kept","#,
+            r#""body":{{"core":"call","reaches":{{"is":"publishedvalue","module":"other","name":"x"}},"#,
+            r#""arguments":[],"type":{{"prim":"BOOL"}},"aborts":[]}}}}"#,
+            r#"],"examples":[]}}]}}"#,
+        ),
+        TRANSPORT_VERSION
     );
 
-    let refused = object_for(document).expect_err("one value does not answer two ways");
+    let refused = object_for(&document).expect_err("one value does not answer two ways");
 
     assert!(
         refused.downcast_ref::<NotLowered>().is_none(),
@@ -429,17 +445,19 @@ fn a_published_value_reached_at_two_different_types_is_the_halves_disagreeing() 
 /// a single stage reaching it, and every fact the two of them share stated once so each of the
 /// tests below has one place to make disagree with the other.
 fn composed_document() -> String {
-    concat!(
-        r#"{"transport":27,"declarations":[],"#,
-        r#""behaviors":[{"module":"m","name":"inner","is":"body","parameters":{"named":[{"name":"p0","input":{"is":"scalar","scalar":"INT"}}]},"output":{"is":"scalar","scalar":"INT"},"requirements":[],"ensures":{"at":"none"}},"#,
-        r#"{"module":"m","name":"outer","is":"composed","parameters":{"positional":[{"is":"scalar","scalar":"INT"}]},"output":{"is":"scalar","scalar":"INT"},"requirements":[],"ensures":{"at":"none"}}],"#,
-        r#""modules":[{"name":"m","publishes":[],"helpers":[],"values":[],"entries":[],"definitions":["#,
-        r#"{"is":"body","declared":"m.inner","parameters":["a"],"publication":"kept","body":{"core":"read","binding":0,"type":{"prim":"INT"},"aborts":[]}},"#,
-        r#"{"is":"composed","declared":"m.outer","publication":"published","stages":["#,
-        r#"{"behavior":"m.inner","routing":{"is":"always"}}]}"#,
-        r#"],"examples":[]}]}"#,
+    format!(
+        concat!(
+            r#"{{"transport":{},"declarations":[],"#,
+            r#""behaviors":[{{"module":"m","name":"inner","is":"body","parameters":{{"named":[{{"name":"p0","input":{{"is":"scalar","scalar":"INT"}}}}]}},"output":{{"is":"scalar","scalar":"INT"}},"requirements":[],"ensures":{{"at":"none"}}}},"#,
+            r#"{{"module":"m","name":"outer","is":"composed","parameters":{{"positional":[{{"is":"scalar","scalar":"INT"}}]}},"output":{{"is":"scalar","scalar":"INT"}},"requirements":[],"ensures":{{"at":"none"}}}}],"#,
+            r#""modules":[{{"name":"m","publishes":[],"helpers":[],"values":[],"entries":[],"definitions":["#,
+            r#"{{"is":"body","declared":"m.inner","parameters":["a"],"publication":"kept","body":{{"core":"read","binding":0,"type":{{"prim":"INT"}},"aborts":[]}}}},"#,
+            r#"{{"is":"composed","declared":"m.outer","publication":"published","stages":["#,
+            r#"{{"behavior":"m.inner","routing":{{"is":"always"}}}}]}}"#,
+            r#"],"examples":[]}}]}}"#,
+        ),
+        TRANSPORT_VERSION
     )
-    .to_string()
 }
 
 /// A composition's own document validates: this is the control every test below makes one fact
@@ -555,21 +573,24 @@ fn a_compositions_own_takes_disagreeing_with_its_first_stages_target_is_the_halv
 #[test]
 fn an_applys_answer_disagreeing_with_its_functions_own_type_is_the_halves_disagreeing_even_though_both_are_pointers()
  {
-    let document = concat!(
-        r#"{"transport":27,"declarations":["#,
-        r#"{"module":"m","name":"A","by":"amodule","is":"unit"},"#,
-        r#"{"module":"m","name":"B","by":"amodule","is":"unit"}],"#,
-        r#""behaviors":[],"#,
-        r#""modules":[{"name":"m","publishes":[],"#,
-        r#""helpers":[{"reached":{"is":"own","module":"m","name":"f"},"#,
-        r#""parameters":[{"name":"f","type":{"fn":{"takes":[],"answers":{"ref":{"is":"declared","declared":"m.A"}}}}}],"#,
-        r#""body":{"core":"apply","function":{"core":"read","binding":0,"#,
-        r#""type":{"fn":{"takes":[],"answers":{"ref":{"is":"declared","declared":"m.A"}}}},"aborts":[]},"#,
-        r#""arguments":[],"type":{"ref":{"is":"declared","declared":"m.B"}},"aborts":[]}}],"#,
-        r#""values":[],"entries":[],"definitions":[],"examples":[]}]}"#,
+    let document = format!(
+        concat!(
+            r#"{{"transport":{},"declarations":["#,
+            r#"{{"module":"m","name":"A","by":"amodule","is":"unit"}},"#,
+            r#"{{"module":"m","name":"B","by":"amodule","is":"unit"}}],"#,
+            r#""behaviors":[],"#,
+            r#""modules":[{{"name":"m","publishes":[],"#,
+            r#""helpers":[{{"reached":{{"is":"own","module":"m","name":"f"}},"#,
+            r#""parameters":[{{"name":"f","type":{{"fn":{{"takes":[],"answers":{{"ref":{{"is":"declared","declared":"m.A"}}}}}}}}}}],"#,
+            r#""body":{{"core":"apply","function":{{"core":"read","binding":0,"#,
+            r#""type":{{"fn":{{"takes":[],"answers":{{"ref":{{"is":"declared","declared":"m.A"}}}}}}}},"aborts":[]}},"#,
+            r#""arguments":[],"type":{{"ref":{{"is":"declared","declared":"m.B"}}}},"aborts":[]}}}}],"#,
+            r#""values":[],"entries":[],"definitions":[],"examples":[]}}]}}"#,
+        ),
+        TRANSPORT_VERSION
     );
 
-    let refused = object_for(document)
+    let refused = object_for(&document)
         .expect_err("an Apply answering a different declared type than its own function's type");
 
     assert!(
@@ -586,20 +607,23 @@ fn an_applys_answer_disagreeing_with_its_functions_own_type_is_the_halves_disagr
 /// it: the value passes through and the entry that has to write it out lowers.
 #[test]
 fn a_published_answer_with_a_date_field_is_written_out() {
-    let document = concat!(
-        r#"{"transport":27,"declarations":["#,
-        r#"{"module":"m","name":"Priced","by":"amodule","is":"product","#,
-        r#""fields":[{"name":"amount","binding":0,"codec":{"is":"scalar","scalar":"DATE"}}],"invariants":[]}],"#,
-        r#""behaviors":[{"module":"m","name":"same","is":"body","#,
-        r#""parameters":{"named":[{"name":"p0","input":{"is":"nominal","named":{"is":"declared","declared":"m.Priced"}}}]},"#,
-        r#""output":{"is":"nominal","named":{"is":"declared","declared":"m.Priced"}},"requirements":[],"ensures":{"at":"none"}}],"#,
-        r#""modules":[{"name":"m","publishes":[],"helpers":[],"values":[],"entries":[],"definitions":["#,
-        r#"{"is":"body","declared":"m.same","parameters":["p"],"publication":"published","#,
-        r#""body":{"core":"read","binding":0,"type":{"ref":{"is":"declared","declared":"m.Priced"}},"aborts":[]}}"#,
-        r#"],"examples":[]}]}"#,
+    let document = format!(
+        concat!(
+            r#"{{"transport":{},"declarations":["#,
+            r#"{{"module":"m","name":"Priced","by":"amodule","is":"product","#,
+            r#""fields":[{{"name":"amount","binding":0,"codec":{{"is":"scalar","scalar":"DATE"}}}}],"invariants":[]}}],"#,
+            r#""behaviors":[{{"module":"m","name":"same","is":"body","#,
+            r#""parameters":{{"named":[{{"name":"p0","input":{{"is":"nominal","named":{{"is":"declared","declared":"m.Priced"}}}}}}]}},"#,
+            r#""output":{{"is":"nominal","named":{{"is":"declared","declared":"m.Priced"}}}},"requirements":[],"ensures":{{"at":"none"}}}}],"#,
+            r#""modules":[{{"name":"m","publishes":[],"helpers":[],"values":[],"entries":[],"definitions":["#,
+            r#"{{"is":"body","declared":"m.same","parameters":["p"],"publication":"published","#,
+            r#""body":{{"core":"read","binding":0,"type":{{"ref":{{"is":"declared","declared":"m.Priced"}}}},"aborts":[]}}}}"#,
+            r#"],"examples":[]}}]}}"#,
+        ),
+        TRANSPORT_VERSION
     );
 
-    object_for(document).expect("a Date is written out as the text it names");
+    object_for(&document).expect("a Date is written out as the text it names");
 
     let kept = document.replace(r#""publication":"published""#, r#""publication":"kept""#);
     object_for(&kept).expect("a kept behavior has no boundary, so nothing is written out");
@@ -610,7 +634,7 @@ fn a_published_answer_with_a_date_field_is_written_out() {
 fn answering_a_sum(case_fields: &str, form: &str) -> String {
     format!(
         concat!(
-            r#"{{"transport":27,"declarations":["#,
+            r#"{{"transport":{},"declarations":["#,
             r#"{{"module":"m","name":"C","by":"amodule","is":"product","fields":{},"invariants":[]}},"#,
             r#"{{"module":"m","name":"S","by":"amodule","is":"sum","#,
             r#""cases":[{{"is":"declared","declared":"m.C"}}],"form":{}}}],"#,
@@ -622,7 +646,7 @@ fn answering_a_sum(case_fields: &str, form: &str) -> String {
             r#""body":{{"core":"read","binding":0,"type":{{"ref":{{"is":"declared","declared":"m.S"}}}},"aborts":[]}}}}"#,
             r#"],"examples":[]}}]}}"#
         ),
-        case_fields, form
+        TRANSPORT_VERSION, case_fields, form
     )
 }
 
@@ -669,21 +693,24 @@ fn a_discriminated_form_with_one_key_for_tag_and_contents_is_the_halves_disagree
 /// disagreeing; the value would be written out as whatever the codec took it for.
 #[test]
 fn a_construction_disagreeing_with_what_its_field_carries_is_the_halves_disagreeing() {
-    let document = concat!(
-        r#"{"transport":27,"declarations":["#,
-        r#"{"module":"m","name":"P","by":"amodule","is":"product","#,
-        r#""fields":[{"name":"n","binding":0,"codec":{"is":"scalar","scalar":"STRING"}}],"invariants":[]}],"#,
-        r#""behaviors":[{"module":"m","name":"make","is":"body","parameters":{"named":[]},"#,
-        r#""output":{"is":"nominal","named":{"is":"declared","declared":"m.P"}},"requirements":[],"ensures":{"at":"none"}}],"#,
-        r#""modules":[{"name":"m","publishes":[],"helpers":[],"values":[],"entries":[],"definitions":["#,
-        r#"{"is":"body","declared":"m.make","parameters":[],"publication":"kept","#,
-        r#""body":{"core":"construct","declared":"m.P","#,
-        r#""values":[{"core":"int","value":42,"type":{"prim":"INT"},"aborts":[]}],"#,
-        r#""type":{"ref":{"is":"declared","declared":"m.P"}},"aborts":[]}}"#,
-        r#"],"examples":[]}]}"#,
+    let document = format!(
+        concat!(
+            r#"{{"transport":{},"declarations":["#,
+            r#"{{"module":"m","name":"P","by":"amodule","is":"product","#,
+            r#""fields":[{{"name":"n","binding":0,"codec":{{"is":"scalar","scalar":"STRING"}}}}],"invariants":[]}}],"#,
+            r#""behaviors":[{{"module":"m","name":"make","is":"body","parameters":{{"named":[]}},"#,
+            r#""output":{{"is":"nominal","named":{{"is":"declared","declared":"m.P"}}}},"requirements":[],"ensures":{{"at":"none"}}}}],"#,
+            r#""modules":[{{"name":"m","publishes":[],"helpers":[],"values":[],"entries":[],"definitions":["#,
+            r#"{{"is":"body","declared":"m.make","parameters":[],"publication":"kept","#,
+            r#""body":{{"core":"construct","declared":"m.P","#,
+            r#""values":[{{"core":"int","value":42,"type":{{"prim":"INT"}},"aborts":[]}}],"#,
+            r#""type":{{"ref":{{"is":"declared","declared":"m.P"}}}},"aborts":[]}}}}"#,
+            r#"],"examples":[]}}]}}"#,
+        ),
+        TRANSPORT_VERSION
     );
 
-    let refused = object_for(document).expect_err("an Int put where the field carries a String");
+    let refused = object_for(&document).expect_err("an Int put where the field carries a String");
 
     assert!(
         refused.downcast_ref::<NotLowered>().is_none(),
@@ -697,7 +724,7 @@ fn a_construction_disagreeing_with_what_its_field_carries_is_the_halves_disagree
 fn building(codec: &str, value: &str) -> String {
     format!(
         concat!(
-            r#"{{"transport":27,"declarations":["#,
+            r#"{{"transport":{},"declarations":["#,
             r#"{{"module":"m","name":"A","by":"amodule","is":"unit"}},"#,
             r#"{{"module":"m","name":"B","by":"amodule","is":"unit"}},"#,
             r#"{{"module":"m","name":"U","by":"amodule","is":"unit"}},"#,
@@ -714,7 +741,7 @@ fn building(codec: &str, value: &str) -> String {
             r#""type":{{"ref":{{"is":"declared","declared":"m.P"}}}},"aborts":[]}}}}"#,
             r#"],"examples":[]}}]}}"#
         ),
-        codec, value
+        TRANSPORT_VERSION, codec, value
     )
 }
 
@@ -829,17 +856,20 @@ fn a_case_with_a_field_under_the_tags_key_is_the_halves_disagreeing() {
 /// for.
 #[test]
 fn an_answer_whose_cases_are_not_what_its_type_descends_to_is_the_halves_disagreeing() {
-    let document = concat!(
-        r#"{"transport":27,"declarations":["#,
-        r#"{"module":"m","name":"A","by":"amodule","is":"unit"},"#,
-        r#"{"module":"m","name":"B","by":"amodule","is":"unit"}],"#,
-        r#""behaviors":[{"module":"m","name":"either","is":"injected","parameters":{"named":[]},"#,
-        r#""output":{"is":"cases","type":{"union":[{"is":"declared","declared":"m.A"},"#,
-        r#"{"is":"declared","declared":"m.B"}]},"#,
-        r#""cases":[{"is":"declared","declared":"m.A"}],"form":{"is":"enumeration"}},"requirements":[],"ensures":{"at":"none"}}],"#,
-        r#""modules":[{"name":"m","publishes":[],"helpers":[],"values":[],"entries":[],"definitions":[],"examples":[]}]}"#,
+    let document = format!(
+        concat!(
+            r#"{{"transport":{},"declarations":["#,
+            r#"{{"module":"m","name":"A","by":"amodule","is":"unit"}},"#,
+            r#"{{"module":"m","name":"B","by":"amodule","is":"unit"}}],"#,
+            r#""behaviors":[{{"module":"m","name":"either","is":"injected","parameters":{{"named":[]}},"#,
+            r#""output":{{"is":"cases","type":{{"union":[{{"is":"declared","declared":"m.A"}},"#,
+            r#"{{"is":"declared","declared":"m.B"}}]}},"#,
+            r#""cases":[{{"is":"declared","declared":"m.A"}}],"form":{{"is":"enumeration"}}}},"requirements":[],"ensures":{{"at":"none"}}}}],"#,
+            r#""modules":[{{"name":"m","publishes":[],"helpers":[],"values":[],"entries":[],"definitions":[],"examples":[]}}]}}"#,
+        ),
+        TRANSPORT_VERSION
     );
-    is_the_halves_disagreeing(document, "m.either");
+    is_the_halves_disagreeing(&document, "m.either");
 }
 
 /// A body's parameters and its target's inputs are one list crossed twice.
@@ -886,18 +916,21 @@ fn two_local_definitions_written_the_same_are_the_halves_disagreeing() {
 /// none is (`coherence.rs` holds the rest).
 #[test]
 fn an_answer_written_by_no_case_is_refused_where_it_is_read() {
-    let document = concat!(
-        r#"{"transport":27,"declarations":["#,
-        r#"{"module":"m","name":"NotFound","by":"amodule","is":"unit"}],"#,
-        r#""behaviors":[{"module":"m","name":"lengthOf","is":"injected","parameters":{"named":[]},"#,
-        r#""output":{"is":"cases","type":{"union":[{"is":"primitive","prim":"INT"},"#,
-        r#"{"is":"declared","declared":"m.NotFound"}]},"#,
-        r#""cases":[],"#,
-        r#""form":{"is":"discriminated","tag":"type","contents":"value"}},"requirements":[],"ensures":{"at":"none"}}],"#,
-        r#""modules":[{"name":"m","publishes":[],"helpers":[],"values":[],"entries":[],"definitions":[],"examples":[]}]}"#,
+    let document = format!(
+        concat!(
+            r#"{{"transport":{},"declarations":["#,
+            r#"{{"module":"m","name":"NotFound","by":"amodule","is":"unit"}}],"#,
+            r#""behaviors":[{{"module":"m","name":"lengthOf","is":"injected","parameters":{{"named":[]}},"#,
+            r#""output":{{"is":"cases","type":{{"union":[{{"is":"primitive","prim":"INT"}},"#,
+            r#"{{"is":"declared","declared":"m.NotFound"}}]}},"#,
+            r#""cases":[],"#,
+            r#""form":{{"is":"discriminated","tag":"type","contents":"value"}}}},"requirements":[],"ensures":{{"at":"none"}}}}],"#,
+            r#""modules":[{{"name":"m","publishes":[],"helpers":[],"values":[],"entries":[],"definitions":[],"examples":[]}}]}}"#,
+        ),
+        TRANSPORT_VERSION
     );
 
-    let refused = object_for(document).expect_err("an answer written by no case");
+    let refused = object_for(&document).expect_err("an answer written by no case");
 
     assert!(refused.downcast_ref::<NotLowered>().is_none(), "{refused}");
     assert!(refused.to_string().contains("no case in it"), "{refused}");
