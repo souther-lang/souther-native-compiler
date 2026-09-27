@@ -1,0 +1,10 @@
+error[E0500]: closure requires unique access to `*run` but it is already borrowed
+  --> tests/lifetimes/fail/outer_run_used_inside_scope.rs:9:23
+   |
+ 9 |             run.scope(|_inner| {
+   |             --- ----- ^^^^^^^^ closure construction occurs here
+   |             |   |
+   |             |   first borrow later used by call
+   |             borrow occurs here
+10 |                 make(run);
+   |                      --- second borrow occurs due to use of `*run` in closure

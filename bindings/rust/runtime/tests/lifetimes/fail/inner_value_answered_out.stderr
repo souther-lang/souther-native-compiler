@@ -1,0 +1,8 @@
+error: lifetime may not live long enough
+ --> tests/lifetimes/fail/inner_value_answered_out.rs:9:42
+  |
+9 |             let made = run.scope(|inner| make(inner));
+  |                                   ------ ^^^^^^^^^^^ returning this value requires that `'1` must outlive `'2`
+  |                                   |    |
+  |                                   |    return type of closure is Held<'2, Runtime>
+  |                                   has type `&mut souther_binding_runtime::Scope<'1, '_, Runtime>`
