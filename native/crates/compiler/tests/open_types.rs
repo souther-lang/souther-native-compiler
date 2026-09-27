@@ -133,3 +133,37 @@ fn a_function_value_written_in_a_helper_over_a_variable_is_one_closure_in_each_c
         "one lifted function for each copy"
     );
 }
+
+/// `h<'a, 'b>` calling `h<'b, 'a>` is two functions calling one another, which is what the two
+/// copies are once each is made for the types a call reaches it at.
+#[test]
+fn a_helper_calling_itself_with_its_types_swapped_is_lowered_as_two_functions() {
+    let (a, b) = (r#"{"var":0}"#, r#"{"var":1}"#);
+    let swapped = node(
+        "call",
+        &format!(
+            r#""reaches":{{"is":"helper","reached":{{"is":"own","module":"m","name":"h"}}}},"arguments":[{},{}]"#,
+            read(1, b),
+            read(0, a)
+        ),
+        INT,
+    );
+    let held = format!(
+        r#"{{"reached":{{"is":"own","module":"m","name":"h"}},"parameters":[{{"name":"x","type":{a}}},{{"name":"y","type":{b}}}],"body":{swapped}}}"#
+    );
+    let called = node(
+        "call",
+        &format!(
+            r#""reaches":{{"is":"helper","reached":{{"is":"own","module":"m","name":"h"}}}},"arguments":[{},{}]"#,
+            node("int", r#""value":1"#, INT),
+            node("string", r#""value":"a""#, STRING)
+        ),
+        INT,
+    );
+    let document = format!(
+        r#"{{"transport":27,"declarations":[],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[{held}],"values":[{{"module":"m","name":"v","handovers":[],"body":{called}}}],"entries":[],"definitions":[],"examples":[]}}]}}"#
+    );
+    if let Err(refused) = object_for(&document) {
+        panic!("refused: {refused}");
+    }
+}

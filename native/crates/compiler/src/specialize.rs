@@ -23,25 +23,26 @@
 //! `foldFrom<Int, Int>` again. Which copy a call reaches is answered here, once, by the call it is;
 //! the lowering reads that answer and does not work it out a second time from a name and some types.
 //!
-//! Which recursions are lowered is decided of the helpers as written, before any copy is made
-//! ([`Recursions`]). Helpers that reach one another in a cycle are one recursion, and within one a
-//! call hands each variable of what it calls the caller's own variable of the same number: the
-//! recursion runs at the types it was entered at. One that does not is refused, whichever calls
-//! reach it and in whatever order they are read.
+//! A recursion is no different: the copies are made as calls reach them, and a call inside a copy
+//! that reaches a copy already made reaches that one. `h<'a, 'b>` calling `h<'b, 'a>` is two copies
+//! calling one another, and `f<'a>` calling `f<Int>` is at most two, so any recursion that reaches
+//! finitely many sets of types closes by itself. What does not is `f<'a>` calling `f<List<'a>>`,
+//! which needs a copy after every copy. A copy remembers the copy whose body made it, and one that
+//! would be the [`DEPTH`]th of its helper along that chain is refused as not converging. That is a
+//! limit of this backend on what it spends and no statement about the language: what a copy is
+//! made for is not affected by it, and a program under it is lowered the same at any other bound.
 //!
-//! That is a restriction this backend chooses, and stronger than what copies can be made for. Some
-//! of what it refuses would need a copy after every copy (`f<'a>` calling `f<List<'a>>`), and some
-//! would close over a few (`h<'a, 'b>` calling `h<'b, 'a>` goes round two; `f<'a>` calling
-//! `f<Int>` stops at two). What it buys is that a recursion entered at some types is one copy of
-//! each of its helpers at those types, so the copies are bounded without counting them, and a call
-//! a helper makes to itself is always a call to the same function, which is what lets it be a jump.
-//! Admitting the ones that close would mean composing what each call settles round every cycle, and
-//! telling a cycle that permutes or fixes its types from one that nests them. No helper the
-//! standard library writes needs it, and no model can write a type variable.
+//! A call a copy makes to itself is a call to the same function, which is what lets it be a jump
+//! ([`Specializations::callee`] is asked, and only a call reaching the copy it stands in is one).
+//! No helper the standard library writes needs more, and no model can write a type variable.
 
 use crate::index;
 use crate::transport::{Body, Carrier, Held, Node, Owner, Reaches, Reference, Ty};
 use crate::{Lowered, Runs, not_lowered};
+
+/// How many copies of one helper may be made one from the body of another before the making is
+/// taken not to converge.
+const DEPTH: usize = 16;
 use std::collections::HashMap;
 
 /// A helper, by the module holding the copy and the reference a call there reaches it by.
@@ -215,6 +216,8 @@ pub(crate) struct Instance<'p> {
     /// Which copy of the helper this is, counted from nought among the copies of the one helper,
     /// which is what tells the functions of one helper apart.
     pub ordinal: usize,
+    /// The copy whose body a call made this one, where a call in one did.
+    parent: Option<InstanceId>,
     body: Settled<'p>,
 }
 
@@ -275,12 +278,11 @@ impl<'p> Specializations<'p> {
                 index::unique(&mut helpers, (body.carrier().module(), &held.reached), body);
             }
         }
-        let recursions = Recursions::of(runs, &helpers);
         let mut roots = Vec::new();
         for body in runs.bodies() {
             match body.owner {
                 Owner::Helper(held) if held.variables() == 0 => {
-                    specializations.copy(&recursions, body.carrier(), held, Vec::new())?;
+                    specializations.copy(None, body.carrier(), held, Vec::new())?;
                 }
                 // A helper over variables is lowered as its copies and never as itself.
                 Owner::Helper(_) => {}
@@ -294,7 +296,7 @@ impl<'p> Specializations<'p> {
             }
         }
         for body in roots {
-            specializations.resolve(&helpers, &recursions, body.carrier(), calls_in(body.node))?;
+            specializations.resolve(&helpers, None, body.carrier(), calls_in(body.node))?;
         }
         // Each copy's body, once, in the order the copies were made: a copy made while one is
         // read is read after it.
@@ -303,7 +305,7 @@ impl<'p> Specializations<'p> {
             let instance = &specializations.instances[at];
             let carrier = instance.carrier;
             let calls = calls_in(instance.body());
-            specializations.resolve(&helpers, &recursions, carrier, calls)?;
+            specializations.resolve(&helpers, Some(InstanceId(at)), carrier, calls)?;
             at += 1;
         }
         Ok(specializations)
@@ -313,7 +315,7 @@ impl<'p> Specializations<'p> {
     fn resolve(
         &mut self,
         helpers: &HashMap<HelperKey<'p>, Body<'p>>,
-        recursions: &Recursions,
+        parent: Option<InstanceId>,
         carrier: Carrier<'p>,
         calls: Vec<Called>,
     ) -> Lowered<()> {
@@ -331,7 +333,7 @@ impl<'p> Specializations<'p> {
                      everywhere this reads (`unrun::each_lowered`)",
             );
             let types = bound.by_number(held.variables());
-            let id = self.copy(recursions, helper.carrier(), held, types)?;
+            let id = self.copy(parent, helper.carrier(), held, types)?;
             index::unique(&mut self.reached, call.at, id);
         }
         Ok(())
@@ -340,19 +342,34 @@ impl<'p> Specializations<'p> {
     /// The copy of `held` whose variables come to `types`, made where there is none yet.
     fn copy(
         &mut self,
-        recursions: &Recursions,
+        parent: Option<InstanceId>,
         carrier: Carrier<'p>,
         held: &'p Held,
         types: Vec<Option<Ty>>,
     ) -> Lowered<InstanceId> {
-        // Asked of the helper and not of the copies made so far, so what is refused does not turn
-        // on which call was read first.
-        recursions.lowered(carrier.module(), &held.reached)?;
         let key = (carrier.module(), &held.reached, types);
         if let Some(id) = self.by_key.get(&key) {
             return Ok(*id);
         }
         let (_, _, types) = key;
+        // How many of this helper's copies the chain of copies each made from the body of the one
+        // before already holds, this one not yet among them.
+        let mut along = 0;
+        let mut at = parent;
+        while let Some(id) = at {
+            let ancestor = &self.instances[id.0];
+            if ancestor.carrier == carrier && std::ptr::eq(ancestor.held, held) {
+                along += 1;
+            }
+            at = ancestor.parent;
+        }
+        if along >= DEPTH {
+            return Err(not_lowered(format!(
+                "{}, whose copies would be made one from the body of another without end: the \
+                 types it is called at keep growing",
+                held.reached.rendered()
+            )));
+        }
         let body = if types.is_empty() {
             Settled::AsHeld(&held.body)
         } else {
@@ -371,6 +388,7 @@ impl<'p> Specializations<'p> {
             held,
             types: types.clone(),
             ordinal,
+            parent,
             body,
         });
         index::unique(
@@ -396,170 +414,6 @@ impl<'p> Specializations<'p> {
             .get(&std::ptr::from_ref(call))
             .expect("every call reaching a helper in a body lowered here was resolved to a copy")
     }
-}
-
-/// Which helpers run as a recursion at the types it was entered at, decided of the helpers as
-/// written: the restriction the module's own documentation gives, and no weaker one.
-///
-/// Helpers reaching one another in a cycle are one recursion: a strongly connected part of the
-/// graph whose edges are the calls in each helper's body, a helper calling itself included. Within
-/// one, every call has to hand the variable of each number of what it calls the caller's variable
-/// of that number and nothing else. What is refused is kept by each helper of the recursion and
-/// said only where a copy of one is asked for, so a helper no body here reaches is refused for
-/// nothing.
-struct Recursions {
-    refused: HashMap<(String, Reference), String>,
-}
-
-impl Recursions {
-    fn of<'p>(runs: &Runs<'p>, helpers: &HashMap<HelperKey<'p>, Body<'p>>) -> Self {
-        // Every helper once, in the order the program holds them, so what is found is found the
-        // same way every time.
-        let order: Vec<HelperKey<'p>> = runs
-            .bodies()
-            .filter_map(|body| {
-                let held = body.owner.helper()?;
-                Some((body.carrier().module(), &held.reached))
-            })
-            .collect();
-        let at: HashMap<HelperKey<'p>, usize> = order
-            .iter()
-            .enumerate()
-            .map(|(place, key)| (*key, place))
-            .collect();
-        // Each call in a helper's body: whom it reaches, and what it settles each variable of that
-        // to, over the caller's variables. `None` where a variable is settled to nothing.
-        let calls: Vec<Vec<(usize, Vec<Option<Ty>>)>> = order
-            .iter()
-            .map(|key| {
-                let Owner::Helper(caller) = helpers[key].owner else {
-                    unreachable!("gathered from the helpers' bodies alone");
-                };
-                calls_in(&caller.body)
-                    .into_iter()
-                    .map(|call| {
-                        let callee = &helpers[&(key.0, &call.reached)];
-                        let Owner::Helper(held) = callee.owner else {
-                            unreachable!("gathered from the helpers' bodies alone");
-                        };
-                        let handed: Vec<&Ty> = call.handed.iter().collect();
-                        let settled = called(held, &handed, &call.answers)
-                            .expect(
-                                "`Coherent` held every call of a helper to fit it wherever it is \
-                                 lowered, which is everywhere this reads",
-                            )
-                            .by_number(held.variables());
-                        (at[&(key.0, &call.reached)], settled)
-                    })
-                    .collect()
-            })
-            .collect();
-        let part = strongly_connected(&calls);
-        let mut refused = HashMap::new();
-        for (caller, reaching) in calls.iter().enumerate() {
-            for (callee, settled) in reaching {
-                if part[caller] != part[*callee] {
-                    continue;
-                }
-                let (_, reached) = order[*callee];
-                // At its own types: each variable bound to itself. One the call binds to nothing is
-                // not bound to other types; where a copy needs it, no copy is made (`resolve`).
-                if settled
-                    .iter()
-                    .enumerate()
-                    .all(|(var, ty)| ty.as_ref().is_none_or(|ty| *ty == Ty::Var { var }))
-                {
-                    continue;
-                }
-                let why = format!(
-                    "{}, which a recursion it is part of reaches at other types than it was \
-                     called at, from {}",
-                    reached.rendered(),
-                    order[caller].1.rendered()
-                );
-                for (member, of) in part.iter().enumerate() {
-                    if *of == part[caller] {
-                        let (module, reached) = order[member];
-                        refused
-                            .entry((module.to_string(), reached.clone()))
-                            .or_insert_with(|| why.clone());
-                    }
-                }
-            }
-        }
-        Recursions { refused }
-    }
-
-    /// Refuses a copy of the helper `reached` held by `module`, where its recursion is refused.
-    fn lowered(&self, module: &str, reached: &Reference) -> Lowered<()> {
-        match self.refused.get(&(module.to_string(), reached.clone())) {
-            Some(why) => Err(not_lowered(why.clone())),
-            None => Ok(()),
-        }
-    }
-}
-
-/// Which strongly connected part of the graph each node is in, numbered in no order that means
-/// anything beyond telling the parts apart: `calls[n]` is where node `n` has an edge to.
-fn strongly_connected<T>(calls: &[Vec<(usize, T)>]) -> Vec<usize> {
-    struct Walk<'c, T> {
-        calls: &'c [Vec<(usize, T)>],
-        index: Vec<Option<usize>>,
-        low: Vec<usize>,
-        stack: Vec<usize>,
-        on_stack: Vec<bool>,
-        part: Vec<usize>,
-        next: usize,
-        parts: usize,
-    }
-    impl<T> Walk<'_, T> {
-        fn visit(&mut self, node: usize) {
-            self.index[node] = Some(self.next);
-            self.low[node] = self.next;
-            self.next += 1;
-            self.stack.push(node);
-            self.on_stack[node] = true;
-            for &(to, _) in &self.calls[node] {
-                match self.index[to] {
-                    None => {
-                        self.visit(to);
-                        self.low[node] = self.low[node].min(self.low[to]);
-                    }
-                    Some(index) if self.on_stack[to] => {
-                        self.low[node] = self.low[node].min(index);
-                    }
-                    Some(_) => {}
-                }
-            }
-            if Some(self.low[node]) == self.index[node] {
-                while let Some(member) = self.stack.pop() {
-                    self.on_stack[member] = false;
-                    self.part[member] = self.parts;
-                    if member == node {
-                        break;
-                    }
-                }
-                self.parts += 1;
-            }
-        }
-    }
-    let count = calls.len();
-    let mut walk = Walk {
-        calls,
-        index: vec![None; count],
-        low: vec![0; count],
-        stack: Vec::new(),
-        on_stack: vec![false; count],
-        part: vec![0; count],
-        next: 0,
-        parts: 0,
-    };
-    for node in 0..count {
-        if walk.index[node].is_none() {
-            walk.visit(node);
-        }
-    }
-    walk.part
 }
 
 /// A call reaching a helper, by where it stands, with what it names and the types it was settled
@@ -828,10 +682,21 @@ mod tests {
         .expect("a document every relation of which holds");
     }
 
-    /// A helper handing itself a list of what it was handed would need a copy for every depth, and
-    /// is one of the recursions refused.
+    /// The copies of each helper of the program, by the helper and what its variables came to, in
+    /// the order they were made.
+    fn copies_of(document: &str) -> anyhow::Result<Vec<(String, Vec<Option<Ty>>)>> {
+        specialized(document, |specializations, _| {
+            specializations
+                .iter()
+                .map(|(_, it)| (it.held.reached.rendered(), it.types.clone()))
+                .collect()
+        })
+    }
+
+    /// A helper handing itself a list of what it was handed would need a copy after every copy, and
+    /// is refused as not converging, at the copy after the last that is made.
     #[test]
-    fn a_helper_calling_itself_at_other_types_is_not_lowered() {
+    fn a_helper_calling_itself_at_ever_larger_types_is_not_lowered() {
         let listed = r#"{"list":{"var":0}}"#;
         let nested = node("list", &format!(r#""elements":[{}]"#, read(0, VAR)), listed);
         let helpers = [helper("m.nest", &[VAR], &call("m.nest", &[nested], INT))];
@@ -844,7 +709,7 @@ mod tests {
             refused.downcast_ref::<crate::NotLowered>().is_some(),
             "{refused}"
         );
-        assert!(refused.to_string().contains("other types"), "{refused}");
+        assert!(refused.to_string().contains("without end"), "{refused}");
     }
 
     /// A function value written in a helper over variables is in each copy of it, at the types that
@@ -878,21 +743,11 @@ mod tests {
 
     const OTHER: &str = r#"{"var":1}"#;
 
-    fn refused_as_other_types(document: &str) {
-        let refused = specialized(document, |_, _| ()).expect_err("a recursion at other types");
-        assert!(
-            refused.downcast_ref::<crate::NotLowered>().is_some(),
-            "{refused}"
-        );
-        assert!(refused.to_string().contains("other types"), "{refused}");
-    }
-
-    /// `h<'a, 'b>` calling `h<'b, 'a>` would close over two copies, and is refused all the same:
-    /// neither copy's call to itself is a call to itself. It is refused whichever of them a body
-    /// asks for first and however many it asks for, since what is refused is the helper's and not
-    /// what the copies made before it happen to be.
+    /// `h<'a, 'b>` calling `h<'b, 'a>` closes over two copies, whichever of them a body asks for
+    /// first and however many it asks for: the copy a call inside one reaches is the other, and
+    /// the other's is the first.
     #[test]
-    fn a_recursion_swapping_its_types_is_refused_whatever_reaches_it_first() {
+    fn a_recursion_swapping_its_types_closes_over_two_copies() {
         let swapped = [helper(
             "m.h",
             &[VAR, OTHER],
@@ -905,16 +760,36 @@ mod tests {
             tuple(&[int_text.clone(), text_int.clone()], &[INT, INT]),
             tuple(&[text_int, int_text], &[INT, INT]),
         ] {
-            refused_as_other_types(&holding(&swapped, &body));
+            let mut copies: Vec<Vec<Option<Ty>>> = copies_of(&holding(&swapped, &body))
+                .expect("a recursion that closes")
+                .into_iter()
+                .map(|(_, types)| types)
+                .collect();
+            copies.sort_by_key(|types| format!("{types:?}"));
+            assert_eq!(
+                copies,
+                [
+                    vec![Some(int()), Some(string())],
+                    vec![Some(string()), Some(int())]
+                ]
+            );
         }
     }
 
-    /// `f<'a>` calling `f<Int>` stops at two copies and is refused all the same, which is the
-    /// restriction and not a copy count: the recursion does not run at the types it was entered at.
+    /// `f<'a>` calling `f<Int>` stops at two copies: the one it was entered at, and the one it
+    /// settles to, which calls itself.
     #[test]
-    fn a_recursion_settling_its_type_to_one_type_is_refused_though_it_closes() {
+    fn a_recursion_settling_its_type_to_one_type_closes_over_two_copies() {
         let helpers = [helper("m.f", &[VAR], &call("m.f", &[number(1)], INT))];
-        refused_as_other_types(&holding(&helpers, &call("m.f", &[text("a")], INT)));
+        let copies = copies_of(&holding(&helpers, &call("m.f", &[text("a")], INT)))
+            .expect("a recursion that closes");
+        assert_eq!(
+            copies,
+            [
+                ("f".to_string(), vec![Some(string())]),
+                ("f".to_string(), vec![Some(int())])
+            ]
+        );
     }
 
     /// Two helpers calling each other, each handing the other its own variable of each number,
@@ -945,15 +820,24 @@ mod tests {
         .expect("a recursion at its own types");
     }
 
-    /// A helper leaving nothing open, in a recursion with one that does, can only call it back at
-    /// a type of its own choosing, which is other types than the recursion was entered at.
+    /// A helper leaving nothing open, in a recursion with one that does, calls it back at a type of
+    /// its own choosing: a copy at that type, which calls back the one it was made from.
     #[test]
-    fn a_recursion_calling_back_at_a_fixed_type_is_refused() {
+    fn a_recursion_calling_back_at_a_fixed_type_closes_over_the_copies_it_reaches() {
         let helpers = [
             helper("m.open", &[VAR], &call("m.shut", &[], INT)),
             helper("m.shut", &[], &call("m.open", &[number(1)], INT)),
         ];
-        refused_as_other_types(&holding(&helpers, &call("m.open", &[text("a")], INT)));
+        let copies = copies_of(&holding(&helpers, &call("m.open", &[text("a")], INT)))
+            .expect("a recursion that closes");
+        assert_eq!(
+            copies,
+            [
+                ("shut".to_string(), vec![]),
+                ("open".to_string(), vec![Some(string())]),
+                ("open".to_string(), vec![Some(int())]),
+            ]
+        );
     }
 
     /// The writer numbers a helper's variables from nought as it meets each, and what reads one
