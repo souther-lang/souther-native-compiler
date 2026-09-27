@@ -137,34 +137,40 @@ the application does, and a pool would not change what this example shows.
 Two parties read a request, and each owns a different part of what it means. The model owns what a
 value is: which fields a type has, which case an orderer is, and every rule a type states, a
 positive quantity, a name that is not blank and no longer than 100, a corporate number of thirteen
-digits. None of that is written again in Rust. The boundary owns how a client's text is written:
-its canonical form (an id and an email in lower case, an email and a name without the spaces around
-them) and the forms the model leaves to it (an id is a UUID, an email is shaped like one). Trimming
-a name is not a rule the model could state instead: an invariant decides whether a value holds and
-never rewrites it, so a model asked to trim would keep `"  Taro  "` as it came.
+digits. None of that is written again in Rust. The boundary owns how a client writes a value: an id
+is a UUID in lower case, an email is trimmed, lowercased and shaped like one, a name is trimmed.
+Each of those is a raoh decoder, which writes the value in its form and refuses what cannot be
+written so, as one step. Trimming a name is not a rule the model could state instead: an invariant
+decides whether a value holds and never rewrites it, so a model asked to trim would keep
+`"  Taro  "` as it came.
 
-The model's decoders are reached in two ways, and which one is decided by what the boundary's step
-is about. Where the boundary checks the very value the model reads, an id, the two are piped, and
-where the boundary refuses the value the model has nothing to add at that path. Where the model
-reads a value whole, an orderer, the boundary canonicalises the members it owns each on its own,
-and the model reads the value whichever of them was refused:
+Where the boundary owns the value the model reads, an id, the two decoders are piped: the model
+reads what the boundary answered, and nothing where it refused. Where the model reads a value whole
+and the boundary owns some of its members, an orderer's email and names, a `pipe` would stop at the
+first refusal, and an orderer whose email is refused would never reach the model, which alone can
+say that a corporation has no company name. So each member is decoded on its own, and the model
+reads the value whichever of them was refused (`http::boundary::members`):
 
 ```rust
 field("userId", model.after(uuid(), |run, id: &String| UserId::new(run, id))),
-// ...
-model.canonicalised(
-    vec![("email", /* trimmed, lowercased, shaped like an email */), ("name", trimmed()), ("companyName", trimmed())],
+field("orderer", model.members(
+    vec![
+        ("email", text(string().trim().lowercase().email())),
+        ("name", text(string().trim())),
+        ("companyName", text(string().trim())),
+    ],
     |run, it| Orderer::decode(run, &it.to_string()),
-)
+)),
 ```
 
-A `pipe` from the boundary's step into the model's would stop at the first: an orderer whose email
-is refused would never reach the model, which alone can say that a corporation has no company name.
-So a request answers all of its issues at once, field by field and member by member. A corporation
-whose email is not shaped like one and whose company name and corporate number are missing is one
-400 with three issues: raoh found the first, and the model the other two. Where both find something
-wrong with one member, a name that is no text, the boundary's issue is the one kept, since it says
-what form the member was not in.
+What the model is handed of a member is what the boundary's decoder answered for it, and of a
+refused member nothing. The model never reads text the boundary refused, so what it sees does not
+depend on whether the rest of the request was valid: a rule relating two members sees decoded
+values or no value, never a raw one. It reports a refused member as missing, which is only that it
+was taken out, and that one issue, at the member's own path, is dropped; nothing inside the member
+is the model's to report, since it was not handed it. A corporation whose email is not shaped like
+one and whose company name and corporate number are missing is one 400 with three issues: raoh
+found the first, and the model the other two.
 
 ```json
 {"issues": [

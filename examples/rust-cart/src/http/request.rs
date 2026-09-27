@@ -3,26 +3,24 @@
 //! Two parties read a request, and each owns a different part of what it means. The model owns
 //! what a value is: which case an orderer is, the fields each case has, and every rule a type
 //! states, a positive quantity, a name that is not blank and a corporate number of thirteen digits
-//! among them. Nothing here says any of that again. The boundary owns how a value is written from
-//! outside: the canonical form of what a client sends (an id in lower case, an email and a name
-//! without the spaces around them, an email in lower case), and the forms the model leaves to it (an
-//! id is a UUID, an email is shaped like one). raoh does the boundary's part.
+//! among them. Nothing here says any of that again. The boundary owns how a client writes a value:
+//! an id is a UUID in lower case, an email is trimmed, lowercased and shaped like one, a name is
+//! trimmed. Each of those is a raoh decoder, which writes the value in its form and refuses what
+//! cannot be written so, as one step.
 //!
-//! The model's decoders are reached in two ways only, and which one is decided by what the
-//! boundary's step is about:
+//! The model's decoders are reached in three ways, by what the boundary owns of the value:
 //!
-//! - [`Model::after`], where the boundary checks and canonicalises one value and the model reads what
-//!   it answers. Both speak of that one value, so where the boundary refuses it the model has
-//!   nothing to add: its issue would be at the same path.
-//! - [`Model::canonicalised`], where the model reads a value whole and the boundary puts some of its
-//!   members in their canonical form first. Each member is canonicalised on its own and the model
-//!   reads the value whichever of them the boundary refused, so a refused email does not keep the
-//!   model from saying that a company name is missing.
+//! - [`Model::after`], where the boundary owns the value the model reads, an id: the model reads
+//!   what the boundary's decoder answered, and nothing where it refused, since its issue would be
+//!   at the same path.
+//! - [`Model::members`], where the model reads a value whole and the boundary owns some of its
+//!   members, an orderer's email and names: [`boundary::members`] says how the two are put together.
+//! - [`Model::as_given`], where the boundary owns nothing of it, a quantity.
 //!
 //! A request has no type of its own in the model, since a behavior takes its arguments by place, so
 //! each argument is a field here and read by its type's decoder. Every field is read whichever of
-//! them fails, and together with the two ways above that makes a request answer every issue it has
-//! at once, the boundary's and the model's.
+//! them fails, and with the ways above that makes a request answer every issue it has at once, the
+//! boundary's and the model's.
 //!
 //! The model's step is a raoh decoder like any other. It is made from the run it reads in, which a
 //! decoder can borrow but not hold, so the decoders here live for one call.
@@ -32,7 +30,9 @@ use std::cell::RefCell;
 use model::com::example::cart::domain::{Orderer, ProductId, Quantity, UserId};
 use model::{Construction, Failure, Reading, Run};
 use raoh::json::prelude::*;
-use raoh::{Issues, Pointer, decoder_fn};
+use raoh::{Issues, decoder_fn};
+
+use super::boundary::{self, Member};
 
 /// What a request comes to: its arguments, or the issues found in it. The run ending while it was
 /// read is the `Err` outside.
@@ -55,7 +55,7 @@ pub fn add_item<'run>(
             ),
             field(
                 "quantity",
-                model.canonicalised(Vec::new(), |run, it| Quantity::decode(run, &it.to_string())),
+                model.as_given(|run, it| Quantity::decode(run, &it.to_string())),
             ),
         ));
         from_str(&arguments, body)
@@ -70,7 +70,17 @@ pub fn checkout<'run>(run: &mut Run<'run>, body: &str) -> Read<(UserId<'run>, Or
                 "userId",
                 model.after(uuid(), |run, id: &String| UserId::new(run, id)),
             ),
-            field("orderer", orderer(model)),
+            field(
+                "orderer",
+                model.members(
+                    vec![
+                        ("email", text(string().trim().lowercase().email())),
+                        ("name", text(string().trim())),
+                        ("companyName", text(string().trim())),
+                    ],
+                    |run, it| Orderer::decode(run, &it.to_string()),
+                ),
+            ),
         ));
         from_str(&arguments, body)
     })
@@ -86,42 +96,32 @@ pub fn user_id<'run>(run: &mut Run<'run>, given: Option<&str>) -> Read<UserId<'r
     })
 }
 
-/// A UUID's text, as the database keeps one: in lower case, with its hyphens.
+/// A UUID as this API writes one, and as the database keeps it: in lower case, with its hyphens.
+/// Another notation of one (braced, a URN, without hyphens) is not how a client writes an id here.
 fn uuid() -> impl Decoder<Value, Output = String> {
-    string().uuid().map(|id| id.to_string())
-}
-
-/// An orderer in the model's own encoding of one, read whole by the model once the members whose
-/// canonical form is the boundary's are in it. Whether each is there at all, and what it has to
-/// be, is the model's to say, as it is of every other member.
-fn orderer<'a, 'run>(
-    model: &'a Model<'_, 'run>,
-) -> impl Decoder<Value, Output = Orderer<'run>> + 'a {
-    model.canonicalised(
-        vec![
-            (
-                "email",
-                string()
-                    .trim()
-                    .lowercase()
-                    .email()
-                    .map(Value::String)
-                    .boxed(),
-            ),
-            ("name", trimmed()),
-            ("companyName", trimmed()),
-        ],
-        |run, it| Orderer::decode(run, &it.to_string()),
+    string().lowercase().refine(
+        |text: &String| hyphenated(text),
+        "invalid_format",
+        "not a valid UUID",
     )
 }
 
-/// Text without the spaces around it, which is how a name is written whatever a client sent.
-fn trimmed() -> BoxDecoder<Value, Value> {
-    string().trim().map(Value::String).boxed()
+/// Whether `text` is 32 hexadecimal digits in lower case, in groups of 8, 4, 4, 4 and 12 joined by
+/// hyphens.
+fn hyphenated(text: &str) -> bool {
+    text.len() == 36
+        && text.char_indices().all(|(at, digit)| match at {
+            8 | 13 | 18 | 23 => digit == '-',
+            _ => digit.is_ascii_digit() || ('a'..='f').contains(&digit),
+        })
 }
 
-/// A member of a value the model reads whole, and how the boundary writes it canonically.
-type Canonical = (&'static str, BoxDecoder<Value, Value>);
+/// A member the boundary writes as text, `decoder` saying how.
+fn text(
+    decoder: impl Decoder<Value, Output = String> + Send + Sync + 'static,
+) -> BoxDecoder<Value, Value> {
+    decoder.map(Value::String).boxed()
+}
 
 /// The run the model's steps read in, and the first failure one of them answered.
 struct Model<'m, 'run> {
@@ -143,63 +143,32 @@ impl<'m, 'run> Model<'m, 'run> {
         }
     }
 
-    /// One value, checked and canonicalised by `form`, and then read by the model through `make`
-    /// from what `form` answered.
+    /// A value the boundary owns, decoded by `boundary`, and then read by the model through `make`
+    /// from what `boundary` answered.
     fn after<'a, O, T, A: Answered<T>>(
         &'a self,
-        form: impl Decoder<Value, Output = O> + 'a,
+        boundary: impl Decoder<Value, Output = O> + 'a,
         make: impl Fn(&mut Run<'run>, &O) -> Result<A, Failure> + 'a,
     ) -> impl Decoder<Value, Output = T> + 'a {
-        form.pipe(self.of(make))
+        boundary.pipe(self.of(make))
     }
 
-    /// A value read whole by the model through `make`, with each of `members` put in the
-    /// boundary's canonical form first where the value has it.
-    ///
-    /// Every member is canonicalised on its own, and the model reads the value whichever of them
-    /// was refused, with a refused member as it was given. So the issues of both come back
-    /// together. Where both speak of one member, the boundary's is the one kept: it says what form
-    /// the member was not in, and the model's could only say that the member did not hold.
-    fn canonicalised<'a, T, A: Answered<T>>(
+    /// A value read whole by the model through `make`, once each of `members` it has is decoded by
+    /// the boundary.
+    fn members<'a, T, A: Answered<T>>(
         &'a self,
-        members: Vec<Canonical>,
+        members: Vec<Member>,
         make: impl Fn(&mut Run<'run>, &Value) -> Result<A, Failure> + 'a,
     ) -> impl Decoder<Value, Output = T> + 'a {
-        let whole = self.of(make);
-        decoder_fn(move |given: &Value, path| {
-            let mut canonical = given.clone();
-            let mut issues = Issues::new();
-            let mut refused: Vec<Pointer> = Vec::new();
-            if let Value::Object(object) = &mut canonical {
-                for (name, form) in &members {
-                    if let Some(member) = object.get_mut(*name) {
-                        let at = path.key(name);
-                        match form.decode_at(member, &at) {
-                            Ok(written) => *member = written,
-                            Err(found) => {
-                                refused.push(at.to_pointer());
-                                issues.merge(found);
-                            }
-                        }
-                    }
-                }
-            }
-            match whole.decode_at(&canonical, path) {
-                Ok(read) if issues.is_empty() => Ok(read),
-                Ok(_) => Err(issues),
-                Err(found) => {
-                    for issue in found.iter() {
-                        let spoken = refused
-                            .iter()
-                            .any(|member| issue.path().segments().starts_with(member.segments()));
-                        if !spoken {
-                            issues.push(issue.clone());
-                        }
-                    }
-                    Err(issues)
-                }
-            }
-        })
+        boundary::members(members, self.of(make))
+    }
+
+    /// A value the boundary owns nothing of, read by the model through `make` as it came.
+    fn as_given<'a, T, A: Answered<T>>(
+        &'a self,
+        make: impl Fn(&mut Run<'run>, &Value) -> Result<A, Failure> + 'a,
+    ) -> impl Decoder<Value, Output = T> + 'a {
+        self.of(make)
     }
 
     /// A decoder reading its input into a value of the model through `make`, a constructor or a

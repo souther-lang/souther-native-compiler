@@ -166,6 +166,26 @@ async fn an_id_that_is_not_a_uuid_is_400_with_raohs_issue() {
 }
 
 #[tokio::test]
+async fn an_id_is_a_uuid_as_this_api_writes_one() {
+    // Upper case is written in lower case; a UUID in another notation is not how an id is written.
+    let cart = Cart::new();
+
+    let upper = cart.add_item(&USER.to_uppercase(), ON_SALE, 1).await;
+    let braced = cart.add_item(&format!("{{{USER}}}"), ON_SALE, 1).await;
+    let bare = cart.add_item(&USER.replace('-', ""), ON_SALE, 1).await;
+
+    assert_eq!(upper.status, StatusCode::CREATED);
+    assert_eq!(
+        (braced.status, paths(&braced)),
+        (StatusCode::BAD_REQUEST, vec!["/userId"])
+    );
+    assert_eq!(
+        (bare.status, paths(&bare)),
+        (StatusCode::BAD_REQUEST, vec!["/userId"])
+    );
+}
+
+#[tokio::test]
 async fn a_quantity_of_none_is_400() {
     let answer = Cart::new().add_item(USER, ON_SALE, 0).await;
 

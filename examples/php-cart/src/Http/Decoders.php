@@ -23,14 +23,15 @@ use function Raoh\Boundary\Json\string_;
  * a value is, and its decoders, which the binding generates, read it: which case an orderer is, the
  * fields each case has, and every rule a type states, a positive quantity, a name that is not blank
  * and a corporate number of thirteen digits among them. Nothing here says any of that again. The
- * boundary owns how a value is written from outside: the canonical form of what a client sends (an
- * id in lower case, an email and a name without the spaces around them, an email in lower case),
- * and the forms the model leaves to it (an id is a UUID, an email is shaped like one). raoh-php does
- * the boundary's part.
+ * boundary owns how a client writes a value: an id is a UUID in lower case, an email is trimmed,
+ * lowercased and shaped like one, a name is trimmed. Each of those is a raoh-php decoder, which
+ * writes the value in its form and refuses what cannot be written so, as one step.
  *
- * An id's form is about the very value the model reads, so it is piped into the model's decoder.
- * An orderer's members are canonicalised apart from the model's reading of the whole, by
- * `Canonical`, so that a member the boundary refuses does not keep the model from reading the rest.
+ * Where the boundary owns the value the model reads, an id, the two are piped: the model reads what
+ * the boundary answered, and nothing where it refused, since its issue would be at the same path.
+ * Where the model reads a value whole and the boundary owns some of its members, an orderer, the
+ * two are put together by `Members`, so that a member the boundary refuses does not keep the model
+ * from reading the rest.
  */
 final class Decoders
 {
@@ -61,15 +62,15 @@ final class Decoders
     }
 
     /**
-     * An orderer in the model's own encoding of one, read whole by the model once the members
-     * whose canonical form is the boundary's are in it. Whether each is there at all, and what it
-     * has to be, is the model's to say, as it is of every other member.
+     * An orderer in the model's own encoding of one, read whole by the model once the members the
+     * boundary owns are decoded. Whether each is there at all, and what it has to be, is the
+     * model's to say, as it is of every other member.
      *
      * @return Decoder<mixed, Orderer>
      */
     public static function orderer(): Decoder
     {
-        return Canonical::of([
+        return Members::of([
             'email' => string_()->trim()->toLowerCase()->email(),
             'name' => string_()->trim(),
             'companyName' => string_()->trim(),
@@ -77,7 +78,8 @@ final class Decoders
     }
 
     /**
-     * A UUID's text, as the database keeps one: in lower case, with its hyphens.
+     * A UUID as this API writes one, and as the database keeps it: in lower case, with its hyphens.
+     * Another notation of one (braced, a URN, without hyphens) is not how a client writes an id here.
      *
      * @return Decoder<mixed, string>
      */

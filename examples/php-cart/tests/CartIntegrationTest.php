@@ -98,6 +98,19 @@ final class CartIntegrationTest extends TestCase
     }
 
     #[Test]
+    public function anIdIsAUuidAsThisApiWritesOne(): void
+    {
+        // Upper case is written in lower case; a UUID in another notation is not how an id is written.
+        $upper = $this->addItem(strtoupper(self::USER), self::ON_SALE, 1);
+        $braced = $this->addItem('{' . self::USER . '}', self::ON_SALE, 1);
+        $bare = $this->addItem(str_replace('-', '', self::USER), self::ON_SALE, 1);
+
+        self::assertSame(201, $upper->status);
+        self::assertSame([400, ['/userId']], [$braced->status, array_column(self::body($braced)['issues'], 'path')]);
+        self::assertSame([400, ['/userId']], [$bare->status, array_column(self::body($bare)['issues'], 'path')]);
+    }
+
+    #[Test]
     public function aQuantityOfNoneIs400(): void
     {
         $response = $this->addItem(self::USER, self::ON_SALE, 0);

@@ -47,10 +47,12 @@ without the spaces around them), and the forms the model leaves to a boundary (a
 email is shaped like one). Trimming is not a rule the model could state instead, since an invariant
 decides whether a value holds and never rewrites it.
 
-An id's form is about the very value the model reads, so it is piped into the model's decoder. An
-orderer's members are canonicalised apart from the model's reading of the whole (`Canonical`), so an
-email the boundary refuses does not keep the model from saying that a company name is missing, and
-a request answers all of its issues at once.
+Each of the boundary's steps is a raoh-php decoder, which writes the value in its form and refuses
+what cannot be written so, as one step. An id's decoder is piped into the model's, since both are
+about one value. An orderer's members are decoded each on their own, and the model reads the whole
+whichever of them was refused (`Members`): of a refused member it is handed nothing, never the text
+the boundary refused. So an email the boundary refuses does not keep the model from saying that a
+company name is missing, and a request answers all of its issues at once.
 
 Each handler answers an `Outcome`: the response, and whether what the request wrote is kept. That the
 model answered is not that its answer is to be kept. `loadCart` makes a new user's cart row before the

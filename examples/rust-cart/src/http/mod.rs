@@ -7,6 +7,7 @@
 //! model stops this compiling until a route says what it is answered with, and whether what was
 //! written on the way to it is kept: every arm is an [`Outcome`].
 
+pub mod boundary;
 pub mod request;
 pub mod response;
 
