@@ -178,6 +178,12 @@ impl fmt::Display for Abort {
     }
 }
 
+/// What a host implementation left for the call it was reached from.
+pub(crate) enum Caught {
+    Panicked(Box<dyn Any + Send>),
+    Failed(HostError),
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -224,10 +230,4 @@ mod tests {
         };
         assert_eq!(unnamed, UnnamedStatus("REQUIRED_FORM_HAS_NO_PLACE"));
     }
-}
-
-/// What a host implementation left for the call it was reached from.
-pub(crate) enum Caught {
-    Panicked(Box<dyn Any + Send>),
-    Failed(HostError),
 }

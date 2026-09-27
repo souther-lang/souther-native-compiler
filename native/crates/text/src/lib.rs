@@ -99,7 +99,7 @@ pub fn admitted(bytes: &[u8], capacity: Capacity) -> Result<Cow<'_, str>, Admiss
     if text.is_ascii() {
         return capacity
             .holds(text.len() as i64)
-            .then(|| Cow::Borrowed(text))
+            .then_some(Cow::Borrowed(text))
             .ok_or(AdmissionRefusal::NoPlace);
     }
     canonical::nfc_of_input(text, capacity)
