@@ -299,6 +299,12 @@ struct Clock {
     minute: i64,
     second: i64,
     nano: i64,
+    /// Whether a point was written, whatever digits followed it. A `Time` and a `DateTime` refuse
+    /// this on its own: `09:30:00.000` and `09:30:00` name one second once `nano` is taken, so
+    /// asking `nano != 0` after the point is read would admit the first as the second (spec
+    /// §a-local-temporal-is-held-to-the-second) — the same substitution the text is refused for
+    /// naming a leap second is refused for here, made by asking the value instead of the text.
+    has_fraction: bool,
 }
 
 fn read_clock(from: &mut Reader, seconds_required: bool) -> Option<Clock> {
@@ -307,10 +313,11 @@ fn read_clock(from: &mut Reader, seconds_required: bool) -> Option<Clock> {
         return None;
     }
     let minute = from.digits(2)?;
-    let (mut second, mut nano) = (0, 0);
+    let (mut second, mut nano, mut has_fraction) = (0, 0, false);
     if from.eat(b':') {
         second = from.digits(2)?;
         if from.eat(b'.') {
+            has_fraction = true;
             let fraction = from.run();
             if !(1..=9).contains(&fraction.len()) {
                 return None;
@@ -328,16 +335,17 @@ fn read_clock(from: &mut Reader, seconds_required: bool) -> Option<Clock> {
         minute,
         second,
         nano,
+        has_fraction,
     })
 }
 
 /// The time of day a local clock names, held to the second: none where the numbers name no time,
-/// and a refusal where they name one with a fraction of a second.
+/// and a refusal where the text carried a point, whatever digits followed it.
 fn local_time(clock: &Clock) -> Result<i64, Refusal> {
     if clock.hour > 23 || clock.minute > 59 || clock.second > 59 {
         return Err(Refusal::Format);
     }
-    if clock.nano != 0 {
+    if clock.has_fraction {
         return Err(Refusal::Fraction);
     }
     Ok(clock.hour * 3600 + clock.minute * 60 + clock.second)
@@ -415,8 +423,15 @@ pub(crate) fn parse_instant(text: &[u8]) -> Option<(i64, i64)> {
     if !from.finished() || clock.minute > 59 || clock.second > 59 {
         return None;
     }
+    // 24:00:00 is admitted only where nothing follows it: no minute, no second, and no written
+    // fraction, even one of nought. A fraction of nought collapses to the same moment once read,
+    // which is exactly why its presence has to be decided from the text and not from clock.nano:
+    // asking the value here would let "T24:00:00.000Z" through unable to tell it from
+    // "T24:00:00Z", the same substitution local_time refuses a Time and a DateTime for.
     let end_of_day = clock.hour == 24;
-    if clock.hour > 24 || (end_of_day && (clock.minute, clock.second, clock.nano) != (0, 0, 0)) {
+    if clock.hour > 24
+        || (end_of_day && (clock.minute != 0 || clock.second != 0 || clock.has_fraction))
+    {
         return None;
     }
     let second = (days_from_civil(year, month, date) * SECONDS_PER_DAY)
@@ -1263,9 +1278,11 @@ mod tests {
             assert_eq!(parse_time(written.as_bytes()), Ok(second));
         }
         assert_eq!(parse_time("09:30:00".as_bytes()), Ok(9 * 3600 + 30 * 60));
+        // A fraction of nought names the same second as no fraction at all once read, and is
+        // refused for that: reading it back would not tell the two texts apart.
         assert_eq!(
             parse_time("09:30:00.000".as_bytes()),
-            Ok(9 * 3600 + 30 * 60)
+            Err(Refusal::Fraction)
         );
         assert_eq!(parse_time("09:30:00.5".as_bytes()), Err(Refusal::Fraction));
         assert_eq!(
@@ -1303,6 +1320,10 @@ mod tests {
         );
         assert_eq!(
             parse_date_time("2026-07-25T09:30:00.1".as_bytes()),
+            Err(Refusal::Fraction)
+        );
+        assert_eq!(
+            parse_date_time("2026-07-25T09:30:00.000".as_bytes()),
             Err(Refusal::Fraction)
         );
         assert_eq!(
@@ -1383,6 +1404,9 @@ mod tests {
             "2026-07-25T25:00:00Z",
             "2026-07-25T24:00:01Z",
             "2026-07-25T24:00:00.1Z",
+            // A fraction of nought collapses to the day's exact end once read, and its grammar is
+            // refused for that: the same lexical fact as a Time's or a DateTime's.
+            "2026-07-25T24:00:00.000Z",
             "2026-07-25T00:00:00.Z",
             "2026-07-25T00:00:00.1234567890Z",
             "+1000000000-12-31T23:59:59.999999999+00:00 ",
