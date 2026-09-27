@@ -423,8 +423,14 @@ pub(crate) fn parse_instant(text: &[u8]) -> Option<(i64, i64)> {
     if !from.finished() || clock.minute > 59 || clock.second > 59 {
         return None;
     }
+    // 24:00:00 is the start of the next day, so nothing about it may carry: a minute, a second or
+    // a fraction — even of nought — names a different moment than the day's exact end, the same
+    // lexical fact local_time refuses a Time and a DateTime by. Reading nano == 0 here would let
+    // "T24:00:00.000Z" through as that moment, once the point that named it is gone.
     let end_of_day = clock.hour == 24;
-    if clock.hour > 24 || (end_of_day && (clock.minute, clock.second, clock.nano) != (0, 0, 0)) {
+    if clock.hour > 24
+        || (end_of_day && (clock.minute != 0 || clock.second != 0 || clock.has_fraction))
+    {
         return None;
     }
     let second = (days_from_civil(year, month, date) * SECONDS_PER_DAY)
@@ -1397,6 +1403,9 @@ mod tests {
             "2026-07-25T25:00:00Z",
             "2026-07-25T24:00:01Z",
             "2026-07-25T24:00:00.1Z",
+            // A fraction of nought still names a different moment than the day's exact end once
+            // the point that named it is gone: the same lexical fact as a Time's or a DateTime's.
+            "2026-07-25T24:00:00.000Z",
             "2026-07-25T00:00:00.Z",
             "2026-07-25T00:00:00.1234567890Z",
             "+1000000000-12-31T23:59:59.999999999+00:00 ",

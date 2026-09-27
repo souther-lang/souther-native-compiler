@@ -1980,8 +1980,9 @@ pub enum Node {
     /// it was written as.
     ///
     /// What the checker's parse answered is what crosses, for the reason a `Decimal`'s integer and
-    /// scale do: the spellings `java.time` admits are the source's grammar, which the checker has
-    /// already read, and text handed over would be read a second time here by a grammar of its own.
+    /// scale do: the checker has already admitted the text against the specification's grammar for
+    /// the type (souther-lang/souther#2007), and text handed over would be read a second time here
+    /// by a grammar of its own.
     /// `count` is the day, counted from 1970-01-01, of a `Date`; the second of the day of a `Time`;
     /// the second, counted from 1970-01-01T00:00:00 as though it were in UTC, of a `DateTime`; and
     /// the second, counted from the epoch, of an `Instant`, whose nanosecond within it is `nano`.

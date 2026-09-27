@@ -8,8 +8,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * A {@code Date}, a {@code Time}, a {@code DateTime} and an {@code Instant} cross a boundary as the
- * ISO 8601 text that names them: read from it by the grammar of each type (Raoh's), and written
- * as {@code toString} of the {@code java.time} class the language names for it (spec §primitives).
+ * ISO 8601 text that names them: read from it by the grammar the Souther specification states for
+ * each type (spec §temporal-text), and written as {@code toString} of the {@code java.time} class
+ * the language names for it (spec §primitives).
  *
  * <p>The rows are where reading and writing part from each other, which is the whole of what a
  * boundary decides: a clock written to the second and read back without its seconds, an instant
@@ -55,6 +56,8 @@ class ATemporalIsReadFromAndWrittenAsItsTextTest {
                     ok("2026-07-25", "09:30", "2026-07-25T09:30", "2026-07-25T00:00:00.000120Z"))
             .row("end of the day", "Booking",
                     ok("2026-07-25", "09:30", "2026-07-25T09:30", "2026-07-25T24:00:00Z"))
+            .row("a fraction of nought at the end of the day", "Booking",
+                    ok("2026-07-25", "09:30", "2026-07-25T09:30", "2026-07-25T24:00:00.000Z"))
             .row("years", "Booking",
                     ok("+10000-01-01", "09:30", "-0001-12-31T23:59:59", "-1000000000-01-01T00:00:00Z"))
             .row("the last of each", "Booking",
@@ -107,6 +110,7 @@ class ATemporalIsReadFromAndWrittenAsItsTextTest {
                 milliseconds: value {"day":"2026-07-25","start":"09:30","at":"2026-07-25T09:30","seen":"2026-07-25T00:00:00.500Z"}
                 microseconds: value {"day":"2026-07-25","start":"09:30","at":"2026-07-25T09:30","seen":"2026-07-25T00:00:00.000120Z"}
                 end of the day: value {"day":"2026-07-25","start":"09:30","at":"2026-07-25T09:30","seen":"2026-07-26T00:00:00Z"}
+                a fraction of nought at the end of the day: issues [@/seen invalid_format]
                 years: value {"day":"+10000-01-01","start":"09:30","at":"-0001-12-31T23:59:59","seen":"-1000000000-01-01T00:00:00Z"}
                 the last of each: value {"day":"+999999999-12-31","start":"23:59:59","at":"+999999999-12-31T23:59:59","seen":"+1000000000-12-31T23:59:59.999999999Z"}
                 a fraction in a time: issues [@/start invalid_format]

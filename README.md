@@ -183,23 +183,25 @@ nanoseconds from -1000000000-01-01T00:00:00Z to +1000000000-12-31T23:59:59.99999
 and what a temporal is as text, are the runtime's (`runtime/src/temporal.rs`) and nothing else's. A
 literal is carried as the count the checker's own parse read it as — a `Date`'s day, a `Time`'s
 second of the day, a `DateTime`'s second, an `Instant`'s second and nanosecond — and not as the
-text it was written as: `java.time` admits spellings it does not write back (`DateTime("2026-07-01t09:30")`),
-that parse is what decides what a program may say, and text handed over would be read again here by
-a grammar of its own. The driver holds the count to what the type holds, and the runtime makes the value from it where it is
-reached. Every operation is a call into the runtime, and equality and order are by the day, the
-second or the moment a value names, so two made apart are equal where they name one. A shift
-(`Date.addDays`, `addMonths` and `addYears`, `DateTime.addMinutes`, `addHours` and `addDays`) that
-leaves what a type holds ends the run, the one reason for a count too large to add and for a day
-past the end; `Date.fromParts` and `Time.fromParts` name a case for parts that name none and
-normalise nothing. A boundary writes a temporal as `toString` of its `java.time` class does — a time
-without its seconds where they are nought, an instant in UTC — and reads it by Raoh's grammar,
-which is not what the JVM this build is tested against reads: that one hands the text to
-`java.time`, whose parsers accept more (a lower case `t`, a point with nothing after it). Nothing
-of the language says which is right (souther-lang/souther#2007), so this follows Raoh's current
-grammar, and only a boundary reads text by it. An instant is read from an offset spelling as the moment it
-names, a fraction of a second in a `Time` or a `DateTime` is a decode issue and never dropped, and a
-leap second is refused. `ATemporalAnswersWhatTheJvmAnswersTest` holds every kernel and comparison
-to what `java.time` answers over the ends of every range and a seeded run of the rest.
+text it was written as: the checker admits the text against the Souther specification's own
+grammar for a temporal (souther-lang/souther#2007) before `java.time` ever sees it, so what a
+program may say is the language's and not whatever `java.time`'s parsers would additionally take
+(a lower case `t`, a point with nothing after it). The driver holds the count to what the type
+holds, and the runtime makes the value from it where it is reached. Every operation is a call into
+the runtime, and equality and order are by the day, the second or the moment a value names, so two
+made apart are equal where they name one. A shift (`Date.addDays`, `addMonths` and `addYears`,
+`DateTime.addMinutes`, `addHours` and `addDays`) that leaves what a type holds ends the run, the
+one reason for a count too large to add and for a day past the end; `Date.fromParts` and
+`Time.fromParts` name a case for parts that name none and normalise nothing. A boundary writes a
+temporal as `toString` of its `java.time` class does — a time without its seconds where they are
+nought, an instant in UTC — and reads it by the same specification's grammar, over a text of its
+own with no `java.time` or Raoh behind it: a text held to the second refuses a fraction of one even
+where it is nought, since `09:30:00.000` and `09:30:00` name one second once the point is read past
+and only the text still says which was sent. An instant is read from an offset spelling as the
+moment it names, and its end of day, `24:00:00`, admits none of a minute, a second or a fraction
+after it for the same reason. A leap second is refused. `ATemporalAnswersWhatTheJvmAnswersTest`
+holds every kernel and comparison to what `java.time` answers over the ends of every range and a
+seeded run of the rest.
 
 A value of a union says which case it is by the token at the front of it. A declared case's token is
 its declaration's; an `Int`, a `Bool`, a `String`, a `Decimal` or a temporal standing as a case, and a case the language
