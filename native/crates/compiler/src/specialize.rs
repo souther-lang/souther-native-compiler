@@ -4,13 +4,18 @@
 //! What the language leaves to a backend (ADR-0092): a recursive helper is not expanded at its call
 //! sites and stays one definition over `'a`, and the instantiation of a variable belongs to the
 //! call. On the JVM that is absorbed by the representation a value runs in. Here every layout, every
-//! comparison and every codec is chosen by type, so a body over `'a` has no lowering until `'a` is a
-//! type, and what is lowered is a copy of it for each set of types some call hands it.
+//! comparison and every codec is chosen by type, so what a body over `'a` does with a value of `'a`
+//! has no lowering until `'a` is a type, and what is lowered is a copy of it for each set of types
+//! some call hands it.
 //!
 //! Nothing here works a type out. A call already carries what its arguments and its answer were
 //! settled at, and the helper's parameters and answer say where each variable stands in those, so
 //! what a variable comes to is read off the one against the other ([`Substitution::binds`]). A
-//! variable no parameter and no answer reaches is one no call settles, and the helper is not lowered.
+//! variable no parameter and no answer reaches is one no call settles, and it stays as written in
+//! the copy. That is no refusal of the helper: a list held over it is a pointer whatever it holds,
+//! and `None` of it is a tag. What asks of it what it is, a layout, a comparison or a form, refuses
+//! there ([`crate::open_type`]), so what is refused is decided by what asks and not by where a
+//! variable stands.
 //!
 //! A copy is keyed by the helper and what its variables come to, so every call needing the same
 //! types reaches one function. A copy's body is the helper's with its variables replaced, and a call
@@ -114,42 +119,52 @@ impl Substitution {
 
     /// `ty` with each variable replaced by what it came to, where every variable it writes is bound.
     pub(crate) fn applied(&self, ty: &Ty) -> Option<Ty> {
+        self.replaced(ty, false)
+    }
+
+    /// `ty` with each variable a call settled replaced by what it came to, and each one none did
+    /// left as written. What asks what a variable is refuses there ([`crate::open_type`]); a body
+    /// that never asks is lowered as it is.
+    pub(crate) fn partly_applied(&self, ty: &Ty) -> Ty {
+        self.replaced(ty, true)
+            .expect("a variable left as written is not a reason to give no type")
+    }
+
+    fn replaced(&self, ty: &Ty, leaving: bool) -> Option<Ty> {
+        let each = |ty: &Ty| self.replaced(ty, leaving);
         Some(match ty {
-            Ty::Var { var } => self.0.get(*var)?.clone()?,
+            Ty::Var { var } => match self.0.get(*var).cloned().flatten() {
+                Some(came_to) => came_to,
+                None if leaving => ty.clone(),
+                None => return None,
+            },
             Ty::Prim { .. }
             | Ty::Ref { .. }
             | Ty::Union { .. }
             | Ty::Nothing { .. }
             | Ty::Never { .. } => ty.clone(),
             Ty::Option { option } => Ty::Option {
-                option: Box::new(self.applied(option)?),
+                option: Box::new(each(option)?),
             },
             Ty::List { list } => Ty::List {
-                list: Box::new(self.applied(list)?),
+                list: Box::new(each(list)?),
             },
             Ty::Set { set } => Ty::Set {
-                set: Box::new(self.applied(set)?),
+                set: Box::new(each(set)?),
             },
             Ty::Tuple { tuple } => Ty::Tuple {
-                tuple: tuple
-                    .iter()
-                    .map(|it| self.applied(it))
-                    .collect::<Option<_>>()?,
+                tuple: tuple.iter().map(each).collect::<Option<_>>()?,
             },
             Ty::Fn { fn_ } => Ty::Fn {
                 fn_: crate::transport::FnSignature {
-                    takes: fn_
-                        .takes
-                        .iter()
-                        .map(|it| self.applied(it))
-                        .collect::<Option<_>>()?,
-                    answers: Box::new(self.applied(&fn_.answers)?),
+                    takes: fn_.takes.iter().map(each).collect::<Option<_>>()?,
+                    answers: Box::new(each(&fn_.answers)?),
                 },
             },
             Ty::Map { map } => Ty::Map {
                 map: crate::transport::MapTy {
-                    key: Box::new(self.applied(&map.key)?),
-                    value: Box::new(self.applied(&map.value)?),
+                    key: Box::new(each(&map.key)?),
+                    value: Box::new(each(&map.value)?),
                 },
             },
         })
@@ -195,8 +210,7 @@ pub(crate) struct Instance<'p> {
     pub carrier: Carrier<'p>,
     pub held: &'p Held,
     /// What each variable came to, by its number. Empty for a helper that leaves none open, and
-    /// `None` for a variable written only where nothing of the helper is lowered
-    /// ([`needed`]), which no call has to settle.
+    /// `None` for a variable no call settles, which the copy leaves as written.
     pub types: Vec<Option<Ty>>,
     /// Which copy of the helper this is, counted from nought among the copies of the one helper,
     /// which is what tells the functions of one helper apart.
@@ -225,11 +239,7 @@ impl<'p> Instance<'p> {
         self.held
             .parameters
             .iter()
-            .map(|parameter| {
-                settled
-                    .applied(&parameter.ty)
-                    .expect("a copy settles every variable its helper leaves open")
-            })
+            .map(|parameter| settled.partly_applied(&parameter.ty))
             .collect()
     }
 
@@ -314,7 +324,6 @@ impl<'p> Specializations<'p> {
             let Owner::Helper(held) = helper.owner else {
                 unreachable!("gathered from the helpers' bodies alone");
             };
-            let reached = held.reached.rendered();
             let handed: Vec<&Ty> = call.handed.iter().collect();
             let bound = called(held, &handed, &call.answers).expect(
                 "`Coherent` held every call of a helper to fit what the helper takes, and \
@@ -322,14 +331,6 @@ impl<'p> Specializations<'p> {
                      everywhere this reads (`unrun::each_lowered`)",
             );
             let types = bound.by_number(held.variables());
-            if needed(held)
-                .into_iter()
-                .any(|var| types.get(var).is_none_or(Option::is_none))
-            {
-                return Err(not_lowered(format!(
-                    "{reached}, whose body leaves open a type no call of it settles"
-                )));
-            }
             let id = self.copy(recursions, helper.carrier(), held, types)?;
             index::unique(&mut self.reached, call.at, id);
         }
@@ -606,36 +607,15 @@ fn calls_in(node: &Node) -> Vec<Called> {
 
 /// Every type `node` writes, and every node lowered under it writes, with its variables replaced.
 ///
-/// A function a call never applies is left as it is written: nothing reads it again, and a
-/// variable it alone writes is one no call settles ([`needed`]).
+/// A variable no call settles is left as it is written ([`Substitution::partly_applied`]), and so
+/// is a function a call never applies: nothing reads it again.
 fn settle(node: &mut Node, settled: &Substitution) {
     for ty in node.types_mut() {
-        *ty = settled
-            .applied(ty)
-            .expect("a copy settles every variable its lowered body writes");
+        *ty = settled.partly_applied(ty);
     }
     for child in crate::unrun::lowered_children_mut(node) {
         settle(child, settled);
     }
-}
-
-/// The variables a copy of `held` has to have settled: every one its parameters, its answer and
-/// what of its body is lowered write.
-///
-/// Narrower than [`Held::numbers`], which is every variable the helper writes and what `Coherent`
-/// holds the numbering to: a variable written only in a function a call never applies stands where
-/// nothing is lowered, so no call has to say what it is.
-fn needed(held: &Held) -> std::collections::BTreeSet<usize> {
-    let mut numbers = std::collections::BTreeSet::new();
-    for parameter in &held.parameters {
-        parameter.ty.numbers(&mut numbers);
-    }
-    crate::unrun::each_lowered(&held.body, &mut |node| {
-        for ty in node.types() {
-            ty.numbers(&mut numbers);
-        }
-    });
-    numbers
 }
 
 #[cfg(test)]
@@ -997,9 +977,10 @@ mod tests {
         );
     }
 
-    /// A variable nothing a call hands over or answers reaches is one no call settles.
+    /// A variable nothing a call hands over or answers reaches is one no call settles, and a body
+    /// that never asks what it is has no need of it: the copy is made, the variable left as written.
     #[test]
-    fn a_variable_no_call_settles_is_not_lowered() {
+    fn a_variable_no_call_settles_is_left_open_where_nothing_asks_what_it_is() {
         let absent = node("none", "", r#"{"option":{"var":0}}"#);
         let body = node(
             "let",
@@ -1010,15 +991,27 @@ mod tests {
             INT,
         );
         let helpers = [helper("m.h", &[INT], &body)];
-        let refused = specialized(
+        let (types, open) = specialized(
             &holding(&helpers, &call("m.h", &[number(1)], INT)),
-            |_, _| (),
+            |specializations, _| {
+                let mut open = 0;
+                for (_, copy) in specializations.iter() {
+                    copy.body().each_written(&mut |node| {
+                        open += node.types().iter().filter(|ty| ty.is_open()).count();
+                    });
+                }
+                (
+                    specializations
+                        .iter()
+                        .map(|(_, it)| it.types.clone())
+                        .collect::<Vec<_>>(),
+                    open,
+                )
+            },
         )
-        .expect_err("nothing settles the variable");
-        assert!(
-            refused.downcast_ref::<crate::NotLowered>().is_some(),
-            "{refused}"
-        );
+        .expect("nothing asks what the variable is");
+        assert_eq!(types, vec![vec![None]]);
+        assert!(open > 0, "the variable is left as written");
     }
 
     /// A variable written only in a function a call never applies stands where nothing is lowered,

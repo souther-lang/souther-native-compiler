@@ -259,7 +259,9 @@ fn planned(
         }
         // No layout yet, and when there is one a host reaches it through operations of its own.
         Ty::Set { .. } | Ty::Map { .. } => Err(refused(Reason::NoRepresentation)),
-        Ty::Var { var } => crate::laid_out_nowhere(*var),
+        // What a host is handed is a behavior's, and no behavior writes a variable, so this is
+        // the one refusal there is for a type nothing is known of.
+        Ty::Var { .. } => Err(refused(Reason::NoRepresentation)),
         // No value of either is made, so none is handed to a host or taken from one.
         Ty::Nothing { .. } | Ty::Never { .. } => Err(refused(Reason::NoValue)),
     }

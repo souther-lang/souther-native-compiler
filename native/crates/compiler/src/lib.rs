@@ -2406,7 +2406,7 @@ fn machine_type(ty: &Ty) -> Lowered<types::Type> {
         // none of that is a second machine type; a function value is a pointer here exactly as a
         // tuple or a declared value is.
         Ty::Fn { .. } => Ok(POINTER),
-        Ty::Var { var } => laid_out_nowhere(*var),
+        Ty::Var { var } => Err(open_type(*var)),
         // No value of it is ever made, so there is nothing to hold. Not a width chosen to stand in
         // for one: a list of it is laid out as any list is (above), and a walk whose step would be
         // handed one never runs that step (`growing`), so what asks this is code that would hold a
@@ -2738,7 +2738,8 @@ fn means_the_same_elsewhere(ty: &Ty) -> bool {
         Ty::Fn { fn_ } => {
             fn_.takes.iter().all(means_the_same_elsewhere) && means_the_same_elsewhere(&fn_.answers)
         }
-        Ty::Var { var } => laid_out_nowhere(*var),
+        // Nothing is known of what it comes to, so nothing is known to mean the same elsewhere.
+        Ty::Var { .. } => false,
         // No value of either crosses, so none can mean something else once it has.
         Ty::Nothing { .. } | Ty::Never { .. } => true,
     }
@@ -2765,14 +2766,16 @@ fn case_means_the_same_elsewhere(case: &Case) -> bool {
     }
 }
 
-/// A type variable met where a value's layout is asked for, which is nowhere: `Coherent` refuses one
-/// outside a helper's body, and a helper that leaves variables open is lowered only as its copies,
-/// each with every variable replaced ([`specialize`]).
-fn laid_out_nowhere(var: usize) -> ! {
-    unreachable!(
-        "the type variable {var} reached a lowering, which is handed only copies of a helper with \
-         every variable replaced"
-    )
+/// A type variable met where a value's layout, a comparison or a form is asked for.
+///
+/// A copy of a helper replaces each variable a call settles and leaves the others as written
+/// ([`specialize`]), since a body that never asks what a variable is has no need of it. What does
+/// ask is refused here, where it asks, and not before by a rule about where a variable may stand:
+/// what needs a type is a fact about the one asking.
+pub(crate) fn open_type(var: usize) -> NotLowered {
+    not_lowered(format!(
+        "a value of the type variable {var}, which no call of the helper it stands in settles"
+    ))
 }
 
 /// A primitive or a case the language gives, named as a type on its own rather than as one case

@@ -36,7 +36,7 @@ use souther_native_abi::{
 use crate::transport::{Case, FnSignature, Prim, Ty};
 use crate::{
     CLOSURE_CODE, Lowered, Lowerings, POINTER, TRUSTED, accepted, capture_at, carry, into_slot,
-    laid_out_nowhere, lifted_signature, machine_type, not_lowered, out_of_slot, out_slot,
+    lifted_signature, machine_type, not_lowered, open_type, out_of_slot, out_slot,
     room_for_closure, says_its_case,
 };
 
@@ -152,7 +152,7 @@ pub(crate) fn restatement(from: &Ty, to: &Ty) -> Lowered<Restatement> {
                 }
             })
         }
-        (Ty::Var { var }, _) | (_, Ty::Var { var }) => laid_out_nowhere(*var),
+        (Ty::Var { var }, _) | (_, Ty::Var { var }) => return Err(open_type(*var)),
         // Equal types were answered above, and so were two that say their case; what is left of
         // these is a primitive beside something else, or one kind beside another. A set and a map
         // have no layout yet, and are asked of nothing until they do.

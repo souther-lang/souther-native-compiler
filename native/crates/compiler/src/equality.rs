@@ -134,7 +134,7 @@ pub(crate) fn equal(
             "a comparison of two values of {}",
             ty.spelt()
         ))),
-        Ty::Var { var } => crate::laid_out_nowhere(*var),
+        Ty::Var { var } => Err(crate::open_type(*var)),
         // No value of it is ever made, so there are never two to compare; one asked for is refused
         // the way a value of it is (`machine_type`), and not answered with a truth nothing earned.
         Ty::Nothing { .. } => Err(not_lowered(format!(
@@ -247,7 +247,7 @@ impl Comparing<'_, '_, '_, '_> {
                 let same = equal(self.builder, self.lowering, self.module, ty, a, b)?;
                 self.unless(same);
             }
-            Ty::Var { var } => crate::laid_out_nowhere(*var),
+            Ty::Var { var } => return Err(crate::open_type(*var)),
         }
         let yes = self.builder.ins().iconst(types::I8, 1);
         self.builder.ins().return_(&[yes]);
