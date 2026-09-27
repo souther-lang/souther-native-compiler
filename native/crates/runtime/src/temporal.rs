@@ -299,6 +299,12 @@ struct Clock {
     minute: i64,
     second: i64,
     nano: i64,
+    /// Whether a point was written, whatever digits followed it. A `Time` and a `DateTime` refuse
+    /// this on its own: `09:30:00.000` and `09:30:00` name one second once `nano` is taken, so
+    /// asking `nano != 0` after the point is read would admit the first as the second (spec
+    /// §a-local-temporal-is-held-to-the-second) — the same substitution the text is refused for
+    /// naming a leap second is refused for here, made by asking the value instead of the text.
+    has_fraction: bool,
 }
 
 fn read_clock(from: &mut Reader, seconds_required: bool) -> Option<Clock> {
@@ -307,10 +313,11 @@ fn read_clock(from: &mut Reader, seconds_required: bool) -> Option<Clock> {
         return None;
     }
     let minute = from.digits(2)?;
-    let (mut second, mut nano) = (0, 0);
+    let (mut second, mut nano, mut has_fraction) = (0, 0, false);
     if from.eat(b':') {
         second = from.digits(2)?;
         if from.eat(b'.') {
+            has_fraction = true;
             let fraction = from.run();
             if !(1..=9).contains(&fraction.len()) {
                 return None;
@@ -328,16 +335,17 @@ fn read_clock(from: &mut Reader, seconds_required: bool) -> Option<Clock> {
         minute,
         second,
         nano,
+        has_fraction,
     })
 }
 
 /// The time of day a local clock names, held to the second: none where the numbers name no time,
-/// and a refusal where they name one with a fraction of a second.
+/// and a refusal where the text carried a point, whatever digits followed it.
 fn local_time(clock: &Clock) -> Result<i64, Refusal> {
     if clock.hour > 23 || clock.minute > 59 || clock.second > 59 {
         return Err(Refusal::Format);
     }
-    if clock.nano != 0 {
+    if clock.has_fraction {
         return Err(Refusal::Fraction);
     }
     Ok(clock.hour * 3600 + clock.minute * 60 + clock.second)
@@ -1263,9 +1271,11 @@ mod tests {
             assert_eq!(parse_time(written.as_bytes()), Ok(second));
         }
         assert_eq!(parse_time("09:30:00".as_bytes()), Ok(9 * 3600 + 30 * 60));
+        // A fraction of nought names the same second as no fraction at all once read, and is
+        // refused for that: reading it back would not tell the two texts apart.
         assert_eq!(
             parse_time("09:30:00.000".as_bytes()),
-            Ok(9 * 3600 + 30 * 60)
+            Err(Refusal::Fraction)
         );
         assert_eq!(parse_time("09:30:00.5".as_bytes()), Err(Refusal::Fraction));
         assert_eq!(
@@ -1303,6 +1313,10 @@ mod tests {
         );
         assert_eq!(
             parse_date_time("2026-07-25T09:30:00.1".as_bytes()),
+            Err(Refusal::Fraction)
+        );
+        assert_eq!(
+            parse_date_time("2026-07-25T09:30:00.000".as_bytes()),
             Err(Refusal::Fraction)
         );
         assert_eq!(
