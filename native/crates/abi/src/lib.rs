@@ -1180,9 +1180,10 @@ pub const RATIONAL_IS_ZERO: &str = "souther_rational_is_zero";
 pub const RATIONAL_IS_WHOLE: &str = "souther_rational_is_whole";
 /// Whether a `Rational` has a finite decimal spelling, asked before [`RATIONAL_TO_FINITE_DECIMAL`].
 pub const RATIONAL_HAS_FINITE_DECIMAL: &str = "souther_rational_has_finite_decimal";
-/// Two `Rational`s by exact value, into room for the comparison, as [`DECIMAL_COMPARE`] answers it
-/// and for all six comparisons for the same reason. It answers whether it could: a pair whose order
-/// needs a working width past what a number may be has none.
+/// Two `Rational`s by exact value, as [`DECIMAL_COMPARE`] answers it and for all six comparisons for
+/// the same reason. It says nothing of a pair whose order needs more room than the run has, which
+/// ends the run as an arena that has run out does: that is the run's shortage and not a value
+/// with no place, so no abort of the program stands for it.
 pub const RATIONAL_COMPARE: &str = "souther_rational_compare";
 /// `+` and `Rational.add`, into room for the `Rational`.
 pub const RATIONAL_ADD: &str = "souther_rational_add";
@@ -2369,8 +2370,8 @@ pub const GENERATED_RUNTIME: &[GeneratedCall] = {
         },
         GeneratedCall {
             name: RATIONAL_COMPARE,
-            takes: &[Given(Rational), Given(Rational), Room(Comparison)],
-            answers: Some(Host(Bool)),
+            takes: &[Given(Rational), Given(Rational)],
+            answers: Some(Comparison),
         },
         GeneratedCall {
             name: RATIONAL_ADD,

@@ -743,12 +743,14 @@ fn runtime_function(function: &souther_native_abi::RuntimeFunction) -> manifest:
     .described()
 }
 
-/// Every case no declaration names that the runtime has a token for, as the manifest names it, with
-/// what a host makes and reads it through.
+/// Every case no declaration names that the runtime has a token for and a host can cross, as the
+/// manifest names it, with what a host makes and reads it through.
 ///
 /// Walked from the cases themselves and found in [`HOST_CASES`] by the name the runtime's token is
-/// defined under, which is the one place a case is spelt ([`crate::built_in_case`]); a case with
-/// no token has no representation to carry and is left out.
+/// defined under, which is the one place a case is spelt ([`crate::built_in_case`]). A case with
+/// no token has no representation to carry, and a case with a token and no entry in
+/// [`HOST_CASES`] has no external form: a `Rational` is held by objects and never handed to a
+/// host. Both are left out.
 fn case_crossings() -> Vec<manifest::CaseCrossing> {
     use transport::{LanguageCase as L, Prim as P};
     let primitives = [
@@ -779,10 +781,7 @@ fn case_crossings() -> Vec<manifest::CaseCrossing> {
         .chain(&language)
         .filter_map(|case| {
             let name = crate::built_in_case(case).ok()?;
-            let crossing = HOST_CASES
-                .iter()
-                .find(|it| it.case == name)
-                .expect("the runtime makes and reads every case it has a token for");
+            let crossing = HOST_CASES.iter().find(|it| it.case == name)?;
             Some(manifest::CaseCrossing {
                 case: built_in(case),
                 make: runtime_function(&crossing.make),
@@ -793,7 +792,7 @@ fn case_crossings() -> Vec<manifest::CaseCrossing> {
     assert_eq!(
         crossings.len(),
         HOST_CASES.len(),
-        "every case the runtime makes is one a case of the language has a token for"
+        "every case a host makes is one a case of the language has a token for"
     );
     crossings
 }

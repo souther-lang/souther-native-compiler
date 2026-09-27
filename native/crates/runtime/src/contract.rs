@@ -100,7 +100,6 @@ rooms! {
     *mut *mut Text => Word::Host(HostWord::String),
     *mut *mut Decimal => Word::Host(HostWord::Decimal),
     *mut *mut Rational => Word::Rational,
-    *mut Comparison => Word::Comparison,
     *mut *mut Date => Word::Host(HostWord::Date),
     *mut *mut Time => Word::Host(HostWord::Time),
     *mut *mut DateTime => Word::Host(HostWord::DateTime),
@@ -541,11 +540,7 @@ fn functions() -> Vec<(&'static str, Shape)> {
             "souther_rational_compare",
             shape_of(
                 souther_rational_compare
-                    as unsafe extern "C" fn(
-                        *const Rational,
-                        *const Rational,
-                        *mut Comparison,
-                    ) -> i8,
+                    as unsafe extern "C" fn(*const Rational, *const Rational) -> Comparison,
             ),
         ),
         (

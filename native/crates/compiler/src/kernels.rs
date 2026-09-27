@@ -364,6 +364,33 @@ pub(crate) enum LoweredKernel {
     /// `decimal.divide`: a dividend, a divisor, a scale and a rounding mode, and the quotient at
     /// that scale, or `DivisionByZero`.
     DecimalDivide,
+    /// `rational.fromInt`: an `Int`, as the `Rational` it is exactly.
+    RationalFromInt,
+    /// `rational.fromDecimal`: a `Decimal`, as the `Rational` it is exactly, at whatever scale.
+    RationalFromDecimal,
+    /// `rational.toWholeNumber`: a `Rational`, and the `Int` it is where it is a whole number, or
+    /// `NotWhole`. A whole number no `Int` holds ends the run.
+    RationalToWholeNumber,
+    /// `rational.toFiniteDecimal`: a `Rational`, and the `Decimal` it is where it has a finite
+    /// decimal spelling, or `NotAFiniteDecimal`. One no `Decimal` holds ends the run.
+    RationalToFiniteDecimal,
+    /// `rational.toInt`: a rounding mode and a `Rational`, and the whole number it rounds to. One
+    /// no `Int` holds ends the run.
+    RationalToInt,
+    /// `rational.toDecimal`: a scale, a rounding mode and a `Rational`, and the value at that
+    /// scale. A scale outside the range, or a value no `Decimal` holds, ends the run.
+    RationalToDecimal,
+    /// `rational.add`: two `Rational`s, and their exact sum.
+    RationalAdd,
+    /// `rational.subtract`: the same, the first less the second.
+    RationalSubtract,
+    /// `rational.multiply`: two `Rational`s, and their exact product.
+    RationalMultiply,
+    /// `rational.divide`: a dividend and a divisor, and the exact quotient. A zero divisor ends the
+    /// run, and so does a quotient with no place.
+    RationalDivide,
+    /// `rational.compare`: two `Rational`s, and -1, 0 or 1 by exact value.
+    RationalCompare,
     /// `date.addDays`: a count of days and a `Date`, and the `Date` that many days on. A day past the end of what a `Date` holds ends the run.
     DateAddDays,
     /// `date.addMonths`: a count of months and a `Date`, and the `Date` that many months on, the last day of the month where the day is past its end. A month past the end of what a `Date` holds ends the run.
@@ -461,6 +488,17 @@ impl LoweredKernel {
             "decimal.toInt" => LoweredKernel::DecimalToInt,
             "decimal.round" => LoweredKernel::DecimalRound,
             "decimal.divide" => LoweredKernel::DecimalDivide,
+            "rational.fromInt" => LoweredKernel::RationalFromInt,
+            "rational.fromDecimal" => LoweredKernel::RationalFromDecimal,
+            "rational.toWholeNumber" => LoweredKernel::RationalToWholeNumber,
+            "rational.toFiniteDecimal" => LoweredKernel::RationalToFiniteDecimal,
+            "rational.toInt" => LoweredKernel::RationalToInt,
+            "rational.toDecimal" => LoweredKernel::RationalToDecimal,
+            "rational.add" => LoweredKernel::RationalAdd,
+            "rational.subtract" => LoweredKernel::RationalSubtract,
+            "rational.multiply" => LoweredKernel::RationalMultiply,
+            "rational.divide" => LoweredKernel::RationalDivide,
+            "rational.compare" => LoweredKernel::RationalCompare,
             "date.addDays" => LoweredKernel::DateAddDays,
             "date.addMonths" => LoweredKernel::DateAddMonths,
             "date.addYears" => LoweredKernel::DateAddYears,
@@ -489,6 +527,7 @@ impl LoweredKernel {
         let int = || Shape::Prim(Prim::Int);
         let string = || Shape::Prim(Prim::String);
         let decimal = || Shape::Prim(Prim::Decimal);
+        let rational = || Shape::Prim(Prim::Rational);
         let mode = || Shape::Declared(ROUNDING_MODE);
         let bool = || Shape::Prim(Prim::Bool);
         let date = || Shape::Prim(Prim::Date);
@@ -698,6 +737,51 @@ impl LoweredKernel {
                 decimal_or_division_by_zero(),
                 vec![AbortKind::RequiredFormHasNoPlace],
             ),
+            // Every `Int` and every `Decimal` has one exact value, so neither way in ends a run
+            // and neither states a policy.
+            LoweredKernel::RationalFromInt => known(vec![int()], rational(), Vec::new()),
+            LoweredKernel::RationalFromDecimal => known(vec![decimal()], rational(), Vec::new()),
+            // What a carrier does not hold is a case and not a value chosen for it; a value it does
+            // not hold for want of room ends the run.
+            LoweredKernel::RationalToWholeNumber => known(
+                vec![rational()],
+                int_or_not_whole(),
+                vec![AbortKind::RequiredFormHasNoPlace],
+            ),
+            LoweredKernel::RationalToFiniteDecimal => known(
+                vec![rational()],
+                decimal_or_not_a_finite_decimal(),
+                vec![AbortKind::RequiredFormHasNoPlace],
+            ),
+            LoweredKernel::RationalToInt => known(
+                vec![mode(), rational()],
+                int(),
+                vec![AbortKind::RequiredFormHasNoPlace],
+            ),
+            LoweredKernel::RationalToDecimal => known(
+                vec![int(), mode(), rational()],
+                decimal(),
+                vec![AbortKind::RequiredFormHasNoPlace],
+            ),
+            // The exact sum always has a value, but writing it brings a common exponent out and
+            // builds the distance between the two, which can want more than a `Rational` holds.
+            LoweredKernel::RationalAdd
+            | LoweredKernel::RationalSubtract
+            | LoweredKernel::RationalMultiply => known(
+                vec![rational(), rational()],
+                rational(),
+                vec![AbortKind::RequiredFormHasNoPlace],
+            ),
+            // A zero divisor ends the run outright, as `/` does, and so does a quotient with no
+            // place: the one kernel that ends for two reasons.
+            LoweredKernel::RationalDivide => known(
+                vec![rational(), rational()],
+                rational(),
+                vec![AbortKind::DivisionByZero, AbortKind::RequiredFormHasNoPlace],
+            ),
+            LoweredKernel::RationalCompare => {
+                known(vec![rational(), rational()], int(), Vec::new())
+            }
             // A shift off the end of what a temporal holds ends the run, as an `Int` overflow does
             // (spec §a-shift-off-the-end-of-a-temporal-aborts).
             LoweredKernel::DateAddDays
@@ -771,6 +855,30 @@ fn decimal_or_not_a_number() -> Shape {
     ])
 }
 
+/// What `Rational.toWholeNumber` answers, its members in the order its declaration writes this
+/// union in.
+fn int_or_not_whole() -> Shape {
+    Shape::Cases(vec![
+        Case::Primitive { prim: Prim::Int },
+        Case::Language {
+            case: LanguageCase::NotWhole,
+        },
+    ])
+}
+
+/// What `Rational.toFiniteDecimal` answers, its members in the order its declaration writes this
+/// union in.
+fn decimal_or_not_a_finite_decimal() -> Shape {
+    Shape::Cases(vec![
+        Case::Primitive {
+            prim: Prim::Decimal,
+        },
+        Case::Language {
+            case: LanguageCase::NotAFiniteDecimal,
+        },
+    ])
+}
+
 /// What `Decimal.divide` answers, its members in the order the checker writes this union in.
 fn decimal_or_division_by_zero() -> Shape {
     Shape::Cases(vec![
@@ -839,7 +947,7 @@ mod tests {
         }
     }
 
-    const LOWERED: [(&str, LoweredKernel); 72] = [
+    const LOWERED: [(&str, LoweredKernel); 83] = [
         ("int.add", LoweredKernel::IntAdd),
         ("int.subtract", LoweredKernel::IntSubtract),
         ("int.multiply", LoweredKernel::IntMultiply),
@@ -896,6 +1004,23 @@ mod tests {
         ("decimal.toInt", LoweredKernel::DecimalToInt),
         ("decimal.round", LoweredKernel::DecimalRound),
         ("decimal.divide", LoweredKernel::DecimalDivide),
+        ("rational.fromInt", LoweredKernel::RationalFromInt),
+        ("rational.fromDecimal", LoweredKernel::RationalFromDecimal),
+        (
+            "rational.toWholeNumber",
+            LoweredKernel::RationalToWholeNumber,
+        ),
+        (
+            "rational.toFiniteDecimal",
+            LoweredKernel::RationalToFiniteDecimal,
+        ),
+        ("rational.toInt", LoweredKernel::RationalToInt),
+        ("rational.toDecimal", LoweredKernel::RationalToDecimal),
+        ("rational.add", LoweredKernel::RationalAdd),
+        ("rational.subtract", LoweredKernel::RationalSubtract),
+        ("rational.multiply", LoweredKernel::RationalMultiply),
+        ("rational.divide", LoweredKernel::RationalDivide),
+        ("rational.compare", LoweredKernel::RationalCompare),
         ("date.addDays", LoweredKernel::DateAddDays),
         ("date.addMonths", LoweredKernel::DateAddMonths),
         ("date.addYears", LoweredKernel::DateAddYears),
@@ -1009,7 +1134,7 @@ mod tests {
         }
         assert_eq!(LoweredKernel::of("int.divide"), None);
         assert_eq!(LoweredKernel::of("decimal.abs"), None);
-        assert_eq!(LoweredKernel::of("rational.fromDecimal"), None);
+        assert_eq!(LoweredKernel::of("rational.abs"), None);
     }
 
     /// A kernel that can end a run ends it for one reason, so what it hands back says only whether
@@ -1017,7 +1142,13 @@ mod tests {
     #[test]
     fn a_kernel_ends_a_run_for_one_reason_at_most() {
         for (key, kernel) in LOWERED {
-            assert!(kernel.contract().aborts.len() <= 1, "{key}");
+            // `Rational.divide` is the one that ends for two, as the operator it stands behind does.
+            let most = if kernel == LoweredKernel::RationalDivide {
+                2
+            } else {
+                1
+            };
+            assert!(kernel.contract().aborts.len() <= most, "{key}");
         }
     }
 
@@ -1026,6 +1157,9 @@ mod tests {
         let string = Ty::Prim { prim: Prim::String };
         let decimal = Ty::Prim {
             prim: Prim::Decimal,
+        };
+        let rational = Ty::Prim {
+            prim: Prim::Rational,
         };
         let mode = Ty::declared(ROUNDING_MODE.to_string());
         let date = Ty::Prim { prim: Prim::Date };
@@ -1115,6 +1249,18 @@ mod tests {
             LoweredKernel::DecimalToInt => vec![mode, decimal],
             LoweredKernel::DecimalRound => vec![int, mode, decimal],
             LoweredKernel::DecimalDivide => vec![decimal.clone(), decimal, int, mode],
+            LoweredKernel::RationalFromInt => vec![int],
+            LoweredKernel::RationalFromDecimal => vec![decimal],
+            LoweredKernel::RationalToWholeNumber | LoweredKernel::RationalToFiniteDecimal => {
+                vec![rational]
+            }
+            LoweredKernel::RationalToInt => vec![mode, rational],
+            LoweredKernel::RationalToDecimal => vec![int, mode, rational],
+            LoweredKernel::RationalAdd
+            | LoweredKernel::RationalSubtract
+            | LoweredKernel::RationalMultiply
+            | LoweredKernel::RationalDivide
+            | LoweredKernel::RationalCompare => vec![rational.clone(), rational],
             LoweredKernel::DateAddDays
             | LoweredKernel::DateAddMonths
             | LoweredKernel::DateAddYears => vec![int, date],

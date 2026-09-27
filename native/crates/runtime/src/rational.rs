@@ -627,20 +627,26 @@ pub unsafe extern "C" fn souther_rational_has_finite_decimal(at: *const Rational
     i8::from(unsafe { ratio(at) }.has_finite_decimal())
 }
 
-/// Two `Rational`s by exact value, written through `out` as below, at or above nought where the
-/// order has a place: `==`, `<` and `Rational.compare`.
+/// Two `Rational`s by exact value, whatever their exponents: `==`, `<` and `Rational.compare`.
 ///
 /// # Safety
 ///
-/// As [`souther_rational_from_decimal`], and `out` is room for a comparison.
+/// As [`souther_rational_from_decimal`].
+///
+/// # Panics
+///
+/// Where the pair needs a working width past what a `Decimal`'s integer may be to be ordered: two
+/// values that close, at exponents that far from one another. That is a run with no room for what
+/// the answer wanted and not a value with no place, so it ends as an arena that has run out does
+/// and not as an abort of the program: which of the two it is decides which of the two it ends as.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_rational_compare(
     left: *const Rational,
     right: *const Rational,
-    out: *mut Comparison,
-) -> i8 {
-    let ordering = unsafe { ratio(left).compare(&ratio(right)) };
-    unsafe { answered(ordering.map(|it| Comparison(it as i64)), out) }
+) -> Comparison {
+    let ordering = unsafe { ratio(left).compare(&ratio(right)) }
+        .expect("no room for the working width this pair of rationals is ordered at");
+    Comparison(ordering as i64)
 }
 
 /// `+` and `Rational.add`, written through `out` where the sum is one a `Rational` holds.
@@ -1039,12 +1045,10 @@ mod tests {
             assert_eq!(unsafe { souther_rational_divide(one, third, &mut out) }, 1);
             out
         };
-        let mut order = Comparison(9);
         assert_eq!(
-            unsafe { souther_rational_compare(one_third, third, &mut order) },
-            1
+            unsafe { souther_rational_compare(one_third, third) },
+            Comparison(-1)
         );
-        assert_eq!(order, Comparison(-1));
         assert_eq!(unsafe { souther_rational_is_whole(one_third) }, 0);
         assert_eq!(unsafe { souther_rational_is_whole(third) }, 1);
         let mut whole = 0;

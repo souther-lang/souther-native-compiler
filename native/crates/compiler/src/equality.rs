@@ -30,7 +30,8 @@ use cranelift::frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift::module::{FuncId, Module};
 use cranelift::object::ObjectModule;
 use souther_native_abi::{
-    CARRIED, DECIMAL_COMPARE, HELD, LIST_ELEMENTS, LIST_LENGTH, NOTHING, SLOT, field_at, member_at,
+    CARRIED, DECIMAL_COMPARE, HELD, LIST_ELEMENTS, LIST_LENGTH, NOTHING, RATIONAL_COMPARE, SLOT,
+    field_at, member_at,
 };
 
 use crate::transport::{Case, Declaration, Prim, Ty};
@@ -120,10 +121,12 @@ pub(crate) fn equal(
                 );
                 Ok(builder.ins().icmp_imm_s(IntCC::Equal, compared, 0))
             }
-            Prim::Rational => Err(not_lowered(format!(
-                "a comparison of two values of type {}",
-                prim.spelt()
-            ))),
+            // By exact value, which the runtime compares: `1 / 2` and `2 / 4` are one value.
+            Prim::Rational => {
+                let compared =
+                    crate::runtime_call(builder, lowering, module, RATIONAL_COMPARE, &[a, b]);
+                Ok(builder.ins().icmp_imm_s(IntCC::Equal, compared, 0))
+            }
         },
         // What a function does is not something two of them can be asked to agree on, and the
         // checker gives a function no equality to ask with.

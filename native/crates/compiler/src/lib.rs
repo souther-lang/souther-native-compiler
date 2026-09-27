@@ -61,11 +61,15 @@ use souther_native_abi::{
     DECIMAL_DIVIDE, DECIMAL_FROM_INT, DECIMAL_IS_ZERO, DECIMAL_LITERAL, DECIMAL_MULTIPLY,
     DECIMAL_NEGATE, DECIMAL_ROUND, DECIMAL_SUBTRACT, DECIMAL_TO_INT, EXAMPLE_STATUSES,
     FAKE_NO_OUTPUT, HELD, HOST_STATUSES, INJECTION_UNBOUND, INSTANT_COMPARE, INSTANT_LITERAL,
-    LANGUAGE_UNITS, LIST_LENGTH, NO_FAILED_CLAUSE, NOTHING, Parameter, SLOT, STRING_CHARACTERS,
-    STRING_CODE_POINT_VALUES, STRING_CODE_POINTS, STRING_COMPARE, STRING_CONCAT, STRING_CONCAT_ALL,
-    STRING_CONTAINS, STRING_ENDS_WITH, STRING_FROM_DECIMAL, STRING_FROM_INT, STRING_JOIN,
-    STRING_LINES, STRING_LOWERCASE, STRING_MATCHES, STRING_PAD_LEFT, STRING_PAD_RIGHT,
-    STRING_REPEAT, STRING_REPLACE, STRING_REVERSE, STRING_SLICE, STRING_SPLIT, STRING_STARTS_WITH,
+    LANGUAGE_UNITS, LIST_LENGTH, NO_FAILED_CLAUSE, NOTHING, Parameter, RATIONAL_ADD,
+    RATIONAL_COMPARE, RATIONAL_DIVIDE, RATIONAL_FROM_DECIMAL, RATIONAL_FROM_INT,
+    RATIONAL_HAS_FINITE_DECIMAL, RATIONAL_IS_WHOLE, RATIONAL_IS_ZERO, RATIONAL_MULTIPLY,
+    RATIONAL_NEGATE, RATIONAL_SUBTRACT, RATIONAL_TO_DECIMAL, RATIONAL_TO_FINITE_DECIMAL,
+    RATIONAL_TO_INT, RATIONAL_TO_WHOLE, SLOT, STRING_CHARACTERS, STRING_CODE_POINT_VALUES,
+    STRING_CODE_POINTS, STRING_COMPARE, STRING_CONCAT, STRING_CONCAT_ALL, STRING_CONTAINS,
+    STRING_ENDS_WITH, STRING_FROM_DECIMAL, STRING_FROM_INT, STRING_JOIN, STRING_LINES,
+    STRING_LOWERCASE, STRING_MATCHES, STRING_PAD_LEFT, STRING_PAD_RIGHT, STRING_REPEAT,
+    STRING_REPLACE, STRING_REVERSE, STRING_SLICE, STRING_SPLIT, STRING_STARTS_WITH,
     STRING_TO_DECIMAL, STRING_TO_INT, STRING_TRIM, STRING_UPPERCASE, STRING_WORDS, Status,
     TIME_COMPARE, TIME_FROM_PARTS, TIME_HOUR, TIME_LITERAL, TIME_MINUTE, TIME_SECOND, TOKEN, WHICH,
     Word, behavior_symbol, boundary_symbol, built_in_case_symbol, checked_constructor_symbol,
@@ -2443,7 +2447,10 @@ fn machine_type(ty: &Ty) -> Lowered<types::Type> {
             // and every operation, comparison and crossing is a call into the runtime, which alone
             // knows the layout.
             Prim::Date | Prim::Time | Prim::DateTime | Prim::Instant => Ok(POINTER),
-            Prim::Rational => Err(not_lowered(format!("a value of type {}", prim.spelt()))),
+            // The address of what the runtime keeps a `Rational` as, for the reason a `Decimal` is
+            // one word. A `Rational` is held here and crosses between objects, and no host is
+            // handed one: its external form is none, which is not this width's to say.
+            Prim::Rational => Ok(POINTER),
         },
     }
 }
@@ -2491,12 +2498,7 @@ fn built_in_case(case: &Case) -> Lowered<&'static str> {
             Prim::Time => "Time",
             Prim::DateTime => "DateTime",
             Prim::Instant => "Instant",
-            Prim::Rational => {
-                return Err(not_lowered(format!(
-                    "a value of the case {}, which has no representation to carry",
-                    prim.spelt()
-                )));
-            }
+            Prim::Rational => "Rational",
         },
         Case::Language { case } => match case {
             LanguageCase::DivisionByZero => "DivisionByZero",
@@ -2718,7 +2720,9 @@ fn means_the_same_elsewhere(ty: &Ty) -> bool {
             Prim::Decimal => true,
             // Addresses only the runtime reads behind, for the same reason.
             Prim::Date | Prim::Time | Prim::DateTime | Prim::Instant => true,
-            Prim::Rational => false,
+            // An address only the runtime reads behind, for the same reason. That it means the same
+            // in every object is not that it crosses to a host, which it does not.
+            Prim::Rational => true,
         },
         Ty::Ref { named } => case_means_the_same_elsewhere(named),
         // Written nowhere at run time: what holds a union holds one of its members, and each of
@@ -4858,19 +4862,21 @@ fn lower(
         Node::Neg {
             operand, aborts, ..
         } => {
-            // The width first: a `Rational` has none here, and is refused before its negation is
-            // asked what it can end for. An `Int` names the one reason `Coherent` held it to, and a
-            // `Decimal` only changes sign, at the scale it had, which the runtime does.
+            // The width first, then the type it negates. An `Int` names the one reason `Coherent`
+            // held it to, and a `Decimal` or a `Rational` only changes sign, which the runtime does.
             let width = machine_type(operand.ty())?;
             let held = lower(builder, lowering, module, bindings, abort, operand)?;
-            if let Ty::Prim {
-                prim: Prim::Decimal,
-            } = operand.ty()
-            {
-                runtime_call(builder, lowering, module, DECIMAL_NEGATE, &[held])
-            } else {
-                let nought = builder.ins().iconst(width, 0);
-                difference(builder, abort, one_reason_status(aborts), nought, held)
+            match operand.ty() {
+                Ty::Prim {
+                    prim: Prim::Decimal,
+                } => runtime_call(builder, lowering, module, DECIMAL_NEGATE, &[held]),
+                Ty::Prim {
+                    prim: Prim::Rational,
+                } => runtime_call(builder, lowering, module, RATIONAL_NEGATE, &[held]),
+                _ => {
+                    let nought = builder.ins().iconst(width, 0);
+                    difference(builder, abort, one_reason_status(aborts), nought, held)
+                }
             }
         }
         // A fork answers what the branch it takes answers, and each branch hands that to the block
@@ -5357,6 +5363,21 @@ const RUNTIME_KERNELS: &[&str] = &[
     DECIMAL_TO_INT,
     DECIMAL_ROUND,
     DECIMAL_DIVIDE,
+    RATIONAL_FROM_INT,
+    RATIONAL_FROM_DECIMAL,
+    RATIONAL_NEGATE,
+    RATIONAL_IS_ZERO,
+    RATIONAL_IS_WHOLE,
+    RATIONAL_HAS_FINITE_DECIMAL,
+    RATIONAL_COMPARE,
+    RATIONAL_ADD,
+    RATIONAL_SUBTRACT,
+    RATIONAL_MULTIPLY,
+    RATIONAL_DIVIDE,
+    RATIONAL_TO_WHOLE,
+    RATIONAL_TO_FINITE_DECIMAL,
+    RATIONAL_TO_INT,
+    RATIONAL_TO_DECIMAL,
     DATE_LITERAL,
     TIME_LITERAL,
     DATETIME_LITERAL,
@@ -5768,6 +5789,87 @@ fn lower_kernel(
                     prim: Prim::Decimal,
                 };
                 carry(builder, lowering, module, &decimal, Some(quotient))
+            })?
+        }
+        // Every `Int` and every `Decimal` has one exact value, so neither way in ends a run.
+        LoweredKernel::RationalFromInt => {
+            runtime_call(builder, lowering, module, RATIONAL_FROM_INT, &values)
+        }
+        LoweredKernel::RationalFromDecimal => {
+            runtime_call(builder, lowering, module, RATIONAL_FROM_DECIMAL, &values)
+        }
+        LoweredKernel::RationalAdd
+        | LoweredKernel::RationalSubtract
+        | LoweredKernel::RationalMultiply => {
+            let name = match kernel {
+                LoweredKernel::RationalAdd => RATIONAL_ADD,
+                LoweredKernel::RationalSubtract => RATIONAL_SUBTRACT,
+                _ => RATIONAL_MULTIPLY,
+            };
+            written_or_ended(
+                builder, lowering, module, abort, name, &values, POINTER, aborts,
+            )
+        }
+        LoweredKernel::RationalDivide => {
+            let [dividend, divisor] = values[..] else {
+                unreachable!("`Coherent` held rational.divide to the two arguments it takes");
+            };
+            exact_quotient(builder, lowering, module, abort, dividend, divisor)
+        }
+        // Already -1, 0 or 1, by exact value.
+        LoweredKernel::RationalCompare => {
+            runtime_call(builder, lowering, module, RATIONAL_COMPARE, &values)
+        }
+        LoweredKernel::RationalToInt => written_or_ended(
+            builder,
+            lowering,
+            module,
+            abort,
+            RATIONAL_TO_INT,
+            &values,
+            types::I64,
+            aborts,
+        ),
+        LoweredKernel::RationalToDecimal => written_or_ended(
+            builder,
+            lowering,
+            module,
+            abort,
+            RATIONAL_TO_DECIMAL,
+            &values,
+            POINTER,
+            aborts,
+        ),
+        // What is not whole is a case, told before any `Int` is asked for; a whole number no `Int`
+        // holds ends the run.
+        LoweredKernel::RationalToWholeNumber | LoweredKernel::RationalToFiniteDecimal => {
+            let (asked, name, width, held, none) = match kernel {
+                LoweredKernel::RationalToWholeNumber => (
+                    RATIONAL_IS_WHOLE,
+                    RATIONAL_TO_WHOLE,
+                    types::I64,
+                    Prim::Int,
+                    LanguageCase::NotWhole,
+                ),
+                _ => (
+                    RATIONAL_HAS_FINITE_DECIMAL,
+                    RATIONAL_TO_FINITE_DECIMAL,
+                    POINTER,
+                    Prim::Decimal,
+                    LanguageCase::NotAFiniteDecimal,
+                ),
+            };
+            let fits = runtime_call(builder, lowering, module, asked, &values);
+            fork(builder, fits, POINTER, |builder, taken| {
+                if taken {
+                    let value = written_or_ended(
+                        builder, lowering, module, abort, name, &values, width, aborts,
+                    );
+                    let case = Case::Primitive { prim: held };
+                    return carry(builder, lowering, module, &case, Some(value));
+                }
+                let none = Case::Language { case: none };
+                carry(builder, lowering, module, &none, None)
             })?
         }
         // A shift off the end of what a temporal holds answers nothing, and the run ends there as
@@ -6275,20 +6377,150 @@ fn binary(
 ) -> Lowered<ir::Value> {
     // What the operator reads its operands as decides what it does with them, so it is asked
     // before the operator is: an operator with a case of its own would otherwise be lowered as
-    // the operands stand whatever the document says they are read as. A pair read at their exact
-    // values would first have to be taken as a `Rational`, which has no representation here yet.
+    // the operands stand whatever the document says they are read as.
     match operands.reading {
         Reading::AsTheyStand => {
             binary_as_they_stand(builder, lowering, module, bindings, abort, op, operands)
         }
         Reading::In { ty } => read_in(builder, lowering, module, bindings, abort, op, ty, operands),
-        Reading::ExactNumbers => Err(not_lowered(format!(
-            "{} over {} and {}, read at their exact values",
-            op.spelt(),
-            operands.left.ty().spelt(),
-            operands.right.ty().spelt()
+        Reading::ExactNumbers => {
+            let Operands {
+                left,
+                right,
+                aborts,
+                ..
+            } = operands;
+            let a = Held::of(
+                left,
+                lower(builder, lowering, module, bindings, abort, left)?,
+            );
+            let b = Held::of(
+                right,
+                lower(builder, lowering, module, bindings, abort, right)?,
+            );
+            exact_operator(builder, lowering, module, abort, op, a, b, aborts)
+        }
+    }
+}
+
+/// An operator over two numbers read at their exact values: `Int + Rational`, `Rational < Decimal`.
+///
+/// Each operand is taken as the exact value it stands for ([`exact_number`]), and the operator is
+/// then the `Rational`'s. Nothing is restated: a value of one type is never held as another, and
+/// what an operand is read as is the operator's own business and stops with it.
+#[allow(clippy::too_many_arguments)]
+fn exact_operator(
+    builder: &mut FunctionBuilder,
+    lowering: &Lowering,
+    module: &mut ObjectModule,
+    abort: ir::Block,
+    op: Op,
+    left: Held,
+    right: Held,
+    aborts: &[AbortKind],
+) -> Lowered<ir::Value> {
+    let a = exact_number(builder, lowering, module, left)?;
+    let b = exact_number(builder, lowering, module, right)?;
+    match op {
+        Op::Add | Op::Sub | Op::Mul => {
+            let name = match op {
+                Op::Add => RATIONAL_ADD,
+                Op::Sub => RATIONAL_SUBTRACT,
+                _ => RATIONAL_MULTIPLY,
+            };
+            Ok(written_or_ended(
+                builder,
+                lowering,
+                module,
+                abort,
+                name,
+                &[a, b],
+                POINTER,
+                aborts,
+            ))
+        }
+        Op::Div => Ok(exact_quotient(builder, lowering, module, abort, a, b)),
+        Op::Eq | Op::Ne | Op::Lt | Op::Le | Op::Gt | Op::Ge => {
+            let compared = runtime_call(builder, lowering, module, RATIONAL_COMPARE, &[a, b]);
+            Ok(builder.ins().icmp_imm_s(as_a_whole_number(op), compared, 0))
+        }
+        Op::And | Op::Or | Op::Concat => Err(unlowered_operator(op, &left, &right)),
+    }
+}
+
+/// The `Rational` a number stands for, which is what an operator that reads its operands at their
+/// exact values computes with.
+///
+/// Not a conversion the language has: a number is not a value of another type for being read this
+/// way, and this is not asked for by a position that wants a `Rational`, which writes
+/// `Rational.fromInt` and is the kernel's. It is what the operator means, and it is here and in no
+/// table of what widens to what.
+fn exact_number(
+    builder: &mut FunctionBuilder,
+    lowering: &Lowering,
+    module: &mut ObjectModule,
+    number: Held,
+) -> Lowered<ir::Value> {
+    match number.ty {
+        Ty::Prim { prim: Prim::Int } => Ok(runtime_call(
+            builder,
+            lowering,
+            module,
+            RATIONAL_FROM_INT,
+            &[number.value],
+        )),
+        Ty::Prim {
+            prim: Prim::Decimal,
+        } => Ok(runtime_call(
+            builder,
+            lowering,
+            module,
+            RATIONAL_FROM_DECIMAL,
+            &[number.value],
+        )),
+        Ty::Prim {
+            prim: Prim::Rational,
+        } => Ok(number.value),
+        other => Err(not_lowered(format!(
+            "{} read at its exact value, which is not a number",
+            other.spelt()
         ))),
     }
+}
+
+/// The exact quotient of two exact values: a zero divisor ends the run for what that is, and a
+/// quotient the runtime has no place for ends it for the one reason that is.
+fn exact_quotient(
+    builder: &mut FunctionBuilder,
+    lowering: &Lowering,
+    module: &mut ObjectModule,
+    abort: ir::Block,
+    dividend: ir::Value,
+    divisor: ir::Value,
+) -> ir::Value {
+    let by_nought = runtime_call(builder, lowering, module, RATIONAL_IS_ZERO, &[divisor]);
+    abort_where(
+        builder,
+        abort,
+        native_status(AbortKind::DivisionByZero),
+        by_nought,
+    );
+    let room = out_slot(builder);
+    let wrote = runtime_call(
+        builder,
+        lowering,
+        module,
+        RATIONAL_DIVIDE,
+        &[dividend, divisor, room],
+    );
+    let nothing = builder.ins().icmp_imm_s(IntCC::Equal, wrote, 0);
+    abort_where(
+        builder,
+        abort,
+        native_status(AbortKind::RequiredFormHasNoPlace),
+        nothing,
+    );
+    builder.ins().load(POINTER, TRUSTED, room, 0)
 }
 
 /// A comparison over two operands the checker reads as values of `reading`, for this operator only.
@@ -6424,9 +6656,9 @@ fn binary_as_they_stand(
                 Op::Eq | Op::Ne | Op::Lt | Op::Le | Op::Gt | Op::Ge => {
                     compare(builder, lowering, module, op, a.ty, a.value, b.value)
                 }
-                // `/` answers the exact quotient, which is not a whole number and has no
-                // representation here yet.
-                Op::Div => Err(not_lowered(format!("the operator {}", op.spelt()))),
+                // `/` answers the exact quotient, whatever it divides: each side is taken as the
+                // exact value it is, and the run ends for a zero divisor.
+                Op::Div => exact_operator(builder, lowering, module, abort, op, a, b, aborts),
                 Op::Concat => join(builder, lowering, module, abort, aborts, a, b),
                 Op::And | Op::Or => {
                     unreachable!("answered above, where the right side may not run")
@@ -6530,8 +6762,27 @@ fn arithmetic(
                     aborts,
                 ))
             }
-            Prim::Rational
-            | Prim::Bool
+            Prim::Rational => {
+                let name = match op {
+                    Op::Add => RATIONAL_ADD,
+                    Op::Sub => RATIONAL_SUBTRACT,
+                    Op::Mul => RATIONAL_MULTIPLY,
+                    _ => unreachable!(
+                        "reached from a sum, a difference or a product and nothing else"
+                    ),
+                };
+                Ok(written_or_ended(
+                    builder,
+                    lowering,
+                    module,
+                    abort,
+                    name,
+                    &[a, b],
+                    POINTER,
+                    aborts,
+                ))
+            }
+            Prim::Bool
             | Prim::String
             | Prim::Date
             | Prim::Time
