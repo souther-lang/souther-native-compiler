@@ -62,7 +62,12 @@ impl Statuses {
         self.named
             .iter()
             .find(|(name, _)| *name == "REQUIRED_FORM_HAS_NO_PLACE")
-            .map(|&(name, status)| Failure::Abort(Abort { status, name: Some(name) }))
+            .map(|&(name, status)| {
+                Failure::Abort(Abort {
+                    status,
+                    name: Some(name),
+                })
+            })
             .ok_or(UnnamedStatus("REQUIRED_FORM_HAS_NO_PLACE"))
     }
 
@@ -73,9 +78,22 @@ impl Statuses {
 
     /// What a call that answered `status` comes to, where a host implementation it called back
     /// left `caught`: a panic raised again, and a failure answered, whatever the status.
+    ///
+    /// A `caught` failure is the host implementation's own where it is a [`HostError`] of any
+    /// other type, and is answered as [`Failure::Host`]. Where it is a [`Failure`] itself, the
+    /// implementation answered a value that crossing back into the library could not hand over —
+    /// a generated argument or answer conversion failed with `?` inside the closure `implemented`
+    /// or a function value calls, most often `Failure::Abort` where crossing a `String` found no
+    /// place (souther-native-compiler#109), or `Failure::Foreign` where a handle crossed from
+    /// another runtime. That is not the implementation failing; it is the same failure a direct
+    /// call into the library would answer for the same reason, and is unwrapped to answer it that
+    /// way rather than doubly wrapped as a `Failure::Host` of a `Failure`.
     pub(crate) fn answered(&self, status: Status, caught: Option<Caught>) -> Result<(), Failure> {
         if let Some(caught) = caught {
-            return Err(Failure::Host(caught.raised()));
+            return Err(match caught.raised().downcast::<Failure>() {
+                Ok(failure) => *failure,
+                Err(raised) => Failure::Host(raised),
+            });
         }
         match status {
             it if it == self.answered => Ok(()),
@@ -215,6 +233,45 @@ mod tests {
         };
         assert_eq!(abort.status(), 7);
         assert_eq!(abort.name(), Some("REQUIRED_FORM_HAS_NO_PLACE"));
+    }
+
+    /// A `Failure` a generated argument or answer conversion raised with `?` inside a host
+    /// implementation's callback — `Words::string` answering `Err(Failure::Abort(..))` where an
+    /// injected behavior's own answer has no place as a `String`, most concretely — crosses the
+    /// callback boundary boxed as a `HostError`, indistinguishable by type alone from a host
+    /// implementation's own error. `answered` unwraps it back to the original `Failure` rather
+    /// than wrapping it again as `Failure::Host`: the crossing failed, not the implementation, and
+    /// a caller matching on `Failure::Abort` (as `Construction::of` already does for
+    /// `INVARIANT_NOT_HELD`) has to see the same shape here as it would calling directly
+    /// (souther-native-compiler#109).
+    #[test]
+    fn a_failure_caught_across_a_callback_is_unwrapped_and_not_doubly_wrapped() {
+        let statuses = Statuses::new(WITH_NO_PLACE).unwrap();
+        let no_place = statuses.no_place().unwrap();
+        let caught = Caught::Failed(Box::new(no_place));
+        let answered = statuses.answered(0, Some(caught));
+        let Err(Failure::Abort(abort)) = answered else {
+            panic!("expected Failure::Abort straight through, got {answered:?}");
+        };
+        assert_eq!(abort.name(), Some("REQUIRED_FORM_HAS_NO_PLACE"));
+    }
+
+    /// A host implementation's own error — anything that is not itself a `Failure` — still
+    /// answers `Failure::Host`, unaffected by unwrapping `Failure`s specifically.
+    #[test]
+    fn a_hosts_own_error_still_answers_failure_host() {
+        let statuses = Statuses::new(BASE).unwrap();
+        #[derive(Debug)]
+        struct Mine;
+        impl std::fmt::Display for Mine {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("mine")
+            }
+        }
+        impl std::error::Error for Mine {}
+        let caught = Caught::Failed(Box::new(Mine));
+        let answered = statuses.answered(0, Some(caught));
+        assert!(matches!(answered, Err(Failure::Host(_))), "{answered:?}");
     }
 
     /// A manifest that never names `REQUIRED_FORM_HAS_NO_PLACE` — a library built before
