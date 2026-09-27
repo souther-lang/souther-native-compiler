@@ -1210,7 +1210,11 @@ fn type_of(ty: &Ty, declared: &Declared) -> manifest::Type {
             key: boxed(&map.key),
             value: boxed(&map.value),
         },
-        Ty::Var { var } => crate::laid_out_nowhere(*var),
+        // A manifest describes what a module publishes, and `Coherent` refuses a published type that
+        // writes a variable: a helper's body is the one place the checker leaves a type open.
+        Ty::Var { var } => unreachable!(
+            "the type variable {var} stands in a published type, which `Coherent` refuses"
+        ),
         Ty::Nothing { .. } => manifest::Type::Nothing,
         Ty::Never { .. } => manifest::Type::Never,
         Ty::Ref {

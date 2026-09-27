@@ -35,7 +35,7 @@ mod unrun;
 mod versioned;
 
 use anyhow::{Result, anyhow, bail};
-use closures::{ClosureSites, Site};
+use closures::{ClosureId, ClosureSites, Site};
 use coherent::{Coherent, Defined};
 use cranelift::codegen::ir::condcodes::IntCC;
 use cranelift::codegen::ir::{
@@ -421,13 +421,27 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
         targets,
         locals,
         runs,
-        closures,
         defined,
     } = coherent;
     // Every copy of a helper this object defines, and which of them each call reaches, settled
     // before anything is declared: a helper that leaves type variables open is a function only once
     // a call has said what each variable is.
     let specializations = Specializations::of(&runs)?;
+
+    // What each function value carries, planned over the bodies as they are lowered: the bodies of
+    // what this object runs that are no helper, and every copy of a helper, each with the function
+    // values it holds of its own (`closures`).
+    let closures = ClosureSites::of(
+        runs.bodies()
+            .filter(|body| body.owner.helper().is_none())
+            .map(closures::Standing::from)
+            .chain(specializations.iter().map(|(_, copy)| closures::Standing {
+                carrier: copy.carrier,
+                environment: &[],
+                node: copy.body(),
+            })),
+    )
+    .expect("`Coherent` numbered every site of the document once");
 
     let mut context = Context::new();
     let mut shapes = FunctionBuilderContext::new();
@@ -479,8 +493,8 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
     // one body may be referenced from another (a closure returned from one function and applied by
     // another), so nothing about defining a body may assume every site it itself needs was already
     // declared by the time it runs; all of them are, because this runs before any of them does.
-    let mut lifted: BTreeMap<usize, FuncId> = BTreeMap::new();
-    for (&site, plan) in closures.lifted() {
+    let mut lifted: BTreeMap<ClosureId, FuncId> = BTreeMap::new();
+    for (site, plan) in closures.lifted() {
         let fn_ = plan.signature;
         let signature = lifted_signature(&fn_.takes, &fn_.answers, call_conv)?;
         let symbol = format!("$closure${site}");
@@ -994,7 +1008,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
     // a nested site, or reach one returned from elsewhere, and every one of them was declared
     // above regardless of which body it is nested under. A site stands where the body holding it
     // does.
-    for (&site, plan) in closures.lifted() {
+    for (site, plan) in closures.lifted() {
         let fn_ = plan.signature;
         let signature = lifted_signature(&fn_.takes, &fn_.answers, call_conv)?;
         let id = *lifted
@@ -2190,7 +2204,7 @@ struct Lowerings<'a> {
     closures: &'a ClosureSites<'a>,
     /// The lifted function declared for each site, by the site's own number — declared before any
     /// body is defined, the same two-phase shape every other declaration in this object keeps.
-    lifted: &'a BTreeMap<usize, FuncId>,
+    lifted: &'a BTreeMap<ClosureId, FuncId>,
     /// What string literals this object already holds.
     literals: &'a Literals,
     /// What pattern machines this object already holds.
@@ -2406,7 +2420,7 @@ fn machine_type(ty: &Ty) -> Lowered<types::Type> {
         // none of that is a second machine type; a function value is a pointer here exactly as a
         // tuple or a declared value is.
         Ty::Fn { .. } => Ok(POINTER),
-        Ty::Var { var } => laid_out_nowhere(*var),
+        Ty::Var { var } => Err(open_type(*var)),
         // No value of it is ever made, so there is nothing to hold. Not a width chosen to stand in
         // for one: a list of it is laid out as any list is (above), and a walk whose step would be
         // handed one never runs that step (`growing`), so what asks this is code that would hold a
@@ -2738,7 +2752,8 @@ fn means_the_same_elsewhere(ty: &Ty) -> bool {
         Ty::Fn { fn_ } => {
             fn_.takes.iter().all(means_the_same_elsewhere) && means_the_same_elsewhere(&fn_.answers)
         }
-        Ty::Var { var } => laid_out_nowhere(*var),
+        // Nothing is known of what it comes to, so nothing is known to mean the same elsewhere.
+        Ty::Var { .. } => false,
         // No value of either crosses, so none can mean something else once it has.
         Ty::Nothing { .. } | Ty::Never { .. } => true,
     }
@@ -2765,14 +2780,16 @@ fn case_means_the_same_elsewhere(case: &Case) -> bool {
     }
 }
 
-/// A type variable met where a value's layout is asked for, which is nowhere: `Coherent` refuses one
-/// outside a helper's body, and a helper that leaves variables open is lowered only as its copies,
-/// each with every variable replaced ([`specialize`]).
-fn laid_out_nowhere(var: usize) -> ! {
-    unreachable!(
-        "the type variable {var} reached a lowering, which is handed only copies of a helper with \
-         every variable replaced"
-    )
+/// A type variable met where a value's layout, a comparison or a form is asked for.
+///
+/// A copy of a helper replaces each variable a call settles and leaves the others as written
+/// ([`specialize`]), since a body that never asks what a variable is has no need of it. What does
+/// ask is refused here, where it asks, and not before by a rule about where a variable may stand:
+/// what needs a type is a fact about the one asking.
+pub(crate) fn open_type(var: usize) -> NotLowered {
+    not_lowered(format!(
+        "a value of the type variable {var}, which no call of the helper it stands in settles"
+    ))
 }
 
 /// A primitive or a case the language gives, named as a type on its own rather than as one case
@@ -4731,7 +4748,7 @@ fn lower_standing(
     node: &Node,
     stands: &Ty,
 ) -> Lowered<ir::Value> {
-    if !matches!(node.ty(), Ty::Never { .. }) {
+    if !node.ty().does_not_answer() {
         return lower(builder, lowering, module, bindings, abort, node);
     }
     let width = machine_type(stands)?;
@@ -5076,10 +5093,7 @@ fn lower(
             // A behavior is applied the one way every behavior is, which is where what is done
             // about its answer is decided (`call_behavior`).
             Reaches::Behavior { declared } => {
-                let mut given = Vec::with_capacity(arguments.len());
-                for argument in arguments {
-                    given.push(lower(builder, lowering, module, bindings, abort, argument)?);
-                }
+                let given = lower_arguments(builder, lowering, module, bindings, abort, node)?;
                 let through = bindings.through(builder, abort, declared);
                 call_behavior(builder, lowering, module, abort, declared, through, &given)?
             }
@@ -5134,10 +5148,7 @@ fn lower(
                         unreachable!()
                     }
                 };
-                let mut given = Vec::with_capacity(arguments.len());
-                for argument in arguments {
-                    given.push(lower(builder, lowering, module, bindings, abort, argument)?);
-                }
+                let given = lower_arguments(builder, lowering, module, bindings, abort, node)?;
                 call_reached(builder, module, abort, reached, machine_type(ty)?, &given)
             }
             // The kernels this backend lowers are `kernels::Lowered`'s and nowhere else's, so one it
@@ -5181,27 +5192,25 @@ fn lower(
                 .load(types::I64, flags, value, member_at(*at) as i32);
             out_of_slot(builder, held, machine_type(ty)?)
         }
-        Node::Block { site, .. } => {
-            let plan = lowering
+        Node::Block { .. } => {
+            let (site, plan) = lowering
                 .closures
-                .site(*site)
+                .at(node)
                 .expect("every closure site was planned before any body was lowered");
+            // A function that never runs has no code, and a closure of it holds none: nothing calls
+            // it, and it carries nothing.
+            if !plan.runs {
+                return Ok(uncallable_function(builder, lowering, module));
+            }
             let flags = TRUSTED;
             let carried = plan.captures.len() + usize::from(plan.environment.is_some());
             let value = lowering.room(builder, module, room_for_closure(carried));
-
-            // A function that never runs has no code, and a closure of it holds none: nothing calls
-            // it, and it carries nothing.
-            let code = if plan.runs {
-                let code_id = *lowering.lifted.get(site).expect(
-                    "every closure site that runs was declared a lifted function before any was \
-                     defined",
-                );
-                let code_ref = module.declare_func_in_func(code_id, builder.func);
-                builder.ins().func_addr(POINTER, code_ref)
-            } else {
-                builder.ins().iconst(POINTER, NOTHING)
-            };
+            let code_id = *lowering.lifted.get(&site).expect(
+                "every closure site that runs was declared a lifted function before any was \
+                 defined",
+            );
+            let code_ref = module.declare_func_in_func(code_id, builder.func);
+            let code = builder.ins().func_addr(POINTER, code_ref);
             builder.ins().store(flags, code, value, CLOSURE_CODE as i32);
 
             for (position, capture) in plan.captures.iter().enumerate() {
@@ -6065,6 +6074,10 @@ fn branched(
         Node::Match { subject, arms, .. } => {
             let value = lower(builder, lowering, module, bindings, abort, subject)?;
             for arm in arms {
+                // What it tests for has no value, so it is never taken, and is not written.
+                if unrun::never_entered(arm, subject.ty()) {
+                    continue;
+                }
                 let next = enter_arm(
                     builder,
                     lowering,
@@ -6916,6 +6929,48 @@ fn copy_slots(builder: &mut FunctionBuilder, from: ir::Value, to: ir::Value, cou
     builder.seal_block(head);
 
     builder.switch_to_block(done);
+}
+
+/// A function value no call reaches: a closure holding no code and carrying nothing, which is what
+/// a block whose function never runs is made as, and what stands in the place of a function a
+/// callee never applies ([`unrun`]).
+fn uncallable_function(
+    builder: &mut FunctionBuilder,
+    lowering: &Lowering,
+    module: &mut ObjectModule,
+) -> ir::Value {
+    let value = lowering.room(builder, module, room_for_closure(0));
+    let code = builder.ins().iconst(POINTER, NOTHING);
+    builder
+        .ins()
+        .store(TRUSTED, code, value, CLOSURE_CODE as i32);
+    value
+}
+
+/// What a call hands over, in the order it hands it: each argument lowered, except a function the
+/// callee never applies, which is not lowered at all and is handed [`uncallable_function`] in its
+/// place. The callee holds a pointer there either way, and nothing reads it.
+fn lower_arguments(
+    builder: &mut FunctionBuilder,
+    lowering: &Lowering,
+    module: &mut ObjectModule,
+    bindings: &mut Bindings,
+    abort: ir::Block,
+    call: &Node,
+) -> Lowered<Vec<ir::Value>> {
+    let Node::Call { arguments, .. } = call else {
+        unreachable!("only a call hands over arguments");
+    };
+    let unrun = unrun::never_applied(call);
+    let mut given = Vec::with_capacity(arguments.len());
+    for (at, argument) in arguments.iter().enumerate() {
+        given.push(if unrun.contains(&at) {
+            uncallable_function(builder, lowering, module)
+        } else {
+            lower(builder, lowering, module, bindings, abort, argument)?
+        });
+    }
+    Ok(given)
 }
 
 /// A walk that builds a list (`$build(step, xs, from)`): the list the walk grows starts empty,

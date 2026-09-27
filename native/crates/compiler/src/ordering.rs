@@ -115,7 +115,7 @@ pub(crate) fn ordered(
         | Ty::Fn { .. }
         | Ty::Nothing { .. }
         | Ty::Never { .. } => Err(unordered(op, ty)),
-        Ty::Var { var } => crate::laid_out_nowhere(*var),
+        Ty::Var { var } => Err(crate::open_type(*var)),
     }
 }
 

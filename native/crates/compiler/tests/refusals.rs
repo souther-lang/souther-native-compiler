@@ -163,6 +163,26 @@ fn equality_over_what_has_equality_and_no_order_is_lowered() {
     }
 }
 
+/// And over what holds what has no value, which has one value of each: the empty list and the absent
+/// optional. Two are the one value, and no element is compared, since none is made.
+#[test]
+fn equality_over_what_holds_what_has_no_value_is_lowered() {
+    // Both types no value of which is made: what has none, and what does not answer.
+    for bottom in [r#"{"nothing":{}}"#, r#"{"never":{}}"#] {
+        let list = format!(r#"{{"list":{bottom}}}"#);
+        let held = format!(r#"{{"option":{bottom}}}"#);
+        let nested = format!(r#"{{"tuple":[{list},{held}]}}"#);
+
+        for ty in [&list, &held, &nested] {
+            for op in ["EQ", "NE"] {
+                if let Err(refused) = object_for(&over(op, ty, ty)) {
+                    panic!("{op} over {ty} is refused: {refused}");
+                }
+            }
+        }
+    }
+}
+
 /// An ordering over two truths: `Bool` is not one of the ordered types. A comparison decided by
 /// the machine width would have run it as an `icmp` over two bytes and answered something.
 #[test]

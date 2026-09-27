@@ -3,10 +3,10 @@
 //! `ProgramWriter` writes a [`Node::Block`] whole — its own parameters and its body, nothing about
 //! what the body reaches outside itself — because what a backend has to materialise as runtime
 //! state is a representation question and not a fact the checker states. This is where this
-//! backend answers it: a standard lexical free-variable walk, run once per top-level body before
-//! any of it is lowered, so a lifted function can be declared for every site it finds before any
-//! body that might reach one (its own enclosing body, or another site nested inside or beside it)
-//! is defined — the same two-phase (plan, then define) shape `object_for` already keeps for every
+//! backend answers it: a standard lexical free-variable walk, run once per body that is lowered
+//! before any of it is lowered, so a lifted function can be declared for every site it finds before
+//! any body that might reach one (its own enclosing body, or another site nested inside or beside
+//! it) is defined — the same two-phase (plan, then define) shape `object_for` already keeps for every
 //! other declaration in the object.
 //!
 //! A nested block's free bindings are worked out against its own parameters alone, never against
@@ -18,14 +18,21 @@
 //! top-level body, the binding is simply a live value already in scope there. Which of those it is
 //! is not asked here — this only says what each site reaches, in the order it was first reached.
 //!
-//! These plans are made inside `coherent`, before it reads the bodies, and nothing here checks
-//! whether a block's own type, its parameters and its body's type agree, or whether a read is typed
-//! as its binder. `coherent` does, after this, and hands the plans on only for a document where
-//! every one of those holds. So a capture's type, which a plan takes off a free read, is the type
-//! its binder was bound at by the time anything lowers it. A document naming two sites under one
-//! `site` ordinal is refused here: `ProgramWriter` promises the number is document-wide unique, but
-//! a promise from the other language is not a check on this side of the wire, and the earlier
-//! site's plan would otherwise answer for both.
+//! Nothing here checks whether a block's own type, its parameters and its body's type agree, or
+//! whether a read is typed as its binder. `coherent` does, over the bodies as they are written, and
+//! the plans are made only for a document where every one of those holds. So a capture's type,
+//! which a plan takes off a free read, is the type its binder was bound at by the time anything
+//! lowers it.
+//!
+//! What a plan is for is a block as it is lowered, and a helper over type variables is lowered as
+//! its copies ([`crate::specialize`]): one block as written is one in each copy, at the types that
+//! copy has, with a layout and a signature of its own. So a plan is made of the bodies as they are
+//! lowered, once the copies are made, and is known by where the block stands in the body it was
+//! read from ([`ClosureSites::at`]) and not by the number the block was written under. That number
+//! is the document's own statement that it names each site once, and is held to it by
+//! [`ClosureSites::numbered`], which reads every body as written: `ProgramWriter` promises the
+//! number is document-wide unique, but a promise from the other language is not a check on this
+//! side of the wire.
 //!
 //! Not every block is a site. The step of a walk that builds a collection runs where the walk
 //! stands, as the body of a loop, and is never a value ([`Step::of_walk`]): its parameters are bound
@@ -41,7 +48,7 @@ use crate::growing::Step;
 use crate::index;
 use crate::transport::{Body, Carrier, FnSignature, Node, Parameter, Reaches, Requirement, Ty};
 use anyhow::{Result, bail};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// One binding a closure carries forward, and the type it was read at — read off the
 /// [`Node::Read`] that reached it (or, where it was reached only because a nested site captured
@@ -73,48 +80,90 @@ pub struct Site<'a> {
     /// way the JVM carries the dependency instance a lambda calls. None where it reaches none, and
     /// the closure carries nothing more.
     pub environment: Option<&'a [Requirement]>,
-    /// Whether a call can reach the function: false where it never runs ([`crate::unrun::never_runs`]),
+    /// Whether a call can reach the function: false where it never runs ([`FnSignature::never_runs`]),
     /// and then the closure is made with no code, no function is lifted for it, and it carries
     /// nothing.
     pub runs: bool,
 }
 
-/// Every closure site the document holds, found once over the whole program.
+/// One planned function value, by the order it was found in: a lifted function is declared for
+/// each, and what the lowering of the block reads is read by it.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub struct ClosureId(usize);
+
+impl std::fmt::Display for ClosureId {
+    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(out)
+    }
+}
+
+/// A body that is lowered, where it stands: what a plan is made of.
+pub struct Standing<'a> {
+    pub carrier: Carrier<'a>,
+    pub environment: &'a [Requirement],
+    pub node: &'a Node,
+}
+
+impl<'a> From<Body<'a>> for Standing<'a> {
+    fn from(body: Body<'a>) -> Self {
+        Standing {
+            carrier: body.carrier(),
+            environment: body.environment(),
+            node: body.node,
+        }
+    }
+}
+
+/// Every closure site of the bodies that are lowered, each known by the block it is.
 #[derive(Default)]
 pub struct ClosureSites<'a> {
-    by_site: BTreeMap<usize, Site<'a>>,
-    /// Every site met, planned or not, so that two sharing a number are refused wherever they
-    /// stand.
-    numbered: BTreeMap<usize, ()>,
+    sites: Vec<Site<'a>>,
+    at: HashMap<*const Node, ClosureId>,
+    /// Every site number met, planned or not, where they are held to be met once: a number two
+    /// sites share is refused wherever they stand.
+    numbered: Option<BTreeMap<usize, ()>>,
 }
 
 impl<'a> ClosureSites<'a> {
-    /// Every closure site under `bodies`.
-    pub fn of(bodies: impl IntoIterator<Item = Body<'a>>) -> Result<Self> {
-        let mut sites = ClosureSites::default();
+    /// Refuses a document where two blocks of `bodies`, read as written, claim one site number.
+    pub fn numbered(bodies: impl IntoIterator<Item = Body<'a>>) -> Result<()> {
+        let mut sites = ClosureSites {
+            numbered: Some(BTreeMap::new()),
+            ..ClosureSites::default()
+        };
         for body in bodies {
             Planner::new(&mut sites, body.carrier(), body.environment(), true)
+                .free(body.node, &mut HashSet::new())?;
+        }
+        Ok(())
+    }
+
+    /// Every closure site under `bodies`, which are the bodies as they are lowered: a helper over
+    /// type variables is not one of them, and each of its copies is. A number two blocks share is
+    /// no fault here, since a block written once is in every copy.
+    pub fn of(bodies: impl IntoIterator<Item = Standing<'a>>) -> Result<Self> {
+        let mut sites = ClosureSites::default();
+        for body in bodies {
+            Planner::new(&mut sites, body.carrier, body.environment, true)
                 .free(body.node, &mut HashSet::new())?;
         }
         Ok(sites)
     }
 
-    /// Whether `node`, a body standing where `carrier` says, holds a closure site that is lowered.
-    /// A block that is a walk's step is not one, and nor is anything in a step that never runs.
-    pub fn any_in(carrier: Carrier<'a>, node: &'a Node) -> Result<bool> {
-        let mut sites = ClosureSites::default();
-        Planner::new(&mut sites, carrier, &[], true).free(node, &mut HashSet::new())?;
-        Ok(!sites.by_site.is_empty())
-    }
-
-    pub fn site(&self, site: usize) -> Option<&Site<'a>> {
-        self.by_site.get(&site)
+    /// The plan of the block `node`, a `Node::Block` in a body this was made of.
+    pub fn at(&self, node: &Node) -> Option<(ClosureId, &Site<'a>)> {
+        let id = *self.at.get(&std::ptr::from_ref(node))?;
+        Some((id, &self.sites[id.0]))
     }
 
     /// Every site a function is lifted for: each one whose function runs. One that never runs is
     /// made with no code, so nothing is lifted for it and nothing here can ask for it.
-    pub fn lifted(&self) -> impl Iterator<Item = (&usize, &Site<'a>)> {
-        self.by_site.iter().filter(|(_, site)| site.runs)
+    pub fn lifted(&self) -> impl Iterator<Item = (ClosureId, &Site<'a>)> {
+        self.sites
+            .iter()
+            .enumerate()
+            .filter(|(_, site)| site.runs)
+            .map(|(at, site)| (ClosureId(at), site))
     }
 }
 
@@ -228,7 +277,7 @@ impl<'p, 'a> Planner<'p, 'a> {
                     own.insert(parameter.binding);
                 }
                 // A body that never runs reaches nothing, and the sites in it are only numbered.
-                let runs = !crate::unrun::never_runs(fn_);
+                let runs = !fn_.never_runs();
                 let reached = if runs {
                     self.free(body, &mut own)?
                 } else {
@@ -256,11 +305,15 @@ impl<'p, 'a> Planner<'p, 'a> {
                 // `ProgramWriter` promises this number is unique across the whole document, and
                 // this reader does not take that on trust: a duplicate would let the first block's
                 // lifted function and captures answer for the second's too.
-                index::once(&mut self.sites.numbered, *site, (), || {
-                    format!("two `Node::Block`s both claim closure site {site}")
-                })?;
+                if let Some(numbered) = &mut self.sites.numbered {
+                    index::once(numbered, *site, (), || {
+                        format!("two `Node::Block`s both claim closure site {site}")
+                    })?;
+                }
                 if self.lowered {
-                    index::unique(&mut self.sites.by_site, *site, planned);
+                    let id = ClosureId(self.sites.sites.len());
+                    index::unique(&mut self.sites.at, std::ptr::from_ref(node), id);
+                    self.sites.sites.push(planned);
                 }
 
                 for (binding, ty) in &reached.bindings {
@@ -295,6 +348,13 @@ impl<'p, 'a> Planner<'p, 'a> {
             Node::Match { subject, arms, .. } => {
                 self.walk(subject, bound, acc)?;
                 for arm in arms {
+                    // An arm never entered is not lowered, so nothing in it is planned; its sites
+                    // are still numbered.
+                    if crate::unrun::never_entered(arm, subject.ty()) {
+                        Planner::new(self.sites, self.carrier, self.environment, false)
+                            .free(&arm.body, &mut HashSet::new())?;
+                        continue;
+                    }
                     match arm.binding {
                         Some(binding) => {
                             let added = bound.insert(binding);

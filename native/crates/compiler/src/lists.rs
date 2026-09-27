@@ -7,7 +7,7 @@
 //! as: the language has one order over each type, and a kernel ordering by another would be a
 //! second.
 //!
-//! A function that never runs ([`never_runs`]) is not called, and no call of it is emitted: what it
+//! A function that never runs ([`crate::transport::FnSignature::never_runs`]) is not called, and no call of it is emitted: what it
 //! takes is what the list or the optional beside it holds (the kernel's contract binds the two to
 //! one variable), which is the type of what has no value, so there is nothing to hand it. The
 //! kernel answers what it answers for nothing. The function is still worked out and made where it
@@ -30,7 +30,6 @@ use souther_native_abi::{
 
 use crate::ordering::ordered;
 use crate::transport::{AbortKind, FnSignature, Op, Prim, Ty};
-use crate::unrun::never_runs;
 use crate::{
     Held, Lowered, Lowering, POINTER, TRUSTED, abort_where, call_function, into_slot, machine_type,
     not_lowered, one_reason_status, out_of_slot, product, runtime_call, sum, written_or_ended,
@@ -47,7 +46,7 @@ pub(crate) fn find(
     list: ir::Value,
 ) -> Lowered<ir::Value> {
     let function = signature(predicate.ty);
-    if never_runs(function) {
+    if function.never_runs() {
         return Ok(builder.ins().iconst(POINTER, NOTHING));
     }
     let taken = machine_type(&function.takes[0])?;
@@ -108,7 +107,7 @@ pub(crate) fn mapped(
     optional: ir::Value,
 ) -> Lowered<ir::Value> {
     let signature = signature(function.ty);
-    if never_runs(signature) {
+    if signature.never_runs() {
         return Ok(optional);
     }
     let taken = machine_type(&signature.takes[0])?;
@@ -355,7 +354,7 @@ pub(crate) fn extreme(
     subject: &Ty,
     list: ir::Value,
 ) -> Lowered<ir::Value> {
-    if has_no_value(subject) {
+    if subject.has_no_value() {
         return Ok(builder.ins().iconst(POINTER, NOTHING));
     }
     let machine = machine_type(subject)?;
@@ -392,7 +391,7 @@ pub(crate) fn sorted(
     subject: &Ty,
     list: ir::Value,
 ) -> Lowered<ir::Value> {
-    if has_no_value(subject) {
+    if subject.has_no_value() {
         return Ok(list);
     }
     let count = length(builder, list);
@@ -430,7 +429,7 @@ pub(crate) fn sorted_by(
     list: ir::Value,
 ) -> Lowered<ir::Value> {
     let function = signature(key.ty);
-    if never_runs(function) {
+    if function.never_runs() {
         return Ok(list);
     }
     let taken = machine_type(&function.takes[0])?;
@@ -446,7 +445,7 @@ pub(crate) fn sorted_by(
         builder.ins().store(TRUSTED, answered, to, 0);
         Ok(())
     })?;
-    if has_no_value(subject) {
+    if subject.has_no_value() {
         return Ok(list);
     }
     let values = copied(builder, lowering, module, list, count);
@@ -652,12 +651,6 @@ fn merged<const LANES: usize>(
 
     builder.switch_to_block(done);
     Ok(from.map(|from| builder.use_var(from)))
-}
-
-/// Whether no value of `ty` is ever made: what has no value, and what does not answer. A list of
-/// either that the run holds is empty, since making an element would have been making one.
-fn has_no_value(ty: &Ty) -> bool {
-    matches!(ty, Ty::Nothing { .. } | Ty::Never { .. })
 }
 
 /// What a function value handed to a kernel is: the contract gave it a function's shape, and
