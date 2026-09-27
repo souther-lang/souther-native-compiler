@@ -13,6 +13,7 @@
 
 use serde_json::{Value, json};
 use souther_native_driver::object_for;
+use souther_native_driver::transport::TRANSPORT_VERSION;
 use std::fs;
 use std::process::Command;
 use tempfile::tempdir;
@@ -400,7 +401,7 @@ fn document() -> String {
         })
         .collect();
     json!({
-        "transport":29,
+        "transport": TRANSPORT_VERSION,
         "declarations": declarations(),
         "behaviors": targets,
         "modules": [{"name": "m", "publishes": ["m.A", "m.P", "m.R", "m.Q"], "helpers": [], "values": [],

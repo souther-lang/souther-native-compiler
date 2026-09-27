@@ -24,6 +24,7 @@
 //! and it is written to the language's rule and not to any reader's.
 
 use serde_json::{Value, json};
+use souther_native_driver::transport::TRANSPORT_VERSION;
 use souther_native_driver::{NotLowered, object_for};
 use std::collections::{BTreeMap, BTreeSet};
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -66,7 +67,7 @@ fn binary(op: &str, left: Value, right: Value, ty: Value, aborts: Value) -> Valu
 
 fn program(declarations: Value, helpers: Value, publishes: Value) -> Value {
     json!({
-        "transport":29,
+        "transport": TRANSPORT_VERSION,
         "declarations": declarations,
         "behaviors": [],
         "modules": [{

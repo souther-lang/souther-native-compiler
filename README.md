@@ -185,24 +185,25 @@ grammar are implemented here, in the runtime alone (`runtime/src/temporal.rs`), 
 this crate reads either from scratch. A
 literal is carried as the count the checker's own parse read it as — a `Date`'s day, a `Time`'s
 second of the day, a `DateTime`'s second, an `Instant`'s second and nanosecond — and not as the
-text it was written as: which text a literal may spell is the checker's, and not read again here
-by a grammar of this crate's own. That is the specification's one grammar for a temporal wherever
-it arrives, so a literal the checker admits is text the boundary below reads too, and
-`Time("09:30:00.000")` is refused in source as it is at a boundary. The driver holds the count to
-what the type holds, and the runtime makes the value from it where it is reached.
-Every operation is a call into
-the runtime, and equality and order are by the day, the second or the moment a value names, so two
-made apart are equal where they name one. A shift (`Date.addDays`, `addMonths` and `addYears`,
-`DateTime.addMinutes`, `addHours` and `addDays`) that leaves what a type holds ends the run, the
-one reason for a count too large to add and for a day past the end; `Date.fromParts` and
-`Time.fromParts` name a case for parts that name none and normalise nothing. A boundary writes a
-temporal as `toString` of its `java.time` class does — a time without its seconds where they are
-nought, an instant in UTC — and reads it by the same specification's grammar, over a text of its
-own with no `java.time` or Raoh behind it: a text held to the second refuses a fraction of one even
-where it is nought, since `09:30:00.000` and `09:30:00` name one second once the point is read past
-and only the text still says which was sent. An instant is read from an offset spelling as the
-moment it names, and its end of day, `24:00:00`, admits none of a minute, a second or a fraction
-after it for the same reason. A leap second is refused. `ATemporalAnswersWhatTheJvmAnswersTest`
+text it was written as: what admits a spelling is `TemporalText`'s grammar, read the same way for a
+literal the checker elaborates and for a text a boundary is handed, and `java.time` only builds a
+value from a text that grammar already admitted, rather than deciding on its own what a program may
+say. The driver holds the count to what the type holds, and the runtime makes the value from it
+where it is reached. Every operation is a call into the runtime, and equality and order are by the
+day, the second or the moment a value names, so two made apart are equal where they name one. A
+shift (`Date.addDays`, `addMonths` and `addYears`, `DateTime.addMinutes`, `addHours` and
+`addDays`) that leaves what a type holds ends the run, the one reason for a count too large to add
+and for a day past the end; `Date.fromParts` and `Time.fromParts` name a case for parts that name
+none and normalise nothing. A boundary writes a temporal as `toString` of its `java.time` class
+does — a time without its seconds where they are nought, an instant in UTC — and reads it by the
+same `TemporalText` authority a literal is checked against: `atBoundary`'s grammar, which a literal
+is held to as well, plus one condition more a source `Instant` alone answers to, that its offset is
+spelled `Z` and nothing else — so the sets are not equal, only decided by the one language either
+way. A text held to the second refuses a fraction of one even where it is nought, since
+`09:30:00.000` and `09:30:00` name one second once the point is read past and only the text still
+says which was sent, and an instant's end of day, `24:00:00`, admits none of a minute, a second or a
+fraction after it for the same reason. An instant is read from an offset spelling as the moment it
+names, and a leap second is refused. `ATemporalAnswersWhatTheJvmAnswersTest`
 holds every kernel and comparison to what `java.time` answers over the ends of every range and a
 seeded run of the rest.
 
@@ -406,13 +407,13 @@ hold of, checked in the order they are declared. A decoder answers a status wher
 without a value, and otherwise a reading the host asks what it came to: a value, the bytes not
 being JSON and where they stopped, or every issue found in the document — not the first — each with
 one of Raoh's codes, the message key a resolver words it by (the code where Raoh gives none of its
-own), a JSON Pointer and its metadata as the JSON object it is. A newtype's clause the checker states
-as a standard constraint is reported as that constraint, with the code, key and metadata the JVM's
-decoder reports for it (`too_short` with `min` and `actual`, `out_of_range` under
-`out_of_range.non_negative`), each of a clause's constraints asked in the order they are written. A
-clause no constraint states, the part of one a constraint does not, and a product's clause are
-`invariant_violation` at the value's path, naming the type's module and name and the clause where
-it has one. A value of a type another build declares is read by that build's object, under
+own), a JSON Pointer and its metadata as the JSON object it is, a `Decimal` in it at its scale. A
+newtype's clause the checker states as a standard constraint is reported as that constraint, with
+the code, key and metadata the JVM's decoder reports for it (`too_short` with `min` and `actual`,
+`out_of_range` under `out_of_range.non_negative`), each of a clause's constraints asked in the
+order they are written. A clause no constraint states, the part of one a constraint does not, and a
+product's clause are `invariant_violation` at the value's path, naming the type's module and name
+and the clause where it has one. A value of a type another build declares is read by that build's object, under
 `souther7.<module>$read$<Name>`, whatever kind of type it is: how a declaration is read is the
 declaring build's, and for a type built from fields that build is also the only one that can say
 which clause did not hold. Text read is canonicalized to NFC. What JSON is, is `souther-json-syntax`, a crate that knows

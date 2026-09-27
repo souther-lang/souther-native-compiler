@@ -5,6 +5,7 @@
 //! is the checker's answer and not the case's. This driver reads that answer and does not look for
 //! one; what it holds is that the order it is handed places the value at all.
 
+use souther_native_driver::transport::TRANSPORT_VERSION;
 use souther_native_driver::{NotLowered, object_for};
 
 /// The units `m.A` and `m.B`, the enumeration `m.S = m.A | m.B`, and the enumeration `m.T = m.B`:
@@ -32,7 +33,7 @@ fn ordering(ty: &str, by: &str) -> String {
         )
     };
     format!(
-        r#"{{"transport":29,"declarations":[{},{},{},{}],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[{helper}],"values":[],"entries":[],"definitions":[],"examples":[]}}]}}"#,
+        r#"{{"transport":{TRANSPORT_VERSION},"declarations":[{},{},{},{}],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[{helper}],"values":[],"entries":[],"definitions":[],"examples":[]}}]}}"#,
         unit("A"),
         unit("B"),
         sum("S", &["A", "B"]),
@@ -93,4 +94,18 @@ fn a_union_is_ordered_by_an_enumeration_listing_every_member() {
 fn an_order_that_does_not_place_the_value_is_the_halves_disagreeing() {
     is_the_halves_disagreeing(&ordering(A, "T"), "does not list m.A");
     is_the_halves_disagreeing(&ordering(A, "A"), "no order the language has");
+}
+
+/// A comparison over a case or a union with no basis named for it is a document the checker never
+/// writes (`Core.Binary`'s own constructor holds a written comparison to naming one), and this
+/// driver refuses it as the two halves disagreeing rather than looking for one.
+#[test]
+fn a_case_ordered_with_no_basis_named_is_the_halves_disagreeing() {
+    let named = ordering(A, "S");
+    let unnamed = named.replace(
+        r#""ordering":{"ref":{"is":"declared","declared":"m.S"}}"#,
+        r#""ordering":null"#,
+    );
+    assert_ne!(named, unnamed, "the comparison named its basis");
+    is_the_halves_disagreeing(&unnamed, "does not say what it orders its operands by");
 }

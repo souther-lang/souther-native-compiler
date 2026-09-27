@@ -90,12 +90,18 @@ pub const MOVES: &[(u32, &str)] = &[
     ),
     (
         28,
-        "which value an arm's name stands for, as the checker says (`binding`: `stands`, \
-         `number`, `as`), in place of a number and a type read beside what the arm tests; and \
-         what a comparison or a sort places its values on (`ordering`)",
+        "what an ordering operator's operands, or a kernel that orders, are ordered by (`ordering`, \
+         on `binary` and on an `orderingsubject` fact): the checker's own enumeration for a case or \
+         a union of cases, so a backend no longer has to find the one this document's own \
+         declarations happen to place it by",
     ),
     (
         29,
+        "which value an arm's name stands for, as the checker says (`binding`: `stands`, \
+         `number`, `as`), in place of a number and a type read beside what the arm tests",
+    ),
+    (
+        30,
         "what each clause of a declaration this build runs is as standard constraints on its one \
          field (`projection`: `constraints`, `complete`)",
     ),

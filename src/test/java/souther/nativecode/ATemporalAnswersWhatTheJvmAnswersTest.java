@@ -2,6 +2,7 @@ package souther.nativecode;
 
 import org.junit.jupiter.api.Test;
 import souther.compiler.abort.AbortKind;
+import souther.compiler.diag.CompileException;
 import souther.compiler.observe.ObservedValue;
 import souther.compiler.program.CheckedBehavior;
 import souther.compiler.program.CheckedModule;
@@ -19,6 +20,7 @@ import java.util.Random;
 import java.util.function.Supplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Every kernel and comparison over a {@code Date}, a {@code Time}, a {@code DateTime} and an
@@ -322,6 +324,24 @@ class ATemporalAnswersWhatTheJvmAnswersTest {
     @Test
     void everyTemporalRowHolds() throws Exception {
         ARowHoldsWhereverItIsRunTest.assertEveryRowHolds(TEMPORALS);
+    }
+
+    /**
+     * What names a temporal is {@link souther.temporal.TemporalText}'s grammar, checked as source is
+     * checked, and not whatever {@code java.time} happens to parse. A fraction of a second on a
+     * {@code Time} is one of {@code java.time}'s spellings that the grammar refuses outright, so it
+     * never reaches a value for this to lose the digits of.
+     */
+    @Test
+    void aFractionOfASecondOnATimeIsRefusedBeforeItIsAValue() {
+        assertThatThrownBy(() -> Checked.of(List.of("""
+                module spelling
+
+                behavior clock : (a: Int) -> Time
+                let clock (a) = Time("09:30:00.000")
+                """)))
+                .isInstanceOf(CompileException.class)
+                .hasMessageContaining("holds no fraction of one");
     }
 
     /**

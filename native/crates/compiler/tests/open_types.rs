@@ -4,6 +4,7 @@
 //! is refused is what asks of one what it is, where it asks: a list held over one is a pointer and
 //! needs nothing of it, and two of them compared need its comparison.
 
+use souther_native_driver::transport::TRANSPORT_VERSION;
 use souther_native_driver::{NotLowered, object_for};
 
 const INT: &str = r#"{"prim":"INT"}"#;
@@ -46,7 +47,7 @@ fn holding(body: &str, answers: &str) -> String {
         answers,
     );
     format!(
-        r#"{{"transport":29,"declarations":[],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[{held}],"values":[{{"module":"m","name":"v","handovers":[],"body":{called}}}],"entries":[],"definitions":[],"examples":[]}}]}}"#
+        r#"{{"transport":{TRANSPORT_VERSION},"declarations":[],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[{held}],"values":[{{"module":"m","name":"v","handovers":[],"body":{called}}}],"entries":[],"definitions":[],"examples":[]}}]}}"#
     )
 }
 
@@ -120,7 +121,7 @@ fn a_function_value_written_in_a_helper_over_a_variable_is_one_closure_in_each_c
         &format!(r#"{{"tuple":[{},{}]}}"#, at(INT), at(STRING)),
     );
     let document = format!(
-        r#"{{"transport":29,"declarations":[],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[{held}],"values":[{{"module":"m","name":"v","handovers":[],"body":{both}}}],"entries":[],"definitions":[],"examples":[]}}]}}"#
+        r#"{{"transport":{TRANSPORT_VERSION},"declarations":[],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[{held}],"values":[{{"module":"m","name":"v","handovers":[],"body":{both}}}],"entries":[],"definitions":[],"examples":[]}}]}}"#
     );
     let object = object_for(&document).unwrap_or_else(|refused| panic!("refused: {refused}"));
     let has = |symbol: &str| {
@@ -161,7 +162,7 @@ fn a_helper_calling_itself_with_its_types_swapped_is_lowered_as_two_functions() 
         INT,
     );
     let document = format!(
-        r#"{{"transport":29,"declarations":[],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[{held}],"values":[{{"module":"m","name":"v","handovers":[],"body":{called}}}],"entries":[],"definitions":[],"examples":[]}}]}}"#
+        r#"{{"transport":{TRANSPORT_VERSION},"declarations":[],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[{held}],"values":[{{"module":"m","name":"v","handovers":[],"body":{called}}}],"entries":[],"definitions":[],"examples":[]}}]}}"#
     );
     if let Err(refused) = object_for(&document) {
         panic!("refused: {refused}");

@@ -6,6 +6,7 @@
 //! and the same document with one of those two statements changed, which is refused as the two
 //! halves disagreeing and not as something this backend is behind on.
 
+use souther_native_driver::transport::TRANSPORT_VERSION;
 use souther_native_driver::{NotLowered, object_for};
 
 const INT: &str = r#"{"prim":"INT"}"#;
@@ -31,7 +32,7 @@ const P: &str = r#"{"ref":{"is":"declared","declared":"m.P"}}"#;
 fn document(behaviors: &[String], helpers: &[String], definitions: &[String]) -> String {
     format!(
         concat!(
-            r#"{{"transport":29,"declarations":["#,
+            r#"{{"transport":{transport},"declarations":["#,
             r#"{{"module":"m","name":"A","by":"amodule","is":"unit"}},"#,
             r#"{{"module":"m","name":"B","by":"amodule","is":"unit"}},"#,
             r#"{{"module":"m","name":"S","by":"amodule","is":"sum","#,
@@ -47,7 +48,8 @@ fn document(behaviors: &[String], helpers: &[String], definitions: &[String]) ->
         ),
         behaviors.join(","),
         helpers.join(","),
-        definitions.join(",")
+        definitions.join(","),
+        transport = TRANSPORT_VERSION,
     )
 }
 
@@ -1725,7 +1727,7 @@ fn a_concat_names_the_one_reason_it_can_end_for() {
 fn with_clauses(fields: &str, invariants: &str, helpers: &[String]) -> String {
     format!(
         concat!(
-            r#"{{"transport":29,"declarations":["#,
+            r#"{{"transport":{transport},"declarations":["#,
             r#"{{"module":"m","name":"R","by":"amodule","is":"product","#,
             r#""fields":[{}],"invariants":[{}]}}],"#,
             r#""behaviors":[],"#,
@@ -1734,7 +1736,8 @@ fn with_clauses(fields: &str, invariants: &str, helpers: &[String]) -> String {
         ),
         fields,
         invariants,
-        helpers.join(",")
+        helpers.join(","),
+        transport = TRANSPORT_VERSION,
     )
 }
 
@@ -2215,7 +2218,7 @@ fn a_newtype_that_wraps_itself_is_the_halves_disagreeing() {
             read(1, n)
         );
         format!(
-            r#"{{"transport":29,"declarations":[{}],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[{}],"values":[],"entries":[],"definitions":[],"examples":[]}}]}}"#,
+            r#"{{"transport":{TRANSPORT_VERSION},"declarations":[{}],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[{}],"values":[],"entries":[],"definitions":[],"examples":[]}}]}}"#,
             declarations.join(","),
             h(&[n, n], &body)
         )
@@ -2726,7 +2729,7 @@ fn a_construction_of_another_builds_type_names_the_reason_its_clauses_give() {
         );
         format!(
             concat!(
-                r#"{{"transport":29,"declarations":["#,
+                r#"{{"transport":{transport},"declarations":["#,
                 r#"{{"module":"m","name":"R","by":"onthepath","is":"product","#,
                 r#""fields":[{}],"headers":[{}]}}],"behaviors":[],"#,
                 r#""modules":[{{"name":"m","publishes":[],"helpers":[{}],"values":[],"#,
@@ -2734,7 +2737,8 @@ fn a_construction_of_another_builds_type_names_the_reason_its_clauses_give() {
             ),
             field("count", 0, "INT"),
             headers,
-            h(&[], &built)
+            h(&[], &built),
+            transport = TRANSPORT_VERSION,
         )
     };
     let stated = r#"{"name":"counted"}"#;
@@ -2909,7 +2913,7 @@ fn a_present_carrier_is_named_by_what_it_holds() {
 fn a_handover_carries_a_value_the_module_builds() {
     let value = |carries: &str| {
         format!(
-            r#"{{"transport":29,"declarations":[],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[],"values":[{{"module":"m","name":"ks","handovers":[],"body":{}}},{{"module":"m","name":"ys","handovers":[{{"parameter":"dep","type":{INT},"carries":{{"module":"m","name":"{carries}"}}}}],"body":{}}}],"entries":[],"definitions":[],"examples":[]}}]}}"#,
+            r#"{{"transport":{TRANSPORT_VERSION},"declarations":[],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[],"values":[{{"module":"m","name":"ks","handovers":[],"body":{}}},{{"module":"m","name":"ys","handovers":[{{"parameter":"dep","type":{INT},"carries":{{"module":"m","name":"{carries}"}}}}],"body":{}}}],"entries":[],"definitions":[],"examples":[]}}]}}"#,
             int(1),
             read(0, INT)
         )
@@ -3394,7 +3398,7 @@ fn what_clauses_are_answered_under_crosses_where_another_build_runs_them() {
     let declared = |by: &str, clauses: &str| {
         format!(
             concat!(
-                r#"{{"transport":29,"declarations":["#,
+                r#"{{"transport":{transport},"declarations":["#,
                 r#"{{"module":"m","name":"R","by":"{}","is":"product","#,
                 r#""fields":[{}]{}}}],"behaviors":[],"#,
                 r#""modules":[{{"name":"m","publishes":[],"helpers":[],"values":[],"#,
@@ -3402,7 +3406,8 @@ fn what_clauses_are_answered_under_crosses_where_another_build_runs_them() {
             ),
             by,
             field("count", 0, "INT"),
-            clauses
+            clauses,
+            transport = TRANSPORT_VERSION,
         )
     };
     let headers = r#","headers":[{"name":"counted"}]"#;

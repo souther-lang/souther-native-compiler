@@ -262,7 +262,7 @@ impl FactContract {
                 written: _,
                 meaning: _,
             } => *self == FactContract::StringMatches,
-            KernelFact::OrderingSubject { .. } => {
+            KernelFact::OrderingSubject { ty: _, ordering: _ } => {
                 matches!(self, FactContract::OrderingSubject(_))
             }
         }
