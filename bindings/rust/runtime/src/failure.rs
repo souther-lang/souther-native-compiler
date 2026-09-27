@@ -178,6 +178,54 @@ impl fmt::Display for Abort {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const BASE: &[(&str, Status)] = &[
+        ("ANSWERED", 0),
+        ("INJECTION_UNBOUND", 1),
+        ("INJECTION_PROTOCOL_VIOLATION", 2),
+        ("HOST_EXCEPTION", 3),
+    ];
+
+    const WITH_NO_PLACE: &[(&str, Status)] = &[
+        ("ANSWERED", 0),
+        ("INJECTION_UNBOUND", 1),
+        ("INJECTION_PROTOCOL_VIOLATION", 2),
+        ("HOST_EXCEPTION", 3),
+        ("REQUIRED_FORM_HAS_NO_PLACE", 7),
+    ];
+
+    /// `no_place` reads the manifest's own number for `REQUIRED_FORM_HAS_NO_PLACE` and names it,
+    /// rather than a number this binding picks: two libraries that number their statuses
+    /// differently still answer the same `Abort` name for the same reason
+    /// (souther-native-compiler#109).
+    #[test]
+    fn no_place_is_the_manifests_own_status_named() {
+        let statuses = Statuses::new(WITH_NO_PLACE).unwrap();
+        let Failure::Abort(abort) = statuses.no_place().unwrap() else {
+            panic!("no_place answers an Abort");
+        };
+        assert_eq!(abort.status(), 7);
+        assert_eq!(abort.name(), Some("REQUIRED_FORM_HAS_NO_PLACE"));
+    }
+
+    /// A manifest that never names `REQUIRED_FORM_HAS_NO_PLACE` — a library built before
+    /// souther-native-compiler#109, or one that never builds a `String` from a host's bytes —
+    /// answers `UnnamedStatus` rather than a wrong `Abort`: `Words::string` (native.rs) turns this
+    /// into `Failure::ProtocolViolation` rather than propagating a status-table lookup error where
+    /// its own callers expect a `Failure`.
+    #[test]
+    fn no_place_is_unnamed_where_the_manifest_does_not_name_it() {
+        let statuses = Statuses::new(BASE).unwrap();
+        let Err(unnamed) = statuses.no_place() else {
+            panic!("no_place answers UnnamedStatus where the manifest never names it");
+        };
+        assert_eq!(unnamed, UnnamedStatus("REQUIRED_FORM_HAS_NO_PLACE"));
+    }
+}
+
 /// What a host implementation left for the call it was reached from.
 pub(crate) enum Caught {
     Panicked(Box<dyn Any + Send>),

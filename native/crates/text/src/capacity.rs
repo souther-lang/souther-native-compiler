@@ -40,3 +40,19 @@ pub(crate) fn code_points(text: &str) -> i64 {
     }
     text.chars().count() as i64
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The bound is a number of the language and not this carrier's own, so every carrier states
+    /// the same one: the JVM's `souther.runtime.Strings.LONGEST_TEXT` is `(1L << 28) - 1`
+    /// (souther-lang/souther PR #2022, ADR-0096), and the specification's own
+    /// `what-a-string-holds` paragraph states `268435455` — the two crates agree by stating the
+    /// same arithmetic rather than by copying one crate's decimal literal into the other's.
+    #[test]
+    fn the_bound_is_the_languages_own_and_not_this_carriers() {
+        assert_eq!(LONGEST_TEXT, (1i64 << 28) - 1);
+        assert_eq!(LONGEST_TEXT, 268_435_455);
+    }
+}
