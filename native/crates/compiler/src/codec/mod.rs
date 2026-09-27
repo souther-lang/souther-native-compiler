@@ -31,6 +31,13 @@ use cranelift::codegen::isa::CallConv;
 use cranelift::module::{FuncId, Linkage, Module};
 use cranelift::object::ObjectModule;
 use souther_native_abi::{
+    DECIMAL_LITERAL, LIST_DUPLICATES, READ_DECIMAL_MAX, READ_DECIMAL_MIN,
+    READ_DECIMAL_NON_NEGATIVE, READ_DECIMAL_POSITIVE, READ_DUPLICATES, READ_FIXED_LENGTH,
+    READ_INT_MAX, READ_INT_MIN, READ_INT_NON_NEGATIVE, READ_INT_POSITIVE, READ_LIST_FIXED_SIZE,
+    READ_LIST_MAX_SIZE, READ_LIST_MIN_SIZE, READ_LIST_NON_EMPTY, READ_MAP_MAX_SIZE,
+    READ_MAP_MIN_SIZE, READ_MAP_NON_EMPTY, READ_MAX_LENGTH, READ_MIN_LENGTH, READ_PATTERN,
+};
+use souther_native_abi::{
     DECODE_ABANDON, DECODE_BEGIN, DECODE_END, DECODE_HOST_BEGIN, DECODE_ROOT, EXTERNAL_APPEND,
     EXTERNAL_ARRAY, EXTERNAL_BOOL, EXTERNAL_DATE, EXTERNAL_DATETIME, EXTERNAL_DECIMAL,
     EXTERNAL_INSTANT, EXTERNAL_INT, EXTERNAL_JSON, EXTERNAL_NULL, EXTERNAL_OBJECT, EXTERNAL_PUT,
@@ -224,6 +231,28 @@ pub(crate) enum Runtime {
     MapEmpty,
     MapContainsKey,
     MapInsert,
+    ReadMinLength,
+    ReadMaxLength,
+    ReadFixedLength,
+    ReadPattern,
+    ReadIntMin,
+    ReadIntMax,
+    ReadIntPositive,
+    ReadIntNonNegative,
+    ReadDecimalMin,
+    ReadDecimalMax,
+    ReadDecimalPositive,
+    ReadDecimalNonNegative,
+    ReadListNonEmpty,
+    ReadListMinSize,
+    ReadListMaxSize,
+    ReadListFixedSize,
+    ListDuplicates,
+    ReadDuplicates,
+    ReadMapNonEmpty,
+    ReadMapMinSize,
+    ReadMapMaxSize,
+    DecimalLiteral,
 }
 
 impl Runtime {
@@ -283,6 +312,28 @@ impl Runtime {
             Runtime::MapEmpty => MAP_EMPTY,
             Runtime::MapContainsKey => MAP_CONTAINS_KEY,
             Runtime::MapInsert => MAP_INSERT,
+            Runtime::ReadMinLength => READ_MIN_LENGTH,
+            Runtime::ReadMaxLength => READ_MAX_LENGTH,
+            Runtime::ReadFixedLength => READ_FIXED_LENGTH,
+            Runtime::ReadPattern => READ_PATTERN,
+            Runtime::ReadIntMin => READ_INT_MIN,
+            Runtime::ReadIntMax => READ_INT_MAX,
+            Runtime::ReadIntPositive => READ_INT_POSITIVE,
+            Runtime::ReadIntNonNegative => READ_INT_NON_NEGATIVE,
+            Runtime::ReadDecimalMin => READ_DECIMAL_MIN,
+            Runtime::ReadDecimalMax => READ_DECIMAL_MAX,
+            Runtime::ReadDecimalPositive => READ_DECIMAL_POSITIVE,
+            Runtime::ReadDecimalNonNegative => READ_DECIMAL_NON_NEGATIVE,
+            Runtime::ReadListNonEmpty => READ_LIST_NON_EMPTY,
+            Runtime::ReadListMinSize => READ_LIST_MIN_SIZE,
+            Runtime::ReadListMaxSize => READ_LIST_MAX_SIZE,
+            Runtime::ReadListFixedSize => READ_LIST_FIXED_SIZE,
+            Runtime::ListDuplicates => LIST_DUPLICATES,
+            Runtime::ReadDuplicates => READ_DUPLICATES,
+            Runtime::ReadMapNonEmpty => READ_MAP_NON_EMPTY,
+            Runtime::ReadMapMinSize => READ_MAP_MIN_SIZE,
+            Runtime::ReadMapMaxSize => READ_MAP_MAX_SIZE,
+            Runtime::DecimalLiteral => DECIMAL_LITERAL,
         }
     }
 }

@@ -12,8 +12,9 @@ import java.util.Map;
  * <p>A host binding's view and nothing more: the decoder and the encoder a module publishes for a
  * type, and the runtime's functions a reading is asked through. What a line says is {@code value}
  * and the value written back by the type's encoder, {@code issues} and each issue as {@code @path
- * code key=value…}, {@code malformed at} and the offset, or {@code status} and a status that is
- * not {@code ANSWERED}.
+ * code}, then {@code key=} and its message key where that is not its code, then its metadata as the
+ * JSON object it is where that says anything; {@code malformed at} and the offset, or
+ * {@code status} and a status that is not {@code ANSWERED}.
  */
 final class Decoding {
 
@@ -66,16 +67,21 @@ final class Decoding {
                 extern int64_t souther_decoded_issue_count(Value);
                 extern Value souther_decoded_issue(Value, int64_t);
                 extern Value souther_issue_code(Value);
+                extern Value souther_issue_message_key(Value);
                 extern Value souther_issue_path(Value);
-                extern int64_t souther_issue_meta_count(Value);
-                extern Value souther_issue_meta_key(Value, int64_t);
-                extern Value souther_issue_meta_value(Value, int64_t);
+                extern Value souther_issue_meta(Value);
 
                 typedef uint32_t (*Decode)(const uint8_t *, int64_t, Value *);
                 typedef Value (*Encode)(Value);
 
                 static void text(Value s) {
                     printf("%.*s", (int) souther_string_length(s), (const char *) souther_string_bytes(s));
+                }
+
+                static int same(Value a, Value b) {
+                    return souther_string_length(a) == souther_string_length(b)
+                        && memcmp(souther_string_bytes(a), souther_string_bytes(b),
+                                  (size_t) souther_string_length(a)) == 0;
                 }
 
                 static void report(const char *label, Decode decode, Encode encode,
@@ -102,11 +108,14 @@ final class Decoding {
                             text(souther_issue_path(issue));
                             printf(" ");
                             text(souther_issue_code(issue));
-                            for (int64_t entry = 0; entry < souther_issue_meta_count(issue); entry++) {
+                            if (!same(souther_issue_code(issue), souther_issue_message_key(issue))) {
+                                printf(" key=");
+                                text(souther_issue_message_key(issue));
+                            }
+                            Value meta = souther_issue_meta(issue);
+                            if (souther_string_length(meta) != 2) {
                                 printf(" ");
-                                text(souther_issue_meta_key(issue, entry));
-                                printf("=");
-                                text(souther_issue_meta_value(issue, entry));
+                                text(meta);
                             }
                             printf("]");
                         }

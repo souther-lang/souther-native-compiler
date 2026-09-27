@@ -17,8 +17,9 @@ pub enum Form {
     Null,
     Bool(bool),
     Number(i64),
-    /// A `Decimal`, as the text its amount is written as.
-    Amount(String),
+    /// A `Decimal`, as the value it is, scale and all: how it is written is the writer's to say,
+    /// its amount at a boundary and its scale kept in an issue's metadata ([`Written`]).
+    Amount(Amount),
     String(Vec<u8>),
     Array(Vec<Form>),
     /// Members in the order they were put, a key given twice kept twice: the code that builds an
@@ -162,12 +163,12 @@ fn units(bytes: &[u8]) -> Vec<u16> {
 }
 
 /// What ordering a set's members asks of each part of them, worked out once: every text's UTF-16
-/// code units, every written amount read as one, and every object's members in ascending key order.
+/// code units, and every object's members in ascending key order. An amount is the value it is
+/// already, and is read off its form.
 /// By where each part stands, which does not move while the members are ordered.
 #[derive(Default)]
 struct Prepared {
     units: HashMap<*const Vec<u8>, Vec<u16>>,
-    amounts: HashMap<*const Form, Amount>,
     by_key: HashMap<*const Form, Vec<usize>>,
 }
 
@@ -180,11 +181,6 @@ impl Prepared {
             match form {
                 Form::String(text) => {
                     placed(&mut prepared.units, text, units(text));
-                }
-                Form::Amount(written) => {
-                    let amount = Amount::of_json_number(written.as_bytes())
-                        .expect("an amount is written as a JSON number");
-                    placed(&mut prepared.amounts, form, amount);
                 }
                 Form::Array(items) => left.extend(items),
                 Form::Object(members) => {
@@ -199,7 +195,7 @@ impl Prepared {
                     });
                     placed(&mut prepared.by_key, form, sorted);
                 }
-                Form::Null | Form::Bool(_) | Form::Number(_) => {}
+                Form::Null | Form::Bool(_) | Form::Number(_) | Form::Amount(_) => {}
             }
         }
         prepared
@@ -212,7 +208,7 @@ impl Prepared {
     fn amount(&self, form: &Form) -> Amount {
         match form {
             Form::Number(value) => Amount::of_int(*value),
-            Form::Amount(_) => self.amounts[&std::ptr::from_ref(form)].clone(),
+            Form::Amount(amount) => amount.clone(),
             other => unreachable!("{other:?} is no number"),
         }
     }
@@ -311,7 +307,7 @@ fn order(one: &Form, other: &Form, prepared: &Prepared) -> Ordering {
 pub unsafe extern "C" fn souther_external_json(root: *mut Form) -> *mut Text {
     let root = unsafe { taken(root) };
     let mut written = Vec::new();
-    write(&root, &mut written);
+    write(&root, &mut written, Written::AtABoundary);
     string_of(std::str::from_utf8(&written).expect("JSON written of text is text"))
 }
 
@@ -322,9 +318,20 @@ enum Step<'a> {
     Punctuation(&'static [u8]),
 }
 
+/// What a tree is written as JSON for, which decides how a `Decimal` in it is written.
+#[derive(Clone, Copy)]
+pub(crate) enum Written {
+    /// A value crossing a boundary: a `Decimal` as its amount, whatever scale it was read or
+    /// worked out at (spec §primitives), as the JVM's boundary writes one.
+    AtABoundary,
+    /// Raoh's metadata of an issue, which holds each value as the value it is: a `Decimal` at its
+    /// scale, as a `BigDecimal` in the JVM's issue is (`1.50`, not `1.5`).
+    AsMetadata,
+}
+
 /// The tree as JSON, walked with a stack of its own rather than a frame per level, so how deep a
 /// value may be is not a question about the native stack.
-fn write(root: &Form, out: &mut Vec<u8>) {
+pub(crate) fn write(root: &Form, out: &mut Vec<u8>, written: Written) {
     let mut left = vec![Step::Form(root)];
     while let Some(step) = left.pop() {
         match step {
@@ -337,7 +344,13 @@ fn write(root: &Form, out: &mut Vec<u8>) {
             Step::Form(Form::Bool(true)) => out.extend_from_slice(b"true"),
             Step::Form(Form::Bool(false)) => out.extend_from_slice(b"false"),
             Step::Form(Form::Number(value)) => out.extend_from_slice(value.to_string().as_bytes()),
-            Step::Form(Form::Amount(written)) => out.extend_from_slice(written.as_bytes()),
+            Step::Form(Form::Amount(amount)) => out.extend_from_slice(
+                match written {
+                    Written::AtABoundary => amount.external_text(),
+                    Written::AsMetadata => amount.scaled_text(),
+                }
+                .as_bytes(),
+            ),
             Step::Form(Form::String(text)) => quoted(text, out),
             // What follows the opening is pushed last-first, so it comes off in the order written.
             Step::Form(Form::Array(items)) => {
@@ -430,7 +443,7 @@ mod tests {
             Form::String("\u{ff61}".as_bytes().to_vec()),
             Form::String("\u{10000}".as_bytes().to_vec()),
             Form::String(b"a".to_vec()),
-            Form::Amount("2.5".to_string()),
+            Form::Amount(Amount::of_json_number(b"2.5").expect("a number")),
             Form::Number(10),
             Form::Number(-3),
             Form::Bool(true),

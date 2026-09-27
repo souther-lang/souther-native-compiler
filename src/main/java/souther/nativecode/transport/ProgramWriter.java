@@ -3,10 +3,12 @@ package souther.nativecode.transport;
 import souther.compiler.abort.AbortKind;
 import souther.compiler.abort.AbortSet;
 import souther.compiler.check.CallElaborator;
+import souther.compiler.core.BoundaryConstraint;
 import souther.compiler.core.Composition;
 import souther.compiler.core.Contract;
 import souther.compiler.core.Core;
 import souther.compiler.core.EnsuresEnforcement;
+import souther.compiler.core.ConstraintProjection;
 import souther.compiler.core.Kernel;
 import souther.compiler.diag.Region;
 import souther.compiler.core.ValueShape;
@@ -95,7 +97,7 @@ public final class ProgramWriter {
      * written moves, so that a driver and a writer that disagree say so rather than producing an
      * object that is wrong quietly.
      */
-    public static final int TRANSPORT_VERSION = 28;
+    public static final int TRANSPORT_VERSION = 30;
 
     private final CheckedProgram program;
 
@@ -418,8 +420,8 @@ public final class ProgramWriter {
 
     /**
      * Every clause a value of this has to hold, in the order a failure is decided in: the name it
-     * is reported under, where the author gave one, and the condition as the checker elaborated
-     * it over the fields' bindings.
+     * is reported under, where the author gave one, the condition as the checker elaborated it over
+     * the fields' bindings, and what the clause is as standard constraints on the data's one field.
      *
      * <p>Every clause that applies and not the ones this declaration wrote, since a spread carries
      * the clauses of what it takes in, and the checker has already said which those are.
@@ -429,9 +431,67 @@ public final class ProgramWriter {
         for (ValueShape.Invariant clause : held.invariants()) {
             String name = clause.name().map(ProgramWriter::quoted).orElse("null");
             written.add("{\"name\":" + name
-                    + ",\"condition\":" + core(clause.condition(), bindings) + "}");
+                    + ",\"condition\":" + core(clause.condition(), bindings)
+                    + ",\"projection\":" + projection(clause.projection()) + "}");
         }
         return written.toString();
+    }
+
+    /**
+     * What a clause is as standard constraints on the data's one field, as the checker found it
+     * ({@link ConstraintProjection}): the constraints parts of it are, in the order they are
+     * written, and whether they are the whole of it. A fact about the clause, written for a newtype
+     * and a product alike; which of them a decoder checks the constraints of is the reader's, by
+     * the declaration's form.
+     */
+    private String projection(ConstraintProjection projection) {
+        StringJoiner constraints = new StringJoiner(",", "[", "]");
+        for (BoundaryConstraint constraint : projection.constraints()) {
+            constraints.add(constraint(constraint));
+        }
+        return "{\"constraints\":" + constraints + ",\"complete\":" + projection.complete() + "}";
+    }
+
+    /**
+     * One constraint, as what it is and its bound. Every one of them is named here and none by a
+     * default, so a constraint added to the language is one this has to spell before it compiles.
+     * A pattern crosses as what it matches, as the checker read it, beside the text it was written
+     * as, the way a {@code String.matches} pattern does; a {@code Decimal} bound as its integer and
+     * its scale, the way a literal does.
+     */
+    private static String constraint(BoundaryConstraint constraint) {
+        return switch (constraint) {
+            case BoundaryConstraint.MinLength it -> bounded("minlength", it.n());
+            case BoundaryConstraint.MaxLength it -> bounded("maxlength", it.n());
+            case BoundaryConstraint.FixedLength it -> bounded("fixedlength", it.n());
+            case BoundaryConstraint.Pattern it -> "{\"is\":\"pattern\",\"written\":"
+                    + quoted(it.written()) + ",\"meaning\":" + meaning(it.meaning()) + "}";
+            case BoundaryConstraint.Min it -> bounded("min", it.n());
+            case BoundaryConstraint.Max it -> bounded("max", it.n());
+            case BoundaryConstraint.Positive it -> "{\"is\":\"positive\"}";
+            case BoundaryConstraint.NonNegative it -> "{\"is\":\"nonnegative\"}";
+            case BoundaryConstraint.DecimalMin it -> decimalBound("decimalmin", it.n());
+            case BoundaryConstraint.DecimalMax it -> decimalBound("decimalmax", it.n());
+            case BoundaryConstraint.DecimalPositive it -> "{\"is\":\"decimalpositive\"}";
+            case BoundaryConstraint.DecimalNonNegative it -> "{\"is\":\"decimalnonnegative\"}";
+            case BoundaryConstraint.NonEmpty it -> "{\"is\":\"nonempty\"}";
+            case BoundaryConstraint.MinSize it -> bounded("minsize", it.n());
+            case BoundaryConstraint.MaxSize it -> bounded("maxsize", it.n());
+            case BoundaryConstraint.FixedSize it -> bounded("fixedsize", it.n());
+            case BoundaryConstraint.Unique it -> "{\"is\":\"unique\"}";
+            case BoundaryConstraint.MapNonEmpty it -> "{\"is\":\"mapnonempty\"}";
+            case BoundaryConstraint.MapMinSize it -> bounded("mapminsize", it.n());
+            case BoundaryConstraint.MapMaxSize it -> bounded("mapmaxsize", it.n());
+        };
+    }
+
+    private static String bounded(String is, long n) {
+        return "{\"is\":" + quoted(is) + ",\"n\":" + n + "}";
+    }
+
+    private static String decimalBound(String is, java.math.BigDecimal n) {
+        return "{\"is\":" + quoted(is) + ",\"n\":{\"unscaled\":"
+                + quoted(n.unscaledValue().toString()) + ",\"scale\":" + n.scale() + "}}";
     }
 
     /**
@@ -1593,16 +1653,6 @@ public final class ProgramWriter {
     }
 
     /**
-     * What the operands are ordered by, for an operator that orders them: itself for a number or
-     * text, and the one enumeration that places them for a case or a union of cases. The checker's
-     * own answer, and not something a backend works out again from the operands' types once this
-     * crosses.
-     */
-    private String ordering(Optional<Core.OrderingBasis> ordering) {
-        return ordering.map(it -> type(it.type())).orElse("null");
-    }
-
-    /**
      * A kernel the call reaches, with what this application of it takes each argument as and what
      * else the checker settled about it. The kernel's own signature has type variables, and what
      * they came to here is the checker's answer, not something to substitute again downstream.
@@ -1721,21 +1771,45 @@ public final class ProgramWriter {
             for (ResolvedCase selected : arm.pattern().cases()) {
                 selects.add(selects(selected));
             }
-            String binding = arm.binder() == null
-                    ? "null"
-                    : Integer.toString(bindings.number(arm.binder().binding()));
-            // What the value is read as inside the arm, which the checker settled and nothing
-            // downstream can work out from what the arm tests: an optional's present carrier is
-            // tested the same way whatever it holds. Core.Case#bindType() answers this off the
-            // binding itself (Unbound, Selected, or Payload), so an arm that binds nothing is
-            // never a case of one that binds something the checker gave no type for.
-            String binds = arm.bindType() == null ? "null" : type(arm.bindType());
-            arms.add("{\"selects\":" + selects + ",\"binding\":" + binding + ",\"binds\":" + binds
+            arms.add("{\"selects\":" + selects + ",\"binding\":" + binding(arm.binding(), bindings)
                     + ",\"body\":" + core(arm.body(), bindings) + "}");
         }
         return "{\"core\":\"match\",\"subject\":" + core(it.scrutinee(), bindings)
                 + ",\"arms\":" + arms + ",\"type\":" + type(it.type())
                 + ",\"aborts\":" + aborts(it) + "}";
+    }
+
+    /**
+     * The name an arm introduces, which value it stands for, and what it is read as, all three the
+     * checker's ({@link Core.ArmBinding}).
+     *
+     * <p>Which value is written out rather than left to be read off what the arm tests. The same
+     * test is named as the matched value or as what its carrier holds depending on what was
+     * written, so a reader working it out from the test would be answering a question the checker
+     * already answered, and could answer it another way: {@code None as n} names the optional
+     * itself, and {@code Some v} what the optional holds.
+     */
+    private String binding(Core.ArmBinding binding, Bindings bindings) {
+        return switch (binding) {
+            case Core.ArmBinding.Unbound it -> "null";
+            case Core.ArmBinding.Selected it -> "{\"stands\":\"selected\",\"number\":"
+                    + bindings.number(it.binder().binding()) + ",\"as\":" + type(it.type()) + "}";
+            case Core.ArmBinding.Payload it -> "{\"stands\":\"payload\",\"number\":"
+                    + bindings.number(it.binder().binding()) + ",\"as\":" + type(it.type()) + "}";
+        };
+    }
+
+    /**
+     * The type whose order a comparison or a sort places its values on, as the checker settled it
+     * ({@link Core.OrderingBasis}), or null where nothing is ordered.
+     *
+     * <p>Written as the type it is, so an enumeration that orders a case is a declaration this
+     * document carries whether or not anything else names it: which enumeration places a case is
+     * the checker's answer, and a reader looking for it among the declarations it happened to be
+     * handed would be asking the question again with less than the checker had.
+     */
+    private String ordering(Optional<Core.OrderingBasis> basis) {
+        return basis.map(it -> type(it.type())).orElse("null");
     }
 
     /** What one case of an arm tests for, and what it leaves to be read. */

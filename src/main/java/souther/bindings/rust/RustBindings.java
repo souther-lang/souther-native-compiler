@@ -98,10 +98,9 @@ public final class RustBindings {
         add.accept("souther_decoded_issue_count", List.of(Word.DECODED, Word.COUNT));
         add.accept("souther_decoded_issue", List.of(Word.DECODED, Word.COUNT, Word.ISSUE));
         add.accept("souther_issue_code", List.of(Word.ISSUE, Word.STRING));
+        add.accept("souther_issue_message_key", List.of(Word.ISSUE, Word.STRING));
         add.accept("souther_issue_path", List.of(Word.ISSUE, Word.STRING));
-        add.accept("souther_issue_meta_count", List.of(Word.ISSUE, Word.COUNT));
-        add.accept("souther_issue_meta_key", List.of(Word.ISSUE, Word.COUNT, Word.STRING));
-        add.accept("souther_issue_meta_value", List.of(Word.ISSUE, Word.COUNT, Word.STRING));
+        add.accept("souther_issue_meta", List.of(Word.ISSUE, Word.STRING));
         return Map.copyOf(functions);
     }
 

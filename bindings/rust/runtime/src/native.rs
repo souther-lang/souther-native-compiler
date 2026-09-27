@@ -161,10 +161,9 @@ pub struct Words {
     decoded_issue_count: Of<Word, i64>,
     decoded_issue: Of2<Word, i64, Word>,
     issue_code: Of<Word, Word>,
+    issue_message_key: Of<Word, Word>,
     issue_path: Of<Word, Word>,
-    issue_meta_count: Of<Word, i64>,
-    issue_meta_key: Of2<Word, i64, Word>,
-    issue_meta_value: Of2<Word, i64, Word>,
+    issue_meta: Of<Word, Word>,
     value: i32,
     issues: i32,
 }
@@ -215,10 +214,9 @@ impl Words {
                 decoded_issue_count: library.function("souther_decoded_issue_count")?,
                 decoded_issue: library.function("souther_decoded_issue")?,
                 issue_code: library.function("souther_issue_code")?,
+                issue_message_key: library.function("souther_issue_message_key")?,
                 issue_path: library.function("souther_issue_path")?,
-                issue_meta_count: library.function("souther_issue_meta_count")?,
-                issue_meta_key: library.function("souther_issue_meta_key")?,
-                issue_meta_value: library.function("souther_issue_meta_value")?,
+                issue_meta: library.function("souther_issue_meta")?,
                 value: outcome("VALUE")?,
                 issues: outcome("ISSUES")?,
             })
@@ -381,8 +379,9 @@ impl Words {
         }
     }
 
-    /// One issue a reading found, as Raoh holds one. The codes are Raoh's already; the library
-    /// gives no message, so the message is the code's until something resolves it.
+    /// One issue a reading found, as Raoh holds one. The code, the message key and the metadata
+    /// are Raoh's already, so this changes how they are held and not what they say; the library
+    /// gives no message, and a resolver words one by the key.
     ///
     /// # Safety
     ///
@@ -391,14 +390,19 @@ impl Words {
         // SAFETY: what the caller says.
         unsafe {
             let code = self.text((self.issue_code)(issue));
+            let key = self.text((self.issue_message_key)(issue));
             let path = self.text((self.issue_path)(issue));
+            let meta = self.text((self.issue_meta)(issue));
+            let serde_json::Value::Object(meta) =
+                serde_json::from_str(&meta).expect("the library writes metadata as JSON")
+            else {
+                panic!("the library writes metadata as a JSON object, and wrote {meta}");
+            };
             let mut made = raoh::Issue::new(code)
+                .with_message_key(key)
                 .at(raoh::Pointer::parse(&path).expect("the library writes a JSON Pointer"));
-            for entry in 0..(self.issue_meta_count)(issue) {
-                made = made.with_meta(
-                    self.text((self.issue_meta_key)(issue, entry)),
-                    self.text((self.issue_meta_value)(issue, entry)),
-                );
+            for (name, said) in meta {
+                made = made.with_meta(name, said);
             }
             made
         }

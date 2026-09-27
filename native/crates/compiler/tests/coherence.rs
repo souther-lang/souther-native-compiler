@@ -32,7 +32,7 @@ const P: &str = r#"{"ref":{"is":"declared","declared":"m.P"}}"#;
 fn document(behaviors: &[String], helpers: &[String], definitions: &[String]) -> String {
     format!(
         concat!(
-            r#"{{"transport":{},"declarations":["#,
+            r#"{{"transport":{transport},"declarations":["#,
             r#"{{"module":"m","name":"A","by":"amodule","is":"unit"}},"#,
             r#"{{"module":"m","name":"B","by":"amodule","is":"unit"}},"#,
             r#"{{"module":"m","name":"S","by":"amodule","is":"sum","#,
@@ -46,10 +46,10 @@ fn document(behaviors: &[String], helpers: &[String], definitions: &[String]) ->
             r#""modules":[{{"name":"m","publishes":[],"helpers":[{}],"values":[],"entries":[],"definitions":[{}],"#,
             r#""examples":[]}}]}}"#
         ),
-        TRANSPORT_VERSION,
         behaviors.join(","),
         helpers.join(","),
-        definitions.join(",")
+        definitions.join(","),
+        transport = TRANSPORT_VERSION,
     )
 }
 
@@ -174,12 +174,19 @@ fn which(atoms: &[&str]) -> String {
     format!(r#"{{"tests":"which","atoms":[{}]}}"#, atoms.join(","))
 }
 
-fn arm(selects: &str, binding: Option<(usize, &str)>, body: &str) -> String {
-    let (binding, binds) = match binding {
-        Some((number, ty)) => (number.to_string(), ty.to_string()),
-        None => ("null".to_string(), "null".to_string()),
-    };
-    format!(r#"{{"selects":[{selects}],"binding":{binding},"binds":{binds},"body":{body}}}"#)
+fn arm(selects: &str, binding: Option<String>, body: &str) -> String {
+    let binding = binding.unwrap_or_else(|| "null".to_string());
+    format!(r#"{{"selects":[{selects}],"binding":{binding},"body":{body}}}"#)
+}
+
+/// A name for what an optional's present carrier holds, read under `number` as `ty`.
+fn payload(number: usize, ty: &str) -> String {
+    format!(r#"{{"stands":"payload","number":{number},"as":{ty}}}"#)
+}
+
+/// A name for the value an arm matched, read under `number` as `ty`.
+fn selected(number: usize, ty: &str) -> String {
+    format!(r#"{{"stands":"selected","number":{number},"as":{ty}}}"#)
 }
 
 fn reads_whole(document: &str) {
@@ -389,7 +396,7 @@ fn an_arm_binds_every_case_it_tests() {
             &format!(
                 r#""subject":{},"arms":[{}]"#,
                 read(0, S),
-                arm(&which(tests), Some((1, A)), &read(1, A))
+                arm(&which(tests), Some(selected(1, A)), &read(1, A))
             ),
             A,
         )
@@ -413,7 +420,7 @@ fn a_case_is_tested_only_of_a_union_or_a_sum() {
                 read(0, subject),
                 arm(
                     &format!(r#"{{"tests":"which","atoms":[{atom}]}}"#),
-                    Some((1, binds)),
+                    Some(selected(1, binds)),
                     &int(0)
                 )
             ),
@@ -459,7 +466,11 @@ fn an_arm_reads_a_present_value_as_what_the_optional_holds() {
             &format!(
                 r#""subject":{},"arms":[{},{}]"#,
                 read(0, &optional),
-                arm(r#"{"tests":"held"}"#, Some((1, binds)), &read(1, binds)),
+                arm(
+                    r#"{"tests":"held"}"#,
+                    Some(payload(1, binds)),
+                    &read(1, binds)
+                ),
                 arm(r#"{"tests":"nothing"}"#, None, &widen(&unit("m.A"), S))
             ),
             S,
@@ -469,37 +480,37 @@ fn an_arm_reads_a_present_value_as_what_the_optional_holds() {
     is_the_halves_disagreeing(&helpers(&[h(&[&optional], &fork(A))]), "m.h");
 }
 
-/// An arm binds what each of its tests leaves to read. A test that an optional holds nothing
-/// leaves nothing under it, so an arm binding a value there binds the optional itself, the same as
-/// an arm naming a case it tests binds the subject rather than what a case carries; and an arm
-/// testing for `None` among the cases of a union binds the value as one of those cases, the way an
-/// arm testing for declared cases does.
+/// An arm's name stands for what the checker says it does (`Core.ArmBinding`). A test that an
+/// optional holds nothing leaves nothing under its carrier, so a name there is for the optional
+/// itself (`None as n`) and is read as the optional; read as what the optional would hold, the two
+/// halves disagree. An arm testing for `None` among the cases of a union names the value as one of
+/// those cases, the way an arm testing for declared cases does.
 #[test]
 fn an_arm_binds_what_each_of_its_tests_leaves_to_read() {
     let optional = option_of(S);
-    let binds_the_optional_itself = |binds: &str| {
+    let naming_nothing = |binding: Option<String>| {
         node(
             "match",
             &format!(
                 r#""subject":{},"arms":[{},{}]"#,
                 read(0, &optional),
-                arm(r#"{"tests":"held"}"#, Some((1, S)), &read(1, S)),
-                arm(
-                    r#"{"tests":"nothing"}"#,
-                    Some((2, binds)),
-                    &widen(&unit("m.A"), S)
-                )
+                arm(r#"{"tests":"held"}"#, Some(payload(1, S)), &read(1, S)),
+                arm(r#"{"tests":"nothing"}"#, binding, &widen(&unit("m.A"), S))
             ),
             S,
         )
     };
     reads_whole(&helpers(&[h(
         &[&optional],
-        &binds_the_optional_itself(&optional),
+        &naming_nothing(Some(selected(2, &optional))),
     )]));
     is_the_halves_disagreeing(
-        &helpers(&[h(&[&optional], &binds_the_optional_itself(S))]),
-        "m.h",
+        &helpers(&[h(&[&optional], &naming_nothing(Some(selected(2, S))))]),
+        "the value the match is over",
+    );
+    is_the_halves_disagreeing(
+        &helpers(&[h(&[&optional], &naming_nothing(Some(payload(2, S))))]),
+        "does not test for one present carrier",
     );
 
     let none = r#"{"is":"language","case":"NONE"}"#;
@@ -514,7 +525,7 @@ fn an_arm_binds_what_each_of_its_tests_leaves_to_read() {
             read(0, &union),
             arm(
                 &format!(r#"{{"tests":"which","atoms":[{none},{a_case}]}}"#),
-                Some((1, &tested)),
+                Some(selected(1, &tested)),
                 &int(1)
             ),
             arm(&which(&["m.B"]), None, &int(2)),
@@ -1296,20 +1307,27 @@ fn a_module_builds_only_the_values_it_declares() {
     );
 }
 
-/// An entry is for a value its module builds. One for a value `m` does not build, whatever its
-/// body answers, would export `m.v`'s symbol with nothing of `m`'s behind it.
+/// An entry is for a value its module declares (ADR-0074), which is not always one it builds: a
+/// constant folds into what reads it, has no place to run, and its entry answers what it folds to.
+/// One for a value another module declares would export that module's symbol from `m`'s object.
 #[test]
-fn a_module_publishes_entries_only_for_the_values_it_builds() {
-    let answering = format!(
-        r#"{{"value":{{"module":"m","name":"v"}},"body":{}}}"#,
-        int(1)
-    );
+fn a_module_publishes_entries_only_for_the_values_it_declares() {
+    let answering = |module: &str| {
+        format!(
+            r#"{{"value":{{"module":"{module}","name":"v"}},"body":{}}}"#,
+            int(1)
+        )
+    };
     reads_whole(&owning(
         &helpers(&[]),
         &[value("m", "v")],
         &[entry("m", "v")],
     ));
-    is_the_halves_disagreeing(&owning(&helpers(&[]), &[], &[answering]), "m.v");
+    reads_whole(&owning(&helpers(&[]), &[], &[answering("m")]));
+    is_the_halves_disagreeing(
+        &owning(&helpers(&[]), &[], &[answering("other")]),
+        "other.v, which another module declares",
+    );
 }
 
 /// A helper and a value are two kinds of definition, and a module holds none of one name as both.
@@ -1709,17 +1727,17 @@ fn a_concat_names_the_one_reason_it_can_end_for() {
 fn with_clauses(fields: &str, invariants: &str, helpers: &[String]) -> String {
     format!(
         concat!(
-            r#"{{"transport":{},"declarations":["#,
+            r#"{{"transport":{transport},"declarations":["#,
             r#"{{"module":"m","name":"R","by":"amodule","is":"product","#,
             r#""fields":[{}],"invariants":[{}]}}],"#,
             r#""behaviors":[],"#,
             r#""modules":[{{"name":"m","publishes":[],"helpers":[{}],"values":[],"entries":[],"definitions":[],"#,
             r#""examples":[]}}]}}"#
         ),
-        TRANSPORT_VERSION,
         fields,
         invariants,
-        helpers.join(",")
+        helpers.join(","),
+        transport = TRANSPORT_VERSION,
     )
 }
 
@@ -1731,7 +1749,9 @@ fn field(name: &str, binding: usize, scalar: &str) -> String {
 
 fn clause(name: Option<&str>, condition: &str) -> String {
     let name = name.map_or("null".to_string(), |it| format!(r#""{it}""#));
-    format!(r#"{{"name":{name},"condition":{condition}}}"#)
+    format!(
+        r#"{{"name":{name},"condition":{condition},"projection":{{"constraints":[],"complete":false}}}}"#
+    )
 }
 
 fn at_least(left: &str, right: &str) -> String {
@@ -1742,6 +1762,103 @@ fn at_least(left: &str, right: &str) -> String {
         ),
         BOOL,
     )
+}
+
+/// A clause the checker states as `constraints`, `complete` or not.
+fn stated(condition: &str, constraints: &str, complete: bool) -> String {
+    format!(
+        r#"{{"name":null,"condition":{condition},"projection":{{"constraints":[{constraints}],"complete":{complete}}}}}"#
+    )
+}
+
+/// What a clause is as standard constraints is about the one field of a data made of one, and of
+/// that field's type (`ConstraintProjection`): a data of more than one field has no one field for
+/// a constraint to be about, an `Int`'s bound is not a `String`'s, and a clause is never the whole
+/// of no constraint. A pattern is one the checker read, and a `Decimal` bound an integer and a scale.
+#[test]
+fn what_a_clause_is_as_constraints_is_about_its_datas_one_field() {
+    let holds = at_least(&read(0, INT), &int(0));
+    let one = field("count", 0, "INT");
+    let text = field("name", 0, "STRING");
+    let money = field("amount", 0, "DECIMAL");
+    let two = [field("count", 0, "INT"), field("other", 1, "INT")].join(",");
+    let nought = r#"{"is":"nonnegative"}"#;
+    let long = r#"{"is":"minlength","n":3}"#;
+
+    reads_whole(&with_clauses(&one, &stated(&holds, nought, true), &[]));
+    reads_whole(&with_clauses(&one, &stated(&holds, nought, false), &[]));
+    is_the_halves_disagreeing(
+        &with_clauses(&two, &stated(&holds, nought, true), &[]),
+        "and m.R has 2",
+    );
+    is_the_halves_disagreeing(
+        &with_clauses(&one, &stated(&holds, long, true), &[]),
+        "which is not about a Int",
+    );
+    is_the_halves_disagreeing(
+        &with_clauses(&one, &stated(&holds, "", true), &[]),
+        "the whole of no constraint",
+    );
+    let truth = node(
+        "binary",
+        &format!(
+            r#""op":"EQ","reading":{{"is":"astheystand"}},"ordering":null,"left":{},"right":{}"#,
+            read(0, STRING),
+            read(0, STRING)
+        ),
+        BOOL,
+    );
+    reads_whole(&with_clauses(
+        &text,
+        &stated(
+            &truth,
+            r#"{"is":"pattern","written":"a","meaning":[{"is":"nothing"}]}"#,
+            false,
+        ),
+        &[],
+    ));
+    is_the_halves_disagreeing(
+        &with_clauses(
+            &text,
+            &stated(
+                &truth,
+                r#"{"is":"pattern","written":"a","meaning":[]}"#,
+                false,
+            ),
+            &[],
+        ),
+        "means what no reading of a pattern is",
+    );
+    let same = node(
+        "binary",
+        &format!(
+            r#""op":"EQ","reading":{{"is":"astheystand"}},"ordering":null,"left":{},"right":{}"#,
+            read(0, DECIMAL),
+            read(0, DECIMAL)
+        ),
+        BOOL,
+    );
+    reads_whole(&with_clauses(
+        &money,
+        &stated(
+            &same,
+            r#"{"is":"decimalmin","n":{"unscaled":"-150","scale":2}}"#,
+            false,
+        ),
+        &[],
+    ));
+    is_the_halves_disagreeing(
+        &with_clauses(
+            &money,
+            &stated(
+                &same,
+                r#"{"is":"decimalmin","n":{"unscaled":"1.5","scale":2}}"#,
+                false,
+            ),
+            &[],
+        ),
+        "which is no integer",
+    );
 }
 
 /// A clause reads each field under the binding the field is bound at, which need not be where the
@@ -2133,7 +2250,7 @@ fn every_type_a_node_writes_is_one_the_document_declares() {
 
     // What a kernel's application was settled against.
     let ordering = format!(
-        r#"{{"is":"kernel","kernel":"list.sort","takes":[],"fact":{{"is":"orderingsubject","type":{missing}}}}}"#
+        r#"{{"is":"kernel","kernel":"list.sort","takes":[],"fact":{{"is":"orderingsubject","type":{missing},"ordering":{missing}}}}}"#
     );
     refuses(call(&ordering, &[], INT), &[]);
 
@@ -2168,7 +2285,7 @@ fn every_type_a_node_writes_is_one_the_document_declares() {
             &format!(
                 r#""subject":{},"arms":[{},{}]"#,
                 read(0, &optional),
-                arm(r#"{"tests":"held"}"#, Some((1, missing)), &int(1)),
+                arm(r#"{"tests":"held"}"#, Some(payload(1, missing)), &int(1)),
                 arm(r#"{"tests":"nothing"}"#, None, &int(2))
             ),
             INT,
@@ -2204,7 +2321,9 @@ fn a_kernel_settles_what_this_backend_knows_it_settles() {
         "settles",
     );
     is_the_halves_disagreeing(
-        &document(&format!(r#"{{"is":"orderingsubject","type":{INT}}}"#)),
+        &document(&format!(
+            r#"{{"is":"orderingsubject","type":{INT},"ordering":{INT}}}"#
+        )),
         "settles",
     );
 
@@ -2216,7 +2335,7 @@ fn a_kernel_settles_what_this_backend_knows_it_settles() {
     let shuffling = node(
         "call",
         &format!(
-            r#""reaches":{{"is":"kernel","kernel":"list.shuffle","takes":[{ints}],"fact":{{"is":"orderingsubject","type":{INT}}}}},"arguments":[{}]"#,
+            r#""reaches":{{"is":"kernel","kernel":"list.shuffle","takes":[{ints}],"fact":{{"is":"orderingsubject","type":{INT},"ordering":{INT}}}}},"arguments":[{}]"#,
             read(0, &ints)
         ),
         &ints,
@@ -2241,10 +2360,14 @@ fn kernel(key: &str, takes: &[&str], fact: &str) -> String {
     )
 }
 
-/// An `orderingsubject` fact settling `ty` as what is ordered, ordered by `basis` — absent only
-/// where `ty` is a type no value of which is made, since there is then nothing to place.
-fn ordering_subject(ty: &str, basis: Option<&str>) -> String {
-    let ordering = basis.map_or("null".to_string(), ToString::to_string);
+/// What a kernel was settled as ordering, placed on its own order: a type no value of which is
+/// made has none, since there is nothing to place.
+fn ordering_subject(ty: &str) -> String {
+    let ordering = if ty.contains("nothing") || ty.contains("never") {
+        "null"
+    } else {
+        ty
+    };
     format!(r#"{{"is":"orderingsubject","type":{ty},"ordering":{ordering}}}"#)
 }
 
@@ -2263,7 +2386,7 @@ fn a_list_no_value_of_whose_element_is_made_is_ordered_without_a_comparison() {
             reads_whole(&helpers(&[h(
                 &[&listed],
                 &call(
-                    &kernel(key, &[&listed], &ordering_subject(element, None)),
+                    &kernel(key, &[&listed], &ordering_subject(element)),
                     &[read(0, &listed)],
                     &answers,
                 ),
@@ -2310,7 +2433,7 @@ fn a_kernel_is_handed_a_function_that_never_runs_and_calls_none() {
             never_run(INT, int(1)),
             empty,
             list_of(nothing),
-            ordering_subject(INT, Some(INT)),
+            ordering_subject(INT),
         ),
         (
             "option.map",
@@ -2383,11 +2506,7 @@ fn what_a_kernel_orders_by_is_what_it_takes_orders() {
         h(
             &[&key, &ints],
             &call(
-                &kernel(
-                    "list.sortBy",
-                    &[&key, &ints],
-                    &ordering_subject(subject, Some(subject)),
-                ),
+                &kernel("list.sortBy", &[&key, &ints], &ordering_subject(subject)),
                 &[read(0, &key), read(1, &ints)],
                 &ints,
             ),
@@ -2408,7 +2527,7 @@ fn what_a_kernel_orders_by_is_what_it_takes_orders() {
             h(
                 &[&ints],
                 &call(
-                    &kernel(key, &[&ints], &ordering_subject(subject, Some(subject))),
+                    &kernel(key, &[&ints], &ordering_subject(subject)),
                     &[read(0, &ints)],
                     &answers,
                 ),
@@ -2525,16 +2644,15 @@ fn only_the_kinds_that_can_end_a_run_name_a_reason_to() {
 #[test]
 fn a_comparison_and_a_truth_operator_name_no_reason_to_end_a_run() {
     let over = |op: &str, ty: &str, answers: &str| {
-        let orders = matches!(op, "LT" | "LE" | "GT" | "GE");
-        let ordering = if orders {
-            ty.to_string()
-        } else {
-            "null".to_string()
-        };
         node(
             "binary",
             &format!(
-                r#""op":"{op}","reading":{{"is":"astheystand"}},"ordering":{ordering},"left":{},"right":{}"#,
+                r#""op":"{op}","reading":{{"is":"astheystand"}},"ordering":{},"left":{},"right":{}"#,
+                if matches!(op, "LT" | "GE") {
+                    ty
+                } else {
+                    "null"
+                },
                 read(0, ty),
                 read(1, ty)
             ),
@@ -2611,16 +2729,16 @@ fn a_construction_of_another_builds_type_names_the_reason_its_clauses_give() {
         );
         format!(
             concat!(
-                r#"{{"transport":{},"declarations":["#,
+                r#"{{"transport":{transport},"declarations":["#,
                 r#"{{"module":"m","name":"R","by":"onthepath","is":"product","#,
                 r#""fields":[{}],"headers":[{}]}}],"behaviors":[],"#,
                 r#""modules":[{{"name":"m","publishes":[],"helpers":[{}],"values":[],"#,
                 r#""entries":[],"definitions":[],"examples":[]}}]}}"#
             ),
-            TRANSPORT_VERSION,
             field("count", 0, "INT"),
             headers,
-            h(&[], &built)
+            h(&[], &built),
+            transport = TRANSPORT_VERSION,
         )
     };
     let stated = r#"{"name":"counted"}"#;
@@ -2732,7 +2850,7 @@ fn a_number_names_one_binder_in_force() {
                 read(1, &optional),
                 arm(
                     r#"{"tests":"held"}"#,
-                    Some((binding, INT)),
+                    Some(payload(binding, INT)),
                     &read(binding, INT)
                 ),
                 arm(r#"{"tests":"nothing"}"#, None, &read(0, INT))
@@ -2763,32 +2881,29 @@ fn a_number_names_one_binder_in_force() {
 
 /// An arm says what it reads its value as exactly where it binds one. The writer says both or
 /// neither, and an arm saying only `binds` is a statement the lowering would drop.
+/// What an optional's present carrier holds is named only as that (`Some v`): the carrier itself
+/// has no name of its own, so a name for the matched value there is the two halves disagreeing.
 #[test]
-fn an_arm_binds_and_says_what_it_reads_it_as_together() {
+fn a_present_carrier_is_named_by_what_it_holds() {
     let optional = option_of(INT);
-    let forking = |arm_of: String| {
+    let forking = |binding: Option<String>| {
         node(
             "match",
             &format!(
-                r#""subject":{},"arms":[{arm_of},{}]"#,
+                r#""subject":{},"arms":[{},{}]"#,
                 read(0, &optional),
+                arm(r#"{"tests":"held"}"#, binding, &int(1)),
                 arm(r#"{"tests":"nothing"}"#, None, &int(2))
             ),
             INT,
         )
     };
-    let document = |arm_of: String| helpers(&[h(&[&optional], &forking(arm_of))]);
-    let held = |binding: &str, binds: &str| {
-        format!(
-            r#"{{"selects":[{{"tests":"held"}}],"binding":{binding},"binds":{binds},"body":{}}}"#,
-            int(1)
-        )
-    };
+    let document = |binding| helpers(&[h(&[&optional], &forking(binding))]);
 
-    reads_whole(&document(held("1", INT)));
-    reads_whole(&document(held("null", "null")));
-    is_the_halves_disagreeing(&document(held("null", INT)), "binds nothing");
-    is_the_halves_disagreeing(&document(held("1", "null")), "does not say");
+    reads_whole(&document(Some(payload(1, INT))));
+    reads_whole(&document(None));
+    is_the_halves_disagreeing(&document(Some(selected(1, &optional))), "named only by");
+    is_the_halves_disagreeing(&document(Some(payload(1, S))), "what the optional holds");
 }
 
 /// What a value is handed is another value this module builds. The lowering reads the type of the
@@ -3283,16 +3398,16 @@ fn what_clauses_are_answered_under_crosses_where_another_build_runs_them() {
     let declared = |by: &str, clauses: &str| {
         format!(
             concat!(
-                r#"{{"transport":{},"declarations":["#,
+                r#"{{"transport":{transport},"declarations":["#,
                 r#"{{"module":"m","name":"R","by":"{}","is":"product","#,
                 r#""fields":[{}]{}}}],"behaviors":[],"#,
                 r#""modules":[{{"name":"m","publishes":[],"helpers":[],"values":[],"#,
                 r#""entries":[],"definitions":[],"examples":[]}}]}}"#
             ),
-            TRANSPORT_VERSION,
             by,
             field("count", 0, "INT"),
-            clauses
+            clauses,
+            transport = TRANSPORT_VERSION,
         )
     };
     let headers = r#","headers":[{"name":"counted"}]"#;

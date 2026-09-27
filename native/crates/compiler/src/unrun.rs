@@ -247,7 +247,7 @@ mod tests {
     /// what it binds and what it calls with it, and the arm for none is written as any is.
     #[test]
     fn an_arm_for_a_value_of_what_has_no_value_is_left_out() {
-        let arm = |tests: &str, body: serde_json::Value| json!({ "selects": [{ "tests": tests }], "binding": null, "binds": null, "body": body });
+        let arm = |tests: &str, body: serde_json::Value| json!({ "selects": [{ "tests": tests }], "binding": null, "body": body });
         let matched = |subject: serde_json::Value| -> Node {
             serde_json::from_value(json!({
                 "core": "match", "subject": subject,

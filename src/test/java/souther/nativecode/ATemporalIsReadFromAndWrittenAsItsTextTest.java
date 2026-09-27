@@ -127,8 +127,8 @@ class ATemporalIsReadFromAndWrittenAsItsTextTest {
                 a year the way nobody writes it: issues [@/day invalid_format]
                 a lower case: issues [@/at invalid_format] [@/seen invalid_format]
                 a date-time with no time: issues [@/at invalid_format]
-                every one wrong: issues [@/day type_mismatch actual=number expected=String] [@/start type_mismatch actual=boolean expected=String] [@/at type_mismatch actual=null expected=String] [@/seen type_mismatch actual=array expected=String]
-                every one absent: issues [@/day missing_field actual=nothing expected=a field] [@/start missing_field actual=nothing expected=a field] [@/at missing_field actual=nothing expected=a field] [@/seen missing_field actual=nothing expected=a field]
+                every one wrong: issues [@/day type_mismatch {"actual":"number","expected":"String"}] [@/start type_mismatch {"actual":"boolean","expected":"String"}] [@/at type_mismatch {"actual":"null","expected":"String"}] [@/seen type_mismatch {"actual":"array","expected":"String"}]
+                every one absent: issues [@/day missing_field {"actual":"nothing","expected":"a field"}] [@/start missing_field {"actual":"nothing","expected":"a field"}] [@/at missing_field {"actual":"nothing","expected":"a field"}] [@/seen missing_field {"actual":"nothing","expected":"a field"}]
                 """);
     }
 }

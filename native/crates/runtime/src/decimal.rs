@@ -393,7 +393,7 @@ pub unsafe extern "C" fn souther_string_from_decimal(
 /// As [`souther_decimal_unscaled`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_external_decimal(at: *const Decimal) -> *mut Form {
-    crate::external::handed(Form::Amount(unsafe { amount(at) }.external_text()))
+    crate::external::handed(Form::Amount(unsafe { amount(at) }))
 }
 
 #[cfg(test)]

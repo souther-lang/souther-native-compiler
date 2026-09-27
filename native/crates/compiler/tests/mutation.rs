@@ -24,6 +24,7 @@
 //! and it is written to the language's rule and not to any reader's.
 
 use serde_json::{Value, json};
+use souther_native_driver::transport::TRANSPORT_VERSION;
 use souther_native_driver::{NotLowered, object_for};
 use std::collections::{BTreeMap, BTreeSet};
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -47,6 +48,12 @@ fn int(value: i64) -> Value {
     json!({ "core": "int", "value": value, "type": prim(INT), "aborts": [] })
 }
 
+/// Two operands read as they stand, placed on the order of what the left one is where `op` orders.
+/// A clause none of whose parts is a standard constraint.
+fn none() -> Value {
+    json!({ "constraints": [], "complete": false })
+}
+
 fn binary(op: &str, left: Value, right: Value, ty: Value, aborts: Value) -> Value {
     let ordering = match op {
         "LT" | "LE" | "GT" | "GE" => left["type"].clone(),
@@ -60,7 +67,7 @@ fn binary(op: &str, left: Value, right: Value, ty: Value, aborts: Value) -> Valu
 
 fn program(declarations: Value, helpers: Value, publishes: Value) -> Value {
     json!({
-        "transport": souther_native_driver::transport::TRANSPORT_VERSION,
+        "transport": TRANSPORT_VERSION,
         "declarations": declarations,
         "behaviors": [],
         "modules": [{
@@ -93,7 +100,7 @@ fn by_hand() -> Vec<(&'static str, Value)> {
         "module": "m", "name": "R", "by": "amodule", "is": "product",
         "fields": [{ "name": "count", "binding": 0,
                      "codec": { "is": "scalar", "scalar": INT } }],
-        "invariants": [{ "name": "counted", "condition": clause }]
+        "invariants": [{ "name": "counted", "condition": clause, "projection": none() }]
     }]);
     let built = json!({
         "core": "construct", "declared": "m.R", "values": [read(0, prim(INT))],
@@ -153,9 +160,9 @@ fn by_hand() -> Vec<(&'static str, Value)> {
     let forking = json!({
         "core": "match", "subject": read(0, json!({ "option": prim(INT) })),
         "arms": [
-            { "selects": [{ "tests": "held" }], "binding": 1, "binds": prim(INT),
+            { "selects": [{ "tests": "held" }], "binding": { "stands": "payload", "number": 1, "as": prim(INT) },
               "body": negated },
-            { "selects": [{ "tests": "nothing" }], "binding": null, "binds": null,
+            { "selects": [{ "tests": "nothing" }], "binding": null,
               "body": int(0) }
         ],
         "type": prim(INT), "aborts": []
@@ -251,9 +258,9 @@ fn by_hand() -> Vec<(&'static str, Value)> {
     let beside = json!({
         "core": "match", "subject": read(1, json!({ "option": prim(INT) })),
         "arms": [
-            { "selects": [{ "tests": "held" }], "binding": 2, "binds": prim(INT),
+            { "selects": [{ "tests": "held" }], "binding": { "stands": "payload", "number": 2, "as": prim(INT) },
               "body": read(2, prim(INT)) },
-            { "selects": [{ "tests": "nothing" }], "binding": null, "binds": null,
+            { "selects": [{ "tests": "nothing" }], "binding": null,
               "body": read(0, prim(INT)) }
         ],
         "type": prim(INT), "aborts": []
@@ -309,8 +316,8 @@ fn by_hand() -> Vec<(&'static str, Value)> {
         "amodule",
         (
             "invariants",
-            json!([{ "name": "ordered", "condition": ordered },
-                   { "name": null, "condition": bounded }]),
+            json!([{ "name": "ordered", "condition": ordered, "projection": none() },
+                   { "name": null, "condition": bounded, "projection": none() }]),
         ),
     );
     let attempting_elsewhere = spanned(
@@ -806,13 +813,13 @@ fn rename(
                 }
                 if let Some(arms) = fields.get_mut("arms").and_then(Value::as_array_mut) {
                     for arm in arms {
-                        let old = arm.get("binding").and_then(Value::as_u64);
+                        let old = arm["binding"].get("number").and_then(Value::as_u64);
                         let mut before = None;
                         if let Some(old) = old {
                             let new =
                                 number(mode, names, handed, arm.get("body"), Some(old), fresh);
                             before = bind(names, old, new);
-                            arm["binding"] = Value::from(new);
+                            arm["binding"]["number"] = Value::from(new);
                         }
                         if let Some(body) = arm.get_mut("body") {
                             rename(body, names, fresh, mode, handed);

@@ -7,20 +7,18 @@ import souther.nativecode.transport.ProgramWriter;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * A program the language admits that this backend does not write yet, followed all the way out.
+ * What this backend does not write yet, and that it is told apart from a document the two halves
+ * disagree about.
  *
  * <p>Three answers are possible at the end of this path and only one of them is right: the program
  * is refused by the language, this backend has not got round to it, or the command was wrong.
- * Which one a reader is told decides whether they go and change their program.
- *
- * <p>The middle answer has no example here today: `Set` and `Map` (`ASetIsHeldByItsMembersTest`)
- * closed the gaps this class held open for them, and the arm this class once refused a binder over
- * crosses now too. What a reader is told when this backend really is behind — {@code NotLowered},
- * and {@code Main}'s "this backend does not write that yet" over it — is still
- * {@code NativeCompiler}'s and {@code Main}'s own contract, and the next gap this class finds
- * should hold that path to it again.
+ * Which one a reader is told decides whether they go and change their program. No program the
+ * checker accepts reaches a refusal of the writer's today (the last, an arm naming an absent
+ * optional, went once the checker said what such a name stands for), so the driver's half is asked
+ * of a document.
  */
 class WhatThisBackendDoesNotWriteYetTest {
 
@@ -31,6 +29,23 @@ class WhatThisBackendDoesNotWriteYetTest {
 
             let widen (a) = a
             """;
+
+    /**
+     * The smallest document that reaches a lowering this driver does not have: two values of the
+     * type of what has no value, compared. No program the checker accepts is refused as not lowered
+     * by the writer today, so the driver's half of the path is asked with a document written by
+     * hand, the one `native/crates/compiler/tests/refusals.rs` refuses the same way.
+     */
+    private static final String COMPARING_NOTHING = ("{\"transport\":" + ProgramWriter.TRANSPORT_VERSION
+            + ",\"declarations\":[],\"behaviors\":[],\"modules\":[{\"name\":\"calculation\","
+            + "\"publishes\":[],\"helpers\":[{\"reached\":{\"is\":\"own\",\"module\":\"calculation\","
+            + "\"name\":\"f\"},\"parameters\":[{\"name\":\"a\",\"type\":{\"nothing\":{}}},"
+            + "{\"name\":\"b\",\"type\":{\"nothing\":{}}}],\"body\":{\"core\":\"binary\",\"op\":\"EQ\","
+            + "\"reading\":{\"is\":\"astheystand\"},"
+            + "\"left\":{\"core\":\"read\",\"binding\":0,\"type\":{\"nothing\":{}},\"aborts\":[]},"
+            + "\"right\":{\"core\":\"read\",\"binding\":1,\"type\":{\"nothing\":{}},\"aborts\":[]},"
+            + "\"type\":{\"prim\":\"BOOL\"},\"aborts\":[]}}],\"values\":[],\"entries\":[],"
+            + "\"definitions\":[],\"examples\":[]}]}");
 
     /**
      * The type crosses. What a primitive is called is the language's and whether there is a
@@ -74,51 +89,11 @@ class WhatThisBackendDoesNotWriteYetTest {
                         + java.time.LocalDate.parse("2026-07-25").toEpochDay() + ",\"nano\":0");
     }
 
-    /**
-     * An arm binding a name where it tests that an optional holds nothing is read as the optional
-     * itself ({@link souther.compiler.core.Core.Case#bindType()}), which is the type
-     * {@code n} stands as. The checker never admits such a binder without settling its type, so
-     * this crosses like any other arm.
-     */
+    /** What the driver has no lowering for arrives as that, and not as a document it could not read. */
     @Test
-    void anArmBindingANameToNothingCrossesAsTheOptionalItself() {
-        CheckedProgram program = Checked.of(List.of("""
-                module absent exposing ( counted, Held )
-
-                data Held = { o: Int? }
-
-                behavior counted : (h: Held) -> Int
-                let counted (h) = match h.o with
-                    | Some x -> x
-                    | None as n -> 0
-                """));
-
-        assertThat(ProgramWriter.written(program))
-                .contains("\"selects\":[{\"tests\":\"nothing\"}],\"binding\":2,"
-                        + "\"binds\":{\"option\":{\"prim\":\"INT\"}}");
-    }
-
-    /**
-     * The writer's shape crosses `Coherent` and runs: {@code n}, bound to the optional itself, is
-     * read back out and answers what it was bound to, the way any other binder does. Checked here
-     * and not only above, because a shape that crosses is not yet a shape the driver accepts — the
-     * two are different questions this backend has answered wrongly apart before.
-     */
-    @Test
-    void anArmBindingANameToNothingIsRunWithTheOptionalItBoundIt() throws Exception {
-        ARowHoldsWhereverItIsRunTest.assertEveryRowHolds("""
-                module absent exposing ( counted, Held )
-
-                data Held = { o: Int? }
-
-                behavior counted : (h: Held) -> Int
-                let counted (h) = match h.o with
-                    | Some x -> x
-                    | None as n -> if n == h.o then 0 else 1
-
-                example counted
-                    | "held" : (Held { o = 5 }) -> 5
-                    | "absent" : (Held { o = None }) -> 0
-                """);
+    void theDriverSaysItIsOneThisBackendHasNotGotRoundTo() {
+        assertThatThrownBy(() -> NativeCompiler.driven(COMPARING_NOTHING))
+                .isInstanceOf(NotLowered.class)
+                .hasMessageContaining("Nothing");
     }
 }

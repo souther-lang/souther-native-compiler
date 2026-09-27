@@ -40,8 +40,11 @@ const SPELT_OUT: i64 = 1000;
 ///
 /// Nought has no sign, so there is one way to hold each value: `-0.0` is read as `0.0`, as the JVM
 /// reads it.
+///
+/// `pub` because a [`Form`](crate::external::Form) holds one; the module is the crate's own, so
+/// nothing outside the runtime reaches it.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Amount {
+pub struct Amount {
     negative: bool,
     magnitude: Magnitude,
     scale: i32,
@@ -583,6 +586,13 @@ impl Amount {
             least
         };
         spelt.scientific_text()
+    }
+
+    /// The value at the scale it carries, as the JVM's `BigDecimal.toString` writes it: what an
+    /// issue's metadata says a `Decimal` is, since Raoh's metadata holds the `BigDecimal` itself and
+    /// its scale with it, where a boundary writes the amount alone ([`Amount::external_text`]).
+    pub(crate) fn scaled_text(&self) -> String {
+        self.scientific_text()
     }
 
     /// The value as the JVM's `BigDecimal.toString` writes it: plain where the scale is not below

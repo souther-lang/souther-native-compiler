@@ -91,9 +91,10 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 use transport::{
-    AbortKind, AlternativesForm, Arm, Carrier, Case, Declaration, DeclaredBy, Definition,
-    Departures, Emitted, Ensures, FnSignature, Guard, KernelFact, LanguageCase, Node, Op, Owner,
-    Prim, Program, Publication, Reaches, Reading, Requirement, Routing, Selects, Target, Ty,
+    AbortKind, AlternativesForm, Arm, ArmBinding, Carrier, Case, Declaration, DeclaredBy,
+    Definition, Departures, Emitted, Ensures, FnSignature, Guard, KernelFact, LanguageCase, Node,
+    Op, Owner, Prim, Program, Publication, Reaches, Reading, Requirement, Routing, Selects, Target,
+    Ty,
 };
 
 /// A fork that ran out of arms, which is this compiler having emitted the wrong test rather than
@@ -112,6 +113,12 @@ const COUNT_NO_LIST_HOLDS: u8 = 3;
 /// [`NO_ARM`] is one: this compiler added the work out of order, and nothing a program does
 /// comes to this.
 const A_WALK_OUT_OF_ORDER: u8 = 4;
+
+/// A clause the checker states as the whole of its constraints having failed with every one of
+/// them met, where a reader reports which constraint a value broke: the checker's claim that a value
+/// meeting them meets the clause (`ConstraintProjection`) not holding. A trap for the reason
+/// [`NO_ARM`] is one: no document the checker wrote comes to this.
+const A_WHOLE_CLAUSE_MET: u8 = 5;
 
 /// Every reason a Souther computation ends without a value, mapped to the wire number a generated
 /// function's status answers with. `souther_native_abi` reserves `ANSWERED`, the `HOST_STATUSES`
@@ -1159,6 +1166,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
         constructors: &constructors,
         allocate,
         value_ops: &value_ops,
+        machines: &machines,
     };
     let mut codecs = codec::Codecs::new(call_conv);
     // What a host builds, reads, decodes and encodes a value of a published type through, each
@@ -1341,6 +1349,8 @@ pub(crate) struct Emitting<'a> {
     /// The hasher and the equality of each type a set or a map is kept over, declared here where a
     /// reading builds one and written with the rest ([`define_owed`]).
     pub value_ops: &'a hashing::ValueOps,
+    /// What pattern machines this object already holds, for a reading that holds a value to one.
+    pub machines: &'a patterns::Machines,
 }
 
 impl Emitting<'_> {
@@ -1665,6 +1675,19 @@ impl<'a> Declared<'a> {
             }
             if let Declaration::Sum { cases, form, .. } = declaration {
                 declared.settled(&key, cases, form)?;
+                // The checker answers the leaves a sum descends to each once, at the place it was
+                // first reached, which is what an enumeration's order is read off
+                // ([`Declared::order_of`]).
+                let mut seen = Vec::new();
+                for case in cases.iter() {
+                    if seen.contains(&case) {
+                        bail!("{key} lists {} twice among its cases", case.spelt());
+                    }
+                    seen.push(case);
+                }
+            }
+            if let Some(clauses) = declaration.clauses() {
+                projected(&key, declaration.fields(), clauses)?;
             }
         }
         // Once every field is known to name a declaration, so the walk reaches only ones that are.
@@ -1974,7 +1997,7 @@ impl<'a> Declared<'a> {
     /// to it. A newtype that comes back to itself is refused: it has no value, the checker refuses
     /// it where it is written, and [`Declared::of`] asks this of every newtype, so every other asker
     /// is handed a walk that ends.
-    pub(crate) fn newtype_spine(&self, ty: &Ty) -> Result<NewtypeSpine> {
+    fn newtype_spine(&self, ty: &Ty) -> Result<NewtypeSpine> {
         let mut worn: Vec<String> = Vec::new();
         let mut opens: Vec<Ty> = Vec::new();
         let mut at = ty.clone();
@@ -2013,6 +2036,73 @@ impl<'a> Declared<'a> {
             return Ok(PairIn::Opened(inner.clone()));
         }
         Ok(PairIn::Held)
+    }
+
+    /// The leaves the enumeration `enumeration` places its values among, in the order it places
+    /// them: its cases, which the checker descended and `Declared::of` held to list each once. Read
+    /// off the declaration and not worked out, so asking it for every comparison costs nothing.
+    fn order_of(&self, enumeration: &str) -> &'a [Case] {
+        match self.laid(enumeration) {
+            Declaration::Sum {
+                cases,
+                form: AlternativesForm::Enumeration,
+                ..
+            } => cases,
+            _ => unreachable!("`Coherent` held {enumeration} to be an enumeration an order is of"),
+        }
+    }
+
+    /// Whether `basis` is an order values of `ty` can be placed on, as the checker says they are
+    /// (`Core.OrderingBasis`): `ty` opened of every newtype it wears is the basis itself where the
+    /// basis is a primitive, and is an enumeration, one of its cases or a union of them where the
+    /// basis is that enumeration. Which enumeration places a case is the checker's answer and is
+    /// not looked for here: this only holds that the answer is one the lowering can place `ty` on.
+    fn orders(&self, basis: &Ty, ty: &Ty) -> Result<()> {
+        let spine = self.newtype_spine(ty)?;
+        let opened = spine.opens.last().unwrap_or(ty);
+        match basis {
+            Ty::Prim { prim } if !matches!(prim, Prim::Bool) && opened == basis => Ok(()),
+            Ty::Ref {
+                named: Case::Declared { declared },
+            } if matches!(
+                self.shape(declared)?,
+                Declaration::Sum {
+                    form: AlternativesForm::Enumeration,
+                    ..
+                }
+            ) =>
+            {
+                let members = match opened {
+                    Ty::Ref { named } => vec![named.clone()],
+                    Ty::Union { union } => union.iter().cloned().collect(),
+                    _ => bail!(
+                        "a value of {} placed on the order of {}, which places only its own \
+                         cases: the two halves disagree",
+                        ty.spelt(),
+                        basis.spelt()
+                    ),
+                };
+                let places = self.order_of(declared);
+                for leaf in self.leaves_of(&members)? {
+                    if !places.contains(&leaf) {
+                        bail!(
+                            "a value of {} placed on the order of {}, which does not list {}: the \
+                             two halves disagree",
+                            ty.spelt(),
+                            basis.spelt(),
+                            leaf.spelt()
+                        );
+                    }
+                }
+                Ok(())
+            }
+            _ => bail!(
+                "a value of {} placed on the order of {}, which is no order the language has for \
+                 it: the two halves disagree",
+                ty.spelt(),
+                basis.spelt()
+            ),
+        }
     }
 
     /// What a declaration a document was read whole with says, where [`Coherent`] held the key to
@@ -4441,22 +4531,18 @@ fn define_rules(
         let next = builder.create_block();
         let read = match &rule.guard {
             Guard::Always => answer,
-            Guard::Case { selects, binds } => {
+            Guard::Case { selects, .. } => {
                 let selects = std::slice::from_ref(selects);
                 let applies = builder.create_block();
                 let asked = tests(&mut builder, &lowering, module, answer, &answers, selects)?;
                 builder.ins().brif(asked, applies, &[], next, &[]);
                 builder.seal_block(applies);
                 builder.switch_to_block(applies);
-                self::binds(
-                    &mut builder,
-                    &lowering,
-                    module,
-                    answer,
-                    &answers,
-                    selects,
-                    binds,
-                )?
+                let binding = rule
+                    .guard
+                    .reads(rule.value)
+                    .expect("a rule over a case reads the answer under a name");
+                self::binds(&mut builder, &lowering, module, answer, &answers, &binding)?
             }
         };
         let variable = builder.declare_var(machine_type(rule.guard.reads_as(&answers))?);
@@ -5278,14 +5364,16 @@ fn shared_field(
     ty: &Ty,
 ) -> Lowered<ir::Value> {
     let Ty::Ref {
-        named: named @ Case::Declared { .. },
+        named: Case::Declared { declared },
     } = of
     else {
         unreachable!("a field is read off a sum only where the sum is its target's type");
     };
     let cases = lowering
         .declared
-        .leaves_of(std::slice::from_ref(named))
+        .leaves_of(&[Case::Declared {
+            declared: declared.clone(),
+        }])
         .expect("`Coherent` held every case of the sum to be one a declaration crossed for");
     let which = Tagged::of(value, of).which(builder);
     let read = builder.create_block();
@@ -5614,17 +5702,15 @@ fn lower_kernel(
             let [key, list] = given[..] else {
                 unreachable!("`Coherent` held list.sortBy to the two arguments it takes");
             };
-            let (subject, ordering) = ordering_subject(kernel, fact);
-            lists::sorted_by(
-                builder, lowering, module, abort, key, subject, ordering, list.value,
-            )?
+            let subject = ordering_subject(kernel, fact);
+            lists::sorted_by(builder, lowering, module, abort, key, subject, list.value)?
         }
         LoweredKernel::ListSort => {
             let [list] = values[..] else {
                 unreachable!("`Coherent` held list.sort to the one argument it takes");
             };
-            let (subject, ordering) = ordering_subject(kernel, fact);
-            lists::sorted(builder, lowering, module, subject, ordering, list)?
+            let subject = ordering_subject(kernel, fact);
+            lists::sorted(builder, lowering, module, subject, list)?
         }
         LoweredKernel::ListMax | LoweredKernel::ListMin => {
             let [list] = values[..] else {
@@ -5634,8 +5720,8 @@ fn lower_kernel(
                 LoweredKernel::ListMax => Op::Gt,
                 _ => Op::Lt,
             };
-            let (subject, ordering) = ordering_subject(kernel, fact);
-            lists::extreme(builder, lowering, module, op, subject, ordering, list)?
+            let subject = ordering_subject(kernel, fact);
+            lists::extreme(builder, lowering, module, op, subject, list)?
         }
         LoweredKernel::ListReverse => {
             let [list] = values[..] else {
@@ -6012,14 +6098,16 @@ fn lower_kernel(
     })
 }
 
-/// What a kernel that orders was settled as ordering by, which `Coherent` held to be the one type
-/// its contract says it orders, and what a value of that type is ordered by: itself for a number
-/// or text, and the one enumeration that places them for a case or a union of cases.
-fn ordering_subject(kernel: LoweredKernel, fact: &KernelFact) -> (&Ty, Option<&Ty>) {
+/// What a kernel that orders was settled as ordering, and by which order, which `Coherent` held to
+/// be the one type its contract says it orders and an order that places it.
+fn ordering_subject(kernel: LoweredKernel, fact: &KernelFact) -> ordering::Placing<'_> {
     let KernelFact::OrderingSubject { ty, ordering } = fact else {
         unreachable!("`Coherent` held {kernel:?} to the ordering subject it settles");
     };
-    (ty, ordering.as_ref())
+    ordering::Placing {
+        ty,
+        basis: ordering.as_ref(),
+    }
 }
 
 /// The function two values of a temporal type are compared through, which answers below, at or
@@ -6158,8 +6246,8 @@ fn branched(
                     arm,
                 )?;
                 let answered = branch(builder, module, bindings, &arm.body);
-                if let Some(number) = arm.binding {
-                    bindings.leave(number);
+                if let Some(binding) = &arm.binding {
+                    bindings.leave(binding.number());
                 }
                 answered?;
                 builder.switch_to_block(next);
@@ -6276,23 +6364,12 @@ fn enter_arm(
     builder.seal_block(next);
 
     builder.switch_to_block(taken);
-    if let Some(number) = arm.binding {
-        let read_as = arm
-            .binds
-            .as_ref()
-            .expect("`Coherent` held every arm that binds to say what it reads the value as");
-        let held = binds(
-            builder,
-            lowering,
-            module,
-            value,
-            subject,
-            &arm.selects,
-            read_as,
-        )?;
+    if let Some(binding) = &arm.binding {
+        let read_as = binding.read_as();
+        let held = binds(builder, lowering, module, value, subject, binding)?;
         let variable = builder.declare_var(machine_type(read_as)?);
         builder.def_var(variable, held);
-        bindings.at(number, variable);
+        bindings.at(binding.number(), variable);
     }
     Ok(next)
 }
@@ -6364,26 +6441,27 @@ fn is_one_of_cases(
     Ok(any.expect("`Coherent` held every test to name at least one case"))
 }
 
-/// What the arm reads the value as, once it is known to be one of its cases.
-///
-/// An arm over an optional's present carrier reads what it holds, narrowed to what the arm says it
-/// reads the value as. Every other arm reads the value as the case it selected, which is the value
-/// itself unless that case is a primitive a union carried ([`restate`]). What the arm reads it as
-/// is carried on the arm, because the test it was selected by does not say it.
+/// The value an arm's name stands for, once the value is known to be one of its cases: what the
+/// optional's present carrier holds where the checker says the name is for that, and otherwise the
+/// matched value itself, restated as what the name is read as ([`restate`]) — which is the value
+/// unless the case is a primitive a union carried. Which of the two is the checker's
+/// ([`ArmBinding`]), and not read off what the arm tests.
 fn binds(
     builder: &mut FunctionBuilder,
     lowering: &Lowerings,
     module: &mut ObjectModule,
     value: ir::Value,
     subject: &Ty,
-    selects: &[Selects],
-    read_as: &Ty,
+    binding: &ArmBinding,
 ) -> Lowered<ir::Value> {
-    if selects.iter().any(|it| matches!(it, Selects::Held)) {
-        let held = builder.ins().load(types::I64, TRUSTED, value, HELD as i32);
-        Ok(out_of_slot(builder, held, machine_type(read_as)?))
-    } else {
-        restate(builder, lowering, module, value, subject, read_as)
+    match binding {
+        ArmBinding::Payload { read_as, .. } => {
+            let held = builder.ins().load(types::I64, TRUSTED, value, HELD as i32);
+            Ok(out_of_slot(builder, held, machine_type(read_as)?))
+        }
+        ArmBinding::Selected { read_as, .. } => {
+            restate(builder, lowering, module, value, subject, read_as)
+        }
     }
 }
 
@@ -6434,8 +6512,7 @@ where
 /// caller already has all of them off one `Node::Binary`.
 struct Operands<'a> {
     reading: &'a Reading,
-    /// What the operands are ordered by, where the operator orders them at all: the checker's own
-    /// answer, and not something this side works out again from the operands' types.
+    /// What the operands are placed on an order by, for an operator that orders them.
     ordering: Option<&'a Ty>,
     left: &'a Node,
     right: &'a Node,
@@ -6621,9 +6698,9 @@ fn read_in(
     operands: Operands,
 ) -> Lowered<ir::Value> {
     let Operands {
-        ordering,
         left,
         right,
+        ordering,
         ..
     } = operands;
     let a = lower(builder, lowering, module, bindings, abort, left)?;
@@ -6636,12 +6713,20 @@ fn read_in(
         PairIn::Opened(inner) => {
             let (_, a) = opened(builder, lowering.declared, left.ty(), a)?;
             let (_, b) = opened(builder, lowering.declared, right.ty(), b)?;
-            compare(builder, lowering, module, op, &inner, ordering, a, b)
+            let placing = ordering::Placing {
+                ty: &inner,
+                basis: ordering,
+            };
+            compare(builder, lowering, module, op, placing, a, b)
         }
         PairIn::Held => {
             let a = restate(builder, lowering, module, a, left.ty(), reading)?;
             let b = restate(builder, lowering, module, b, right.ty(), reading)?;
-            compare(builder, lowering, module, op, reading, ordering, a, b)
+            let placing = ordering::Placing {
+                ty: reading,
+                basis: ordering,
+            };
+            compare(builder, lowering, module, op, placing, a, b)
         }
     }
 }
@@ -6681,8 +6766,8 @@ fn opened(
 
 /// The newtypes worn round a value ([`Declared::newtype_spine`]): the type of each value read out
 /// of the one before, from the outermost newtype in. Empty where the type is no newtype.
-pub(crate) struct NewtypeSpine {
-    pub(crate) opens: Vec<Ty>,
+struct NewtypeSpine {
+    opens: Vec<Ty>,
 }
 
 /// A binary operator over operands read as they stand.
@@ -6696,9 +6781,9 @@ fn binary_as_they_stand(
     operands: Operands,
 ) -> Lowered<ir::Value> {
     let Operands {
-        ordering,
         left,
         right,
+        ordering,
         aborts,
         ..
     } = operands;
@@ -6735,9 +6820,13 @@ fn binary_as_they_stand(
                 Op::Add | Op::Sub | Op::Mul => {
                     arithmetic(builder, lowering, module, abort, op, a, b, aborts)
                 }
-                Op::Eq | Op::Ne | Op::Lt | Op::Le | Op::Gt | Op::Ge => compare(
-                    builder, lowering, module, op, a.ty, ordering, a.value, b.value,
-                ),
+                Op::Eq | Op::Ne | Op::Lt | Op::Le | Op::Gt | Op::Ge => {
+                    let placing = ordering::Placing {
+                        ty: a.ty,
+                        basis: ordering,
+                    };
+                    compare(builder, lowering, module, op, placing, a.value, b.value)
+                }
                 // `/` answers the exact quotient, whatever it divides: each side is taken as the
                 // exact value it is, and the run ends for a zero divisor.
                 Op::Div => exact_operator(builder, lowering, module, abort, op, a, b, aborts),
@@ -6765,25 +6854,23 @@ fn binary_as_they_stand(
 /// asked of every type the checker compares, and `equality` answers it per type; an order is had
 /// by a number, text and an enumeration, and by a newtype over one of those, and `ordering`
 /// answers it.
-#[allow(clippy::too_many_arguments)]
 fn compare(
     builder: &mut FunctionBuilder,
     lowering: &Lowering,
     module: &mut ObjectModule,
     op: Op,
-    ty: &Ty,
-    ordering: Option<&Ty>,
+    placing: ordering::Placing,
     a: ir::Value,
     b: ir::Value,
 ) -> Lowered<ir::Value> {
     match op {
-        Op::Eq => equality::equal(builder, lowering, module, ty, a, b),
+        Op::Eq => equality::equal(builder, lowering, module, placing.ty, a, b),
         Op::Ne => {
-            let same = equality::equal(builder, lowering, module, ty, a, b)?;
+            let same = equality::equal(builder, lowering, module, placing.ty, a, b)?;
             Ok(builder.ins().icmp_imm_s(IntCC::Equal, same, 0))
         }
         Op::Lt | Op::Le | Op::Gt | Op::Ge => {
-            ordering::ordered(builder, lowering, module, op, ty, ordering, a, b)
+            ordering::ordered(builder, lowering, module, op, placing, a, b)
         }
         Op::Add | Op::Sub | Op::Mul | Op::Div | Op::Concat | Op::And | Op::Or => {
             unreachable!("{} is not a comparison", op.spelt())
@@ -7520,4 +7607,58 @@ fn abort_where(
     builder.ins().jump(abort, &[code.into()]);
 
     builder.switch_to_block(ok);
+}
+
+/// What each clause of `key` is as standard constraints, held to what `ConstraintProjection` says
+/// of it: constraints about the one field of a data made of one, of that field's type, and none for
+/// a data of more than one field, which has no one field for a constraint to be about. A pattern is
+/// one the checker read, as a `String.matches` pattern is.
+fn projected(
+    key: &str,
+    fields: &[transport::Field],
+    clauses: &[transport::Invariant],
+) -> Result<()> {
+    for (at, clause) in clauses.iter().enumerate() {
+        let constraints = clause.projection.constraints();
+        if constraints.is_empty() {
+            continue;
+        }
+        let [field] = fields else {
+            bail!(
+                "clause {at} of {key} is stated as constraints on one field, and {key} has {}: \
+                 the two halves disagree",
+                fields.len()
+            );
+        };
+        let ty = field.codec.ty();
+        for constraint in constraints {
+            let fits = match constraint.of() {
+                transport::ConstraintOf::String => ty == Ty::Prim { prim: Prim::String },
+                transport::ConstraintOf::Int => ty == Ty::Prim { prim: Prim::Int },
+                transport::ConstraintOf::Decimal => {
+                    ty == Ty::Prim {
+                        prim: Prim::Decimal,
+                    }
+                }
+                transport::ConstraintOf::List => matches!(ty, Ty::List { .. }),
+                transport::ConstraintOf::Map => matches!(ty, Ty::Map { .. }),
+            };
+            if !fits {
+                bail!(
+                    "clause {at} of {key} is stated as {constraint:?}, which is not about a {}: \
+                     the two halves disagree",
+                    ty.spelt()
+                );
+            }
+            if let transport::BoundaryConstraint::Pattern { written, meaning } = constraint
+                && patterns::check(meaning).is_err()
+            {
+                bail!(
+                    "clause {at} of {key} says the pattern {written:?} means what no reading of a \
+                     pattern is: the two halves disagree"
+                );
+            }
+        }
+    }
+    Ok(())
 }

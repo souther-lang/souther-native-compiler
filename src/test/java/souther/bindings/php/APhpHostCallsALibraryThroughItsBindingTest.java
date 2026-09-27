@@ -317,7 +317,7 @@ class APhpHostCallsALibraryThroughItsBindingTest {
             read back: Acme\\Billing\\Shop\\Owed, amount 4
             free: {}
             order: ok
-            nested: [/line/price invariant_violation]
+            nested: [/line/price out_of_range]
             not json: [/ invalid_format]
             normalized: 636166c3a9
             quantity: 5, Acme\\Billing\\Shop\\Free, true false, 'paid', Acme\\Billing\\Shop\\Free

@@ -33,7 +33,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           repository: souther-lang/souther
-          ref: e52ead0b17cad041d7c2c11ee1114f7e6db8a000
+          ref: f80f96ff279dc88c50eb2cddf2ace297bf270985
           path: souther
 
       # Only souther-compiler and what it needs to build, not the whole reactor: the lsp, the

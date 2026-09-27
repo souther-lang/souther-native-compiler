@@ -4,16 +4,15 @@
 //! ordered as what it wraps (ADR-0047). So a newtype is opened first, all the way down, and what is
 //! left is one of the three.
 //!
+//! Which order two values are placed on is the checker's answer (`Core.OrderingBasis`), carried on
+//! the comparison and on the sort: a primitive, or the enumeration that places a case. A case is
+//! not ordered on its own account, since one unit may be a case of two enumerations that place it
+//! differently, and so the basis is read here and never looked for.
+//!
 //! An enumeration is ordered by where each case stands in its declaration (ADR-0069): the leaves a
-//! sum walks into, each at the place it was first reached. So is a value of one of its cases, and
-//! of a union of them, where one enumeration and no other places them. The token a value carries says which
+//! sum walks into, each at the place it was first reached. The token a value carries says which
 //! case it is and nothing about where that case stands, so it is looked up among the leaves and
 //! never compared as an address. Where two tokens were put is the linker's to decide.
-//!
-//! Which enumeration places a case or a union is the checker's own answer, carried on the node
-//! (`ordering`) and not worked out again here: a unit may be a case of two enumerations that place
-//! it differently, and only the checker, reading every declaration and not only what this document
-//! carries, ever finds one where there is one.
 
 use cranelift::codegen::ir::condcodes::IntCC;
 use cranelift::codegen::ir::{self, InstBuilder, types};
@@ -25,27 +24,58 @@ use crate::transport::{Case, Op, Prim, Ty};
 use crate::{Lowered, Lowerings, Tagged, as_a_whole_number, not_lowered, opened, token_of};
 use souther_native_abi::{DECIMAL_COMPARE, RATIONAL_COMPARE};
 
-/// Whether `a` and `b`, two values of `ty`, stand as `op` asks: a truth, as `<` answers one.
-///
-/// `basis` is what the checker settled the operands are ordered by (`Core.OrderingBasis`): the one
-/// enumeration that places a case or a union of cases, or itself for a number or text. Read from
-/// the node and not rediscovered from `ty` — the same answer this document's declarations alone
-/// cannot always give, since a unit may be a case of two enumerations that place it differently.
-#[allow(clippy::too_many_arguments)]
+/// Two values to be ordered: the type they are held as, and the type whose order places them, as
+/// the checker settled it (`Core.OrderingBasis`). The basis is none only where the checker placed
+/// nothing, which it does only where there is no value to place.
+#[derive(Clone, Copy)]
+pub(crate) struct Placing<'t> {
+    pub(crate) ty: &'t Ty,
+    pub(crate) basis: Option<&'t Ty>,
+}
+
+impl<'t> Placing<'t> {
+    /// The enumeration whose leaves the values are placed among, where the order is one; none
+    /// where it is a primitive's, whose values are compared as they are.
+    pub(crate) fn enumeration(&self) -> Option<&'t Case> {
+        match self.basis {
+            Some(Ty::Ref {
+                named: named @ Case::Declared { .. },
+            }) => Some(named),
+            _ => None,
+        }
+    }
+}
+
+/// Whether `a` and `b`, two values `placing` says how to order, stand as `op` asks: a truth, as `<`
+/// answers one.
 pub(crate) fn ordered(
     builder: &mut FunctionBuilder,
     lowering: &Lowerings,
     module: &mut ObjectModule,
     op: Op,
-    ty: &Ty,
-    basis: Option<&Ty>,
+    placing: Placing,
     a: ir::Value,
     b: ir::Value,
 ) -> Lowered<ir::Value> {
-    let (opened_ty, a) = opened(builder, lowering.declared, ty, a)?;
-    let (_, b) = opened(builder, lowering.declared, ty, b)?;
-    let ty = &opened_ty;
     let condition = as_a_whole_number(op);
+    // A value of an enumeration, of one of its cases, or of a union of them, placed among the
+    // enumeration's leaves (ADR-0069). `Coherent` held the basis to be an enumeration that lists
+    // every leaf of what the values are (`Declared::orders`).
+    if placing.enumeration().is_some() {
+        let one = place_of(builder, lowering, module, placing, a)?;
+        let other = place_of(builder, lowering, module, placing, b)?;
+        let (Some(one), Some(other)) = (one, other) else {
+            unreachable!("an enumeration's order places each of its values")
+        };
+        return Ok(builder.ins().icmp(condition, one, other));
+    }
+    let Placing { ty, basis } = placing;
+    let Some(basis) = basis else {
+        return Err(unordered(op, ty));
+    };
+    let (_, a) = opened(builder, lowering.declared, ty, a)?;
+    let (_, b) = opened(builder, lowering.declared, ty, b)?;
+    let ty = basis;
     match ty {
         // Every primitive is named, for the reason `machine_type` names them.
         Ty::Prim { prim } => match prim {
@@ -86,35 +116,13 @@ pub(crate) fn ordered(
                 Ok(builder.ins().icmp_imm_s(condition, compared, 0))
             }
         },
-        // A value of an enumeration, of one of its cases, or of a union of them, ordered by the
-        // one enumeration that places them (ADR-0069). That is the type itself where it is one, and
-        // the sum listing it where it is a case: a case is not ordered on its own account, since
-        // one unit may be a case of two sums that place it differently.
         Ty::Ref {
             named: Case::Primitive { .. } | Case::Language { .. },
         } => crate::named_as_a_type(ty),
         Ty::Ref {
             named: Case::Declared { .. },
-        }
-        | Ty::Union { .. } => {
-            let Some(Ty::Ref {
-                named: enumeration @ Case::Declared { .. },
-            }) = basis
-            else {
-                return Err(not_lowered(format!(
-                    "{} over two values of {}, which the checker gives no ordering enumeration for",
-                    op.spelt(),
-                    ty.spelt()
-                )));
-            };
-            let leaves = lowering
-                .declared
-                .leaves_of(std::slice::from_ref(enumeration))
-                .expect("`Coherent` held every case named to be one a declaration crossed for");
-            let one = place(builder, lowering, module, &leaves, Tagged::of(a, ty))?;
-            let other = place(builder, lowering, module, &leaves, Tagged::of(b, ty))?;
-            Ok(builder.ins().icmp(condition, one, other))
-        }
+        } => unreachable!("placed above, on the enumeration's order"),
+        Ty::Union { .. } => Err(unordered(op, ty)),
         Ty::Option { .. }
         | Ty::Tuple { .. }
         | Ty::List { .. }
@@ -125,6 +133,36 @@ pub(crate) fn ordered(
         | Ty::Never { .. } => Err(unordered(op, ty)),
         Ty::Var { var } => Err(crate::open_type(*var)),
     }
+}
+
+/// Where `value`, a value `placing` says how to order, stands on that order where the order is an
+/// enumeration's: its place among the enumeration's leaves, an `Int` that orders as the value does.
+/// None where the order is a primitive's, which values are compared as they are.
+///
+/// Worked out once for a value that is compared many times, as a sort compares each element, so
+/// that each comparison is of two whole numbers and not a walk over the enumeration's leaves.
+pub(crate) fn place_of(
+    builder: &mut FunctionBuilder,
+    lowering: &Lowerings,
+    module: &mut ObjectModule,
+    placing: Placing,
+    value: ir::Value,
+) -> Lowered<Option<ir::Value>> {
+    let Some(named) = placing.enumeration() else {
+        return Ok(None);
+    };
+    let (opened_ty, value) = opened(builder, lowering.declared, placing.ty, value)?;
+    let Case::Declared { declared } = named else {
+        unreachable!("an enumeration is a declaration")
+    };
+    let leaves = lowering.declared.order_of(declared);
+    Ok(Some(place(
+        builder,
+        lowering,
+        module,
+        leaves,
+        Tagged::of(value, &opened_ty),
+    )?))
 }
 
 /// Where the case `value` is stands among `leaves`, counted from nought.

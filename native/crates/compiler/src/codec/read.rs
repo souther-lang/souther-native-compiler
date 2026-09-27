@@ -20,14 +20,19 @@
 //! the document's mistake and is not recorded as one: it goes back as it came, the way it does from
 //! any other call.
 
+use super::write::Writing;
 use super::{Codecs, Runtime};
 use crate::literals::Literals;
-use crate::transport::{AlternativesForm, Case, CodecShape, Declaration, Field, LeafScalar, Prim};
+use crate::patterns::{self, Machines};
+use crate::transport::{
+    AlternativesForm, BoundaryConstraint, Case, CodecShape, Declaration, Field, LeafScalar, Prim,
+};
 use crate::{
     CaseBody, Construction, Constructors, Declared, Emitting, Lowered, POINTER, TRUSTED,
     carry_into, construction, decide, into_slot, lay_out, machine_type, not_lowered, out_slot,
     room_to_carry,
 };
+use cranelift::codegen::ir::TrapCode;
 use cranelift::codegen::ir::condcodes::IntCC;
 use cranelift::codegen::ir::{self, InstBuilder, types};
 use cranelift::frontend::{FunctionBuilder, Variable};
@@ -50,6 +55,7 @@ pub(super) fn define(
     let constructors = emitting.constructors;
     let allocate = emitting.allocate;
     let value_ops = emitting.value_ops;
+    let machines = emitting.machines;
     emitting.function(id, signature, |builder, module, given| {
         let [node, path, decoding, out] = given else {
             unreachable!("a reader takes a node, a path, a reading and room for the value")
@@ -68,6 +74,7 @@ pub(super) fn define(
             constructors,
             allocate,
             value_ops,
+            machines,
             codecs,
             decoding: *decoding,
             out: *out,
@@ -100,6 +107,8 @@ struct Reading<'w, 'f> {
     allocate: FuncId,
     /// The hasher and the equality of what a set or a map read here is kept over.
     value_ops: &'w crate::hashing::ValueOps,
+    /// The pattern machines the object holds, for a value held to a pattern.
+    machines: &'w Machines,
     codecs: &'w mut Codecs,
     /// The reading every issue is recorded in.
     decoding: ir::Value,
@@ -687,25 +696,48 @@ impl Reading<'_, '_> {
         self.builder.seal_block(broken);
         self.builder.switch_to_block(broken);
         let clause = self.builder.block_params(broken)[0];
-        self.broken(declaration, clause, path);
+        self.broken(declaration, clause, fields, path)?;
 
         self.builder.seal_block(held);
         self.builder.switch_to_block(held);
         Ok(self.builder.block_params(held)[0])
     }
 
-    /// Records that the clause at `clause` among `declaration`'s did not hold of the value at
-    /// `path`, naming the clause where its author did, and answers nothing.
-    fn broken(&mut self, declaration: &Declaration, clause: ir::Value, path: ir::Value) {
+    /// Records that the clause at `clause` among `declaration`'s did not hold of the value built
+    /// of `fields` at `path`, and answers nothing.
+    ///
+    /// A newtype crosses as its field's value, so a clause of one is reported as what the checker
+    /// found it to be as standard constraints on that value ([`Invariant::projection`](crate::transport::Invariant::projection)): each of
+    /// them asked in the order it is written, the first the value breaks recorded as Raoh's own,
+    /// and the clause's own failure only where no constraint is broken and the constraints are not
+    /// the whole of it. Which clause did not hold is the construction's answer, which decides the
+    /// clauses in the order a decoder chains them, so every clause before it held and so did every
+    /// constraint of theirs. A product crosses as an object and its clauses run whole, as the rules
+    /// they are, whatever they are as constraints: its failure names its type and the clause.
+    fn broken(
+        &mut self,
+        declaration: &Declaration,
+        clause: ir::Value,
+        fields: &[ir::Value],
+        path: ir::Value,
+    ) -> Lowered<()> {
         let module = self.literal(declaration.module());
         let name = self.literal(declaration.name());
         let clauses = declaration
             .clauses()
             .expect("a value is built by a call here only of a type whose clauses this build runs");
+        let held = match declaration {
+            Declaration::Newtype { field, .. } => Some((&field.codec, fields[0])),
+            _ => None,
+        };
         for (at, stated) in clauses.iter().enumerate() {
-            let Some(called) = &stated.name else {
-                continue;
+            let constraints = match held {
+                Some(_) => stated.projection.constraints(),
+                None => &[],
             };
+            if stated.name.is_none() && constraints.is_empty() {
+                continue;
+            }
             let this = self.builder.create_block();
             let next = self.builder.create_block();
             let is = self.builder.ins().icmp_imm_s(
@@ -715,12 +747,32 @@ impl Reading<'_, '_> {
             );
             self.builder.ins().brif(is, this, &[], next, &[]);
             self.builder.switch_to_block(this);
-            let called = self.literal(called);
-            self.call(
-                Runtime::ReadInvariant,
-                &[path, self.decoding, module, name, called],
-            );
-            self.builder.ins().jump(self.nothing, &[]);
+            if let Some((shape, value)) = held {
+                for constraint in constraints {
+                    let met = self.meets(constraint, shape, value, path)?;
+                    let go_on = self.builder.create_block();
+                    self.builder.ins().brif(met, go_on, &[], self.nothing, &[]);
+                    self.builder.switch_to_block(go_on);
+                }
+            }
+            if held.is_some() && stated.projection.complete() {
+                // The constraints are the whole of the clause, the checker's claim that a value
+                // meeting them meets it (`ConstraintProjection`), so the clause cannot have failed
+                // with every one of them met.
+                self.builder.ins().trap(
+                    TrapCode::user(crate::A_WHOLE_CLAUSE_MET).expect("a trap code of its own"),
+                );
+            } else {
+                let called = match &stated.name {
+                    Some(called) => self.literal(called),
+                    None => self.builder.ins().iconst(POINTER, 0),
+                };
+                self.call(
+                    Runtime::ReadInvariant,
+                    &[path, self.decoding, module, name, called],
+                );
+                self.builder.ins().jump(self.nothing, &[]);
+            }
             self.builder.switch_to_block(next);
         }
         let unnamed = self.builder.ins().iconst(POINTER, 0);
@@ -729,6 +781,156 @@ impl Reading<'_, '_> {
             &[path, self.decoding, module, name, unnamed],
         );
         self.builder.ins().jump(self.nothing, &[]);
+        Ok(())
+    }
+
+    /// Whether `value`, read as `shape`, meets `constraint`, the runtime having recorded what
+    /// Raoh's own constraint reports where it does not. What each is called and what its failure
+    /// says is the runtime's; which one a clause is, is the checker's.
+    fn meets(
+        &mut self,
+        constraint: &BoundaryConstraint,
+        shape: &CodecShape,
+        value: ir::Value,
+        path: ir::Value,
+    ) -> Lowered<ir::Value> {
+        let reading = self.decoding;
+        let n = |reading: &mut Self, n: &i64| reading.builder.ins().iconst(types::I64, *n);
+        Ok(match constraint {
+            BoundaryConstraint::MinLength { n: bound } => {
+                let bound = n(self, bound);
+                self.asked(Runtime::ReadMinLength, &[path, reading, value, bound])
+            }
+            BoundaryConstraint::MaxLength { n: bound } => {
+                let bound = n(self, bound);
+                self.asked(Runtime::ReadMaxLength, &[path, reading, value, bound])
+            }
+            BoundaryConstraint::FixedLength { n: bound } => {
+                let bound = n(self, bound);
+                self.asked(Runtime::ReadFixedLength, &[path, reading, value, bound])
+            }
+            BoundaryConstraint::Pattern { written, meaning } => {
+                let machine = patterns::machine(meaning)
+                    .expect("`Declared::of` held what every pattern is said to mean to a reading");
+                let machine = self.machines.address(self.builder, self.module, &machine);
+                let written = self.literal(written);
+                self.asked(
+                    Runtime::ReadPattern,
+                    &[path, reading, value, machine, written],
+                )
+            }
+            BoundaryConstraint::Min { n: bound } => {
+                let bound = n(self, bound);
+                self.asked(Runtime::ReadIntMin, &[path, reading, value, bound])
+            }
+            BoundaryConstraint::Max { n: bound } => {
+                let bound = n(self, bound);
+                self.asked(Runtime::ReadIntMax, &[path, reading, value, bound])
+            }
+            BoundaryConstraint::Positive => {
+                self.asked(Runtime::ReadIntPositive, &[path, reading, value])
+            }
+            BoundaryConstraint::NonNegative => {
+                self.asked(Runtime::ReadIntNonNegative, &[path, reading, value])
+            }
+            BoundaryConstraint::DecimalMin { n: bound } => {
+                let bound = self.decimal(bound);
+                self.asked(Runtime::ReadDecimalMin, &[path, reading, value, bound])
+            }
+            BoundaryConstraint::DecimalMax { n: bound } => {
+                let bound = self.decimal(bound);
+                self.asked(Runtime::ReadDecimalMax, &[path, reading, value, bound])
+            }
+            BoundaryConstraint::DecimalPositive => {
+                self.asked(Runtime::ReadDecimalPositive, &[path, reading, value])
+            }
+            BoundaryConstraint::DecimalNonNegative => {
+                self.asked(Runtime::ReadDecimalNonNegative, &[path, reading, value])
+            }
+            BoundaryConstraint::NonEmpty => {
+                self.asked(Runtime::ReadListNonEmpty, &[path, reading, value])
+            }
+            BoundaryConstraint::MinSize { n: bound } => {
+                let bound = n(self, bound);
+                self.asked(Runtime::ReadListMinSize, &[path, reading, value, bound])
+            }
+            BoundaryConstraint::MaxSize { n: bound } => {
+                let bound = n(self, bound);
+                self.asked(Runtime::ReadListMaxSize, &[path, reading, value, bound])
+            }
+            BoundaryConstraint::FixedSize { n: bound } => {
+                let bound = n(self, bound);
+                self.asked(Runtime::ReadListFixedSize, &[path, reading, value, bound])
+            }
+            BoundaryConstraint::Unique => self.unique(shape, value, path)?,
+            BoundaryConstraint::MapNonEmpty => {
+                self.asked(Runtime::ReadMapNonEmpty, &[path, reading, value])
+            }
+            BoundaryConstraint::MapMinSize { n: bound } => {
+                let bound = n(self, bound);
+                self.asked(Runtime::ReadMapMinSize, &[path, reading, value, bound])
+            }
+            BoundaryConstraint::MapMaxSize { n: bound } => {
+                let bound = n(self, bound);
+                self.asked(Runtime::ReadMapMaxSize, &[path, reading, value, bound])
+            }
+        })
+    }
+
+    /// A `Decimal` bound, made by the runtime from its integer and its scale as a literal is.
+    fn decimal(&mut self, bound: &crate::transport::DecimalBound) -> ir::Value {
+        let digits = self.literal(&bound.unscaled);
+        let scale = self
+            .builder
+            .ins()
+            .iconst(types::I64, i64::from(bound.scale));
+        self.asked(Runtime::DecimalLiteral, &[digits, scale])
+    }
+
+    /// Whether the list `value` of `shape` holds no element twice, compared as Souther compares.
+    /// Where it holds some, they are written as a boundary writes the list's elements and handed
+    /// to the runtime, which records them as Raoh's `duplicates`.
+    fn unique(
+        &mut self,
+        shape: &CodecShape,
+        value: ir::Value,
+        path: ir::Value,
+    ) -> Lowered<ir::Value> {
+        let CodecShape::ListOf { element } = shape else {
+            unreachable!("`Declared::of` held a list's constraint to be stated of a list")
+        };
+        let [hasher, equality] = self
+            .value_ops
+            .both(self.builder, self.module, &element.ty());
+        let repeated = self.asked(Runtime::ListDuplicates, &[value, hasher, equality]);
+        let length = self
+            .builder
+            .ins()
+            .load(types::I64, TRUSTED, repeated, LIST_LENGTH as i32);
+        let none = self.builder.ins().icmp_imm_s(IntCC::Equal, length, 0);
+        let some = self.builder.create_block();
+        let answered = self.builder.create_block();
+        self.builder.append_block_param(answered, types::I8);
+        let met = self.builder.ins().iconst(types::I8, 1);
+        self.builder
+            .ins()
+            .brif(none, answered, &[met.into()], some, &[]);
+
+        self.builder.switch_to_block(some);
+        let written = Writing {
+            builder: &mut *self.builder,
+            module: &mut *self.module,
+            declared: self.declared,
+            literals: self.literals,
+            codecs: &mut *self.codecs,
+        }
+        .shaped(shape, repeated)?;
+        self.call(Runtime::ReadDuplicates, &[path, self.decoding, written]);
+        let broken = self.builder.ins().iconst(types::I8, 0);
+        self.builder.ins().jump(answered, &[broken.into()]);
+
+        self.builder.switch_to_block(answered);
+        Ok(self.builder.block_params(answered)[0])
     }
 
     /// One of a set of alternatives, told apart the way the set's form says it is written.

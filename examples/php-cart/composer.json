@@ -19,7 +19,7 @@
         "php": "^8.2",
         "ext-ffi": "*",
         "ext-pdo_sqlite": "*",
-        "raoh/raoh": "^0.5",
+        "raoh/raoh": "0.8.x-dev",
         "souther-lang/php-runtime": "dev-main"
     },
     "require-dev": {

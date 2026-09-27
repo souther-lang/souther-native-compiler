@@ -41,7 +41,7 @@ class AnAdditionCrossesAsWhatTheCheckerSettledTest {
         String written = ProgramWriter.written(Checked.of(List.of(ADDING)));
 
         assertThat(written).isEqualTo("""
-                {"transport":28,"declarations":[],\
+                {"transport":30,"declarations":[],\
                 "behaviors":[{"module":"calculation","name":"add","is":"body",\
                 "parameters":{"named":[{"name":"a","input":{"is":"scalar","scalar":"INT"}},\
                 {"name":"b","input":{"is":"scalar","scalar":"INT"}}]},\
@@ -132,12 +132,9 @@ class AnAdditionCrossesAsWhatTheCheckerSettledTest {
     }
 
     /**
-     * A temporal literal crosses as the count the checker's own parse read it as, and not as the
-     * text it was written as: {@code java.time} admits spellings it does not write back
-     * ({@code DateTime("2026-04-01t09:30")}, {@code Time("09:30:00.")}, {@code Date("+010000-01-01")}),
-     * and text handed over would be read again on the other side by a grammar of its own, whose
-     * refusals would be programs the checker passed. Two spellings of one value cross as one
-     * document.
+     * A temporal literal crosses as the count the checker read it as, and not as the text it was
+     * written as: text handed over would be read again on the other side, and whether the two
+     * readings agree would be a question for every literal.
      */
     @Test
     void aTemporalLiteralCrossesAsTheCountTheCheckerReadItAs() {
@@ -176,4 +173,37 @@ class AnAdditionCrossesAsWhatTheCheckerSettledTest {
                 + ",\"nano\":0,\"type\":{\"prim\":\"DATETIME\"},");
     }
 
+    /**
+     * Which text is a temporal is the language's grammar ({@code souther.temporal.TemporalText}), and a
+     * spelling {@code java.time} reads and that grammar does not is refused in source as it is at a
+     * boundary: a year padded past four digits, a point with no digits after it, a fraction of
+     * nought, a lower-case {@code t}. So a literal and the text a boundary reads are one grammar
+     * (#116).
+     */
+    @Test
+    void aSpellingTheLanguageDoesNotAdmitIsRefusedInSource() {
+        for (String definition : List.of(
+                "let a (n) = Date(\"+010000-01-01\")",
+                "let b (n) = Time(\"09:30:00.\")",
+                "let b (n) = Time(\"09:30:00.000\")",
+                "let c (n) = DateTime(\"2026-07-01t09:30\")",
+                "let c (n) = DateTime(\"2026-07-01T09:30:00.000\")",
+                "let d (n) = Instant(\"2026-07-01T00:00:00.Z\")")) {
+            assertThatThrownBy(() -> literalsOver(definition + "\n"))
+                    .as(definition)
+                    .hasMessageContaining("E1322");
+        }
+    }
+
+    private static String literalsOver(String definitions) {
+        return ProgramWriter.written(Checked.of(List.of("""
+                module spelling
+
+                behavior a : (n: Int) -> Date
+                behavior b : (n: Int) -> Time
+                behavior c : (n: Int) -> DateTime
+                behavior d : (n: Int) -> Instant
+
+                """ + definitions)));
+    }
 }

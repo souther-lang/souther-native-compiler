@@ -103,35 +103,35 @@ class AValueIsReadFromTheFormItIsWrittenInTest {
                 line: value {"price":3,"quantity":2,"note":"gift wrap","gift":true}
                 line absent: value {"price":3,"quantity":2}
                 line null: value {"price":3,"quantity":2}
-                line wrong: issues [@/price invariant_violation module=wire type=Money clause=notNegative] [@/quantity type_mismatch actual=string expected=Int] [@/gift type_mismatch actual=number expected=Bool]
-                line empty: issues [@/price missing_field actual=nothing expected=a field] [@/quantity missing_field actual=nothing expected=a field]
-                line array: issues [@ type_mismatch actual=array expected=an object]
-                line none: issues [@ invariant_violation module=wire type=Line]
+                line wrong: issues [@/price out_of_range key=out_of_range.non_negative {"actual":-1,"min":0}] [@/quantity type_mismatch {"actual":"string","expected":"Int"}] [@/gift type_mismatch {"actual":"number","expected":"Bool"}]
+                line empty: issues [@/price missing_field {"actual":"nothing","expected":"a field"}] [@/quantity missing_field {"actual":"nothing","expected":"a field"}]
+                line array: issues [@ type_mismatch {"actual":"array","expected":"an object"}]
+                line none: issues [@ invariant_violation {"module":"wire","type":"Line"}]
                 line nfc: value {"price":1,"quantity":1,"note":"が"}
                 line cut: malformed at 11
                 line and more: malformed at 24
                 line twice: value {"price":3,"quantity":1}
                 line more: value {"price":3,"quantity":1}
                 chain: value {"n":1,"next":{"n":2}}
-                chain deep: issues [@/next/next/n type_mismatch actual=string expected=Int]
+                chain deep: issues [@/next/next/n type_mismatch {"actual":"string","expected":"Int"}]
                 stage: value "Won"
-                stage unknown: issues [@ not_allowed actual=Draw expected=a case]
-                stage number: issues [@ type_mismatch actual=number expected=a case]
+                stage unknown: issues [@ not_allowed {"actual":"Draw","expected":"a case"}]
+                stage number: issues [@ type_mismatch {"actual":"number","expected":"a case"}]
                 rank manager: value {"type":"Manager","value":3}
                 rank staff: value {"type":"Staff"}
-                rank empty: issues [@/value missing_field actual=nothing expected=a field]
-                rank untagged: issues [@/type missing_field actual=nothing expected=a case]
-                rank unknown: issues [@/type not_allowed actual=Boss expected=a case]
-                rank numbered: issues [@/type type_mismatch actual=number expected=a case]
+                rank empty: issues [@/value missing_field {"actual":"nothing","expected":"a field"}]
+                rank untagged: issues [@/type missing_field {"actual":"nothing","expected":"a case"}]
+                rank unknown: issues [@/type not_allowed {"actual":"Boss","expected":"a case"}]
+                rank numbered: issues [@/type type_mismatch {"actual":"number","expected":"a case"}]
                 settled free: value {"type":"Free"}
                 settled paid: value {"type":"Paid","amount":6,"stage":"Won"}
-                settled wrong: issues [@/amount invariant_violation module=wire type=Money clause=notNegative] [@/stage not_allowed actual=Tie expected=a case]
+                settled wrong: issues [@/amount out_of_range key=out_of_range.non_negative {"actual":-2,"min":0}] [@/stage not_allowed {"actual":"Tie","expected":"a case"}]
                 free: value {}
-                free null: issues [@ type_mismatch actual=null expected=an object]
+                free null: issues [@ type_mismatch {"actual":"null","expected":"an object"}]
                 money: value 5
-                money below: issues [@ invariant_violation module=wire type=Money clause=notNegative]
-                money amount: issues [@ type_mismatch actual=number expected=Int]
-                money past: issues [@ out_of_range actual=number expected=Int]
+                money below: issues [@ out_of_range key=out_of_range.non_negative {"actual":-5,"min":0}]
+                money amount: issues [@ type_mismatch {"actual":"number","expected":"Int"}]
+                money past: issues [@ out_of_range {"actual":"number","expected":"Int"}]
                 ratio: value {"top":2,"bottom":3}
                 ratio past: status %d
                 tag: value "x\\"y"
@@ -238,8 +238,8 @@ class AValueIsReadFromTheFormItIsWrittenInTest {
         assertThat(said).isEqualTo("""
                 manager: value {"kind":"Manager","body":3}
                 staff: value {"kind":"Staff"}
-                spelt as today: issues [@/kind missing_field actual=nothing expected=a case]
-                empty: issues [@/body missing_field actual=nothing expected=a field]
+                spelt as today: issues [@/kind missing_field {"actual":"nothing","expected":"a case"}]
+                empty: issues [@/body missing_field {"actual":"nothing","expected":"a field"}]
                 """);
     }
 

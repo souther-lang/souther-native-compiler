@@ -100,18 +100,6 @@ fn a_rational_is_lowered() {
     object_for(&document("DIV", "INT")).expect("a quotient of two Ints is lowered");
 }
 
-/// Refused, and refused as not lowered: what is under test is that nothing is emitted for it.
-///
-/// Every pair below is read as it stands and is one the checker never writes the operator over:
-/// which types an operator orders is the checker's rule, and a reading says what the operands were
-/// taken as, not whether the operator admits them. So these are refused the way any pair this
-/// backend has no lowering for is.
-fn is_refused_and_not_lowered(document: &str, naming: &str) {
-    let refused = object_for(document).expect_err("nothing is emitted for this pair");
-    assert!(refused.downcast_ref::<NotLowered>().is_some(), "{refused}");
-    assert!(refused.to_string().contains(naming), "{refused}");
-}
-
 /// A sum of two values of a declared type, answering one.
 ///
 /// No Souther source produces this: what crosses for `a + b` over a newtype is a construction of
@@ -145,13 +133,14 @@ fn a_sum_of_a_number_and_an_address_is_the_halves_disagreeing_whichever_side_it_
 }
 
 /// An ordering over two tuples, and over two optionals: a tuple and an optional have equality and
-/// no order.
+/// no order, so no order the checker could name places them, and a comparison saying one does is
+/// the two halves disagreeing.
 #[test]
-fn an_ordering_over_what_has_equality_and_no_order_is_refused() {
+fn an_ordering_over_what_has_equality_and_no_order_is_the_halves_disagreeing() {
     let pair = r#"{"tuple":[{"prim":"INT"},{"prim":"INT"}]}"#;
     let held = r#"{"option":{"prim":"INT"}}"#;
     for ty in [pair, held] {
-        is_refused_and_not_lowered(&over("LT", ty, ty), "<");
+        is_the_halves_disagreeing(&over("LT", ty, ty), "no order the language has");
     }
 }
 
@@ -191,11 +180,12 @@ fn equality_over_what_holds_what_has_no_value_is_lowered() {
     }
 }
 
-/// An ordering over two truths: `Bool` is not one of the ordered types. A comparison decided by
-/// the machine width would have run it as an `icmp` over two bytes and answered something.
+/// An ordering over two truths: `Bool` is not one of the ordered types, so an order of it is none
+/// the checker names. A comparison decided by the machine width would have run it as an `icmp`
+/// over two bytes and answered something.
 #[test]
-fn an_ordering_over_two_truths_is_refused() {
-    is_refused_and_not_lowered(&document("LT", "BOOL"), "Bool");
+fn an_ordering_over_two_truths_is_the_halves_disagreeing() {
+    is_the_halves_disagreeing(&document("LT", "BOOL"), "no order the language has");
 }
 
 /// A field nothing here names is the writer saying something this driver has no idea it was told.

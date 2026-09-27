@@ -28,7 +28,7 @@ use souther_native_abi::{
     RATIONAL_FROM_INT, RATIONAL_MULTIPLY, SLOT, Status, list_at, room_for_held, room_for_list,
 };
 
-use crate::ordering::ordered;
+use crate::ordering::{Placing, ordered, place_of};
 use crate::transport::{AbortKind, FnSignature, Op, Prim, Ty};
 use crate::{
     Held, Lowered, Lowering, POINTER, TRUSTED, abort_where, call_function, into_slot, machine_type,
@@ -351,15 +351,15 @@ pub(crate) fn extreme(
     lowering: &Lowering,
     module: &mut ObjectModule,
     op: Op,
-    subject: &Ty,
-    basis: Option<&Ty>,
+    subject: Placing,
     list: ir::Value,
 ) -> Lowered<ir::Value> {
-    if subject.has_no_value() {
+    if subject.ty.has_no_value() {
         return Ok(builder.ins().iconst(POINTER, NOTHING));
     }
-    let machine = machine_type(subject)?;
     let count = length(builder, list);
+    let keys = SortKeys::of(builder, lowering, module, subject, list, count)?;
+    let machine = keys.machine()?;
     let nought = builder.ins().iconst(types::I64, 0);
     let first = element_at(builder, list, nought);
     let nothing = builder.ins().iconst(POINTER, NOTHING);
@@ -367,19 +367,24 @@ pub(crate) fn extreme(
     let start = builder.ins().select(empty, nothing, first);
     let chosen = builder.declare_var(POINTER);
     builder.def_var(chosen, start);
+    let chosen_at = builder.declare_var(types::I64);
+    builder.def_var(chosen_at, nought);
     let rest = builder.ins().iadd_imm_s(count, -1);
     let rest = builder.ins().smax(rest, nought);
     each(builder, rest, |builder, at| {
         let along = builder.ins().iadd_imm_s(at, 1);
+        let so_far_at = builder.use_var(chosen_at);
+        let at_candidate = element_at(builder, keys.list, along);
+        let candidate = read(builder, at_candidate, machine);
+        let at_best = element_at(builder, keys.list, so_far_at);
+        let best = read(builder, at_best, machine);
+        let beyond = keys.ordered(builder, lowering, module, op, candidate, best)?;
         let slot = element_at(builder, list, along);
         let so_far = builder.use_var(chosen);
-        let candidate = read(builder, slot, machine);
-        let best = read(builder, so_far, machine);
-        let beyond = ordered(
-            builder, lowering, module, op, subject, basis, candidate, best,
-        )?;
         let now = builder.ins().select(beyond, slot, so_far);
         builder.def_var(chosen, now);
+        let now_at = builder.ins().select(beyond, along, so_far_at);
+        builder.def_var(chosen_at, now_at);
         Ok(())
     })?;
     Ok(builder.use_var(chosen))
@@ -391,22 +396,25 @@ pub(crate) fn sorted(
     builder: &mut FunctionBuilder,
     lowering: &Lowering,
     module: &mut ObjectModule,
-    subject: &Ty,
-    basis: Option<&Ty>,
+    subject: Placing,
     list: ir::Value,
 ) -> Lowered<ir::Value> {
-    if subject.has_no_value() {
+    if subject.ty.has_no_value() {
         return Ok(list);
     }
     let count = length(builder, list);
     let values = copied(builder, lowering, module, list, count);
+    let keys = SortKeys::of(builder, lowering, module, subject, values, count)?;
+    if keys.are(values) {
+        let (sorted, []) = merged(builder, lowering, module, keys, count, [])?;
+        return Ok(sorted);
+    }
     let spare = new_list(builder, lowering, module, count);
-    let [values] = merged(
+    let (_, [values]) = merged(
         builder,
         lowering,
         module,
-        subject,
-        basis,
+        keys,
         count,
         [Lane {
             from: values,
@@ -414,6 +422,93 @@ pub(crate) fn sorted(
         }],
     )?;
     Ok(values)
+}
+
+/// What a walk that compares each value many times compares, worked out once per value: where
+/// each stands on its order, as an `Int`, where the order is an enumeration's, and the values
+/// themselves where it is a primitive's.
+///
+/// Placing a value of an enumeration walks its leaves, so a walk that compared the values
+/// themselves would walk them at every comparison: `n log n` walks of `L` cases for a sort of `n`
+/// values, where these are `n`. The fields are this module's own and [`SortKeys::of`] is the one
+/// way to have one, so a sort, a merge or a search for an extreme is handed keys and never values
+/// it would place again and again; a single comparison written in source is `ordering::ordered`'s,
+/// and nowhere else here compares two values (`tests/ordering_sites.rs`).
+struct SortKeys<'t> {
+    /// A list of the keys, one for each value, in the order the values are.
+    list: ir::Value,
+    by: KeyedBy<'t>,
+}
+
+enum KeyedBy<'t> {
+    /// Each value's place on its enumeration's order.
+    Places,
+    /// The values, compared as the order says.
+    Values(Placing<'t>),
+}
+
+impl<'t> SortKeys<'t> {
+    /// The keys of the `count` values `list` holds, on `subject`'s order. Where the order is a
+    /// primitive's the keys are `list` itself, which is read and not written.
+    fn of(
+        builder: &mut FunctionBuilder,
+        lowering: &Lowering,
+        module: &mut ObjectModule,
+        subject: Placing<'t>,
+        list: ir::Value,
+        count: ir::Value,
+    ) -> Lowered<SortKeys<'t>> {
+        if subject.enumeration().is_none() {
+            return Ok(SortKeys {
+                list,
+                by: KeyedBy::Values(subject),
+            });
+        }
+        let machine = machine_type(subject.ty)?;
+        let places = new_list(builder, lowering, module, count);
+        each(builder, count, |builder, at| {
+            let slot = element_at(builder, list, at);
+            let value = read(builder, slot, machine);
+            let place = place_of(builder, lowering, module, subject, value)?
+                .expect("an enumeration's order places each of its values");
+            let to = element_at(builder, places, at);
+            builder.ins().store(TRUSTED, place, to, 0);
+            Ok(())
+        })?;
+        Ok(SortKeys {
+            list: places,
+            by: KeyedBy::Places,
+        })
+    }
+
+    /// Whether the keys are the list `values`, so that ordering the keys orders the values.
+    fn are(&self, values: ir::Value) -> bool {
+        matches!(self.by, KeyedBy::Values(_)) && self.list == values
+    }
+
+    /// What one key is held as.
+    fn machine(&self) -> Lowered<types::Type> {
+        match self.by {
+            KeyedBy::Places => Ok(types::I64),
+            KeyedBy::Values(subject) => machine_type(subject.ty),
+        }
+    }
+
+    /// Whether key `a` stands as `op` asks of key `b`.
+    fn ordered(
+        &self,
+        builder: &mut FunctionBuilder,
+        lowering: &Lowering,
+        module: &mut ObjectModule,
+        op: Op,
+        a: ir::Value,
+        b: ir::Value,
+    ) -> Lowered<ir::Value> {
+        match self.by {
+            KeyedBy::Places => Ok(builder.ins().icmp(crate::as_a_whole_number(op), a, b)),
+            KeyedBy::Values(subject) => ordered(builder, lowering, module, op, subject, a, b),
+        }
+    }
 }
 
 /// `list` ordered by what `key` answers for each element, ordered as `subject` (`List.sortBy`),
@@ -424,15 +519,13 @@ pub(crate) fn sorted(
 /// out again at each comparison would be called as many times as the sort compares. Where no value
 /// of what the key answers is made, no key is ever answered, so a list the walk gets past is empty
 /// and nothing is compared.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn sorted_by(
     builder: &mut FunctionBuilder,
     lowering: &Lowering,
     module: &mut ObjectModule,
     abort: ir::Block,
     key: Held,
-    subject: &Ty,
-    basis: Option<&Ty>,
+    subject: Placing,
     list: ir::Value,
 ) -> Lowered<ir::Value> {
     let function = signature(key.ty);
@@ -452,29 +545,22 @@ pub(crate) fn sorted_by(
         builder.ins().store(TRUSTED, answered, to, 0);
         Ok(())
     })?;
-    if subject.has_no_value() {
+    if subject.ty.has_no_value() {
         return Ok(list);
     }
     let values = copied(builder, lowering, module, list, count);
-    let spare_keys = new_list(builder, lowering, module, count);
     let spare_values = new_list(builder, lowering, module, count);
-    let [_, values] = merged(
+    let keys = SortKeys::of(builder, lowering, module, subject, keys, count)?;
+    let (_, [values]) = merged(
         builder,
         lowering,
         module,
-        subject,
-        basis,
+        keys,
         count,
-        [
-            Lane {
-                from: keys,
-                to: spare_keys,
-            },
-            Lane {
-                from: values,
-                to: spare_values,
-            },
-        ],
+        [Lane {
+            from: values,
+            to: spare_values,
+        }],
     )?;
     Ok(values)
 }
@@ -485,26 +571,35 @@ struct Lane {
     to: ir::Value,
 }
 
-/// The lanes ordered together by what the first holds, ordered as `subject`, and the list each is
-/// left in: a merge sort from the bottom up, merging runs of one element into runs of two, of four,
-/// and on until one run is the whole list.
+/// The keys, and the lanes beside them, ordered together by the keys, and the list each is left in:
+/// a merge sort from the bottom up, merging runs of one element into runs of two, of four, and on
+/// until one run is the whole list. The keys' list is written as the merge goes, so it is one the
+/// caller owns.
 ///
 /// Each pass merges every pair of runs from one list of a lane into the other, and the two swap for
 /// the next pass. Where the two runs being merged hold equal elements, the one from the run on the
 /// left is taken first: the left run's elements came in before the right's, so the order equal
 /// elements came in is kept however many passes there are.
-fn merged<const LANES: usize>(
+fn merged<const BESIDE: usize>(
     builder: &mut FunctionBuilder,
     lowering: &Lowering,
     module: &mut ObjectModule,
-    subject: &Ty,
-    basis: Option<&Ty>,
+    keys: SortKeys,
     count: ir::Value,
-    lanes: [Lane; LANES],
-) -> Lowered<[ir::Value; LANES]> {
-    let machine = machine_type(subject)?;
-    let from = lanes.each_ref().map(|_| builder.declare_var(POINTER));
-    let to = lanes.each_ref().map(|_| builder.declare_var(POINTER));
+    beside: [Lane; BESIDE],
+) -> Lowered<(ir::Value, [ir::Value; BESIDE])> {
+    let machine = keys.machine()?;
+    let spare = new_list(builder, lowering, module, count);
+    let lanes: Vec<Lane> = std::iter::once(Lane {
+        from: keys.list,
+        to: spare,
+    })
+    .chain(beside)
+    .collect();
+    let from: Vec<cranelift::frontend::Variable> =
+        lanes.iter().map(|_| builder.declare_var(POINTER)).collect();
+    let to: Vec<cranelift::frontend::Variable> =
+        lanes.iter().map(|_| builder.declare_var(POINTER)).collect();
     for (lane, (from, to)) in lanes.iter().zip(from.iter().zip(&to)) {
         builder.def_var(*from, lane.from);
         builder.def_var(*to, lane.to);
@@ -597,23 +692,14 @@ fn merged<const LANES: usize>(
     builder.seal_block(compared);
 
     builder.switch_to_block(compared);
-    let being_ordered = builder.use_var(from[0]);
+    let ordering = builder.use_var(from[0]);
     let i = builder.use_var(left);
     let j = builder.use_var(right);
-    let on_the_left = element_at(builder, being_ordered, i);
+    let on_the_left = element_at(builder, ordering, i);
     let on_the_left = read(builder, on_the_left, machine);
-    let on_the_right = element_at(builder, being_ordered, j);
+    let on_the_right = element_at(builder, ordering, j);
     let on_the_right = read(builder, on_the_right, machine);
-    let before = ordered(
-        builder,
-        lowering,
-        module,
-        Op::Lt,
-        subject,
-        basis,
-        on_the_right,
-        on_the_left,
-    )?;
+    let before = keys.ordered(builder, lowering, module, Op::Lt, on_the_right, on_the_left)?;
     builder.ins().brif(before, take_right, &[], take_left, &[]);
     builder.seal_block(take_left);
     builder.seal_block(take_right);
@@ -660,7 +746,9 @@ fn merged<const LANES: usize>(
     builder.seal_block(done);
 
     builder.switch_to_block(done);
-    Ok(from.map(|from| builder.use_var(from)))
+    let sorted = builder.use_var(from[0]);
+    let beside = std::array::from_fn(|at| builder.use_var(from[at + 1]));
+    Ok((sorted, beside))
 }
 
 /// What a function value handed to a kernel is: the contract gave it a function's shape, and

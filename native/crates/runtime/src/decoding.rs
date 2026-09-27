@@ -9,11 +9,12 @@
 //! read here and not in generated code, the way a string is compared here: what a place written as
 //! `1.0` is, is one answer for every declaration and not one emitted into every reader.
 //!
-//! What was found wrong is kept, all of it, as issues with Raoh's codes: a caller who fixes one
-//! field and is then told about the next has been made to ask as many times as its document had
-//! mistakes. An issue carries a code, the JSON Pointer of where it was found, and what else its code
-//! says about it as named entries, which is what Raoh's own metadata is. Not a sentence: what a
-//! person reads is written against the code by whoever shows it.
+//! What was found wrong is kept, all of it, as issues in Raoh's terms: a caller who fixes one field
+//! and is then told about the next has been made to ask as many times as its document had mistakes.
+//! An issue carries a code, the message key a resolver picks its wording by — the code itself where
+//! Raoh gives no other — the JSON Pointer of where it was found, and what else it says about it as
+//! Raoh's metadata: a JSON object whose entries are what they are, a number as a number and a list
+//! as a list. Not a sentence: what a person reads is written against the key by whoever shows it.
 //!
 //! Everything a reading makes that outlives it — the reading itself, its issues, its paths and the
 //! text in them — is taken from the arena, so the mark a caller took before decoding drops it with
@@ -21,8 +22,9 @@
 //! it when it ends.
 
 use crate::amount::Amount;
-use crate::decimal::{Decimal, decimal_of};
+use crate::decimal::{Decimal, amount, decimal_of};
 use crate::document::{Form, Node, parsed};
+use crate::external::Form as Said;
 use crate::temporal::{
     Date, DateTime, Instant, Time, date_of, date_time_of, instant_of, parse_date, parse_date_time,
     parse_instant, parse_time, time_of,
@@ -60,17 +62,14 @@ pub struct Path {
     step: *const u8,
 }
 
-/// What entries an issue can carry. Raoh's metadata is a map, and the most any code here says is
-/// the three an invariant does.
-const META: usize = 3;
-
 /// One thing found wrong.
 #[repr(C)]
 pub struct Issue {
     code: *const u8,
+    message_key: *const u8,
     path: *const u8,
-    meta: [(*const u8, *const u8); META],
-    meta_count: i64,
+    /// The metadata, as the JSON object it is written as.
+    meta: *const u8,
     next: *mut Issue,
 }
 
@@ -114,22 +113,51 @@ fn string(text: &str) -> *const u8 {
     string_of(text).cast()
 }
 
-/// Records an issue found at `path`.
+/// The metadata of an issue as the JSON object it is written as: its entries in the order of their
+/// names, one entry to a name, so one issue's metadata is written one way wherever it is read, and
+/// each value as the value it is — a `Decimal` at its scale, where a boundary writes its amount.
+fn metadata(entries: Vec<(&str, Said)>) -> String {
+    let mut members: Vec<(Vec<u8>, Said)> = entries
+        .into_iter()
+        .map(|(name, said)| (name.as_bytes().to_vec(), said))
+        .collect();
+    members.sort_by(|a, b| a.0.cmp(&b.0));
+    assert!(
+        members.windows(2).all(|pair| pair[0].0 != pair[1].0),
+        "an issue says one thing under a name"
+    );
+    let mut written = Vec::new();
+    crate::external::write(
+        &Said::Object(members),
+        &mut written,
+        crate::external::Written::AsMetadata,
+    );
+    String::from_utf8(written).expect("JSON written of text is text")
+}
+
+/// Text an issue says under a name.
+fn words(text: &str) -> Said {
+    Said::String(text.as_bytes().to_vec())
+}
+
+/// Records an issue found at `path`, under `key` where Raoh gives it a message key of its own and
+/// under its code where it does not.
 ///
 /// # Safety
 /// `decoding` is one [`souther_decode_begin`] answered and still reading, and `path` is as
 /// [`pointer`] says.
-unsafe fn found(decoding: *mut Decoding, code: &str, path: *const Path, meta: &[(&str, &str)]) {
-    assert!(meta.len() <= META, "no code says more than {META} things");
-    let mut entries = [(ptr::null::<u8>(), ptr::null::<u8>()); META];
-    for (entry, (key, value)) in entries.iter_mut().zip(meta) {
-        *entry = (string(key), string(value));
-    }
+unsafe fn found(
+    decoding: *mut Decoding,
+    code: &str,
+    key: Option<&str>,
+    path: *const Path,
+    meta: Vec<(&str, Said)>,
+) {
     let issue = held(Issue {
         code: string(code),
+        message_key: string(key.unwrap_or(code)),
         path: string(&unsafe { pointer(path) }),
-        meta: entries,
-        meta_count: meta.len() as i64,
+        meta: string(&metadata(meta)),
         next: ptr::null_mut(),
     });
     let decoding = unsafe { &mut *decoding };
@@ -147,8 +175,9 @@ unsafe fn mismatched(decoding: *mut Decoding, path: *const Path, node: &Node, wa
         found(
             decoding,
             "type_mismatch",
+            None,
             path,
-            &[("actual", node.kind()), ("expected", wanted)],
+            vec![("actual", words(node.kind())), ("expected", words(wanted))],
         )
     };
 }
@@ -436,7 +465,7 @@ pub unsafe extern "C" fn souther_path_below_member(
 /// As [`souther_read_missing`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_read_duplicate_key(path: *const Path, decoding: *mut Decoding) {
-    unsafe { found(decoding, "duplicate_key", path, &[]) };
+    unsafe { found(decoding, "duplicate_key", None, path, Vec::new()) };
 }
 
 /// Records that a field the declaration says every value has was not written, at `path`, which
@@ -450,8 +479,9 @@ pub unsafe extern "C" fn souther_read_missing(path: *const Path, decoding: *mut 
         found(
             decoding,
             "missing_field",
+            None,
             path,
-            &[("actual", "nothing"), ("expected", "a field")],
+            vec![("actual", words("nothing")), ("expected", words("a field"))],
         )
     };
 }
@@ -524,8 +554,9 @@ unsafe fn int(node: &Node, path: *const Path, decoding: *mut Decoding) -> Option
             found(
                 decoding,
                 "out_of_range",
+                None,
                 path,
-                &[("actual", "number"), ("expected", "Int")],
+                vec![("actual", words("number")), ("expected", words("Int"))],
             )
         };
     }
@@ -601,8 +632,9 @@ pub unsafe extern "C" fn souther_read_decimal(
                     found(
                         decoding,
                         "out_of_range",
+                        None,
                         path,
-                        &[("actual", "number"), ("expected", "Decimal")],
+                        vec![("actual", words("number")), ("expected", words("Decimal"))],
                     )
                 };
             }
@@ -635,7 +667,7 @@ unsafe fn temporal_text<'a>(
 /// A place whose text is no value of a temporal type, or one a type held to the second would have
 /// to round.
 unsafe fn refused(decoding: *mut Decoding, path: *const Path) {
-    unsafe { found(decoding, "invalid_format", path, &[]) };
+    unsafe { found(decoding, "invalid_format", None, path, Vec::new()) };
 }
 
 /// A `Date`, written through `out` as one of the runtime's in the arena, where `node` is text that
@@ -764,8 +796,9 @@ pub unsafe extern "C" fn souther_read_tag(
             found(
                 decoding,
                 "missing_field",
+                None,
                 path,
-                &[("actual", "nothing"), ("expected", "a case")],
+                vec![("actual", words("nothing")), ("expected", words("a case"))],
             )
         };
         return ptr::null();
@@ -810,8 +843,9 @@ pub unsafe extern "C" fn souther_read_not_a_case(
         found(
             decoding,
             "not_allowed",
+            None,
             path,
-            &[("actual", &written), ("expected", "a case")],
+            vec![("actual", words(&written)), ("expected", words("a case"))],
         )
     };
 }
@@ -832,11 +866,507 @@ pub unsafe extern "C" fn souther_read_invariant(
     clause: *const Text,
 ) {
     let (module, name) = unsafe { (text(&module).as_str(), text(&name).as_str()) };
-    let mut meta: Vec<(&str, &str)> = vec![("module", module), ("type", name)];
+    let mut meta = vec![("module", words(module)), ("type", words(name))];
     if !clause.is_null() {
-        meta.push(("clause", unsafe { text(&clause).as_str() }));
+        meta.push(("clause", words(unsafe { text(&clause).as_str() })));
     }
-    unsafe { found(decoding, "invariant_violation", path, &meta) };
+    unsafe { found(decoding, "invariant_violation", None, path, meta) };
+}
+
+// What a clause stated as a standard constraint reports where the value breaks it: the code, the
+// message key and the metadata Raoh's own constraint reports, so a host reading these reads what
+// the JVM's decoder answers for the same model. Each answers whether the value meets it, having
+// recorded that it does not where it does not. Which constraint a clause is was the checker's; this
+// is only what Raoh calls each.
+
+/// Where `holds` is false, records `code` under `key` at `path` with `meta`; answers `holds`.
+///
+/// # Safety
+/// As [`found`].
+unsafe fn meets(
+    holds: bool,
+    decoding: *mut Decoding,
+    path: *const Path,
+    code: &str,
+    key: Option<&str>,
+    meta: impl FnOnce() -> Vec<(&'static str, Said)>,
+) -> i8 {
+    if !holds {
+        unsafe { found(decoding, code, key, path, meta()) };
+    }
+    i8::from(holds)
+}
+
+/// How many characters `value` holds, counted as `String.length` counts them.
+unsafe fn characters(value: *const Text) -> i64 {
+    unsafe { crate::souther_string_code_points(value) }
+}
+
+/// How many elements the list `value` holds.
+unsafe fn elements_of(value: *const crate::List) -> i64 {
+    unsafe {
+        value
+            .cast::<u8>()
+            .offset(souther_native_abi::LIST_LENGTH as isize)
+            .cast::<i64>()
+            .read()
+    }
+}
+
+/// `StringDecoder.minLength(n)`: `too_short` with `min` and `actual`.
+///
+/// # Safety
+/// As [`souther_read_invariant`]; `value` is a string of the runtime's layout.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_read_min_length(
+    path: *const Path,
+    decoding: *mut Decoding,
+    value: *const Text,
+    n: i64,
+) -> i8 {
+    let actual = unsafe { characters(value) };
+    unsafe {
+        meets(actual >= n, decoding, path, "too_short", None, || {
+            vec![("min", Said::Number(n)), ("actual", Said::Number(actual))]
+        })
+    }
+}
+
+/// `StringDecoder.maxLength(n)`: `too_long` with `max` and `actual`.
+///
+/// # Safety
+/// As [`souther_read_min_length`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_read_max_length(
+    path: *const Path,
+    decoding: *mut Decoding,
+    value: *const Text,
+    n: i64,
+) -> i8 {
+    let actual = unsafe { characters(value) };
+    unsafe {
+        meets(actual <= n, decoding, path, "too_long", None, || {
+            vec![("max", Said::Number(n)), ("actual", Said::Number(actual))]
+        })
+    }
+}
+
+/// `StringDecoder.fixedLength(n)`: `invalid_length` with `expected` and `actual`.
+///
+/// # Safety
+/// As [`souther_read_min_length`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_read_fixed_length(
+    path: *const Path,
+    decoding: *mut Decoding,
+    value: *const Text,
+    n: i64,
+) -> i8 {
+    let actual = unsafe { characters(value) };
+    unsafe {
+        meets(actual == n, decoding, path, "invalid_length", None, || {
+            vec![
+                ("expected", Said::Number(n)),
+                ("actual", Said::Number(actual)),
+            ]
+        })
+    }
+}
+
+/// A pattern the whole of `value` has to match: `invalid_format` with the `pattern` it was held
+/// to, which is the text the author's call was given and not the machine that ran it.
+///
+/// # Safety
+/// As [`souther_read_min_length`]; `machine` is the first of the words `souther_text::pattern`
+/// compiled, and `written` a string of the runtime's layout.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_read_pattern(
+    path: *const Path,
+    decoding: *mut Decoding,
+    value: *const Text,
+    machine: *const u32,
+    written: *const Text,
+) -> i8 {
+    let holds = unsafe { crate::souther_string_matches(machine, value) } != 0;
+    unsafe {
+        meets(holds, decoding, path, "invalid_format", None, || {
+            vec![("pattern", words(text(&written).as_str()))]
+        })
+    }
+}
+
+/// `LongDecoder.min(n)`: `out_of_range` under `out_of_range.minimum`, with `min` and `actual`.
+///
+/// # Safety
+/// As [`souther_read_invariant`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_read_int_min(
+    path: *const Path,
+    decoding: *mut Decoding,
+    value: i64,
+    n: i64,
+) -> i8 {
+    unsafe {
+        meets(
+            value >= n,
+            decoding,
+            path,
+            "out_of_range",
+            Some("out_of_range.minimum"),
+            || vec![("min", Said::Number(n)), ("actual", Said::Number(value))],
+        )
+    }
+}
+
+/// `LongDecoder.max(n)`: `out_of_range` under `out_of_range.maximum`, with `max` and `actual`.
+///
+/// # Safety
+/// As [`souther_read_invariant`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_read_int_max(
+    path: *const Path,
+    decoding: *mut Decoding,
+    value: i64,
+    n: i64,
+) -> i8 {
+    unsafe {
+        meets(
+            value <= n,
+            decoding,
+            path,
+            "out_of_range",
+            Some("out_of_range.maximum"),
+            || vec![("max", Said::Number(n)), ("actual", Said::Number(value))],
+        )
+    }
+}
+
+/// `LongDecoder.positive()`: `out_of_range` under `out_of_range.positive`, with `min` one.
+///
+/// # Safety
+/// As [`souther_read_invariant`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_read_int_positive(
+    path: *const Path,
+    decoding: *mut Decoding,
+    value: i64,
+) -> i8 {
+    unsafe {
+        meets(
+            value > 0,
+            decoding,
+            path,
+            "out_of_range",
+            Some("out_of_range.positive"),
+            || vec![("min", Said::Number(1)), ("actual", Said::Number(value))],
+        )
+    }
+}
+
+/// `LongDecoder.nonNegative()`: `out_of_range` under `out_of_range.non_negative`, with `min`
+/// nought.
+///
+/// # Safety
+/// As [`souther_read_invariant`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_read_int_non_negative(
+    path: *const Path,
+    decoding: *mut Decoding,
+    value: i64,
+) -> i8 {
+    unsafe {
+        meets(
+            value >= 0,
+            decoding,
+            path,
+            "out_of_range",
+            Some("out_of_range.non_negative"),
+            || vec![("min", Said::Number(0)), ("actual", Said::Number(value))],
+        )
+    }
+}
+
+/// A `Decimal` as metadata holds it: the value, scale and all, which [`metadata`] writes at its
+/// scale.
+unsafe fn amount_said(at: *const Decimal) -> Said {
+    Said::Amount(unsafe { amount(at) })
+}
+
+/// `DecimalDecoder.min(n)`: `out_of_range` under `out_of_range.minimum`, with `min` and `actual`,
+/// compared by amount whatever the scales.
+///
+/// # Safety
+/// As [`souther_read_invariant`]; `value` and `n` are `Decimal`s of the runtime's.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_read_decimal_min(
+    path: *const Path,
+    decoding: *mut Decoding,
+    value: *const Decimal,
+    n: *const Decimal,
+) -> i8 {
+    let holds = unsafe { amount(value).compare(&amount(n)) }.is_ge();
+    unsafe {
+        meets(
+            holds,
+            decoding,
+            path,
+            "out_of_range",
+            Some("out_of_range.minimum"),
+            || vec![("min", amount_said(n)), ("actual", amount_said(value))],
+        )
+    }
+}
+
+/// `DecimalDecoder.max(n)`: `out_of_range` under `out_of_range.maximum`, with `max` and `actual`.
+///
+/// # Safety
+/// As [`souther_read_decimal_min`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_read_decimal_max(
+    path: *const Path,
+    decoding: *mut Decoding,
+    value: *const Decimal,
+    n: *const Decimal,
+) -> i8 {
+    let holds = unsafe { amount(value).compare(&amount(n)) }.is_le();
+    unsafe {
+        meets(
+            holds,
+            decoding,
+            path,
+            "out_of_range",
+            Some("out_of_range.maximum"),
+            || vec![("max", amount_said(n)), ("actual", amount_said(value))],
+        )
+    }
+}
+
+/// Where a `Decimal` stands against nought.
+unsafe fn sign_of(value: *const Decimal) -> std::cmp::Ordering {
+    unsafe { amount(value) }.compare(&crate::amount::Amount::of_int(0))
+}
+
+/// `DecimalDecoder.positive()`: `out_of_range` under `out_of_range.positive`, with `min` nought —
+/// the bound the value has to be above, as Raoh's own says it, and not a least value.
+///
+/// # Safety
+/// As [`souther_read_decimal_min`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_read_decimal_positive(
+    path: *const Path,
+    decoding: *mut Decoding,
+    value: *const Decimal,
+) -> i8 {
+    let holds = unsafe { sign_of(value) }.is_gt();
+    unsafe {
+        meets(
+            holds,
+            decoding,
+            path,
+            "out_of_range",
+            Some("out_of_range.positive"),
+            || vec![("min", Said::Number(0)), ("actual", amount_said(value))],
+        )
+    }
+}
+
+/// `DecimalDecoder.nonNegative()`: `out_of_range` under `out_of_range.non_negative`, with `min`
+/// nought.
+///
+/// # Safety
+/// As [`souther_read_decimal_min`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_read_decimal_non_negative(
+    path: *const Path,
+    decoding: *mut Decoding,
+    value: *const Decimal,
+) -> i8 {
+    let holds = unsafe { sign_of(value) }.is_ge();
+    unsafe {
+        meets(
+            holds,
+            decoding,
+            path,
+            "out_of_range",
+            Some("out_of_range.non_negative"),
+            || vec![("min", Said::Number(0)), ("actual", amount_said(value))],
+        )
+    }
+}
+
+/// How a collection's size is refused, the same for a list's elements and a map's entries: Raoh's
+/// `nonempty` is `too_small` under `too_small.nonempty` with `min` one and `actual` nought, a least
+/// size `too_small` with `min`, a most `too_big` with `max`, an exact one `invalid_size` with
+/// `expected`, each with the `actual` size.
+unsafe fn sized(decoding: *mut Decoding, path: *const Path, actual: i64, bound: Bound) -> i8 {
+    let (holds, code, key, name, n) = match bound {
+        Bound::NonEmpty => (
+            actual > 0,
+            "too_small",
+            Some("too_small.nonempty"),
+            "min",
+            1,
+        ),
+        Bound::AtLeast(n) => (actual >= n, "too_small", None, "min", n),
+        Bound::AtMost(n) => (actual <= n, "too_big", None, "max", n),
+        Bound::Exactly(n) => (actual == n, "invalid_size", None, "expected", n),
+    };
+    unsafe {
+        meets(holds, decoding, path, code, key, || {
+            vec![(name, Said::Number(n)), ("actual", Said::Number(actual))]
+        })
+    }
+}
+
+/// Which size a collection is held to.
+enum Bound {
+    NonEmpty,
+    AtLeast(i64),
+    AtMost(i64),
+    Exactly(i64),
+}
+
+/// `ListDecoder.nonempty()`.
+///
+/// # Safety
+/// As [`souther_read_invariant`]; `value` is a list of the runtime's layout.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_read_list_non_empty(
+    path: *const Path,
+    decoding: *mut Decoding,
+    value: *const crate::List,
+) -> i8 {
+    unsafe { sized(decoding, path, elements_of(value), Bound::NonEmpty) }
+}
+
+/// `ListDecoder.minSize(n)`.
+///
+/// # Safety
+/// As [`souther_read_list_non_empty`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_read_list_min_size(
+    path: *const Path,
+    decoding: *mut Decoding,
+    value: *const crate::List,
+    n: i64,
+) -> i8 {
+    unsafe { sized(decoding, path, elements_of(value), Bound::AtLeast(n)) }
+}
+
+/// `ListDecoder.maxSize(n)`.
+///
+/// # Safety
+/// As [`souther_read_list_non_empty`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_read_list_max_size(
+    path: *const Path,
+    decoding: *mut Decoding,
+    value: *const crate::List,
+    n: i64,
+) -> i8 {
+    unsafe { sized(decoding, path, elements_of(value), Bound::AtMost(n)) }
+}
+
+/// `ListDecoder.fixedSize(n)`.
+///
+/// # Safety
+/// As [`souther_read_list_non_empty`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_read_list_fixed_size(
+    path: *const Path,
+    decoding: *mut Decoding,
+    value: *const crate::List,
+    n: i64,
+) -> i8 {
+    unsafe { sized(decoding, path, elements_of(value), Bound::Exactly(n)) }
+}
+
+/// `ListDecoder.unique()` refused: `duplicate_element` with the `duplicates`, the elements the list
+/// holds more than once as a boundary writes them, which generated code wrote into `duplicates`.
+/// Which elements those are is [`crate::souther_list_duplicates`]'s answer.
+///
+/// # Safety
+/// As [`souther_read_invariant`]; `duplicates` is a form the caller owns, and owns no longer once
+/// this returns.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_read_duplicates(
+    path: *const Path,
+    decoding: *mut Decoding,
+    duplicates: *mut Said,
+) {
+    let duplicates = *unsafe { Box::from_raw(duplicates) };
+    unsafe {
+        found(
+            decoding,
+            "duplicate_element",
+            None,
+            path,
+            vec![("duplicates", duplicates)],
+        )
+    };
+}
+
+/// The emptiness of a map, as the JVM's decoder refuses it: what `RecordDecoder.nonempty()`
+/// reports.
+///
+/// # Safety
+/// As [`souther_read_invariant`]; `value` is a map of the runtime's.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_read_map_non_empty(
+    path: *const Path,
+    decoding: *mut Decoding,
+    value: *const crate::Map,
+) -> i8 {
+    unsafe {
+        sized(
+            decoding,
+            path,
+            crate::souther_map_size(value),
+            Bound::NonEmpty,
+        )
+    }
+}
+
+/// A least count of entries.
+///
+/// # Safety
+/// As [`souther_read_map_non_empty`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_read_map_min_size(
+    path: *const Path,
+    decoding: *mut Decoding,
+    value: *const crate::Map,
+    n: i64,
+) -> i8 {
+    unsafe {
+        sized(
+            decoding,
+            path,
+            crate::souther_map_size(value),
+            Bound::AtLeast(n),
+        )
+    }
+}
+
+/// A most count of entries.
+///
+/// # Safety
+/// As [`souther_read_map_non_empty`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_read_map_max_size(
+    path: *const Path,
+    decoding: *mut Decoding,
+    value: *const crate::Map,
+    n: i64,
+) -> i8 {
+    unsafe {
+        sized(
+            decoding,
+            path,
+            crate::souther_map_size(value),
+            Bound::AtMost(n),
+        )
+    }
 }
 
 /// What a reading came to: [`DECODED_VALUE`], [`DECODED_ISSUES`] or [`DECODED_MALFORMED`].
@@ -923,44 +1453,25 @@ pub unsafe extern "C" fn souther_issue_path(issue: *const Issue) -> *const Text 
     unsafe { (*issue).path.cast() }
 }
 
-/// How many named entries the issue carries besides its code and its path.
+/// The key a resolver picks the issue's wording by: Raoh's message key where it gives the issue one
+/// of its own (`out_of_range.minimum`), and its code where it gives none. Always one or the other,
+/// as Raoh's own `Issue` holds it.
 ///
 /// # Safety
 /// As [`souther_issue_code`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_issue_meta_count(issue: *const Issue) -> Count {
-    Count(unsafe { (*issue).meta_count })
+pub unsafe extern "C" fn souther_issue_message_key(issue: *const Issue) -> *const Text {
+    unsafe { (*issue).message_key.cast() }
 }
 
-fn entry(issue: &Issue, at: i64) -> (*const u8, *const u8) {
-    assert!(
-        (0..issue.meta_count).contains(&at),
-        "an entry is asked for by where it stands among the {} there are",
-        issue.meta_count
-    );
-    issue.meta[at as usize]
-}
-
-/// The name of the issue's entry at `at`.
+/// What else the issue says, as the JSON object Raoh's metadata is: its entries in the order of
+/// their names, a number written as a number and a list as a list. `{}` where it says nothing more.
 ///
 /// # Safety
 /// As [`souther_issue_code`].
-/// # Panics
-/// Where there is no entry at `at`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_issue_meta_key(issue: *const Issue, at: Count) -> *const Text {
-    entry(unsafe { &*issue }, at.0).0.cast()
-}
-
-/// What the issue's entry at `at` says.
-///
-/// # Safety
-/// As [`souther_issue_meta_key`].
-/// # Panics
-/// Where there is no entry at `at`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_issue_meta_value(issue: *const Issue, at: Count) -> *const Text {
-    entry(unsafe { &*issue }, at.0).1.cast()
+pub unsafe extern "C" fn souther_issue_meta(issue: *const Issue) -> *const Text {
+    unsafe { (*issue).meta.cast() }
 }
 
 #[cfg(test)]
@@ -980,26 +1491,26 @@ mod tests {
         unsafe { souther_decode_begin(document.as_ptr(), Count(document.len() as i64)) }
     }
 
-    /// Every issue a reading found, as `path code key=value…`.
+    /// Every issue a reading found, as `path code meta`, with ` key=…` after the code where the
+    /// message key is not the code.
     fn issues(decoding: *mut Decoding) -> Vec<String> {
         unsafe {
             souther_decode_end(decoding, ptr::null());
             (0..souther_decoded_issue_count(decoding).0)
                 .map(|at| {
                     let issue = souther_decoded_issue(decoding, Count(at));
-                    let mut line = format!(
-                        "{} {}",
+                    let code = said(souther_issue_code(issue));
+                    let key = said(souther_issue_message_key(issue));
+                    let keyed = if key == code {
+                        String::new()
+                    } else {
+                        format!(" key={key}")
+                    };
+                    format!(
+                        "{} {code}{keyed} {}",
                         said(souther_issue_path(issue)),
-                        said(souther_issue_code(issue))
-                    );
-                    for entry in 0..souther_issue_meta_count(issue).0 {
-                        line.push_str(&format!(
-                            " {}={}",
-                            said(souther_issue_meta_key(issue, Count(entry))),
-                            said(souther_issue_meta_value(issue, Count(entry)))
-                        ));
-                    }
-                    line
+                        said(souther_issue_meta(issue))
+                    )
                 })
                 .collect()
         }
@@ -1059,28 +1570,32 @@ mod tests {
         assert_eq!(int("-9223372036854775808"), Ok(i64::MIN));
         assert_eq!(
             int("9223372036854775808"),
-            Err(vec![" out_of_range actual=number expected=Int".to_string()])
+            Err(vec![
+                r#" out_of_range {"actual":"number","expected":"Int"}"#.to_string()
+            ])
         );
         assert_eq!(
             int("-99999999999999999999999"),
-            Err(vec![" out_of_range actual=number expected=Int".to_string()])
+            Err(vec![
+                r#" out_of_range {"actual":"number","expected":"Int"}"#.to_string()
+            ])
         );
         assert_eq!(
             int("1.0"),
             Err(vec![
-                " type_mismatch actual=number expected=Int".to_string()
+                r#" type_mismatch {"actual":"number","expected":"Int"}"#.to_string()
             ])
         );
         assert_eq!(
             int("1e0"),
             Err(vec![
-                " type_mismatch actual=number expected=Int".to_string()
+                r#" type_mismatch {"actual":"number","expected":"Int"}"#.to_string()
             ])
         );
         assert_eq!(
             int("\"1\""),
             Err(vec![
-                " type_mismatch actual=string expected=Int".to_string()
+                r#" type_mismatch {"actual":"string","expected":"Int"}"#.to_string()
             ])
         );
         souther_reset(mark);
@@ -1099,7 +1614,7 @@ mod tests {
         unsafe { souther_read_missing(path, decoding) };
         assert_eq!(
             issues(decoding),
-            vec!["/a~1b/~0c/0 missing_field actual=nothing expected=a field"]
+            vec![r#"/a~1b/~0c/0 missing_field {"actual":"nothing","expected":"a field"}"#]
         );
         souther_reset(mark);
     }
@@ -1123,8 +1638,8 @@ mod tests {
         assert_eq!(
             issues(decoding),
             vec![
-                "/xs/1 type_mismatch actual=boolean expected=Int",
-                "/xs/1 type_mismatch actual=boolean expected=an array",
+                r#"/xs/1 type_mismatch {"actual":"boolean","expected":"Int"}"#,
+                r#"/xs/1 type_mismatch {"actual":"boolean","expected":"an array"}"#,
             ]
         );
         souther_reset(mark);
@@ -1177,9 +1692,98 @@ mod tests {
         assert_eq!(
             issues(decoding),
             vec![
-                " invariant_violation module=shop type=Money clause=notNegative",
-                "/x invariant_violation module=shop type=Line",
+                r#" invariant_violation {"clause":"notNegative","module":"shop","type":"Money"}"#,
+                r#"/x invariant_violation {"module":"shop","type":"Line"}"#,
             ]
+        );
+        souther_reset(mark);
+    }
+
+    fn decimal(unscaled: &str, scale: i64) -> *mut Decimal {
+        unsafe { crate::souther_decimal_of_parts(literal(unscaled), scale) }
+    }
+
+    fn ints(values: &[i64]) -> *mut crate::List {
+        crate::kernels::list_of(values, |it| *it)
+    }
+
+    /// Each constraint answers whether the value meets it, and where it does not records what
+    /// Raoh's own constraint reports: its code, its message key where it has one of its own, and
+    /// its metadata with numbers as numbers — a `Decimal` at its scale, as Raoh's own holds it.
+    #[test]
+    fn a_constraint_a_value_breaks_is_reported_as_raohs() {
+        let mark = souther_mark();
+        let decoding = begun("{}");
+        let at = |step: &str| unsafe { souther_path_below(ptr::null(), literal(step)) };
+        let held = unsafe {
+            [
+                souther_read_min_length(at("a"), decoding, literal("\u{304c}b"), 3),
+                souther_read_min_length(at("a"), decoding, literal("abc"), 3),
+                souther_read_max_length(at("b"), decoding, literal("abcd"), 3),
+                souther_read_fixed_length(at("c"), decoding, literal("ab"), 3),
+                souther_read_int_min(at("d"), decoding, 2, 3),
+                souther_read_int_max(at("e"), decoding, 4, 3),
+                souther_read_int_positive(at("f"), decoding, 0),
+                souther_read_int_non_negative(at("g"), decoding, -1),
+                souther_read_int_non_negative(at("g"), decoding, 0),
+                souther_read_decimal_min(at("h"), decoding, decimal("150", 2), decimal("200", 2)),
+                souther_read_decimal_max(at("i"), decoding, decimal("250", 2), decimal("2", 0)),
+                souther_read_decimal_positive(at("j"), decoding, decimal("0", 2)),
+                souther_read_decimal_non_negative(at("k"), decoding, decimal("-1", 1)),
+                souther_read_list_non_empty(at("l"), decoding, ints(&[])),
+                souther_read_list_min_size(at("m"), decoding, ints(&[1]), 2),
+                souther_read_list_max_size(at("n"), decoding, ints(&[1, 2, 3]), 2),
+                souther_read_list_fixed_size(at("o"), decoding, ints(&[1]), 2),
+                souther_read_list_fixed_size(at("o"), decoding, ints(&[1, 2]), 2),
+            ]
+        };
+        assert_eq!(held, [0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1]);
+        assert_eq!(
+            issues(decoding),
+            vec![
+                r#"/a too_short {"actual":2,"min":3}"#,
+                r#"/b too_long {"actual":4,"max":3}"#,
+                r#"/c invalid_length {"actual":2,"expected":3}"#,
+                r#"/d out_of_range key=out_of_range.minimum {"actual":2,"min":3}"#,
+                r#"/e out_of_range key=out_of_range.maximum {"actual":4,"max":3}"#,
+                r#"/f out_of_range key=out_of_range.positive {"actual":0,"min":1}"#,
+                r#"/g out_of_range key=out_of_range.non_negative {"actual":-1,"min":0}"#,
+                r#"/h out_of_range key=out_of_range.minimum {"actual":1.50,"min":2.00}"#,
+                r#"/i out_of_range key=out_of_range.maximum {"actual":2.50,"max":2}"#,
+                r#"/j out_of_range key=out_of_range.positive {"actual":0.00,"min":0}"#,
+                r#"/k out_of_range key=out_of_range.non_negative {"actual":-0.1,"min":0}"#,
+                r#"/l too_small key=too_small.nonempty {"actual":0,"min":1}"#,
+                r#"/m too_small {"actual":1,"min":2}"#,
+                r#"/n too_big {"actual":3,"max":2}"#,
+                r#"/o invalid_size {"actual":1,"expected":2}"#,
+            ]
+        );
+        souther_reset(mark);
+    }
+
+    /// The elements a list repeats are each answered once, in the order their repetition was
+    /// found, and reported as the form they are written in.
+    #[test]
+    fn a_list_repeating_elements_reports_each_once() {
+        let mark = souther_mark();
+        extern "C" fn hash(value: i64) -> crate::Hash {
+            crate::Hash(value)
+        }
+        extern "C" fn equal(a: i64, b: i64) -> i8 {
+            i8::from(a == b)
+        }
+        let repeated =
+            unsafe { crate::souther_list_duplicates(ints(&[3, 1, 3, 2, 1, 3]), hash, equal) };
+        assert_eq!(unsafe { elements_of(repeated) }, 2);
+        let none = unsafe { crate::souther_list_duplicates(ints(&[1, 2]), hash, equal) };
+        assert_eq!(unsafe { elements_of(none) }, 0);
+
+        let decoding = begun("{}");
+        let form = crate::external::handed(Said::Array(vec![Said::Number(3), Said::Number(1)]));
+        unsafe { souther_read_duplicates(ptr::null(), decoding, form) };
+        assert_eq!(
+            issues(decoding),
+            vec![r#" duplicate_element {"duplicates":[3,1]}"#]
         );
         souther_reset(mark);
     }

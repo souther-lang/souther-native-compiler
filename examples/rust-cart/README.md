@@ -179,9 +179,10 @@ found the first, and the model the other two.
   {"path": "/orderer/corporateNumber", "code": "missing_field", ...}]}
 ```
 
-A rule a type states is reported at the field's path, with the type and its module in the issue's
-metadata. Its code is `invariant_violation` for now, where the JVM reports a rule with a Raoh
-equivalent under that constraint's code (`too_long`, `invalid_format`); #97 is that difference.
+A rule a type states is reported at the field's path. A newtype's rule with a Raoh equivalent is
+reported under that constraint's code and message key (`too_long`, `invalid_format`), as the JVM
+reports it; any other rule is `invariant_violation`, with the type and its module in the issue's
+metadata.
 
 The database implementations read a row back through the model's decoder too, handed the row as
 JSON under the type's field names, so what the database holds is checked by the model where it meets

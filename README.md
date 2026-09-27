@@ -286,7 +286,7 @@ A host builds and reads a value of a type the module publishes through functions
 defines for it, and never through where the value keeps anything. A host holds a value as an
 address it does not look behind, good until the mark taken before it was made is reset, and hands
 it back to these and to the behaviors. For each published type with fields or none there is a
-constructor, `souther6_m_<module>_t_<Name>_construct`, taking the fields and answering `status +
+constructor, `souther7_m_<module>_t_<Name>_construct`, taking the fields and answering `status +
 out` the way the type's own constructor does, since it is that constructor it runs: a value whose
 clauses do not hold is answered `InvariantNotHeld` and nothing is written through `out`, and a type
 with no clause answers a status too, so a clause added later does not change how a host calls it.
@@ -304,7 +304,7 @@ manifest lists them under `cases`. A read is made only of a value `..._case` has
 and is not asked again. The case answered is the concrete one the value is, and
 whether a host can read that case further is its own publication's answer and not the sum's. A
 behavior answering a union no declaration names has the same reader beside its call,
-`souther6_m_<module>_b_<behavior>_answer_case`, counting the cases the union descends to: a member
+`souther7_m_<module>_b_<behavior>_answer_case`, counting the cases the union descends to: a member
 that is a sum counts as its own cases, since a value of it is one of them. It is the behavior's and
 not the union's, which has no name to be spelt under.
 
@@ -346,7 +346,7 @@ but what a behavior answers, whose `..._answer_case` says.
 A list crosses as an address too, of type `souther_list`, wherever its element crosses: as a field,
 as what a behavior takes or answers, and as what a behavior a host implements takes or answers. A
 host builds one and reads one through functions the object defines for each way an element crosses,
-under the module: `souther6_m_<module>_l_<element>_construct`, taking a count and a column for each
+under the module: `souther7_m_<module>_l_<element>_construct`, taking a count and a column for each
 word an element crosses as and answering the list, `..._length`, and `..._at`, taking the list, an
 index and room for the element's words and answering one where the index is inside the list and
 nought, with nothing written, where it is not. `<element>` is the shape the element crosses in: a
@@ -365,7 +365,7 @@ an element is where it would read one, so such a list is built by a host and rea
 A function value crosses as an address too, of type `souther_function`, wherever a value holding
 one is handed across: today a published value and what such a value takes and answers, since a
 behavior's boundary and a field have no function in them. A host calls one through
-`souther6_m_<module>_fn_<shape>_call`, taking the value, what it takes as a host hands each over,
+`souther7_m_<module>_fn_<shape>_call`, taking the value, what it takes as a host hands each over,
 and room for what it answers, and answering the status the function answered. A host makes one of
 its own through `..._implement`, handing room laid out as `souther_hosted_function`, a pointer to a
 function of the type `..._implementation`, and what that function is handed first, and is answered
@@ -406,10 +406,15 @@ the one function every construction of the type goes through, so a value read is
 hold of, checked in the order they are declared. A decoder answers a status where a clause ended
 without a value, and otherwise a reading the host asks what it came to: a value, the bytes not
 being JSON and where they stopped, or every issue found in the document — not the first — each with
-one of Raoh's codes, a JSON Pointer and its metadata as named entries. A clause that does not hold is
-`invariant_violation` at the value's path, naming the type's module and name and the clause where
-it has one. A value of a type another build declares is read by that build's object, under
-`souther6.<module>$read$<Name>`, whatever kind of type it is: how a declaration is read is the
+one of Raoh's codes, the message key a resolver words it by (the code where Raoh gives none of its
+own), a JSON Pointer and its metadata as the JSON object it is, a `Decimal` in it at its scale. A
+newtype's clause the checker states as a standard constraint is reported as that constraint, with
+the code, key and metadata the JVM's decoder reports for it (`too_short` with `min` and `actual`,
+`out_of_range` under `out_of_range.non_negative`), each of a clause's constraints asked in the
+order they are written. A clause no constraint states, the part of one a constraint does not, and a
+product's clause are `invariant_violation` at the value's path, naming the type's module and name
+and the clause where it has one. A value of a type another build declares is read by that build's object, under
+`souther7.<module>$read$<Name>`, whatever kind of type it is: how a declaration is read is the
 declaring build's, and for a type built from fields that build is also the only one that can say
 which clause did not hold. Text read is canonicalized to NFC. What JSON is, is `souther-json-syntax`, a crate that knows
 no Souther type, no arena and no runtime, written to be what both runtimes read once #17 moves it.
@@ -449,11 +454,11 @@ object defines, to one set, reading each of them as it is.
 
 A host calls a function by a C identifier. The symbols one object built here calls in another carry
 `.` and `$`, and no C compiler or FFI that reads C declarations can name those. So what a host
-calls is spelt apart: `souther6`, the ABI generation, then the module as `_m_<segment>` per segment
+calls is spelt apart: `souther7`, the ABI generation, then the module as `_m_<segment>` per segment
 of its dotted name, then `_b_<behavior>`, `_v_<value>`, `_t_<type>`, or `_l_` and the shape a
 list's element crosses in, or `_fn_` and the shape of a function value, and what is done with it. A
 name is written as it is where it is ASCII letters and digits, with `_` doubled and any other
-character as `_u<hex>_`, its code point. So `shop.quote` is `souther6_m_shop_b_quote` and a
+character as `_u<hex>_`, its code point. So `shop.quote` is `souther7_m_shop_b_quote` and a
 behavior named `数量` is `..._b__u6570__u91cf_`, and inside a name `_` is only ever followed by `_`
 or `u`, which is what keeps every spelling readable back to the one set of names it was made from.
 
@@ -525,7 +530,7 @@ through a capability of the host's implementation and nothing else, so nothing d
 symbol of its own. A capability is two words, laid out as the header's `souther_capability`: the
 code a call through it reaches, which takes what the code is handed first and then what the behavior
 takes, and what it is handed first. The host makes one through
-`souther6_m_<module>_b_<behavior>_implement`, handing room for the capability, room laid out as
+`souther7_m_<module>_b_<behavior>_implement`, handing room for the capability, room laid out as
 `souther_hosted`, a pointer to a function of the type `..._implementation`, and what that function
 is to be handed first. The function takes that, then what the behavior takes and room for its
 answer, in the words a host hands a published behavior, and answers a status. A behavior with a body

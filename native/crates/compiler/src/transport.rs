@@ -95,6 +95,16 @@ pub const MOVES: &[(u32, &str)] = &[
          a union of cases, so a backend no longer has to find the one this document's own \
          declarations happen to place it by",
     ),
+    (
+        29,
+        "which value an arm's name stands for, as the checker says (`binding`: `stands`, \
+         `number`, `as`), in place of a number and a type read beside what the arm tests",
+    ),
+    (
+        30,
+        "what each clause of a declaration this build runs is as standard constraints on its one \
+         field (`projection`: `constraints`, `complete`)",
+    ),
 ];
 
 /// A document of [`TRANSPORT_VERSION`], and no other, read through [`Program::read`] and nothing
@@ -1079,6 +1089,21 @@ impl Guard {
             Guard::Case { binds, .. } => binds,
         }
     }
+
+    /// The name a rule over a case reads the answer under, as an arm would name it: what the
+    /// case's refinement reads (`Contract.Guard.Case`, which types it by the refinement's `bound()`)
+    /// — what an optional's present carrier holds, and otherwise the answer as the case. `None` for
+    /// a rule over every answer, which reads it as it is.
+    pub fn reads(&self, number: usize) -> Option<ArmBinding> {
+        let Guard::Case { selects, binds } = self else {
+            return None;
+        };
+        let read_as = binds.clone();
+        Some(match selects {
+            Selects::Held => ArmBinding::Payload { number, read_as },
+            Selects::Which { .. } | Selects::Nothing => ArmBinding::Selected { number, read_as },
+        })
+    }
 }
 
 /// One of the closed set of scalars a boundary writes as themselves.
@@ -1422,12 +1447,198 @@ pub struct Field {
 }
 
 /// One clause a declaration holds its values to: the name a failure is reported under, where the
-/// author gave one, and what has to hold, as the checker elaborated it over the fields' bindings.
+/// author gave one, what has to hold, as the checker elaborated it over the fields' bindings, and
+/// what the clause is as standard constraints on the declaration's one field.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Invariant {
     pub name: Option<String>,
     pub condition: Node,
+    pub projection: Projection,
+}
+
+/// What a clause is as standard constraints on the one field of the data it governs, as the
+/// checker found it (`ConstraintProjection`): the constraints parts of it are, in the order they
+/// are written, and whether they are the whole of it.
+///
+/// A fact about the clause and not an instruction about where it is checked. A newtype's decoder
+/// checks the constraints, and the clause's condition as well where they are not the whole of it;
+/// a product crosses as an object, and each of its clauses runs as the rule it is.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields, try_from = "WrittenProjection")]
+pub struct Projection {
+    constraints: Vec<BoundaryConstraint>,
+    complete: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WrittenProjection {
+    constraints: Vec<BoundaryConstraint>,
+    complete: bool,
+}
+
+impl TryFrom<WrittenProjection> for Projection {
+    type Error = String;
+
+    /// A clause is never the whole of no constraint, which `ConstraintProjection` refuses too: a
+    /// clause says something, and one said by nothing would be a clause every value meets.
+    fn try_from(written: WrittenProjection) -> Result<Self, Self::Error> {
+        let WrittenProjection {
+            constraints,
+            complete,
+        } = written;
+        if complete && constraints.is_empty() {
+            return Err("a clause said to be the whole of no constraint".to_string());
+        }
+        Ok(Projection {
+            constraints,
+            complete,
+        })
+    }
+}
+
+impl Projection {
+    /// The constraints parts of the clause are, in the order they are written.
+    pub fn constraints(&self) -> &[BoundaryConstraint] {
+        &self.constraints
+    }
+
+    /// Whether the constraints say everything the clause says, so that a value meeting them meets
+    /// the clause.
+    pub fn complete(&self) -> bool {
+        self.complete
+    }
+}
+
+/// One standard constraint a part of a clause is exactly (`BoundaryConstraint`), grouped by the type
+/// of the field it is about. Which code, message key and metadata a failure of it is reported with
+/// are not here: they are Raoh's, and the runtime says them.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(tag = "is", rename_all = "lowercase", deny_unknown_fields)]
+pub enum BoundaryConstraint {
+    /// A `String` of at least `n` characters.
+    MinLength { n: i64 },
+    /// A `String` of at most `n` characters.
+    MaxLength { n: i64 },
+    /// A `String` of exactly `n` characters.
+    FixedLength { n: i64 },
+    /// A `String` the whole of which a pattern matches: what it matches as the checker read it,
+    /// and the text it was written as, which is what a failure says the value was held to.
+    Pattern {
+        written: String,
+        meaning: Vec<PatternPart>,
+    },
+    /// An `Int` of at least `n`.
+    Min { n: i64 },
+    /// An `Int` of at most `n`.
+    Max { n: i64 },
+    /// An `Int` above nought.
+    Positive,
+    /// An `Int` not below nought.
+    NonNegative,
+    /// A `Decimal` of at least `n`.
+    DecimalMin { n: DecimalBound },
+    /// A `Decimal` of at most `n`.
+    DecimalMax { n: DecimalBound },
+    /// A `Decimal` above nought.
+    DecimalPositive,
+    /// A `Decimal` not below nought.
+    DecimalNonNegative,
+    /// A `List` of one element or more.
+    NonEmpty,
+    /// A `List` of at least `n` elements.
+    MinSize { n: i64 },
+    /// A `List` of at most `n` elements.
+    MaxSize { n: i64 },
+    /// A `List` of exactly `n` elements.
+    FixedSize { n: i64 },
+    /// A `List` no element of which appears twice.
+    Unique,
+    /// A `Map` of one entry or more.
+    MapNonEmpty,
+    /// A `Map` of at least `n` entries.
+    MapMinSize { n: i64 },
+    /// A `Map` of at most `n` entries.
+    MapMaxSize { n: i64 },
+}
+
+/// A `Decimal` bound as the checker read it: its integer, as the text of one, and its scale — the
+/// way a `Decimal` literal crosses, since the runtime makes one from the two.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields, try_from = "WrittenDecimal")]
+pub struct DecimalBound {
+    pub unscaled: String,
+    pub scale: i32,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WrittenDecimal {
+    unscaled: String,
+    scale: i32,
+}
+
+impl TryFrom<WrittenDecimal> for DecimalBound {
+    type Error = String;
+
+    fn try_from(written: WrittenDecimal) -> Result<Self, Self::Error> {
+        if !integer_text(&written.unscaled) {
+            return Err(format!(
+                "a decimal bound whose integer is written {:?}, which is no integer",
+                written.unscaled
+            ));
+        }
+        Ok(DecimalBound {
+            unscaled: written.unscaled,
+            scale: written.scale,
+        })
+    }
+}
+
+/// Whether `text` writes an integer the way the runtime reads one: digits, one or more, after an
+/// optional minus. What a `Decimal`'s integer crosses as, a literal's and a bound's alike.
+pub fn integer_text(text: &str) -> bool {
+    let digits = text.strip_prefix('-').unwrap_or(text);
+    !digits.is_empty() && digits.bytes().all(|it| it.is_ascii_digit())
+}
+
+/// Which type of field a constraint is about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConstraintOf {
+    String,
+    Int,
+    Decimal,
+    List,
+    Map,
+}
+
+impl BoundaryConstraint {
+    /// Which type of field this is about, every constraint named.
+    pub fn of(&self) -> ConstraintOf {
+        match self {
+            BoundaryConstraint::MinLength { .. }
+            | BoundaryConstraint::MaxLength { .. }
+            | BoundaryConstraint::FixedLength { .. }
+            | BoundaryConstraint::Pattern { .. } => ConstraintOf::String,
+            BoundaryConstraint::Min { .. }
+            | BoundaryConstraint::Max { .. }
+            | BoundaryConstraint::Positive
+            | BoundaryConstraint::NonNegative => ConstraintOf::Int,
+            BoundaryConstraint::DecimalMin { .. }
+            | BoundaryConstraint::DecimalMax { .. }
+            | BoundaryConstraint::DecimalPositive
+            | BoundaryConstraint::DecimalNonNegative => ConstraintOf::Decimal,
+            BoundaryConstraint::NonEmpty
+            | BoundaryConstraint::MinSize { .. }
+            | BoundaryConstraint::MaxSize { .. }
+            | BoundaryConstraint::FixedSize { .. }
+            | BoundaryConstraint::Unique => ConstraintOf::List,
+            BoundaryConstraint::MapNonEmpty
+            | BoundaryConstraint::MapMinSize { .. }
+            | BoundaryConstraint::MapMaxSize { .. } => ConstraintOf::Map,
+        }
+    }
 }
 
 /// The name one clause of a declaration another build runs is answered under, where its author
@@ -2008,8 +2219,9 @@ pub enum Node {
     /// it was written as.
     ///
     /// What the checker's parse answered is what crosses, for the reason a `Decimal`'s integer and
-    /// scale do: which text a literal may spell is the checker's own grammar to say, and text
-    /// handed over would be read a second time here by a grammar of its own.
+    /// scale do: which text a literal may spell is the checker's to say, which is the
+    /// specification's one grammar for a temporal, and text handed over would be read a second
+    /// time here by a grammar of its own.
     /// `count` is the day, counted from 1970-01-01, of a `Date`; the second of the day of a `Time`;
     /// the second, counted from 1970-01-01T00:00:00 as though it were in UTC, of a `DateTime`; and
     /// the second, counted from the epoch, of an `Instant`, whose nanosecond within it is `nano`.
@@ -2026,11 +2238,10 @@ pub enum Node {
         /// What the operator reads its operands as, which the checker settled and the operands'
         /// types do not say.
         reading: Reading,
-        /// What the operands are ordered by, as the checker settled it: itself for a number or
-        /// text, and the one enumeration that places them for a case or a union of cases. Every
-        /// written comparison carries one; absent only for an operator that orders nothing and for
-        /// a comparison no source wrote, which is never lowered.
-        #[serde(default)]
+        /// The type whose order the operands are placed on, for an operator that orders them and
+        /// for no other (`Core.OrderingBasis`): the enumeration for a case of it, `Int` for a
+        /// quantity over one. Not the reading, which says what the operands are read as, and not
+        /// anything an operand's type says: which enumeration places a case is the checker's.
         ordering: Option<Ty>,
         left: Box<Node>,
         right: Box<Node>,
@@ -2416,14 +2627,11 @@ pub enum KernelFact {
         /// is made of, the whole last.
         meaning: Vec<PatternPart>,
     },
-    /// The type an ordering was checked against.
+    /// The type an ordering was checked against, and the type whose order its values are placed
+    /// on (`Core.OrderingBasis`), which is none exactly where there is no value to place.
     OrderingSubject {
         #[serde(rename = "type")]
         ty: Ty,
-        /// What a value of `ty` is ordered by, as the checker settled it: itself for a number or
-        /// text, and the one enumeration that places them for a case or a union of cases. Absent
-        /// only where `ty` orders nothing.
-        #[serde(default)]
         ordering: Option<Ty>,
     },
 }
@@ -2477,15 +2685,56 @@ pub enum Reading {
 #[serde(deny_unknown_fields)]
 pub struct Arm {
     pub selects: Vec<Selects>,
-    /// The number the body reads the value under, where the arm binds it at all.
-    pub binding: Option<usize>,
-    /// What the value is read as inside the arm.
-    ///
-    /// Carried rather than worked out from what the arm tests, because the test does not say it:
-    /// an optional's present carrier is tested the same way whatever it holds, so a reader that
-    /// took the type from the test would read every optional's value at one width.
-    pub binds: Option<Ty>,
+    /// The name the arm introduces, where it introduces one.
+    pub binding: Option<ArmBinding>,
     pub body: Node,
+}
+
+/// The name an arm introduces: the number the body reads it under, which value it stands for, and
+/// what it is read as — the checker's `Core.ArmBinding`, which says all three.
+///
+/// Which value is carried rather than worked out from what the arm tests, because the test does not
+/// say it: `None as n` names the optional itself, `Some v` what the optional holds, and an optional's
+/// present carrier is tested the same way whatever it holds. A name always comes with what it is
+/// read as, so there is no arm with one of the two and not the other.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(tag = "stands", rename_all = "lowercase", deny_unknown_fields)]
+pub enum ArmBinding {
+    /// The value that was matched: the case a single case selected, the subject for several, the
+    /// optional itself for its absent carrier.
+    Selected {
+        number: usize,
+        #[serde(rename = "as")]
+        read_as: Ty,
+    },
+    /// What lies under the optional's present carrier the arm selects.
+    Payload {
+        number: usize,
+        #[serde(rename = "as")]
+        read_as: Ty,
+    },
+}
+
+impl ArmBinding {
+    /// The number the body reads the name under.
+    pub fn number(&self) -> usize {
+        match self {
+            ArmBinding::Selected { number, .. } | ArmBinding::Payload { number, .. } => *number,
+        }
+    }
+
+    /// What the name is read as inside the arm.
+    pub fn read_as(&self) -> &Ty {
+        match self {
+            ArmBinding::Selected { read_as, .. } | ArmBinding::Payload { read_as, .. } => read_as,
+        }
+    }
+
+    fn read_as_mut(&mut self) -> &mut Ty {
+        match self {
+            ArmBinding::Selected { read_as, .. } | ArmBinding::Payload { read_as, .. } => read_as,
+        }
+    }
 }
 
 /// What one case of an arm tests for.
@@ -2549,7 +2798,7 @@ impl KernelFact {
                 meaning: _,
             } => Vec::new(),
             KernelFact::OrderingSubject { ty, ordering } => {
-                std::iter::once(ty).chain(ordering.iter()).collect()
+                std::iter::once(ty).chain(ordering.as_ref()).collect()
             }
         }
     }
@@ -2563,7 +2812,7 @@ impl KernelFact {
                 meaning: _,
             } => Vec::new(),
             KernelFact::OrderingSubject { ty, ordering } => {
-                std::iter::once(ty).chain(ordering.iter_mut()).collect()
+                std::iter::once(ty).chain(ordering.as_mut()).collect()
             }
         }
     }
@@ -2723,7 +2972,7 @@ impl Node {
                 aborts: _,
             } => std::iter::once(ty)
                 .chain(reading.types())
-                .chain(ordering.iter())
+                .chain(ordering.as_ref())
                 .collect(),
             Node::Let {
                 binding: _,
@@ -2753,11 +3002,10 @@ impl Node {
                 .chain(arms.iter().filter_map(|arm| {
                     let Arm {
                         selects: _,
-                        binding: _,
-                        binds,
+                        binding,
                         body: _,
                     } = arm;
-                    binds.as_ref()
+                    binding.as_ref().map(ArmBinding::read_as)
                 }))
                 .collect(),
             Node::Call {
@@ -2803,11 +3051,14 @@ impl Node {
                 ..
             } => std::iter::once(ty)
                 .chain(reading.types_mut())
-                .chain(ordering.iter_mut())
+                .chain(ordering.as_mut())
                 .collect(),
             Node::Let { binds, ty, .. } | Node::Attempt { binds, ty, .. } => vec![ty, binds],
             Node::Match { arms, ty, .. } => std::iter::once(ty)
-                .chain(arms.iter_mut().filter_map(|arm| arm.binds.as_mut()))
+                .chain(
+                    arms.iter_mut()
+                        .filter_map(|arm| arm.binding.as_mut().map(ArmBinding::read_as_mut)),
+                )
                 .collect(),
             Node::Call { reaches, ty, .. } => {
                 std::iter::once(ty).chain(reaches.types_mut()).collect()
