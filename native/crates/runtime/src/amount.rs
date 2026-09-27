@@ -555,7 +555,7 @@ impl Amount {
     /// The amount with as many of its trailing zeros dropped as the scale lets it drop: one form
     /// for every value the language calls equal (spec §primitives), as the JVM's `leastDigits`
     /// answers it. The scale stops at its smallest, and fixing the scale fixes the digits.
-    fn least_digits(&self) -> Amount {
+    pub(crate) fn least_digits(&self) -> Amount {
         if self.is_zero() {
             return Amount::new(false, Magnitude::ZERO, 0);
         }

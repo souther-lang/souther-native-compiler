@@ -908,8 +908,17 @@ pub extern "C" fn souther_hash_combine(hash: Hash, word: i64) -> Hash {
 
 /// The hash of a run of bytes: FNV-1a over them, and then mixed.
 pub(crate) fn hash_of_bytes(bytes: &[u8]) -> Hash {
-    let folded = bytes.iter().fold(0xcbf2_9ce4_8422_2325u64, |hash, byte| {
-        (hash ^ u64::from(*byte)).wrapping_mul(0x0000_0100_0000_01b3)
+    hash_of_parts(&[bytes])
+}
+
+/// The hash of runs of bytes one after another, each after its length, so that where one ends is
+/// part of what is hashed: FNV-1a over them, and then mixed. What a value made of parts is hashed
+/// by without writing it out as one run first.
+pub(crate) fn hash_of_parts(parts: &[&[u8]]) -> Hash {
+    let fold = |hash: u64, byte: &u8| (hash ^ u64::from(*byte)).wrapping_mul(0x0000_0100_0000_01b3);
+    let folded = parts.iter().fold(0xcbf2_9ce4_8422_2325u64, |hash, part| {
+        let hash = (part.len() as u64).to_le_bytes().iter().fold(hash, fold);
+        part.iter().fold(hash, fold)
     });
     Hash(mix(folded) as i64)
 }
@@ -1047,6 +1056,36 @@ mod tests {
         let mut map_out = std::ptr::null();
         let wrote = unsafe { souther_map_insert(full_map, 1, 1, spread, numbers, &mut map_out) };
         assert_eq!(wrote, 0);
+        souther_reset(mark);
+    }
+
+    /// A `Decimal` hashes as its amount and a `Rational` as the value it is, however each was
+    /// reached: `1.0` and `1.00` alike, `1 / 2` and `2 / 4` alike, and neither alike another value.
+    #[test]
+    fn equal_amounts_and_equal_ratios_hash_alike() {
+        use crate::amount::Amount;
+        use crate::decimal::{decimal_of, souther_decimal_hash};
+        use crate::rational::{Rational, souther_rational_divide, souther_rational_from_int};
+        let mark = souther_mark();
+        let decimal = |unscaled: u8, scale| unsafe {
+            souther_decimal_hash(decimal_of(&Amount::of_parts(false, &[unscaled], scale)))
+        };
+        assert_eq!(decimal(10, 1), decimal(100, 2));
+        assert_ne!(decimal(10, 1), decimal(11, 1));
+        assert_ne!(decimal(10, 1), decimal(10, 2));
+        let ratio = |top, bottom| unsafe {
+            let mut out: *mut Rational = std::ptr::null_mut();
+            let wrote = souther_rational_divide(
+                souther_rational_from_int(top),
+                souther_rational_from_int(bottom),
+                &mut out,
+            );
+            assert_eq!(wrote, 1);
+            crate::rational::souther_rational_hash(out)
+        };
+        assert_eq!(ratio(1, 2), ratio(2, 4));
+        assert_ne!(ratio(1, 2), ratio(1, 3));
+        assert_ne!(ratio(1, 2), ratio(-1, 2));
         souther_reset(mark);
     }
 

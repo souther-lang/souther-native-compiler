@@ -34,7 +34,7 @@
 //! the denominator's after them, each little end first and with no zero byte at the top.
 
 use crate::amount::{Amount, Dropped, Rounding, WIDEST, dropped, rounded};
-use crate::collection::{Hash, hash_of_bytes};
+use crate::collection::{Hash, hash_of_parts};
 use crate::decimal::{Decimal, amount, decimal_of, rounding};
 use crate::enclosure::Enclosure;
 use crate::kernels::answered;
@@ -868,7 +868,9 @@ pub unsafe extern "C" fn souther_rational_compare(
     Comparison(ordering as i64)
 }
 
-/// A `Rational`'s hash, from the one form each value is kept in, so two that are equal hash alike.
+/// A `Rational`'s hash, from the one form each value is kept in, so two that are equal hash alike:
+/// its sign, the bytes of its numerator and its denominator, and its powers of two and five, and
+/// never written out as text first.
 ///
 /// # Safety
 ///
@@ -882,13 +884,17 @@ pub unsafe extern "C" fn souther_rational_hash(at: *const Rational) -> Hash {
         twos,
         fives,
     } = unsafe { ratio(at) };
-    let written = format!(
-        "{}{}/{}*2^{twos}*5^{fives}",
-        if negative { "-" } else { "" },
-        numerator.digits(),
-        denominator.digits()
-    );
-    hash_of_bytes(written.as_bytes())
+    numerator.with_le_bytes(|numerator| {
+        denominator.with_le_bytes(|denominator| {
+            hash_of_parts(&[
+                &[u8::from(negative)],
+                numerator,
+                denominator,
+                &twos.to_le_bytes(),
+                &fives.to_le_bytes(),
+            ])
+        })
+    })
 }
 
 /// `+` and `Rational.add`, written through `out` where the sum is one a `Rational` holds.
