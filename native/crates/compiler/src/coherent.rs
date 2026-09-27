@@ -2125,15 +2125,21 @@ impl<'a> Walk<'_, 'a> {
                             "what it takes orders",
                         )?;
                         // The order its values are placed on is the checker's, and is none only
-                        // where there is no value to place: a type no value of which is made, or
-                        // one a helper leaves open until it is copied.
+                        // where there is no value to place: a type no value of which is made.
+                        // The checker also says none for a `sortBy` key answering a variable
+                        // while it reads a helper on its own, but the pinned checker expands such
+                        // a helper where it is called and settles the sort there, at that call's
+                        // types; a helper that crosses with its variables open (a recursive one,
+                        // or core's) holds no ordering kernel over one. A variable with no order is
+                        // then no document the pinned checker writes, and a copy of it would reach
+                        // the lowering as a concrete type with nothing to place it on. A pin that
+                        // starts writing one is refused here, and is what decides how it crosses.
                         match ordering {
                             Some(basis) => self
                                 .declared
                                 .orders(basis, subject)
                                 .map_err(|it| anyhow!("{}: {it}", self.owner))?,
-                            None if subject.has_no_value() || matches!(subject, Ty::Var { .. }) => {
-                            }
+                            None if subject.has_no_value() => {}
                             None => bail!(
                                 "{}: an application of {kernel} orders {} and says by no order: \
                                  the two halves disagree",

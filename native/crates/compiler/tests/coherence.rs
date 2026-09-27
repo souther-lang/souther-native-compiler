@@ -2549,6 +2549,31 @@ fn what_a_kernel_orders_by_is_what_it_takes_orders() {
     }
 }
 
+/// A `sortBy` whose key answers a variable the helper leaves open, with no order said, is refused as
+/// the two halves disagreeing. The pinned checker settles such a sort where the helper is expanded,
+/// at the types of the call, and writes no ordering kernel over a variable in a helper that crosses
+/// open; a document saying one is not one it wrote, and a copy of it would reach the lowering as a
+/// sort by a concrete type with nothing to place its values on.
+#[test]
+fn a_sort_by_a_variable_with_no_order_said_is_the_halves_disagreeing() {
+    let element = r#"{"var":0}"#;
+    let answered = r#"{"var":1}"#;
+    let elements = list_of(element);
+    let key = fn_of(&[element], answered);
+    let unordered = format!(r#"{{"is":"orderingsubject","type":{answered},"ordering":null}}"#);
+    is_the_halves_disagreeing(
+        &helpers(&[h(
+            &[&key, &elements],
+            &call(
+                &kernel("list.sortBy", &[&key, &elements], &unordered),
+                &[read(0, &key), read(1, &elements)],
+                &elements,
+            ),
+        )]),
+        "says by no order",
+    );
+}
+
 /// What a pattern is said to mean is what some pattern reads as: parts naming only parts written
 /// before them, and runs of scalar values in order and apart. Anything else is not a reading the
 /// checker makes, and is refused as the two halves disagreeing. Every reading is one this backend
