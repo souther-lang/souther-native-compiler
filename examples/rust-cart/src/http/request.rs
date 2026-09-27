@@ -1,14 +1,17 @@
-//! Request bodies, read into the arguments of a behavior in two steps.
+//! Request bodies, read into the arguments of a behavior.
 //!
-//! raoh checks the form of each field and normalises it: a UUID in lower case, a positive
-//! quantity, an email trimmed, lowercased and shaped like one, a corporate number of thirteen
-//! digits, which the model has no regular expression to say. What it hands on is read by the
-//! model: which case an orderer is, the fields each case has, and what each type states. Either
-//! failing is an issue under the field's path, and every field is read, so a request answers every
-//! issue it has at once.
+//! What a value of the model is, the model's decoders read: which case an orderer is, the fields
+//! each case has, and every rule a type states, a positive quantity and a corporate number of
+//! thirteen digits among them. Nothing here says any of it again. What is left to the boundary is
+//! what the model leaves to it: an id is a UUID, written in lower case, and an email is trimmed,
+//! lowercased and shaped like one. raoh does that part, and its answer is piped into the model's.
 //!
-//! The model's step is a raoh decoder like any other, piped after the form's. It is made from the
-//! run it reads in, which a decoder can borrow but not hold, so the decoders here live for one call.
+//! A request has no type of its own in the model, since a behavior takes its arguments by place, so
+//! each argument is a field here and read by its type's decoder. Every field is read whichever of
+//! them fails, so a request answers every issue it has at once, raoh's and the model's together.
+//!
+//! The model's step is a raoh decoder like any other. It is made from the run it reads in, which a
+//! decoder can borrow but not hold, so the decoders here live for one call.
 
 use std::cell::RefCell;
 
@@ -38,9 +41,7 @@ pub fn add_item<'run>(
             ),
             field(
                 "quantity",
-                i64()
-                    .positive()
-                    .pipe(model.of(|run, n: &i64| Quantity::new(run, *n))),
+                model.of(|run, it: &Value| Quantity::decode(run, &it.to_string())),
             ),
         ));
         from_str(&arguments, body)
@@ -76,35 +77,29 @@ fn uuid() -> impl Decoder<Value, Output = String> {
     string().uuid().map(|id| id.to_string())
 }
 
-/// An orderer, `{"type":"Individual","email":"…","name":"…"}` or
-/// `{"type":"Corporation","email":"…","companyName":"…","corporateNumber":"…"}`: the model's own
-/// encoding of one. raoh checks the fields that are there, and the model reads the whole.
+/// An orderer in the model's own encoding of one, read whole by the model once its email is
+/// normalised. Whether the email is there at all is the model's to say, as every other field is.
 fn orderer<'a, 'run>(
     model: &'a Model<'_, 'run>,
 ) -> impl Decoder<Value, Output = Orderer<'run>> + 'a {
-    object((
-        field("type", string()),
-        field("email", string().trim().lowercase().email()),
-        optional_field("name", string().trim().non_blank().max_length(100)),
-        optional_field("companyName", string().trim().non_blank().max_length(200)),
-        optional_field("corporateNumber", string().pattern(r"^\d{13}$")),
-    ))
-    .map(|(kind, email, name, company_name, corporate_number)| {
-        let mut normalised = serde_json::Map::new();
-        normalised.insert("type".into(), Value::String(kind));
-        normalised.insert("email".into(), Value::String(email));
-        for (key, given) in [
-            ("name", name),
-            ("companyName", company_name),
-            ("corporateNumber", corporate_number),
-        ] {
-            if let Some(given) = given {
-                normalised.insert(key.into(), Value::String(given));
+    (object((optional_field("email", email()),)), as_given())
+        .map(|((email,), mut orderer)| {
+            if let Some(email) = email {
+                orderer["email"] = Value::String(email);
             }
-        }
-        Value::Object(normalised)
-    })
-    .pipe(model.of(|run, it: &Value| Orderer::decode(run, &it.to_string())))
+            orderer
+        })
+        .pipe(model.of(|run, it: &Value| Orderer::decode(run, &it.to_string())))
+}
+
+/// An email trimmed and lowercased, and shaped like one, which the model leaves to the boundary.
+fn email() -> impl Decoder<Value, Output = String> {
+    string().trim().lowercase().email()
+}
+
+/// What was given, as it was given.
+fn as_given() -> impl Decoder<Value, Output = Value> {
+    decoder_fn(|given: &Value, _| Ok(given.clone()))
 }
 
 /// The run the model's steps read in, and the first failure one of them answered.

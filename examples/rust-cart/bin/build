@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Builds model/cart.sou into build/native (the shared library) and build/rust (its binding, the crate
-# `model`) with the command line souther-native-compiler offers, run from the root of the clone this
-# example is in. The rows of cart.sou run as part of the compile, and a row that does not hold
-# refuses the build before Cargo is reached.
+# Builds examples/cart-model, the model every host's cart runs, into build/native (the shared
+# library) and build/rust (its binding, the crate `model`) with the command line
+# souther-native-compiler offers, run from the root of the clone this example is in. The rows of
+# cart.sou run as part of the compile, and a row that does not hold refuses the build before Cargo
+# is reached.
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")/.." && pwd)"
@@ -10,4 +11,4 @@ root="$(cd "$here/../.." && pwd)"
 
 cd "$root"
 mvn --batch-mode --quiet --no-snapshot-updates process-classes exec:java \
-    -Dargs="--library $here/build/native --rust $here/build/rust --crate model $here/model"
+    -Dargs="--library $here/build/native --rust $here/build/rust --crate model $root/examples/cart-model"

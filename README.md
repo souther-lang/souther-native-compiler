@@ -93,10 +93,10 @@ The binding is mapped by the application like its own classes, or loaded with th
 written beside it. `scripts/php-from-the-command-line.sh` does all of this in CI, with no Java calling
 the API.
 
-`examples/php-cart` is an application built this way: the cart model of the Java
-`raoh-souther` example, with its HTTP boundary decoded by raoh-php and its injected behaviors
-implemented over PDO. Its README says how to build and run it, and what differs from the Java one.
-`scripts/php-cart-example.sh` builds it and runs its tests in CI.
+`examples/php-cart` is an application built this way: `examples/cart-model`, the cart model every
+host's cart example runs, with its HTTP boundary decoded by raoh-php and its injected behaviors
+implemented over PDO. Its README says how to build and run it, and what differs from the Java
+`raoh-souther` example. `scripts/php-cart-example.sh` builds it and runs its tests in CI.
 
 A Rust host depends on the crate `--rust` wrote by path, and until the runtime crate is published,
 reaches it by patching it in from the clone:
@@ -784,12 +784,11 @@ that call as `Failure::Host`, and a panic is caught before it reaches the librar
 where the call returns. Which behaviors have a type is decided as the PHP generator decides which have
 a class. What Rust has no way to hold is not written, as in the PHP binding.
 
-`examples/rust-cart` is the cart example as a Rust application: the model every host's cart runs,
-served by axum, its HTTP boundary decoded by raoh, and its injected behaviors implemented over
-SQLite and bound, for each request, to the transaction the request runs in. Besides the HTTP
-contract, its tests hold what rustc refuses a host of the model. `scripts/rust-cart-example.sh`
-builds it and runs its tests in CI, and holds its `cart.sou` to be the same file as every other
-host's.
+`examples/rust-cart` is the cart example as a Rust application: `examples/cart-model` served by
+axum, its HTTP boundary decoded by raoh, and its injected behaviors implemented over SQLite and
+bound, for each request, to the transaction the request runs in. Besides the HTTP contract, its
+tests hold what rustc refuses a host of the model. `scripts/rust-cart-example.sh` builds it and
+runs its tests in CI.
 
 ## Where a value lives
 

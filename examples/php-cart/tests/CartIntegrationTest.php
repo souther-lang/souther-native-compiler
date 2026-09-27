@@ -169,6 +169,16 @@ final class CartIntegrationTest extends TestCase
     }
 
     #[Test]
+    public function aNameOfNothingButSpacesIs400(): void
+    {
+        // That a name is not blank is PersonName's rule, and the model's decoder reports it.
+        $response = $this->checkout('/carts/checkout', self::USER, ['name' => '   '] + self::individual());
+
+        self::assertSame(400, $response->status);
+        self::assertSame('/orderer/name', self::body($response)['issues'][0]['path']);
+    }
+
+    #[Test]
     public function anOrdererOfNoKnownTypeIs400(): void
     {
         $response = $this->checkout('/carts/checkout', self::USER, ['type' => 'Robot'] + self::individual());

@@ -1,7 +1,7 @@
 # rust-cart
 
 The cart example every host binding of a Souther library is shown with, written as a Rust
-application. The domain is `model/cart.sou`, the model every host's cart runs, compiled by this
+application. The domain is `examples/cart-model`, the model every host's cart runs, compiled by this
 repository into a shared library and its Rust binding. What is written in Rust is the boundaries
 around it: HTTP served by [axum](https://github.com/tokio-rs/axum), JSON decoded with
 [raoh](https://github.com/kawasima/raoh-rust) into the model's values, and the behaviors the model
@@ -9,7 +9,7 @@ asks a host for implemented over SQLite with [rusqlite](https://github.com/rusql
 
 ## What is in it
 
-The rules of the cart are in `model/cart.sou` and nowhere else: the capacity of 10000, which a
+The rules of the cart are in `examples/cart-model/cart.sou` and nowhere else: the capacity of 10000, which a
 `PendingItem` holds or is not built; the 10% discount at 5000 and above; that an empty cart is not
 ordered and a quotation is for a corporation. Its `example` rows state what each behavior answers,
 and they run when it is built, so a rule that stopped holding stops the build before Cargo is
@@ -73,11 +73,10 @@ The rules are checked without a database. `fake loadCart` and the other fakes in
 for the injected behaviors, and the `example` rows run `addItemToCart`, `placeOrder` and
 `issueQuote` over them when `bin/build` compiles the model. Nothing here mocks a trait.
 
-The model is the same on every host. The Java example on the JVM
-([`raoh-souther`](https://github.com/kawasima/boundaries-not-layers/tree/main/examples/raoh-souther)),
-`examples/php-cart` and this one run one `cart.sou` (CI holds this repository's copies to be the
-same file), and an order is written in the one encoding
-the model gives it, so a client does not know which host answered.
+The model is the same on every host. `examples/php-cart` and this one build one file,
+`examples/cart-model/cart.sou`, and an order is written in the one encoding the model gives it, so
+a client does not know which host answered. What a field of a request may hold is in that file too:
+a corporate number of thirteen digits is `CorporateNumber`'s rule, and neither host says it again.
 
 What another host checks when it runs, rustc checks here. A value of the model lives in an arena
 that belongs to the run it was made in, and the run ends with the request. PHP throws `Expired` when
@@ -130,20 +129,24 @@ the application does, and a pool would not change what this example shows.
 
 ## How a request is read
 
-A request is read in two steps. raoh checks the form of each field and normalises it: a UUID, a
-positive quantity, an email trimmed and lowercased, a corporate number of thirteen digits. What it
-hands on is read by the model, which knows which fields a type has, what the type states, and which
-case an orderer is. None of that is written again in Rust.
+A request is read by the model's decoders, which know which fields a type has, every rule the type
+states, a positive quantity and a corporate number of thirteen digits among them, and which case an
+orderer is. None of that is written again in Rust. In front of them raoh does only what the model
+leaves to a boundary: that an id is a UUID, written in lower case, and that an email is trimmed,
+lowercased and shaped like one. An orderer is handed to the model whole, its email normalised in
+place, so a field the model adds to a case reaches the model without this code knowing of it.
 
-The model's step is a raoh decoder like any other, piped after the form's:
+The model's step is a raoh decoder like any other. A request has no type of its own in the model,
+since a behavior takes its arguments by place, so each argument is a field read by its type's
+decoder:
 
 ```rust
 field("userId", uuid().pipe(model.of(|run, id: &String| UserId::new(run, id)))),
-field("orderer", orderer(model)),
+field("quantity", model.of(|run, it: &Value| Quantity::decode(run, &it.to_string()))),
 ```
 
-Every field is read whichever step fails in another, so a request answers all of its issues at once.
-A corporation whose user is no UUID and whose company name and corporate number are missing is one
+Every field is read whichever of them fails, so a request answers all of its issues at once. A
+corporation whose user is no UUID and whose company name and corporate number are missing is one
 400 with three issues: raoh found the first, and the model the other two, since which fields a
 corporation has is the model's to say.
 
@@ -153,6 +156,10 @@ corporation has is the model's to say.
   {"path": "/orderer/companyName", "code": "missing_field", ...},
   {"path": "/orderer/corporateNumber", "code": "missing_field", ...}]}
 ```
+
+A rule a type states is reported at the field's path, with the type and its module in the issue's
+metadata. Its code is `invariant_violation` for now, where the JVM reports a rule with a Raoh
+equivalent under that constraint's code (`too_long`, `invalid_format`); #97 is that difference.
 
 The database implementations read a row back through the model's decoder too, handed the row as
 JSON under the type's field names, so what the database holds is checked by the model where it meets
@@ -169,7 +176,7 @@ SQLite rusqlite builds.
 `bin/build` runs the command line at the root of the clone:
 
     mvn -q process-classes exec:java \
-        -Dargs='--library <here>/build/native --rust <here>/build/rust --crate model <here>/model'
+        -Dargs='--library <here>/build/native --rust <here>/build/rust --crate model examples/cart-model'
 
 It writes the library into `build/native` and its binding into `build/rust`, as the crate `model`,
 which `Cargo.toml` depends on by path. The module is `com.example.cart.domain`, so its types are

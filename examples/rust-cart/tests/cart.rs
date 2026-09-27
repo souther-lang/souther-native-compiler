@@ -247,6 +247,16 @@ async fn a_corporate_number_other_than_thirteen_digits_is_400() {
 }
 
 #[tokio::test]
+async fn a_name_of_nothing_but_spaces_is_400() {
+    // That a name is not blank is PersonName's rule, and the model's decoder reports it.
+    let orderer = with(individual(), "name", json!("   "));
+    let answer = Cart::new().checkout("/carts/checkout", USER, orderer).await;
+
+    assert_eq!(answer.status, StatusCode::BAD_REQUEST);
+    assert_eq!(paths(&answer), ["/orderer/name"]);
+}
+
+#[tokio::test]
 async fn an_orderer_of_no_known_type_is_400() {
     let orderer = with(individual(), "type", json!("Robot"));
     let answer = Cart::new().checkout("/carts/checkout", USER, orderer).await;

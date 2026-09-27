@@ -20,7 +20,7 @@ impl SaveOrder for SqlSaveOrder<'_> {
             OrdererCase::Individual(it) => (
                 "individual",
                 it.email().value(),
-                Some(it.name()),
+                Some(it.name().value()),
                 None,
                 None,
             ),
@@ -28,8 +28,8 @@ impl SaveOrder for SqlSaveOrder<'_> {
                 "corporation",
                 it.email().value(),
                 None,
-                Some(it.companyName()),
-                Some(it.corporateNumber()),
+                Some(it.companyName().value()),
+                Some(it.corporateNumber().value()),
             ),
         };
         let charge = order.charge();
