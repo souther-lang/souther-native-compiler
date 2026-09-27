@@ -19,6 +19,7 @@
 //! whatever scale it was written at.
 
 use crate::amount::{Amount, Rounding};
+use crate::collection::{Hash, hash_of_bytes};
 use crate::external::Form;
 use crate::kernels::answered;
 use crate::{Comparison, Count, Text, Value, souther_alloc, string_of, text};
@@ -215,6 +216,17 @@ pub unsafe extern "C" fn souther_decimal_compare(
 ) -> Comparison {
     let ordering = unsafe { amount(left).compare(&amount(right)) };
     Comparison(ordering as i64)
+}
+
+/// A `Decimal`'s hash, from the text its amount is written as at a boundary, which is one text for
+/// one amount whatever the scale: `1.0` and `1.00`, which are equal, hash alike.
+///
+/// # Safety
+///
+/// As [`souther_decimal_unscaled`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_decimal_hash(at: *const Decimal) -> Hash {
+    hash_of_bytes(unsafe { amount(at) }.external_text().as_bytes())
 }
 
 /// Whether a `Decimal` is nought, at whatever scale: what a division asks of its divisor before it

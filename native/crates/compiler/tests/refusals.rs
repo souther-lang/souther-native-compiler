@@ -72,17 +72,21 @@ fn an_operator_over_what_has_no_lowering_is_not_lowered_rather_than_unreadable()
     );
 }
 
-/// The same for a type. One with no machine representation yet is a lowering this driver has not
-/// got, not a document it failed to understand.
+/// The same for a type. One with no machine representation is a lowering this driver has not got,
+/// not a document it failed to understand: the type of what has no value, of which nothing is made
+/// to be laid out. A set has one, and two are compared by their members.
 #[test]
 fn a_type_with_no_representation_is_not_lowered() {
-    let set = r#"{"set":{"prim":"INT"}}"#;
-    let refused = object_for(&over("EQ", set, set)).expect_err("no representation for it");
+    let nothing = r#"{"nothing":{}}"#;
+    let refused = object_for(&over("EQ", nothing, nothing)).expect_err("no representation for it");
 
     assert!(
         refused.downcast_ref::<NotLowered>().is_some(),
         "read as something other than a lowering this driver has not got: {refused}"
     );
+
+    let set = r#"{"set":{"prim":"INT"}}"#;
+    object_for(&over("EQ", set, set)).expect("two sets are compared by their members");
 }
 
 /// A `Rational` is lowered, as a quotient and as what the arithmetic over it answers.

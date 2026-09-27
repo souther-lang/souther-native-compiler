@@ -26,6 +26,7 @@ use souther_native_abi::{
 };
 
 mod amount;
+mod collection;
 #[cfg(test)]
 mod contract;
 mod decimal;
@@ -37,6 +38,7 @@ mod kernels;
 mod magnitude;
 mod rational;
 mod temporal;
+pub use collection::*;
 pub use decimal::*;
 pub use kernels::*;
 pub use rational::*;
@@ -282,6 +284,17 @@ pub unsafe extern "C" fn souther_string_compare(
         Ordering::Equal => 0,
         Ordering::Greater => 1,
     })
+}
+
+/// A string's hash, from its bytes: two strings are equal where their bytes are
+/// ([`souther_string_compare`]).
+///
+/// # Safety
+///
+/// As [`souther_string_compare`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_string_hash(at: *const Text) -> Hash {
+    hash_of_bytes(unsafe { text(&at) }.as_str().as_bytes())
 }
 
 // The symbol that says which generation of the contract with generated code this runtime is

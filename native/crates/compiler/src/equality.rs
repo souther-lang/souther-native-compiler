@@ -5,7 +5,8 @@
 //! else is held as an address, and two of those built apart are equal where what they hold is:
 //! a declared value by its fields, a newtype by what it wraps, a sum by which case it is and then
 //! as that case, an optional by whether it holds a value and then by the value, a tuple member by
-//! member, and a list by its length and then element by element.
+//! member, a list by its length and then element by element, and a set or a map by its members,
+//! which the runtime walks (`hashing`).
 //!
 //! Each of those is a function of this object's, one per type, and not code written at every site
 //! that says `==`. A type is reached from inside its own comparison as often as not: an element of
@@ -30,10 +31,11 @@ use cranelift::frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift::module::{FuncId, Module};
 use cranelift::object::ObjectModule;
 use souther_native_abi::{
-    CARRIED, DECIMAL_COMPARE, HELD, LIST_ELEMENTS, LIST_LENGTH, NOTHING, RATIONAL_COMPARE, SLOT,
-    field_at, member_at,
+    CARRIED, DECIMAL_COMPARE, HELD, LIST_ELEMENTS, LIST_LENGTH, MAP_EQUAL, NOTHING,
+    RATIONAL_COMPARE, SET_EQUAL, SLOT, field_at, member_at,
 };
 
+use crate::hashing;
 use crate::transport::{Case, Declaration, Prim, Ty};
 use crate::{
     Lowered, Lowerings, TRUSTED, Tagged, accepted, machine_type, not_lowered, out_of_slot, token_of,
@@ -156,15 +158,48 @@ pub(crate) fn equal(
         // absent value and a list of it the one empty list, so two are the one value. What is
         // compared is never an element, which no value is made of.
         _ if ty.holds_no_value() => Ok(builder.ins().iconst(types::I8, 1)),
+        // By the members each holds and not the order either keeps them in, which the runtime
+        // answers over the element's equality: as many members, and each of one equal to one of
+        // the other's (`souther_native_abi::SET_EQUAL`). Not a comparator of this object's, since
+        // the walk is the runtime's.
+        Ty::Set { set } => {
+            let elements =
+                lowering
+                    .value_ops
+                    .address(builder, module, hashing::Kind::Equality, set);
+            Ok(crate::runtime_call(
+                builder,
+                lowering,
+                module,
+                SET_EQUAL,
+                &[a, b, elements],
+            ))
+        }
+        // As many keys, and under each of one's an equal value under an equal key of the other's.
+        Ty::Map { map } => {
+            let keys =
+                lowering
+                    .value_ops
+                    .address(builder, module, hashing::Kind::Equality, &map.key);
+            let values =
+                lowering
+                    .value_ops
+                    .address(builder, module, hashing::Kind::Equality, &map.value);
+            Ok(crate::runtime_call(
+                builder,
+                lowering,
+                module,
+                MAP_EQUAL,
+                &[a, b, keys, values],
+            ))
+        }
         Ty::Ref {
             named: Case::Declared { .. },
         }
         | Ty::Union { .. }
         | Ty::Option { .. }
         | Ty::Tuple { .. }
-        | Ty::List { .. }
-        | Ty::Set { .. }
-        | Ty::Map { .. } => {
+        | Ty::List { .. } => {
             let call_conv = builder.func.signature.call_conv;
             let id = lowering.comparators.of(module, ty, call_conv)?;
             let comparing = module.declare_func_in_func(id, builder.func);

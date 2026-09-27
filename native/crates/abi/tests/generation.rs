@@ -53,6 +53,8 @@ fn constants() -> Vec<(&'static str, i128)> {
         ),
         ("HOST_EXCEPTION", HOST_EXCEPTION.into()),
         ("FAKE_NO_OUTPUT", FAKE_NO_OUTPUT.into()),
+        ("HASH_START", HASH_START.into()),
+        ("HASH_PRESENT", HASH_PRESENT.into()),
     ]
 }
 
@@ -75,6 +77,9 @@ fn surface() -> BTreeSet<String> {
         lines.insert(format!("status {name} = {status}"));
     }
     lines.insert(format!("answers {IMPLEMENTATION_ANSWERS:?}"));
+    for (at, rule) in HASHING.iter().enumerate() {
+        lines.insert(format!("hashing {at} {rule}"));
+    }
     lines.insert(format!("runtime says {}", runtime_generation_symbol()));
     for (name, value) in constants() {
         lines.insert(format!("const {name} = {value}"));

@@ -59,7 +59,7 @@ use crate::transport::{
     Held, KernelFact, Node, Op, Owner, Prim, Program, Reaches, Reaching, Reading, Reference,
     Routing, Selects, Target, Ty, Value,
 };
-use crate::{Declared, PairIn, Runs, Targets, departures_taken, not_lowered, says_its_case};
+use crate::{Declared, PairIn, Runs, Targets, departures_taken, says_its_case};
 use anyhow::{Result, anyhow, bail};
 use souther_native_abi::{
     DATE_DAYS, DATE_TIME_SECONDS, INSTANT_SECONDS, SECONDS_PER_DAY, spells_a_module, spells_a_name,
@@ -295,8 +295,6 @@ impl<'a> Coherent<'a> {
                 reached: &reached,
                 bound: HashMap::new(),
                 owed: &mut owed,
-                runs: runs.runs(&body),
-                unrun: Vec::new(),
                 environment: body.environment(),
                 constructs,
             };
@@ -328,9 +326,6 @@ impl<'a> Coherent<'a> {
 struct Owed {
     /// Relations under which a value only has to be a value of the type it stands in.
     fits: Vec<Owing>,
-    /// What this backend has no lowering for, found while reading and refused only once nothing
-    /// in the document disagrees.
-    not_lowered: Vec<String>,
     /// What a call of another build's published value stands at, by the value, as the first call
     /// read says it: one declaration answers one way, so every other call is held to this.
     published: HashMap<(String, String), Ty>,
@@ -340,49 +335,29 @@ struct Owing {
     what: String,
     actual: Ty,
     expected: Ty,
-    /// Whether the relation stands in something this object runs. One that does not is still held
-    /// to the checker's answer, and not refused as not lowered where this backend cannot say.
-    runs: bool,
 }
 
 impl Owed {
     fn fits(&mut self, what: String, actual: &Ty, expected: &Ty) {
-        self.fits_where(true, what, actual, expected);
-    }
-
-    fn fits_where(&mut self, runs: bool, what: String, actual: &Ty, expected: &Ty) {
         self.fits.push(Owing {
             what,
             actual: actual.clone(),
             expected: expected.clone(),
-            runs,
         });
     }
 
-    /// The second pass and the third: every relation that is a question of values, then what
-    /// could not be asked because this backend lays no value of the types out.
+    /// The second pass: every relation that is a question of values.
     fn settle(self, declared: &Declared) -> Result<()> {
-        let mut undecided = Vec::new();
         for owing in &self.fits {
-            match declared.fits(&owing.actual, &owing.expected)? {
-                Some(true) => {}
-                Some(false) => bail!(
+            if !declared.fits(&owing.actual, &owing.expected)? {
+                bail!(
                     "{}: {} is not a value of {}, and the checker holds it to be one: the two \
                      halves disagree",
                     owing.what,
                     owing.actual.spelt(),
                     owing.expected.spelt()
-                ),
-                None if owing.runs => undecided.push(format!(
-                    "whether a value of {} is one of {}",
-                    owing.actual.spelt(),
-                    owing.expected.spelt()
-                )),
-                None => {}
+                );
             }
-        }
-        if let Some(first) = self.not_lowered.into_iter().chain(undecided).next() {
-            return Err(not_lowered(first).into());
         }
         Ok(())
     }
@@ -593,12 +568,6 @@ struct Walk<'w, 'a> {
     /// What each binding in scope is in force at, as the node that made it says.
     bound: HashMap<usize, Ty>,
     owed: &'w mut Owed,
-    /// Whether this object runs what is being read: the body, and not a function a call inside it
-    /// never applies ([`crate::unrun`]). What this backend has no lowering for is refused only
-    /// where it would be lowered; the two halves disagreeing is refused wherever it stands.
-    runs: bool,
-    /// The functions the calls read so far never apply, which are read with `runs` false.
-    unrun: Vec<&'a Node>,
     /// What the body is handed a capability for ([`crate::transport::Body::environment`]).
     environment: &'a [crate::transport::Requirement],
     /// The behavior a row's body constructs, with what the row states its dependencies answer.
@@ -661,7 +630,7 @@ impl<'a> Walk<'_, 'a> {
 
     fn fits(&mut self, what: &str, actual: &Ty, expected: &Ty) {
         let what = format!("{}: {what}", self.owner);
-        self.owed.fits_where(self.runs, what, actual, expected);
+        self.owed.fits(what, actual, expected);
     }
 
     /// Refuses a type naming a declaration the document does not carry, and a type variable
@@ -671,12 +640,6 @@ impl<'a> Walk<'_, 'a> {
             self.declared.resolves_open(what, ty)
         } else {
             self.declared.resolves(what, ty)
-        }
-    }
-
-    fn not_lowered(&mut self, what: String) {
-        if self.runs {
-            self.owed.not_lowered.push(what);
         }
     }
 
@@ -732,17 +695,7 @@ impl<'a> Walk<'_, 'a> {
     /// `node` and everything under it: what each node says it is against where its value comes
     /// from, and each child against the slot it stands in.
     fn node(&mut self, node: &'a Node) -> Result<()> {
-        let runs = self.runs;
-        if self.unrun.iter().any(|it| std::ptr::eq(*it, node)) {
-            self.runs = false;
-        }
-        let entered = crate::unrun::never_lowered(node);
-        let before = self.unrun.len();
-        self.unrun.extend(entered);
-        let read = self.relations(node).and_then(|()| self.hold_slots(node));
-        self.unrun.truncate(before);
-        self.runs = runs;
-        read
+        self.relations(node).and_then(|()| self.hold_slots(node))
     }
 
     /// Every child of `node` against the slot it stands in, from the one table of them.
@@ -1065,8 +1018,9 @@ impl<'a> Walk<'_, 'a> {
                 let callee = operation.spelt().to_string();
                 let takes = match operation {
                     // The step as it is written, the list it walks as a list of what the step takes
-                    // for an element, and where the walk starts.
-                    Emitted::BuildList => {
+                    // for an element, and where the walk starts. The same of a walk building a map,
+                    // whose step takes the map for what it has built.
+                    Emitted::BuildList | Emitted::BuildMap => {
                         let step = arguments.first().map(Node::ty);
                         let Some(Ty::Fn { fn_ }) = step else {
                             bail!(
@@ -1094,9 +1048,18 @@ impl<'a> Walk<'_, 'a> {
                     }
                     // What it grows and what it adds are the list it answers.
                     Emitted::GrowList => vec![answers.clone(), answers.clone()],
-                    // Refused as not lowered (`call`), and nothing here knows what they take.
-                    Emitted::BuildMap | Emitted::PutMap => {
-                        arguments.iter().map(|it| it.ty().clone()).collect()
+                    // The map it writes into, which is the map it answers, a key and a value of
+                    // that map's.
+                    Emitted::PutMap => {
+                        let Ty::Map { map } = answers else {
+                            bail!(
+                                "{}: {callee} answers {}, where it writes into a map: the two \
+                                 halves disagree",
+                                self.owner,
+                                answers.spelt()
+                            );
+                        };
+                        vec![answers.clone(), (*map.key).clone(), (*map.value).clone()]
                     }
                 };
                 (callee, takes)
@@ -2115,15 +2078,25 @@ impl<'a> Walk<'_, 'a> {
                         )?;
                     }
                     self.ends_for(&format!("a call of {kernel}"), aborts, &contract.aborts)?;
-                    let Some(answers) = contract.answers.settled(&bound) else {
-                        unreachable!("what {kernel} takes binds every variable of what it answers");
-                    };
-                    self.same(
-                        &format!("a call of {kernel}"),
-                        ty,
-                        &answers,
-                        "what it answers",
-                    )
+                    // What it answers is the one type what it takes bound. A kernel that takes
+                    // nothing (`Set.empty`) binds nothing, and what it answers is held to its shape
+                    // alone, with what the call is settled as binding what is left.
+                    match contract.answers.settled(&bound) {
+                        Some(answers) => self.same(
+                            &format!("a call of {kernel}"),
+                            ty,
+                            &answers,
+                            "what it answers",
+                        ),
+                        None if contract.answers.binds(ty, &mut bound) => Ok(()),
+                        None => bail!(
+                            "{}: a call of {kernel} is typed {} and it answers {}: the two halves \
+                             disagree",
+                            self.owner,
+                            ty.spelt(),
+                            contract.answers.spelt()
+                        ),
+                    }
                 }
                 // Refused where it is lowered; nothing here knows what it answers.
                 None => Ok(()),
@@ -2171,15 +2144,40 @@ impl<'a> Walk<'_, 'a> {
                     &[AbortKind::RequiredFormHasNoPlace],
                 )
             }
-            // No map is laid out here, so neither the walk that builds one nor its write is
-            // lowered: refused as that, and not as the two halves disagreeing about something the
-            // document says in full.
+            // What the walk answers is what its step answers, which is a map, and the walk ends no
+            // run: a key the step cannot write ends it inside the step.
             Reaches::Emitted {
-                operation: operation @ (Emitted::BuildMap | Emitted::PutMap),
+                operation: Emitted::BuildMap,
             } => {
-                self.not_lowered(format!("the operation {}", operation.spelt()));
-                Ok(())
+                let Some(Ty::Fn { fn_ }) = arguments.first().map(Node::ty) else {
+                    unreachable!("`parameters` refused a walk whose step is not a function");
+                };
+                if !matches!(ty, Ty::Map { .. }) || !matches!(fn_.takes[0], Ty::Map { .. }) {
+                    bail!(
+                        "{}: {} answers {} and its step builds {}, where a walk builds a map: the \
+                         two halves disagree",
+                        self.owner,
+                        Emitted::BuildMap.spelt(),
+                        ty.spelt(),
+                        fn_.takes[0].spelt()
+                    );
+                }
+                self.same(
+                    &format!("a call of {}", Emitted::BuildMap.spelt()),
+                    ty,
+                    &fn_.answers,
+                    "what its step answers",
+                )?;
+                self.ends_for(Emitted::BuildMap.spelt(), aborts, &[])
             }
+            // A key more than a map holds ends the run, as `Map.insert`'s does.
+            Reaches::Emitted {
+                operation: Emitted::PutMap,
+            } => self.ends_for(
+                Emitted::PutMap.spelt(),
+                aborts,
+                &[AbortKind::RequiredFormHasNoPlace],
+            ),
         }
     }
 }

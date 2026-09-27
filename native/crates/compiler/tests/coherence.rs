@@ -15,11 +15,12 @@ const DECIMAL: &str = r#"{"prim":"DECIMAL"}"#;
 const DATE: &str = r#"{"prim":"DATE"}"#;
 /// A type this backend has no layout for, for the tests about what is refused as not lowered
 /// rather than as the two halves disagreeing, and about a refusal of the halves that comes before
-/// lowering would refuse: a set, which no build lays out. Every test standing a type here for "no
+/// lowering would refuse: the type of what has no value, of which nothing is ever made to be laid
+/// out. Every test standing a type here for "no
 /// layout" is held to it by `a_helper_this_backend_is_behind_on_is_on_its_own_not_lowered`, which
 /// asks it to be refused as not lowered on its own; a type that stopped being so would make the
 /// rest agree with themselves, so `Date` and the rest that are laid out are not used for it.
-const UNLAID: &str = r#"{"set":{"prim":"INT"}}"#;
+const UNLAID: &str = r#"{"nothing":{}}"#;
 const A: &str = r#"{"ref":{"is":"declared","declared":"m.A"}}"#;
 const S: &str = r#"{"ref":{"is":"declared","declared":"m.S"}}"#;
 const P: &str = r#"{"ref":{"is":"declared","declared":"m.P"}}"#;
@@ -210,7 +211,7 @@ fn a_read_typed_as_another_type_of_the_same_width_is_still_the_halves_disagreein
 }
 
 /// A binder this backend has no representation for, read as one it has, is still two statements
-/// of one type that disagree, and is refused as that before anything asks for the set's
+/// of one type that disagree, and is refused as that before anything asks for the binder's
 /// layout.
 #[test]
 fn a_read_disagreeing_with_a_binder_that_has_no_layout_is_the_halves_disagreeing() {
@@ -745,24 +746,13 @@ fn what_a_compositions_last_stage_answers_is_what_it_answers() {
 }
 
 /// A document whose halves disagree in one body, and which this backend is behind on in another,
-/// is refused as disagreeing, whichever of the two bodies is read first. `m.g` answers whether one
-/// set is a set of a wider type, which nothing here has a rule for.
+/// is refused as disagreeing, whichever of the two bodies is read first. `m.g` calls a kernel
+/// nothing here lowers.
 #[test]
 fn a_disagreement_anywhere_is_refused_before_anything_is_not_lowered() {
-    let set = |of: &str| format!(r#"{{"set":{of}}}"#);
-    let g = helper(
-        "m.g",
-        &[&set(A)],
-        &let_(
-            1,
-            &set(S),
-            &widen(&read(0, &set(A)), &set(S)),
-            &read(1, &set(S)),
-            &set(S),
-        ),
-    );
+    let g = helper("m.g", &[INT], &unheard_of(read(0, INT)));
     let refused =
-        object_for(&helpers(std::slice::from_ref(&g))).expect_err("nothing lays a set out");
+        object_for(&helpers(std::slice::from_ref(&g))).expect_err("nothing lowers the kernel");
     assert!(refused.downcast_ref::<NotLowered>().is_some(), "{refused}");
     is_the_halves_disagreeing(&helpers(&[g, h(&[INT], &read(0, BOOL))]), "m.h");
 }
@@ -817,6 +807,12 @@ fn b() -> (String, String) {
     )
 }
 
+/// A call of a kernel the standard library does not declare, taking an `Int` and answering one,
+/// which this backend lowers nowhere: what refuses it is the kernel and not a type.
+fn unheard_of(argument: String) -> String {
+    call(&kernel("int.unheardOf", &[INT], NO_FACT), &[argument], INT)
+}
+
 /// A helper with no layout here, which on its own is refused as not lowered.
 fn behind() -> String {
     helper("m.behind", &[UNLAID], &read(0, UNLAID))
@@ -824,13 +820,13 @@ fn behind() -> String {
 
 #[test]
 fn a_helper_this_backend_is_behind_on_is_on_its_own_not_lowered() {
-    let refused = object_for(&helpers(&[behind()])).expect_err("no layout for a set");
+    let refused = object_for(&helpers(&[behind()])).expect_err("no layout for what has no value");
     assert!(refused.downcast_ref::<NotLowered>().is_some(), "{refused}");
 }
 
 /// Two helpers one module holds under one name: whichever was read last would be checked, and
-/// whichever was declared first compiled. Refused as the name written twice, and not as the first
-/// copy's set, which a backend reading the document in another order would never have met.
+/// whichever was declared first compiled. Refused as the name written twice, and not as what the
+/// first copy takes, which a backend reading the document in another order would never have met.
 #[test]
 fn a_helper_written_twice_is_refused_before_either_is_lowered() {
     let first = helper("m.g", &[UNLAID], &read(0, UNLAID));
@@ -916,7 +912,7 @@ fn a_row_written_twice_is_the_halves_disagreeing() {
 }
 
 /// A target saying a name is defined here, with no local definition under the name, is refused
-/// as that, and not as the target's `Set` having no layout.
+/// as that, before what it answers is asked of anything.
 #[test]
 fn a_target_defined_here_with_nothing_defining_it_is_refused_before_its_signature_is_asked() {
     let target = r#"{"module":"m","name":"b","is":"body","parameters":{"named":[]},"output":{"is":"setof","element":{"is":"scalar","scalar":"INT"}},"requirements":[],"ensures":{"at":"none"}}"#;
@@ -939,7 +935,7 @@ fn another_builds_value_called_at_two_types_is_refused_before_anything_is_lowere
 }
 
 /// A quotient is a `Rational` whatever it divides, so a `/` typed as anything else is refused as
-/// that, before the set elsewhere is found to have no layout.
+/// that, before the helper elsewhere is found to take what has no layout.
 #[test]
 fn a_quotient_is_a_rational() {
     let divided = |ty: &str| {
@@ -1828,35 +1824,33 @@ fn a_clause_builds_no_value() {
 
 /// A clause this object does not run is read, and held to what the checker holds it to, and is not
 /// refused for what this backend cannot lower. This object runs the clauses of a declaration it
-/// builds: one whose fields have a representation here, and which a body here constructs or the
-/// module publishes, so another build may construct one through this object. A declaration the
-/// module keeps and nothing here constructs is built nowhere, whatever its fields are; one whose
-/// fields have no representation is built nowhere here either. The same clause on a declaration
-/// the module publishes is run, and refused as not lowered.
+/// builds: one a body here constructs or the module publishes, so another build may construct one
+/// through this object. A declaration the module keeps and nothing here constructs is built
+/// nowhere. The same clause on a declaration the module publishes is run, and refused as not
+/// lowered.
 ///
-/// The clause makes a function taking a set, which no lifted function here can take.
+/// The clause calls a kernel nothing here lowers.
 #[test]
 fn a_clause_of_a_declaration_nothing_here_builds_is_not_run() {
-    let date_to_truth = fn_of(&[UNLAID], BOOL);
-    let block = format!(
-        r#"{{"core":"block","site":0,"parameters":[{{"binding":1,"name":"x"}}],"body":{},"type":{date_to_truth},"aborts":[]}}"#,
-        truth(true)
+    let holds = clause(
+        None,
+        &let_(2, INT, &unheard_of(read(0, INT)), &truth(true), BOOL),
     );
-    let holds = clause(None, &let_(2, &date_to_truth, &block, &truth(true), BOOL));
     let published =
         |document: String| document.replace(r#""publishes":[]"#, r#""publishes":["m.R"]"#);
-    let unlaid = r#"{"name":"items","binding":0,"codec":{"is":"setof","element":{"is":"scalar","scalar":"INT"}}}"#;
     let counted = field("count", 0, "INT");
 
-    reads_whole(&published(with_clauses(unlaid, &holds, &[])));
     reads_whole(&with_clauses(&counted, &holds, &[]));
 
     let refused = object_for(&published(with_clauses(&counted, &holds, &[])))
         .expect_err("the module publishes it, so it is built here and its clause is run");
     assert!(refused.downcast_ref::<NotLowered>().is_some(), "{refused}");
 
-    let disagreeing = clause(None, &let_(2, &date_to_truth, &block, &read(0, BOOL), BOOL));
-    is_the_halves_disagreeing(&with_clauses(unlaid, &disagreeing, &[]), "m.R's clause 0");
+    let disagreeing = clause(
+        None,
+        &let_(2, INT, &unheard_of(read(0, INT)), &read(0, BOOL), BOOL),
+    );
+    is_the_halves_disagreeing(&with_clauses(&counted, &disagreeing, &[]), "m.R's clause 0");
 }
 
 /// A kernel's application states what it takes each argument as, which is the kernel's signature

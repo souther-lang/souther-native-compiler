@@ -19,10 +19,13 @@
 //! makes two of them compare by the number; an `Instant` is its second counted the same way and
 //! then its nanosecond of that second, which is never negative.
 
+use crate::collection::{Hash, souther_hash_combine};
 use crate::external::{Form, handed};
 use crate::kernels::answered;
 use crate::{Comparison, Count, Text, souther_alloc, string_of, text};
-use souther_native_abi::{DATE_DAYS, DATE_TIME_SECONDS, INSTANT_SECONDS, SECONDS_PER_DAY, SLOT};
+use souther_native_abi::{
+    DATE_DAYS, DATE_TIME_SECONDS, HASH_START, INSTANT_SECONDS, SECONDS_PER_DAY, SLOT,
+};
 use std::cmp::Ordering;
 
 /// A `Date`, as the functions here take and answer one: an address, a type of its own for the
@@ -708,6 +711,47 @@ pub unsafe extern "C" fn souther_instant_compare(
 ) -> Comparison {
     let ordering: Ordering = unsafe { moment(left).cmp(&moment(right)) };
     Comparison(ordering as i64)
+}
+
+/// A `Date`'s hash, from the day it names, which is what two equal ones share.
+///
+/// # Safety
+///
+/// As [`souther_date_iso`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_date_hash(at: *const Date) -> Hash {
+    souther_hash_combine(Hash(HASH_START), unsafe { day(at) })
+}
+
+/// A `Time`'s hash, from the second of the day it names.
+///
+/// # Safety
+///
+/// As [`souther_date_iso`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_time_hash(at: *const Time) -> Hash {
+    souther_hash_combine(Hash(HASH_START), unsafe { second_of_day(at) })
+}
+
+/// A `DateTime`'s hash, from the second it names.
+///
+/// # Safety
+///
+/// As [`souther_date_iso`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_datetime_hash(at: *const DateTime) -> Hash {
+    souther_hash_combine(Hash(HASH_START), unsafe { local_second(at) })
+}
+
+/// An `Instant`'s hash, from the second and then the nanosecond it names.
+///
+/// # Safety
+///
+/// As [`souther_date_iso`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_instant_hash(at: *const Instant) -> Hash {
+    let (second, nano) = unsafe { moment(at) };
+    souther_hash_combine(souther_hash_combine(Hash(HASH_START), second), nano)
 }
 
 /// `Date.addDays`, written through `out` where the day it names is one a `Date` holds.

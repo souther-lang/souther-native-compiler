@@ -1834,12 +1834,16 @@ impl Ty {
         matches!(self, Ty::Never { .. })
     }
 
-    /// Whether the one value of this type is what holds nothing: an optional or a list of a type
-    /// no value of which is made, which is absent or empty, since making an element would have
-    /// been making one of that type.
+    /// Whether the one value of this type is what holds nothing: an optional, a list or a set of a
+    /// type no value of which is made, which is absent or empty, since making an element would
+    /// have been making one of that type; and a map whose keys or values are of one, which is
+    /// empty for the same reason.
     pub fn holds_no_value(&self) -> bool {
         match self {
-            Ty::Option { option: held } | Ty::List { list: held } => held.has_no_value(),
+            Ty::Option { option: held } | Ty::List { list: held } | Ty::Set { set: held } => {
+                held.has_no_value()
+            }
+            Ty::Map { map } => map.key.has_no_value() || map.value.has_no_value(),
             _ => false,
         }
     }

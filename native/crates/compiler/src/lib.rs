@@ -16,6 +16,7 @@ mod codec;
 mod coherent;
 mod equality;
 mod growing;
+mod hashing;
 mod host;
 mod index;
 mod interface;
@@ -28,6 +29,7 @@ mod ordering;
 mod patterns;
 mod replaced;
 mod restating;
+mod sets;
 mod specialize;
 pub mod transport;
 pub use link::runtime_arguments;
@@ -55,28 +57,32 @@ use restating::restate;
 use souther_native_abi::{
     ALLOCATE, ANSWERED, CAPABILITY_ENVIRONMENT, CAPABILITY_INVOKE, CARRIED, DATE_ADD_DAYS,
     DATE_ADD_MONTHS, DATE_ADD_YEARS, DATE_COMPARE, DATE_DAY, DATE_DAYS_BETWEEN, DATE_FROM_PARTS,
-    DATE_LITERAL, DATE_MONTH, DATE_YEAR, DATETIME_ADD_DAYS, DATETIME_ADD_HOURS,
-    DATETIME_ADD_MINUTES, DATETIME_COMPARE, DATETIME_FROM_DATE_AND_TIME, DATETIME_LITERAL,
-    DATETIME_MINUTES_BETWEEN, DATETIME_TO_DATE, DATETIME_TO_TIME, DECIMAL_ADD, DECIMAL_COMPARE,
-    DECIMAL_DIVIDE, DECIMAL_FROM_INT, DECIMAL_IS_ZERO, DECIMAL_LITERAL, DECIMAL_MULTIPLY,
-    DECIMAL_NEGATE, DECIMAL_ROUND, DECIMAL_SUBTRACT, DECIMAL_TO_INT, EXAMPLE_STATUSES,
-    FAKE_NO_OUTPUT, HELD, HOST_STATUSES, INJECTION_UNBOUND, INSTANT_COMPARE, INSTANT_LITERAL,
-    LANGUAGE_UNITS, LIST_LENGTH, NO_FAILED_CLAUSE, NOTHING, Parameter, RATIONAL_ADD,
-    RATIONAL_COMPARE, RATIONAL_DIVIDE, RATIONAL_FROM_DECIMAL, RATIONAL_FROM_INT,
-    RATIONAL_HAS_FINITE_DECIMAL, RATIONAL_IS_WHOLE, RATIONAL_IS_ZERO, RATIONAL_MULTIPLY,
-    RATIONAL_NEGATE, RATIONAL_SUBTRACT, RATIONAL_TO_DECIMAL, RATIONAL_TO_FINITE_DECIMAL,
-    RATIONAL_TO_INT, RATIONAL_TO_WHOLE, SLOT, STRING_CHARACTERS, STRING_CODE_POINT_VALUES,
+    DATE_HASH, DATE_LITERAL, DATE_MONTH, DATE_YEAR, DATETIME_ADD_DAYS, DATETIME_ADD_HOURS,
+    DATETIME_ADD_MINUTES, DATETIME_COMPARE, DATETIME_FROM_DATE_AND_TIME, DATETIME_HASH,
+    DATETIME_LITERAL, DATETIME_MINUTES_BETWEEN, DATETIME_TO_DATE, DATETIME_TO_TIME, DECIMAL_ADD,
+    DECIMAL_COMPARE, DECIMAL_DIVIDE, DECIMAL_FROM_INT, DECIMAL_HASH, DECIMAL_IS_ZERO,
+    DECIMAL_LITERAL, DECIMAL_MULTIPLY, DECIMAL_NEGATE, DECIMAL_ROUND, DECIMAL_SUBTRACT,
+    DECIMAL_TO_INT, EXAMPLE_STATUSES, FAKE_NO_OUTPUT, HASH_COMBINE, HELD, HOST_STATUSES,
+    INJECTION_UNBOUND, INSTANT_COMPARE, INSTANT_HASH, INSTANT_LITERAL, LANGUAGE_UNITS, LIST_LENGTH,
+    MAP_CONTAINS_KEY, MAP_EMPTY, MAP_EQUAL, MAP_FROM_LIST, MAP_GET, MAP_HASH, MAP_INSERT, MAP_KEYS,
+    MAP_REMOVE, MAP_SIZE, MAP_TO_LIST, MAP_VALUES, NO_FAILED_CLAUSE, NOTHING, Parameter,
+    RATIONAL_ADD, RATIONAL_COMPARE, RATIONAL_DIVIDE, RATIONAL_FROM_DECIMAL, RATIONAL_FROM_INT,
+    RATIONAL_HAS_FINITE_DECIMAL, RATIONAL_HASH, RATIONAL_IS_WHOLE, RATIONAL_IS_ZERO,
+    RATIONAL_MULTIPLY, RATIONAL_NEGATE, RATIONAL_SUBTRACT, RATIONAL_TO_DECIMAL,
+    RATIONAL_TO_FINITE_DECIMAL, RATIONAL_TO_INT, RATIONAL_TO_WHOLE, SET_CONTAINS, SET_DIFFERENCE,
+    SET_EMPTY, SET_EQUAL, SET_FROM_LIST, SET_HASH, SET_INSERT, SET_INTERSECTION, SET_REMOVE,
+    SET_SIZE, SET_TO_LIST, SET_UNION, SLOT, STRING_CHARACTERS, STRING_CODE_POINT_VALUES,
     STRING_CODE_POINTS, STRING_COMPARE, STRING_CONCAT, STRING_CONCAT_ALL, STRING_CONTAINS,
-    STRING_ENDS_WITH, STRING_FROM_DECIMAL, STRING_FROM_INT, STRING_JOIN, STRING_LINES,
+    STRING_ENDS_WITH, STRING_FROM_DECIMAL, STRING_FROM_INT, STRING_HASH, STRING_JOIN, STRING_LINES,
     STRING_LOWERCASE, STRING_MATCHES, STRING_PAD_LEFT, STRING_PAD_RIGHT, STRING_REPEAT,
     STRING_REPLACE, STRING_REVERSE, STRING_SLICE, STRING_SPLIT, STRING_STARTS_WITH,
     STRING_TO_DECIMAL, STRING_TO_INT, STRING_TRIM, STRING_UPPERCASE, STRING_WORDS, Status,
-    TIME_COMPARE, TIME_FROM_PARTS, TIME_HOUR, TIME_LITERAL, TIME_MINUTE, TIME_SECOND, TOKEN, WHICH,
-    Word, behavior_symbol, boundary_symbol, built_in_case_symbol, checked_constructor_symbol,
-    constructor_symbol, example_symbol, field_at, generated_call, held_symbol, home_symbol,
-    list_at, member_at, requirement_at, room_for_capability, room_for_carried, room_for_fields,
-    room_for_list, room_for_members, room_for_requirements, spells_a_module, spells_a_name,
-    type_symbol, value_symbol,
+    TIME_COMPARE, TIME_FROM_PARTS, TIME_HASH, TIME_HOUR, TIME_LITERAL, TIME_MINUTE, TIME_SECOND,
+    TOKEN, WHICH, Word, behavior_symbol, boundary_symbol, built_in_case_symbol,
+    checked_constructor_symbol, constructor_symbol, example_symbol, field_at, generated_call,
+    held_symbol, home_symbol, list_at, member_at, requirement_at, room_for_capability,
+    room_for_carried, room_for_fields, room_for_list, room_for_members, room_for_requirements,
+    spells_a_module, spells_a_name, type_symbol, value_symbol,
 };
 use specialize::{Instance, InstanceId, Specializations};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -766,10 +772,12 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
 
     let comparators = equality::Comparators::default();
     let restaters = restating::Restaters::default();
+    let value_ops = hashing::ValueOps::default();
     let lowerings = Lowerings {
         declared: &declared,
         comparators: &comparators,
         restaters: &restaters,
+        value_ops: &value_ops,
         reachable: &reachable,
         specializations: &specializations,
         allocate,
@@ -1064,40 +1072,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
         accepted(module.define_function(checked, &mut context));
     }
 
-    // Every comparator and every restating function a body above asked for, and every one those
-    // ask for in turn. Written last because a comparison or a restatement anywhere may be the first
-    // to reach a pair of types, and each reaches the types its values are made of only as it is
-    // written.
-    loop {
-        if let Some(owed) = comparators.owed() {
-            context.clear();
-            context.func = Function::with_name_signature(UserFuncName::default(), owed.signature);
-            equality::define_comparator(
-                &mut context.func,
-                &mut shapes,
-                &owed.ty,
-                frontend,
-                &lowerings,
-                &mut module,
-            )?;
-            accepted(module.define_function(owed.id, &mut context));
-        } else if let Some(owed) = restaters.owed() {
-            context.clear();
-            context.func =
-                Function::with_name_signature(UserFuncName::default(), owed.signature.clone());
-            restating::define_restater(
-                &mut context.func,
-                &mut shapes,
-                &owed,
-                frontend,
-                &lowerings,
-                &mut module,
-            )?;
-            accepted(module.define_function(owed.id, &mut context));
-        } else {
-            break;
-        }
-    }
+    define_owed(&mut context, &mut shapes, frontend, &lowerings, &mut module)?;
 
     // Every behavior this object defines and publishes, which a host calls and whose answer a
     // boundary writes as the language writes it, and every row, which has a boundary too. A
@@ -1182,6 +1157,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
         literals: &literals,
         constructors: &constructors,
         allocate,
+        value_ops: &value_ops,
     };
     let mut codecs = codec::Codecs::new(call_conv);
     // What a host builds, reads, decodes and encodes a value of a published type through, each
@@ -1225,11 +1201,70 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
     boundary::define(&mut emitting, &mut codecs, &boundaries)?;
     // Every writer and reader the entries above reached.
     codecs.define(&mut emitting)?;
+    // And what they asked of a set or a map they read or handed over.
+    define_owed(&mut context, &mut shapes, frontend, &lowerings, &mut module)?;
 
     surface.carry(&mut module);
     refer_to_the_runtimes_generation(&mut module);
 
     Ok(accepted(module.finish().emit()))
+}
+
+/// Every comparator, restating function, hasher and equality a body asked for, and every one those
+/// ask for in turn. Written after the bodies because a comparison, a restatement or a set anywhere
+/// may be the first to reach a type, and each reaches the types its values are made of only as it is
+/// written; and asked again after what a host and a boundary are handed, which reads and builds
+/// sets of its own.
+fn define_owed(
+    context: &mut Context,
+    shapes: &mut FunctionBuilderContext,
+    frontend: TargetFrontendConfig,
+    lowerings: &Lowerings,
+    module: &mut ObjectModule,
+) -> Lowered<()> {
+    loop {
+        if let Some(owed) = lowerings.comparators.owed() {
+            context.clear();
+            context.func = Function::with_name_signature(UserFuncName::default(), owed.signature);
+            equality::define_comparator(
+                &mut context.func,
+                shapes,
+                &owed.ty,
+                frontend,
+                lowerings,
+                module,
+            )?;
+            accepted(module.define_function(owed.id, context));
+        } else if let Some(owed) = lowerings.restaters.owed() {
+            context.clear();
+            context.func =
+                Function::with_name_signature(UserFuncName::default(), owed.signature.clone());
+            restating::define_restater(
+                &mut context.func,
+                shapes,
+                &owed,
+                frontend,
+                lowerings,
+                module,
+            )?;
+            accepted(module.define_function(owed.id, context));
+        } else if let Some(owed) = lowerings.value_ops.owed() {
+            context.clear();
+            context.func =
+                Function::with_name_signature(UserFuncName::default(), owed.signature.clone());
+            hashing::define(
+                &mut context.func,
+                shapes,
+                &owed,
+                frontend,
+                lowerings,
+                module,
+            )?;
+            accepted(module.define_function(owed.id, context));
+        } else {
+            return Ok(());
+        }
+    }
 }
 
 /// What a host constructs, apart from what it calls: every behavior this object defines that a
@@ -1302,6 +1337,9 @@ pub(crate) struct Emitting<'a> {
     pub literals: &'a Literals,
     pub constructors: &'a Constructors,
     pub allocate: FuncId,
+    /// The hasher and the equality of each type a set or a map is kept over, declared here where a
+    /// reading builds one and written with the rest ([`define_owed`]).
+    pub value_ops: &'a hashing::ValueOps,
 }
 
 impl Emitting<'_> {
@@ -1827,13 +1865,10 @@ impl<'a> Declared<'a> {
 
     /// Whether every value of `actual` is a value of `expected`, as the checker lets one stand as
     /// the other for the types this backend lays out: the same type; for declared types, unions and
-    /// primitives, every case the one descends to being among the other's; for an optional, a list
-    /// or a tuple, the same asked of what it holds; for a function, one taking at least what the
+    /// primitives, every case the one descends to being among the other's; for an optional, a
+    /// list, a set or a tuple, the same asked of what it holds, and for a map of both its keys and
+    /// its values; for a function, one taking at least what the
     /// other takes and answering no more than it answers.
-    ///
-    /// `None` where either side is a `Set` or a `Map`. The checker lets one stand where a wider one
-    /// is asked for, and neither is laid out here, so this side has no reason to know the rule yet
-    /// and does not answer it: the question is left to be refused as not lowered.
     ///
     /// Nothing about a value's layout is asked here, so a refusal from this is always the two
     /// halves disagreeing.
@@ -1843,56 +1878,51 @@ impl<'a> Declared<'a> {
     /// outside `Core` (a composition's stages, what an arm binds), and nowhere else. It is a copy of
     /// part of the checker's rule all the same, and each type laid out here later would copy more
     /// of it.
-    fn fits(&self, actual: &Ty, expected: &Ty) -> Result<Option<bool>> {
+    fn fits(&self, actual: &Ty, expected: &Ty) -> Result<bool> {
         if actual == expected {
-            return Ok(Some(true));
+            return Ok(true);
         }
         Ok(match (actual, expected) {
             // No value of either is made, so what it stands as is never handed one that does not
             // fit.
-            (Ty::Nothing { .. } | Ty::Never { .. }, _) => Some(true),
-            (Ty::Set { .. } | Ty::Map { .. }, _) | (_, Ty::Set { .. } | Ty::Map { .. }) => None,
+            (Ty::Nothing { .. } | Ty::Never { .. }, _) => true,
             (Ty::Option { option: actual }, Ty::Option { option: expected })
-            | (Ty::List { list: actual }, Ty::List { list: expected }) => {
+            | (Ty::List { list: actual }, Ty::List { list: expected })
+            | (Ty::Set { set: actual }, Ty::Set { set: expected }) => {
                 self.fits(actual, expected)?
             }
+            // Both, as the checker asks (`TypeOps.assignable`): a map is read by its keys as much as
+            // by its values, and neither is ever written.
+            (Ty::Map { map: actual }, Ty::Map { map: expected }) => {
+                self.fits(&actual.key, &expected.key)?
+                    && self.fits(&actual.value, &expected.value)?
+            }
             (Ty::Tuple { tuple: actual }, Ty::Tuple { tuple: expected }) => {
-                if actual.len() != expected.len() {
-                    return Ok(Some(false));
-                }
-                self.all_fit(actual.iter().zip(expected))?
+                actual.len() == expected.len() && self.all_fit(actual.iter().zip(expected))?
             }
             // What the position takes it as is handed only what that type takes, so the function
             // standing there has to take at least that; and what it answers stands where the
             // position's answer does.
             (Ty::Fn { fn_: actual }, Ty::Fn { fn_: expected }) => {
-                if actual.takes.len() != expected.takes.len() {
-                    return Ok(Some(false));
-                }
                 let takes = expected.takes.iter().zip(&actual.takes);
                 let answers = std::iter::once((actual.answers.as_ref(), expected.answers.as_ref()));
-                self.all_fit(takes.chain(answers))?
+                actual.takes.len() == expected.takes.len() && self.all_fit(takes.chain(answers))?
             }
             _ => match (self.cases_of(actual)?, self.cases_of(expected)?) {
-                (Some(actual), Some(expected)) => {
-                    Some(actual.iter().all(|case| expected.contains(case)))
-                }
-                _ => Some(false),
+                (Some(actual), Some(expected)) => actual.iter().all(|case| expected.contains(case)),
+                _ => false,
             },
         })
     }
 
-    /// Whether every pair fits, `None` where one is not answered and none is refused.
-    fn all_fit<'t>(&self, pairs: impl Iterator<Item = (&'t Ty, &'t Ty)>) -> Result<Option<bool>> {
-        let mut all = Some(true);
+    /// Whether every pair fits.
+    fn all_fit<'t>(&self, pairs: impl Iterator<Item = (&'t Ty, &'t Ty)>) -> Result<bool> {
         for (actual, expected) in pairs {
-            match self.fits(actual, expected)? {
-                Some(false) => return Ok(Some(false)),
-                None => all = None,
-                Some(true) => {}
+            if !self.fits(actual, expected)? {
+                return Ok(false);
             }
         }
-        Ok(all)
+        Ok(true)
     }
 
     /// Whether a value of `ty` is one a test of which case it is can stand over: a union, or a
@@ -2189,6 +2219,9 @@ struct Lowerings<'a> {
     /// The function restating a value of each pair of types a site here asked to have one held as
     /// the other, where that rebuilds it.
     restaters: &'a restating::Restaters,
+    /// The hasher and the equality of each type a set or a map here is kept over, which the
+    /// runtime calls.
+    value_ops: &'a hashing::ValueOps,
     reachable: &'a Reachable,
     /// Which copy of a helper each call reaching one reaches.
     specializations: &'a Specializations<'a>,
@@ -2373,10 +2406,18 @@ fn import_runtime(module: &mut ObjectModule, name: &str, call_conv: CallConv) ->
 fn word_on_the_machine(word: Word) -> types::Type {
     match word {
         Word::Host(word) => interface::machine(word),
-        Word::Comparison => types::I64,
-        Word::Memory | Word::Rational | Word::Form | Word::Node | Word::Path | Word::Machine => {
-            POINTER
-        }
+        Word::Comparison | Word::Hash => types::I64,
+        Word::Memory
+        | Word::Rational
+        | Word::Form
+        | Word::Node
+        | Word::Path
+        | Word::Machine
+        | Word::Set
+        | Word::Map
+        | Word::Held
+        | Word::Hasher
+        | Word::Equality => POINTER,
     }
 }
 
@@ -2409,12 +2450,10 @@ fn machine_type(ty: &Ty) -> Lowered<types::Type> {
         // carried with the runtime's token for it (`carry`). Every one has a token: what a host can
         // be handed is a narrower set than what objects can tell apart ([`built_in_case`]).
         Ty::Union { .. } => Ok(POINTER),
-        // A collection other than a list is a value with a layout to design, and none is designed
-        // yet. Read whole off the wire all the same: whether a type crosses and whether it can be
-        // laid out here are two questions, and only this one is this backend's.
-        Ty::Set { .. } | Ty::Map { .. } => {
-            Err(not_lowered(format!("a value of type {}", ty.spelt())))
-        }
+        // The address of what the runtime keeps one as, which nothing but the runtime reads behind
+        // (`souther_native_abi::SET_EMPTY`): how a set holds its members is the runtime's trie and
+        // no layout of this object's.
+        Ty::Set { .. } | Ty::Map { .. } => Ok(POINTER),
         // A flat closure: one pointer, the same as every other compound value. Slot 0 holds the
         // lifted function's code address and every slot after it a capture — see `closures` — but
         // none of that is a second machine type; a function value is a pointer here exactly as a
@@ -2740,8 +2779,14 @@ fn means_the_same_elsewhere(ty: &Ty) -> bool {
         // A length and slots, laid out in the crate both halves read, so a list means what its
         // elements mean.
         Ty::List { list } => means_the_same_elsewhere(list),
-        // No layout, so nothing another object could read the same way.
-        Ty::Set { .. } | Ty::Map { .. } => false,
+        // An address only the runtime reads behind, which every object in a library links, kept
+        // under hashes every object of a generation composes alike
+        // (`souther_native_abi::HASHING`): so a set means what its members mean, and a map what its
+        // keys and values do.
+        Ty::Set { set } => means_the_same_elsewhere(set),
+        Ty::Map { map } => {
+            means_the_same_elsewhere(&map.key) && means_the_same_elsewhere(&map.value)
+        }
         Ty::Tuple { tuple } => tuple.iter().all(means_the_same_elsewhere),
         // What another object reads of a function value is its header and nothing else: the code
         // at `FUNCTION_INVOKE`, called with the value itself and then what the function takes
@@ -5098,7 +5143,15 @@ fn lower(
                 call_behavior(builder, lowering, module, abort, declared, through, &given)?
             }
             Reaches::Emitted { operation } => match operation {
-                Emitted::BuildList => build_list(builder, lowering, module, bindings, abort, node)?,
+                Emitted::BuildList => walk_built(
+                    builder,
+                    lowering,
+                    module,
+                    bindings,
+                    abort,
+                    node,
+                    Built::List,
+                )?,
                 Emitted::GrowList => {
                     let [grown, added] = arguments.as_slice() else {
                         unreachable!(
@@ -5126,10 +5179,38 @@ fn lower(
                     }
                     growing.0
                 }
-                Emitted::BuildMap | Emitted::PutMap => unreachable!(
-                    "`Coherent` refused {} as not lowered wherever it runs",
-                    operation.spelt()
-                ),
+                Emitted::BuildMap => {
+                    walk_built(builder, lowering, module, bindings, abort, node, Built::Map)?
+                }
+                // A write into the map the walk builds is an insertion into it: the map is one the
+                // runtime keeps like any other, and what the step answers is the next one.
+                Emitted::PutMap => {
+                    let [map, key, value] = arguments.as_slice() else {
+                        unreachable!(
+                            "`Coherent` held {} to the three arguments it takes",
+                            operation.spelt()
+                        );
+                    };
+                    let Ty::Map { map: kept } = ty else {
+                        unreachable!("`Coherent` held {} to answer a map", operation.spelt());
+                    };
+                    let map = lower(builder, lowering, module, bindings, abort, map)?;
+                    let key = lower(builder, lowering, module, bindings, abort, key)?;
+                    let value = lower(builder, lowering, module, bindings, abort, value)?;
+                    let [hasher, equality] = lowering.value_ops.both(builder, module, &kept.key);
+                    let key = into_slot(builder, key);
+                    let value = into_slot(builder, value);
+                    written_or_ended(
+                        builder,
+                        lowering,
+                        module,
+                        abort,
+                        MAP_INSERT,
+                        &[map, key, value, hasher, equality],
+                        POINTER,
+                        aborts,
+                    )
+                }
             },
             Reaches::Helper { .. } | Reaches::Value { .. } | Reaches::PublishedValue { .. } => {
                 let reached = match reaches {
@@ -5155,11 +5236,16 @@ fn lower(
             // has not met falls to NotLowered rather than a list here claiming to know. What one
             // takes is that table's contract and not the document's word: `Coherent` held the
             // settlement to it, so the arguments are exactly as many as the kernel takes.
-            Reaches::Kernel { kernel, fact, .. } => match LoweredKernel::of(kernel) {
+            Reaches::Kernel {
+                kernel,
+                takes,
+                fact,
+            } => match LoweredKernel::of(kernel) {
                 Some(known) => {
                     let call = KernelCall {
                         kernel: known,
                         arguments,
+                        takes,
                         fact,
                         aborts,
                     };
@@ -5404,12 +5490,47 @@ const RUNTIME_KERNELS: &[&str] = &[
     DATETIME_TO_DATE,
     DATETIME_TO_TIME,
     DATETIME_FROM_DATE_AND_TIME,
+    SET_EMPTY,
+    SET_INSERT,
+    SET_REMOVE,
+    SET_CONTAINS,
+    SET_UNION,
+    SET_INTERSECTION,
+    SET_DIFFERENCE,
+    SET_SIZE,
+    SET_TO_LIST,
+    SET_FROM_LIST,
+    SET_EQUAL,
+    SET_HASH,
+    MAP_EMPTY,
+    MAP_GET,
+    MAP_CONTAINS_KEY,
+    MAP_KEYS,
+    MAP_VALUES,
+    MAP_INSERT,
+    MAP_REMOVE,
+    MAP_SIZE,
+    MAP_TO_LIST,
+    MAP_FROM_LIST,
+    MAP_EQUAL,
+    MAP_HASH,
+    HASH_COMBINE,
+    STRING_HASH,
+    DECIMAL_HASH,
+    RATIONAL_HASH,
+    DATE_HASH,
+    TIME_HASH,
+    DATETIME_HASH,
+    INSTANT_HASH,
 ];
 
 /// A call of a kernel this backend lowers, as the node calling it holds it.
 struct KernelCall<'a> {
     kernel: LoweredKernel,
     arguments: &'a [Node],
+    /// What the checker settled this application takes each argument as, which `Coherent` held to
+    /// the kernel's contract: what a set's members are hashed and compared as is read here.
+    takes: &'a [Ty],
     fact: &'a KernelFact,
     aborts: &'a [AbortKind],
 }
@@ -5434,6 +5555,7 @@ fn lower_kernel(
     let KernelCall {
         kernel,
         arguments,
+        takes,
         fact,
         aborts,
     } = call;
@@ -5469,6 +5591,32 @@ fn lower_kernel(
     }
     let values: Vec<ir::Value> = given.iter().map(|it| it.value).collect();
     Ok(match kernel {
+        LoweredKernel::SetEmpty
+        | LoweredKernel::SetSingleton
+        | LoweredKernel::SetInsert
+        | LoweredKernel::SetRemove
+        | LoweredKernel::SetContains
+        | LoweredKernel::SetUnion
+        | LoweredKernel::SetIntersection
+        | LoweredKernel::SetDifference
+        | LoweredKernel::SetIsEmpty
+        | LoweredKernel::SetSize
+        | LoweredKernel::SetToList
+        | LoweredKernel::SetFromList
+        | LoweredKernel::MapEmpty
+        | LoweredKernel::MapGet
+        | LoweredKernel::MapContainsKey
+        | LoweredKernel::MapKeys
+        | LoweredKernel::MapValues
+        | LoweredKernel::MapSingleton
+        | LoweredKernel::MapInsert
+        | LoweredKernel::MapRemove
+        | LoweredKernel::MapIsEmpty
+        | LoweredKernel::MapSize
+        | LoweredKernel::MapToList
+        | LoweredKernel::MapFromList => sets::lower(
+            builder, lowering, module, abort, kernel, takes, &values, aborts,
+        ),
         LoweredKernel::IntAdd | LoweredKernel::IntSubtract | LoweredKernel::IntMultiply => {
             let [a, b] = given[..] else {
                 unreachable!("`Coherent` held {kernel:?} to the two arguments it takes");
@@ -6973,27 +7121,42 @@ fn lower_arguments(
     Ok(given)
 }
 
-/// A walk that builds a list (`$build(step, xs, from)`): the list the walk grows starts empty,
-/// the step is run where the walk stands on each element of `xs` from `from` onwards, adding to it
-/// ([`Growing`]), and what was grown is handed over once, as a list.
+/// What a walk builds: a list, or a map.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Built {
+    List,
+    Map,
+}
+
+/// A walk that builds a list or a map (`$build(step, xs, from)`): what the walk builds starts
+/// empty, the step is run where the walk stands on each element of `xs` from `from` onwards, and
+/// what it answers last is handed over.
 ///
 /// The step is the loop's body, not a function value ([`growing::Step`]): what is bound around it is
 /// worked out once, before the walk, and its two parameters are bound here as a `let` binds, the
-/// accumulator to what the list is grown in and the element to one slot of `xs` at a time. What it
+/// accumulator to what is being built and the element to one slot of `xs` at a time. What it
 /// answers is what the next element is handed as the accumulator. The walk goes on while the index
 /// is below the length read without a sign, which is where `foldFrom`, the fold it was rewritten
 /// from, finds an element: a negative `from` finds none.
 ///
+/// A list is grown in place ([`Growing`]) and handed over once, which is what the walk is for: no
+/// step reads it, which `growing` holds. A map is the runtime's like any other and is built by
+/// insertion, each step's `$put` answering the next one, so a step may read it (`Map.get` inside
+/// `Map.updateOrInsert`) and nothing is held of where it is read. Each insertion copies the path
+/// it changes in the trie and no more, so a walk over n elements does O(n log n) work and not the
+/// O(n²) of a map copied whole at every step.
+///
 /// A step never applied ([`unrun`]) is not lowered, nor anything bound around it: it takes a value
-/// of what has no value, so `xs` is an empty list literal and the walk answers an empty list. `xs`
-/// and `from` are still worked out.
-fn build_list(
+/// of what has no value, so `xs` is an empty list literal and the walk answers an empty list or an
+/// empty map. `xs` and `from` are still worked out.
+fn walk_built(
     builder: &mut FunctionBuilder,
     lowering: &Lowering,
     module: &mut ObjectModule,
     bindings: &mut Bindings,
     abort: ir::Block,
     walk: &Node,
+    built: Built,
 ) -> Lowered<ir::Value> {
     let Node::Call { arguments, .. } = walk else {
         unreachable!("a walk is a call");
@@ -7001,20 +7164,24 @@ fn build_list(
     let [_, walked, from] = arguments.as_slice() else {
         unreachable!("`Coherent` held a walk to the three arguments it takes");
     };
-    // A step never applied is not lowered, the values bound around it included: the list walked
-    // is an empty list literal, so the walk answers an empty list.
+    let empty = |builder: &mut FunctionBuilder, module: &mut ObjectModule| match built {
+        Built::List => {
+            let empty = lowering.room(builder, module, room_for_list(0));
+            let nought = builder.ins().iconst(types::I64, 0);
+            builder
+                .ins()
+                .store(TRUSTED, nought, empty, LIST_LENGTH as i32);
+            empty
+        }
+        Built::Map => runtime_call(builder, lowering, module, MAP_EMPTY, &[]),
+    };
     if !unrun::never_applied(walk).is_empty() {
         lower(builder, lowering, module, bindings, abort, walked)?;
         lower(builder, lowering, module, bindings, abort, from)?;
-        let empty = lowering.room(builder, module, room_for_list(0));
-        let nought = builder.ins().iconst(types::I64, 0);
-        builder
-            .ins()
-            .store(TRUSTED, nought, empty, LIST_LENGTH as i32);
-        return Ok(empty);
+        return Ok(empty(builder, module));
     }
     let Some(step) = growing::Step::of_walk(walk) else {
-        unreachable!("`growing` held every walk building a list to walk with a step");
+        unreachable!("`growing` held every walk to walk with a step");
     };
     // Every binding entered here is left again whichever way this ends, as a `let`'s is.
     let mut entered = Vec::new();
@@ -7033,10 +7200,15 @@ fn build_list(
             unreachable!("`growing` answers a step only where it takes two parameters");
         };
         let accumulator = builder.declare_var(POINTER);
-        let started = Growing::start(builder, lowering, module);
-        builder.def_var(accumulator, started.0);
+        let started = match built {
+            Built::List => Growing::start(builder, lowering, module).0,
+            Built::Map => empty(builder, module),
+        };
+        builder.def_var(accumulator, started);
         bindings.at(grown.binding, accumulator);
-        bindings.grows(grown.binding);
+        if built == Built::List {
+            bindings.grows(grown.binding);
+        }
         entered.push(grown.binding);
         let taken = machine_type(&step.signature.takes[1])?;
         let each = builder.declare_var(taken);
@@ -7076,7 +7248,11 @@ fn build_list(
         builder.seal_block(head);
 
         builder.switch_to_block(done);
-        Ok(Growing(builder.use_var(accumulator)).sealed(builder))
+        let last = builder.use_var(accumulator);
+        Ok(match built {
+            Built::List => Growing(last).sealed(builder),
+            Built::Map => last,
+        })
     })();
     for binding in entered.into_iter().rev() {
         bindings.leave(binding);

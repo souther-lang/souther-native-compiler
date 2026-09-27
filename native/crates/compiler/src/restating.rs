@@ -9,7 +9,7 @@
 //! the same way where every position is.
 //!
 //! Where one is not, the value is rebuilt. An optional, a list and a tuple are rebuilt around what
-//! they hold restated, and a function is wrapped: what calls it through the wider type hands the
+//! they hold restated, a set and a map are built again from their members restated, and a function is wrapped: what calls it through the wider type hands the
 //! wrapper what that type takes, and the wrapper restates it, calls the function it holds, and
 //! restates what that answers. Each is a function of this object's own, one per pair of types, and
 //! written once every body is, as a comparator is (`equality`): a restatement reaches the types a
@@ -29,15 +29,15 @@ use cranelift::frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift::module::{FuncId, Module};
 use cranelift::object::ObjectModule;
 use souther_native_abi::{
-    ANSWERED, CARRIED, HELD, LIST_ELEMENTS, LIST_LENGTH, NOTHING, SLOT, member_at, room_for_held,
-    room_for_list, room_for_members,
+    ANSWERED, CARRIED, HELD, LIST_ELEMENTS, LIST_LENGTH, MAP_FROM_LIST, MAP_TO_LIST, NOTHING,
+    SET_FROM_LIST, SET_TO_LIST, SLOT, member_at, room_for_held, room_for_list, room_for_members,
 };
 
 use crate::transport::{Case, FnSignature, Prim, Ty};
 use crate::{
     CLOSURE_CODE, Lowered, Lowerings, POINTER, TRUSTED, accepted, capture_at, carry, into_slot,
     lifted_signature, machine_type, not_lowered, open_type, out_of_slot, out_slot,
-    room_for_closure, says_its_case,
+    room_for_closure, runtime_call, says_its_case,
 };
 
 /// What holding a value of one type as a value of another takes, position by position.
@@ -56,6 +56,14 @@ pub(crate) enum Restatement {
     Option(Box<Restatement>),
     /// A list rebuilt with every element restated.
     List(Box<Restatement>),
+    /// A set built again from every member restated, each hashed under the wider type: a member
+    /// held another way hashes another way (`hashing`).
+    Set(Box<Restatement>),
+    /// A map built again from every entry, its key and its value each restated.
+    Map {
+        key: Box<Restatement>,
+        value: Box<Restatement>,
+    },
     /// A tuple rebuilt with every member restated.
     Tuple(Vec<Restatement>),
     /// A function wrapped: each of what the wider type takes restated to what the function takes,
@@ -122,6 +130,24 @@ pub(crate) fn restatement(from: &Ty, to: &Ty) -> Lowered<Restatement> {
                 Restatement::List(Box::new(it.remove(0)))
             })
         }
+        (Ty::Set { set: from }, Ty::Set { set: to }) => {
+            Restatement::over(vec![restatement(from, to)?], |mut it| {
+                Restatement::Set(Box::new(it.remove(0)))
+            })
+        }
+        (Ty::Map { map: from }, Ty::Map { map: to }) => Restatement::over(
+            vec![
+                restatement(&from.key, &to.key)?,
+                restatement(&from.value, &to.value)?,
+            ],
+            |mut it| {
+                let value = Box::new(it.remove(1));
+                Restatement::Map {
+                    key: Box::new(it.remove(0)),
+                    value,
+                }
+            },
+        ),
         (Ty::Tuple { tuple: from }, Ty::Tuple { tuple: to }) => {
             if from.len() != to.len() {
                 return Err(another_way());
@@ -154,8 +180,7 @@ pub(crate) fn restatement(from: &Ty, to: &Ty) -> Lowered<Restatement> {
         }
         (Ty::Var { var }, _) | (_, Ty::Var { var }) => return Err(open_type(*var)),
         // Equal types were answered above, and so were two that say their case; what is left of
-        // these is a primitive beside something else, or one kind beside another. A set and a map
-        // have no layout yet, and are asked of nothing until they do.
+        // these is a primitive beside something else, or one kind beside another.
         (
             Ty::Prim { .. }
             | Ty::Ref { .. }
@@ -222,6 +247,8 @@ fn carried_out(
         }
         Restatement::Option(_)
         | Restatement::List(_)
+        | Restatement::Set(_)
+        | Restatement::Map { .. }
         | Restatement::Tuple(_)
         | Restatement::Function { .. } => {
             let call_conv = builder.func.signature.call_conv;
@@ -407,6 +434,55 @@ impl Restating<'_, '_, '_, '_> {
             }
             (Restatement::List(element), Ty::List { list: from }, Ty::List { list: to }) => {
                 self.list(from, to, element, value)
+            }
+            // Its members listed, the list restated as a list is, and a set built of what that
+            // answers under the wider type's hasher and equality.
+            (Restatement::Set(member), Ty::Set { set: from }, Ty::Set { set: to }) => {
+                let listed = runtime_call(
+                    self.builder,
+                    self.lowering,
+                    self.module,
+                    SET_TO_LIST,
+                    &[value],
+                );
+                let listed = self.list(from, to, member, listed)?;
+                let [hasher, equality] =
+                    self.lowering.value_ops.both(self.builder, self.module, to);
+                Ok(runtime_call(
+                    self.builder,
+                    self.lowering,
+                    self.module,
+                    SET_FROM_LIST,
+                    &[listed, hasher, equality],
+                ))
+            }
+            // Its entries listed as pairs, each pair restated as a tuple is, and a map built of
+            // them under the wider key's hasher and equality.
+            (Restatement::Map { key, value: held }, Ty::Map { map: from }, Ty::Map { map: to }) => {
+                let pair = |map: &crate::transport::MapTy| Ty::Tuple {
+                    tuple: vec![(*map.key).clone(), (*map.value).clone()],
+                };
+                let (from_pair, to_pair) = (pair(from), pair(to));
+                let plan = Restatement::Tuple(vec![(**key).clone(), (**held).clone()]);
+                let listed = runtime_call(
+                    self.builder,
+                    self.lowering,
+                    self.module,
+                    MAP_TO_LIST,
+                    &[value],
+                );
+                let listed = self.list(&from_pair, &to_pair, &plan, listed)?;
+                let [hasher, equality] =
+                    self.lowering
+                        .value_ops
+                        .both(self.builder, self.module, &to.key);
+                Ok(runtime_call(
+                    self.builder,
+                    self.lowering,
+                    self.module,
+                    MAP_FROM_LIST,
+                    &[listed, hasher, equality],
+                ))
             }
             (Restatement::Tuple(members), Ty::Tuple { tuple: from }, Ty::Tuple { tuple: to }) => {
                 let rebuilt =
