@@ -1019,6 +1019,30 @@ mod tests {
         out
     }
 
+    /// Whether the collection at `at` keeps any entries side by side, which only entries whose
+    /// hashes share every bit and whose keys are not equal make. A test meaning to walk those
+    /// nodes asks this of what it built, so that data that no longer makes one fails the test
+    /// rather than quietly walking the nodes that split.
+    fn keeps_side_by_side<T>(at: *const T) -> bool {
+        let mut left = vec![unsafe { Trie::at(at) }.root];
+        while let Some(node) = left.pop() {
+            if node == 0 {
+                continue;
+            }
+            let at = node as *const u64;
+            let header = unsafe { at.read() };
+            if header & SIDE_BY_SIDE != 0 {
+                return true;
+            }
+            for word in unsafe { words_of(at, header) } {
+                if word & BELOW != 0 {
+                    left.push(word & !BELOW);
+                }
+            }
+        }
+        false
+    }
+
     fn members(set: *const Set) -> Vec<i64> {
         let mut listed = unsafe { elements(souther_set_to_list(set)) };
         listed.sort();
@@ -1030,8 +1054,14 @@ mod tests {
     #[test]
     fn a_set_holds_each_member_once_whatever_its_hash() {
         let mark = souther_mark();
-        for hash in [spread as Hasher, clashing as Hasher] {
+        for (hash, clashes) in [(spread as Hasher, false), (clashing as Hasher, true)] {
             let set = set_of(&[3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5], hash);
+            if clashes {
+                assert!(
+                    keeps_side_by_side(set),
+                    "every odd member hashes to one place"
+                );
+            }
             assert_eq!(members(set), vec![1, 2, 3, 4, 5, 6, 9]);
             assert_eq!(unsafe { souther_set_size(set) }, 7);
             assert_eq!(unsafe { souther_set_contains(set, 9, hash, numbers) }, 1);
@@ -1156,36 +1186,59 @@ mod tests {
         Hash(mix(key.rem_euclid(10) as u64) as i64)
     }
 
+    /// Every odd key to one place and every even one to another: `1` and `3` share every bit of
+    /// their hash and are not equal, so they are kept side by side, and `11` and `13`, equal to them,
+    /// arrive there.
     unsafe extern "C" fn last_digit_clashing(key: i64) -> Hash {
         Hash(key.rem_euclid(10) & 1)
     }
 
+    fn map_with(pairs: &[(i64, i64)], hash: Hasher) -> *const Map {
+        pairs
+            .iter()
+            .fold(souther_map_empty().cast_const(), |map, (key, value)| {
+                let mut out = std::ptr::null();
+                let wrote =
+                    unsafe { souther_map_insert(map, *key, *value, hash, by_last_digit, &mut out) };
+                assert_eq!(wrote, 1);
+                out
+            })
+    }
+
+    fn sorted_pairs(map: *const Map) -> Vec<(i64, i64)> {
+        let mut pairs: Vec<(i64, i64)> = unsafe { elements(souther_map_to_list(map)) }
+            .into_iter()
+            .map(|pair| {
+                let pair = pair as *const i64;
+                unsafe { (pair.read(), pair.add(1).read()) }
+            })
+            .collect();
+        pairs.sort();
+        pairs
+    }
+
     /// A key a collection holds stays the key it holds when an equal one arrives: a map takes the
-    /// arriving value under the key it had, and a set keeps the member it had, whether the two were
-    /// told apart at the top of the trie or side by side at its bottom.
+    /// arriving value under the key it had, and a set keeps the member it had, whether the two meet
+    /// where the trie splits or side by side at its bottom, which the clashing hash is held to reach.
     #[test]
     fn a_key_held_is_not_replaced_by_an_equal_one() {
         let mark = souther_mark();
-        for hash in [last_digit as Hasher, last_digit_clashing as Hasher] {
-            let mut map = souther_map_empty().cast_const();
-            for (key, value) in [(1, 10), (2, 20), (11, 110), (21, 210)] {
-                let mut out = std::ptr::null();
-                let wrote =
-                    unsafe { souther_map_insert(map, key, value, hash, by_last_digit, &mut out) };
-                assert_eq!(wrote, 1);
-                map = out;
+        for (hash, clashing) in [
+            (last_digit as Hasher, false),
+            (last_digit_clashing as Hasher, true),
+        ] {
+            let map = map_with(&[(1, 10), (3, 30)], hash);
+            if clashing {
+                assert!(keeps_side_by_side(map), "1 and 3 hash to one place");
             }
-            let mut keys = unsafe { elements(souther_map_keys(map)) };
-            keys.sort();
-            assert_eq!(keys, vec![1, 2], "the keys first put in");
-            let held = unsafe { souther_map_get(map, 31, hash, by_last_digit) };
+            let map = map_with(&[(1, 10), (3, 30), (11, 110), (13, 130)], hash);
             assert_eq!(
-                unsafe { held.cast::<i64>().read() },
-                210,
-                "the value last put in"
+                sorted_pairs(map),
+                vec![(1, 110), (3, 130)],
+                "the keys first put in, the values last put in"
             );
 
-            let pairs = [(3, 30), (13, 130)].map(|(key, value)| {
+            let pairs = [(1, 10), (3, 30), (11, 110), (13, 130)].map(|(key, value)| {
                 let pair = souther_alloc(Count(room_for_members(2)));
                 unsafe {
                     pair.cast::<i64>().write(key);
@@ -1195,16 +1248,19 @@ mod tests {
             });
             let listed = list_of(&pairs, |it| *it);
             let built = unsafe { souther_map_from_list(listed, hash, by_last_digit) };
-            let pair = unsafe { elements(souther_map_to_list(built)) }[0] as *const i64;
-            assert_eq!(unsafe { (pair.read(), pair.add(1).read()) }, (3, 130));
+            if clashing {
+                assert!(keeps_side_by_side(built), "1 and 3 hash to one place");
+            }
+            assert_eq!(sorted_pairs(built), vec![(1, 110), (3, 130)]);
 
-            let listed = list_of(&[1, 11, 2], |it| *it);
+            let listed = list_of(&[1, 3, 11, 13], |it| *it);
             let set = unsafe { souther_set_from_list(listed, hash, by_last_digit) };
+            if clashing {
+                assert!(keeps_side_by_side(set), "1 and 3 hash to one place");
+            }
             let mut out = std::ptr::null();
             unsafe { souther_set_insert(set, 21, hash, by_last_digit, &mut out) };
-            let mut members = unsafe { elements(souther_set_to_list(out)) };
-            members.sort();
-            assert_eq!(members, vec![1, 2], "the members first put in");
+            assert_eq!(members(out), vec![1, 3], "the members first put in");
         }
         souther_reset(mark);
     }
@@ -1229,8 +1285,11 @@ mod tests {
     #[test]
     fn a_map_holds_the_last_value_put_under_a_key_whatever_its_hash() {
         let mark = souther_mark();
-        for hash in [spread as Hasher, clashing as Hasher] {
+        for (hash, clashes) in [(spread as Hasher, false), (clashing as Hasher, true)] {
             let map = map_of(&[(1, 10), (2, 20), (3, 30), (1, 11)], hash);
+            if clashes {
+                assert!(keeps_side_by_side(map), "1 and 3 hash to one place");
+            }
             assert_eq!(unsafe { souther_map_size(map) }, 3);
             assert_eq!(got(map, 1, hash), Some(11));
             assert_eq!(got(map, 4, hash), None);
