@@ -1,7 +1,7 @@
 {
   "format": "souther-native-interface",
   "version": 14,
-  "abi": 7,
+  "abi": 8,
   "statuses": {
     "ANSWERED": 0,
     "DIVISION_BY_ZERO": 4,

@@ -61,7 +61,7 @@ public final class Manifest {
     public static final int VERSION = 14;
 
     /** The ABI generation the functions this binds answer to. */
-    public static final int ABI = 7;
+    public static final int ABI = 8;
 
     private final int abi;
     private final Map<String, Integer> statuses;
