@@ -5093,10 +5093,7 @@ fn lower(
             // A behavior is applied the one way every behavior is, which is where what is done
             // about its answer is decided (`call_behavior`).
             Reaches::Behavior { declared } => {
-                let mut given = Vec::with_capacity(arguments.len());
-                for argument in arguments {
-                    given.push(lower(builder, lowering, module, bindings, abort, argument)?);
-                }
+                let given = lower_arguments(builder, lowering, module, bindings, abort, node)?;
                 let through = bindings.through(builder, abort, declared);
                 call_behavior(builder, lowering, module, abort, declared, through, &given)?
             }
@@ -5151,10 +5148,7 @@ fn lower(
                         unreachable!()
                     }
                 };
-                let mut given = Vec::with_capacity(arguments.len());
-                for argument in arguments {
-                    given.push(lower(builder, lowering, module, bindings, abort, argument)?);
-                }
+                let given = lower_arguments(builder, lowering, module, bindings, abort, node)?;
                 call_reached(builder, module, abort, reached, machine_type(ty)?, &given)
             }
             // The kernels this backend lowers are `kernels::Lowered`'s and nowhere else's, so one it
@@ -5203,22 +5197,20 @@ fn lower(
                 .closures
                 .at(node)
                 .expect("every closure site was planned before any body was lowered");
+            // A function that never runs has no code, and a closure of it holds none: nothing calls
+            // it, and it carries nothing.
+            if !plan.runs {
+                return Ok(uncallable_function(builder, lowering, module));
+            }
             let flags = TRUSTED;
             let carried = plan.captures.len() + usize::from(plan.environment.is_some());
             let value = lowering.room(builder, module, room_for_closure(carried));
-
-            // A function that never runs has no code, and a closure of it holds none: nothing calls
-            // it, and it carries nothing.
-            let code = if plan.runs {
-                let code_id = *lowering.lifted.get(&site).expect(
-                    "every closure site that runs was declared a lifted function before any was \
-                     defined",
-                );
-                let code_ref = module.declare_func_in_func(code_id, builder.func);
-                builder.ins().func_addr(POINTER, code_ref)
-            } else {
-                builder.ins().iconst(POINTER, NOTHING)
-            };
+            let code_id = *lowering.lifted.get(&site).expect(
+                "every closure site that runs was declared a lifted function before any was \
+                 defined",
+            );
+            let code_ref = module.declare_func_in_func(code_id, builder.func);
+            let code = builder.ins().func_addr(POINTER, code_ref);
             builder.ins().store(flags, code, value, CLOSURE_CODE as i32);
 
             for (position, capture) in plan.captures.iter().enumerate() {
@@ -6082,6 +6074,10 @@ fn branched(
         Node::Match { subject, arms, .. } => {
             let value = lower(builder, lowering, module, bindings, abort, subject)?;
             for arm in arms {
+                // What it tests for has no value, so it is never taken, and is not written.
+                if unrun::never_entered(arm, subject.ty()) {
+                    continue;
+                }
                 let next = enter_arm(
                     builder,
                     lowering,
@@ -6933,6 +6929,48 @@ fn copy_slots(builder: &mut FunctionBuilder, from: ir::Value, to: ir::Value, cou
     builder.seal_block(head);
 
     builder.switch_to_block(done);
+}
+
+/// A function value no call reaches: a closure holding no code and carrying nothing, which is what
+/// a block whose function never runs is made as, and what stands in the place of a function a
+/// callee never applies ([`unrun`]).
+fn uncallable_function(
+    builder: &mut FunctionBuilder,
+    lowering: &Lowering,
+    module: &mut ObjectModule,
+) -> ir::Value {
+    let value = lowering.room(builder, module, room_for_closure(0));
+    let code = builder.ins().iconst(POINTER, NOTHING);
+    builder
+        .ins()
+        .store(TRUSTED, code, value, CLOSURE_CODE as i32);
+    value
+}
+
+/// What a call hands over, in the order it hands it: each argument lowered, except a function the
+/// callee never applies, which is not lowered at all and is handed [`uncallable_function`] in its
+/// place. The callee holds a pointer there either way, and nothing reads it.
+fn lower_arguments(
+    builder: &mut FunctionBuilder,
+    lowering: &Lowering,
+    module: &mut ObjectModule,
+    bindings: &mut Bindings,
+    abort: ir::Block,
+    call: &Node,
+) -> Lowered<Vec<ir::Value>> {
+    let Node::Call { arguments, .. } = call else {
+        unreachable!("only a call hands over arguments");
+    };
+    let unrun = unrun::never_applied(call);
+    let mut given = Vec::with_capacity(arguments.len());
+    for (at, argument) in arguments.iter().enumerate() {
+        given.push(if unrun.contains(&at) {
+            uncallable_function(builder, lowering, module)
+        } else {
+            lower(builder, lowering, module, bindings, abort, argument)?
+        });
+    }
+    Ok(given)
 }
 
 /// A walk that builds a list (`$build(step, xs, from)`): the list the walk grows starts empty,

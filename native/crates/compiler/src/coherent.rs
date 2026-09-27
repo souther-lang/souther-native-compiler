@@ -1563,18 +1563,6 @@ impl<'a> Walk<'_, 'a> {
                 for argument in arguments {
                     self.node(argument)?;
                 }
-                // A walk hands its step nothing in its place. Anything else would hand the
-                // function it never applies to a copy taking a function over what has no value,
-                // which nothing here lowers; none of the function is lowered either way.
-                if !matches!(reaches, Reaches::Emitted { .. }) {
-                    for at in crate::unrun::never_applied(node) {
-                        self.not_lowered(format!(
-                            "argument {at} of a call of {}, a function over {} it never applies",
-                            self.parameters(reaches, arguments, ty)?.0,
-                            arguments[at].ty().spelt()
-                        ));
-                    }
-                }
                 self.call(reaches, arguments, ty, aborts)
             }
             Node::Block {

@@ -12,9 +12,14 @@
 //! block are part of it, and upstream emits "none of it — no class, no body". The step of a walk
 //! over an empty list literal is the case that happens: `List.map(f, [])` walks with a step taking
 //! a `Nothing` for an element. A walk hands its step nothing in its place and answers an empty
-//! list. Any other such call would have to hand the function it never applies to a copy that takes
-//! it, which is a function taking what has no value; that is refused as not lowered where the call
-//! is read (`Coherent`), and nothing of the function is lowered either way.
+//! list. Any other such call hands the callee a function no call reaches, one with no code and
+//! carrying nothing, where the callee takes a pointer whatever it does with it; nothing of the
+//! function is lowered.
+//!
+//! An arm is the same where what it tests for is what has no value. `List.get` of an empty list
+//! literal answers an optional of it, which is never present, so the arm for a value being there is
+//! never taken and what it binds is never made: the arm is not lowered, nor is anything in it, and
+//! a call in it needs no copy of a helper.
 //!
 //! Handed to a kernel, it is `HANDED_OVER` like any other function: what the function is made of
 //! is worked out, a `let` around its block and the test of an `if` choosing between two included,
@@ -28,7 +33,7 @@
 //! walks a call or a block itself. Whether the document is coherent is asked of all of it, run or
 //! not.
 
-use crate::transport::{FnSignature, Node, Reaches, Ty};
+use crate::transport::{Arm, FnSignature, Node, Reaches, Selects, Ty};
 
 /// Whether a function taking and answering as `function` does is never applied: one of the types
 /// it takes is the type of what has no value (`Core.neverRuns`). Only that type, as upstream asks
@@ -69,11 +74,27 @@ pub(crate) fn never_applied(node: &Node) -> Vec<usize> {
     }
 }
 
+/// Whether an arm testing a value of type `subject` is never entered: the value it tests for is
+/// what has no value. An optional holding what has no value is never present, so an arm that
+/// tests only for it being present is never taken, and what it binds is never made.
+pub(crate) fn never_entered(arm: &Arm, subject: &Ty) -> bool {
+    matches!(subject, Ty::Option { option } if matches!(**option, Ty::Nothing { .. }))
+        && arm
+            .selects
+            .iter()
+            .all(|selects| matches!(selects, Selects::Held))
+}
+
 /// The children of `node` that are written and never run: the functions a call that is not a
-/// kernel's never applies, and the body of a block whose function never runs. Empty for every
-/// other node.
+/// kernel's never applies, the body of a block whose function never runs, and the body of an arm
+/// that is never entered. Empty for every other node.
 pub(crate) fn never_lowered(node: &Node) -> Vec<&Node> {
     match node {
+        Node::Match { subject, arms, .. } => arms
+            .iter()
+            .filter(|arm| never_entered(arm, subject.ty()))
+            .map(|arm| &arm.body)
+            .collect(),
         Node::Call { arguments, .. } => never_applied(node)
             .into_iter()
             .map(|at| &arguments[at])
@@ -231,6 +252,45 @@ mod tests {
             }
         )));
         assert_eq!(visited(&kernel).len() + 1, kernel_written(&kernel));
+    }
+
+    /// A match over an optional of what has no value: the arm for a value being there is left out,
+    /// what it binds and what it calls with it, and the arm for none is written as any is.
+    #[test]
+    fn an_arm_for_a_value_of_what_has_no_value_is_left_out() {
+        let nothing = json!({ "nothing": {} });
+        let held = json!({ "option": nothing });
+        let subject = json!({ "core": "none", "type": held, "aborts": [] });
+        let arm = |tests: &str, body: serde_json::Value| json!({ "selects": [{ "tests": tests }], "binding": null, "binds": null, "body": body });
+        let matched = |subject: serde_json::Value| -> Node {
+            serde_json::from_value(json!({
+                "core": "match", "subject": subject,
+                "arms": [arm("held", int(1)), arm("nothing", int(2))],
+                "type": { "prim": "INT" }, "aborts": []
+            }))
+            .expect("a node")
+        };
+        let never = matched(subject);
+        let lowered = visited(&never);
+        assert!(
+            !lowered
+                .iter()
+                .any(|node| matches!(node, Node::Int { value: 1, .. }))
+        );
+        assert!(
+            lowered
+                .iter()
+                .any(|node| matches!(node, Node::Int { value: 2, .. }))
+        );
+        // An optional of what has a value is matched as it is written.
+        let present = json!({ "core": "none", "type": { "option": { "prim": "INT" } },
+            "aborts": [] });
+        let possible = matched(present);
+        assert!(
+            visited(&possible)
+                .iter()
+                .any(|node| matches!(node, Node::Int { value: 1, .. }))
+        );
     }
 
     fn kernel_written(node: &Node) -> usize {

@@ -348,6 +348,13 @@ impl<'p, 'a> Planner<'p, 'a> {
             Node::Match { subject, arms, .. } => {
                 self.walk(subject, bound, acc)?;
                 for arm in arms {
+                    // An arm never entered is not lowered, so nothing in it is planned; its sites
+                    // are still numbered.
+                    if crate::unrun::never_entered(arm, subject.ty()) {
+                        Planner::new(self.sites, self.carrier, self.environment, false)
+                            .free(&arm.body, &mut HashSet::new())?;
+                        continue;
+                    }
                     match arm.binding {
                         Some(binding) => {
                             let added = bound.insert(binding);
