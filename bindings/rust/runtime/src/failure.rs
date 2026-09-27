@@ -79,19 +79,25 @@ impl Statuses {
     /// What a call that answered `status` comes to, where a host implementation it called back
     /// left `caught`: a panic raised again, and a failure answered, whatever the status.
     ///
-    /// A `caught` failure is the host implementation's own where it is a [`HostError`] of any
-    /// other type, and is answered as [`Failure::Host`]. Where it is a [`Failure`] itself, the
-    /// implementation answered a value that crossing back into the library could not hand over —
-    /// a generated argument or answer conversion failed with `?` inside the closure `implemented`
-    /// or a function value calls, most often `Failure::Abort` where crossing a `String` found no
-    /// place (souther-native-compiler#109), or `Failure::Foreign` where a handle crossed from
-    /// another runtime. That is not the implementation failing; it is the same failure a direct
-    /// call into the library would answer for the same reason, and is unwrapped to answer it that
-    /// way rather than doubly wrapped as a `Failure::Host` of a `Failure`.
+    /// A `caught` failure a generated `implemented` closure raised is boxed as a
+    /// [`CallbackFailure`], never a bare [`HostError`] or [`Failure`], because which of the two
+    /// happened cannot be told apart by the payload's type alone — a host implementation may
+    /// legitimately answer a `Failure` as its own error. Where it downcasts to one,
+    /// [`CallbackFailure::Host`] answers [`Failure::Host`] and [`CallbackFailure::Crossing`]
+    /// unwraps straight to the `Failure` it holds — most often `Failure::Abort` where crossing a
+    /// `String` found no place (souther-native-compiler#109), or `Failure::Foreign` where a handle
+    /// crossed from another runtime — rather than doubly wrapping it as a `Failure::Host` of a
+    /// `Failure`: the crossing failed, not the implementation, and a caller matching on
+    /// `Failure::Abort` needs the same shape a direct call into the library would answer for the
+    /// same reason. A `caught` that does not downcast to `CallbackFailure` at all — anything not
+    /// produced through this generated shape — answers `Failure::Host` unchanged, as before.
     pub(crate) fn answered(&self, status: Status, caught: Option<Caught>) -> Result<(), Failure> {
         if let Some(caught) = caught {
-            return Err(match caught.raised().downcast::<Failure>() {
-                Ok(failure) => *failure,
+            return Err(match caught.raised().downcast::<CallbackFailure>() {
+                Ok(callback) => match *callback {
+                    CallbackFailure::Host(error) => Failure::Host(error),
+                    CallbackFailure::Crossing(failure) => failure,
+                },
                 Err(raised) => Failure::Host(raised),
             });
         }
@@ -167,6 +173,47 @@ impl std::error::Error for Failure {
     }
 }
 
+/// Why a generated callback — `implemented`'s closure, over a host implementation's own answer or
+/// a function value's — answered no value: the host implementation's own error, or a [`Failure`]
+/// a generated argument or answer conversion raised crossing back into the library.
+///
+/// A callback is generated as `Result<(), HostError>`, and [`Failure`] is itself a public
+/// [`std::error::Error`], so a host implementation may legitimately answer a `Failure` as its own
+/// error: which of the two happened is not a question a payload's type alone can answer. Generated
+/// code boxes each explicitly as this instead — the host implementation's own error as
+/// [`CallbackFailure::Host`], the one a crossing back into the library raised (a generated
+/// argument or answer conversion's own `?`, `library.words.string` and a declared type's
+/// `__word` among them) as [`CallbackFailure::Crossing`] — so [`Statuses::answered`] can tell them
+/// apart by which variant it downcasts to rather than by inspecting what it holds
+/// (souther-native-compiler#109).
+#[derive(Debug)]
+pub enum CallbackFailure {
+    /// The host implementation's own error.
+    Host(HostError),
+    /// A [`Failure`] a crossing back into the library raised, and not the implementation's own.
+    Crossing(Failure),
+}
+
+impl fmt::Display for CallbackFailure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            CallbackFailure::Host(error) => write!(f, "a host implementation failed: {error}"),
+            CallbackFailure::Crossing(failure) => {
+                write!(f, "a crossing back into the library failed: {failure}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for CallbackFailure {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            CallbackFailure::Host(error) => Some(error.as_ref()),
+            CallbackFailure::Crossing(failure) => Some(failure),
+        }
+    }
+}
+
 /// A computation that ended without a value: the status, and the name the library gives it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Abort {
@@ -238,17 +285,16 @@ mod tests {
     /// A `Failure` a generated argument or answer conversion raised with `?` inside a host
     /// implementation's callback — `Words::string` answering `Err(Failure::Abort(..))` where an
     /// injected behavior's own answer has no place as a `String`, most concretely — crosses the
-    /// callback boundary boxed as a `HostError`, indistinguishable by type alone from a host
-    /// implementation's own error. `answered` unwraps it back to the original `Failure` rather
-    /// than wrapping it again as `Failure::Host`: the crossing failed, not the implementation, and
-    /// a caller matching on `Failure::Abort` (as `Construction::of` already does for
-    /// `INVARIANT_NOT_HELD`) has to see the same shape here as it would calling directly
-    /// (souther-native-compiler#109).
+    /// callback boundary boxed as `CallbackFailure::Crossing`. `answered` unwraps it back to the
+    /// original `Failure` rather than wrapping it again as `Failure::Host`: the crossing failed,
+    /// not the implementation, and a caller matching on `Failure::Abort` (as `Construction::of`
+    /// already does for `INVARIANT_NOT_HELD`) has to see the same shape here as it would calling
+    /// directly (souther-native-compiler#109).
     #[test]
-    fn a_failure_caught_across_a_callback_is_unwrapped_and_not_doubly_wrapped() {
+    fn a_crossing_failure_caught_across_a_callback_is_unwrapped_and_not_doubly_wrapped() {
         let statuses = Statuses::new(WITH_NO_PLACE).unwrap();
         let no_place = statuses.no_place().unwrap();
-        let caught = Caught::Failed(Box::new(no_place));
+        let caught = Caught::Failed(Box::new(CallbackFailure::Crossing(no_place)));
         let answered = statuses.answered(0, Some(caught));
         let Err(Failure::Abort(abort)) = answered else {
             panic!("expected Failure::Abort straight through, got {answered:?}");
@@ -256,10 +302,35 @@ mod tests {
         assert_eq!(abort.name(), Some("REQUIRED_FORM_HAS_NO_PLACE"));
     }
 
-    /// A host implementation's own error — anything that is not itself a `Failure` — still
-    /// answers `Failure::Host`, unaffected by unwrapping `Failure`s specifically.
+    /// The case a type-based downcast to `Failure` cannot tell apart from the one above: a host
+    /// implementation legitimately answering a `Failure` as its own error — `Failure` is a public
+    /// `Error`, so nothing stops a host from reusing it. Boxed as `CallbackFailure::Host` (what
+    /// generated code does for the implementation's own `Result`, never `CallbackFailure::Crossing`,
+    /// regardless of what the error's own type happens to be), this answers `Failure::Host`
+    /// wrapping the original `Failure` — never unwrapped as if the crossing itself had failed.
+    /// Provenance is which variant of `CallbackFailure` generated code chose at the point the error
+    /// was boxed, not something inferred from the payload afterward (souther-native-compiler#109).
     #[test]
-    fn a_hosts_own_error_still_answers_failure_host() {
+    fn a_hosts_own_failure_shaped_error_still_answers_failure_host() {
+        let statuses = Statuses::new(WITH_NO_PLACE).unwrap();
+        let no_place = statuses.no_place().unwrap();
+        let caught = Caught::Failed(Box::new(CallbackFailure::Host(Box::new(no_place))));
+        let answered = statuses.answered(0, Some(caught));
+        let Err(Failure::Host(host)) = answered else {
+            panic!("expected Failure::Host wrapping the host's own Failure, got {answered:?}");
+        };
+        assert!(
+            host.downcast::<Failure>().is_ok(),
+            "the host's own Failure survives inside it"
+        );
+    }
+
+    /// A host implementation's own error that was never boxed as a `CallbackFailure` at all —
+    /// reaching `answered` this way only through a `Caught` no generated code produced — still
+    /// answers `Failure::Host`, the same fallback `answered` already gave every `caught` before
+    /// `CallbackFailure` existed.
+    #[test]
+    fn an_error_that_is_not_a_callback_failure_still_answers_failure_host() {
         let statuses = Statuses::new(BASE).unwrap();
         #[derive(Debug)]
         struct Mine;
