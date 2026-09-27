@@ -88,6 +88,13 @@ pub const MOVES: &[(u32, &str)] = &[
         "no `Raw` primitive: the language no longer has one, so it is no member of what a type \
          or a case can be (`prim`)",
     ),
+    (
+        28,
+        "what an ordering operator's operands, or a kernel that orders, are ordered by (`ordering`, \
+         on `binary` and on an `orderingsubject` fact): the checker's own enumeration for a case or \
+         a union of cases, so a backend no longer has to find the one this document's own \
+         declarations happen to place it by",
+    ),
 ];
 
 /// A document of [`TRANSPORT_VERSION`], and no other, read through [`Program::read`] and nothing
@@ -2001,10 +2008,8 @@ pub enum Node {
     /// it was written as.
     ///
     /// What the checker's parse answered is what crosses, for the reason a `Decimal`'s integer and
-    /// scale do: which text a literal may spell is the checker's own grammar to say (the
-    /// specification's, as of souther-lang/souther#2007, once the checker this repository builds
-    /// against reads it — souther-lang/souther-native-compiler#116), and text handed over would be
-    /// read a second time here by a grammar of its own.
+    /// scale do: which text a literal may spell is the checker's own grammar to say, and text
+    /// handed over would be read a second time here by a grammar of its own.
     /// `count` is the day, counted from 1970-01-01, of a `Date`; the second of the day of a `Time`;
     /// the second, counted from 1970-01-01T00:00:00 as though it were in UTC, of a `DateTime`; and
     /// the second, counted from the epoch, of an `Instant`, whose nanosecond within it is `nano`.
@@ -2021,6 +2026,12 @@ pub enum Node {
         /// What the operator reads its operands as, which the checker settled and the operands'
         /// types do not say.
         reading: Reading,
+        /// What the operands are ordered by, as the checker settled it: itself for a number or
+        /// text, and the one enumeration that places them for a case or a union of cases. Every
+        /// written comparison carries one; absent only for an operator that orders nothing and for
+        /// a comparison no source wrote, which is never lowered.
+        #[serde(default)]
+        ordering: Option<Ty>,
         left: Box<Node>,
         right: Box<Node>,
         #[serde(rename = "type")]
@@ -2409,6 +2420,11 @@ pub enum KernelFact {
     OrderingSubject {
         #[serde(rename = "type")]
         ty: Ty,
+        /// What a value of `ty` is ordered by, as the checker settled it: itself for a number or
+        /// text, and the one enumeration that places them for a case or a union of cases. Absent
+        /// only where `ty` orders nothing.
+        #[serde(default)]
+        ordering: Option<Ty>,
     },
 }
 
@@ -2532,7 +2548,9 @@ impl KernelFact {
                 written: _,
                 meaning: _,
             } => Vec::new(),
-            KernelFact::OrderingSubject { ty } => vec![ty],
+            KernelFact::OrderingSubject { ty, ordering } => {
+                std::iter::once(ty).chain(ordering.iter()).collect()
+            }
         }
     }
 
@@ -2544,7 +2562,9 @@ impl KernelFact {
                 written: _,
                 meaning: _,
             } => Vec::new(),
-            KernelFact::OrderingSubject { ty } => vec![ty],
+            KernelFact::OrderingSubject { ty, ordering } => {
+                std::iter::once(ty).chain(ordering.iter_mut()).collect()
+            }
         }
     }
 }
@@ -2696,11 +2716,15 @@ impl Node {
             Node::Binary {
                 op: _,
                 reading,
+                ordering,
                 left: _,
                 right: _,
                 ty,
                 aborts: _,
-            } => std::iter::once(ty).chain(reading.types()).collect(),
+            } => std::iter::once(ty)
+                .chain(reading.types())
+                .chain(ordering.iter())
+                .collect(),
             Node::Let {
                 binding: _,
                 binds,
@@ -2772,9 +2796,15 @@ impl Node {
             | Node::Widen { ty, .. }
             | Node::Unreachable { ty, .. }
             | Node::Apply { ty, .. } => vec![ty],
-            Node::Binary { reading, ty, .. } => {
-                std::iter::once(ty).chain(reading.types_mut()).collect()
-            }
+            Node::Binary {
+                reading,
+                ordering,
+                ty,
+                ..
+            } => std::iter::once(ty)
+                .chain(reading.types_mut())
+                .chain(ordering.iter_mut())
+                .collect(),
             Node::Let { binds, ty, .. } | Node::Attempt { binds, ty, .. } => vec![ty, binds],
             Node::Match { arms, ty, .. } => std::iter::once(ty)
                 .chain(arms.iter_mut().filter_map(|arm| arm.binds.as_mut()))

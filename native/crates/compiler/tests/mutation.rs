@@ -48,15 +48,19 @@ fn int(value: i64) -> Value {
 }
 
 fn binary(op: &str, left: Value, right: Value, ty: Value, aborts: Value) -> Value {
+    let ordering = match op {
+        "LT" | "LE" | "GT" | "GE" => left["type"].clone(),
+        _ => Value::Null,
+    };
     json!({
-        "core": "binary", "op": op, "reading": { "is": "astheystand" },
+        "core": "binary", "op": op, "reading": { "is": "astheystand" }, "ordering": ordering,
         "left": left, "right": right, "type": ty, "aborts": aborts
     })
 }
 
 fn program(declarations: Value, helpers: Value, publishes: Value) -> Value {
     json!({
-        "transport":27,
+        "transport": souther_native_driver::transport::TRANSPORT_VERSION,
         "declarations": declarations,
         "behaviors": [],
         "modules": [{

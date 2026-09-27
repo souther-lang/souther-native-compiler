@@ -95,7 +95,7 @@ public final class ProgramWriter {
      * written moves, so that a driver and a writer that disagree say so rather than producing an
      * object that is wrong quietly.
      */
-    public static final int TRANSPORT_VERSION = 27;
+    public static final int TRANSPORT_VERSION = 28;
 
     private final CheckedProgram program;
 
@@ -1245,12 +1245,12 @@ public final class ProgramWriter {
      * it: the count the value it parsed to is, and not the text it was written as.
      *
      * <p>Read by the checker's own parse ({@code CallElaborator#parseTemporal}, which is public for
-     * a backend to share the one reading of the text): {@code java.time}'s, whose spellings are more
-     * than the ones it writes back ({@code DateTime("2026-07-01t09:30")} is admitted), and which
-     * decides what a program may say. The text handed over as it stands would be read a second time
-     * on the other side by a grammar of its own, and whatever that one refused of what this one
-     * admitted would be a program the checker passed and the backend did not; so what crosses is
-     * what was read, as a {@code Decimal}'s integer and scale are. A {@code Date} crosses as its
+     * a backend to share the one reading of the text): {@code TemporalText}'s grammar decides what
+     * a program may say, and {@code java.time} only builds the value a text already admitted. The
+     * text handed over as it stands would be read a second time on the other side by a grammar of
+     * its own, and a backend's own reading of it is exactly the second language this project's
+     * design refuses to let stand — so what crosses is what was read, as a {@code Decimal}'s integer
+     * and scale are. A {@code Date} crosses as its
      * day, a {@code Time} as its second of the day, a {@code DateTime} as its second counted from
      * 1970-01-01T00:00:00 as though it were in UTC, and an {@code Instant} as its second and its
      * nanosecond; the last two are the checker's own carriers ({@code numeric.DateTimes}, {@code
@@ -1327,6 +1327,7 @@ public final class ProgramWriter {
             case Core.Str it -> stringNode(it.value(), it.type(), program.abortsAt(it));
             case Core.Binary it -> "{\"core\":\"binary\",\"op\":" + quoted(op(it.op()))
                     + ",\"reading\":" + reading(it.reading())
+                    + ",\"ordering\":" + ordering(it.ordering())
                     + ",\"left\":" + core(it.left(), bindings)
                     + ",\"right\":" + core(it.right(), bindings)
                     + ",\"type\":" + type(it.type()) + ",\"aborts\":" + aborts(it) + "}";
@@ -1592,6 +1593,16 @@ public final class ProgramWriter {
     }
 
     /**
+     * What the operands are ordered by, for an operator that orders them: itself for a number or
+     * text, and the one enumeration that places them for a case or a union of cases. The checker's
+     * own answer, and not something a backend works out again from the operands' types once this
+     * crosses.
+     */
+    private String ordering(Optional<Core.OrderingBasis> ordering) {
+        return ordering.map(it -> type(it.type())).orElse("null");
+    }
+
+    /**
      * A kernel the call reaches, with what this application of it takes each argument as and what
      * else the checker settled about it. The kernel's own signature has type variables, and what
      * they came to here is the checker's answer, not something to substitute again downstream.
@@ -1610,7 +1621,8 @@ public final class ProgramWriter {
                     "{\"is\":\"stringmatches\",\"written\":" + quoted(it.written())
                             + ",\"meaning\":" + meaning(it.meaning()) + "}";
             case Core.KernelFact.OrderingSubject it ->
-                    "{\"is\":\"orderingsubject\",\"type\":" + type(it.type()) + "}";
+                    "{\"is\":\"orderingsubject\",\"type\":" + type(it.type())
+                            + ",\"ordering\":" + ordering(it.ordering()) + "}";
         };
         return "{\"is\":\"kernel\",\"kernel\":" + quoted(target.kernel().key())
                 + ",\"takes\":" + takes + ",\"fact\":" + fact + "}";
@@ -1709,22 +1721,15 @@ public final class ProgramWriter {
             for (ResolvedCase selected : arm.pattern().cases()) {
                 selects.add(selects(selected));
             }
-            // A binder over a test that leaves nothing to read, `None as n`, is admitted with no
-            // type for what it binds (souther-lang/souther#1984). Nothing it could be written as is
-            // one the checker settled, so it is refused until the checker says.
-            if (arm.binder() != null && arm.pattern().bindType() == null) {
-                throw notYet("an arm binding a name to what it tests holds nothing, which the "
-                        + "checker gives no type (souther-lang/souther#1984)", it);
-            }
             String binding = arm.binder() == null
                     ? "null"
                     : Integer.toString(bindings.number(arm.binder().binding()));
             // What the value is read as inside the arm, which the checker settled and nothing
             // downstream can work out from what the arm tests: an optional's present carrier is
-            // tested the same way whatever it holds.
-            String binds = arm.binder() == null
-                    ? "null"
-                    : type(arm.pattern().bindType());
+            // tested the same way whatever it holds. Core.Case#bindType() answers this off the
+            // binding itself (Unbound, Selected, or Payload), so an arm that binds nothing is
+            // never a case of one that binds something the checker gave no type for.
+            String binds = arm.bindType() == null ? "null" : type(arm.bindType());
             arms.add("{\"selects\":" + selects + ",\"binding\":" + binding + ",\"binds\":" + binds
                     + ",\"body\":" + core(arm.body(), bindings) + "}");
         }

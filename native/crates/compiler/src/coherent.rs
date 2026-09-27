@@ -55,9 +55,9 @@ use crate::closures::ClosureSites;
 use crate::index;
 use crate::kernels::{Bound, LoweredKernel};
 use crate::transport::{
-    AbortKind, Answers, Carrier, Case, Cases, Declaration, Definition, Emitted, Ensures, Guard,
-    Held, KernelFact, Node, Op, Owner, Prim, Program, Reaches, Reaching, Reading, Reference,
-    Routing, Selects, Target, Ty, Value,
+    AbortKind, AlternativesForm, Answers, Carrier, Case, Cases, Declaration, Definition, Emitted,
+    Ensures, Guard, Held, KernelFact, Node, Op, Owner, Prim, Program, Reaches, Reaching, Reading,
+    Reference, Routing, Selects, Target, Ty, Value,
 };
 use crate::{Declared, PairIn, Runs, Targets, departures_taken, says_its_case};
 use anyhow::{Result, anyhow, bail};
@@ -1336,7 +1336,7 @@ impl<'a> Walk<'_, 'a> {
                 self.node(target)?;
                 let of = target.ty();
                 let Ty::Ref {
-                    named: Case::Declared { declared },
+                    named: named @ Case::Declared { declared },
                 } = of
                 else {
                     bail!(
@@ -1351,9 +1351,7 @@ impl<'a> Walk<'_, 'a> {
                 // of the case's field, whichever case the value is. So every case is asked, and
                 // what each lays out stands as what the read answers.
                 if let crate::transport::Declaration::Sum { .. } = shape {
-                    let cases = self.declared.leaves_of(&[Case::Declared {
-                        declared: declared.clone(),
-                    }])?;
+                    let cases = self.declared.leaves_of(std::slice::from_ref(named))?;
                     for case in &cases {
                         let Case::Declared { declared: key } = case else {
                             bail!(
@@ -1392,6 +1390,7 @@ impl<'a> Walk<'_, 'a> {
             Node::Binary {
                 op,
                 reading,
+                ordering,
                 left,
                 right,
                 ty,
@@ -1400,6 +1399,7 @@ impl<'a> Walk<'_, 'a> {
                 self.node(left)?;
                 self.node(right)?;
                 self.reading(*op, reading, left.ty(), right.ty())?;
+                self.ordering(*op, ordering.as_ref(), reading, left.ty())?;
                 self.operator(*op, reading, (left.ty(), right.ty()), ty, aborts)
             }
             Node::Neg {
@@ -1674,6 +1674,130 @@ impl<'a> Walk<'_, 'a> {
         }
     }
 
+    /// What an operator's `ordering` says: present for the four that order their operands, and for
+    /// no other, the same rule the checker's own node holds itself to. Where it is present, it is
+    /// also asked whether it could really be the basis of an order over what is compared
+    /// ([`Walk::orders`]) — not which one the checker would have chosen where more than one
+    /// enumeration could place a case, only that the one it named does.
+    fn ordering(&self, op: Op, ordering: Option<&Ty>, reading: &Reading, left: &Ty) -> Result<()> {
+        match (op, ordering) {
+            (Op::Lt | Op::Le | Op::Gt | Op::Ge, None) => bail!(
+                "{}: {} orders its operands and settles no basis for it: the two halves disagree",
+                self.owner,
+                op.spelt()
+            ),
+            (
+                Op::Eq
+                | Op::Ne
+                | Op::And
+                | Op::Or
+                | Op::Add
+                | Op::Sub
+                | Op::Mul
+                | Op::Div
+                | Op::Concat,
+                Some(_),
+            ) => bail!(
+                "{}: {} orders nothing and settles a basis for it: the two halves disagree",
+                self.owner,
+                op.spelt()
+            ),
+            (Op::Lt | Op::Le | Op::Gt | Op::Ge, Some(basis)) => {
+                // A number read at its exact value is opened to one before an order ever reads
+                // it (`exact_operator`'s own `RATIONAL_COMPARE`, never `ordering::ordered`), so
+                // what `left` still says here — a newtype `Rational` is compared beside, most
+                // often — names nothing `orders` should be asked about.
+                let compared_as = match reading {
+                    Reading::AsTheyStand => left,
+                    Reading::In { ty } => ty,
+                    Reading::ExactNumbers => return Ok(()),
+                };
+                self.orders(compared_as, basis)
+            }
+            _ => Ok(()),
+        }
+    }
+
+    /// Whether `basis` could really place every value `ty` stands for: a number by itself, and a
+    /// case or a union of them by the one enumeration that lists every one of them.
+    ///
+    /// This is not [`ordering::ordered`](crate::ordering::ordered)'s own question asked again —
+    /// that reads a leaf at whichever basis this settles and trusts it once this has checked it,
+    /// and opens a newtype to reach one before it does. A basis this side never checked would let
+    /// a case two enumerations both list — `m.B`, ordered by `T = m.B` where `S = m.A | m.B` is
+    /// what a program actually forked on — place `m.A` at the position `T` leaves for whatever a
+    /// tag it does not carry any of falls to, comparing wrongly and not refusing at all.
+    fn orders(&self, ty: &Ty, basis: &Ty) -> Result<()> {
+        // A newtype opens to what it wraps before an order ever reads it (ADR-0047), all the way
+        // down; the basis names what it opens to, not the newtype itself, the same as
+        // `ordering::ordered` never asks the basis about a type it opens past.
+        let opened = self.declared.newtype_spine(ty)?;
+        let ty = opened.opens.last().unwrap_or(ty);
+        let subject: &[Case] = match ty {
+            Ty::Prim { .. } => {
+                if ty != basis {
+                    bail!(
+                        "{}: {} is ordered by {}, and not by itself: the two halves disagree",
+                        self.owner,
+                        ty.spelt(),
+                        basis.spelt()
+                    );
+                }
+                return Ok(());
+            }
+            Ty::Ref {
+                named: named @ Case::Declared { .. },
+            } => std::slice::from_ref(named),
+            Ty::Union { union } => union,
+            // Not what `ordering::ordered` orders at all — it answers `unordered` on its own, and
+            // reads no basis to do it.
+            _ => return Ok(()),
+        };
+        let Ty::Ref {
+            named: enumeration @ Case::Declared { declared },
+        } = basis
+        else {
+            bail!(
+                "{}: {} is ordered by {}, which is no declared enumeration: the two halves \
+                 disagree",
+                self.owner,
+                ty.spelt(),
+                basis.spelt()
+            );
+        };
+        // `leaves_of` answers a declaration whole where it is not a sum — a product or a newtype
+        // named as its own basis would place every value of it alike and pass the coverage this
+        // reads next by naming nothing further to cover. So a basis is asked to be an enumeration
+        // before it is asked what it places: a case's declaration one form of the language holds
+        // to have no order of its own (a product, a newtype), and a discriminated sum's cases carry
+        // more than which one they are, so a token alone does not place them the way this compares.
+        match self.declared.shape(declared)? {
+            Declaration::Sum {
+                form: AlternativesForm::Enumeration,
+                ..
+            } => {}
+            _ => bail!(
+                "{}: {} is ordered by {}, which is no enumeration: the two halves disagree",
+                self.owner,
+                ty.spelt(),
+                basis.spelt()
+            ),
+        }
+        let places = self.declared.leaves_of(std::slice::from_ref(enumeration))?;
+        for leaf in self.declared.leaves_of(subject)? {
+            if !places.contains(&leaf) {
+                bail!(
+                    "{}: {} is ordered by {}, which does not place {}: the two halves disagree",
+                    self.owner,
+                    ty.spelt(),
+                    basis.spelt(),
+                    leaf.spelt()
+                );
+            }
+        }
+        Ok(())
+    }
+
     /// An operator against what it says it answers. Where its operands stand is [`Walk::slots`]'s,
     /// and what its reading says of them is [`Walk::reading`]'s.
     ///
@@ -1830,22 +1954,19 @@ impl<'a> Walk<'_, 'a> {
     /// leaves what it holds. Every value that reaches the arm is one of those, so what the arm binds
     /// is no narrower than any of them and no wider than what it reads them from.
     ///
-    /// A test that an optional holds nothing leaves nothing to read, so an arm binding a value
-    /// where one of its selectors is that test is not an arm the checker writes, whatever else it
-    /// tests; nor is one whose selectors read the value two ways, since nothing tells at run time
-    /// which of the two the arm was reached by. Neither is this backend being behind.
+    /// A test that an optional holds nothing leaves nothing under it to read, so an arm binding a
+    /// value there reads the optional itself, the same as an arm naming a case it tests reads the
+    /// value as that case's subject rather than as what a case carries: neither has a carrier to
+    /// open, and both bind what was matched
+    /// whole. Nor is an arm whose selectors read the value two ways admitted, since nothing tells
+    /// at run time which of the two the arm was reached by.
     fn arm_binds(&mut self, subject: &Ty, selects: &[Selects], binds: &Ty) -> Result<()> {
         let mut read_out = None;
         let mut tested = Vec::new();
         for selector in selects {
             let holds_it = match selector {
-                Selects::Nothing => bail!(
-                    "{}: an arm binds a value where it tests that {} holds nothing, which leaves \
-                     nothing to bind: the two halves disagree",
-                    self.owner,
-                    subject.spelt()
-                ),
                 Selects::Held => true,
+                Selects::Nothing => false,
                 Selects::Which { atoms } => {
                     tested.extend(atoms.iter().cloned());
                     false
@@ -1878,14 +1999,19 @@ impl<'a> Walk<'_, 'a> {
                 )
             }
             Some(false) => {
-                self.fits(
-                    "a case an arm tests is read as what it binds",
-                    &Ty::Union {
-                        union: Cases::one_or_more(tested)
-                            .expect("an arm reading its value as itself tests a case or more"),
-                    },
-                    binds,
-                );
+                // A case tested and read as itself: what an arm binds is one of the cases it
+                // tests. An arm reading an optional's own absence as itself tests no case at all
+                // (`Selects::Nothing` carries no atom), and has only the subject to be read out of.
+                if !tested.is_empty() {
+                    self.fits(
+                        "a case an arm tests is read as what it binds",
+                        &Ty::Union {
+                            union: Cases::one_or_more(tested)
+                                .expect("an arm reading its value as itself tests a case or more"),
+                        },
+                        binds,
+                    );
+                }
                 self.fits(
                     "what an arm binds is read out of its subject",
                     binds,
@@ -2067,8 +2193,13 @@ impl<'a> Walk<'_, 'a> {
                     // What an ordering was checked against is what the lowering compares by, so it
                     // is held to the one type the kernel orders: the element of the list a sort
                     // takes, and what the key a `sortBy` takes answers.
-                    if let (Some(known_to_hold), KernelFact::OrderingSubject { ty: subject }) =
-                        (contract.fact.holds(&bound), fact)
+                    if let (
+                        Some(known_to_hold),
+                        KernelFact::OrderingSubject {
+                            ty: subject,
+                            ordering,
+                        },
+                    ) = (contract.fact.holds(&bound), fact)
                     {
                         self.same(
                             &format!("what an application of {kernel} orders by"),
@@ -2076,6 +2207,28 @@ impl<'a> Walk<'_, 'a> {
                             &known_to_hold,
                             "what it takes orders",
                         )?;
+                        // Nothing to check where there is nothing to be ordered: the requirement
+                        // stood and no value of `subject` is ever made. Everywhere else the same
+                        // basis a written comparison would carry is asked of what this kernel
+                        // orders, so a `List.sort` over a case two enumerations both list is held
+                        // to the one the checker named exactly as `<` over the same case is.
+                        //
+                        // Not asked here: whether `subject` can still be a still-open type variable
+                        // with no basis, which the checker's own contract allows for and this
+                        // document's own generic helpers are transported whole enough to carry
+                        // before `specialize` ever narrows one (souther-lang/souther-native-compiler#119).
+                        // Every kernel this settles for in this document's own test suite specializes
+                        // before it orders, so this is not yet known to be reachable.
+                        match ordering {
+                            Some(basis) => self.orders(subject, basis)?,
+                            None if subject.has_no_value() => {}
+                            None => bail!(
+                                "{}: an application of {kernel} orders {}, and settles no basis \
+                                 for it: the two halves disagree",
+                                self.owner,
+                                subject.spelt()
+                            ),
+                        }
                     }
                     self.ends_for(&format!("a call of {kernel}"), aborts, &contract.aborts)?;
                     // What it answers is the one type what it takes bound. A kernel that takes

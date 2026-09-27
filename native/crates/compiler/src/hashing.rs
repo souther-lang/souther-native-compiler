@@ -355,24 +355,18 @@ impl Hashing<'_, '_, '_, '_> {
     fn body(&mut self, ty: &Ty, value: ir::Value) -> Lowered<ir::Value> {
         match ty {
             Ty::Ref {
-                named: Case::Declared { declared },
+                named: named @ Case::Declared { declared },
             } => match self.lowering.declared.laid(declared) {
                 Declaration::Product { fields, .. } => {
                     let types: Vec<Ty> = fields.iter().map(|it| it.codec.ty()).collect();
-                    let tagged = self.tagged(&Case::Declared {
-                        declared: declared.clone(),
-                    })?;
+                    let tagged = self.tagged(named)?;
                     self.slots(tagged, &types, field_at, value)
                 }
                 Declaration::Newtype { field, .. } => {
-                    let tagged = self.tagged(&Case::Declared {
-                        declared: declared.clone(),
-                    })?;
+                    let tagged = self.tagged(named)?;
                     self.slots(tagged, &[field.codec.ty()], field_at, value)
                 }
-                Declaration::Unit { .. } => self.tagged(&Case::Declared {
-                    declared: declared.clone(),
-                }),
+                Declaration::Unit { .. } => self.tagged(named),
                 Declaration::Sum { cases, .. } => self.cases(ty, cases, value),
             },
             Ty::Ref {

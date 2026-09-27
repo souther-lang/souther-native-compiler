@@ -6,6 +6,7 @@
 //! and the same document with one of those two statements changed, which is refused as the two
 //! halves disagreeing and not as something this backend is behind on.
 
+use souther_native_driver::transport::TRANSPORT_VERSION;
 use souther_native_driver::{NotLowered, object_for};
 
 const INT: &str = r#"{"prim":"INT"}"#;
@@ -31,7 +32,7 @@ const P: &str = r#"{"ref":{"is":"declared","declared":"m.P"}}"#;
 fn document(behaviors: &[String], helpers: &[String], definitions: &[String]) -> String {
     format!(
         concat!(
-            r#"{{"transport":27,"declarations":["#,
+            r#"{{"transport":{},"declarations":["#,
             r#"{{"module":"m","name":"A","by":"amodule","is":"unit"}},"#,
             r#"{{"module":"m","name":"B","by":"amodule","is":"unit"}},"#,
             r#"{{"module":"m","name":"S","by":"amodule","is":"sum","#,
@@ -45,6 +46,7 @@ fn document(behaviors: &[String], helpers: &[String], definitions: &[String]) ->
             r#""modules":[{{"name":"m","publishes":[],"helpers":[{}],"values":[],"entries":[],"definitions":[{}],"#,
             r#""examples":[]}}]}}"#
         ),
+        TRANSPORT_VERSION,
         behaviors.join(","),
         helpers.join(","),
         definitions.join(",")
@@ -468,29 +470,36 @@ fn an_arm_reads_a_present_value_as_what_the_optional_holds() {
 }
 
 /// An arm binds what each of its tests leaves to read. A test that an optional holds nothing
-/// leaves nothing, so an arm binding a value there is the two halves disagreeing, and not this
-/// backend being behind; and an arm testing for `None` among the cases of a union binds the value
-/// as one of those cases, the way an arm testing for declared cases does.
+/// leaves nothing under it, so an arm binding a value there binds the optional itself, the same as
+/// an arm naming a case it tests binds the subject rather than what a case carries; and an arm
+/// testing for `None` among the cases of a union binds the value as one of those cases, the way an
+/// arm testing for declared cases does.
 #[test]
 fn an_arm_binds_what_each_of_its_tests_leaves_to_read() {
     let optional = option_of(S);
-    let binding_nothing = node(
-        "match",
-        &format!(
-            r#""subject":{},"arms":[{},{}]"#,
-            read(0, &optional),
-            arm(r#"{"tests":"held"}"#, Some((1, S)), &read(1, S)),
-            arm(
-                r#"{"tests":"nothing"}"#,
-                Some((2, &optional)),
-                &widen(&unit("m.A"), S)
-            )
-        ),
-        S,
-    );
+    let binds_the_optional_itself = |binds: &str| {
+        node(
+            "match",
+            &format!(
+                r#""subject":{},"arms":[{},{}]"#,
+                read(0, &optional),
+                arm(r#"{"tests":"held"}"#, Some((1, S)), &read(1, S)),
+                arm(
+                    r#"{"tests":"nothing"}"#,
+                    Some((2, binds)),
+                    &widen(&unit("m.A"), S)
+                )
+            ),
+            S,
+        )
+    };
+    reads_whole(&helpers(&[h(
+        &[&optional],
+        &binds_the_optional_itself(&optional),
+    )]));
     is_the_halves_disagreeing(
-        &helpers(&[h(&[&optional], &binding_nothing)]),
-        "leaves nothing to bind",
+        &helpers(&[h(&[&optional], &binds_the_optional_itself(S))]),
+        "m.h",
     );
 
     let none = r#"{"is":"language","case":"NONE"}"#;
@@ -1700,13 +1709,14 @@ fn a_concat_names_the_one_reason_it_can_end_for() {
 fn with_clauses(fields: &str, invariants: &str, helpers: &[String]) -> String {
     format!(
         concat!(
-            r#"{{"transport":27,"declarations":["#,
+            r#"{{"transport":{},"declarations":["#,
             r#"{{"module":"m","name":"R","by":"amodule","is":"product","#,
             r#""fields":[{}],"invariants":[{}]}}],"#,
             r#""behaviors":[],"#,
             r#""modules":[{{"name":"m","publishes":[],"helpers":[{}],"values":[],"entries":[],"definitions":[],"#,
             r#""examples":[]}}]}}"#
         ),
+        TRANSPORT_VERSION,
         fields,
         invariants,
         helpers.join(",")
@@ -1727,7 +1737,9 @@ fn clause(name: Option<&str>, condition: &str) -> String {
 fn at_least(left: &str, right: &str) -> String {
     node(
         "binary",
-        &format!(r#""op":"GE","reading":{{"is":"astheystand"}},"left":{left},"right":{right}"#),
+        &format!(
+            r#""op":"GE","reading":{{"is":"astheystand"}},"ordering":{INT},"left":{left},"right":{right}"#
+        ),
         BOOL,
     )
 }
@@ -2084,12 +2096,12 @@ fn a_newtype_that_wraps_itself_is_the_halves_disagreeing() {
     let compared = |declarations: &[String], reading: &str| {
         let n = r#"{"ref":{"is":"declared","declared":"m.N"}}"#;
         let body = format!(
-            r#"{{"core":"binary","op":"LE","reading":{reading},"left":{},"right":{},"type":{BOOL},"aborts":[]}}"#,
+            r#"{{"core":"binary","op":"LE","reading":{reading},"ordering":{n},"left":{},"right":{},"type":{BOOL},"aborts":[]}}"#,
             read(0, n),
             read(1, n)
         );
         format!(
-            r#"{{"transport":27,"declarations":[{}],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[{}],"values":[],"entries":[],"definitions":[],"examples":[]}}]}}"#,
+            r#"{{"transport":{TRANSPORT_VERSION},"declarations":[{}],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[{}],"values":[],"entries":[],"definitions":[],"examples":[]}}]}}"#,
             declarations.join(","),
             h(&[n, n], &body)
         )
@@ -2229,8 +2241,11 @@ fn kernel(key: &str, takes: &[&str], fact: &str) -> String {
     )
 }
 
-fn ordering_subject(ty: &str) -> String {
-    format!(r#"{{"is":"orderingsubject","type":{ty}}}"#)
+/// An `orderingsubject` fact settling `ty` as what is ordered, ordered by `basis` — absent only
+/// where `ty` is a type no value of which is made, since there is then nothing to place.
+fn ordering_subject(ty: &str, basis: Option<&str>) -> String {
+    let ordering = basis.map_or("null".to_string(), ToString::to_string);
+    format!(r#"{{"is":"orderingsubject","type":{ty},"ordering":{ordering}}}"#)
 }
 
 const NO_FACT: &str = r#"{"is":"none"}"#;
@@ -2248,7 +2263,7 @@ fn a_list_no_value_of_whose_element_is_made_is_ordered_without_a_comparison() {
             reads_whole(&helpers(&[h(
                 &[&listed],
                 &call(
-                    &kernel(key, &[&listed], &ordering_subject(element)),
+                    &kernel(key, &[&listed], &ordering_subject(element, None)),
                     &[read(0, &listed)],
                     &answers,
                 ),
@@ -2295,7 +2310,7 @@ fn a_kernel_is_handed_a_function_that_never_runs_and_calls_none() {
             never_run(INT, int(1)),
             empty,
             list_of(nothing),
-            ordering_subject(INT),
+            ordering_subject(INT, Some(INT)),
         ),
         (
             "option.map",
@@ -2368,7 +2383,11 @@ fn what_a_kernel_orders_by_is_what_it_takes_orders() {
         h(
             &[&key, &ints],
             &call(
-                &kernel("list.sortBy", &[&key, &ints], &ordering_subject(subject)),
+                &kernel(
+                    "list.sortBy",
+                    &[&key, &ints],
+                    &ordering_subject(subject, Some(subject)),
+                ),
                 &[read(0, &key), read(1, &ints)],
                 &ints,
             ),
@@ -2389,7 +2408,7 @@ fn what_a_kernel_orders_by_is_what_it_takes_orders() {
             h(
                 &[&ints],
                 &call(
-                    &kernel(key, &[&ints], &ordering_subject(subject)),
+                    &kernel(key, &[&ints], &ordering_subject(subject, Some(subject))),
                     &[read(0, &ints)],
                     &answers,
                 ),
@@ -2506,10 +2525,16 @@ fn only_the_kinds_that_can_end_a_run_name_a_reason_to() {
 #[test]
 fn a_comparison_and_a_truth_operator_name_no_reason_to_end_a_run() {
     let over = |op: &str, ty: &str, answers: &str| {
+        let orders = matches!(op, "LT" | "LE" | "GT" | "GE");
+        let ordering = if orders {
+            ty.to_string()
+        } else {
+            "null".to_string()
+        };
         node(
             "binary",
             &format!(
-                r#""op":"{op}","reading":{{"is":"astheystand"}},"left":{},"right":{}"#,
+                r#""op":"{op}","reading":{{"is":"astheystand"}},"ordering":{ordering},"left":{},"right":{}"#,
                 read(0, ty),
                 read(1, ty)
             ),
@@ -2586,12 +2611,13 @@ fn a_construction_of_another_builds_type_names_the_reason_its_clauses_give() {
         );
         format!(
             concat!(
-                r#"{{"transport":27,"declarations":["#,
+                r#"{{"transport":{},"declarations":["#,
                 r#"{{"module":"m","name":"R","by":"onthepath","is":"product","#,
                 r#""fields":[{}],"headers":[{}]}}],"behaviors":[],"#,
                 r#""modules":[{{"name":"m","publishes":[],"helpers":[{}],"values":[],"#,
                 r#""entries":[],"definitions":[],"examples":[]}}]}}"#
             ),
+            TRANSPORT_VERSION,
             field("count", 0, "INT"),
             headers,
             h(&[], &built)
@@ -2772,7 +2798,7 @@ fn an_arm_binds_and_says_what_it_reads_it_as_together() {
 fn a_handover_carries_a_value_the_module_builds() {
     let value = |carries: &str| {
         format!(
-            r#"{{"transport":27,"declarations":[],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[],"values":[{{"module":"m","name":"ks","handovers":[],"body":{}}},{{"module":"m","name":"ys","handovers":[{{"parameter":"dep","type":{INT},"carries":{{"module":"m","name":"{carries}"}}}}],"body":{}}}],"entries":[],"definitions":[],"examples":[]}}]}}"#,
+            r#"{{"transport":{TRANSPORT_VERSION},"declarations":[],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[],"values":[{{"module":"m","name":"ks","handovers":[],"body":{}}},{{"module":"m","name":"ys","handovers":[{{"parameter":"dep","type":{INT},"carries":{{"module":"m","name":"{carries}"}}}}],"body":{}}}],"entries":[],"definitions":[],"examples":[]}}]}}"#,
             int(1),
             read(0, INT)
         )
@@ -2825,7 +2851,7 @@ fn answer_at_least_a(value: usize) -> String {
     node(
         "binary",
         &format!(
-            r#""op":"GE","reading":{{"is":"astheystand"}},"left":{},"right":{}"#,
+            r#""op":"GE","reading":{{"is":"astheystand"}},"ordering":{INT},"left":{},"right":{}"#,
             read(value, INT),
             read(0, INT)
         ),
@@ -3257,12 +3283,13 @@ fn what_clauses_are_answered_under_crosses_where_another_build_runs_them() {
     let declared = |by: &str, clauses: &str| {
         format!(
             concat!(
-                r#"{{"transport":27,"declarations":["#,
+                r#"{{"transport":{},"declarations":["#,
                 r#"{{"module":"m","name":"R","by":"{}","is":"product","#,
                 r#""fields":[{}]{}}}],"behaviors":[],"#,
                 r#""modules":[{{"name":"m","publishes":[],"helpers":[],"values":[],"#,
                 r#""entries":[],"definitions":[],"examples":[]}}]}}"#
             ),
+            TRANSPORT_VERSION,
             by,
             field("count", 0, "INT"),
             clauses

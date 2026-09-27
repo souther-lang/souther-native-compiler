@@ -75,6 +75,7 @@ class WhereAnAnswerIsHeldCrossesAsTheCheckerPlacedItTest {
                 {"guard":{"is":"case","selects":{"tests":"which","atoms":[\
                 {"is":"declared","declared":"m.Found"}]},"binds":{"ref":{"is":"declared","declared":"m.Found"}}},\
                 "value":1,"condition":{"core":"binary","op":"EQ","reading":{"is":"astheystand"},\
+                "ordering":null,\
                 "left":{"core":"field","target":{"core":"read","binding":1,\
                 "type":{"ref":{"is":"declared","declared":"m.Found"}},"aborts":[]},"field":"id","type":{"prim":"INT"},\
                 "aborts":[]},"right":{"core":"read","binding":0,"type":{"prim":"INT"},"aborts":[]},\

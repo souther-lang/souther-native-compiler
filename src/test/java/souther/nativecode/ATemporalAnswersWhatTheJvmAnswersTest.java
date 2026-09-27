@@ -2,6 +2,7 @@ package souther.nativecode;
 
 import org.junit.jupiter.api.Test;
 import souther.compiler.abort.AbortKind;
+import souther.compiler.diag.CompileException;
 import souther.compiler.observe.ObservedValue;
 import souther.compiler.program.CheckedBehavior;
 import souther.compiler.program.CheckedModule;
@@ -19,6 +20,7 @@ import java.util.Random;
 import java.util.function.Supplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Every kernel and comparison over a {@code Date}, a {@code Time}, a {@code DateTime} and an
@@ -153,17 +155,6 @@ class ATemporalAnswersWhatTheJvmAnswersTest {
 
             behavior launch : (a: Int) -> Instant
             let launch (a) = Instant("2026-07-25T00:00:00.5Z")
-
-            behavior spelledOtherwise : (a: Int) -> Bool
-            let spelledOtherwise (a) =
-                Date("+010000-01-01") == Date("+10000-01-01")
-                    && Time("09:30:00.") == Time("09:30")
-                    && DateTime("2026-07-01t09:30") == DateTime("2026-07-01T09:30")
-                    && DateTime("2026-07-01T09:30:00.") == DateTime("2026-07-01T09:30")
-                    && Instant("2026-07-01T00:00:00.Z") == Instant("2026-07-01T00:00:00Z")
-
-            example spelledOtherwise
-                | "spellings java.time reads and a boundary does not" : (0) -> true
 
             example rentDay
                 | "a literal" : (0) -> Date("2026-07-25")
@@ -333,6 +324,24 @@ class ATemporalAnswersWhatTheJvmAnswersTest {
     @Test
     void everyTemporalRowHolds() throws Exception {
         ARowHoldsWhereverItIsRunTest.assertEveryRowHolds(TEMPORALS);
+    }
+
+    /**
+     * What names a temporal is {@link souther.temporal.TemporalText}'s grammar, checked as source is
+     * checked, and not whatever {@code java.time} happens to parse. A fraction of a second on a
+     * {@code Time} is one of {@code java.time}'s spellings that the grammar refuses outright, so it
+     * never reaches a value for this to lose the digits of.
+     */
+    @Test
+    void aFractionOfASecondOnATimeIsRefusedBeforeItIsAValue() {
+        assertThatThrownBy(() -> Checked.of(List.of("""
+                module spelling
+
+                behavior clock : (a: Int) -> Time
+                let clock (a) = Time("09:30:00.000")
+                """)))
+                .isInstanceOf(CompileException.class)
+                .hasMessageContaining("holds no fraction of one");
     }
 
     /**

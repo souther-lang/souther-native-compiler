@@ -510,15 +510,19 @@ fn an_object_carrying_no_surface_is_refused() {
 /// they walk a union's a behavior answers, so it is where both are put to a host's documents. The
 /// primitive stands under the contents key beside its name, and the case the language gives is its
 /// name alone.
-const CARRYING: &str = r#"{"transport":27,"declarations":[
-    {"module":"m","name":"A","by":"amodule","is":"unit"},
-    {"module":"m","name":"Q","by":"amodule","is":"sum",
-     "cases":[{"is":"primitive","prim":"INT"},{"is":"language","case":"DIVISION_BY_ZERO"},
-              {"is":"declared","declared":"m.A"}],
-     "form":{"is":"discriminated","tag":"type","contents":"value"}}],
+fn carrying() -> String {
+    format!(
+        r#"{{"transport":{TRANSPORT_VERSION},"declarations":[
+    {{"module":"m","name":"A","by":"amodule","is":"unit"}},
+    {{"module":"m","name":"Q","by":"amodule","is":"sum",
+     "cases":[{{"is":"primitive","prim":"INT"}},{{"is":"language","case":"DIVISION_BY_ZERO"}},
+              {{"is":"declared","declared":"m.A"}}],
+     "form":{{"is":"discriminated","tag":"type","contents":"value"}}}}],
   "behaviors":[],
-  "modules":[{"name":"m","publishes":["m.A","m.Q"],"helpers":[],"values":[],"entries":[],
-              "definitions":[],"examples":[]}]}"#;
+  "modules":[{{"name":"m","publishes":["m.A","m.Q"],"helpers":[],"values":[],"entries":[],
+              "definitions":[],"examples":[]}}]}}"#
+    )
+}
 
 const READING_CASES: &str = r#"
 #include <inttypes.h>
@@ -567,7 +571,7 @@ int main(void) {
 #[test]
 fn a_case_no_declaration_names_is_read_and_written_as_the_language_writes_it() {
     assert_eq!(
-        ran(CARRYING, READING_CASES),
+        ran(&carrying(), READING_CASES),
         concat!(
             "0 case 0 holds 4 {\"type\":\"Int\",\"value\":4}\n",
             "0 case 1 {\"type\":\"DivisionByZero\"}\n",

@@ -1,6 +1,7 @@
 //! A string literal is one piece of data in the object, however many places spell it.
 
 use souther_native_driver::object_for;
+use souther_native_driver::transport::TRANSPORT_VERSION;
 
 /// `m.twice` joins a literal to itself, and its boundary writes a key it shares with nothing: the
 /// literal's bytes are in the object once, not once per site that spells them.
@@ -9,15 +10,16 @@ fn a_literal_spelt_twice_is_held_once() {
     let text = r#"{"core":"string","value":"zebra-crossing","type":{"prim":"STRING"},"aborts":[]}"#;
     let document = format!(
         concat!(
-            r#"{{"transport":27,"declarations":[],"#,
+            r#"{{"transport":{transport},"declarations":[],"#,
             r#""behaviors":[{{"module":"m","name":"twice","is":"body","parameters":{{"named":[]}},"#,
             r#""output":{{"is":"scalar","scalar":"STRING"}},"requirements":[],"ensures":{{"at":"none"}}}}],"#,
             r#""modules":[{{"name":"m","publishes":[],"helpers":[],"values":[],"entries":[],"definitions":["#,
             r#"{{"is":"body","declared":"m.twice","parameters":[],"publication":"published","#,
-            r#""body":{{"core":"binary","op":"CONCAT","reading":{{"is":"astheystand"}},"left":{text},"right":{text},"#,
+            r#""body":{{"core":"binary","op":"CONCAT","reading":{{"is":"astheystand"}},"ordering":null,"left":{text},"right":{text},"#,
             r#""type":{{"prim":"STRING"}},"aborts":["REQUIRED_FORM_HAS_NO_PLACE"]}}}}"#,
             r#"],"examples":[]}}]}}"#
         ),
+        transport = TRANSPORT_VERSION,
         text = text
     );
 

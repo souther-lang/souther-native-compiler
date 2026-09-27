@@ -1974,7 +1974,7 @@ impl<'a> Declared<'a> {
     /// to it. A newtype that comes back to itself is refused: it has no value, the checker refuses
     /// it where it is written, and [`Declared::of`] asks this of every newtype, so every other asker
     /// is handed a walk that ends.
-    fn newtype_spine(&self, ty: &Ty) -> Result<NewtypeSpine> {
+    pub(crate) fn newtype_spine(&self, ty: &Ty) -> Result<NewtypeSpine> {
         let mut worn: Vec<String> = Vec::new();
         let mut opens: Vec<Ty> = Vec::new();
         let mut at = ty.clone();
@@ -2013,88 +2013,6 @@ impl<'a> Declared<'a> {
             return Ok(PairIn::Opened(inner.clone()));
         }
         Ok(PairIn::Held)
-    }
-
-    /// The enumeration whose declaration orders a value of `ty`, where exactly one does: `ty`
-    /// itself where it is one, the one sum that lists it where it is a unit, and the one every
-    /// member lists where it is a union. As the checker answers it (ADR-0069): a unit may be a case
-    /// of two enumerations that place it differently, and then no order is its own.
-    ///
-    /// Asked of the declarations this document carries. Every sum listing a unit is declared in
-    /// the unit's own module, and a module of this compile has every declaration carried; a module
-    /// off the path has only the ones something reaches, so an enumeration nothing else names may
-    /// be missing, and then this answers none rather than a wrong one — it never finds two where
-    /// the checker found one. The checker's own answer is not on the node (souther-lang/souther#1987).
-    fn enumeration_of(&self, ty: &Ty) -> Result<Option<String>> {
-        let candidates = match ty {
-            Ty::Ref {
-                named: Case::Declared { declared },
-            } => self.enumerations_listing(declared)?,
-            Ty::Union { union } => {
-                let mut shared: Option<Vec<String>> = None;
-                for member in union.iter() {
-                    let Case::Declared { declared } = member else {
-                        return Ok(None);
-                    };
-                    let listing = self.enumerations_listing(declared)?;
-                    shared = Some(match shared {
-                        None => listing,
-                        Some(so_far) => so_far
-                            .into_iter()
-                            .filter(|it| listing.contains(it))
-                            .collect(),
-                    });
-                }
-                shared.unwrap_or_default()
-            }
-            _ => return Ok(None),
-        };
-        Ok(match candidates.as_slice() {
-            [one] => Some(one.clone()),
-            _ => None,
-        })
-    }
-
-    /// Every enumeration that could order a value of the declaration `declared`: itself where it is
-    /// one, and every one listing it among its leaves where it is a unit.
-    fn enumerations_listing(&self, declared: &str) -> Result<Vec<String>> {
-        let is_enumeration = |declaration: &Declaration| {
-            matches!(
-                declaration,
-                Declaration::Sum {
-                    form: AlternativesForm::Enumeration,
-                    ..
-                }
-            )
-        };
-        Ok(match self.shape(declared)? {
-            declaration @ Declaration::Sum { .. } => {
-                if is_enumeration(declaration) {
-                    vec![declared.to_string()]
-                } else {
-                    Vec::new()
-                }
-            }
-            Declaration::Unit { .. } => {
-                let case = Case::Declared {
-                    declared: declared.to_string(),
-                };
-                let mut listing = Vec::new();
-                for (key, declaration) in &self.shapes {
-                    if is_enumeration(declaration)
-                        && self
-                            .leaves_of(std::slice::from_ref(&Case::Declared {
-                                declared: key.clone(),
-                            }))?
-                            .contains(&case)
-                    {
-                        listing.push(key.clone());
-                    }
-                }
-                listing
-            }
-            Declaration::Product { .. } | Declaration::Newtype { .. } => Vec::new(),
-        })
     }
 
     /// What a declaration a document was read whole with says, where [`Coherent`] held the key to
@@ -5002,6 +4920,7 @@ fn lower(
         Node::Binary {
             op,
             reading,
+            ordering,
             left,
             right,
             aborts,
@@ -5015,6 +4934,7 @@ fn lower(
             *op,
             Operands {
                 reading,
+                ordering: ordering.as_ref(),
                 left,
                 right,
                 aborts,
@@ -5358,16 +5278,14 @@ fn shared_field(
     ty: &Ty,
 ) -> Lowered<ir::Value> {
     let Ty::Ref {
-        named: Case::Declared { declared },
+        named: named @ Case::Declared { .. },
     } = of
     else {
         unreachable!("a field is read off a sum only where the sum is its target's type");
     };
     let cases = lowering
         .declared
-        .leaves_of(&[Case::Declared {
-            declared: declared.clone(),
-        }])
+        .leaves_of(std::slice::from_ref(named))
         .expect("`Coherent` held every case of the sum to be one a declaration crossed for");
     let which = Tagged::of(value, of).which(builder);
     let read = builder.create_block();
@@ -5696,15 +5614,17 @@ fn lower_kernel(
             let [key, list] = given[..] else {
                 unreachable!("`Coherent` held list.sortBy to the two arguments it takes");
             };
-            let subject = ordering_subject(kernel, fact);
-            lists::sorted_by(builder, lowering, module, abort, key, subject, list.value)?
+            let (subject, ordering) = ordering_subject(kernel, fact);
+            lists::sorted_by(
+                builder, lowering, module, abort, key, subject, ordering, list.value,
+            )?
         }
         LoweredKernel::ListSort => {
             let [list] = values[..] else {
                 unreachable!("`Coherent` held list.sort to the one argument it takes");
             };
-            let subject = ordering_subject(kernel, fact);
-            lists::sorted(builder, lowering, module, subject, list)?
+            let (subject, ordering) = ordering_subject(kernel, fact);
+            lists::sorted(builder, lowering, module, subject, ordering, list)?
         }
         LoweredKernel::ListMax | LoweredKernel::ListMin => {
             let [list] = values[..] else {
@@ -5714,8 +5634,8 @@ fn lower_kernel(
                 LoweredKernel::ListMax => Op::Gt,
                 _ => Op::Lt,
             };
-            let subject = ordering_subject(kernel, fact);
-            lists::extreme(builder, lowering, module, op, subject, list)?
+            let (subject, ordering) = ordering_subject(kernel, fact);
+            lists::extreme(builder, lowering, module, op, subject, ordering, list)?
         }
         LoweredKernel::ListReverse => {
             let [list] = values[..] else {
@@ -6093,12 +6013,13 @@ fn lower_kernel(
 }
 
 /// What a kernel that orders was settled as ordering by, which `Coherent` held to be the one type
-/// its contract says it orders.
-fn ordering_subject(kernel: LoweredKernel, fact: &KernelFact) -> &Ty {
-    let KernelFact::OrderingSubject { ty } = fact else {
+/// its contract says it orders, and what a value of that type is ordered by: itself for a number
+/// or text, and the one enumeration that places them for a case or a union of cases.
+fn ordering_subject(kernel: LoweredKernel, fact: &KernelFact) -> (&Ty, Option<&Ty>) {
+    let KernelFact::OrderingSubject { ty, ordering } = fact else {
         unreachable!("`Coherent` held {kernel:?} to the ordering subject it settles");
     };
-    ty
+    (ty, ordering.as_ref())
 }
 
 /// The function two values of a temporal type are compared through, which answers below, at or
@@ -6513,6 +6434,9 @@ where
 /// caller already has all of them off one `Node::Binary`.
 struct Operands<'a> {
     reading: &'a Reading,
+    /// What the operands are ordered by, where the operator orders them at all: the checker's own
+    /// answer, and not something this side works out again from the operands' types.
+    ordering: Option<&'a Ty>,
     left: &'a Node,
     right: &'a Node,
     aborts: &'a [AbortKind],
@@ -6696,7 +6620,12 @@ fn read_in(
     reading: &Ty,
     operands: Operands,
 ) -> Lowered<ir::Value> {
-    let Operands { left, right, .. } = operands;
+    let Operands {
+        ordering,
+        left,
+        right,
+        ..
+    } = operands;
     let a = lower(builder, lowering, module, bindings, abort, left)?;
     let b = lower(builder, lowering, module, bindings, abort, right)?;
     let pair = lowering
@@ -6707,12 +6636,12 @@ fn read_in(
         PairIn::Opened(inner) => {
             let (_, a) = opened(builder, lowering.declared, left.ty(), a)?;
             let (_, b) = opened(builder, lowering.declared, right.ty(), b)?;
-            compare(builder, lowering, module, op, &inner, a, b)
+            compare(builder, lowering, module, op, &inner, ordering, a, b)
         }
         PairIn::Held => {
             let a = restate(builder, lowering, module, a, left.ty(), reading)?;
             let b = restate(builder, lowering, module, b, right.ty(), reading)?;
-            compare(builder, lowering, module, op, reading, a, b)
+            compare(builder, lowering, module, op, reading, ordering, a, b)
         }
     }
 }
@@ -6752,8 +6681,8 @@ fn opened(
 
 /// The newtypes worn round a value ([`Declared::newtype_spine`]): the type of each value read out
 /// of the one before, from the outermost newtype in. Empty where the type is no newtype.
-struct NewtypeSpine {
-    opens: Vec<Ty>,
+pub(crate) struct NewtypeSpine {
+    pub(crate) opens: Vec<Ty>,
 }
 
 /// A binary operator over operands read as they stand.
@@ -6767,6 +6696,7 @@ fn binary_as_they_stand(
     operands: Operands,
 ) -> Lowered<ir::Value> {
     let Operands {
+        ordering,
         left,
         right,
         aborts,
@@ -6805,9 +6735,9 @@ fn binary_as_they_stand(
                 Op::Add | Op::Sub | Op::Mul => {
                     arithmetic(builder, lowering, module, abort, op, a, b, aborts)
                 }
-                Op::Eq | Op::Ne | Op::Lt | Op::Le | Op::Gt | Op::Ge => {
-                    compare(builder, lowering, module, op, a.ty, a.value, b.value)
-                }
+                Op::Eq | Op::Ne | Op::Lt | Op::Le | Op::Gt | Op::Ge => compare(
+                    builder, lowering, module, op, a.ty, ordering, a.value, b.value,
+                ),
                 // `/` answers the exact quotient, whatever it divides: each side is taken as the
                 // exact value it is, and the run ends for a zero divisor.
                 Op::Div => exact_operator(builder, lowering, module, abort, op, a, b, aborts),
@@ -6835,12 +6765,14 @@ fn binary_as_they_stand(
 /// asked of every type the checker compares, and `equality` answers it per type; an order is had
 /// by a number, text and an enumeration, and by a newtype over one of those, and `ordering`
 /// answers it.
+#[allow(clippy::too_many_arguments)]
 fn compare(
     builder: &mut FunctionBuilder,
     lowering: &Lowering,
     module: &mut ObjectModule,
     op: Op,
     ty: &Ty,
+    ordering: Option<&Ty>,
     a: ir::Value,
     b: ir::Value,
 ) -> Lowered<ir::Value> {
@@ -6851,7 +6783,7 @@ fn compare(
             Ok(builder.ins().icmp_imm_s(IntCC::Equal, same, 0))
         }
         Op::Lt | Op::Le | Op::Gt | Op::Ge => {
-            ordering::ordered(builder, lowering, module, op, ty, a, b)
+            ordering::ordered(builder, lowering, module, op, ty, ordering, a, b)
         }
         Op::Add | Op::Sub | Op::Mul | Op::Div | Op::Concat | Op::And | Op::Or => {
             unreachable!("{} is not a comparison", op.spelt())
