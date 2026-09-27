@@ -183,10 +183,22 @@ unsafe fn mismatched(decoding: *mut Decoding, path: *const Path, node: &Node, wa
 }
 
 /// Text arriving from outside, admitted where it arrives, which is at its string leaf: put in NFC
-/// (spec §string-canonical). What most documents write is ASCII, which is NFC already and is taken
-/// as it is.
-fn canonical(written: &[u8]) -> std::borrow::Cow<'_, str> {
-    souther_text::admitted(written, STRING_HOLDS).expect("the parser holds a string to be UTF-8")
+/// and within what a String holds (spec §string-canonical, §what-a-string-holds), or refused with
+/// the issue code `invalid_format` at `path` — half of a surrogate pair as much as text with no
+/// place is not the form a string's leaf takes.
+unsafe fn admitted_text<'a>(
+    written: &'a [u8],
+    capacity: souther_text::Capacity,
+    path: *const Path,
+    decoding: *mut Decoding,
+) -> Option<std::borrow::Cow<'a, str>> {
+    match souther_text::admitted(written, capacity) {
+        Ok(text) => Some(text),
+        Err(souther_text::AdmissionRefusal::NotText | souther_text::AdmissionRefusal::NoPlace) => {
+            unsafe { refused(decoding, path) };
+            None
+        }
+    }
 }
 
 /// Begins reading `length` bytes at `bytes` as a document in the external form.
@@ -598,7 +610,9 @@ pub unsafe extern "C" fn souther_read_string(
     out: *mut *mut Text,
 ) -> i8 {
     let read = match unsafe { &*node } {
-        Node::String(written) => Some(string_of(&canonical(written))),
+        Node::String(written) => {
+            unsafe { admitted_text(written, STRING_HOLDS, path, decoding) }.map(|it| string_of(&it))
+        }
         other => {
             unsafe { mismatched(decoding, path, other, "String") };
             None
@@ -656,7 +670,7 @@ unsafe fn temporal_text<'a>(
     decoding: *mut Decoding,
 ) -> Option<std::borrow::Cow<'a, str>> {
     match node {
-        Node::String(written) => Some(canonical(written)),
+        Node::String(written) => unsafe { admitted_text(written, STRING_HOLDS, path, decoding) },
         other => {
             unsafe { mismatched(decoding, path, other, "String") };
             None
@@ -759,8 +773,11 @@ pub unsafe extern "C" fn souther_read_instant(
     unsafe { answered(out, read, ptr::null_mut()) }
 }
 
-/// Whether `node` is text naming a case, having recorded that it is not where it is not. Which
-/// case it names is asked of it next ([`souther_read_is`]).
+/// Whether `node` is text naming a case, having recorded that it is not where it is not, or that
+/// its canonical value has no place a case spelling could hold. Admission is settled here, once:
+/// [`souther_read_is`] and [`souther_read_not_a_case`] read `node`'s text only after this has
+/// answered 1 for it, and rely on that admission already having succeeded. Which case it names is
+/// asked of it next ([`souther_read_is`]).
 ///
 /// # Safety
 /// As [`souther_read_object`].
@@ -771,11 +788,11 @@ pub unsafe extern "C" fn souther_read_case(
     decoding: *mut Decoding,
 ) -> i8 {
     let node = unsafe { &*node };
-    if let Node::String(_) = node {
-        return 1;
-    }
-    unsafe { mismatched(decoding, path, node, "a case") };
-    0
+    let Node::String(written) = node else {
+        unsafe { mismatched(decoding, path, node, "a case") };
+        return 0;
+    };
+    i8::from(unsafe { admitted_text(written, STRING_HOLDS, path, decoding) }.is_some())
 }
 
 /// What the object `node` names its case with, under `key`, and null having recorded why where it
@@ -813,12 +830,16 @@ pub unsafe extern "C" fn souther_read_tag(
 ///
 /// # Safety
 /// `node` is a place in a document being read that holds text; `name` is a string of the
-/// runtime's layout.
+/// runtime's layout. `node` is one [`souther_read_case`] has already answered 1 for: this takes no
+/// `path` or `decoding` to report a refusal with, because admission was already settled there, and
+/// asking again of the same text cannot answer differently.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_read_is(node: *const Node, name: *const Text) -> i8 {
     match unsafe { &*node } {
         Node::String(written) => {
-            i8::from(canonical(written).as_bytes() == unsafe { text(&name) }.as_bytes())
+            let admitted = souther_text::admitted(written, STRING_HOLDS)
+                .expect("souther_read_case admitted this text");
+            i8::from(admitted.as_bytes() == unsafe { text(&name) }.as_bytes())
         }
         _ => 0,
     }
@@ -827,16 +848,18 @@ pub unsafe extern "C" fn souther_read_is(node: *const Node, name: *const Text) -
 /// Records that the text `node` writes names none of the cases there are, at `path`.
 ///
 /// # Safety
-/// As [`souther_read_object`].
+/// As [`souther_read_object`], and `node` is one [`souther_read_case`] has already answered 1 for.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_read_not_a_case(
     node: *const Node,
     path: *const Path,
     decoding: *mut Decoding,
 ) {
-    // What was written, as the text it is admitted as: every string holds text in NFC.
+    // What was written, as the text it is admitted as: every string holds text in NFC and within
+    // what a String holds, which `souther_read_case` already established for this node.
     let written = match unsafe { &*node } {
-        Node::String(written) => canonical(written),
+        Node::String(written) => souther_text::admitted(written, STRING_HOLDS)
+            .expect("souther_read_case admitted this text"),
         _ => std::borrow::Cow::Borrowed(""),
     };
     unsafe {
@@ -1666,6 +1689,35 @@ mod tests {
             1
         );
         unsafe { souther_decode_abandon(decoding) };
+        souther_reset(mark);
+    }
+
+    /// A string leaf whose canonical value has no place at what a `String` holds is refused with
+    /// `invalid_format`, the same code half of a surrogate pair is refused with — never a silent
+    /// `false` that a case-reading caller (`souther_read_is`) would go on to record as
+    /// `not_allowed`, which conflated "not this case" with "not a case at all"
+    /// (souther-native-compiler#109). `admitted_text` is what every string-leaf reader
+    /// (`souther_read_string`, `souther_read_case`, `temporal_text`) routes through, so pinning it
+    /// here pins all of them; a document string long enough to exceed the real
+    /// `STRING_HOLDS` (2^28 - 1 code points) is not something a test can build, so this asks the
+    /// same gate of a small capacity instead, exactly as the language's own test of the bound does
+    /// (spec §what-a-string-holds).
+    #[test]
+    fn text_with_no_place_is_invalid_format_and_not_a_silent_refusal() {
+        let mark = souther_mark();
+        let decoding = begun("{}");
+        let refused = unsafe {
+            admitted_text(
+                b"abcd",
+                souther_text::Capacity::of_code_points(3),
+                ptr::null(),
+                decoding,
+            )
+        };
+        assert!(refused.is_none());
+        let found = issues(decoding);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(found[0].contains("invalid_format"), "{found:?}");
         souther_reset(mark);
     }
 
