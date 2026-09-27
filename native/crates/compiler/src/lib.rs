@@ -1209,6 +1209,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
     codecs.define(&mut emitting)?;
 
     surface.carry(&mut module);
+    refer_to_the_runtimes_generation(&mut module);
 
     Ok(accepted(module.finish().emit()))
 }
@@ -2443,6 +2444,29 @@ fn machine_type(ty: &Ty) -> Lowered<types::Type> {
             Prim::Rational => Err(not_lowered(format!("a value of type {}", prim.spelt()))),
         },
     }
+}
+
+/// Has the object refer to the symbol the runtime of this object's generation defines
+/// ([`runtime_generation_symbol`]), so that linking it with a runtime of another generation is an
+/// undefined symbol. The calls generated code makes to the runtime are to names that carry no
+/// generation, and a linker checks a name and nothing of how a call to it is made.
+///
+/// A datum the object holds and nothing reads, since a relocation is what a linker has to resolve;
+/// local, so that the objects of one library do not each define it.
+fn refer_to_the_runtimes_generation(module: &mut ObjectModule) {
+    let generation = accepted(module.declare_data(
+        &souther_native_abi::runtime_generation_symbol(),
+        Linkage::Import,
+        false,
+        false,
+    ));
+    let held =
+        accepted(module.declare_data("souther$runtime_generation", Linkage::Local, false, false));
+    let mut laid = DataDescription::new();
+    laid.define(vec![0; SLOT as usize].into_boxed_slice());
+    let named = module.declare_data_in_data(generation, &mut laid);
+    laid.write_data_addr(0, named, 0);
+    accepted(module.define_data(held, &laid));
 }
 
 /// The name the runtime's token for a case no declaration names is defined under, where there is

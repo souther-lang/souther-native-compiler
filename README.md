@@ -418,6 +418,13 @@ character as `_u<hex>_`, its code point. So `shop.quote` is `souther6_m_shop_b_q
 behavior named `数量` is `..._b__u6570__u91cf_`, and inside a name `_` is only ever followed by `_`
 or `u`, which is what keeps every spelling readable back to the one set of names it was made from.
 
+The functions generated code calls in the runtime are the runtime's own and carry no generation, so
+a linker would resolve one to a runtime that makes the call another way. The runtime instead defines
+a symbol only its generation defines, `souther_runtime_abi_<n>`, and every object refers to the one
+of its own: an object linked with a runtime of another generation has an undefined symbol.
+`native/crates/abi/generations/<n>.txt` records the contract each generation begins from, and a test
+fails when what the current one records changes without a new generation.
+
 A published behavior and a published value have an entry of their own for a host, which converts
 what a host hands over and calls the symbol another object calls. The two are called by different
 parties, and the day one of them takes a value in a form a host does not hand one over in, the

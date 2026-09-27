@@ -75,6 +75,7 @@ fn surface() -> BTreeSet<String> {
         lines.insert(format!("status {name} = {status}"));
     }
     lines.insert(format!("answers {IMPLEMENTATION_ANSWERS:?}"));
+    lines.insert(format!("runtime says {}", runtime_generation_symbol()));
     for (name, value) in constants() {
         lines.insert(format!("const {name} = {value}"));
     }

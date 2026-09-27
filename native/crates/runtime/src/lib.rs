@@ -281,7 +281,12 @@ pub unsafe extern "C" fn souther_string_compare(
     })
 }
 
-/// The two strings' text, one after the other, as a string of its own: `++` over two strings, and
+// The symbol that says which generation of the contract with generated code this runtime is
+// (`souther_native_abi::runtime_generation_symbol`). Written by the build from the abi crate's
+// number, so that an object of another generation has an undefined symbol and not a call answered
+// the other way.
+include!(concat!(env!("OUT_DIR"), "/runtime_generation.rs"));
+
 /// What a string holds on this carrier: how much text, in UTF-16 code units.
 ///
 /// The language says the bound is the carrier's (spec §what-a-string-holds), and this carrier's own
@@ -292,6 +297,7 @@ pub unsafe extern "C" fn souther_string_compare(
 pub(crate) const STRING_HOLDS: souther_text::Capacity =
     souther_text::Capacity::of_units(1_073_741_819);
 
+/// The two strings' text, one after the other, as a string of its own: `++` over two strings, and
 /// `String.append`.
 ///
 /// In NFC, which each of the two is and the join need not be: a letter ending the one and a mark

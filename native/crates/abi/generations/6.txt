@@ -175,6 +175,7 @@ host RuntimeFunction { name: "souther_string_length", takes: [Given(String)], an
 host RuntimeFunction { name: "souther_string_of_utf8", takes: [Given(Bytes), Given(Count)], answers: Some(String) }
 host RuntimeFunction { name: "souther_time_iso", takes: [Given(Time)], answers: Some(String) }
 host RuntimeFunction { name: "souther_time_of_iso", takes: [Given(String)], answers: Some(Time) }
+runtime says souther_runtime_abi_6
 status FAKE_NO_OUTPUT = 2147483644
 status HOST_EXCEPTION = 2147483647
 status INJECTION_PROTOCOL_VIOLATION = 2147483646

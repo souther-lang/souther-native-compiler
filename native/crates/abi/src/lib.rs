@@ -66,7 +66,8 @@
 /// did. The symbols are the runtime's own and carry no generation, so an object built before the
 /// move calls `souther_string_concat(a, b)` and reads a pointer back from a function that now
 /// takes a third argument for the answer, which no linker sees; what a generation is for is that
-/// such an object no longer resolves the symbols of one built after it. The record of the
+/// such an object no longer resolves the symbols of one built after it, and that the runtime is
+/// held to the same by a symbol of its own ([`runtime_generation_symbol`]). The record of the
 /// contract each generation begins from is `generations/<n>.txt`, and `tests/generation.rs` holds
 /// the current one to it.
 ///
@@ -79,6 +80,25 @@
 ///
 /// The last of [`GENERATIONS`], and written nowhere else.
 pub const ABI_GENERATION: u32 = GENERATIONS[GENERATIONS.len() - 1].0;
+
+/// The symbol the runtime defines to say which generation it answers to, and every object generated
+/// code makes refers to.
+///
+/// A generation written into the symbols of generated code keeps two objects of different
+/// generations from resolving one another, and keeps nothing from the runtime: the functions
+/// generated code calls in it are the runtime's own, `souther_string_concat` among them, and a
+/// linker resolves such a name to whatever defines it, however differently the call is made. So
+/// the runtime states its generation in the one way a linker checks, a symbol only that generation
+/// defines, and every object refers to the one its own generation names. An object linked with a
+/// runtime of another generation then has an undefined symbol, and never a call made one way and
+/// answered the other. The runtime writes its definition from [`ABI_GENERATION`] when it is built
+/// and the driver writes the reference from it, so neither spells a number.
+///
+/// An object built before the symbol existed refers to none, and this cannot stop it: the guard
+/// is from generation 6 on.
+pub fn runtime_generation_symbol() -> String {
+    format!("souther_runtime_abi_{ABI_GENERATION}")
+}
 
 /// What each generation moved, oldest first, as the paragraphs above tell it at length.
 ///
@@ -112,7 +132,8 @@ pub const GENERATIONS: &[(u32, &str)] = &[
         "a generated string operation that may have no answer writes it through room and answers \
          whether it wrote one: `souther_string_concat`, `_lowercase`, `_uppercase`, `_join`, \
          `_concat_all`, `_replace`, `_reverse` and `_from_decimal`, where each answered the string \
-         itself (souther-native-compiler#107)",
+         itself, and the runtime says which generation it is by a symbol every object refers to \
+         (souther-native-compiler#107)",
     ),
 ];
 

@@ -34,6 +34,19 @@ fn main() {
         .filter(|_| out.ancestors().nth(2).and_then(|it| it.file_name()) == Some("build".as_ref()))
         .expect("cargo's output directory to stand at <profile>/build/<package>/out");
 
+    // The symbol that says which generation of the contract with generated code this runtime is,
+    // written from the number the `abi` crate holds and not spelt beside it.
+    fs::write(
+        out.join("runtime_generation.rs"),
+        format!(
+            "/// Defined by this generation of the runtime and referred to by every object of it.\n\
+             #[unsafe(export_name = \"{}\")]\n\
+             pub static RUNTIME_GENERATION: u8 = 0;\n",
+            souther_native_abi::runtime_generation_symbol()
+        ),
+    )
+    .expect("the runtime's generation written");
+
     let probe = out.join("probe.rs");
     fs::write(&probe, "pub fn probe() {}\n").expect("the probe written");
     let mut rustc = Command::new(env::var_os("RUSTC").expect("cargo to say which rustc"));
