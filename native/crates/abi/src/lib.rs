@@ -1160,6 +1160,48 @@ pub const STRING_TO_DECIMAL: &str = "souther_string_to_decimal";
 /// `String.fromDecimal`.
 pub const STRING_FROM_DECIMAL: &str = "souther_string_from_decimal";
 
+/// The symbols the `Rational` module's kernels and the exact reading an operator does of its
+/// operands are computed through (spec §primitives, ADR-0116), taking what each takes in the order
+/// it takes it.
+///
+/// A `Rational` has no external form, so nothing a host calls names one and each of these is a
+/// call generated code makes: it stands between generated code and the runtime as a
+/// [`Word::Rational`], and no [`HostWord`] is one. One that answers nothing for some of what it is
+/// handed answers whether it wrote its value through room it is handed last, as [`DECIMAL_ADD`]
+/// does, and the reason the run ends for is the caller's.
+pub const RATIONAL_FROM_INT: &str = "souther_rational_from_int";
+/// `Rational.fromDecimal`, and the exact reading of a `Decimal`.
+pub const RATIONAL_FROM_DECIMAL: &str = "souther_rational_from_decimal";
+/// The unary `-`.
+pub const RATIONAL_NEGATE: &str = "souther_rational_negate";
+/// Whether a division's divisor is nought, asked before it divides.
+pub const RATIONAL_IS_ZERO: &str = "souther_rational_is_zero";
+/// Whether a `Rational` is a whole number, asked before [`RATIONAL_TO_WHOLE`].
+pub const RATIONAL_IS_WHOLE: &str = "souther_rational_is_whole";
+/// Whether a `Rational` has a finite decimal spelling, asked before [`RATIONAL_TO_FINITE_DECIMAL`].
+pub const RATIONAL_HAS_FINITE_DECIMAL: &str = "souther_rational_has_finite_decimal";
+/// Two `Rational`s by exact value, into room for the comparison, as [`DECIMAL_COMPARE`] answers it
+/// and for all six comparisons for the same reason. It answers whether it could: a pair whose order
+/// needs a working width past what a number may be has none.
+pub const RATIONAL_COMPARE: &str = "souther_rational_compare";
+/// `+` and `Rational.add`, into room for the `Rational`.
+pub const RATIONAL_ADD: &str = "souther_rational_add";
+/// `-` and `Rational.subtract`, into room for the `Rational`.
+pub const RATIONAL_SUBTRACT: &str = "souther_rational_subtract";
+/// `*` and `Rational.multiply`, into room for the `Rational`.
+pub const RATIONAL_MULTIPLY: &str = "souther_rational_multiply";
+/// `/` and `Rational.divide`, into room for the `Rational`, over a divisor [`RATIONAL_IS_ZERO`] has
+/// said is not nought.
+pub const RATIONAL_DIVIDE: &str = "souther_rational_divide";
+/// `Rational.toWholeNumber` of a whole number, into room for the `Int`.
+pub const RATIONAL_TO_WHOLE: &str = "souther_rational_to_whole";
+/// `Rational.toFiniteDecimal` of a value that has one, into room for the `Decimal`.
+pub const RATIONAL_TO_FINITE_DECIMAL: &str = "souther_rational_to_finite_decimal";
+/// `Rational.toInt`, into room for the `Int`.
+pub const RATIONAL_TO_INT: &str = "souther_rational_to_int";
+/// `Rational.toDecimal`, into room for the `Decimal`.
+pub const RATIONAL_TO_DECIMAL: &str = "souther_rational_to_decimal";
+
 /// The symbols a caller outside a Souther program makes a temporal with, and reads one back
 /// through: the ISO 8601 text that names it, as a string.
 ///
@@ -2055,7 +2097,7 @@ pub const GENERATED_RUNTIME: &[GeneratedCall] = {
         Value,
     };
     use Parameter::{Given, Room};
-    use Word::{Comparison, Form, Host, Machine, Memory, Node, Path};
+    use Word::{Comparison, Form, Host, Machine, Memory, Node, Path, Rational};
     &[
         GeneratedCall {
             name: ALLOCATE,
@@ -2291,6 +2333,86 @@ pub const GENERATED_RUNTIME: &[GeneratedCall] = {
                 Given(Host(Decimal)),
                 Given(Host(Int)),
                 Given(Host(Value)),
+                Room(Host(Decimal)),
+            ],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: RATIONAL_FROM_INT,
+            takes: &[Given(Host(Int))],
+            answers: Some(Rational),
+        },
+        GeneratedCall {
+            name: RATIONAL_FROM_DECIMAL,
+            takes: &[Given(Host(Decimal))],
+            answers: Some(Rational),
+        },
+        GeneratedCall {
+            name: RATIONAL_NEGATE,
+            takes: &[Given(Rational)],
+            answers: Some(Rational),
+        },
+        GeneratedCall {
+            name: RATIONAL_IS_ZERO,
+            takes: &[Given(Rational)],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: RATIONAL_IS_WHOLE,
+            takes: &[Given(Rational)],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: RATIONAL_HAS_FINITE_DECIMAL,
+            takes: &[Given(Rational)],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: RATIONAL_COMPARE,
+            takes: &[Given(Rational), Given(Rational), Room(Comparison)],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: RATIONAL_ADD,
+            takes: &[Given(Rational), Given(Rational), Room(Rational)],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: RATIONAL_SUBTRACT,
+            takes: &[Given(Rational), Given(Rational), Room(Rational)],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: RATIONAL_MULTIPLY,
+            takes: &[Given(Rational), Given(Rational), Room(Rational)],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: RATIONAL_DIVIDE,
+            takes: &[Given(Rational), Given(Rational), Room(Rational)],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: RATIONAL_TO_WHOLE,
+            takes: &[Given(Rational), Room(Host(Int))],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: RATIONAL_TO_FINITE_DECIMAL,
+            takes: &[Given(Rational), Room(Host(Decimal))],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: RATIONAL_TO_INT,
+            takes: &[Given(Host(Value)), Given(Rational), Room(Host(Int))],
+            answers: Some(Host(Bool)),
+        },
+        GeneratedCall {
+            name: RATIONAL_TO_DECIMAL,
+            takes: &[
+                Given(Host(Int)),
+                Given(Host(Value)),
+                Given(Rational),
                 Room(Host(Decimal)),
             ],
             answers: Some(Host(Bool)),

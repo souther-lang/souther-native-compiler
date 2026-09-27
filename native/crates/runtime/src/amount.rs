@@ -30,7 +30,7 @@ use std::cmp::Ordering;
 /// stop somewhere: this is where the JVM's `BigInteger` stops, so that a result one carrier holds is
 /// one the other holds too. A result past it has no place, and the operation that would have built
 /// it refuses (spec §an-operation-refuses-only-what-its-own-answer-has-no-place-for).
-const WIDEST: u64 = i32::MAX as u64;
+pub(crate) const WIDEST: u64 = i32::MAX as u64;
 
 /// How many digits the text an amount is written as at a boundary may spell an exponent out into
 /// (spec §primitives): `1E+1000` is written with its thousand zeros and `1E+1001` as it stands.
@@ -62,7 +62,7 @@ pub(crate) enum Rounding {
 
 /// What rounding dropped, measured against half of the unit it rounded to.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Dropped {
+pub(crate) enum Dropped {
     Nothing,
     BelowHalf,
     Half,
@@ -105,7 +105,7 @@ impl Ord for Dropped {
 const LOG2_10: f64 = std::f64::consts::LOG2_10;
 
 /// The magnitude, where it is no wider than a `Decimal` holds.
-fn held(magnitude: Magnitude) -> Option<Magnitude> {
+pub(crate) fn held(magnitude: Magnitude) -> Option<Magnitude> {
     (magnitude.bits() <= WIDEST).then_some(magnitude)
 }
 
@@ -125,7 +125,7 @@ fn scaled_up(magnitude: &Magnitude, by: u64) -> Option<Magnitude> {
 
 /// What a remainder is, against half the divisor it was left by: twice the remainder against the
 /// divisor is the remainder against what the divisor leaves above it.
-fn dropped(remainder: &Magnitude, divisor: &Magnitude) -> Dropped {
+pub(crate) fn dropped(remainder: &Magnitude, divisor: &Magnitude) -> Dropped {
     if remainder.is_zero() {
         return Dropped::Nothing;
     }
@@ -137,7 +137,12 @@ fn dropped(remainder: &Magnitude, divisor: &Magnitude) -> Dropped {
 }
 
 /// The quotient, rounded by `mode` from what the division dropped.
-fn rounded(quotient: Magnitude, negative: bool, dropped: Dropped, mode: Rounding) -> Magnitude {
+pub(crate) fn rounded(
+    quotient: Magnitude,
+    negative: bool,
+    dropped: Dropped,
+    mode: Rounding,
+) -> Magnitude {
     if mode.away(negative, quotient.is_odd(), dropped) {
         quotient.increment()
     } else {
@@ -152,6 +157,17 @@ impl Amount {
             magnitude,
             scale,
         }
+    }
+
+    /// A value of this sign, magnitude and scale, where the magnitude is no wider than a `Decimal`
+    /// holds.
+    pub(crate) fn of_magnitude(negative: bool, magnitude: Magnitude, scale: i32) -> Option<Amount> {
+        Some(Amount::new(negative, held(magnitude)?, scale))
+    }
+
+    /// The sign, the magnitude and the scale.
+    pub(crate) fn split(&self) -> (bool, &Magnitude, i32) {
+        (self.negative, &self.magnitude, self.scale)
     }
 
     /// The value these parts are: a sign, the magnitude as little-endian bytes, and the scale.

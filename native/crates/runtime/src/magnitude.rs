@@ -69,6 +69,10 @@ mod wide {
         made(BigUint::parse_bytes(digits, 10).expect("the digits read are ASCII digits"))
     }
 
+    pub(super) fn five_to(n: u32) -> BigUint {
+        made(BigUint::from(5u8).pow(n))
+    }
+
     /// Ten to `n`, for an `n` the caller has already held to a width a value may have.
     pub(super) fn ten_to(n: u64) -> BigUint {
         let n =
@@ -237,6 +241,60 @@ impl Magnitude {
                 (Magnitude::of_big(quotient), Magnitude::of_big(remainder))
             }
         }
+    }
+
+    /// The greatest whole number dividing both.
+    pub(crate) fn gcd(&self, other: &Magnitude) -> Magnitude {
+        match (self, other) {
+            (Small(one), Small(two)) => {
+                let (mut one, mut two) = (*one, *two);
+                while two != 0 {
+                    (one, two) = (two, one % two);
+                }
+                Small(one)
+            }
+            _ => Magnitude::of_big(self.big().gcd(&other.big())),
+        }
+    }
+
+    /// How many two's it is a multiple of, nought for nought.
+    pub(crate) fn twos(&self) -> u64 {
+        match self {
+            Small(0) => 0,
+            Small(small) => u64::from(small.trailing_zeros()),
+            Wide(big) => big.trailing_zeros().unwrap_or(0),
+        }
+    }
+
+    /// Divided by two to `by`, which the magnitude is a multiple of.
+    pub(crate) fn shifted_down(&self, by: u64) -> Magnitude {
+        match self {
+            Small(small) => Small(small >> by.min(127)),
+            Wide(big) => Magnitude::of_big(big >> by),
+        }
+    }
+
+    /// Times two to `by`, for a `by` the caller has already held to a width a value may have.
+    pub(crate) fn times_two_to(&self, by: u64) -> Magnitude {
+        if self.is_zero() || by == 0 {
+            return self.clone();
+        }
+        if let Small(small) = self
+            && by < 128
+            && small.leading_zeros() as u64 >= by
+        {
+            return Small(small << by);
+        }
+        Magnitude::of_big(self.big() << by)
+    }
+
+    /// Times five to `by`, for a `by` the caller has already held to a width a value may have.
+    pub(crate) fn times_five_to(&self, by: u64) -> Magnitude {
+        if self.is_zero() || by == 0 {
+            return self.clone();
+        }
+        let by = u32::try_from(by).expect("a power built here is one a value may be as wide as");
+        Magnitude::of_big(self.big() * wide::five_to(by))
     }
 
     /// Ten to `n`, for an `n` the caller has already held to a width a value may have.

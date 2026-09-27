@@ -112,7 +112,7 @@ language_units! {
 ///
 /// `mode` is a value of `RoundingMode`: one generated code laid out with one of the tokens above,
 /// which is the only way one is made.
-unsafe fn rounding(mode: *const Value) -> Rounding {
+pub(crate) unsafe fn rounding(mode: *const Value) -> Rounding {
     let token = unsafe {
         mode.cast::<u8>()
             .add(WHICH as usize)
