@@ -181,10 +181,12 @@ pub(crate) fn hash(
         Ty::Ref {
             named: Case::Primitive { .. },
         } => crate::named_as_a_type(ty),
-        // No value of it is made, and what holds only it is the one value: its hash is where every
-        // hash starts, as its equality is that two are the one value.
+        // No value of it is made, so nothing asks what one hashes to; a hasher of it is still
+        // handed to the runtime (`define`). What holds only it is not answered here: an empty set
+        // of it stands as an empty set of anything without being rebuilt, and keeps the hash it
+        // was built with, so it hashes as every empty set does, and a list and an optional as
+        // every empty list and absent optional do.
         Ty::Nothing { .. } | Ty::Never { .. } => Ok(start(builder)),
-        _ if ty.holds_no_value() => Ok(start(builder)),
         Ty::Set { .. } => Ok(runtime_call(builder, lowering, module, SET_HASH, &[value])),
         Ty::Map { map } => {
             let values = lowering
@@ -407,6 +409,10 @@ impl Hashing<'_, '_, '_, '_> {
     /// The start where it is absent, and what it holds combined with the mark of one present where
     /// it is not.
     fn optional(&mut self, held: &Ty, value: ir::Value) -> Lowered<ir::Value> {
+        // Never present, so what it holds is never read.
+        if held.has_no_value() {
+            return Ok(self.builder.ins().iconst(types::I64, HASH_START));
+        }
         let absent = self.builder.ins().icmp_imm_s(IntCC::Equal, value, NOTHING);
         let there = self.builder.create_block();
         let answered = self.builder.create_block();
@@ -433,6 +439,10 @@ impl Hashing<'_, '_, '_, '_> {
             .load(types::I64, TRUSTED, value, LIST_LENGTH as i32);
         let start = self.builder.ins().iconst(types::I64, HASH_START);
         let from = combine(self.builder, self.lowering, self.module, start, length);
+        // Empty, so no element is read.
+        if element.has_no_value() {
+            return Ok(from);
+        }
 
         let head = self.builder.create_block();
         self.builder.append_block_param(head, types::I64);

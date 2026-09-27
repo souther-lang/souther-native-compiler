@@ -94,6 +94,18 @@ class ASetIsHeldByItsMembersTest {
                 Set.contains(asked, stages)
             }
 
+            let emptySets = Set.singleton(Set.fromList([]))
+            let emptyLists = Set.singleton([[]])
+
+            behavior emptyWidened : (n: Int) -> Bool
+            let emptyWidened (n) = {
+                let sets: Set<Set<Int>> = emptySets
+                let lists: Set<List<List<Int>>> = emptyLists
+                let none: Set<Int> = Set.fromList(List.rangeInclusive(1, n))
+                let inner: List<Int> = List.rangeInclusive(1, n)
+                Set.contains(none, sets) && Set.contains([inner], lists)
+            }
+
             behavior parities : (xs: List<Int>) -> Int
             let parities (xs) = Set.size(Set.map(x -> Int.floorMod(x, 2), Set.fromList(xs)))
 
@@ -180,6 +192,10 @@ class ASetIsHeldByItsMembersTest {
             example wonOnly
                 | "the case it holds" : (false) -> true
                 | "another case of the sum" : (true) -> false
+
+            example emptyWidened
+                | "an empty set and list built of nothing, asked of as sets of Int" : (0) -> true
+                | "something else" : (1) -> false
 
             example parities
                 | "odd and even" : ([1, 2, 3, 4, 5]) -> 2

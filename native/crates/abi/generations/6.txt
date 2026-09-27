@@ -212,7 +212,7 @@ hashing 3 sum, union: as the case the value is
 hashing 4 optional: START if absent, else combine(PRESENT, held)
 hashing 5 tuple: each member from START; list: combine(START, length), then each element
 hashing 6 set: souther_set_hash; map: souther_map_hash(values' hasher)
-hashing 7 what has no value: START
+hashing 7 what has no value: START; what holds only it, as what holds anything
 host RuntimeFunction { name: "souther_date_iso", takes: [Given(Date)], answers: Some(String) }
 host RuntimeFunction { name: "souther_date_of_iso", takes: [Given(String)], answers: Some(Date) }
 host RuntimeFunction { name: "souther_datetime_iso", takes: [Given(DateTime)], answers: Some(String) }

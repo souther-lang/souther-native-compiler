@@ -1423,7 +1423,8 @@ pub const INSTANT_HASH: &str = "souther_instant_hash";
 ///   [`HASH_PRESENT`] where it is not.
 /// - A tuple: each member in order. A list: its length, then each element in order.
 /// - A set: [`SET_HASH`]. A map: [`MAP_HASH`], handed the values' hasher.
-/// - The type of what has no value, and what holds only it: [`HASH_START`].
+/// - The type of what has no value: [`HASH_START`], which nothing asks. What holds only it hashes as
+///   what holds anything else does, since it stands as that without being rebuilt.
 ///
 /// Two equal values hash alike under every line, which is what the runtime asks of a hash. A
 /// change to any line is a change of what a set built by one object is to another, and moves
@@ -1436,7 +1437,7 @@ pub const HASHING: &[&str] = &[
     "optional: START if absent, else combine(PRESENT, held)",
     "tuple: each member from START; list: combine(START, length), then each element",
     "set: souther_set_hash; map: souther_map_hash(values' hasher)",
-    "what has no value: START",
+    "what has no value: START; what holds only it, as what holds anything",
 ];
 
 /// What a hash is composed from.
