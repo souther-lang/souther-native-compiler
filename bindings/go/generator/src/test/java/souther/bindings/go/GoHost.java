@@ -129,7 +129,7 @@ final class GoHost {
      * what a Go programmer would have, and a host that formats its dependencies is not left with a
      * diff.
      */
-    private static void formatted(Generated binding) throws IOException, InterruptedException {
+    static void formatted(Generated binding) throws IOException, InterruptedException {
         ProcessBuilder builder = new ProcessBuilder("gofmt", "-d", ".")
                 .directory(binding.root().toFile());
         Process process = builder.start();
