@@ -50,10 +50,20 @@ final class GoHost {
      */
     static String ran(Path into, String model, String importPath, String main)
             throws IOException, InterruptedException {
+        return ran(into, List.of(model), importPath, main);
+    }
+
+    /** As above, for a library of several modules, each written as a source. */
+    static String ran(Path into, List<String> modules, String importPath, String main)
+            throws IOException, InterruptedException {
         NativeCompiler.Library library = NativeCompiler.library(
-                souther.nativecode.Checked.of(List.of(model)), into.resolve("native"));
+                souther.nativecode.Checked.of(modules), into.resolve("native"));
         Generated binding = generated(library, into.resolve("binding"), importPath);
         return ran(into, binding, importPath, main, List.of(library.library().toString()));
+    }
+
+    /** A binding generated as the package {@code importPath}, which a host depends on. */
+    record Binding(Generated generated, String importPath) {
     }
 
     /**
@@ -63,9 +73,23 @@ final class GoHost {
      */
     static String ran(Path into, Generated binding, String importPath, String main,
                       List<String> arguments) throws IOException, InterruptedException {
-        workspace(into, binding, importPath, main);
-        formatted(binding);
-        go(into, List.of("vet", importPath + "/...", "host"));
+        return ran(into, List.of(new Binding(binding, importPath)), main, arguments);
+    }
+
+    /**
+     * What a host printed that depends on each of {@code bindings}: several in one program, which is
+     * what a binary that uses two libraries is.
+     */
+    static String ran(Path into, List<Binding> bindings, String main, List<String> arguments)
+            throws IOException, InterruptedException {
+        workspace(into, bindings, main);
+        List<String> vet = new ArrayList<>(List.of("vet"));
+        for (Binding binding : bindings) {
+            formatted(binding.generated());
+            vet.add(binding.importPath() + "/...");
+        }
+        vet.add("host");
+        go(into, vet);
         List<String> run = new ArrayList<>(List.of("run", "host"));
         run.addAll(arguments);
         return go(into, run);
@@ -88,35 +112,28 @@ final class GoHost {
         }
     }
 
-    /** Writes the workspace of the generated module, the runtime and a host whose {@code main.go} is {@code main}. */
-    private static void workspace(Path into, Generated binding, String importPath, String main)
+    /** Writes the workspace of the generated modules, the runtime and a host whose {@code main.go} is {@code main}. */
+    private static void workspace(Path into, List<Binding> bindings, String main)
             throws IOException {
         Path host = into.resolve("host");
         Files.createDirectories(host);
-        Files.writeString(into.resolve("go.work"), """
-                go 1.27
-
-                use (
-                	%s
-                	%s
-                	%s
-                )
-
-                replace %s %s => %s
-
-                replace %s v0.0.0 => %s
-                """.formatted(quoted(into.relativize(binding.root())), quoted(RUNTIME), "./host",
-                GoBindings.RUNTIME_MODULE_PATH, GoBindings.RUNTIME_VERSION, quoted(RUNTIME),
-                importPath, "./" + quoted(into.relativize(binding.root()))),
+        StringBuilder work = new StringBuilder("go 1.27\n\nuse (\n");
+        StringBuilder require = new StringBuilder();
+        StringBuilder replace = new StringBuilder();
+        for (Binding binding : bindings) {
+            Path relative = into.relativize(binding.generated().root());
+            work.append("\t").append(relative).append("\n");
+            require.append("require ").append(binding.importPath()).append(" v0.0.0\n");
+            replace.append("\nreplace ").append(binding.importPath()).append(" v0.0.0 => ./")
+                    .append(relative).append("\n");
+        }
+        work.append("\t").append(RUNTIME).append("\n\t./host\n)\n\nreplace ")
+                .append(GoBindings.RUNTIME_MODULE_PATH).append(" ").append(GoBindings.RUNTIME_VERSION)
+                .append(" => ").append(RUNTIME).append("\n").append(replace);
+        Files.writeString(into.resolve("go.work"), work.toString(), StandardCharsets.UTF_8);
+        Files.writeString(host.resolve("go.mod"), "module host\n\ngo 1.27\n\n" + require
+                + "require github.com/raoh-project/raoh-go " + raohVersion() + "\n",
                 StandardCharsets.UTF_8);
-        Files.writeString(host.resolve("go.mod"), """
-                module host
-
-                go 1.27
-
-                require %s v0.0.0
-                require github.com/raoh-project/raoh-go %s
-                """.formatted(importPath, raohVersion()), StandardCharsets.UTF_8);
         Files.writeString(host.resolve("main.go"), main, StandardCharsets.UTF_8);
     }
 
@@ -128,14 +145,6 @@ final class GoHost {
             throw new AssertionError("the runtime module asks for no Raoh");
         }
         return it.group(1);
-    }
-
-    private static String quoted(Path path) {
-        return path.toString();
-    }
-
-    private static String quoted(String path) {
-        return path;
     }
 
     /** What Go printed, run with {@code arguments} in {@code into}, where it ended well and said nothing else. */

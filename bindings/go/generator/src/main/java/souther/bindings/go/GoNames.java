@@ -148,6 +148,47 @@ final class GoNames {
     }
 
     /**
+     * What a function the library calls back is exported from Go as, which is a name of the whole
+     * program: the C symbol of an {@code //export} is global in the binary, so two bindings in one
+     * program, or two modules of one, must never share one however their names are spelled.
+     *
+     * <p>It is made of what says which one it is, each part encoded so that the whole is read back
+     * as the same parts and no other ({@link #encoded}), which a replacement of what Go does not take
+     * in a name is not: {@code a-b} and {@code a_b} would come to one.
+     *
+     * @param kind       {@code i} for a behavior a host implements and {@code f} for a function type
+     * @param importPath the import path of the binding, which no two bindings in a program share
+     * @param module     the module of the model the callback is of
+     * @param name       the behavior or the function type in that module
+     */
+    static String hostSymbol(char kind, String importPath, String module, String name) {
+        return "souther_host_z" + kind + "_z" + encoded(importPath) + "_z" + encoded(module) + "_z"
+                + encoded(name);
+    }
+
+    /**
+     * {@code text} as letters and digits and {@code _}, and as nothing else: a letter or a digit is
+     * itself, {@code _} is {@code __}, and any other byte of its UTF-8 is {@code _u} and two
+     * hexadecimal digits and {@code _}. Inside a name an {@code _} is then followed only by
+     * {@code _} or {@code u}, so {@code _z} is a separator no name holds, and two texts have one
+     * spelling only if they are one text.
+     */
+    static String encoded(String text) {
+        StringBuilder out = new StringBuilder();
+        for (byte each : text.getBytes(java.nio.charset.StandardCharsets.UTF_8)) {
+            char it = (char) (each & 0xff);
+            if (it < 0x80 && Character.isLetterOrDigit(it)) {
+                out.append(it);
+            } else if (it == '_') {
+                out.append("__");
+            } else {
+                out.append("_u").append(String.format("%02x", each & 0xff)).append('_');
+            }
+        }
+        return out.toString();
+    }
+
+    /**
      * The names taken in one place Go reads names in, so that two things given one name there are
      * refused with both of them named, rather than written as two declarations Go refuses.
      */

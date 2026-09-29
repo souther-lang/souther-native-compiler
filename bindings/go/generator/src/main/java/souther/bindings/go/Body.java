@@ -44,6 +44,11 @@ final class Body {
             return "unsafe";
         }
 
+        /** The import paths of the packages of the binding this file imports. */
+        java.util.Set<String> modulePaths() {
+            return java.util.Collections.unmodifiableSet(modules.keySet());
+        }
+
         String souther() {
             souther = true;
             return "souther";

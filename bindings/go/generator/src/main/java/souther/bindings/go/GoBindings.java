@@ -192,6 +192,7 @@ public final class GoBindings {
         for (GoModule at : modules.values()) {
             module(at);
         }
+        assertAcyclic();
         for (GoModule at : modules.values()) {
             moduleFile(at);
         }
@@ -307,7 +308,7 @@ public final class GoBindings {
     private record FunctionType(String importPath, String name, boolean called, boolean hosted) {
     }
 
-    /** Each function type's Go type, by the type and the shape it crosses in, once it is asked for. */
+    /** Each function type's Go type, by its module, the type and the shape it crosses in, once it is asked for. */
     private final Map<List<Object>, @Nullable FunctionType> functions = new LinkedHashMap<>();
 
     /**
@@ -323,7 +324,8 @@ public final class GoBindings {
      */
     private @Nullable FunctionType functionType(Manifest.Module module, Type.Function type,
                                                 Shape.FunctionOf shape) {
-        List<Object> key = List.of(type, shape);
+        // Written by the module that says it, and by no other, as a union is.
+        List<Object> key = List.of(module.name(), type, shape);
         if (functions.containsKey(key)) {
             return functions.get(key);
         }
@@ -435,7 +437,8 @@ public final class GoBindings {
                     .append("type ").append(dispatch).append(" struct {\n\torigin *").append(lib)
                     .append(".Run\n\tfn     ").append(signed).append("\n}\n");
             at.items.append(out);
-            hostCallback(at, importPath + "_" + at.path.getLast() + "_" + name, "dispatch" + name,
+            hostCallback(at, GoNames.hostSymbol('f', importPath, module.name(), name),
+                    "dispatch" + name,
                     dispatch, "hosted.fn", making.implementation(), making.implement(), true,
                     handed, answering, inputs);
         } else {
@@ -447,7 +450,15 @@ public final class GoBindings {
     }
 
     /** The interface each union no declaration names is written as, by its members, once it is asked for. */
-    private final Map<List<Case>, @Nullable UnionType> unions = new LinkedHashMap<>();
+    private final Map<UnionKey, @Nullable UnionType> unions = new LinkedHashMap<>();
+
+    /**
+     * A union is written by the module that says it, and by no other: a package that reused the one
+     * another module wrote would import it, and an import that is no dependency of the model is one
+     * Go may find a cycle in, where the model has none.
+     */
+    private record UnionKey(String module, List<Case> cases) {
+    }
 
     /** A union's interface: where it stands, and its members. */
     private record UnionType(String importPath, String name, List<Crossing.OneOf.Member> members) {
@@ -462,9 +473,10 @@ public final class GoBindings {
      */
     private Crossing.@Nullable OneOf oneOf(Manifest.Module module, Type.Union union,
                                            Manifest.@Nullable UnionAnswer told) {
-        UnionType made = unions.containsKey(union.cases()) ? unions.get(union.cases())
+        UnionKey key = new UnionKey(module.name(), union.cases());
+        UnionType made = unions.containsKey(key) ? unions.get(key)
                 : unionType(modules.get(module.name()), union);
-        unions.put(union.cases(), made);
+        unions.put(key, made);
         if (made == null) {
             return null;
         }
@@ -1162,7 +1174,7 @@ public final class GoBindings {
                 .append(unsafe).append(".Pointer) {\n")
                 .append("\t\tC.implement_").append(injection.implement())
                 .append("(fn, capability, hosted, userdata)\n\t})}\n}\n");
-        hostCallback(at, importPath + "_" + at.path.getLast() + "_" + injection.name(),
+        hostCallback(at, GoNames.hostSymbol('i', importPath, module.name(), injection.name()),
                 "dispatch" + trait, hosted, "hosted.impl.Apply", injection.implementation(),
                 injection.implement(), false, takes, answers, names);
     }
@@ -1178,14 +1190,14 @@ public final class GoBindings {
      * ({@code Callback}). What the library is given to call is made by a C function of this file's,
      * {@code implement_<symbol>}, which names the exported one.
      *
-     * @param unique   what the exported function is named after, which no other of the program has
+     * @param exported what the function is exported as, which no other of the program is ({@link GoNames#hostSymbol})
      * @param hosted   the type of what the library hands back first, holding the run its function
      *                 was made in as {@code origin}
      * @param call     what calls the host's function, taking the run and what the library handed over
      * @param function whether what is implemented is a function value and not a behavior, which
      *                 answers the value the library made
      */
-    private void hostCallback(GoModule at, String unique, String dispatch, String hosted,
+    private void hostCallback(GoModule at, String exported, String dispatch, String hosted,
                               String call, Manifest.Implementation implementation, String implement,
                               boolean function, List<Crossing> takes, Crossing answers,
                               List<String> names) {
@@ -1193,7 +1205,6 @@ public final class GoBindings {
         String souther = imports.souther();
         String lib = imports.lib();
         String unsafe = imports.unsafe();
-        String exported = "souther_host_" + unique.replaceAll("[^A-Za-z0-9_]", "_");
         List<String> cParameters = new ArrayList<>();
         List<String> goParameters = new ArrayList<>();
         List<String> handedWords = new ArrayList<>();
@@ -1396,6 +1407,40 @@ public final class GoBindings {
         Files.createDirectories(at.getParent());
         input.declarations().copyTo(at);
         written.add(at);
+    }
+
+    /**
+     * Holds what is written to what Go asks: the packages import one another without a cycle. The
+     * model's modules do, and every import a package has is one of what its module depends on, since
+     * what belongs to a module is written in its package; so a cycle here is this generator writing
+     * a package that reaches another it has no reason to, and it is refused rather than left for a
+     * host's build to find.
+     */
+    private void assertAcyclic() {
+        Map<String, GoModule> byPath = new LinkedHashMap<>();
+        modules.values().forEach(it -> byPath.put(it.importPath, it));
+        Set<String> done = new java.util.HashSet<>();
+        for (GoModule start : modules.values()) {
+            visit(start, byPath, done, new ArrayList<>());
+        }
+    }
+
+    private void visit(GoModule at, Map<String, GoModule> byPath, Set<String> done, List<String> path) {
+        if (done.contains(at.importPath)) {
+            return;
+        }
+        if (path.contains(at.importPath)) {
+            List<String> cycle = new ArrayList<>(path.subList(path.indexOf(at.importPath), path.size()));
+            cycle.add(at.importPath);
+            throw new IllegalStateException("the generated packages import one another in a cycle: "
+                    + String.join(" -> ", cycle));
+        }
+        path.add(at.importPath);
+        for (String imported : at.imports.modulePaths()) {
+            visit(byPath.get(imported), byPath, done, path);
+        }
+        path.removeLast();
+        done.add(at.importPath);
     }
 
     // ---------------------------------------------------------------------------------------------
