@@ -109,6 +109,12 @@ final class Body {
         return this;
     }
 
+    /** Statements already written at the depth they belong at, as they are. */
+    Body raw(String written) {
+        out.append(written);
+        return this;
+    }
+
     /** A block's head, and what is written until {@link #close} is inside it. */
     Body open(String head) {
         line(head + " {");

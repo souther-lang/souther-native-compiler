@@ -86,6 +86,20 @@ class AGoHostCallsALibraryThroughItsBindingTest {
             	return value
             }
 
+            func said(outcome shop.Outcome) string {
+            	switch it := outcome.Case().(type) {
+            	case shop.OutcomeFree:
+            		return "free"
+            	case shop.OutcomePaid:
+            		return fmt.Sprintf("paid %d", it.Value.Amount().Value())
+            	case shop.OutcomeOwed:
+            		return fmt.Sprintf("owed %d overdue %v", it.Value.Amount().Value(), it.Value.Overdue())
+            	case shop.OutcomeKept:
+            		return "a case the model keeps"
+            	}
+            	panic("a case the model does not have")
+            }
+
             func code(err error) string {
             	if issues, ok := errors.AsType[*raoh.Issues](err); ok {
             		return issues.All()[0].Code()
@@ -113,8 +127,12 @@ class AGoHostCallsALibraryThroughItsBindingTest {
 
             		for _, paid := range []int64{0, 2, 6, 7} {
             			outcome := made(shop.Settle(r, line, paid))
-            			fmt.Printf("settle %d: owing %d\\n", paid, made(shop.Owing(r, outcome)))
+            			fmt.Printf("settle %d: %s, owing %d\\n", paid, said(outcome), made(shop.Owing(r, outcome)))
             		}
+
+            		nothing := made(shop.NewMoney(r, 0))
+            		free := made(shop.NewLine(r, nothing, 1, souther.None[string]()))
+            		fmt.Printf("free: %s\\n", said(made(shop.Settle(r, free, 0))))
 
             		fmt.Printf("still owing: %d\\n", made(shop.StillOwing(r, line, 1)))
             		fmt.Printf("squared: %d\\n", made(shop.Squared(r, 7)))
@@ -163,10 +181,11 @@ class AGoHostCallsALibraryThroughItsBindingTest {
             plain: false
             none: invariant_violation
             negative: invariant_violation
-            settle 0: owing 6
-            settle 2: owing 4
-            settle 6: owing 0
-            settle 7: owing 0
+            settle 0: owed 6 overdue true, owing 6
+            settle 2: owed 4 overdue false, owing 4
+            settle 6: paid 6, owing 0
+            settle 7: a case the model keeps, owing 0
+            free: free
             still owing: 5
             squared: 49
             standard: 3

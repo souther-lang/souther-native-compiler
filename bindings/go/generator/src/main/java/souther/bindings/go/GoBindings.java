@@ -4,6 +4,7 @@ import org.jspecify.annotations.Nullable;
 import souther.bindings.BindingInput;
 import souther.bindings.Generated;
 import souther.bindings.Manifest;
+import souther.bindings.Manifest.Case;
 import souther.bindings.Manifest.Declaration;
 import souther.bindings.Manifest.Function;
 import souther.bindings.Manifest.Parameter;
@@ -19,6 +20,9 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.Objects;
+import java.util.Set;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -245,6 +249,149 @@ public final class GoBindings {
         for (int field = 0; field < declaration.fields().size(); field++) {
             reader(at, it, declaration.fields().get(field), readers.get(field));
         }
+        if (declaration instanceof Declaration.Sum sum) {
+            sum(at, it, sum);
+        }
+    }
+
+    /**
+     * One case of a sum as {@code Case} answers it: its variant, what it holds, and which case of
+     * the model it is.
+     *
+     * @param holds the Go type of the value of the case, or null where it holds none
+     * @param each  the case, or null for the one every case the model keeps is
+     */
+    private record Arm(String variant, @Nullable String holds, @Nullable Case each) {
+    }
+
+    /** The variant every case of a sum the model keeps is, holding the value as the sum. */
+    private static final String KEPT = "Kept";
+
+    /**
+     * Each case of {@code sum} in the order its {@code which} counts them, or null where a case has
+     * no variant this binding can write: where nothing says which case a value is, a primitive Go
+     * holds no way, or two cases that would be one variant. A case the model keeps, a declared type
+     * it does not publish, is {@value #KEPT}, holding the value as the sum.
+     */
+    private @Nullable List<Arm> arms(GoModule at, Declared of, Declaration.Sum sum) {
+        if (sum.which() == null) {
+            return null;
+        }
+        List<Arm> arms = new ArrayList<>();
+        Set<String> variants = new java.util.HashSet<>();
+        Arm kept = new Arm(KEPT, of.name(), null);
+        for (Case each : sum.cases()) {
+            Arm arm = switch (each) {
+                case Case.Declared d -> {
+                    Declared it = declared.get(d.module() + "." + d.name());
+                    yield it == null ? kept : new Arm(it.name(),
+                            at.imports.module(it.importPath()) + it.name(), each);
+                }
+                case Case.Primitive p -> {
+                    Word held = manifest.crossing(p).holds();
+                    Crossing.Whole whole = held == null ? null : Crossing.Whole.primitive(p.name(), held);
+                    yield whole == null ? null : new Arm(p.name(), whole.type(at.imports), each);
+                }
+                case Case.Language l -> new Arm(GoNames.exported(l.name(), "case `" + l.name() + "`"),
+                        null, each);
+            };
+            if (arm == null || !variants.add(arm.variant()) && arm != kept) {
+                return null;
+            }
+            arms.add(arm);
+        }
+        if (arms.contains(kept)
+                && arms.stream().anyMatch(it -> it != kept && it.variant().equals(KEPT))) {
+            return null;
+        }
+        return arms;
+    }
+
+    private static Set<String> cases(Declaration.Sum sum) {
+        return sum.cases().stream().map(it -> switch (it) {
+            case Case.Declared d -> d.module() + "." + d.name();
+            case Case.Primitive p -> "primitive:" + p.name();
+            case Case.Language l -> "language:" + l.name();
+        }).collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+    }
+
+    /**
+     * {@code Case}: which case a value of the sum is, as the value of that case, of a type of its
+     * own for each, and what makes a value of a case or of a narrower sum a value of this one.
+     */
+    private void sum(GoModule at, Declared it, Declaration.Sum sum) {
+        List<Arm> arms = arms(at, it, sum);
+        if (arms == null) {
+            return;
+        }
+        String souther = at.imports.souther();
+        String caseType = at.names.claim(it.name() + "Case", "the cases of `" + it.key() + "`");
+        String marker = "is" + caseType;
+        StringBuilder out = new StringBuilder();
+        out.append("\n// ").append(caseType).append(" is the case a value of `").append(it.key())
+                .append("` is, holding the value of that case. A type switch tells them apart.\n")
+                .append("type ").append(caseType).append(" interface {\n\t").append(marker)
+                .append("()\n}\n");
+        for (Arm arm : new LinkedHashSet<>(arms)) {
+            String variant = it.name() + arm.variant();
+            at.names.claim(variant, "the case `" + arm.variant() + "` of `" + it.key() + "`");
+            out.append("\n// ").append(variant).append(" is the case ").append(arm.variant())
+                    .append(" of `").append(it.key()).append("`.\n").append("type ").append(variant)
+                    .append(" struct");
+            out.append(arm.holds() == null ? "{}\n" : " {\n\tValue " + arm.holds() + "\n}\n");
+            out.append("\nfunc (").append(variant).append(") ").append(marker).append("() {}\n");
+        }
+        Body body = new Body(at.imports, "run", "return", 1);
+        body.line("value := v.Ref__.Read()");
+        body.line("run := v.Ref__.Run()");
+        body.line("switch " + at.shim(Objects.requireNonNull(sum.which())) + "(run.Library().Symbol(\""
+                + sum.which().name() + "\"), value) {");
+        for (int place = 0; place < arms.size(); place++) {
+            Arm arm = arms.get(place);
+            String variant = it.name() + arm.variant();
+            body.line("case " + place + ":");
+            String held = souther + ".NewRef(run, value)";
+            if (arm.holds() == null) {
+                body.line("\treturn " + variant + "{}");
+            } else if (arm.each() instanceof Case.Primitive p) {
+                Manifest.CaseCrossing crossing = manifest.crossing(p);
+                Crossing.Whole whole = Crossing.Whole.primitive(p.name(), crossing.holds());
+                Body inner = new Body(at.imports, "run", "return", 2);
+                String word = inner.temp("held");
+                inner.line(word + " := " + at.shim(crossing.read()) + "(run.Library().Symbol(\""
+                        + crossing.read().name() + "\"), value)");
+                String made = whole.of(inner, List.of(word));
+                inner.line("return " + variant + "{Value: " + made + "}");
+                body.raw(inner.toString());
+            } else {
+                body.line("\treturn " + variant + "{Value: " + arm.holds() + "{Ref__: " + held + "}}");
+            }
+        }
+        body.line("}");
+        body.line("panic(\"the library answered a case `" + it.key() + "` does not have\")");
+        out.append("\n// Case is which case this value is, as the value of that case.\n")
+                .append("func (v ").append(it.name()).append(") Case() ").append(caseType)
+                .append(" {\n").append(body).append("}\n");
+        // A value of a case, or of a narrower sum, is a value of the sum as it is.
+        Set<String> mine = cases(sum);
+        for (Declared other : declared.values()) {
+            boolean within = switch (other.declaration()) {
+                case Declaration.Sum narrower -> other != it && mine.containsAll(cases(narrower))
+                        && !cases(narrower).equals(mine);
+                default -> mine.contains(other.key());
+            };
+            if (within) {
+                String name = at.names.claim(it.name() + "From" + other.name(),
+                        "the conversion of `" + other.key() + "` to `" + it.key() + "`");
+                out.append("\n// ").append(name).append(" is a value of `").append(other.key())
+                        .append("` as one of `").append(it.key()).append("`.\n")
+                        .append("func ").append(name).append("(v ")
+                        .append(at.imports.module(other.importPath())).append(other.name())
+                        .append(") ").append(it.name()).append(" {\n\treturn ").append(it.name())
+                        .append("{Ref__: v.Ref__}\n}\n");
+            }
+        }
+        at.items.append(out);
     }
 
     /** {@code New<Type>}: the value, or the invariant it does not hold as an issue. */
