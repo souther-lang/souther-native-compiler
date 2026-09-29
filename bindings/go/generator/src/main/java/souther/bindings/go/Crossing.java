@@ -487,6 +487,50 @@ sealed interface Crossing {
         }
     }
 
+    /**
+     * A function value, as the type generated for its function type: one the library made, which
+     * is called through the library, or a function of the host's own, which the library calls
+     * through the run it is handed over in. Handed over through the function of the package that
+     * has the type, which makes a host's function into one the library holds.
+     *
+     * @param importPath the package the type is written in
+     * @param name       what the type is called there
+     */
+    record FunctionValue(String importPath, String name, Shape.FunctionOf shape) implements Crossing {
+
+        @Override
+        public String type(Body.Imports imports) {
+            return imports.module(importPath) + name;
+        }
+
+        @Override
+        public String zero(Body.Imports imports) {
+            return type(imports) + "{}";
+        }
+
+        @Override
+        public void give(Body body, String value, List<String> into) {
+            String at = body.temp("at");
+            body.line(at + ", err := " + imports(body) + name + "Word__(" + body.run + ", " + value
+                    + ")").checked().line(into.getFirst() + " = " + at);
+        }
+
+        @Override
+        public String of(Body body, List<String> words) {
+            return type(body.imports) + "{Ref__: " + body.imports.souther() + ".NewRef(" + body.run
+                    + ", " + words.getFirst() + ")}";
+        }
+
+        private String imports(Body body) {
+            return body.imports.module(importPath);
+        }
+
+        @Override
+        public String label() {
+            return name;
+        }
+    }
+
     /** {@code words}, each declared before a call. */
     static List<String> declare(Body body, String base, List<Word> words) {
         List<String> names = new ArrayList<>();

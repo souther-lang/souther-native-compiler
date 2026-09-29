@@ -239,7 +239,17 @@ public final class GoBindings {
                 }
                 yield new Crossing.Listed(element, listed.construct(), listed.read());
             }
-            case Shape.FunctionOf function -> null;
+            case Shape.FunctionOf function -> {
+                if (!(type instanceof Type.Function it)) {
+                    yield null;
+                }
+                FunctionType written = functionType(module, it, function);
+                // Handed to Go, a function value is one the library made, which is called through
+                // the library; handed over, it may be one of the host's, which the library calls.
+                yield written == null
+                        || !(way == Manifest.Way.HANDED ? written.called() : written.hosted())
+                        ? null : new Crossing.FunctionValue(written.importPath(), written.name(), function);
+            }
         };
         if (made != null && !made.shape().equals(shape)) {
             throw new IllegalStateException("this binding holds a value crossing as " + shape
@@ -282,6 +292,152 @@ public final class GoBindings {
             return null;
         }
         return oneOf(module, union, told);
+    }
+
+    /**
+     * The type a function type is written as: where it stands, and whether a value the library made
+     * can be called ({@code called}) and a host's own function handed over ({@code hosted}).
+     */
+    private record FunctionType(String importPath, String name, boolean called, boolean hosted) {
+    }
+
+    /** Each function type's Go type, by the type and the shape it crosses in, once it is asked for. */
+    private final Map<List<Object>, @Nullable FunctionType> functions = new LinkedHashMap<>();
+
+    /**
+     * {@code type} crossing as {@code shape} as the type generated for it, written in {@code
+     * module}'s package the first time it is asked for; or null where a value of it can be neither
+     * called nor made: what it takes or answers has no way to cross either way it would, or its name
+     * is one another name of the package already is.
+     *
+     * <p>Calling one the library made hands over what it takes and is handed what it answers; a
+     * host's own is handed what it takes and hands back what it answers. The two are asked apart,
+     * since a union is handed over and not handed to Go, and each is written where the manifest
+     * says how ({@code call}, {@code make}).
+     */
+    private @Nullable FunctionType functionType(Manifest.Module module, Type.Function type,
+                                                Shape.FunctionOf shape) {
+        List<Object> key = List.of(type, shape);
+        if (functions.containsKey(key)) {
+            return functions.get(key);
+        }
+        functions.put(key, null);
+        Manifest.Signature signature = shape.signature();
+        Manifest.FunctionCrossing crossing = module.functions().stream()
+                .filter(it -> it.signature().equals(signature)).findFirst().orElseThrow();
+        if (type.takes().size() != signature.takes().size()) {
+            return null;
+        }
+        List<Crossing> handedOver = crossing.call() == null ? null
+                : crossings(module, type.takes(), signature.takes(), Manifest.Way.GIVEN);
+        Crossing answered = crossing.call() == null ? null
+                : crossing(module, type.answers(), signature.answers(), Manifest.Way.HANDED);
+        boolean called = handedOver != null && answered != null;
+        List<Crossing> handed = crossing.make() == null ? null
+                : crossings(module, type.takes(), signature.takes(), Manifest.Way.HANDED);
+        Crossing answering = crossing.make() == null ? null
+                : crossing(module, type.answers(), signature.answers(), Manifest.Way.GIVEN);
+        boolean hosted = handed != null && answering != null;
+        if (!called && !hosted) {
+            return null;
+        }
+        List<Crossing> takes = called ? handedOver : handed;
+        Crossing answers = called ? answered : answering;
+        GoModule at = modules.get(module.name());
+        String name = "Fn" + takes.stream().map(Crossing::label)
+                .collect(java.util.stream.Collectors.joining("And")) + "To" + answers.label();
+        List<String> generated = List.of(name, name + "Host", "Host" + name, name + "Word__",
+                "hosted" + name, "dispatch" + name);
+        if (generated.stream().anyMatch(at.names::has)) {
+            return null;
+        }
+        generated.forEach(it -> at.names.claim(it, "what is written for the function type " + name));
+        FunctionType made = new FunctionType(at.importPath, name, called, hosted);
+        functions.put(key, made);
+
+        Body.Imports imports = at.imports;
+        String lib = imports.lib();
+        String souther = imports.souther();
+        String unsafe = imports.unsafe();
+        List<String> inputs = java.util.stream.IntStream.range(0, takes.size())
+                .mapToObj(it -> "input" + it).toList();
+        List<String> parameters = new ArrayList<>(List.of("r *" + lib + ".Run"));
+        for (int place = 0; place < takes.size(); place++) {
+            parameters.add(inputs.get(place) + " " + takes.get(place).type(imports));
+        }
+        String signed = "func(" + String.join(", ", parameters) + ") (" + answers.type(imports)
+                + ", error)";
+        String what = "a function value of " + (takes.isEmpty() ? "nothing" : takes.stream()
+                .map(it -> it.type(imports)).collect(java.util.stream.Collectors.joining(", ")))
+                + " to " + answers.type(imports);
+        String host = name + "Host";
+        StringBuilder out = new StringBuilder();
+        out.append("\n// ").append(name).append(" is ").append(what)
+                .append(": one the library made, or a function of the host's own.\n")
+                .append("type ").append(name).append(" struct {\n")
+                .append("\t// Ref__ is the function the library made, and the run it was made in.\n")
+                .append("\tRef__ ").append(lib).append(".Ref\n")
+                .append("\t// Host__ is a function of the host's own.\n")
+                .append("\tHost__ *").append(host).append("\n}\n");
+        out.append("\n// ").append(host).append(" is a function of the host's own that is ").append(what)
+                .append(".\ntype ").append(host).append(" struct {\n\tFn ").append(signed).append("\n}\n");
+        out.append("\n// Host").append(name).append(" is f as ").append(what).append(".\n")
+                .append("func Host").append(name).append("(f ").append(signed).append(") ").append(name)
+                .append(" {\n\treturn ").append(name).append("{Host__: &").append(host)
+                .append("{f}}\n}\n");
+
+        // Call: a function of the host's is called as it is, and one the library made through the library.
+        List<String> before = new ArrayList<>(List.of("if f.Host__ != nil {",
+                "\tanswer, err := f.Host__.Fn(" + String.join(", ", java.util.stream.Stream
+                        .concat(java.util.stream.Stream.of("r"), inputs.stream()).toList()) + ")",
+                "\tif err != nil {",
+                "\t\treturn " + answers.zero(imports) + ", &" + souther + ".HostError{Err: err}",
+                "\t}", "\treturn answer, nil", "}"));
+        if (called) {
+            before.addAll(List.of("function, err := f.Ref__.In(r)", "if err != nil {",
+                    "\treturn " + answers.zero(imports) + ", err", "}"));
+            out.append(function(at, "// Call calls it in r, with what it takes.", "func (f " + name
+                    + ") Call", inputs, takes, answers, crossing.call(), "function", false, before));
+        } else {
+            out.append("\n// Call calls it in r, with what it takes.\nfunc (f ").append(name)
+                    .append(") Call(").append(String.join(", ", parameters)).append(") (")
+                    .append(answers.type(imports)).append(", error) {\n");
+            before.forEach(it -> out.append("\t").append(it).append("\n"));
+            out.append("\tpanic(\"the library hands over no ").append(what)
+                    .append(" it offers no way to call\")\n}\n");
+        }
+
+        // Word__: the value as the library of r is handed it.
+        out.append("\n// ").append(name).append("Word__ is the function value as the library of r is handed"
+                + " it: one another library made is\n// refused, and a host's function is made into one"
+                + " there the first time it is handed over.\n")
+                .append("func ").append(name).append("Word__(r *").append(lib).append(".Run, f ")
+                .append(name).append(") (").append(unsafe).append(".Pointer, error) {\n")
+                .append("\tif f.Host__ == nil {\n\t\treturn f.Ref__.In(r)\n\t}\n");
+        if (hosted) {
+            Manifest.FunctionMaking making = Objects.requireNonNull(crossing.make());
+            symbols.add(making.implement());
+            String dispatch = "hosted" + name;
+            out.append("\tfn := r.Library().Symbol(\"").append(making.implement()).append("\")\n")
+                    .append("\treturn ").append(souther).append(".HostFunction(r, f.Host__, func() any {\n")
+                    .append("\t\treturn &").append(dispatch).append("{r, f.Host__.Fn}\n\t}, func(room, userdata ")
+                    .append(unsafe).append(".Pointer) ").append(unsafe).append(".Pointer {\n")
+                    .append("\t\treturn C.implement_").append(making.implement())
+                    .append("(fn, room, userdata)\n\t}), nil\n}\n");
+            out.append("\n// ").append(dispatch).append(" is what the library hands back when it calls a"
+                    + " function of the host's: the\n// function, and the run it was handed over in.\n")
+                    .append("type ").append(dispatch).append(" struct {\n\torigin *").append(lib)
+                    .append(".Run\n\tfn     ").append(signed).append("\n}\n");
+            at.items.append(out);
+            hostCallback(at, importPath + "_" + at.path.getLast() + "_" + name, "dispatch" + name,
+                    dispatch, "hosted.fn", making.implementation(), making.implement(), true,
+                    handed, answering, inputs);
+        } else {
+            out.append("\tpanic(\"the library offers no way to make ").append(what)
+                    .append(" of a host's own function\")\n}\n");
+            at.items.append(out);
+        }
+        return made;
     }
 
     /** The interface each union no declaration names is written as, by its members, once it is asked for. */
@@ -953,9 +1109,7 @@ public final class GoBindings {
 
     /**
      * The interface a host implements {@code injection} as, the type an implementation is made
-     * into that the library calls it through, and what the library calls: it makes Go values of
-     * what the library handed over, calls the implementation in the run of the call that reached
-     * it, and writes what it answered through the room the library handed over.
+     * into that the library calls it through, and what the library calls ({@link #hostCallback}).
      */
     private void injected(GoModule at, Manifest.Injection injection, BehaviorType it) {
         Manifest.Module module = at.module;
@@ -973,9 +1127,6 @@ public final class GoBindings {
         String unsafe = imports.unsafe();
         String trait = it.type();
         String hosted = "hosted" + trait;
-        String dispatch = "dispatch" + trait;
-        String exported = "souther_host_" + (importPath + "_" + at.path.getLast() + "_" + injection.name())
-                .replaceAll("[^A-Za-z0-9_]", "_");
         symbols.add(injection.implement());
 
         List<String> parameters = new ArrayList<>(List.of("r *" + lib + ".Run"));
@@ -1010,16 +1161,44 @@ public final class GoBindings {
                 .append(unsafe).append(".Pointer) {\n")
                 .append("\t\tC.implement_").append(injection.implement())
                 .append("(fn, capability, hosted, userdata)\n\t})}\n}\n");
+        hostCallback(at, importPath + "_" + at.path.getLast() + "_" + injection.name(),
+                "dispatch" + trait, hosted, "hosted.impl.Apply", injection.implementation(),
+                injection.implement(), false, takes, answers, names);
+    }
 
-        // What the library calls: what it was handed first, what the behavior takes, and room for
-        // what it answers, as the manifest says the implementation's type is.
+    /**
+     * What the library calls for a function a host implements, as the manifest says the type of
+     * that function is: it makes Go values of what the library handed over, calls the host's
+     * function in the run of the call that reached it, and writes what it answered through the room
+     * the library handed over.
+     *
+     * <p>The function the library calls is exported from a file of its own, and only hands what it
+     * is given to {@code dispatch}, which does the work in the file that has the C it calls
+     * ({@code Callback}). What the library is given to call is made by a C function of this file's,
+     * {@code implement_<symbol>}, which names the exported one.
+     *
+     * @param unique   what the exported function is named after, which no other of the program has
+     * @param hosted   the type of what the library hands back first, holding the run its function
+     *                 was made in as {@code origin}
+     * @param call     what calls the host's function, taking the run and what the library handed over
+     * @param function whether what is implemented is a function value and not a behavior, which
+     *                 answers the value the library made
+     */
+    private void hostCallback(GoModule at, String unique, String dispatch, String hosted,
+                              String call, Manifest.Implementation implementation, String implement,
+                              boolean function, List<Crossing> takes, Crossing answers,
+                              List<String> names) {
+        Body.Imports imports = at.imports;
+        String souther = imports.souther();
+        String lib = imports.lib();
+        String unsafe = imports.unsafe();
+        String exported = "souther_host_" + unique.replaceAll("[^A-Za-z0-9_]", "_");
         List<String> cParameters = new ArrayList<>();
         List<String> goParameters = new ArrayList<>();
         List<String> handedWords = new ArrayList<>();
         List<String> rooms = new ArrayList<>();
         List<String> forwarded = new ArrayList<>();
-        List<String> c = new ArrayList<>();
-        for (Parameter parameter : injection.implementation().takes()) {
+        for (Parameter parameter : implementation.takes()) {
             String name;
             String type;
             if (parameter.word() == Word.USERDATA && parameter.mode() == Parameter.Mode.GIVEN
@@ -1029,26 +1208,31 @@ public final class GoBindings {
             } else if (parameter.mode() == Parameter.Mode.GIVEN) {
                 name = "handed" + handedWords.size();
                 handedWords.add(name);
-                type = handed(parameter.word(), imports);
+                type = Crossing.local(parameter.word(), imports);
             } else {
                 name = "answer" + rooms.size();
                 rooms.add(name);
-                type = "*" + handed(parameter.word(), imports);
+                type = "*" + Crossing.local(parameter.word(), imports);
             }
             goParameters.add(name + " " + type);
             forwarded.add(name);
             cParameters.add(cType(parameter));
         }
-        c.add("");
         at.c.append("extern uint32_t ").append(exported).append("(")
-                .append(String.join(", ", cParameters)).append(");\n")
-                .append("static inline void implement_").append(injection.implement())
-                .append("(void *fn, void *a0, void *a1, void *a2) {\n")
-                .append("\t__typeof__(&").append(injection.implement()).append(") f = fn;\n")
-                .append("\tf((souther_capability *)a0, (souther_hosted *)a1, (")
-                .append(injection.implementation().type()).append(")").append(exported)
-                .append(", a2);\n}\n");
-
+                .append(String.join(", ", cParameters)).append(");\n");
+        if (function) {
+            at.c.append("static inline void *implement_").append(implement)
+                    .append("(void *fn, void *a0, void *a1) {\n")
+                    .append("\t__typeof__(&").append(implement).append(") f = fn;\n")
+                    .append("\treturn (void *)f((souther_hosted_function *)a0, (")
+                    .append(implementation.type()).append(")").append(exported).append(", a1);\n}\n");
+        } else {
+            at.c.append("static inline void implement_").append(implement)
+                    .append("(void *fn, void *a0, void *a1, void *a2) {\n")
+                    .append("\t__typeof__(&").append(implement).append(") f = fn;\n")
+                    .append("\tf((souther_capability *)a0, (souther_hosted *)a1, (")
+                    .append(implementation.type()).append(")").append(exported).append(", a2);\n}\n");
+        }
         Body body = new Body(imports, at::shim, "run", "return " + souther + ".Crossing(err)", 2);
         int word = 0;
         List<String> arguments = new ArrayList<>(List.of("run"));
@@ -1059,7 +1243,7 @@ public final class GoBindings {
             word += wide;
             arguments.add(names.get(place));
         }
-        body.line("answer, err := hosted.impl.Apply(" + String.join(", ", arguments) + ")");
+        body.line("answer, err := " + call + "(" + String.join(", ", arguments) + ")");
         body.open("if err != nil").line("return err").close();
         List<String> given = Crossing.declare(body, "g", answers.words());
         answers.give(body, "answer", given);
@@ -1068,7 +1252,7 @@ public final class GoBindings {
         }
         body.line("return nil");
         at.items.append("\n// ").append(dispatch).append(" makes Go values of what the library handed over and"
-                + " calls the implementation in the run of\n// the call that reached it.\n")
+                + " calls the host's function in the run of\n// the call that reached it.\n")
                 .append("func ").append(dispatch).append("(").append(String.join(", ", goParameters))
                 .append(") C.uint32_t {\n\thosted := ").append(souther)
                 .append(".UserdataValue(userdata).(*").append(hosted).append(")\n")

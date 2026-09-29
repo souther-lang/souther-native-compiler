@@ -89,6 +89,9 @@ type Run[B any] struct {
 	child  *Run[B]
 	frames []*frame
 	keep   []func()
+	// functions is the function value each function of the host's own was made into in this run,
+	// so that one handed over again is the value it was made into before.
+	functions map[any]unsafe.Pointer
 }
 
 // frame is a call into the library that is going on in a run, and what a host implementation it

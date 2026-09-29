@@ -99,3 +99,24 @@ func (c Capability[B]) of(identity uintptr) bool {
 	}
 	return true
 }
+
+// HostFunction is a function of the host's own made into a function value the library calls, made
+// in r: implement is the library's function making one of the shape, handed room for what it is
+// laid out as and the userdata the library hands the function first, which holds what dispatch
+// makes. The room and the userdata are held until r ends.
+//
+// key says which function of the host's this is: one handed over again in this run is the value it
+// was made into the first time, however often the library calls it.
+func HostFunction[B any](r *Run[B], key any, dispatch func() any, implement func(room, userdata unsafe.Pointer) unsafe.Pointer) unsafe.Pointer {
+	r.checkMaking()
+	if made, ok := r.functions[key]; ok {
+		return made
+	}
+	// souther_hosted_function: what it is called through, and what it is read out of.
+	made := implement(r.Room(3*pointerSize), r.Userdata(dispatch()))
+	if r.functions == nil {
+		r.functions = make(map[any]unsafe.Pointer)
+	}
+	r.functions[key] = made
+	return made
+}
