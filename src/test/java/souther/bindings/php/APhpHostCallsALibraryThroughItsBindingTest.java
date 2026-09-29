@@ -1,5 +1,6 @@
 package souther.bindings.php;
 
+import souther.bindings.Generated;
 import souther.nativecode.Checked;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -351,7 +352,7 @@ class APhpHostCallsALibraryThroughItsBindingTest {
                 .exists();
         NativeCompiler.Library library =
                 NativeCompiler.library(Checked.of(List.of(SHOP)), into.resolve("native"));
-        PhpBindings.Generated binding =
+        Generated binding =
                 LibraryBinding.generated(library, into.resolve("php"), "Acme\\Billing");
         // The same model built a second time, which is a second library to PHP.
         NativeCompiler.Library again =
@@ -375,7 +376,7 @@ class APhpHostCallsALibraryThroughItsBindingTest {
     void aPreloadedLibraryIsCalledAsALoadedOneIs(@TempDir Path into) throws Exception {
         NativeCompiler.Library library =
                 NativeCompiler.library(Checked.of(List.of(SHOP)), into.resolve("native"));
-        PhpBindings.Generated binding =
+        Generated binding =
                 LibraryBinding.generated(library, into.resolve("php"), "Acme\\Billing");
         String requires = "require '" + RUNTIME.toAbsolutePath().resolve("vendor")
                 .resolve("autoload.php") + "';\nrequire '" + binding.root().resolve("autoload.php")

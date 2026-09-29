@@ -58,7 +58,7 @@ class TheCommandLineBuildsALibraryAndItsBindingTest {
         assertThat(into.resolve("native").resolve("souther.json")).exists();
         assertThat(into.resolve("php").resolve("Shop").resolve("Lines").resolve("Behaviors.php"))
                 .exists();
-        assertThat(ran.printed()).contains("from 2 sources").contains("under Acme\\Shop");
+        assertThat(ran.printed()).contains("from 2 sources").contains("wrote the PHP binding");
     }
 
     @Test
@@ -114,6 +114,27 @@ class TheCommandLineBuildsALibraryAndItsBindingTest {
         assertThat(into.resolve("native")).doesNotExist();
     }
 
+    /**
+     * What a binding is asked with is its generator's to hold it to, and it does so before the
+     * library is built, as it does for a name its language will not take.
+     */
+    @Test
+    void aBindingMissingWhatItIsAskedWithIsRefusedBeforeTheLibraryIsWritten(@TempDir Path into)
+            throws Exception {
+        Path model = sources(into, Map.of("money.sou", MONEY));
+
+        Ran php = run("--library", into.resolve("native").toString(),
+                "--php", into.resolve("php").toString(), model.toString());
+        Ran rust = run("--library", into.resolve("native").toString(),
+                "--rust", into.resolve("rust").toString(), model.toString());
+
+        assertThat(php.ended()).isEqualTo(2);
+        assertThat(php.said()).contains("--php wants --namespace");
+        assertThat(rust.ended()).isEqualTo(2);
+        assertThat(rust.said()).contains("--rust wants --crate");
+        assertThat(into.resolve("native")).doesNotExist();
+    }
+
     @Test
     void aProgramTheLanguageRefusesWritesNothing(@TempDir Path into) throws Exception {
         Path model = sources(into, Map.of("lines.sou", LINES));
@@ -133,7 +154,6 @@ class TheCommandLineBuildsALibraryAndItsBindingTest {
         refused("--with without a library", "-o", "a.o", "--with", "b.o", "m.sou");
         refused("--php without a library", "-o", "a.o", "--php", "php", "--namespace", "N",
                 "m.sou");
-        refused("--php without a namespace", "--library", "out", "--php", "php", "m.sou");
         refused("--namespace without --php", "--library", "out", "--namespace", "N", "m.sou");
         refused("the binding inside the library", "--library", "out", "--php", "out/php",
                 "--namespace", "N", "m.sou");
@@ -141,7 +161,6 @@ class TheCommandLineBuildsALibraryAndItsBindingTest {
                 "--namespace", "N", "m.sou");
         refused("--rust without a library", "-o", "a.o", "--rust", "rust", "--crate", "c",
                 "m.sou");
-        refused("--rust without a crate", "--library", "out", "--rust", "rust", "m.sou");
         refused("--crate without --rust", "--library", "out", "--crate", "c", "m.sou");
         refused("the Rust binding inside the library", "--library", "out", "--rust", "out/rust",
                 "--crate", "c", "m.sou");
@@ -162,7 +181,7 @@ class TheCommandLineBuildsALibraryAndItsBindingTest {
         assertThat(command.classPath()).containsExactly(Path.of("a"), Path.of("b"));
         assertThat(command.output()).isEqualTo(new Main.Output.Library(Path.of("out"),
                 List.of(Path.of("x.o"), Path.of("y.o")),
-                List.of(new Main.HostBinding.Php(Path.of("php"), "N"))));
+                List.of(binding("php", "php", "namespace", "N"))));
     }
 
     @Test
@@ -171,8 +190,14 @@ class TheCommandLineBuildsALibraryAndItsBindingTest {
                 "--crate", "acme", "--php", "php", "--namespace", "N", "m.sou"});
 
         assertThat(command.output()).isEqualTo(new Main.Output.Library(Path.of("out"), List.of(),
-                List.of(new Main.HostBinding.Php(Path.of("php"), "N"),
-                        new Main.HostBinding.Rust(Path.of("rust"), "acme"))));
+                List.of(binding("php", "php", "namespace", "N"),
+                        binding("rust", "rust", "crate", "acme"))));
+    }
+
+    private static Main.HostBinding binding(String id, String into, String option, String value) {
+        return new Main.HostBinding(KnownBindings.all().stream()
+                .filter(kind -> kind.id().equals(id)).findFirst().orElseThrow(), Path.of(into),
+                Map.of(option, value));
     }
 
     private static void refused(String what, String... args) {

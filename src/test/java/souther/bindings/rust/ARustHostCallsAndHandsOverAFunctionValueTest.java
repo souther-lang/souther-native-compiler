@@ -2,6 +2,7 @@ package souther.bindings.rust;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import souther.bindings.Generated;
 import souther.nativecode.Documents;
 import souther.nativecode.NativeCompiler;
 
@@ -78,7 +79,7 @@ class ARustHostCallsAndHandsOverAFunctionValueTest {
     void aFunctionValueIsAnEnumOfTheLibrarysAndTheHostsOwn(@TempDir Path into) throws Exception {
         NativeCompiler.Library library =
                 Documents.library(Documents.FUNCTIONS, into.resolve("native"));
-        RustBindings.Generated binding =
+        Generated binding =
                 RustHost.generated(library, into.resolve("binding"), "calling");
 
         String said = RustHost.ran(into, binding, "calling", HOST,

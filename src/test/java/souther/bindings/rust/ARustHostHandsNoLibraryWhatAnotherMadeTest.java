@@ -2,6 +2,7 @@ package souther.bindings.rust;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import souther.bindings.Generated;
 import souther.nativecode.Checked;
 import souther.nativecode.Documents;
 import souther.nativecode.NativeCompiler;
@@ -145,7 +146,7 @@ class ARustHostHandsNoLibraryWhatAnotherMadeTest {
                 into.resolve("a"));
         NativeCompiler.Library b = NativeCompiler.library(Checked.of(List.of(SHOP)),
                 into.resolve("b"));
-        RustBindings.Generated binding = RustHost.generated(a, into.resolve("binding"), "foreign");
+        Generated binding = RustHost.generated(a, into.resolve("binding"), "foreign");
 
         String said = RustHost.ran(into, binding, "foreign", HOST, List.of(a.library().toString(),
                 b.library().toString(), a.library().toString()));
@@ -170,7 +171,7 @@ class ARustHostHandsNoLibraryWhatAnotherMadeTest {
             throws Exception {
         NativeCompiler.Library a = Documents.library(Documents.FUNCTIONS, into.resolve("a"));
         NativeCompiler.Library b = Documents.library(Documents.FUNCTIONS, into.resolve("b"));
-        RustBindings.Generated binding = RustHost.generated(a, into.resolve("binding"), "calling");
+        Generated binding = RustHost.generated(a, into.resolve("binding"), "calling");
 
         String said = RustHost.ran(into, binding, "calling", CALLING,
                 List.of(a.library().toString(), b.library().toString()));
@@ -199,7 +200,7 @@ class ARustHostHandsNoLibraryWhatAnotherMadeTest {
     @Test
     void aFunctionValueCannotBeUnderAnotherFunctionType(@TempDir Path into) throws Exception {
         NativeCompiler.Library library = Documents.library(Documents.FUNCTIONS, into.resolve("a"));
-        RustBindings.Generated binding = RustHost.generated(library, into.resolve("binding"),
+        Generated binding = RustHost.generated(library, into.resolve("binding"),
                 "calling");
         String reading = """
                 use calling::m::{self, FnIntToInt};

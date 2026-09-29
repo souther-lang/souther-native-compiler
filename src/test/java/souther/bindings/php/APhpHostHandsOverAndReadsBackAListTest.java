@@ -1,5 +1,6 @@
 package souther.bindings.php;
 
+import souther.bindings.Generated;
 import souther.nativecode.Checked;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -209,7 +210,7 @@ class APhpHostHandsOverAndReadsBackAListTest {
     void aPhpListCrossesBothWaysWhereverAListStands(@TempDir Path into) throws Exception {
         NativeCompiler.Library library =
                 NativeCompiler.library(Checked.of(List.of(CART)), into.resolve("native"));
-        PhpBindings.Generated binding =
+        Generated binding =
                 LibraryBinding.generated(library, into.resolve("php"), "Acme\\Billing");
         NativeCompiler.Library again =
                 NativeCompiler.library(Checked.of(List.of(CART)), into.resolve("again"));
@@ -231,7 +232,7 @@ class APhpHostHandsOverAndReadsBackAListTest {
     void aListIsTypedAsAListOfItsElementForPhpStan(@TempDir Path into) throws Exception {
         NativeCompiler.Library library =
                 NativeCompiler.library(Checked.of(List.of(CART)), into.resolve("native"));
-        PhpBindings.Generated binding =
+        Generated binding =
                 LibraryBinding.generated(library, into.resolve("php"), "Acme\\Billing");
         Path cart = binding.root().resolve("Cart");
 

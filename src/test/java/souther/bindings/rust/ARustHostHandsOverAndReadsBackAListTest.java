@@ -2,6 +2,7 @@ package souther.bindings.rust;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import souther.bindings.Generated;
 import souther.nativecode.Checked;
 import souther.nativecode.NativeCompiler;
 
@@ -88,7 +89,7 @@ class ARustHostHandsOverAndReadsBackAListTest {
     void aListIsASliceHandedOverAndAVecHandedBack(@TempDir Path into) throws Exception {
         NativeCompiler.Library library =
                 NativeCompiler.library(Checked.of(List.of(CART)), into.resolve("native"));
-        RustBindings.Generated binding =
+        Generated binding =
                 RustHost.generated(library, into.resolve("binding"), "cart-binding");
 
         String said = RustHost.ran(into, binding, "cart-binding", HOST,

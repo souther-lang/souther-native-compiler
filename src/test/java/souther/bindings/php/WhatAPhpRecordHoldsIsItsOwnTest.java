@@ -1,5 +1,6 @@
 package souther.bindings.php;
 
+import souther.bindings.Generated;
 import souther.nativecode.Checked;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -28,7 +29,7 @@ class WhatAPhpRecordHoldsIsItsOwnTest {
 
     @Test
     void everyCollectionAPhpRecordHoldsIsItsOwn(@TempDir Path into) throws Exception {
-        PhpBindings.Generated generated = LibraryBinding.generated(NativeCompiler.library(
+        Generated generated = LibraryBinding.generated(NativeCompiler.library(
                 Checked.of(List.of("""
                         module m exposing ( Kept )
 
@@ -59,7 +60,6 @@ class WhatAPhpRecordHoldsIsItsOwnTest {
 
         assertThat(owning.wrong).isEmpty();
         assertThat(Owning.collectionsIn("souther.bindings.php")).contains(
-                PhpBindings.Generated.class.getName() + ".files",
                 Crossing.OneOf.class.getName() + ".members");
         assertThat(owning.asked).containsAll(Owning.collectionsIn("souther.bindings.php"));
     }

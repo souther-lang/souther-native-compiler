@@ -1,8 +1,10 @@
 package souther.nativecode;
 
+import souther.bindings.BindingGenerator;
+import souther.bindings.BindingInput;
+import souther.bindings.Declarations;
+import souther.bindings.Manifest;
 import souther.bindings.NotBindable;
-import souther.bindings.php.PhpBindings;
-import souther.bindings.rust.RustBindings;
 import souther.compiler.diag.CompileException;
 import souther.compiler.meta.ModulePath;
 import souther.compiler.program.CheckedProgram;
@@ -15,7 +17,11 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Stream;
 
 /**
@@ -24,8 +30,9 @@ import java.util.stream.Stream;
  *
  * <p>Nothing here decides what a library or a binding is. The program is checked once, the driver
  * writes the library from it ({@link NativeCompiler#library}), and each binding is generated from
- * the manifest the driver wrote ({@link PhpBindings#generate}, {@link RustBindings#generate}), never
- * from the program a second time.
+ * the manifest the driver wrote ({@link BindingGenerator#generate}), never from the program a
+ * second time. Which bindings there are is {@link KnownBindings}, and each is written by the
+ * generator that answers to its id, which this does not know beyond that.
  *
  * <p>Each directory is replaced whole by what writes it, and each is a directory of its own: a
  * binding refused after its library was written leaves the new library and the binding that was
@@ -39,23 +46,36 @@ public final class Main {
     private static final int REFUSED = 1;
     private static final int WRONG_COMMAND = 2;
 
-    private static final String USAGE = """
-            usage: souther-native [-cp <path>] -o <object> <source>...
-                   souther-native [-cp <path>] --library <dir> [--with <object>]...
-                                  [--php <dir> --namespace <ns>] [--rust <dir> --crate <name>]
-                                  <source>...
+    private static final String USAGE = usage();
 
-              -cp <path>         the class path of other builds the program imports, as the souther
-                                 command takes it (also --class-path)
-              -o <object>        where to write the object file
-              --library <dir>    where to write the library: object, headers, manifest, shared library
-              --with <object>    the object another build the program reaches was compiled to
-              --php <dir>        where to write the PHP binding of the library
-              --namespace <ns>   the PHP namespace the binding is written under
-              --rust <dir>       where to write the Rust binding of the library, as a crate
-              --crate <name>     the name of the crate the Rust binding is written as
-              <source>           a .sou file, or a directory holding some
-            """;
+    private static String usage() {
+        StringBuilder asked = new StringBuilder();
+        StringBuilder described = new StringBuilder();
+        for (KnownBindings.Kind kind : KnownBindings.all()) {
+            asked.append(asked.isEmpty() ? "" : " ").append("[").append(kind.flag())
+                    .append(" <dir>");
+            described.append("  %-19s where to write the %s binding of the library\n"
+                    .formatted(kind.flag() + " <dir>", kind.display()));
+            for (String option : kind.options()) {
+                asked.append(" --").append(option).append(" <value>");
+                described.append("  %-19s an option of the %s binding\n"
+                        .formatted("--" + option + " <value>", kind.display()));
+            }
+            asked.append("]");
+        }
+        return "usage: souther-native [-cp <path>] -o <object> <source>...\n"
+                + "       souther-native [-cp <path>] --library <dir> [--with <object>]...\n"
+                + "                      " + asked + "\n"
+                + "                      <source>...\n"
+                + "\n"
+                + "  -cp <path>          the class path of other builds the program imports, as the souther\n"
+                + "                      command takes it (also --class-path)\n"
+                + "  -o <object>         where to write the object file\n"
+                + "  --library <dir>     where to write the library: object, headers, manifest, shared library\n"
+                + "  --with <object>     the object another build the program reaches was compiled to\n"
+                + described
+                + "  <source>            a .sou file, or a directory holding some\n";
+    }
 
     /** What a command asks to be written, each of which is a whole command. */
     sealed interface Output {
@@ -76,21 +96,13 @@ public final class Main {
     }
 
     /**
-     * A binding of the library for one host's language, and where it is written. Each is generated
-     * by its own generator from the manifest; nothing here is shared between them but where each
-     * goes.
+     * A binding of the library for one host's language, where it is written, and the options it was
+     * asked with, each named without its dashes. What they mean is its generator's.
      */
-    sealed interface HostBinding {
+    record HostBinding(KnownBindings.Kind kind, Path into, Map<String, String> options) {
 
-        /** The directory the binding is written into, replaced whole. */
-        Path into();
-
-        /** A PHP binding, under a namespace. */
-        record Php(Path into, String namespace) implements HostBinding {
-        }
-
-        /** A Rust binding, as a crate of a name. */
-        record Rust(Path into, String crate) implements HostBinding {
+        HostBinding {
+            options = Map.copyOf(options);
         }
     }
 
@@ -121,6 +133,10 @@ public final class Main {
     }
 
     static int run(String[] args, PrintStream out, PrintStream problems) {
+        return run(args, out, problems, Bindings.installed());
+    }
+
+    static int run(String[] args, PrintStream out, PrintStream problems, Bindings generators) {
         Command command;
         try {
             command = read(args);
@@ -159,18 +175,16 @@ public final class Main {
                     out.println("wrote " + object.into() + " from " + sources(files));
                 }
                 case Output.Library library -> {
+                    Map<HostBinding, BindingGenerator> generating = new LinkedHashMap<>();
                     for (HostBinding binding : library.bindings()) {
+                        BindingGenerator generator = generators.generatorFor(binding.kind());
                         try {
-                            switch (binding) {
-                                case HostBinding.Php php ->
-                                        PhpBindings.refuseAhead(php.into(), php.namespace());
-                                case HostBinding.Rust rust ->
-                                        RustBindings.refuseAhead(rust.into(), rust.crate());
-                            }
+                            generator.preflight(binding.into(), binding.options());
                         } catch (NotBindable e) {
                             problems.println(e.getMessage());
                             return WRONG_COMMAND;
                         }
+                        generating.put(binding, generator);
                     }
                     List<byte[]> alongside = new ArrayList<>(library.alongside().size());
                     for (Path object : library.alongside()) {
@@ -179,36 +193,25 @@ public final class Main {
                     NativeCompiler.Library built = NativeCompiler.library(
                             command.checked(read), alongside, library.into());
                     out.println("wrote the library " + library.into() + " from " + sources(files));
-                    for (HostBinding binding : library.bindings()) {
-                        switch (binding) {
-                            case HostBinding.Php php -> {
-                                try {
-                                    PhpBindings.generate(built.manifest(), built.declarations(),
-                                            php.into(), php.namespace());
-                                } catch (NotBindable e) {
-                                    problems.println("the PHP binding is not written: "
-                                            + e.getMessage());
-                                    return REFUSED;
-                                }
-                                out.println("wrote the PHP binding " + php.into() + " under "
-                                        + php.namespace());
-                            }
-                            case HostBinding.Rust rust -> {
-                                try {
-                                    RustBindings.generate(built.manifest(), rust.into(),
-                                            rust.crate());
-                                } catch (NotBindable e) {
-                                    problems.println("the Rust binding is not written: "
-                                            + e.getMessage());
-                                    return REFUSED;
-                                }
-                                out.println("wrote the Rust binding " + rust.into() + " as the"
-                                        + " crate " + rust.crate());
-                            }
+                    BindingInput input = new BindingInput(Manifest.read(built.manifest()),
+                            Declarations.at(built.declarations()));
+                    for (Map.Entry<HostBinding, BindingGenerator> each : generating.entrySet()) {
+                        HostBinding binding = each.getKey();
+                        try {
+                            each.getValue().generate(input, binding.into(), binding.options());
+                        } catch (NotBindable e) {
+                            problems.println("the " + binding.kind().display()
+                                    + " binding is not written: " + e.getMessage());
+                            return REFUSED;
                         }
+                        out.println("wrote the " + binding.kind().display() + " binding "
+                                + binding.into());
                     }
                 }
             }
+        } catch (BindingUnavailable e) {
+            problems.println(e.getMessage());
+            return WRONG_COMMAND;
         } catch (CompileException e) {
             problems.println(e.getMessage());
             return REFUSED;
@@ -237,10 +240,8 @@ public final class Main {
         Path object = null;
         Path library = null;
         List<Path> alongside = new ArrayList<>();
-        Path php = null;
-        String namespace = null;
-        Path rust = null;
-        String crate = null;
+        Map<KnownBindings.Kind, Path> asked = new HashMap<>();
+        Map<KnownBindings.Kind, Map<String, String>> qualified = new HashMap<>();
         List<Path> sources = new ArrayList<>();
         List<Path> classPath = new ArrayList<>();
         for (int at = 0; at < args.length; at++) {
@@ -256,15 +257,22 @@ public final class Main {
                     }
                 }
                 case "--with" -> alongside.add(Path.of(valueOf(args, ++at, held)));
-                case "--php" -> php = once(held, php, Path.of(valueOf(args, ++at, held)));
-                case "--namespace" -> namespace = once(held, namespace, valueOf(args, ++at, held));
-                case "--rust" -> rust = once(held, rust, Path.of(valueOf(args, ++at, held)));
-                case "--crate" -> crate = once(held, crate, valueOf(args, ++at, held));
                 default -> {
-                    if (held.startsWith("-")) {
+                    Optional<KnownBindings.Kind> asks = KnownBindings.askedBy(held);
+                    Optional<KnownBindings.Kind> qualifies = KnownBindings.qualifiedBy(held);
+                    if (asks.isPresent()) {
+                        asked.put(asks.get(),
+                                once(held, asked.get(asks.get()), Path.of(valueOf(args, ++at, held))));
+                    } else if (qualifies.isPresent()) {
+                        Map<String, String> options = qualified.computeIfAbsent(qualifies.get(),
+                                kind -> new HashMap<>());
+                        options.put(held.substring(2),
+                                once(held, options.get(held.substring(2)), valueOf(args, ++at, held)));
+                    } else if (held.startsWith("-")) {
                         throw new NotACommand("no such option: " + held);
+                    } else {
+                        sources.add(Path.of(held));
                     }
-                    sources.add(Path.of(held));
                 }
             }
         }
@@ -275,11 +283,17 @@ public final class Main {
             throw new NotACommand("-o and --library are two commands; name one");
         }
         if (library == null) {
-            for (var named : List.of(new Named("--with", !alongside.isEmpty()),
-                    new Named("--php", php != null), new Named("--namespace", namespace != null),
-                    new Named("--rust", rust != null), new Named("--crate", crate != null))) {
-                if (named.given()) {
-                    throw new NotACommand(named.option() + " goes with --library");
+            if (!alongside.isEmpty()) {
+                throw new NotACommand("--with goes with --library");
+            }
+            for (KnownBindings.Kind kind : KnownBindings.all()) {
+                if (asked.containsKey(kind)) {
+                    throw new NotACommand(kind.flag() + " goes with --library");
+                }
+                for (String option : kind.options()) {
+                    if (qualified.getOrDefault(kind, Map.of()).containsKey(option)) {
+                        throw new NotACommand("--" + option + " goes with --library");
+                    }
                 }
             }
             if (object == null) {
@@ -288,30 +302,22 @@ public final class Main {
             return new Command(new Output.ObjectFile(object), List.copyOf(sources),
                     List.copyOf(classPath));
         }
-        if (php != null && namespace == null) {
-            throw new NotACommand("--php wants --namespace, the namespace the binding is under");
-        }
-        if (namespace != null && php == null) {
-            throw new NotACommand("--namespace goes with --php");
-        }
-        if (rust != null && crate == null) {
-            throw new NotACommand("--rust wants --crate, the name of the crate the binding is");
-        }
-        if (crate != null && rust == null) {
-            throw new NotACommand("--crate goes with --rust");
+        for (KnownBindings.Kind kind : KnownBindings.all()) {
+            if (!asked.containsKey(kind) && qualified.containsKey(kind)) {
+                throw new NotACommand("--" + qualified.get(kind).keySet().iterator().next()
+                        + " goes with " + kind.flag());
+            }
         }
         List<Named> directories = new ArrayList<>(List.of(new Named("--library", true)));
         List<Path> placed = new ArrayList<>(List.of(library));
         List<HostBinding> bindings = new ArrayList<>();
-        if (php != null) {
-            bindings.add(new HostBinding.Php(php, namespace));
-            directories.add(new Named("--php", true));
-            placed.add(php);
-        }
-        if (rust != null) {
-            bindings.add(new HostBinding.Rust(rust, crate));
-            directories.add(new Named("--rust", true));
-            placed.add(rust);
+        for (KnownBindings.Kind kind : KnownBindings.all()) {
+            if (asked.containsKey(kind)) {
+                bindings.add(new HostBinding(kind, asked.get(kind),
+                        qualified.getOrDefault(kind, Map.of())));
+                directories.add(new Named(kind.flag(), true));
+                placed.add(asked.get(kind));
+            }
         }
         for (int one = 0; one < placed.size(); one++) {
             for (int other = one + 1; other < placed.size(); other++) {

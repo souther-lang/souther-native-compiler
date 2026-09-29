@@ -76,9 +76,12 @@ class WhatARecordHoldsIsItsOwnTest {
         owning.walk(manifest.runtime());
         owning.walk(manifest.modules());
         owning.walk(functions.modules());
+        Path written = into.resolve("written");
+        owning.walk(new Generated(written, List.of(written.resolve("a"))));
 
         assertThat(owning.wrong).isEmpty();
         assertThat(Owning.collectionsIn("souther.bindings")).contains(
+                Generated.class.getName() + ".files",
                 Manifest.Function.class.getName() + ".takes",
                 Manifest.Signature.class.getName() + ".takes",
                 Manifest.Refusal.class.getName() + ".path");

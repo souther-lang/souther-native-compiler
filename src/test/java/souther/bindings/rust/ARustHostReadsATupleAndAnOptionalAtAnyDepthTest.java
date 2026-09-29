@@ -2,6 +2,7 @@ package souther.bindings.rust;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import souther.bindings.Generated;
 import souther.nativecode.Checked;
 import souther.nativecode.NativeCompiler;
 
@@ -59,7 +60,7 @@ class ARustHostReadsATupleAndAnOptionalAtAnyDepthTest {
     void aTupleAndAnOptionalAreRustsOwnAtEveryDepth(@TempDir Path into) throws Exception {
         NativeCompiler.Library library =
                 NativeCompiler.library(Checked.of(List.of(SHAPE)), into.resolve("native"));
-        RustBindings.Generated binding = RustHost.generated(library, into.resolve("binding"),
+        Generated binding = RustHost.generated(library, into.resolve("binding"),
                 "shapes");
 
         String said = RustHost.ran(into, binding, "shapes", HOST,

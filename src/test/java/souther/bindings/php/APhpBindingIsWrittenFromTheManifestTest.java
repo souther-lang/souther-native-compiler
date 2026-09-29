@@ -1,5 +1,6 @@
 package souther.bindings.php;
 
+import souther.bindings.Generated;
 import souther.bindings.Manifest;
 import souther.nativecode.Checked;
 import org.junit.jupiter.api.Test;
@@ -27,19 +28,19 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 class APhpBindingIsWrittenFromTheManifestTest {
 
-    private static PhpBindings.Generated generated(Path into, String source) throws Exception {
+    private static Generated generated(Path into, String source) throws Exception {
         NativeCompiler.Library library =
                 NativeCompiler.library(Checked.of(List.of(source)), into.resolve("native"));
         return LibraryBinding.generated(library, into.resolve("php"), "Acme\\Billing");
     }
 
-    private static String behaviors(PhpBindings.Generated generated) throws Exception {
+    private static String behaviors(Generated generated) throws Exception {
         return Files.readString(generated.root().resolve("M").resolve("Behaviors.php"));
     }
 
     @Test
     void everyFileItWritesIsPhp(@TempDir Path into) throws Exception {
-        PhpBindings.Generated generated = generated(into, """
+        Generated generated = generated(into, """
                 module m exposing ( Found, Missing, Lookup, Box, find, open, amount )
 
                 data Found = { id: Int, label: String? }
@@ -212,7 +213,7 @@ class APhpBindingIsWrittenFromTheManifestTest {
         changing.accept(manifest);
         Path changed = into.resolve("changed.json");
         Files.writeString(changed, JSON.writeValueAsString(manifest), StandardCharsets.UTF_8);
-        PhpBindings.generate(changed, library.declarations(), into.resolve("php"), "Acme\\Billing");
+        LibraryBinding.generated(changed, library.declarations(), into.resolve("php"), "Acme\\Billing");
     }
 
     /** Where the manifest gives a behavior no way in, nothing is written that a caller could call. */
@@ -249,7 +250,7 @@ class APhpBindingIsWrittenFromTheManifestTest {
     @Test
     void aBehaviorAnsweringAnUnnamedUnionAnswersTheClassOfItsCase(@TempDir Path into)
             throws Exception {
-        PhpBindings.Generated generated = generated(into, """
+        Generated generated = generated(into, """
                 module m exposing ( Found, Missing, find )
 
                 data Found = { id: Int }
@@ -278,7 +279,7 @@ class APhpBindingIsWrittenFromTheManifestTest {
      */
     @Test
     void anUnnamedUnionAHostAnswersIsHandedOverAsItIs(@TempDir Path into) throws Exception {
-        PhpBindings.Generated generated = generated(into, """
+        Generated generated = generated(into, """
                 module m exposing ( Found, Missing )
 
                 data Found = { id: Int }
@@ -317,7 +318,7 @@ class APhpBindingIsWrittenFromTheManifestTest {
     @Test
     void aBehaviorWhoseClassCannotBeNamedHasNoneAndTheBindingStands(@TempDir Path into)
             throws Exception {
-        PhpBindings.Generated generated = generated(into, """
+        Generated generated = generated(into, """
                 module m exposing ( Found, Missing, Lookup, clone, behaviors, lookupCodec, charged,
                                     twice )
 
@@ -365,7 +366,7 @@ class APhpBindingIsWrittenFromTheManifestTest {
      */
     @Test
     void twoBehaviorsWhoseClassesAreOneFileHaveNone(@TempDir Path into) throws Exception {
-        PhpBindings.Generated generated = generated(into, """
+        Generated generated = generated(into, """
                 module m exposing ( itema )
 
                 behavior itemA : (n: Int) -> Int
@@ -387,7 +388,7 @@ class APhpBindingIsWrittenFromTheManifestTest {
      */
     @Test
     void anImplementationTakesWhatPhpCannotNameByItsPlace(@TempDir Path into) throws Exception {
-        PhpBindings.Generated generated = generated(into, """
+        Generated generated = generated(into, """
                 module m
 
                 behavior lookUp : (GLOBALS: Int, id: Int) -> Int
@@ -452,7 +453,7 @@ class APhpBindingIsWrittenFromTheManifestTest {
      */
     @Test
     void twoRequirementsOfOneNameAreTakenByTheirPlaces(@TempDir Path into) throws Exception {
-        PhpBindings.Generated generated = LibraryBinding.generated(NativeCompiler.library(
+        Generated generated = LibraryBinding.generated(NativeCompiler.library(
                 Checked.of(List.of("""
                         module a exposing ( load )
 
@@ -700,7 +701,7 @@ class APhpBindingIsWrittenFromTheManifestTest {
         }
         Path changed = into.resolve("changed.json");
         Files.writeString(changed, JSON.writeValueAsString(manifest), StandardCharsets.UTF_8);
-        PhpBindings.generate(changed, library.declarations(), into.resolve("php"), "Acme\\Billing");
+        LibraryBinding.generated(changed, library.declarations(), into.resolve("php"), "Acme\\Billing");
     }
 
     /**
@@ -710,7 +711,7 @@ class APhpBindingIsWrittenFromTheManifestTest {
      */
     @Test
     void aListIsBuiltThroughItsOwnModulesFunctions(@TempDir Path into) throws Exception {
-        PhpBindings.Generated generated =
+        Generated generated =
                 LibraryBinding.generated(twoModules(into), into.resolve("php"), "Acme\\Billing");
 
         assertThat(Files.readString(generated.root().resolve("Shop").resolve("Cart.php")))

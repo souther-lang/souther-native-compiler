@@ -1,6 +1,8 @@
 package souther.bindings.rust;
 
 import org.jspecify.annotations.Nullable;
+import souther.bindings.BindingInput;
+import souther.bindings.Generated;
 import souther.bindings.Manifest;
 import souther.bindings.Manifest.Case;
 import souther.bindings.Manifest.Declaration;
@@ -44,14 +46,6 @@ import java.util.stream.Collectors;
  * ({@link Crossing}).
  */
 public final class RustBindings {
-
-    /** What a binding is written as: the directory its crate stands in, and every file in it. */
-    public record Generated(Path root, List<Path> files) {
-
-        public Generated {
-            files = List.copyOf(files);
-        }
-    }
 
     /** What says a directory is a Rust binding this wrote, and may be replaced whole. */
     static final String MARK = ".souther-rust-binding";
@@ -156,7 +150,7 @@ public final class RustBindings {
     }
 
     /**
-     * Writes the binding of what {@code manifest} describes into {@code into}, as the crate
+     * Writes the binding of what the input's manifest describes into {@code into}, as the crate
      * {@code crate}, which a host depends on by path.
      *
      * <p>{@code into} is then that crate and nothing else: it is written beside it and put in place
@@ -165,8 +159,9 @@ public final class RustBindings {
      *
      * @throws NotBindable where a name in the model is not one Rust takes
      */
-    public static Generated generate(Path manifest, Path into, String crate) throws IOException {
-        Manifest read = Manifest.read(manifest);
+    public static Generated generate(BindingInput input, Path into, String crate)
+            throws IOException {
+        Manifest read = input.manifest();
         String name = RustNames.crateName(crate);
         Output output = Output.replacing(into, MARK);
         RustBindings binding = new RustBindings(read, name, output.staging());

@@ -1,5 +1,9 @@
 package souther.bindings.rust;
 
+import souther.bindings.BindingInput;
+import souther.bindings.Declarations;
+import souther.bindings.Generated;
+import souther.bindings.Manifest;
 import souther.nativecode.NativeCompiler;
 
 import java.io.IOException;
@@ -34,9 +38,10 @@ final class RustHost {
     }
 
     /** The binding of {@code library} generated into {@code into} as the crate {@code crate}. */
-    static RustBindings.Generated generated(NativeCompiler.Library library, Path into, String crate)
+    static Generated generated(NativeCompiler.Library library, Path into, String crate)
             throws IOException {
-        return RustBindings.generate(library.manifest(), into, crate);
+        return RustBindings.generate(new BindingInput(Manifest.read(library.manifest()),
+                Declarations.at(library.declarations())), into, crate);
     }
 
     /**
@@ -48,7 +53,7 @@ final class RustHost {
      * Clippy reads what the generator wrote as a crate of the workspace's own: a lint it finds there
      * is the generator's to answer for, and none is allowed but the ones the crate says it allows.
      */
-    static String ran(Path into, RustBindings.Generated binding, String crate, String main,
+    static String ran(Path into, Generated binding, String crate, String main,
                       List<String> arguments) throws IOException, InterruptedException {
         handsOverOnlyWhatItChecks(binding);
         exposesNoNativeWord(binding);
@@ -63,7 +68,7 @@ final class RustHost {
     }
 
     /** Writes the workspace of the generated crate and a host whose {@code main.rs} is {@code main}. */
-    private static void workspace(Path into, RustBindings.Generated binding, String crate,
+    private static void workspace(Path into, Generated binding, String crate,
                                   String main) throws IOException {
         Path host = into.resolve("host");
         Files.createDirectories(host.resolve("src"));
@@ -100,7 +105,7 @@ final class RustHost {
      * could hand over what it read without the check. Held here, on every crate a test generates,
      * so that the generator cannot come to write one without a test saying so.
      */
-    private static void handsOverOnlyWhatItChecks(RustBindings.Generated binding)
+    private static void handsOverOnlyWhatItChecks(Generated binding)
             throws IOException {
         for (Path file : binding.files()) {
             if (!file.toString().endsWith(".rs")) {
@@ -139,7 +144,7 @@ final class RustHost {
      * and is not hidden from the documentation, which is where a name for what the crate itself
      * calls (a constructor the library answers through) is kept out of what a host is told of.
      */
-    private static void exposesNoNativeWord(RustBindings.Generated binding) throws IOException {
+    private static void exposesNoNativeWord(Generated binding) throws IOException {
         for (Path file : binding.files()) {
             if (!file.toString().endsWith(".rs")) {
                 continue;
@@ -164,7 +169,7 @@ final class RustHost {
      *
      * @return what Cargo said, for the test to hold to the reason
      */
-    static String refused(Path into, RustBindings.Generated binding, String crate, String main)
+    static String refused(Path into, Generated binding, String crate, String main)
             throws IOException, InterruptedException {
         workspace(into, binding, crate, main);
         String manifest = into.resolve("Cargo.toml").toString();

@@ -1,5 +1,6 @@
 package souther.bindings.php;
 
+import souther.bindings.Generated;
 import souther.nativecode.Checked;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -282,7 +283,7 @@ class APhpHostBindsABehaviorToWhatItRequiresTest {
             throws Exception {
         NativeCompiler.Library library = NativeCompiler.library(
                 Checked.of(List.of(CATALOG, WHOLESALE, SHOP)), into.resolve("native"));
-        PhpBindings.Generated binding =
+        Generated binding =
                 LibraryBinding.generated(library, into.resolve("php"), "Acme\\Billing");
         Path host = into.resolve("host.php");
         Files.writeString(host, HOST, StandardCharsets.UTF_8);

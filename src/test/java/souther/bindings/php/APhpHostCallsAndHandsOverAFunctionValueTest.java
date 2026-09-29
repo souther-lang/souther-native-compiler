@@ -1,5 +1,6 @@
 package souther.bindings.php;
 
+import souther.bindings.Generated;
 import souther.bindings.Manifest;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -101,7 +102,7 @@ class APhpHostCallsAndHandsOverAFunctionValueTest {
     void aFunctionValueIsAClosureBothWays(@TempDir Path into) throws Exception {
         NativeCompiler.Library library =
                 Documents.library(Documents.FUNCTIONS, into.resolve("native"));
-        PhpBindings.Generated binding =
+        Generated binding =
                 LibraryBinding.generated(library, into.resolve("php"), "Acme\\Calling");
         Path host = into.resolve("host.php");
         Files.writeString(host, HOST, StandardCharsets.UTF_8);
@@ -136,7 +137,7 @@ class APhpHostCallsAndHandsOverAFunctionValueTest {
             throws Exception {
         NativeCompiler.Library library =
                 Documents.library(Documents.FUNCTIONS, into.resolve("native"));
-        PhpBindings.Generated binding =
+        Generated binding =
                 LibraryBinding.generated(library, into.resolve("php"), "Acme\\Calling");
 
         assertThat(Files.readString(binding.root().resolve("M").resolve("Values.php")))

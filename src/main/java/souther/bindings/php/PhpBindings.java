@@ -1,6 +1,8 @@
 package souther.bindings.php;
 
 import org.jspecify.annotations.Nullable;
+import souther.bindings.BindingInput;
+import souther.bindings.Generated;
 import souther.bindings.Manifest;
 import souther.bindings.Manifest.Case;
 import souther.bindings.Manifest.Declaration;
@@ -56,14 +58,6 @@ import java.util.stream.Collectors;
  * manifest's shape for it, and what is decided here is only how PHP holds it ({@link Crossing}).
  */
 public final class PhpBindings {
-
-    /** What a binding is written as: the directory its namespace stands in, and every file in it. */
-    public record Generated(Path root, List<Path> files) {
-
-        public Generated {
-            files = List.copyOf(files);
-        }
-    }
 
     /** Where the declarations are copied to, beside the binding that loads them. */
     static final String DECLARATIONS = "souther.ffi.h";
@@ -148,8 +142,8 @@ public final class PhpBindings {
     }
 
     /**
-     * Writes the binding of what {@code manifest} describes into {@code into}, under the namespace
-     * {@code namespace}, beside a copy of {@code declarations}, the C declarations the build wrote
+     * Writes the binding of what the input's manifest describes into {@code into}, under the namespace
+     * {@code namespace}, beside a copy of its declarations, the C declarations the build wrote
      * for an FFI to read, which the binding loads the library through.
      *
      * <p>The namespace is the binding's own, and not read off the model, so that two libraries
@@ -161,16 +155,16 @@ public final class PhpBindings {
      *
      * @throws NotBindable where a name in the model is not one PHP takes
      */
-    public static Generated generate(Path manifest, Path declarations, Path into, String namespace)
+    public static Generated generate(BindingInput input, Path into, String namespace)
             throws IOException {
-        Manifest read = Manifest.read(manifest);
+        Manifest read = input.manifest();
         String root = PhpNames.rootNamespace(namespace);
         Output output = Output.replacing(into, MARK);
         PhpBindings binding = new PhpBindings(read, root, output.staging());
         try {
             binding.write();
             Path copied = output.staging().resolve(DECLARATIONS);
-            Files.copy(declarations, copied);
+            input.declarations().copyTo(copied);
             binding.written.add(copied);
             output.commit();
         } catch (IOException | RuntimeException e) {
