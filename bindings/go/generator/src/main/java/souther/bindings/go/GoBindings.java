@@ -177,35 +177,206 @@ public final class GoBindings {
     // What a model type crosses as.
 
     /**
-     * How a value of {@code type} crosses in {@code shape}, or null where this binding has no way to
-     * hold it: a pair of a type and a shape it knows no way to hold, and a declared type it has no
-     * handle for.
+     * How a value of {@code type} crosses in {@code shape}, the way {@code way} says, in a function
+     * of {@code module}'s, or null where this binding has no way to hold it: a pair of a type and a
+     * shape it knows no way to hold, a declared type it has no handle for, a union no declaration
+     * names where nothing says which case it is, and a function value.
      */
-    private @Nullable Crossing crossing(Type type, Shape shape) {
-        return switch (shape) {
+    private @Nullable Crossing crossing(Manifest.Module module, Type type, Shape shape,
+                                        Manifest.Way way) {
+        Crossing made = switch (shape) {
             case Shape.Leaf leaf -> switch (type) {
                 case Type.Primitive it -> Crossing.Whole.primitive(it.name(), leaf.word());
                 case Type.Declared it -> leaf.word() == Word.VALUE ? handle(it.module(), it.name())
                         : null;
+                // Handed to Go only as a behavior's answer, which says which case it is
+                // (`answered`): anywhere else Go would be handed a value of it told nothing.
+                case Type.Union union -> leaf.word() == Word.VALUE && way == Manifest.Way.GIVEN
+                        ? oneOf(module, union, null) : null;
                 default -> null;
             };
             case Shape.Option option -> type instanceof Type.Option it
-                    && crossing(it.of(), option.of()) instanceof Crossing of
+                    && crossing(module, it.of(), option.of(), way) instanceof Crossing of
                     ? new Crossing.Optional(of) : null;
-            default -> null;
+            case Shape.Product product -> {
+                if (!(type instanceof Type.Tuple it) || it.of().size() != product.of().size()
+                        || product.of().size() > Crossing.Tuple.MOST) {
+                    yield null;
+                }
+                List<Crossing> members = crossings(module, it.of(), product.of(), way);
+                yield members == null ? null : new Crossing.Tuple(members);
+            }
+            case Shape.ListOf list -> {
+                if (!(Type.listed(type) instanceof Type of)
+                        || !(crossing(module, of, list.element(), way) instanceof Crossing element)) {
+                    yield null;
+                }
+                Manifest.ListCrossing listed = module.lists().stream()
+                        .filter(l -> l.element().equals(list.element())).findFirst().orElseThrow();
+                if (way == Manifest.Way.GIVEN ? listed.construct() == null : listed.read() == null) {
+                    yield null;
+                }
+                yield new Crossing.Listed(element, listed.construct(), listed.read());
+            }
+            case Shape.FunctionOf function -> null;
         };
+        if (made != null && !made.shape().equals(shape)) {
+            throw new IllegalStateException("this binding holds a value crossing as " + shape
+                    + " as what crosses as " + made.shape());
+        }
+        return made;
     }
 
-    private @Nullable List<Crossing> crossings(List<Type> types, List<Shape> shapes) {
-        List<Crossing> crossings = new ArrayList<>();
+    /**
+     * How each of {@code types} crosses in its shape, or null where any of them has no way, or the
+     * two say different counts.
+     */
+    private @Nullable List<Crossing> crossings(Manifest.Module module, List<Type> types,
+                                               List<Shape> shapes, Manifest.Way way) {
+        if (types.size() != shapes.size()) {
+            return null;
+        }
+        List<Crossing> made = new ArrayList<>();
         for (int at = 0; at < types.size(); at++) {
-            Crossing crossing = crossing(types.get(at), shapes.get(at));
-            if (crossing == null) {
+            Crossing it = crossing(module, types.get(at), shapes.get(at), way);
+            if (it == null) {
                 return null;
             }
-            crossings.add(crossing);
+            made.add(it);
         }
-        return crossings;
+        return made;
+    }
+
+    /**
+     * How the library hands Go what {@code behavior} answers, or null where it has no way to: a
+     * union no declaration names as the type of the member the case the library says it is belongs
+     * to, and anything else as a value of its type is handed.
+     */
+    private @Nullable Crossing answered(Manifest.Module module, Manifest.Answer answer, Shape shape) {
+        if (!(answer.type() instanceof Type.Union union)) {
+            return crossing(module, answer.type(), shape, Manifest.Way.HANDED);
+        }
+        Manifest.UnionAnswer told = Objects.requireNonNull(answer.union());
+        if (!(shape instanceof Shape.Leaf leaf) || leaf.word() != Word.VALUE || told.which() == null) {
+            return null;
+        }
+        return oneOf(module, union, told);
+    }
+
+    /** The interface each union no declaration names is written as, by its members, once it is asked for. */
+    private final Map<List<Case>, @Nullable UnionType> unions = new LinkedHashMap<>();
+
+    /** A union's interface: where it stands, and its members. */
+    private record UnionType(String importPath, String name, List<Crossing.OneOf.Member> members) {
+    }
+
+    /**
+     * {@code union} as the interface generated for it, written in {@code module}'s package the
+     * first time it is asked for, and told its case as {@code told} says where it is handed to Go.
+     * Null where a member has no way to be held: a declared type with no handle, a primitive Go
+     * holds no way, a case the language gives, or two members that would be one type or an
+     * interface whose name another name of the package already is.
+     */
+    private Crossing.@Nullable OneOf oneOf(Manifest.Module module, Type.Union union,
+                                           Manifest.@Nullable UnionAnswer told) {
+        UnionType made = unions.containsKey(union.cases()) ? unions.get(union.cases())
+                : unionType(modules.get(module.name()), union);
+        unions.put(union.cases(), made);
+        if (made == null) {
+            return null;
+        }
+        if (told == null) {
+            return new Crossing.OneOf(made.importPath(), made.name(), made.members(), null);
+        }
+        List<Crossing.OneOf.Arm> arms = new ArrayList<>();
+        for (Case of : told.cases()) {
+            Crossing.OneOf.Member member = memberOf(union, made, of);
+            if (member == null) {
+                return null;
+            }
+            arms.add(new Crossing.OneOf.Arm(member));
+        }
+        return new Crossing.OneOf(made.importPath(), made.name(), made.members(),
+                new Crossing.OneOf.Told(Objects.requireNonNull(told.which()), arms));
+    }
+
+    /**
+     * The member a value the library says is the case {@code of} is made as: the member it is or
+     * the member sum it is a case of; null where it is neither, a case the model keeps.
+     */
+    private Crossing.OneOf.@Nullable Member memberOf(Type.Union union, UnionType made, Case of) {
+        for (int at = 0; at < union.cases().size(); at++) {
+            if (union.cases().get(at).equals(of)) {
+                return made.members().get(at);
+            }
+        }
+        if (of instanceof Case.Declared leaf) {
+            for (int at = 0; at < union.cases().size(); at++) {
+                if (union.cases().get(at) instanceof Case.Declared d
+                        && declared.get(d.module() + "." + d.name()) instanceof Declared it
+                        && it.declaration() instanceof Declaration.Sum sum
+                        && cases(sum).contains(leaf.module() + "." + leaf.name())) {
+                    return made.members().get(at);
+                }
+            }
+        }
+        return null;
+    }
+
+    private @Nullable UnionType unionType(GoModule at, Type.Union union) {
+        List<Crossing.OneOf.Member> members = new ArrayList<>();
+        Set<String> variants = new java.util.HashSet<>();
+        for (Case each : union.cases()) {
+            Crossing.OneOf.Member member = switch (each) {
+                case Case.Declared d -> {
+                    Declared it = declared.get(d.module() + "." + d.name());
+                    yield it == null ? null
+                            : new Crossing.OneOf.Member(it.name(), Crossing.Whole.handle(it), null, null);
+                }
+                case Case.Primitive p -> {
+                    Manifest.CaseCrossing crossing = manifest.crossing(p);
+                    Word held = crossing.holds();
+                    Crossing.Whole whole = held == null ? null : Crossing.Whole.primitive(p.name(), held);
+                    if (whole == null) {
+                        yield null;
+                    }
+                    yield new Crossing.OneOf.Member(p.name(), whole, crossing.make(),
+                            Objects.requireNonNull(crossing.read()));
+                }
+                case Case.Language l -> null;
+            };
+            if (member == null || !variants.add(member.variant())) {
+                return null;
+            }
+            members.add(member);
+        }
+        String name = members.stream().map(Crossing.OneOf.Member::variant)
+                .collect(java.util.stream.Collectors.joining("Or"));
+        if (at.names.has(name)) {
+            return null;
+        }
+        at.names.claim(name, "the interface of a union");
+                String marker = "is" + name;
+        StringBuilder out = new StringBuilder();
+        String what = union.cases().stream().map(it -> switch (it) {
+            case Case.Declared d -> d.module() + "." + d.name();
+            case Case.Primitive p -> p.name();
+            case Case.Language l -> l.name();
+        }).collect(java.util.stream.Collectors.joining(" | "));
+        out.append("\n// ").append(name).append(" is a value of `").append(what)
+                .append("`: one of its members. A type switch tells them apart.\n")
+                .append("type ").append(name).append(" interface {\n\t").append(marker).append("()\n}\n");
+        for (Crossing.OneOf.Member member : members) {
+            String variant = at.names.claim(name + member.variant(), "the member `" + member.variant()
+                    + "` of the union `" + what + "`");
+            out.append("\n// ").append(variant).append(" is the member ").append(member.variant())
+                    .append(" of `").append(what).append("`.\n").append("type ").append(variant)
+                    .append(" struct {\n\tValue ").append(member.whole().type(at.imports))
+                    .append("\n}\n\nfunc (").append(variant).append(") ").append(marker)
+                    .append("() {}\n");
+        }
+        at.items.append(out);
+        return new UnionType(at.importPath, name, members);
     }
 
     private Crossing.@Nullable Whole handle(String module, String name) {
@@ -341,7 +512,7 @@ public final class GoBindings {
             out.append(arm.holds() == null ? "{}\n" : " {\n\tValue " + arm.holds() + "\n}\n");
             out.append("\nfunc (").append(variant).append(") ").append(marker).append("() {}\n");
         }
-        Body body = new Body(at.imports, "run", "return", 1);
+        Body body = new Body(at.imports, at::shim, "run", "return", 1);
         body.line("value := v.Ref__.Read()");
         body.line("run := v.Ref__.Run()");
         body.line("switch " + at.shim(Objects.requireNonNull(sum.which())) + "(run.Library().Symbol(\""
@@ -356,7 +527,7 @@ public final class GoBindings {
             } else if (arm.each() instanceof Case.Primitive p) {
                 Manifest.CaseCrossing crossing = manifest.crossing(p);
                 Crossing.Whole whole = Crossing.Whole.primitive(p.name(), crossing.holds());
-                Body inner = new Body(at.imports, "run", "return", 2);
+                Body inner = new Body(at.imports, at::shim, "run", "return", 2);
                 String word = inner.temp("held");
                 inner.line(word + " := " + at.shim(crossing.read()) + "(run.Library().Symbol(\""
                         + crossing.read().name() + "\"), value)");
@@ -397,8 +568,9 @@ public final class GoBindings {
     /** {@code New<Type>}: the value, or the invariant it does not hold as an issue. */
     private void construct(GoModule at, Declared it, Manifest.Construct construct) {
         List<Manifest.Field> fields = it.declaration().fields();
-        List<Crossing> takes = crossings(fields.stream().map(Manifest.Field::type).toList(),
-                construct.takes());
+        List<Crossing> takes = crossings(at.module,
+                fields.stream().map(Manifest.Field::type).toList(), construct.takes(),
+                Manifest.Way.GIVEN);
         if (takes == null) {
             return;
         }
@@ -424,7 +596,7 @@ public final class GoBindings {
         String name = at.names.claim("Decode" + it.name(), "the reader of `" + it.key() + "`");
         String souther = at.imports.souther();
         String unsafe = at.imports.unsafe();
-        Body body = new Body(at.imports, "r", "return " + it.name() + "{}, err", 1);
+        Body body = new Body(at.imports, at::shim, "r", "return " + it.name() + "{}, err", 1);
         body.line("fn := r.Library().Symbol(\"" + decode.name() + "\")");
         body.line("var reading " + unsafe + ".Pointer");
         body.line("failed := " + souther + ".Call(r, func() " + souther + ".Status {");
@@ -463,11 +635,11 @@ public final class GoBindings {
         if (read == null) {
             return;
         }
-        Crossing crossing = crossing(field.type(), read.answers());
+        Crossing crossing = crossing(at.module, field.type(), read.answers(), Manifest.Way.HANDED);
         if (crossing == null) {
             return;
         }
-        Body body = new Body(at.imports, "run", "return", 1);
+        Body body = new Body(at.imports, at::shim, "run", "return", 1);
         body.line("value := v.Ref__.Read()");
         body.line("run := v.Ref__.Run()");
         List<String> rooms = Crossing.declare(body, "a", crossing.words());
@@ -491,9 +663,9 @@ public final class GoBindings {
             if (call == null || !requiresOf(at.module.name() + "." + behavior.name()).isEmpty()) {
                 continue;
             }
-            List<Crossing> takes = crossings(behavior.parameters().types(), call.signature().takes());
-            Crossing answers = behavior.answers().union() != null ? null
-                    : crossing(behavior.answers().type(), call.signature().answers());
+            List<Crossing> takes = crossings(at.module, behavior.parameters().types(),
+                    call.signature().takes(), Manifest.Way.GIVEN);
+            Crossing answers = answered(at.module, behavior.answers(), call.signature().answers());
             if (takes == null || answers == null) {
                 continue;
             }
@@ -520,7 +692,8 @@ public final class GoBindings {
             if (read == null) {
                 continue;
             }
-            Crossing answers = crossing(value.type(), read.signature().answers());
+            Crossing answers = crossing(at.module, value.type(), read.signature().answers(),
+                    Manifest.Way.HANDED);
             if (answers == null) {
                 continue;
             }
@@ -556,7 +729,7 @@ public final class GoBindings {
                             boolean requirements, boolean constructed) {
         Body.Imports imports = at.imports;
         String souther = imports.souther();
-        Body body = new Body(imports, "r", "return " + answers.zero(imports) + ", err", 1);
+        Body body = new Body(imports, at::shim, "r", "return " + answers.zero(imports) + ", err", 1);
         List<String> parameters = new ArrayList<>(List.of("r *" + imports.lib() + ".Run"));
         for (int at2 = 0; at2 < takes.size(); at2++) {
             parameters.add(names.get(at2) + " " + takes.get(at2).type(imports));
@@ -580,8 +753,10 @@ public final class GoBindings {
         body.open("if failed != nil").line("return " + answers.zero(imports) + ", "
                 + (constructed ? souther + ".Constructed(failed)" : "failed")).close();
         body.line("return " + answers.of(body, rooms) + ", nil");
+        // A list or a union built here is made before the call is, so the run is asked first.
+        String making = body.makes() ? "\t" + souther + ".Making(r)\n" : "";
         return "\n" + doc + "\n" + declared + "(" + String.join(", ", parameters) + ") ("
-                + answers.type(imports) + ", error) {\n" + body + "}\n";
+                + answers.type(imports) + ", error) {\n" + making + body + "}\n";
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -699,13 +874,9 @@ public final class GoBindings {
                     }
                 }
                 case SLICE -> {
-                    if (number != null) {
-                        parameters.add("const " + number + " *" + name);
-                        arguments.add(name);
-                    } else {
-                        parameters.add("const void *" + name);
-                        arguments.add("(const " + address + " *)" + name);
-                    }
+                    parameters.add("const void *" + name);
+                    arguments.add(number != null ? "(const " + number + " *)" + name
+                            : "(const " + address + " *)" + name);
                 }
             }
         }

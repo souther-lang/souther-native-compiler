@@ -1,6 +1,9 @@
 package souther.bindings.go;
 
+import souther.bindings.Manifest.Function;
+
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 
@@ -84,11 +87,18 @@ final class Body {
         }
     }
 
+    /** What calls a function of the library through its address: the C shim of it, noted to be written. */
+    interface Shims {
+        String call(Function function);
+    }
+
     private final StringBuilder out = new StringBuilder();
     private int depth;
     private int temps;
+    private boolean direct;
 
     final Imports imports;
+    private final Shims shims;
 
     /** The Go expression of the run the function works in. */
     final String run;
@@ -96,8 +106,9 @@ final class Body {
     /** The statement that ends the function with the failure {@code err} holds. */
     final String fail;
 
-    Body(Imports imports, String run, String fail, int depth) {
+    Body(Imports imports, Shims shims, String run, String fail, int depth) {
         this.imports = imports;
+        this.shims = shims;
         this.run = run;
         this.fail = fail;
         this.depth = depth;
@@ -125,6 +136,33 @@ final class Body {
     Body close() {
         depth--;
         return line("}");
+    }
+
+    /** A label of the switch this is inside, as gofmt writes it: level with the switch. */
+    Body label(String head) {
+        depth--;
+        line(head);
+        depth++;
+        return this;
+    }
+
+    /**
+     * The call of {@code function}, a Go expression, which is made here and not through {@code
+     * souther.Call}: what the library answers is a number or an address and no status, and it is
+     * made in the run the function works in. Noted, so the function begins by asking the run
+     * whether something may be made through it.
+     */
+    String call(Function function, List<String> arguments) {
+        direct = true;
+        List<String> handed = new java.util.ArrayList<>(List.of(run + ".Library().Symbol(\""
+                + function.name() + "\")"));
+        handed.addAll(arguments);
+        return shims.call(function) + "(" + String.join(", ", handed) + ")";
+    }
+
+    /** Whether something was made through the run by a call written here, before the function's own. */
+    boolean makes() {
+        return direct;
     }
 
     /** A name no other of this function has. */

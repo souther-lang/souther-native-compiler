@@ -184,6 +184,15 @@ func (r *Run[B]) innermost() *Run[B] {
 	return r
 }
 
+// Making panics with a [*Misuse] unless something may be made through r: it is live, is on this
+// goroutine, and is the innermost run. A generated function that hands the library a list or a
+// union it builds itself asks first, before anything is made.
+func Making[B any](r *Run[B]) { r.checkMaking() }
+
+// NoValue panics with a [*Misuse] for a value that was never made: a nil interface where the
+// model has a union, which has no zero value.
+func NoValue() { misuse(ErrNoValue) }
+
 // Ref is a value in a library's arena: where it stands, and the run it was made in. It is good
 // until that run ends.
 type Ref[B any] struct {

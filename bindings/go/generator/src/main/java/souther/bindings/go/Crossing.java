@@ -1,11 +1,15 @@
 package souther.bindings.go;
 
 import org.jspecify.annotations.Nullable;
+import souther.bindings.Manifest;
+import souther.bindings.Manifest.Function;
 import souther.bindings.Manifest.Shape;
 import souther.bindings.Manifest.Word;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
+import java.util.stream.Collectors;
 
 /**
  * How a value of one model type crosses between Go and the library: the shape the manifest says it
@@ -191,6 +195,245 @@ sealed interface Crossing {
         @Override
         public String label() {
             return "Option" + of.label();
+        }
+    }
+
+    /** A tuple: {@code souther.Tuple2} and its like, of what its members are. */
+    record Tuple(List<Crossing> members) implements Crossing {
+
+        /** The most members a tuple has that this binding holds: {@code souther.Tuple8}. */
+        static final int MOST = 8;
+
+        public Tuple {
+            members = List.copyOf(members);
+            if (members.size() < 2 || members.size() > MOST) {
+                throw new IllegalArgumentException("a tuple of " + members.size() + " members has"
+                        + " no type");
+            }
+        }
+
+        @Override
+        public Shape shape() {
+            return new Shape.Product(members.stream().map(Crossing::shape).toList());
+        }
+
+        @Override
+        public String type(Body.Imports imports) {
+            return imports.souther() + ".Tuple" + members.size() + "["
+                    + members.stream().map(it -> it.type(imports)).collect(Collectors.joining(", "))
+                    + "]";
+        }
+
+        @Override
+        public String zero(Body.Imports imports) {
+            return type(imports) + "{}";
+        }
+
+        @Override
+        public void give(Body body, String value, List<String> into) {
+            int at = 0;
+            for (int member = 0; member < members.size(); member++) {
+                int wide = members.get(member).words().size();
+                members.get(member).give(body, value + ".V" + member, into.subList(at, at + wide));
+                at += wide;
+            }
+        }
+
+        @Override
+        public String of(Body body, List<String> words) {
+            List<String> made = new ArrayList<>();
+            int at = 0;
+            for (int member = 0; member < members.size(); member++) {
+                int wide = members.get(member).words().size();
+                made.add("V" + member + ": " + members.get(member).of(body, words.subList(at, at + wide)));
+                at += wide;
+            }
+            return type(body.imports) + "{" + String.join(", ", made) + "}";
+        }
+
+        @Override
+        public String label() {
+            return "Tuple" + members.stream().map(Crossing::label).collect(Collectors.joining("And"));
+        }
+    }
+
+    /**
+     * A list, and a set and a map, which cross as the list of what they hold: a slice of what its
+     * element is, built and read through the functions the manifest names for a list of its
+     * element's shape.
+     *
+     * @param construct what builds one, or null where nothing does
+     * @param read      what reads one, or null where nothing does
+     */
+    record Listed(Crossing element, @Nullable Function construct, Manifest.@Nullable ListRead read)
+            implements Crossing {
+
+        @Override
+        public Shape shape() {
+            return new Shape.ListOf(element.shape());
+        }
+
+        @Override
+        public String type(Body.Imports imports) {
+            return "[]" + element.type(imports);
+        }
+
+        @Override
+        public String zero(Body.Imports imports) {
+            return "nil";
+        }
+
+        /**
+         * The list, built of a column of each word its element crosses as, every element's at its
+         * index. The columns are read for the length of the call and not kept.
+         */
+        @Override
+        public void give(Body body, String value, List<String> into) {
+            Objects.requireNonNull(construct, "a list handed over is built by something");
+            List<Word> words = element.words();
+            String count = body.temp("count");
+            body.line(count + " := len(" + value + ")");
+            List<String> columns = new ArrayList<>();
+            for (Word word : words) {
+                String column = body.temp("column");
+                body.line(column + " := make([]" + local(word, body.imports) + ", 0, " + count + ")");
+                columns.add(column);
+            }
+            String each = body.temp("element");
+            body.open("for _, " + each + " := range " + value);
+            List<String> inner = declare(body, "e", words);
+            element.give(body, each, inner);
+            for (int at = 0; at < words.size(); at++) {
+                body.line(columns.get(at) + " = append(" + columns.get(at) + ", " + inner.get(at) + ")");
+            }
+            body.close();
+            List<String> handed = new ArrayList<>(List.of("C.int64_t(" + count + ")"));
+            columns.forEach(column -> handed.add(body.imports.souther() + ".Addr(" + column + ")"));
+            body.line(into.getFirst() + " = " + body.call(construct, handed));
+        }
+
+        /** Each element read into room of its own, in order. */
+        @Override
+        public String of(Body body, List<String> words) {
+            Objects.requireNonNull(read, "a list handed over is read by something");
+            String count = body.temp("count");
+            body.line(count + " := int64(" + body.call(read.length(), List.of(words.getFirst())) + ")");
+            String elements = body.temp("elements");
+            body.line(elements + " := make([]" + element.type(body.imports) + ", 0, " + count + ")");
+            String index = body.temp("index");
+            body.open("for " + index + " := int64(0); " + index + " < " + count + "; " + index + "++");
+            List<String> rooms = declare(body, "e", element.words());
+            List<String> handed = new ArrayList<>(List.of(words.getFirst(), "C." + "int64_t(" + index + ")"));
+            rooms.forEach(room -> handed.add("&" + room));
+            String inside = body.temp("inside");
+            body.line(inside + " := " + body.call(read.at(), handed));
+            body.open("if " + inside + " == 0")
+                    .line("panic(\"the library answers every element of a list below its length\")")
+                    .close();
+            body.line(elements + " = append(" + elements + ", " + element.of(body, rooms) + ")");
+            body.close();
+            return elements;
+        }
+
+        @Override
+        public String label() {
+            return "List" + element.label();
+        }
+    }
+
+    /**
+     * A value of a union no declaration names, as the interface generated for it: a type for each
+     * of its members, a declared one holding its handle and a primitive Go's own value. Handed over
+     * as one of the member types; handed to Go only where the library says which case it is, which
+     * a behavior's answer does ({@code told}).
+     *
+     * @param importPath the package the interface is written in
+     * @param name    what the interface is called there
+     * @param members each member, in the order the union names them
+     * @param told    how each case the library counts is made, in its order, and what counts it;
+     *                null where the library says nothing of which case a value is
+     */
+    record OneOf(String importPath, String name, List<Member> members, @Nullable Told told)
+            implements Crossing {
+
+        /**
+         * One member: the type it is, how Go holds its value, and where it is a primitive, what
+         * carries a value of it into the union and reads it back out.
+         */
+        record Member(String variant, Whole whole, @Nullable Function make, @Nullable Function read) {
+        }
+
+        /** What the library says a value is: {@code which} counts the cases the union descends to. */
+        record Told(Function which, List<Arm> arms) {
+        }
+
+        /** One case the library counts: the member it is made as. */
+        record Arm(Member member) {
+        }
+
+        public OneOf {
+            members = List.copyOf(members);
+        }
+
+        @Override
+        public Shape shape() {
+            return new Shape.Leaf(Word.VALUE);
+        }
+
+        @Override
+        public String type(Body.Imports imports) {
+            return imports.module(importPath) + name;
+        }
+
+        @Override
+        public String zero(Body.Imports imports) {
+            return "nil";
+        }
+
+        @Override
+        public void give(Body body, String value, List<String> into) {
+            String it = body.temp("member");
+            body.open("switch " + it + " := " + value + ".(type)");
+            for (Member member : members) {
+                body.label("case " + type(body.imports) + member.variant() + ":");
+                if (member.make() == null) {
+                    member.whole().give(body, it + ".Value", into);
+                } else {
+                    List<String> word = declare(body, "w", member.whole().words());
+                    member.whole().give(body, it + ".Value", word);
+                    body.line(into.getFirst() + " = " + body.call(member.make(), word));
+                }
+            }
+            body.label("default:").line(body.imports.souther() + ".NoValue()");
+            body.close();
+        }
+
+        @Override
+        public String of(Body body, List<String> words) {
+            Objects.requireNonNull(told, "a union is handed to Go only where it is told its case");
+            String union = body.temp("union");
+            body.line("var " + union + " " + type(body.imports));
+            body.open("switch " + body.call(told.which(), List.of(words.getFirst())));
+            for (int place = 0; place < told.arms().size(); place++) {
+                Member member = told.arms().get(place).member();
+                body.label("case " + place + ":");
+                String held = words.getFirst();
+                if (member.read() != null) {
+                    held = body.temp("held");
+                    body.line(held + " := " + body.call(member.read(), List.of(words.getFirst())));
+                }
+                body.line(union + " = " + type(body.imports) + member.variant() + "{Value: "
+                        + member.whole().of(body, List.of(held)) + "}");
+            }
+            body.label("default:")
+                    .line("panic(\"the library answered a case the union does not have\")");
+            body.close();
+            return union;
+        }
+
+        @Override
+        public String label() {
+            return name;
         }
     }
 

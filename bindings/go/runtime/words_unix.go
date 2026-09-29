@@ -96,6 +96,16 @@ func Bytes(b []byte) unsafe.Pointer {
 	return unsafe.Pointer(&b[0])
 }
 
+// Addr is where the elements of s are, to hand to the library for the length of a call: an address
+// even where there are none, which the library then reads none of.
+func Addr[T any](s []T) unsafe.Pointer {
+	if len(s) == 0 {
+		var none [1]byte
+		return unsafe.Pointer(&none[0])
+	}
+	return unsafe.Pointer(&s[0])
+}
+
 // Constructed is what a constructor's call came to: err where it answered, an
 // invariant_violation issue where the library says the invariant was not held, and the failure
 // otherwise.

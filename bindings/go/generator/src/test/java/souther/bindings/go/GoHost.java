@@ -45,6 +45,18 @@ final class GoHost {
     }
 
     /**
+     * What a host whose {@code main.go} is {@code main} printed, over the library {@code model}
+     * builds, whose binding is generated as the package {@code importPath}.
+     */
+    static String ran(Path into, String model, String importPath, String main)
+            throws IOException, InterruptedException {
+        NativeCompiler.Library library = NativeCompiler.library(
+                souther.nativecode.Checked.of(List.of(model)), into.resolve("native"));
+        Generated binding = generated(library, into.resolve("binding"), importPath);
+        return ran(into, binding, importPath, main, List.of(library.library().toString()));
+    }
+
+    /**
      * What a host whose {@code main.go} is {@code main} printed, built beside {@code binding} in
      * {@code into} and run with {@code arguments}, where the binding and the host pass vet and the
      * host built and ran with nothing said.
