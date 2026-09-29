@@ -16,9 +16,16 @@ func surface(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
+	return declarations(string(said))
+}
+
+// declarations is what of text declares something: not a comment, and not a blank line, which go
+// doc writes between the paragraphs of one as well as between declarations.
+func declarations(text string) string {
 	var kept []string
-	for _, line := range strings.Split(string(said), "\n") {
-		if strings.HasPrefix(line, "    ") || strings.HasPrefix(strings.TrimSpace(line), "//") {
+	for _, line := range strings.Split(text, "\n") {
+		if strings.TrimSpace(line) == "" || strings.HasPrefix(line, "    ") ||
+			strings.HasPrefix(strings.TrimSpace(line), "//") {
 			continue
 		}
 		kept = append(kept, line)
@@ -36,7 +43,7 @@ func TestTheSurfaceOfTheRuntimeMovesWithItsProtocol(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v: the surface of protocol %d is not recorded, and is:\n%s", err, Protocol, said)
 	}
-	if string(recorded) != said {
+	if declarations(string(recorded)) != said {
 		t.Fatalf("the surface is not what %s records: a change to it is a new protocol, with a record of its own.\n"+
 			"It is now:\n%s", record, said)
 	}

@@ -896,6 +896,8 @@ public final class GoBindings {
         at.items.append("\n// ").append(decoder).append(" is ").append(name)
                 .append(" as a raoh decoder of what a host decoded, reading in r:\n")
                 .append("// composed with a host's own decoders, its issues come back with theirs, at the path it is reached at.\n")
+                .append("// It holds r, and is good only in r's run on the goroutine that opened it: made for a decode\n")
+                .append("// inside the run, not kept past it or shared, which raoh's own decoders can be.\n")
                 .append("func ").append(decoder).append("(r *").append(at.imports.lib()).append(".Run) ")
                 .append(at.imports.raoh()).append(".Decoder[any, ").append(it.name()).append("] {\n")
                 .append("\treturn ").append(souther).append(".Decoder(r, ").append(name).append(")\n}\n");

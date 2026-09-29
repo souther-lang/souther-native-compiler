@@ -17,8 +17,14 @@ import (
 // field, since there is no text to hand over; null is handed over, and the type says whether it
 // takes one. A value that no JSON writes is a type_mismatch. Any other error of decode, the run
 // ending, stops the decode and is not taken for invalid input.
+//
+// Unlike raoh's own decoders, it holds r, and is good only while r is the innermost run open, on
+// the goroutine that opened it: made for one decode inside the run, not kept past it or shared
+// with another goroutine. A decode outside that panics with a *Misuse, as any other use of r does.
 func Decoder[B, T any](r *Run[B], decode func(*Run[B], []byte) (T, error)) raoh.Decoder[any, T] {
+	r.checkMaking()
 	return raoh.NewDecoder(func(in any) (T, error) {
+		r.checkMaking()
 		var zero T
 		if raoh.IsMissing(in) {
 			return zero, raoh.Invalid(raoh.NewIssue(raoh.CodeRequired))
