@@ -30,7 +30,7 @@ class AReleaseCarriesTheChecksumOfEverythingItFetchesTest {
     void everyPlatformsBundleAndEveryGeneratorTheCatalogNamesIsExpected() {
         assertThat(ReleaseChecksums.expected()).contains("native.linux-x86_64",
                 "native.linux-aarch64", "native.macos-x86_64", "native.macos-aarch64",
-                "generator.php", "generator.rust").hasSize(6);
+                "generator.php", "generator.rust", "generator.go").hasSize(7);
         assertThat(ReleaseChecksums.expected())
                 .as("the keys the fetching reads are the ones a release is held to")
                 .contains(ReleaseChecksums.bundle("linux-x86_64"), ReleaseChecksums.generator("php"));

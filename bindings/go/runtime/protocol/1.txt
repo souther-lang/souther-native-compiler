@@ -1,0 +1,328 @@
+package souther // import "github.com/souther-lang/souther-native-compiler/bindings/go/runtime"
+
+Package souther is what every Go binding of a Souther library runs on.
+
+A library keeps what a computation makes in an arena of its own, one for each OS
+thread, and a run is a mark on it that the library is told to drop back to when
+the run ends. A value made in a run is an address into that arena, good until
+then. The Rust runtime holds that in types. Go cannot, so a value keeps the run
+it was made in and is checked when it is used:
+
+  - A run holds its goroutine on one OS thread (runtime.LockOSThread) from the
+  - Using a value after its run ended, from another goroutine, or through a
+  - What Rust reports at run time is an error here as well: a value another
+  - Reading a value, and copying what a native call answered into the host's own
+
+A binding gives each generated library a tag type B, and its Run and Ref are
+of that tag: a run of another generated binding is another type, and does not
+compile.
+
+A library's runtime is known by its identity, the address of its souther_mark.
+Whatever works on one arena has one, so two [Runtime]s with the same identity
+are two handles on one arena, however the library was reached.
+
+CONSTANTS
+
+const Protocol = 1
+
+
+
+VARIABLES
+
+var (
+	ErrUnbound = errors.New("a behavior was reached through a requirement it was handed nothing for")
+	ErrProtocolViolation = errors.New("a host implementation answered what it may not, or failed and left nothing")
+	ErrForeignHandle = errors.New("a value that another library's runtime made was handed to this one's")
+	ErrAlreadyRunning = errors.New("a run of this library is already open on this thread; a run inside it is opened from it with Scope")
+)
+var (
+	ErrExpired = errors.New("the run this was made in has ended")
+	ErrRunOnAnotherGoroutine = errors.New("a run belongs to the goroutine that opened it")
+	ErrNotTheInnermostRun = errors.New("something was made through a run that is not the innermost one")
+	ErrNoValue = errors.New("this handle holds no value: it is a zero value, and was not made by the library")
+)
+var ErrNotTemporal = errors.New("numbers that name no value of a temporal type")
+
+var ErrNotUTF8 = errors.New("text handed to the library is not valid UTF-8")
+
+
+FUNCTIONS
+
+func Addr[T any](s []T) unsafe.Pointer
+
+func Amount[B any](r *Run[B], word unsafe.Pointer) raoh.Decimal
+
+func Call[B any](r *Run[B], native func() Status) error
+
+
+
+func Called[B any](r *Run[B], native func() Status) error
+
+func Constructed(err error) error
+
+func Crossing(err error) error
+
+func DateTimeWord[B any](r *Run[B], dt DateTime) (unsafe.Pointer, error)
+
+func DateWord[B any](r *Run[B], date Date) (unsafe.Pointer, error)
+
+func Decimal[B any](r *Run[B], d raoh.Decimal) unsafe.Pointer
+
+func HostFunction[B any](r *Run[B], key any, dispatch func() any, implement func(room, userdata unsafe.Pointer) unsafe.Pointer) unsafe.Pointer
+
+
+func InstantOf(t time.Time) (Instant, error)
+
+func InstantWord[B any](r *Run[B], i Instant) (unsafe.Pointer, error)
+
+func Load[B any](path string, spec Spec) (*Library[B], error)
+
+
+func Making[B any](r *Run[B])
+
+func NewDate(year int32, month, day uint8) (Date, error)
+
+func NewInstant(second int64, nano uint32) (Instant, error)
+
+func NewTime(hour, minute, second uint8) (Time, error)
+
+func NoValue()
+
+func Reading[B any](r *Run[B], decoded unsafe.Pointer) (unsafe.Pointer, error)
+
+func String[B any](r *Run[B], text string) (unsafe.Pointer, error)
+
+
+func Text[B any](r *Run[B], word unsafe.Pointer) string
+
+func TimeWord[B any](r *Run[B], t Time) (unsafe.Pointer, error)
+
+func UserdataValue(userdata unsafe.Pointer) any
+
+
+TYPES
+
+type Abort struct {
+	Status Status
+	Name string
+}
+
+func (e *Abort) Error() string
+
+type Capability[B any] struct {
+}
+
+
+func Bound[B any](r *Run[B], requires []Capability[B], bind func(capability, requirements unsafe.Pointer)) Capability[B]
+
+
+func Implemented[B any](r *Run[B], dispatch any, implement func(capability, hosted, userdata unsafe.Pointer)) Capability[B]
+
+func (c Capability[B]) Requirements(r *Run[B]) (unsafe.Pointer, error)
+
+
+type Date struct {
+}
+
+func DateOf[B any](r *Run[B], word unsafe.Pointer) Date
+
+func (d Date) Day() uint8
+
+func (d Date) Month() uint8
+
+func (d Date) String() string
+
+func (d Date) Year() int32
+
+type DateTime struct {
+}
+
+func DateTimeOf[B any](r *Run[B], word unsafe.Pointer) DateTime
+
+func NewDateTime(date Date, time Time) DateTime
+
+func (d DateTime) Date() Date
+
+func (d DateTime) String() string
+
+func (d DateTime) Time() Time
+
+type HostError struct{ Err error }
+
+func (e *HostError) Error() string
+
+func (e *HostError) Unwrap() error
+
+type Instant struct {
+}
+
+func InstantOfWord[B any](r *Run[B], word unsafe.Pointer) Instant
+
+func (i Instant) Nano() uint32
+
+func (i Instant) Second() int64
+
+func (i Instant) String() string
+
+func (i Instant) Time() time.Time
+
+type Layout struct {
+	Pointer uintptr
+	Capability uintptr
+	Hosted uintptr
+	HostedFunction uintptr
+}
+
+type Library[B any] struct {
+}
+
+func (l *Library[B]) Run(f func(*Run[B]) error) error
+
+
+func (l *Library[B]) Runtime() *Runtime
+
+func (l *Library[B]) Symbol(name string) unsafe.Pointer
+
+type MissingSymbols struct {
+	Path  string
+	Names []string
+}
+
+func (e *MissingSymbols) Error() string
+
+type Misuse struct{ Err error }
+
+func (m *Misuse) Error() string
+
+func (m *Misuse) Unwrap() error
+
+type Option[T any] struct {
+}
+
+
+func None[T any]() Option[T]
+
+func Some[T any](value T) Option[T]
+
+func (o Option[T]) Get() (T, bool)
+
+func (o Option[T]) IsSome() bool
+
+func (o Option[T]) OrElse(fallback T) T
+
+type Ref[B any] struct {
+}
+
+func NewRef[B any](run *Run[B], ptr unsafe.Pointer) Ref[B]
+
+func (v Ref[B]) In(run *Run[B]) (unsafe.Pointer, error)
+
+
+func (v Ref[B]) Read() unsafe.Pointer
+
+func (v Ref[B]) Run() *Run[B]
+
+type Run[B any] struct {
+}
+
+
+func (r *Run[B]) Library() *Library[B]
+
+func (r *Run[B]) Scope(f func(*Run[B]) error) error
+
+
+type Runtime struct {
+}
+
+func (r *Runtime) Identity() uintptr
+
+type Spec struct {
+	Layout   Layout
+	Statuses map[string]Status
+	Outcomes map[string]int32
+	Symbols  []string
+}
+
+type Status = uint32
+
+func Host[B any](origin *Run[B], f func(*Run[B]) error) Status
+
+
+
+type Time struct {
+}
+
+func TimeOf[B any](r *Run[B], word unsafe.Pointer) Time
+
+func (t Time) Hour() uint8
+
+func (t Time) Minute() uint8
+
+func (t Time) Second() uint8
+
+func (t Time) String() string
+
+type Tuple2[A any, B any] struct {
+	V0 A
+	V1 B
+}
+
+type Tuple3[A any, B any, C any] struct {
+	V0 A
+	V1 B
+	V2 C
+}
+
+type Tuple4[A any, B any, C any, D any] struct {
+	V0 A
+	V1 B
+	V2 C
+	V3 D
+}
+
+type Tuple5[A any, B any, C any, D any, E any] struct {
+	V0 A
+	V1 B
+	V2 C
+	V3 D
+	V4 E
+}
+
+type Tuple6[A any, B any, C any, D any, E any, F any] struct {
+	V0 A
+	V1 B
+	V2 C
+	V3 D
+	V4 E
+	V5 F
+}
+
+type Tuple7[A any, B any, C any, D any, E any, F any, G any] struct {
+	V0 A
+	V1 B
+	V2 C
+	V3 D
+	V4 E
+	V5 F
+	V6 G
+}
+
+type Tuple8[A any, B any, C any, D any, E any, F any, G any, H any] struct {
+	V0 A
+	V1 B
+	V2 C
+	V3 D
+	V4 E
+	V5 F
+	V6 G
+	V7 H
+}
+
+type UnnamedOutcome struct{ Name string }
+
+func (e *UnnamedOutcome) Error() string
+
+type UnnamedStatus struct{ Name string }
+
+func (e *UnnamedStatus) Error() string
+

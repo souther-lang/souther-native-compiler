@@ -71,6 +71,14 @@ jobs:
           java-version: '25'
           cache: maven
 
+      # Go, for what publishes the Go runtime: it asks the module to be fetched, and this job is another
+      # runner than the build's, so what the build installed is not here. The version is the runtime
+      # module's own, from its go.mod, as it is in the build.
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: bindings/go/runtime/go.mod
+          cache-dependency-path: bindings/go/runtime/go.sum
+
       - name: The version the tag names
         run: |
           echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
@@ -81,7 +89,7 @@ jobs:
       - name: The generators
         run: >-
           mvn --batch-mode -DskipTests -Dexec.skip=true -Dsouther.skipReleaseCheck=true
-          -pl bindings/php/generator,bindings/rust/generator -am package
+          -pl bindings/php/generator,bindings/rust/generator,bindings/go/generator -am package
 
       # Written into the compiler's own artifact, which is the one place these are held where a release
       # asset being replaced, or a mirror, does not reach them.
@@ -90,6 +98,7 @@ jobs:
           scripts/record-release-checksums.sh "$CHECKSUMS" dist
           "php=bindings/php/generator/target/souther-binding-php-$VERSION.jar"
           "rust=bindings/rust/generator/target/souther-binding-rust-$VERSION.jar"
+          "go=bindings/go/generator/target/souther-binding-go-$VERSION.jar"
 
       # What is published, as a Maven repository: built once, here, with the checksums in the compiler.
       # The build refuses a release version that does not carry all of them.
@@ -107,6 +116,14 @@ jobs:
         with:
           name: maven-repository
           path: maven-repo
+
+      # The Go runtime is a module of its own in a directory of this repository, and its version is its
+      # own (bindings/go/runtime/VERSION), published as the tag bindings/go/runtime/v<version>, which the
+      # packages the generator writes require. Where that tag is published already, the runtime has to be
+      # what it was then, or this fails: a compiler release that leaves the runtime alone publishes
+      # nothing. It is the last thing before the release, and asks all of it before it pushes, because a
+      # tag the Go proxy has fetched is not taken back.
+      - run: scripts/publish-go-runtime.sh origin "$GITHUB_SHA"
 
       - run: >-
           gh release create "$GITHUB_REF_NAME" dist/*.zip "$CHECKSUMS" --verify-tag --generate-notes

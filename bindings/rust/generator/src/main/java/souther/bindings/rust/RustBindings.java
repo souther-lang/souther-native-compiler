@@ -13,6 +13,7 @@ import souther.bindings.Manifest.Type;
 import souther.bindings.Manifest.Word;
 import souther.bindings.NotBindable;
 import souther.bindings.Output;
+import souther.bindings.RuntimeFunctions;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -52,60 +53,6 @@ public final class RustBindings {
 
     /** The version of the runtime crate what this writes calls. */
     static final String RUNTIME_VERSION = "0.1";
-
-    /**
-     * The runtime's functions the runtime crate calls, as the manifest has to say them: the crate
-     * looks each up by this name and calls it as these words say, so a manifest saying another is
-     * one this crate would call as something it is not.
-     */
-    private static final Map<String, Function> RUNTIME = runtime();
-
-    private static Map<String, Function> runtime() {
-        Map<String, Function> functions = new LinkedHashMap<>();
-        java.util.function.BiConsumer<String, List<Object>> add = (name, words) -> {
-            List<Parameter> takes = new ArrayList<>();
-            for (Object word : words.subList(0, words.size() - 1)) {
-                takes.add(Parameter.given((Word) word));
-            }
-            functions.put(name, new Function(name, takes, (Word) words.getLast()));
-        };
-        functions.put("souther_mark", new Function("souther_mark", List.of(), Word.MARK));
-        functions.put("souther_reset",
-                new Function("souther_reset", List.of(Parameter.given(Word.MARK)), null));
-        // A String has no place for text past what the language bounds it to
-        // (souther-native-compiler#109), so this answers whether it wrote one, as a generated
-        // string operation already does, in place of always answering a String.
-        functions.put("souther_string_of_utf8", new Function("souther_string_of_utf8",
-                List.of(Parameter.given(Word.BYTES), Parameter.given(Word.COUNT),
-                        Parameter.room(Word.STRING)),
-                Word.BOOL));
-        add.accept("souther_string_length", List.of(Word.STRING, Word.COUNT));
-        add.accept("souther_string_bytes", List.of(Word.STRING, Word.BYTES));
-        // The unscaled digits as bytes and a count, not a String: they are the integer's text and
-        // never the value's written form, so they are never fallible on what a String holds
-        // (souther-native-compiler#109).
-        add.accept("souther_decimal_of_parts", List.of(Word.BYTES, Word.COUNT, Word.INT, Word.DECIMAL));
-        add.accept("souther_decimal_unscaled", List.of(Word.DECIMAL, Word.STRING));
-        add.accept("souther_decimal_scale", List.of(Word.DECIMAL, Word.INT));
-        add.accept("souther_date_of_iso", List.of(Word.STRING, Word.DATE));
-        add.accept("souther_date_iso", List.of(Word.DATE, Word.STRING));
-        add.accept("souther_time_of_iso", List.of(Word.STRING, Word.TIME));
-        add.accept("souther_time_iso", List.of(Word.TIME, Word.STRING));
-        add.accept("souther_datetime_of_iso", List.of(Word.STRING, Word.DATETIME));
-        add.accept("souther_datetime_iso", List.of(Word.DATETIME, Word.STRING));
-        add.accept("souther_instant_of_iso", List.of(Word.STRING, Word.INSTANT));
-        add.accept("souther_instant_iso", List.of(Word.INSTANT, Word.STRING));
-        add.accept("souther_decoded_outcome", List.of(Word.DECODED, Word.OUTCOME));
-        add.accept("souther_decoded_value", List.of(Word.DECODED, Word.VALUE));
-        add.accept("souther_decoded_malformed_at", List.of(Word.DECODED, Word.COUNT));
-        add.accept("souther_decoded_issue_count", List.of(Word.DECODED, Word.COUNT));
-        add.accept("souther_decoded_issue", List.of(Word.DECODED, Word.COUNT, Word.ISSUE));
-        add.accept("souther_issue_code", List.of(Word.ISSUE, Word.STRING));
-        add.accept("souther_issue_message_key", List.of(Word.ISSUE, Word.STRING));
-        add.accept("souther_issue_path", List.of(Word.ISSUE, Word.STRING));
-        add.accept("souther_issue_meta", List.of(Word.ISSUE, Word.STRING));
-        return Map.copyOf(functions);
-    }
 
     /** Every name the root of the crate declares, which no top module of the model may be. */
     private static final List<String> ROOT = List.of("Library", "Run", "Scope", "AlreadyRunning",
@@ -259,17 +206,7 @@ public final class RustBindings {
      * are not: each it calls is there, taking and answering what it calls it with.
      */
     private void checkRuntime() {
-        Map<String, Function> said = new LinkedHashMap<>();
-        manifest.runtime().forEach(it -> said.put(it.name(), it));
-        for (Function expected : RUNTIME.values()) {
-            Function it = said.get(expected.name());
-            if (it == null || !it.takes().equals(expected.takes())
-                    || it.answers() != expected.answers()) {
-                throw new IllegalArgumentException("the manifest says the runtime's "
-                        + expected.name() + " is " + it + ", and the Rust runtime calls it as "
-                        + expected);
-            }
-        }
+        RuntimeFunctions.check(manifest, "Rust");
     }
 
     // ---------------------------------------------------------------------------------------------

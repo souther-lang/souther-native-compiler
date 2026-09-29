@@ -1,0 +1,185 @@
+//go:build unix
+
+package souther
+
+/*
+#cgo linux LDFLAGS: -ldl
+#include <dlfcn.h>
+#include <stdint.h>
+#include <stdlib.h>
+
+static int64_t call_mark(void *fn) { return ((int64_t (*)(void))fn)(); }
+static void call_reset(void *fn, int64_t mark) { ((void (*)(int64_t))fn)(mark); }
+*/
+import "C"
+
+import (
+	"errors"
+	"fmt"
+	"runtime/cgo"
+	"slices"
+	"strings"
+	"unsafe"
+)
+
+// A cgo.Handle is a uintptr, and a cell of C memory holds one where the library keeps it; and
+// what a C pointer takes is what a Go pointer does, since both are written into C memory here.
+var (
+	_ = [1]struct{}{}[int(unsafe.Sizeof(cgo.Handle(0)))-int(C.sizeof_uintptr_t)]
+	_ = [1]struct{}{}[int(unsafe.Sizeof(unsafe.Pointer(nil)))-int(C.sizeof_uintptr_t)]
+)
+
+// nativeFile is a library file opened by path.
+//
+// Every Souther library exports the same runtime functions, so a symbol is only looked up through
+// the handle of the file it is wanted from, which is opened RTLD_LOCAL and never linked: two
+// libraries in one program each keep their own arena.
+type nativeFile struct{ handle unsafe.Pointer }
+
+// open loads the library file at path.
+func open(path string) (*nativeFile, error) {
+	name := C.CString(path)
+	defer C.free(unsafe.Pointer(name))
+	handle := C.dlopen(name, C.RTLD_NOW|C.RTLD_LOCAL)
+	if handle == nil {
+		return nil, fmt.Errorf("souther: cannot load %s: %s", path, C.GoString(C.dlerror()))
+	}
+	return &nativeFile{handle}, nil
+}
+
+// close unloads the file. It is called only where nothing was taken from it.
+func (n *nativeFile) close() { C.dlclose(n.handle) }
+
+// symbol is where the library file has name, and whether it has.
+func (n *nativeFile) symbol(name string) (unsafe.Pointer, bool) {
+	c := C.CString(name)
+	defer C.free(unsafe.Pointer(c))
+	at := C.dlsym(n.handle, c)
+	return at, at != nil
+}
+
+// Spec is what a generated binding needs of a library: the statuses the manifest numbers, what a
+// reading comes to, and every function the binding calls.
+type Spec struct {
+	Layout   Layout
+	Statuses map[string]Status
+	// Outcomes is what a reading comes to, by the names the manifest gives them.
+	Outcomes map[string]int32
+	Symbols  []string
+}
+
+// MissingSymbols are functions the binding calls that the library file does not have. It is not
+// the library the binding was generated from, or is one of another ABI generation: a function
+// generated for a behavior or a type has its generation in its name, so a library of another one
+// has none of them.
+type MissingSymbols struct {
+	Path  string
+	Names []string
+}
+
+func (e *MissingSymbols) Error() string {
+	return fmt.Sprintf("souther: %s has no %s, and is not the library this binding was generated from",
+		e.Path, strings.Join(e.Names, ", "))
+}
+
+// Load opens the library file at path as the library of a binding of the tag B.
+//
+// It checks that every function the binding calls is there, so that a file of another library, or
+// of another ABI generation, is refused here and not where a call reaches it. The generation is
+// not asked of the file by a symbol of its own: the one the runtime defines for it
+// (souther_runtime_abi_N) is there for the linker and is not exported. It cannot tell a library
+// from another that has the same functions under the same names with other signatures, so the
+// file is the library the binding was generated from: the caller holds that, as for any unsafe
+// load.
+func Load[B any](path string, spec Spec) (*Library[B], error) {
+	statuses, err := newStatuses(spec.Statuses)
+	if err != nil {
+		return nil, err
+	}
+	// What a reading came to is told by these two, and any other is that the text was not JSON.
+	for _, name := range []string{"VALUE", "ISSUES"} {
+		if _, ok := spec.Outcomes[name]; !ok {
+			return nil, &UnnamedOutcome{name}
+		}
+	}
+	if l := spec.Layout; l.Pointer == 0 || l.Capability == 0 || l.Hosted == 0 || l.HostedFunction == 0 {
+		return nil, errors.New("souther: the binding says nothing of the size of what a host lays out room for")
+	}
+	native, err := open(path)
+	if err != nil {
+		return nil, err
+	}
+	// The file is unloaded where nothing comes of loading it: nothing has been handed out of it yet.
+	loaded := false
+	defer func() {
+		if !loaded {
+			native.close()
+		}
+	}()
+	symbols := make(map[string]unsafe.Pointer, len(spec.Symbols)+2)
+	var missing []string
+	for _, name := range append([]string{"souther_mark", "souther_reset"}, spec.Symbols...) {
+		if at, ok := native.symbol(name); ok {
+			symbols[name] = at
+		} else if !slices.Contains(missing, name) {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) > 0 {
+		return nil, &MissingSymbols{path, missing}
+	}
+	mark, reset := symbols["souther_mark"], symbols["souther_reset"]
+	rt := newRuntime(uintptr(mark),
+		func() int64 { return int64(C.call_mark(mark)) },
+		func(at int64) { C.call_reset(reset, C.int64_t(at)) },
+		statuses)
+	lib := newLibrary[B](rt)
+	lib.native, lib.symbols, lib.outcomes, lib.layout = native, symbols, spec.Outcomes, spec.Layout
+	// From here the library's functions are in use for as long as the program is: nothing says when
+	// the last value or function pointer taken from it is gone, so it is kept loaded.
+	loaded = true
+	return lib, nil
+}
+
+// room is memory of a host implementation for the library to keep, of size bytes, taken from C
+// memory and never from Go's heap, since the library holds it for as long as it may call the
+// implementation and cgo does not let C keep a Go pointer. It is zeroed, and freed once this run
+// ends. The size is the declarations' ([Layout]).
+func (r *Run[B]) room(size uintptr) unsafe.Pointer {
+	r.checkReading()
+	at := C.calloc(1, C.size_t(size))
+	if at == nil {
+		panic("souther: out of memory")
+	}
+	r.hold(func() { C.free(at) })
+	return at
+}
+
+// userdata is what a host implementation is handed back by the library: a cell of C memory
+// holding a [cgo.Handle] of v. The library keeps the cell and never a Go pointer. The cell is
+// freed and the handle deleted once this run ends, after which the library does not call it.
+func (r *Run[B]) userdata(v any) unsafe.Pointer {
+	r.checkReading()
+	cell := (*cgo.Handle)(C.calloc(1, C.sizeof_uintptr_t))
+	if cell == nil {
+		panic("souther: out of memory")
+	}
+	*cell = cgo.NewHandle(v)
+	r.hold(func() { cell.Delete(); C.free(unsafe.Pointer(cell)) })
+	return unsafe.Pointer(cell)
+}
+
+// UserdataValue is the v that [Run.userdata] made userdata of.
+func UserdataValue(userdata unsafe.Pointer) any {
+	return (*(*cgo.Handle)(userdata)).Value()
+}
+
+// Symbol is where the library has name, which [Load] resolved: a function the binding was
+// generated to call. It panics for a name the binding did not say it calls.
+func (l *Library[B]) Symbol(name string) unsafe.Pointer {
+	at, ok := l.symbols[name]
+	if !ok {
+		panic(fmt.Sprintf("souther: the binding calls %s and did not say so to Load", name))
+	}
+	return at
+}

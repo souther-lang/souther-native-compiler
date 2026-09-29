@@ -47,19 +47,24 @@ with no preprocessor does and run a generated PHP binding. Maven also runs Compo
 installed, for what the PHP runtime in `bindings/php/runtime` depends on, as its `composer.lock`
 fixes it. The Rust runtime in `bindings/rust/runtime` is a crate of its own, which Maven formats,
 lints and tests beside the Rust half, and the tests of a generated Rust binding build a host of it
-with Cargo, fetching what the runtime depends on the first time.
+with Cargo, fetching what the runtime depends on the first time. Go is needed too, the version the runtime
+module's `go.mod` names (the one place it is said; the workflows and the scripts read it from there),
+with a C compiler, since a Go binding is built with cgo: Maven formats, vets and tests the Go runtime in
+`bindings/go/runtime` under the race detector, and the tests of a generated Go binding build a host
+of it with the Go toolchain, fetching what the runtime depends on the first time.
 
 The tests are told where the driver is by Maven, through the same property; a test run from an IDE
 names it the same way (`-Dsouther.native.driver=<clone>/native/target/debug/souther-native-driver`).
 
 ## Modules
 
-The build is one Maven reactor of five modules. `bindings/api` (`souther-bindings-api`) holds what a
+The build is one Maven reactor of six modules. `bindings/api` (`souther-bindings-api`) holds what a
 binding generator is written against: the manifest a build writes beside its library, the
 `BindingGenerator` interface, and how a binding is put in place. `compiler`
-(`souther-native-compiler`) is the compiler and the command. `bindings/php/generator` and
-`bindings/rust/generator` are the generators, each beside the language runtime it writes calls into.
-`launcher` is the command with both generators installed, and is not published.
+(`souther-native-compiler`) is the compiler and the command. `bindings/php/generator`,
+`bindings/rust/generator` and `bindings/go/generator` are the generators, each beside the language
+runtime it writes calls into. `launcher` is the command with the three generators installed, and is
+not published.
 
 The generators depend on the API and on nothing else of this project, and none of them can see the
 compiler or a checked program. That a binding is written from the manifest and nothing else is
@@ -70,7 +75,7 @@ the ABI is the driver's answer.
 
 The command finds a generator by the id `KnownBindings` names it by, through `ServiceLoader`. That
 catalog is the one place that says which bindings there are, how each is asked for (`--php` with
-`--namespace`, `--rust` with `--crate`), and which artifact brings its generator, and the options, the
+`--namespace`, `--rust` with `--crate`, `--go` with `--package`), and which artifact brings its generator, and the options, the
 usage and what is fetched are read from it. It is closed: a generator that is not installed cannot say
 that it is missing, and what is fetched and run on the strength of a flag is only what the catalog
 names. A binding whose generator is not installed is a `BindingUnavailable`, which is a command that is
@@ -122,19 +127,20 @@ refused.
 
     souther-native [--offline] [-cp <path>] -o <object> <source>...
     souther-native [--offline] [-cp <path>] --library <dir> [--with <object>]...
-                   [--php <dir> --namespace <ns>] [--rust <dir> --crate <name>] <source>...
+                   [--php <dir> --namespace <ns>] [--rust <dir> --crate <name>]
+                   [--go <dir> --package <import path>] <source>...
     souther-native --fetch
 
 A source is a `.sou` file or a directory holding some. `--library` writes what a host is handed
-(below) into its directory, `--php` the PHP binding of it and `--rust` the Rust one, each from the
+(below) into its directory, `--php` the PHP binding of it, `--rust` the Rust one and `--go` the Go one, each from the
 manifest the library was written with. A program importing another build reads that build's modules
 from `-cp`, the class path the `souther` command takes, and has its object linked in with `--with`,
 one for each build.
 
 The directories are each replaced whole, and each is its own: a binding refused for a name in the
 model leaves the new library and the binding that was there before. A namespace PHP will not take, a
-crate name Cargo will not take, or a binding directory holding what no binding wrote, is refused
-before the library is built.
+crate name Cargo will not take, an import path Go will not take, or a binding directory holding what
+no binding wrote, is refused before the library is built.
 
 Until the runtime is published, an application reaches it as a Composer path repository, which is
 the supported way for now:
@@ -168,6 +174,22 @@ reaches it by patching it in from the clone:
 The library is loaded by path when the host runs, not linked. `scripts/rust-from-the-command-line.sh`
 does this in CI, as the PHP script does.
 
+A Go host requires the module `--go` wrote, by path and with a `replace` to where it was written. The
+import path has a `.` in its first part, as Go asks of a module another module requires. The module
+requires the runtime at the version the runtime says it is (`bindings/go/runtime/VERSION`, which is
+not the compiler's), published as the tag `bindings/go/runtime/v<version>`, so a host needs nothing
+more for it, and runs `go mod tidy` once, since the module carries no `go.sum`:
+
+    require example.com/acme v0.0.0
+    replace example.com/acme => ./build/go
+
+A version that is not published yet is one only a clone has, and a host reaches it by a `replace`:
+
+    replace github.com/souther-lang/souther-native-compiler/bindings/go/runtime v<version> => <clone>/bindings/go/runtime
+
+The library is loaded by path when the host runs, not linked, and cgo is what builds the package, so
+a C compiler is needed. `scripts/go-from-the-command-line.sh` does this in CI.
+
 ## Releasing
 
 A release is a `v<version>` tag, and `.github/workflows/release.yml` does what the tag names. A tag can
@@ -181,6 +203,25 @@ It builds the generators' jars, and writes the SHA-256 of every bundle and every
 compiler's jar. It then builds the publication, as a Maven repository, and keeps it as the workflow's
 artifact `maven-repository`, with the compiler in it carrying those checksums, before it creates the
 GitHub release with the bundles.
+
+The Go runtime is a module of its own in a directory of this repository, and its version is its own:
+the file `bindings/go/runtime/VERSION`, beside its `go.mod`, which the Go generator is built with and
+requires. It is not the compiler's, which has no reason to move when the runtime does not, and cannot be
+a module's from version 2 on, where the path of the module says its major version. A module in a
+directory is versioned by a tag that begins with the directory, `bindings/go/runtime/v<version>`, and
+the repository's own `v<version>` is the version of no module in it. A release publishes that tag
+(`scripts/publish-go-runtime.sh`) as the last thing before the GitHub release, when it is not published
+already, since the Go module proxy keeps what it has fetched of a tag and does not take it back. So
+nothing is pushed that has not been asked for first, and each of these refuses: a version that is not a
+semantic version; a path that does not say the major version from 2 on, or says one before it; a
+runtime that is not what it was when the tag was published, which needs another version; and a module
+that cannot be fetched by its path and its version out of a repository that has this commit tagged (a
+rehearsal, in a directory that stands where GitHub does). Every build asks the same with `--check`,
+which pushes nothing, so a change to the runtime that leaves its version alone is found in the pull
+request, and `scripts/verify-go-runtime-release.sh` holds the whole of it, without a release: a host
+with no `replace` requires the module at a tag made that way and is built, and each refusal is
+exercised. The tests that build a host do use a `replace`, since they run in a clone, so that is what
+holds the resolution.
 
 The checksums are a fact about builds that follow the commit, so the file is not committed, and a
 build of a release version that does not have every one of them fails
@@ -897,6 +938,121 @@ axum, its HTTP boundary decoded by raoh, and its injected behaviors implemented 
 bound, for each request, to the transaction the request runs in. Besides the HTTP contract, its
 tests hold what rustc refuses a host of the model. `scripts/rust-cart-example.sh` builds it and
 runs its tests in CI.
+
+## A Go binding
+
+`GoBindings.generate(input, into, importPath)` writes the Go packages a host calls a library through,
+from the manifest and nothing else, over the runtime module in `bindings/go/runtime`. A module is a
+package of its own under the import path (`cart.lines` is `<path>/cart/lines`), which the module
+graph allows, since modules do not depend on one another in a cycle. Every name is the model's with its
+first letter a capital, which is what Go exports; a name whose first letter has none is refused, and
+two that come to one are refused with both named. The directory is one Go module, with a `go.mod`
+requiring the runtime, and what is written is what `gofmt` writes.
+
+Nothing is linked. `Load(path)` opens the library with `dlopen` and looks each function up through
+that handle, and a call goes through a C function that takes the address (cgo cannot call one),
+spelled with `__typeof__` of the symbol's declaration in the `souther.ffi.h` copied beside it, so the
+C compiler holds each call to what the driver declared. Every Souther library exports the same
+runtime functions, so a link could not say which of two a call reaches, and two libraries in one
+program each keep their own arena. `Load` checks that every function the binding calls is there; the
+ABI generation is in the name of each function generated for a behavior or a type, so a library of
+another one has none of them. The runtime's own marker (`souther_runtime_abi_<n>`) is for the linker
+and is not exported, so it cannot be asked. That the file is the library the binding was generated
+from is the caller's to hold, as it is for `Library::load` in Rust. A library stays loaded for as long
+as the program is, since nothing says when the last value or function pointer taken from it is gone;
+one that failed to load is unloaded.
+
+Go says none of the C ABI itself. What a host lays out room for (a capability, what a host's
+implementation is read out of, a function value of the host's, an array of the capabilities a behavior
+requires) is the C compiler's `sizeof` of what `souther.ffi.h` declares, given to the runtime as a
+`Layout`. Each function a package calls, and each function Go exports for the library to call back, is
+asserted by the C compiler (`_Static_assert` over `__builtin_types_compatible_p`) to be of the type the
+manifest's words make of it, so a number of another width or an address of another type is a build that
+fails and not a call that converts one into the other; the runtime module's own calls are held to the
+same words by a test. What Go exports is one name of the whole program, so it is an injective encoding of
+the binding's import path, the module and the behavior, and never a spelling of them with what Go does
+not take in a name replaced: two bindings in one program, and two modules ending alike, link together.
+
+A run is bracketed on one OS thread. The arena is per thread, and Go moves a goroutine between them,
+so `library.Run(func(r *Run) error { ... })` holds the goroutine on its thread from the mark to the
+reset (`runtime.LockOSThread`), and a callback from the library comes back on the same thread, since
+cgo runs it where it was called from. What Rust holds in types, Go checks when a value is used, and
+a run and its values are of the binding's own tag, so a run of another generated binding is another
+type and does not compile.
+
+- A value used after the run it was made in ended, a run or a value from another goroutine, and
+  something made through a run that has a run inside it are what Rust refuses to compile. They
+  panic with a `*souther.Misuse` (`ErrExpired`, `ErrRunOnAnotherGoroutine`,
+  `ErrNotTheInnermostRun`). Being on the run's thread is being in its goroutine, since no other
+  goroutine runs on a locked thread.
+- A value another runtime made, or a behavior bound to one at any depth, and a second root run of one
+  runtime on one thread, are what Rust also reports at run time. They are errors
+  (`ErrForeignHandle`, `ErrAlreadyRunning`). A library is told apart by the address of its
+  `souther_mark`, so two `Library` values over one file are one runtime.
+- Every function of the binding that takes a run asks it first (`souther.Making(r)`), whatever it goes
+  on to do: calling a function of the host's own that touches no run is asked the same as calling the
+  library's, and a test holds the generated code to it.
+- Reading a value and copying what a call answered leave no arena-owned value with the caller, and
+  need only the first two. Whatever makes a value needs the run to be the innermost, so a value made
+  outside is read and handed to a computation inside `r.Scope(func(inner *Run) error { ... })`, and
+  one made inside cannot be used once it has ended.
+
+A product, a newtype and a unit are each a struct holding the value and the run it was made in, with
+a method for each field, `New<Type>` answering the value or an `invariant_violation` Raoh issue as an
+error, `Decode<Type>` answering the value or Raoh's issues (`*raoh.Issues`) or `invalid_format`,
+and `Encode`. A sum has `Case`, answering a type of its own for each case (`OutcomeOwed{Value: ...}`),
+a case the model keeps being `Kept`, and a `<Sum>From<Type>` for each case and each narrower sum.
+An `Int`, a `Bool` and a `String` are Go's own, a `Decimal` is Raoh's with the scale it was written
+with, and a `Date`, a `Time`, a `DateTime` and an `Instant` are the runtime's, held as their numbers and
+checked where they are made, since the library ends the process on text that names none. An optional
+is a `souther.Option`, at every depth, since a pointer cannot tell an optional of nothing from
+nothing. A tuple is a `souther.Tuple2` and its like up to eight members, a list, a set and a map are
+slices, a map's entries being tuples in the order the library has them, which the language says
+nothing of. A union no declaration names is an interface with a type for each member, named after
+them in the manifest's order (`FreeOrInt`), handed over as one of them and handed back where the
+library says its case. A union, like a function type, belongs to the module that says it: two modules
+that say one alike each have their own type, so that a package imports only what its module depends on
+(the modules do not depend on one another in a cycle, and a package imported for the sake of a shared
+type could make one). A function value is a type of its own (`FnIntToInt`), made by the library or by
+`HostFnIntToInt` of a Go function, and called with `Call(r, ...)`, since a call makes values in the
+innermost run; a function of the host's handed over again and again in a run is one function value.
+
+A behavior that requires nothing is a function of its package. A behavior that requires something,
+or is required, is also a type with `Bind<Name>`, taking what stands for each behavior it requires,
+in order, and `Call`. A behavior a host implements is an interface with an `Apply` typed as the
+model says, and `Implement<Name>(r, implementation)` makes one into what stands for it. What stands
+for a behavior is laid out in C memory, since the library keeps it for as long as it may be called
+and cgo does not let C keep a Go pointer, and it is held until the run it was made in ends. The
+library calls `Apply` in the run of the call that reached it. An error it returns comes back out of
+that call as a `*souther.HostError`, and a panic is caught before it reaches the library and raised
+again where the call returns.
+
+What a generated package may call of the runtime module is its protocol (`souther.Protocol`): the
+surface of each is recorded under `bindings/go/runtime/protocol`, a test fails where the surface is not
+what the record says, and a generated package does not compile against another protocol than the one it
+was written for. That is separate from the library's ABI generation, which is in the names of its
+functions.
+
+A parameter or a field is named as the model names it, with an underscore after it where the name
+means something in Go already (a word of the language, an identifier Go declares, what a signature calls
+the run and a receiver, what a file calls an import); a caller reads a function by its types and not by
+these names. What a generated function writes of its own is claimed around the model's names in one
+scope, so it yields to them and is never listed against them. Whatever a package imports is a package
+of a module the model refers to, which a test of the generator holds, so that the packages do not
+import one another in a cycle where the modules do not.
+
+What a host has no way to reach is not written, as in the PHP and the Rust bindings, and nothing says
+so where it is missing: a behavior, a value or a field the manifest says nothing reaches; a type Go
+has no way to hold here (a tuple of more than eight members, a set or a map where a function value
+takes or answers one, a union with a member the language gives that holds nothing); and a type or a
+function a name of the binding's own would have to be, where that name is another's in the package.
+
+Names ending in `__` (`Ref__`, `Word__`) are the binding's own, which one package hands another;
+Go has no way to keep them from a caller, as Rust does, and a host does not use them.
+
+The modules it writes need the Go the runtime module names, which Raoh's needs are part of. Raoh has no release, so the
+version the runtime and the generated `go.mod` require is a commit, which a test holds to one.
+Windows is not written yet (souther-native-compiler#96).
 
 ## Where a value lives
 
