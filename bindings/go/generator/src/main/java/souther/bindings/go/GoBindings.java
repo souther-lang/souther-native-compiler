@@ -596,8 +596,7 @@ public final class GoBindings {
             out.append("\n// ").append(variant).append(" is the member ").append(member.variant())
                     .append(" of `").append(what).append("`.\n").append("type ").append(variant)
                     .append(" struct {\n\tValue ").append(member.whole().type(at.imports))
-                    .append("\n}\n\nfunc (").append(variant).append(") ").append(marker)
-                    .append("() {}\n");
+                    .append("\n}\n\n").append(noBody(variant, marker));
         }
         at.items.append(out);
         return new UnionType(at.importPath, name, members);
@@ -746,7 +745,7 @@ public final class GoBindings {
                     .append(" of `").append(it.key()).append("`.\n").append("type ").append(variant)
                     .append(" struct");
             out.append(arm.holds() == null ? "{}\n" : " {\n\tValue " + arm.holds() + "\n}\n");
-            out.append("\nfunc (").append(variant).append(") ").append(marker).append("() {}\n");
+            out.append("\n").append(noBody(variant, marker));
         }
         Body body = new Body(at.imports, at::shim, new Names(List.of()), "run", "return", 1);
         body.line("value := v.Ref__.Read()");
@@ -1752,6 +1751,15 @@ public final class GoBindings {
                 + "\tHosted:         uintptr(C.sizeof_souther_hosted),\n"
                 + "\tHostedFunction: uintptr(C.sizeof_souther_hosted_function),\n}\n");
         file(List.of("internal", "binding", "abi.go"), go.toString());
+    }
+
+    /**
+     * The method {@code marker} of {@code receiver} with no body, as gofmt writes it: the braces on
+     * its line where the header up to them is shorter than 100 bytes, and on two lines otherwise.
+     */
+    static String noBody(String receiver, String marker) {
+        String header = "func (" + receiver + ") " + marker + "()";
+        return header + (header.getBytes(StandardCharsets.UTF_8).length < 100 ? " {}\n" : " {\n}\n");
     }
 
     /** The entries of a Go map literal, their values in one column, as gofmt writes them. */
