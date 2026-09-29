@@ -24,15 +24,38 @@ souther_status fake_double(int64_t x, int64_t *out) {
 }
 #endif
 
+typedef souther_status (*invoker)(const souther_capability *, int64_t, int64_t *);
+
+/* A capability is called through what it holds to call itself with, as a library's is. */
+static souther_status invoke_hosted(const souther_capability *capability, int64_t x, int64_t *out) {
+    const souther_hosted *hosted = capability->environment;
+    return ((fake_implementation)hosted->implementation)(hosted->userdata, x, out);
+}
+
+/* A behavior bound to what it requires asks the first. */
+static souther_status invoke_bound(const souther_capability *capability, int64_t x, int64_t *out) {
+    const souther_capability *const *requirements = capability->environment;
+    return fake_call(requirements[0], x, out);
+}
+
 void fake_implement(souther_capability *into, souther_hosted *hosted, fake_implementation implementation,
                     void *userdata) {
     hosted->implementation = (void *)implementation;
     hosted->userdata = userdata;
-    into->invoke = 0;
+    into->invoke = (void *)invoke_hosted;
     into->environment = hosted;
 }
 
 souther_status fake_call(const souther_capability *capability, int64_t x, int64_t *out) {
-    const souther_hosted *hosted = capability->environment;
-    return ((fake_implementation)hosted->implementation)(hosted->userdata, x, out);
+    return ((invoker)capability->invoke)(capability, x, out);
+}
+
+void fake_bind(souther_capability *into, const souther_capability *const *requirements) {
+    into->invoke = (void *)invoke_bound;
+    into->environment = requirements;
+}
+
+/* A behavior bound to what it requires: it asks the first requirement. */
+souther_status fake_run(const souther_capability *const *requirements, int64_t x, int64_t *out) {
+    return fake_call(requirements[0], x, out);
 }

@@ -16,3 +16,5 @@ typedef souther_status (*fake_implementation)(void *, int64_t, int64_t *);
 souther_status fake_call(const souther_capability *, int64_t, int64_t *);
 souther_status fake_double(int64_t, int64_t *);
 void fake_implement(souther_capability *, souther_hosted *, fake_implementation, void *);
+void fake_bind(souther_capability *, const souther_capability *const *);
+souther_status fake_run(const souther_capability *const *, int64_t, int64_t *);

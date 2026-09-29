@@ -243,3 +243,61 @@ func TestWhatAnImplementationMadeIsHeldUntilTheRunEnds(t *testing.T) {
 	})
 	_ = capability
 }
+
+func TestABehaviorIsBoundToWhatItRequiresAndAsksIt(t *testing.T) {
+	lib := load(t, "fake")
+	_ = lib.Run(func(r *bridge.Run) error {
+		bound := bridge.Bind(r, bridge.Implement(r, double{}))
+		got, err := bridge.RunBound(r, bound, 21)
+		if err != nil || got != 42 {
+			t.Errorf("RunBound = %d, %v", got, err)
+		}
+		// A behavior bound to a behavior bound to an implementation, which asks the first.
+		deeper := bridge.Bind(r, bound)
+		got, err = bridge.RunBound(r, deeper, 4)
+		if err != nil || got != 8 {
+			t.Errorf("RunBound = %d, %v", got, err)
+		}
+		return nil
+	})
+}
+
+func TestABehaviorBoundToWhatAnotherRuntimeMadeIsRefusedBeforeTheCall(t *testing.T) {
+	first, second := load(t, "fake"), load(t, "second")
+	_ = first.Run(func(a *bridge.Run) error {
+		return second.Run(func(b *bridge.Run) error {
+			foreign := bridge.Implement(b, double{})
+			bound := bridge.Bind(a, foreign)
+			_, err := bridge.RunBound(a, bound, 1)
+			if !errors.Is(err, souther.ErrForeignHandle) {
+				t.Errorf("bound to what another runtime made: %v", err)
+			}
+			// At any depth.
+			_, err = bridge.RunBound(a, bridge.Bind(a, bound), 1)
+			if !errors.Is(err, souther.ErrForeignHandle) {
+				t.Errorf("bound to what is bound to it: %v", err)
+			}
+			return nil
+		})
+	})
+}
+
+func TestACapabilityUsedAfterItsRunEndedIsExpired(t *testing.T) {
+	lib := load(t, "fake")
+	var kept bridge.Capability
+	_ = lib.Run(func(r *bridge.Run) error {
+		kept = bridge.Implement(r, double{})
+		return nil
+	})
+	_ = lib.Run(func(r *bridge.Run) error {
+		defer func() {
+			var m *souther.Misuse
+			got, _ := recover().(error)
+			if !errors.As(got, &m) || !errors.Is(m, souther.ErrExpired) {
+				t.Errorf("got %v", got)
+			}
+		}()
+		_, _ = bridge.RunBound(r, bridge.Bind(r, kept), 1)
+		return nil
+	})
+}
