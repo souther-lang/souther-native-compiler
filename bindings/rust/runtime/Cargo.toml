@@ -15,7 +15,12 @@ libloading = "0.8"
 # The issues a reading answers are Raoh's, as every host of a Souther model reads them.
 raoh = "0.1"
 # An issue's metadata arrives as the JSON object it is, and is Raoh's `Value`s once read.
-serde_json = "1"
+#
+# `arbitrary_precision` keeps a number as it was spelt: a type's decoder hands the library the text
+# of the `Value` Raoh read, and the library reads a `Decimal` at the scale it was written at, so
+# `1.2300` must reach it as `1.2300`, not as the nearest `f64` written back. Raoh's `Value` is this
+# same `serde_json`, so the feature holds for what a host decodes with Raoh too.
+serde_json = { version = "1", features = ["arbitrary_precision"] }
 
 [dev-dependencies]
 trybuild = "1"

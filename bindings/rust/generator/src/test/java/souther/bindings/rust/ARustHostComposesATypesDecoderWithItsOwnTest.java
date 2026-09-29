@@ -24,7 +24,7 @@ class ARustHostComposesATypesDecoderWithItsOwnTest {
 
     private static final String ORDERING = """
             module ordering exposing ( Email, Individual, Corporation, Orderer, Quantity, Line, Lines,
-                                       Free, Voucher )
+                                       Free, Voucher, Priced )
 
             data Email = String
                 invariant String.length(value) >= 3
@@ -39,10 +39,12 @@ class ARustHostComposesATypesDecoderWithItsOwnTest {
 
             data Free
             data Voucher = { note: String, perk: Free }
+
+            data Priced = { amount: Decimal, on: Date }
             """;
 
     private static final String HOST = """
-            use shop_binding::ordering::{Email, Individual, Lines, Orderer, OrdererCase, Quantity, Voucher};
+            use shop_binding::ordering::{Email, Individual, Lines, Orderer, OrdererCase, Priced, Quantity, Voucher};
             use shop_binding::raoh::json::prelude::*;
             use shop_binding::raoh::{Decoder, Issues};
             use shop_binding::{Decoding, Library, Run};
@@ -117,6 +119,21 @@ class ARustHostComposesATypesDecoderWithItsOwnTest {
                         println!("a unit in a product: {}", said(Decoding::read(run, |decoding| {
                             Voucher::decoder(decoding).decode(&json!({"note": "x", "perk": {}}))
                         })));
+
+                        // A number reaches the library as it was spelt: its scale, and digits no
+                        // f64 holds.
+                        for text in [
+                            r#"{"amount": 1.2300, "on": "2026-09-29"}"#,
+                            r#"{"amount": 12345678901234567890.123456789, "on": "2026-09-29"}"#,
+                            r#"{"amount": -0.10, "on": "2026-09-29"}"#,
+                        ] {
+                            let read = Decoding::read(run, |decoding| from_str(&Priced::decoder(decoding), text));
+                            let priced = read.unwrap().unwrap();
+                            let amount = priced.amount();
+                            let on = priced.on();
+                            println!("priced: {} scale {} on {}-{}-{}", amount.unscaled(), amount.scale(),
+                                on.year(), on.month(), on.day());
+                        }
                     })
                     .unwrap();
             }
@@ -144,6 +161,9 @@ class ARustHostComposesATypesDecoderWithItsOwnTest {
                 a float: [/ type_mismatch]
                 lines: [/lines/1/quantity out_of_range key=out_of_range.positive]
                 a unit in a product: ok
+                priced: 12300 scale 4 on 2026-9-29
+                priced: 12345678901234567890123456789 scale 9 on 2026-9-29
+                priced: -10 scale 2 on 2026-9-29
                 """);
     }
 }

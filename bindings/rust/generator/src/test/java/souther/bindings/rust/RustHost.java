@@ -58,6 +58,7 @@ final class RustHost {
                       List<String> arguments) throws IOException, InterruptedException {
         handsOverOnlyWhatItChecks(binding);
         exposesNoNativeWord(binding);
+        reservesEveryRootName(binding);
         workspace(into, binding, crate, main);
         String manifest = into.resolve("Cargo.toml").toString();
         cargo(List.of("clippy", "--quiet", "--manifest-path", manifest, "-p", crate, "--",
@@ -160,6 +161,46 @@ final class RustHost {
                             + item.group().strip());
                 }
             }
+        }
+    }
+
+    /** A name the root of a generated crate declares in the namespace its modules are in. */
+    private static final java.util.regex.Pattern ROOT_ITEM = java.util.regex.Pattern.compile(
+            "(?m)^(?<pub>pub )?(?<kind>type|struct|enum|trait|union|mod) (?<name>\\w+)");
+
+    /** What the root of a generated crate takes from the runtime, one {@code pub use} of a list. */
+    private static final java.util.regex.Pattern ROOT_USE = java.util.regex.Pattern.compile(
+            "(?m)^pub use souther_binding_runtime::\\{(?<names>[^}]*)}");
+
+    /**
+     * Refuses a name the root of a generated crate declares that {@link RustBindings#ROOT} does not
+     * reserve: a top module of a model named so passes the generator and fails in rustc. A
+     * {@code pub mod} alone is the model's own, one of its top modules.
+     */
+    private static void reservesEveryRootName(Generated binding) throws IOException {
+        Path lib = binding.root().resolve("src").resolve("lib.rs");
+        String written = Files.readString(lib, StandardCharsets.UTF_8);
+        List<String> declared = new ArrayList<>();
+        java.util.regex.Matcher item = ROOT_ITEM.matcher(written);
+        while (item.find()) {
+            if (!(item.group("pub") != null && item.group("kind").equals("mod"))) {
+                declared.add(item.group("name"));
+            }
+        }
+        java.util.regex.Matcher uses = ROOT_USE.matcher(written);
+        if (!uses.find()) {
+            throw new AssertionError(lib + " takes nothing from the runtime in the form this reads");
+        }
+        for (String name : uses.group("names").split(",")) {
+            if (!name.isBlank()) {
+                declared.add(name.strip());
+            }
+        }
+        List<String> unreserved = declared.stream()
+                .filter(it -> !RustBindings.ROOT.contains(it)).toList();
+        if (!unreserved.isEmpty()) {
+            throw new AssertionError(lib + " declares at its root what no top module is kept from: "
+                    + unreserved);
         }
     }
 
