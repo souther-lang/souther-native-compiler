@@ -33,9 +33,8 @@ behavior total : (line: Line) -> Int
 let total (line) = line.price.value * line.quantity
 EOF
 
-# The line the README gives, run from the root of the clone as it says.
-mvn --batch-mode --quiet process-classes exec:java \
-    -Dargs="--library $app/native --rust $app/rust --crate shop $app/model"
+# The line the README gives.
+scripts/souther-native --library "$app/native" --rust "$app/rust" --crate shop "$app/model"
 
 cat > "$app/host/Cargo.toml" <<EOF
 [package]

@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>org.souther-lang</groupId>
+        <artifactId>souther-native-parent</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+        <relativePath>../../../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>souther-binding-rust</artifactId>
+    <name>Souther Rust Binding</name>
+    <description>Writes the Rust binding of a library from its manifest.</description>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.souther-lang</groupId>
+            <artifactId>souther-bindings-api</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.souther-lang</groupId>
+            <artifactId>souther-bindings-api</artifactId>
+            <version>${project.version}</version>
+            <type>test-jar</type>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.souther-lang</groupId>
+            <artifactId>souther-native-compiler</artifactId>
+            <version>${project.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.souther-lang</groupId>
+            <artifactId>souther-native-compiler</artifactId>
+            <version>${project.version}</version>
+            <type>test-jar</type>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <executions>
+                    <!-- The Rust runtime every Rust binding runs on: a crate of its own and not a
+                         member of native/, since a host builds it and not this project, with a
+                         rust-version and a licence of its own. Held to the same layout and lints,
+                         and to its Cargo.lock (locked), as Composer holds the PHP runtime to its. -->
+                    <execution>
+                        <id>rust-runtime-format</id>
+                        <phase>process-test-classes</phase>
+                        <goals>
+                            <goal>exec</goal>
+                        </goals>
+                        <configuration>
+                            <executable>cargo</executable>
+                            <workingDirectory>${maven.multiModuleProjectDirectory}/bindings/rust/runtime</workingDirectory>
+                            <arguments>
+                                <argument>fmt</argument>
+                                <argument>--check</argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>rust-runtime-lint</id>
+                        <phase>process-test-classes</phase>
+                        <goals>
+                            <goal>exec</goal>
+                        </goals>
+                        <configuration>
+                            <executable>cargo</executable>
+                            <workingDirectory>${maven.multiModuleProjectDirectory}/bindings/rust/runtime</workingDirectory>
+                            <arguments>
+                                <argument>clippy</argument>
+                                <argument>--locked</argument>
+                                <argument>--all-targets</argument>
+                                <argument>--</argument>
+                                <argument>-D</argument>
+                                <argument>warnings</argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
+                    <!-- What a run's lifetime refuses is checked here too: trybuild compiles each
+                         case under tests/lifetimes and compares what rustc says with the .stderr
+                         beside it, which the pinned toolchain wrote. -->
+                    <execution>
+                        <id>rust-runtime-test</id>
+                        <phase>test</phase>
+                        <goals>
+                            <goal>exec</goal>
+                        </goals>
+                        <configuration>
+                            <executable>cargo</executable>
+                            <workingDirectory>${maven.multiModuleProjectDirectory}/bindings/rust/runtime</workingDirectory>
+                            <arguments>
+                                <argument>test</argument>
+                                <argument>--locked</argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>

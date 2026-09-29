@@ -42,22 +42,23 @@ if [ "$tagged" != "$pin" ]; then
     exit 2
 fi
 
-# What is searched, and the one way of searching it. grep answers 1 for finding nothing, which is a
-# repository resting on no premise and not a failure, and 2 for a search that did not happen: a
-# path that is not there, a file it could not read. Only the first is accepted, so a search that
-# did not happen cannot be read as one that found nothing and let every premise pass.
-places=(src native examples README.md)
-
+# What is searched, and the one way of searching it. Every file the repository tracks, so that a
+# reference is found wherever it is put and a directory added or moved cannot leave one outside a
+# list of places that nobody updated; what a build leaves behind is not tracked, so it is not read.
+# The script is left out, since it holds the pattern it looks for. git grep answers 1 for finding
+# nothing, which is a repository resting on no premise and not a failure, and 2 for a search that
+# did not happen. Only the first is accepted, so a search that did not happen cannot be read as one
+# that found nothing and let every premise pass.
 references() {
     local status=0
-    grep -rE "$@" "${places[@]}" --exclude-dir=target --exclude-dir=vendor --exclude-dir=build || status=$?
+    git grep -E "$@" -- . ':!scripts/upstream-premises.sh' || status=$?
     if [ "$status" -gt 1 ]; then
         echo "the search for references failed with status $status" >&2
         exit "$status"
     fi
 }
 
-issues="$(references -ho 'souther-lang/souther#[0-9]+' | sed 's/.*#//' | sort -un)"
+issues="$(references -h -o 'souther-lang/souther#[0-9]+' | sed 's/.*#//' | sort -un)"
 
 stale=0
 for number in $issues; do

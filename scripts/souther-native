@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# The command as a clone runs it, from wherever the caller is: builds what it needs (the launcher
+# and the modules under it, and the Rust driver the compiler hands a program to), then runs it with
+# the arguments given. Every caller in this repository runs the command through this, so how a clone
+# starts it is written once.
+#
+# Its paths are read from the directory it is run in, and it ends with what the command ends with.
+# The driver is named by its place in the clone, since that is not where the caller is.
+set -euo pipefail
+
+root="$(cd "$(dirname "$0")/.." && pwd)"
+
+mvn --batch-mode --quiet -f "$root/pom.xml" -pl launcher -am process-classes >&2
+
+exec java "-Dsouther.native.driver=$root/native/target/debug/souther-native-driver" \
+    -cp "$(cat "$root/launcher/target/runtime-classpath.txt")" souther.nativecode.Main "$@"
