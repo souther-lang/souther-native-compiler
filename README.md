@@ -49,16 +49,47 @@ fixes it. The Rust runtime in `bindings/rust/runtime` is a crate of its own, whi
 lints and tests beside the Rust half, and the tests of a generated Rust binding build a host of it
 with Cargo, fetching what the runtime depends on the first time.
 
+## Modules
+
+The build is one Maven reactor of five modules. `bindings/api` (`souther-bindings-api`) holds what a
+binding generator is written against: the manifest a build writes beside its library, the
+`BindingGenerator` interface, and how a binding is put in place. `compiler`
+(`souther-native-compiler`) is the compiler and the command. `bindings/php/generator` and
+`bindings/rust/generator` are the generators, each beside the language runtime it writes calls into.
+`launcher` is the command with both generators installed, and is not published.
+
+The generators depend on the API and on nothing else of this project, and none of them can see the
+compiler or a checked program. That a binding is written from the manifest and nothing else is
+therefore a fact about which classes a generator can name, and not about which packages it happens to
+import from. The one thing carried over that is not the manifest is the C declarations the driver
+wrote, which a generator is handed as something it can copy and not read, since what they say about
+the ABI is the driver's answer.
+
+The command finds a generator by the id `KnownBindings` names it by, through `ServiceLoader`. That
+catalog is the one place that says which bindings there are, how each is asked for (`--php` with
+`--namespace`, `--rust` with `--crate`), and which artifact brings its generator, and the options, the
+usage and what is fetched are read from it. It is closed: a generator that is not installed cannot say
+that it is missing, and what is fetched and run on the strength of a flag is only what the catalog
+names. A binding whose generator is not installed is a `BindingUnavailable`, which is a command that is
+right and cannot be run here, apart from a command that is wrong.
+
+What a generator refuses is refused at the moment the information exists. What holds whatever the
+model says, an option missing, a namespace or a crate the language will not take, a directory holding
+what no generation wrote, is refused by its `preflight` before the library is built and ends the
+command with 2. A name in the model that the language will not take is refused by `generate`, once the
+manifest exists, and ends it with 1. What is true of the command as a whole, `-o` against `--library`
+and one output inside another, is the command's own.
+
 ## From the command line
 
 What the API builds, the command line builds too, so an application needs no Java of its own to
-build what it runs. From the root of a clone:
+build what it runs. In a clone:
 
-    mvn -q process-classes exec:java \
-        -Dargs='--library build/native --php build/php --namespace Acme\Shop model'
+    scripts/souther-native --library build/native --php build/php --namespace Acme\Shop model
 
-`process-classes` builds the driver the command hands the program to; where it is built already,
-`mvn -q exec:java -Dargs='...'` is enough. The command ends with what `Main` ends with: 0 where it
+The script builds what the command needs, the driver the command hands the program to among it, and
+runs it in the directory it was started in, so the paths are read from there. The command ends with
+what `Main` ends with: 0 where it
 wrote everything, 1 where the build is refused (a compile error, what this backend does not write
 yet, or a name from the model a binding's language will not take), and 2 where the command is
 refused.

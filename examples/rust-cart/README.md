@@ -196,10 +196,10 @@ SQLite rusqlite builds.
     bin/build
     cargo test
 
-`bin/build` runs the command line at the root of the clone:
+`bin/build` runs the command line:
 
-    mvn -q process-classes exec:java \
-        -Dargs='--library <here>/build/native --rust <here>/build/rust --crate model examples/cart-model'
+    scripts/souther-native --library <here>/build/native --rust <here>/build/rust --crate model \
+        examples/cart-model
 
 It writes the library into `build/native` and its binding into `build/rust`, as the crate `model`,
 which `Cargo.toml` depends on by path. The module is `com.example.cart.domain`, so its types are

@@ -1,0 +1,725 @@
+package souther.bindings.php;
+
+import souther.bindings.Generated;
+import souther.bindings.Manifest;
+import souther.nativecode.Checked;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import souther.bindings.NotBindable;
+import souther.nativecode.NativeCompiler;
+import souther.nativecode.Php;
+import souther.nativecode.Repository;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ArrayNode;
+import tools.jackson.databind.node.ObjectNode;
+
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
+import java.util.function.Consumer;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+/**
+ * What the generator writes from a manifest, and what it refuses to, asked of the PHP it writes
+ * rather than of a run.
+ */
+class APhpBindingIsWrittenFromTheManifestTest {
+
+    private static Generated generated(Path into, String source) throws Exception {
+        NativeCompiler.Library library =
+                NativeCompiler.library(Checked.of(List.of(source)), into.resolve("native"));
+        return LibraryBinding.generated(library, into.resolve("php"), "Acme\\Billing");
+    }
+
+    private static String behaviors(Generated generated) throws Exception {
+        return Files.readString(generated.root().resolve("M").resolve("Behaviors.php"));
+    }
+
+    @Test
+    void everyFileItWritesIsPhp(@TempDir Path into) throws Exception {
+        Generated generated = generated(into, """
+                module m exposing ( Found, Missing, Lookup, Box, find, open, amount )
+
+                data Found = { id: Int, label: String? }
+                data Missing
+                data Lookup = Found | Missing
+                data Box = Bool
+
+                behavior find : (id: Int) -> Lookup
+                let find (id) = if id > 0 then Found { id = id, label = None } else Missing
+
+                behavior open : (box: Box, lookup: Lookup) -> Bool
+                let open (box, lookup) = box.value
+
+                behavior priceOf : (id: Int) -> Int
+
+                let amount = Box(true)
+                """);
+
+        for (Path file : generated.files()) {
+            if (file.toString().endsWith(".php")) {
+                assertThat(Php.compiles(file)).as("%s", file).isTrue();
+            }
+        }
+        assertThat(generated.files()).extracting(it -> generated.root().relativize(it).toString())
+                .contains("Binding.php", "autoload.php", "souther.ffi.h", "M/Found.php",
+                        "M/Missing.php", "M/Lookup.php", "M/LookupCodec.php", "M/Box.php",
+                        "M/Behaviors.php", "M/Values.php", "M/Injections.php")
+                // Every case of Lookup has a class, and the library says which a value is.
+                .doesNotContain("M/LookupValue.php");
+    }
+
+    /**
+     * A type crossing in a shape this binding knows no way to hold it in is not written, and the
+     * manifest saying so is not refused: which shape a type crosses in is the driver's, and what
+     * PHP can hold of it is this binding's own.
+     */
+    @Test
+    void aTypeInAShapeThisBindingCannotHoldIsNotWritten(@TempDir Path into) throws Exception {
+        NativeCompiler.Library library = NativeCompiler.library(Checked.of(List.of("""
+                module m exposing ( pair, other )
+
+                let pair: (Int, Bool) = (3, true)
+
+                let other: (Int, Bool) = (4, false)
+                """)), into.resolve("native"));
+
+        generatedAfter(into, library, "m", module -> ((ObjectNode) module.get("values").get(0))
+                .set("type", JSON.readTree("{\"kind\":\"primitive\",\"name\":\"Decimal\"}")));
+
+        assertThat(Files.readString(into.resolve("php").resolve("M").resolve("Values.php")))
+                .contains("function other(").doesNotContain("function pair(");
+    }
+
+    /**
+     * A {@code Date}, a {@code Time}, a {@code DateTime} and an {@code Instant} cross as words of
+     * their own, and this binding holds none of them yet: what takes or answers one is not written,
+     * where the rest of the module is, and generating is not refused for it.
+     */
+    @Test
+    void aTemporalThisBindingHoldsNoTypeForIsNotWritten(@TempDir Path into) throws Exception {
+        NativeCompiler.Library library = NativeCompiler.library(Checked.of(List.of("""
+                module m exposing ( twice, shifted, clockOf, seen, moment )
+
+                behavior twice : (n: Int) -> Int
+                let twice (n) = n * 2
+
+                behavior shifted : (day: Date, n: Int) -> Date
+                let shifted (day, n) = Date.addDays(n, day)
+
+                behavior clockOf : (at: DateTime) -> Time
+                let clockOf (at) = DateTime.toTime(at)
+
+                behavior seen : (at: Instant) -> Int
+                let seen (at) = 1
+
+                let moment: Instant = Instant("2026-07-25T00:00:00Z")
+                """)), into.resolve("native"));
+
+        LibraryBinding.generated(library, into.resolve("php"), "Acme\\Billing");
+        Path written = into.resolve("php");
+
+        assertThat(written.resolve("M").resolve("Twice.php")).exists();
+        String behaviors = Files.readString(written.resolve("M").resolve("Behaviors.php"));
+        assertThat(behaviors).contains("function twice(")
+                .doesNotContain("function shifted(", "function clockOf(", "function seen(");
+        // The one value is an `Instant`, so nothing of the module's values is written.
+        assertThat(written.resolve("M").resolve("Values.php")).doesNotExist();
+    }
+
+    /**
+     * A leaf is held by this binding only where the type and the word are a pair it holds, which is
+     * this binding's capability and not how the model crosses: an `Int` as an `int` crossing as an
+     * `INT`, a value of a declared type or of a union as an object crossing as a `VALUE`, and a
+     * primitive case of a union likewise. A manifest pairing a type with another word is read, and
+     * what takes or answers the pair is not written; the rest is.
+     */
+    @Test
+    void aLeafThisBindingCannotHoldIsNotWritten(@TempDir Path into) throws Exception {
+        NativeCompiler.Library library = NativeCompiler.library(Checked.of(List.of("""
+                module m exposing ( Box, Found, Missing, Free, twice, find, quantityOf, kept )
+
+                data Box = { n: Int }
+                data Found = { id: Int }
+                data Missing
+                data Free
+
+                behavior twice : (n: Int) -> Int
+                let twice (n) = n * 2
+
+                behavior find : (id: Int) -> Found | Missing
+                let find (id) = if id > 0 then Found { id = id } else Missing
+
+                behavior quantityOf : (paid: Int) -> Int | Free
+                let quantityOf (paid) = if paid > 0 then paid else Free
+
+                behavior kept : (n: Int) -> Int
+                let kept (n) = n + 1
+                """)), into.resolve("native"));
+        Path behaviors = into.resolve("php").resolve("M").resolve("Behaviors.php");
+
+        // A `Decimal` said to cross as an `INT`, which the function takes as it says.
+        generatedAfter(into, library, "m", module -> ((ObjectNode) behaviorNamed(module, "twice")
+                .get("parameters").get("named").get(0))
+                .set("type", JSON.readTree("{\"kind\":\"primitive\",\"name\":\"Decimal\"}")));
+        assertThat(Files.readString(behaviors)).contains("function kept(").doesNotContain("function twice(");
+
+        // A value of a declared type said to cross as an `INT`.
+        generatedAfter(into, library, "m", module -> ((ObjectNode) behaviorNamed(module, "twice")
+                .get("parameters").get("named").get(0))
+                .set("type", JSON.readTree("{\"kind\":\"declared\",\"module\":\"m\",\"name\":\"Box\"}")));
+        assertThat(Files.readString(behaviors)).contains("function kept(").doesNotContain("function twice(");
+
+        // A union a behavior answers said to cross as an `INT`, the function writing one.
+        generatedAfter(into, library, "m", module -> {
+            ObjectNode call = (ObjectNode) behaviorNamed(module, "find").get("call").get("available");
+            ((ObjectNode) call.get("signature")).set("answers", JSON.readTree("{\"leaf\":\"int\"}"));
+            ArrayNode takes = (ArrayNode) call.get("function").get("takes");
+            takes.set(takes.size() - 1, JSON.readTree("{\"room\":\"int\"}"));
+        });
+        assertThat(Files.readString(behaviors)).contains("function kept(").doesNotContain("function find(");
+
+        // The `Int` a union carries said to be made and read as a `STRING`.
+        generatedWholeAfter(into, library, manifest -> {
+            for (JsonNode crossing : manifest.get("cases")) {
+                if (crossing.get("case").get("name").stringValue().equals("Int")) {
+                    ((ArrayNode) crossing.get("make").get("takes"))
+                            .set(0, JSON.readTree("{\"given\":\"string\"}"));
+                    ((ObjectNode) crossing.get("read")).put("answers", "string");
+                }
+            }
+        });
+        assertThat(Files.readString(behaviors)).contains("function kept(", "function find(")
+                .doesNotContain("function quantityOf(");
+    }
+
+    /** The behavior named {@code name} of {@code module}. */
+    private static ObjectNode behaviorNamed(ObjectNode module, String name) {
+        for (JsonNode it : module.get("behaviors")) {
+            if (it.get("name").stringValue().equals(name)) {
+                return (ObjectNode) it;
+            }
+        }
+        throw new IllegalArgumentException("no behavior " + name);
+    }
+
+    /** Generates from the library's manifest after {@code changing} the whole of it. */
+    private static void generatedWholeAfter(Path into, NativeCompiler.Library library,
+                                            Consumer<ObjectNode> changing) throws Exception {
+        ObjectNode manifest = (ObjectNode) JSON.readTree(library.manifest().toFile());
+        changing.accept(manifest);
+        Path changed = into.resolve("changed.json");
+        Files.writeString(changed, JSON.writeValueAsString(manifest), StandardCharsets.UTF_8);
+        LibraryBinding.generated(changed, library.declarations(), into.resolve("php"), "Acme\\Billing");
+    }
+
+    /** Where the manifest gives a behavior no way in, nothing is written that a caller could call. */
+    @Test
+    void aBehaviorTheManifestGivesNoCallIsNotWritten(@TempDir Path into) throws Exception {
+        NativeCompiler.Library library = NativeCompiler.library(Checked.of(List.of("""
+                module m exposing ( half, twice )
+
+                behavior half : (n: Int) -> Int
+                let half (n) = n
+
+                behavior twice : (n: Int) -> Int
+                let twice (n) = n * 2
+                """)), into.resolve("native"));
+
+        generatedAfter(into, library, "m", module -> {
+            for (JsonNode behavior : module.get("behaviors")) {
+                if (behavior.get("name").stringValue().equals("half")) {
+                    ((ObjectNode) behavior).set("call", JSON.readTree(
+                            "{\"unavailable\": {\"reason\": \"no_representation\", \"path\": []}}"));
+                }
+            }
+        });
+
+        assertThat(Files.readString(into.resolve("php").resolve("M").resolve("Behaviors.php")))
+                .contains("function twice(").doesNotContain("half");
+    }
+
+    /**
+     * A behavior answering a union no declaration names answers it as the union of its members'
+     * classes, each value made as the class of the case the library says it is. Nothing is written
+     * for the union itself: it has no name, and a class for it would be one the model does not have.
+     */
+    @Test
+    void aBehaviorAnsweringAnUnnamedUnionAnswersTheClassOfItsCase(@TempDir Path into)
+            throws Exception {
+        Generated generated = generated(into, """
+                module m exposing ( Found, Missing, find )
+
+                data Found = { id: Int }
+                data Missing
+
+                behavior find : (id: Int) -> Found | Missing
+                let find (id) = if id > 0 then Found { id = id } else Missing
+                """);
+        String written = behaviors(generated);
+
+        assertThat(written).contains(
+                "find(int $id):"
+                        + " \\Acme\\Billing\\M\\Found|\\Acme\\Billing\\M\\Missing",
+                "$session->ffi()->souther" + Manifest.ABI + "_m_m_b_find_answer_case($answer)",
+                "0 => new \\Acme\\Billing\\M\\Found($session->held($answer))",
+                "1 => new \\Acme\\Billing\\M\\Missing($session->held($answer))");
+        assertThat(generated.files()).extracting(it -> generated.root().relativize(it).toString())
+                .containsExactlyInAnyOrder("Binding.php", "autoload.php", "souther.ffi.h",
+                        "M/Found.php", "M/Missing.php", "M/Behaviors.php", "M/Find.php");
+    }
+
+    /**
+     * A union no declaration names that a host answers is handed over as the object PHP holds,
+     * which already is the case it is: the implementation is typed as answering one of the
+     * members' classes, and held to it.
+     */
+    @Test
+    void anUnnamedUnionAHostAnswersIsHandedOverAsItIs(@TempDir Path into) throws Exception {
+        Generated generated = generated(into, """
+                module m exposing ( Found, Missing )
+
+                data Found = { id: Int }
+                data Missing
+
+                behavior lookUp : (id: Int) -> Found | Missing
+                """);
+
+        assertThat(Files.readString(generated.root().resolve("M").resolve("Injections.php")))
+                .contains("@param (callable(int):"
+                        + " \\Acme\\Billing\\M\\Found|\\Acme\\Billing\\M\\Missing)|null $lookUp");
+        assertThat(Files.readString(generated.root().resolve("Binding.php"))).contains(
+                "($answer instanceof \\Acme\\Billing\\M\\Found"
+                        + " || $answer instanceof \\Acme\\Billing\\M\\Missing)",
+                "$answer->nativeHandle()->borrow($session)");
+    }
+
+    @Test
+    void aTypeNamedAsAClassTheBindingWritesIsRefused(@TempDir Path into) {
+        assertThatThrownBy(() -> generated(into, """
+                module m exposing ( Behaviors )
+
+                data Behaviors = Int
+                """))
+                .isInstanceOf(NotBindable.class)
+                .hasMessageContaining("type `m.Behaviors`");
+    }
+
+    /**
+     * A behavior's class is what this generator adds beside the model's surface, under a name of
+     * its own making: where PHP will not take that name, or it is one class with another the
+     * module's binding writes (to PHP, or to a file system that does not tell case apart), the
+     * behavior has no class and the binding is written all the same. What requires it has none
+     * either. The model's own surface is what it was.
+     */
+    @Test
+    void aBehaviorWhoseClassCannotBeNamedHasNoneAndTheBindingStands(@TempDir Path into)
+            throws Exception {
+        Generated generated = generated(into, """
+                module m exposing ( Found, Missing, Lookup, clone, behaviors, lookupCodec, charged,
+                                    twice )
+
+                data Found = { id: Int }
+                data Missing
+                data Lookup = Found | Missing
+
+                behavior clone : (n: Int) -> Int
+                let clone (n) = n
+
+                behavior behaviors : (n: Int) -> Int
+                let behaviors (n) = n
+
+                behavior lookupCodec : (n: Int) -> Int
+                let lookupCodec (n) = n
+
+                behavior print : (n: Int) -> Int
+
+                behavior charged : (n: Int) -> Int
+                    depends on print
+                let charged (n, print) = print(n)
+
+                behavior twice : (n: Int) -> Int
+                let twice (n) = n * 2
+                """);
+
+        assertThat(generated.files()).extracting(it -> generated.root().relativize(it).toString())
+                .contains("M/Twice.php", "M/LookupCodec.php", "M/Behaviors.php", "M/Injections.php")
+                .doesNotContain("M/Clone.php", "M/Print.php", "M/Charged.php");
+        assertThat(behaviors(generated)).contains("function clone(", "function behaviors(",
+                "function lookupCodec(", "function charged(");
+        assertThat(Files.readString(generated.root().resolve("M").resolve("LookupCodec.php")))
+                .contains("final class LookupCodec");
+        for (Path file : generated.files()) {
+            if (file.toString().endsWith(".php")) {
+                assertThat(Php.compiles(file)).as("%s", file).isTrue();
+            }
+        }
+    }
+
+    /**
+     * Two behaviors whose classes differ only in case are one file where case is not told apart,
+     * and neither has a class, rather than whichever was written first. A host implements one and
+     * calls the other, so nothing else the binding writes names both.
+     */
+    @Test
+    void twoBehaviorsWhoseClassesAreOneFileHaveNone(@TempDir Path into) throws Exception {
+        Generated generated = generated(into, """
+                module m exposing ( itema )
+
+                behavior itemA : (n: Int) -> Int
+
+                behavior itema : (n: Int) -> Int
+                let itema (n) = n
+                """);
+
+        assertThat(generated.files()).extracting(it -> generated.root().relativize(it).toString())
+                .contains("M/Behaviors.php", "M/Injections.php")
+                .doesNotContain("M/ItemA.php", "M/Itema.php");
+        assertThat(behaviors(generated)).contains("function itema(");
+    }
+
+    /**
+     * What a class a host implements takes is named as the model names it where PHP takes that,
+     * and by its place where it does not: nothing else publishes the names, and an override is not
+     * held to them, so none of them is a reason to refuse the binding.
+     */
+    @Test
+    void anImplementationTakesWhatPhpCannotNameByItsPlace(@TempDir Path into) throws Exception {
+        Generated generated = generated(into, """
+                module m
+
+                behavior lookUp : (GLOBALS: Int, id: Int) -> Int
+                """);
+
+        assertThat(Files.readString(generated.root().resolve("M").resolve("LookUp.php"))).contains(
+                "abstract public function apply(int $input0, int $id): int;");
+    }
+
+    /**
+     * A behavior requiring one a host has no way to implement has no class, since binding it could
+     * not be handed what it requires, and neither has what requires it in turn. Each is still
+     * called as a function, constructed from what a run is handed, which is nothing for the one no
+     * host can implement: it is still a behavior a host implements, and never one constructed.
+     */
+    @Test
+    void aBehaviorRequiringWhatNoHostCanImplementHasNoClass(@TempDir Path into) throws Exception {
+        NativeCompiler.Library library = NativeCompiler.library(Checked.of(List.of("""
+                module m exposing ( charge, charged, twice )
+
+                behavior rate : (n: Int) -> Int
+
+                behavior charge : (n: Int) -> Int
+                    depends on rate
+                let charge (n, rate) = rate(n)
+
+                behavior charged : (n: Int) -> Int
+                    depends on charge
+                let charged (n, charge) = charge(n) + 1
+
+                behavior twice : (n: Int) -> Int
+                let twice (n) = n * 2
+                """)), into.resolve("native"));
+
+        // What the implementation takes is made a value of a type this binding has no class for,
+        // crossing as one: the manifest may say it crosses, and PHP has no way to hold it.
+        generatedAfter(into, library, "m", module -> {
+            ObjectNode rate = (ObjectNode) module.get("injections").get(0);
+            ((ObjectNode) rate.get("parameters").get(0)).set("type",
+                    JSON.readTree("{\"kind\":\"declared\",\"module\":\"m\",\"name\":\"Nowhere\"}"));
+            ((ArrayNode) rate.get("signature").get("takes"))
+                    .set(0, JSON.readTree("{\"leaf\":\"value\"}"));
+            ((ArrayNode) rate.get("implementation").get("takes"))
+                    .set(1, JSON.readTree("{\"given\":\"value\"}"));
+        });
+
+        Path written = into.resolve("php").resolve("M");
+        assertThat(written.resolve("Twice.php")).exists();
+        assertThat(written.resolve("Charge.php")).doesNotExist();
+        assertThat(written.resolve("Charged.php")).doesNotExist();
+        assertThat(Files.readString(written.resolve("Behaviors.php")))
+                .contains("function charge(", "function charged(");
+        assertThat(Files.readString(into.resolve("php").resolve("Binding.php")))
+                .contains("private const INJECTED = ['m.rate'];");
+    }
+
+    /**
+     * A requirement is its module and its name, so a composition over `a.load` and `b.load`
+     * requires two behaviors of one name. What binding it takes is named by place there, as the
+     * JVM backend names the fields (upstream ADR-0068), and by name wherever the name is the only
+     * one.
+     */
+    @Test
+    void twoRequirementsOfOneNameAreTakenByTheirPlaces(@TempDir Path into) throws Exception {
+        Generated generated = LibraryBinding.generated(NativeCompiler.library(
+                Checked.of(List.of("""
+                        module a exposing ( load )
+
+                        behavior load : (n: Int) -> Int
+                        """, """
+                        module b exposing ( load )
+
+                        behavior load : (n: Int) -> Int
+                        """, """
+                        module m exposing ( both : Int )
+
+                        import a
+                        import b
+
+                        behavior both = a.load >-> b.load
+                        """)), into.resolve("native")), into.resolve("php"), "Acme\\Billing");
+
+        assertThat(Files.readString(generated.root().resolve("M").resolve("Both.php"))).contains(
+                "bind(\\Acme\\Billing\\A\\Load $dependency0, \\Acme\\Billing\\B\\Load"
+                        + " $dependency1): self",
+                "Bound::of(null, \\Souther\\Runtime\\Implemented::by(\\Acme\\Billing\\Binding::class,"
+                        + " 'a.load', $dependency0->apply(...)), \\Souther\\Runtime\\Implemented::by("
+                        + "\\Acme\\Billing\\Binding::class, 'b.load', $dependency1->apply(...)))");
+    }
+
+    /**
+     * The session a call finds is held under a name no parameter of the model's has, so that none
+     * of them is renamed for it.
+     */
+    @Test
+    void theSessionGivesWayToAParameterOfTheSameName(@TempDir Path into) throws Exception {
+        String written = behaviors(generated(into, """
+                module m exposing ( renew )
+
+                behavior renew : (session: Int, ffi: Int) -> Int
+                let renew (session, ffi) = session + ffi
+                """));
+
+        assertThat(written).contains(
+                "renew(int $session, int $ffi): int",
+                "$session_ = \\Acme\\Billing\\Binding::session();",
+                "$ffi_ = $session_->call();");
+    }
+
+    @Test
+    void aTypePhpReservesTheNameOfIsRefused(@TempDir Path into) {
+        assertThatThrownBy(() -> generated(into, """
+                module m exposing ( Match )
+
+                data Match = Int
+                """))
+                .isInstanceOf(NotBindable.class)
+                .hasMessageContaining("`Match` is a word PHP reserves");
+    }
+
+    @Test
+    void aFieldNamedAsAMethodTheBindingWritesIsRefused(@TempDir Path into) {
+        assertThatThrownBy(() -> generated(into, """
+                module m exposing ( Tag )
+
+                data Tag = { encode: Bool }
+                """))
+                .isInstanceOf(NotBindable.class)
+                .hasMessageContaining("field `encode`")
+                .hasMessageContaining("one name to PHP");
+    }
+
+    @Test
+    void aNamespaceIsTheBindingsOwnAndMustBeOne(@TempDir Path into) throws Exception {
+        NativeCompiler.Library library = NativeCompiler.library(Checked.of(List.of("""
+                module m exposing ( Box )
+
+                data Box = Bool
+                """)), into.resolve("native"));
+
+        assertThatThrownBy(() -> LibraryBinding.generated(library, into.resolve("php"), ""))
+                .isInstanceOf(NotBindable.class);
+        assertThatThrownBy(() -> LibraryBinding.generated(library, into.resolve("php"), "Acme\\Class"))
+                .isInstanceOf(NotBindable.class)
+                .hasMessageContaining("`Class` is a word PHP reserves");
+    }
+
+    /**
+     * What generated code calls of the runtime is the version the runtime says it is: the two are
+     * written in two languages, and a binding refuses to load over a runtime of another version.
+     */
+    @Test
+    void theRuntimeSpeaksTheVersionABindingIsWrittenFor() throws Exception {
+        Path binding = Repository.file("bindings", "php", "runtime", "src", "Binding.php");
+
+        assertThat(Php.ran(List.of("-r", "require '" + binding.toAbsolutePath()
+                + "'; echo \\Souther\\Runtime\\Binding::PROTOCOL;")))
+                .isEqualTo(String.valueOf(PhpBindings.RUNTIME_PROTOCOL));
+    }
+
+    /**
+     * The runtime's version is the last of the moves it lists, and each move is under the number
+     * after the one before it: a version is never taken twice and never skipped.
+     */
+    @Test
+    void theRuntimesVersionIsTheLastOfItsMoves() throws Exception {
+        Path binding = Repository.file("bindings", "php", "runtime", "src", "Binding.php");
+
+        assertThat(Php.ran(List.of("-r", "require '" + binding.toAbsolutePath() + "';"
+                + " $moves = array_keys(\\Souther\\Runtime\\Binding::MOVES);"
+                + " echo end($moves) === \\Souther\\Runtime\\Binding::PROTOCOL"
+                + " && $moves === range($moves[0], end($moves)) ? 'held' : 'not held';")))
+                .isEqualTo("held");
+    }
+
+    /** A parameter the model names as PHP names a superglobal is one no PHP function can have. */
+    @Test
+    void aParameterNamedAsASuperglobalIsRefused(@TempDir Path into) {
+        assertThatThrownBy(() -> generated(into, """
+                module m exposing ( f )
+
+                behavior f : (GLOBALS: Int) -> Int
+                let f (x) = x
+                """))
+                .isInstanceOf(NotBindable.class)
+                .hasMessageContaining("`GLOBALS`, which PHP takes for no parameter");
+    }
+
+    /**
+     * Two parameters of one function under one name would be PHP no binding can load.
+     *
+     * <p>Written into the manifest, because the checker refuses a signature naming two parameters
+     * alike (E1011) before any manifest is written. A manifest is read from a file, and one another
+     * build wrote is not held to what this compile's checker refuses.
+     */
+    @Test
+    void twoParametersUnderOneNameAreRefused(@TempDir Path into) throws Exception {
+        NativeCompiler.Library library = NativeCompiler.library(Checked.of(List.of("""
+                module m exposing ( f )
+
+                behavior f : (a: Int, b: Int) -> Int
+                let f (x, y) = x
+                """)), into.resolve("native"));
+
+        assertThatThrownBy(() -> generatedAfter(into, library, "m", module -> {
+            ObjectNode second = (ObjectNode) module.get("behaviors").get(0)
+                    .get("parameters").get("named").get(1);
+            second.put("name", "a");
+        }))
+                .isInstanceOf(NotBindable.class)
+                .hasMessageContaining("parameter `a`")
+                .hasMessageContaining("PHP takes for one parameter");
+    }
+
+    /** A directory a binding is written to is that binding, and nothing a model had before. */
+    @Test
+    void aTypeTheModelNoLongerDeclaresLeavesTheBinding(@TempDir Path into) throws Exception {
+        Path php = into.resolve("php");
+        LibraryBinding.generated(NativeCompiler.library(Checked.of(List.of("""
+                module m exposing ( Kept, Dropped )
+
+                data Kept = Int
+                data Dropped = Bool
+                """)), into.resolve("before")), php, "Acme\\Billing");
+        assertThat(php.resolve("M").resolve("Dropped.php")).exists();
+
+        LibraryBinding.generated(NativeCompiler.library(Checked.of(List.of("""
+                module m exposing ( Kept )
+
+                data Kept = Int
+                """)), into.resolve("after")), php, "Acme\\Billing");
+
+        assertThat(php.resolve("M").resolve("Kept.php")).exists();
+        assertThat(php.resolve("M").resolve("Dropped.php")).doesNotExist();
+    }
+
+    /** A generation refused part of the way leaves what was there, and nothing beside it. */
+    @Test
+    void aRefusedGenerationLeavesTheBindingThatWasThere(@TempDir Path into) throws Exception {
+        Path php = into.resolve("php");
+        LibraryBinding.generated(NativeCompiler.library(Checked.of(List.of("""
+                module m exposing ( Kept )
+
+                data Kept = Int
+                """)), into.resolve("before")), php, "Acme\\Billing");
+        String before = Files.readString(php.resolve("M").resolve("Kept.php"));
+        NativeCompiler.Library refused = NativeCompiler.library(Checked.of(List.of("""
+                module m exposing ( Kept, Tag )
+
+                data Kept = Bool
+                data Tag = { encode: Bool }
+                """)), into.resolve("after"));
+
+        assertThatThrownBy(() -> LibraryBinding.generated(refused, php, "Acme\\Billing"))
+                .isInstanceOf(NotBindable.class);
+        assertThat(Files.readString(php.resolve("M").resolve("Kept.php"))).isEqualTo(before);
+        try (var beside = Files.list(into)) {
+            assertThat(beside.map(it -> it.getFileName().toString()))
+                    .containsExactlyInAnyOrder("php", "before", "after");
+        }
+    }
+
+    /** A directory holding what no generation wrote is not replaced, and keeps what it holds. */
+    @Test
+    void aDirectoryABindingDidNotWriteIsNotReplaced(@TempDir Path into) throws Exception {
+        Path php = Files.createDirectories(into.resolve("php"));
+        Files.writeString(php.resolve("mine.php"), "<?php\n", StandardCharsets.UTF_8);
+
+        assertThatThrownBy(() -> LibraryBinding.generated(NativeCompiler.library(
+                Checked.of(List.of("""
+                        module m exposing ( Kept )
+
+                        data Kept = Int
+                        """)), into.resolve("native")), php, "Acme\\Billing"))
+                .isInstanceOf(NotBindable.class)
+                .hasMessageContaining("holds files a binding did not write");
+        assertThat(php.resolve("mine.php")).exists();
+    }
+
+    /** Two modules each holding a list of values of a type of its own. */
+    private static final String TWO_MODULES_OF_LISTS = """
+            module shop exposing ( Item, Cart )
+
+            data Item = { n: Int }
+            data Cart = { items: List<Item> }
+            """;
+
+    private static final String SECOND_MODULE_OF_LISTS = """
+            module stock exposing ( Part, Bin )
+
+            data Part = { n: Int }
+            data Bin = { parts: List<Part> }
+            """;
+
+    private static NativeCompiler.Library twoModules(Path into) throws Exception {
+        return NativeCompiler.library(Checked.of(List.of(TWO_MODULES_OF_LISTS,
+                SECOND_MODULE_OF_LISTS)), into.resolve("native"));
+    }
+
+    private static final JsonMapper JSON = JsonMapper.builder().build();
+
+    /** Generates from the library's manifest after {@code changing} the module named {@code module}. */
+    private static void generatedAfter(Path into, NativeCompiler.Library library, String module,
+                                       Consumer<ObjectNode> changing) throws Exception {
+        JsonNode manifest = JSON.readTree(library.manifest().toFile());
+        for (JsonNode it : manifest.get("modules")) {
+            if (it.get("name").stringValue().equals(module)) {
+                changing.accept((ObjectNode) it);
+            }
+        }
+        Path changed = into.resolve("changed.json");
+        Files.writeString(changed, JSON.writeValueAsString(manifest), StandardCharsets.UTF_8);
+        LibraryBinding.generated(changed, library.declarations(), into.resolve("php"), "Acme\\Billing");
+    }
+
+    /**
+     * A list is built and read through the functions of the module whose function hands it across,
+     * though another module's for the same element would do the same: those are what that module's
+     * object offers, and the binding of one module does not reach into another's.
+     */
+    @Test
+    void aListIsBuiltThroughItsOwnModulesFunctions(@TempDir Path into) throws Exception {
+        Generated generated =
+                LibraryBinding.generated(twoModules(into), into.resolve("php"), "Acme\\Billing");
+
+        assertThat(Files.readString(generated.root().resolve("Shop").resolve("Cart.php")))
+                .contains("souther" + Manifest.ABI + "_m_shop_l_value_construct", "souther" + Manifest.ABI + "_m_shop_l_value_at")
+                .doesNotContain("souther" + Manifest.ABI + "_m_stock_");
+        assertThat(Files.readString(generated.root().resolve("Stock").resolve("Bin.php")))
+                .contains("souther" + Manifest.ABI + "_m_stock_l_value_construct", "souther" + Manifest.ABI + "_m_stock_l_value_at")
+                .doesNotContain("souther" + Manifest.ABI + "_m_shop_");
+    }
+}

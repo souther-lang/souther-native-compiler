@@ -5,10 +5,11 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>org.souther-lang</groupId>
-    <artifactId>souther-native-compiler</artifactId>
+    <artifactId>souther-native-parent</artifactId>
+    <packaging>pom</packaging>
     <version>0.1.0-SNAPSHOT</version>
 
-    <name>Souther Native Compiler</name>
+    <name>Souther Native</name>
     <description>Compiles a checked Souther program to a host-native object.</description>
     <url>https://github.com/souther-lang/souther-native-compiler</url>
 
@@ -41,31 +42,57 @@
         <junit.version>5.14.0</junit.version>
         <assertj.version>3.27.6</assertj.version>
         <jackson.version>3.2.2</jackson.version>
-        <!-- What `mvn exec:java` hands the command line, none unless given. -->
-        <args></args>
+        <raoh.version>0.8.0</raoh.version>
     </properties>
 
+    <modules>
+        <module>bindings/api</module>
+        <module>compiler</module>
+        <module>bindings/php/generator</module>
+        <module>bindings/rust/generator</module>
+        <module>launcher</module>
+    </modules>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.souther-lang</groupId>
+                <artifactId>souther-compiler</artifactId>
+                <version>${souther.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.souther-lang</groupId>
+                <artifactId>souther-runtime</artifactId>
+                <version>${souther.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>net.unit8.raoh</groupId>
+                <artifactId>raoh</artifactId>
+                <version>${raoh.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>net.unit8.raoh</groupId>
+                <artifactId>raoh-json</artifactId>
+                <version>${raoh.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>tools.jackson.core</groupId>
+                <artifactId>jackson-databind</artifactId>
+                <version>${jackson.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <!-- What no module can do without, and none can do harm with: an annotation library, and the
+         two libraries a test is written against. What a module reads of the language, of the
+         compiler or of another module is declared by that module, since who can see what is the
+         point of there being modules. -->
     <dependencies>
-        <dependency>
-            <groupId>org.souther-lang</groupId>
-            <artifactId>souther-compiler</artifactId>
-            <version>${souther.version}</version>
-        </dependency>
         <dependency>
             <groupId>org.jspecify</groupId>
             <artifactId>jspecify</artifactId>
             <version>${jspecify.version}</version>
         </dependency>
-
-        <!-- A program's examples are checked by running them, so the compile a program is read
-             through needs the runtime those rows call. It is also the answer a boundary's forms
-             are held to, which is why a test reads it and this compiler does not. -->
-        <dependency>
-            <groupId>org.souther-lang</groupId>
-            <artifactId>souther-runtime</artifactId>
-            <version>${souther.version}</version>
-        </dependency>
-
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
@@ -78,203 +105,46 @@
             <version>${assertj.version}</version>
             <scope>test</scope>
         </dependency>
-        <!-- The manifest a binding is generated from is read as JSON, through raoh-json, which the
-             compiler already brings and which leaves Jackson for whoever uses it to supply. A test
-             also reads what a native run writes at a boundary as a JSON value to compare it: only as
-             an observer, taking no rule about the external form from it. -->
-        <dependency>
-            <groupId>tools.jackson.core</groupId>
-            <artifactId>jackson-databind</artifactId>
-            <version>${jackson.version}</version>
-        </dependency>
     </dependencies>
 
     <build>
-        <plugins>
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-compiler-plugin</artifactId>
-                <version>3.14.0</version>
-            </plugin>
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-surefire-plugin</artifactId>
-                <version>3.5.4</version>
-            </plugin>
-
-            <!-- Cargo builds the Rust half and Maven runs it, rather than Maven being taught to
-                 build Rust. One entry point for a contributor, and one build system per language.
-                 The toolchain a clone gets is the one `rust-toolchain.toml` pins, so what runs
-                 here does not depend on what the machine had installed. -->
-            <plugin>
-                <groupId>org.codehaus.mojo</groupId>
-                <artifactId>exec-maven-plugin</artifactId>
-                <version>3.5.0</version>
-                <configuration>
-                    <workingDirectory>${project.basedir}/native</workingDirectory>
-                </configuration>
-                <executions>
-                    <!-- The command line, as `mvn exec:java -Dargs='...'` runs it, in the directory
-                         Maven was started in, where the driver is found as `native/target/debug`.
-                         Its arguments are `args` and not `exec.args`, which every execution of this
-                         plugin reads, so that one command can build first with `process-classes`
-                         without Cargo being handed them too. System.exit is left to end Maven, so
-                         what the command ended with is what Maven ends with. -->
-                    <execution>
-                        <id>default-cli</id>
-                        <goals>
-                            <goal>java</goal>
-                        </goals>
-                        <configuration>
-                            <mainClass>souther.nativecode.Main</mainClass>
-                            <commandlineArgs>${args}</commandlineArgs>
-                        </configuration>
-                    </execution>
-                    <!-- Before the Java tests, because one of them reaches the driver over the
-                         process boundary and a clone that had not built it would report the
-                         boundary as broken. -->
-                    <!-- Before the build, because what it holds is a rule about what the Rust
-                         half is allowed to say, and a build that had already produced the object
-                         would be reporting it after the fact. -->
-                    <!-- Before the lint, for the same reason: a layout is a rule about what the Rust
-                         half says, and rustfmt is what states it. Checked and not applied, so a
-                         build never rewrites what a contributor wrote without their seeing it. -->
-                    <execution>
-                        <id>cargo-format</id>
-                        <phase>process-classes</phase>
-                        <goals>
-                            <goal>exec</goal>
-                        </goals>
-                        <configuration>
-                            <executable>cargo</executable>
-                            <arguments>
-                                <argument>fmt</argument>
-                                <argument>--all</argument>
-                                <argument>--check</argument>
-                            </arguments>
-                        </configuration>
-                    </execution>
-                    <execution>
-                        <id>cargo-lint</id>
-                        <phase>process-classes</phase>
-                        <goals>
-                            <goal>exec</goal>
-                        </goals>
-                        <configuration>
-                            <executable>cargo</executable>
-                            <arguments>
-                                <argument>clippy</argument>
-                                <argument>--all-targets</argument>
-                                <argument>--</argument>
-                                <argument>-D</argument>
-                                <argument>warnings</argument>
-                            </arguments>
-                        </configuration>
-                    </execution>
-                    <execution>
-                        <id>cargo-build</id>
-                        <phase>process-classes</phase>
-                        <goals>
-                            <goal>exec</goal>
-                        </goals>
-                        <configuration>
-                            <executable>cargo</executable>
-                            <arguments>
-                                <argument>build</argument>
-                            </arguments>
-                        </configuration>
-                    </execution>
-                    <execution>
-                        <id>cargo-test</id>
-                        <phase>test</phase>
-                        <goals>
-                            <goal>exec</goal>
-                        </goals>
-                        <configuration>
-                            <executable>cargo</executable>
-                            <arguments>
-                                <argument>test</argument>
-                            </arguments>
-                        </configuration>
-                    </execution>
-                    <!-- The Rust runtime every Rust binding runs on: a crate of its own and not a
-                         member of native/, since a host builds it and not this project, with a
-                         rust-version and a licence of its own. Held to the same layout and lints,
-                         and to its Cargo.lock (locked), as Composer holds the PHP runtime to its. -->
-                    <execution>
-                        <id>rust-runtime-format</id>
-                        <phase>process-classes</phase>
-                        <goals>
-                            <goal>exec</goal>
-                        </goals>
-                        <configuration>
-                            <executable>cargo</executable>
-                            <workingDirectory>${project.basedir}/bindings/rust/runtime</workingDirectory>
-                            <arguments>
-                                <argument>fmt</argument>
-                                <argument>--check</argument>
-                            </arguments>
-                        </configuration>
-                    </execution>
-                    <execution>
-                        <id>rust-runtime-lint</id>
-                        <phase>process-classes</phase>
-                        <goals>
-                            <goal>exec</goal>
-                        </goals>
-                        <configuration>
-                            <executable>cargo</executable>
-                            <workingDirectory>${project.basedir}/bindings/rust/runtime</workingDirectory>
-                            <arguments>
-                                <argument>clippy</argument>
-                                <argument>--locked</argument>
-                                <argument>--all-targets</argument>
-                                <argument>--</argument>
-                                <argument>-D</argument>
-                                <argument>warnings</argument>
-                            </arguments>
-                        </configuration>
-                    </execution>
-                    <!-- What a run's lifetime refuses is checked here too: trybuild compiles each
-                         case under tests/lifetimes and compares what rustc says with the .stderr
-                         beside it, which the pinned toolchain wrote. -->
-                    <execution>
-                        <id>rust-runtime-test</id>
-                        <phase>test</phase>
-                        <goals>
-                            <goal>exec</goal>
-                        </goals>
-                        <configuration>
-                            <executable>cargo</executable>
-                            <workingDirectory>${project.basedir}/bindings/rust/runtime</workingDirectory>
-                            <arguments>
-                                <argument>test</argument>
-                                <argument>--locked</argument>
-                            </arguments>
-                        </configuration>
-                    </execution>
-                    <!-- The PHP runtime's dependencies, as its composer.lock fixes them, before the
-                         Java tests: one of them runs a generated binding over that runtime, and the
-                         entry point stays this one build, as it is for Cargo. Composer does nothing
-                         where vendor/ already matches the lock. -->
-                    <execution>
-                        <id>composer-install</id>
-                        <phase>process-test-classes</phase>
-                        <goals>
-                            <goal>exec</goal>
-                        </goals>
-                        <configuration>
-                            <executable>composer</executable>
-                            <workingDirectory>${project.basedir}/bindings/php/runtime</workingDirectory>
-                            <arguments>
-                                <argument>install</argument>
-                                <argument>--no-interaction</argument>
-                                <argument>--no-progress</argument>
-                            </arguments>
-                        </configuration>
-                    </execution>
-                </executions>
-            </plugin>
-        </plugins>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <version>3.14.0</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-jar-plugin</artifactId>
+                    <version>3.5.1</version>
+                </plugin>
+                <!-- A test runs in its module's directory, and reaches what is not in it through the
+                     root of the repository, which it is told: the Rust half, the language runtimes
+                     and the driver, all of which one clone has in one place. -->
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <version>3.5.4</version>
+                    <configuration>
+                        <systemPropertyVariables>
+                            <souther.repository>${maven.multiModuleProjectDirectory}</souther.repository>
+                            <souther.native.driver>${maven.multiModuleProjectDirectory}/native/target/debug/souther-native-driver</souther.native.driver>
+                        </systemPropertyVariables>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <groupId>org.codehaus.mojo</groupId>
+                    <artifactId>exec-maven-plugin</artifactId>
+                    <version>3.5.0</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-dependency-plugin</artifactId>
+                    <version>3.8.1</version>
+                </plugin>
+            </plugins>
+        </pluginManagement>
     </build>
 </project>

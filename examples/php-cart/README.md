@@ -78,10 +78,10 @@ with the `ffi` and `pdo_sqlite` extensions.
     composer install
     vendor/bin/phpunit
 
-`bin/build` runs the command line from #57 at the root of the clone:
+`bin/build` runs the command line from #57:
 
-    mvn -q process-classes exec:java \
-        -Dargs='--library <here>/build/native --php <here>/build/php --namespace Model examples/cart-model'
+    scripts/souther-native --library <here>/build/native --php <here>/build/php --namespace Model \
+        examples/cart-model
 
 It writes the library into `build/native` and its binding into `build/php`, under the namespace
 `Model`, which `composer.json` maps as it maps the application's own classes. The module is
