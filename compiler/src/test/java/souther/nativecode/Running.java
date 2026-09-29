@@ -83,19 +83,31 @@ final class Running {
     private final List<NativeArtifacts.Bytes> alongside;
 
     /**
-     * What the object carries that a harness here can call, asked of the object once: the program
-     * and what is linked beside it decide it, and neither changes for as long as this Running is
-     * asked anything.
+     * What linking a program has settled, kept for as long as the program is: the entries its
+     * object carries, and the executable for each set of objects beside it and stand-ins. Kept by
+     * the program and not by a Running, because helpers make a Running for every question they
+     * ask, and a program asked again is asked of what was settled for it rather than written out,
+     * scanned and handed to a harness generated again, only for the cache to find what it made
+     * the first time.
+     *
+     * <p>A program is equal only to itself, so this holds each one by identity; weakly, so a
+     * program no test holds any more is not kept for it. Nothing kept refers back to the program.
      */
-    private @Nullable List<Entry> entries;
+    private static final Map<CheckedProgram, Prepared> PREPARED =
+            java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
+
+    private static final class Prepared {
+        @Nullable List<Entry> entries;
+        final Map<Linking, Path> executables = new java.util.HashMap<>();
+        int harnesses;
+    }
 
     /**
-     * The executable for each set of stand-ins, by what they state. The program and what is linked
-     * beside it are this Running's, so the stand-ins are all that is left to decide the harness,
-     * and a question asked again against the same ones is asked of the executable already linked
-     * rather than of a program written out, a harness generated and both compared again.
+     * What decides a harness besides the program: the objects linked beside it, and what the
+     * stand-ins state. A stand-in is read for its dependency and what it states, and a
+     * {@link StoodIn} is equal to another stating the same.
      */
-    private final Map<List<StoodIn>, Path> executables = new java.util.HashMap<>();
+    private record Linking(List<NativeArtifacts.Bytes> alongside, List<StoodIn> stated) {}
 
     private Running(CheckedProgram program, List<NativeArtifacts.Bytes> alongside) {
         this.program = program;
@@ -518,16 +530,38 @@ final class Running {
      * different stand-ins are two executables. Which entry is run is not: it is handed to the
      * process, so the linker is asked once for however many behaviors and rows are asked about.
      */
-    private synchronized Path linked(List<StandsIn> standIns)
-            throws IOException, InterruptedException {
-        List<StoodIn> stated = standIns.stream().map(StandsIn::stated).toList();
-        Path executable = executables.get(stated);
-        if (executable == null) {
-            executable = NativeArtifacts.executable(program, alongside,
-                    harnessFor(entries(), standIns));
-            executables.put(stated, executable);
+    private Path linked(List<StandsIn> standIns) throws IOException, InterruptedException {
+        Prepared prepared = PREPARED.computeIfAbsent(program, ignored -> new Prepared());
+        Linking linking = new Linking(alongside,
+                standIns.stream().map(StandsIn::stated).toList());
+        synchronized (prepared) {
+            Path executable = prepared.executables.get(linking);
+            if (executable == null) {
+                if (prepared.entries == null) {
+                    prepared.entries = entries();
+                }
+                prepared.harnesses++;
+                executable = NativeArtifacts.executable(program, alongside,
+                        harnessFor(prepared.entries, standIns));
+                prepared.executables.put(linking, executable);
+            }
+            return executable;
         }
-        return executable;
+    }
+
+    /**
+     * How many harnesses were generated for this program: one for each set of objects beside it
+     * and stand-ins, however many questions were asked against them and however many Runnings
+     * asked them.
+     */
+    static int harnessesOf(CheckedProgram program) {
+        Prepared prepared = PREPARED.get(program);
+        if (prepared == null) {
+            return 0;
+        }
+        synchronized (prepared) {
+            return prepared.harnesses;
+        }
     }
 
     /**
@@ -539,13 +573,6 @@ final class Running {
      * anyway would fail to link for it.
      */
     private List<Entry> entries() throws IOException, InterruptedException {
-        if (entries == null) {
-            entries = entriesCarried();
-        }
-        return entries;
-    }
-
-    private List<Entry> entriesCarried() throws IOException, InterruptedException {
         Set<String> carried = NativeArtifacts.built(program).defined();
         List<Entry> entries = new ArrayList<>();
         for (CheckedModule module : program.modules()) {
