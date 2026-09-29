@@ -37,6 +37,11 @@
             <artifactId>souther-binding-rust</artifactId>
             <version>${project.version}</version>
         </dependency>
+        <dependency>
+            <groupId>org.souther-lang</groupId>
+            <artifactId>souther-binding-go</artifactId>
+            <version>${project.version}</version>
+        </dependency>
     </dependencies>
 
     <build>

@@ -6,14 +6,14 @@ import java.util.Optional;
 /**
  * The bindings this compiler writes, and what each is asked for on the command line.
  *
- * <p>The one place that says there is a PHP binding and a Rust binding: what the command reads its
+ * <p>The one place that says there is a PHP, a Rust and a Go binding: what the command reads its
  * options from, what its usage says, and, where a generator is not among those installed, which
  * artifact would bring it. It is closed, since what is fetched and run on the strength of a flag is
  * only ever what this names, and it is not derived from the generators found, because a generator
  * that is not there cannot say that it is missing.
  *
- * <p>It says how a binding is asked for and nothing of what the asking means. What a namespace or a
- * crate is, and whether one is acceptable, is the generator's to say.
+ * <p>It says how a binding is asked for and nothing of what the asking means. What a namespace, a
+ * crate or a package is, and whether one is acceptable, is the generator's to say.
  */
 public final class KnownBindings {
 
@@ -36,7 +36,9 @@ public final class KnownBindings {
             new Kind("php", "--php", "PHP", List.of("namespace"),
                     "org.souther-lang:souther-binding-php"),
             new Kind("rust", "--rust", "Rust", List.of("crate"),
-                    "org.souther-lang:souther-binding-rust"));
+                    "org.souther-lang:souther-binding-rust"),
+            new Kind("go", "--go", "Go", List.of("package"),
+                    "org.souther-lang:souther-binding-go"));
 
     private KnownBindings() {
     }

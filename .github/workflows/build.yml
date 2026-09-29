@@ -41,6 +41,13 @@ jobs:
           ini-values: ffi.enable=1
           tools: composer
 
+      # Go, which a Go binding is built with by cgo, and the Go runtime's tests are run with. The
+      # version is the one Raoh asks for, since a generated package imports it.
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27'
+          cache-dependency-path: bindings/go/runtime/go.sum
+
       # The toolchain comes from rust-toolchain.toml, which rustup reads when cargo is first run
       # in the checkout. Nothing here names a version, so there is one place it is written.
       - uses: Swatinem/rust-cache@v2
@@ -60,6 +67,10 @@ jobs:
       # The same for Rust: the command line builds a library and its crate, Cargo builds a host
       # depending on the crate with the runtime patched in from the clone, and it calls the library.
       - run: scripts/rust-from-the-command-line.sh
+
+      # The same for Go: the command line builds a library and its module, and a Go host depending
+      # on it with the runtime put in place from the clone calls the library.
+      - run: scripts/go-from-the-command-line.sh
 
       # The Rust runtime says it builds with the rust-version Raoh asks for, which is older than the
       # toolchain this repository pins, and a dependency moving past it is found here and not by a

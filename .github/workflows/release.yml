@@ -81,7 +81,7 @@ jobs:
       - name: The generators
         run: >-
           mvn --batch-mode -DskipTests -Dexec.skip=true -Dsouther.skipReleaseCheck=true
-          -pl bindings/php/generator,bindings/rust/generator -am package
+          -pl bindings/php/generator,bindings/rust/generator,bindings/go/generator -am package
 
       # Written into the compiler's own artifact, which is the one place these are held where a release
       # asset being replaced, or a mirror, does not reach them.
@@ -90,6 +90,7 @@ jobs:
           scripts/record-release-checksums.sh "$CHECKSUMS" dist
           "php=bindings/php/generator/target/souther-binding-php-$VERSION.jar"
           "rust=bindings/rust/generator/target/souther-binding-rust-$VERSION.jar"
+          "go=bindings/go/generator/target/souther-binding-go-$VERSION.jar"
 
       # What is published, as a Maven repository: built once, here, with the checksums in the compiler.
       # The build refuses a release version that does not carry all of them.
