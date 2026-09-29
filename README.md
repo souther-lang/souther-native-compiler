@@ -170,7 +170,10 @@ does this in CI, as the PHP script does.
 
 ## Releasing
 
-A release is a `v<version>` tag, and `.github/workflows/release.yml` does what the tag names. It builds
+A release is a `v<version>` tag, and `.github/workflows/release.yml` does what the tag names. A tag can
+be put on any commit, and a release is not replaced once it is out, so the first thing it does is run
+the build (`build.yml`, called from it) on the commit that is tagged, and nothing after it starts unless
+that passes; a test holds every job of the release to waiting for it. It then builds
 the driver on each of the four platforms (Linux and macOS, on x86_64 and aarch64) and packs it with
 the runtime archive and the file of what linking that needs, by `scripts/package-native-bundle.sh`.
 It builds the generators' jars, and writes the SHA-256 of every bundle and every jar into

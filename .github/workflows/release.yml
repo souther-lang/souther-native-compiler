@@ -12,7 +12,14 @@ permissions:
   contents: read
 
 jobs:
+  # The build of the commit that is tagged, run here and not remembered from when it was pushed: a tag
+  # can be put on any commit, and what is published from a commit that does not pass is a compiler that
+  # every user of that version fetches from. Nothing below runs unless it passes.
+  ci:
+    uses: ./.github/workflows/build.yml
+
   bundle:
+    needs: ci
     strategy:
       fail-fast: true
       matrix:
