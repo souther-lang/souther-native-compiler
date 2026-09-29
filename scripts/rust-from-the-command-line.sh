@@ -33,9 +33,8 @@ behavior total : (line: Line) -> Int
 let total (line) = line.price.value * line.quantity
 EOF
 
-# The line the README gives, run from the root of the clone as it says. --no-snapshot-updates keeps
-# the souther-compiler CI installed from its pinned commit, as the build's own step does.
-mvn --batch-mode --quiet --no-snapshot-updates process-classes exec:java \
+# The line the README gives, run from the root of the clone as it says.
+mvn --batch-mode --quiet process-classes exec:java \
     -Dargs="--library $app/native --rust $app/rust --crate shop $app/model"
 
 cat > "$app/host/Cargo.toml" <<EOF
