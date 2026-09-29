@@ -54,8 +54,12 @@ public final class RustBindings {
     /** The version of the runtime crate what this writes calls. */
     static final String RUNTIME_VERSION = "0.1";
 
-    /** Every name the root of the crate declares, which no top module of the model may be. */
-    private static final List<String> ROOT = List.of("Library", "Run", "Scope", "AlreadyRunning",
+    /**
+     * Every name the root of the crate declares, which no top module of the model may be. A test
+     * holds every crate it generates to this: a name its {@code lib.rs} declares and this leaves
+     * out fails there, before a model named so fails in rustc.
+     */
+    static final List<String> ROOT = List.of("Library", "Run", "Scope", "Decoding", "AlreadyRunning",
             "Construction", "Date", "DateTime", "Decimal", "Failure", "HostError", "Instant",
             "LoadError", "NotADecimal", "NotATemporal", "Reading", "Time", "raoh", "__ffi");
 
