@@ -19,13 +19,13 @@ func (s LoadProduct) Apply(r *model.Run, id domain.ProductId) (domain.ProductOrP
 		Scan(&row.id, &row.onSale, &row.price)
 	if errors.Is(err, sql.ErrNoRows) {
 		none, err := domain.NewProductNotFound(r)
-		return domain.ProductOrProductNotFoundProductNotFound{Value: none}, err
+		return none, err
 	}
 	if err != nil {
 		return nil, err
 	}
 	product, err := read(r, productForm, row, domain.DecodeProduct)
-	return domain.ProductOrProductNotFoundProduct{Value: product}, err
+	return product, err
 }
 
 // LoadCart is loadCart. It makes sure the user has a cart row, then reads the cart with the total
@@ -90,15 +90,15 @@ func (s PriceCart) Apply(r *model.Run, userID domain.UserId) (domain.PricedCartO
 	switch {
 	case errors.Is(err, errProductGone):
 		gone, err := domain.NewProductNotFound(r)
-		return domain.PricedCartOrProductNotFoundOrSaleEndedProductNotFound{Value: gone}, err
+		return gone, err
 	case errors.Is(err, errSaleOver):
 		over, err := domain.NewSaleEnded(r)
-		return domain.PricedCartOrProductNotFoundOrSaleEndedSaleEnded{Value: over}, err
+		return over, err
 	case err != nil:
 		return nil, err
 	}
 	priced, err := read(r, pricedCartForm, lines, domain.DecodePricedCart)
-	return domain.PricedCartOrProductNotFoundOrSaleEndedPricedCart{Value: priced}, err
+	return priced, err
 }
 
 // Why a line of a cart has no price.
@@ -149,13 +149,13 @@ func (s SaveOrder) Apply(r *model.Run, order domain.Order) (domain.OrderPlaced, 
 	var kind, email string
 	var name, companyName, corporateNumber sql.NullString
 	switch orderer := order.Orderer().Case().(type) {
-	case domain.OrdererIndividual:
-		kind, email = "individual", orderer.Value.Email().Value()
-		name = present(orderer.Value.Name().Value())
-	case domain.OrdererCorporation:
-		kind, email = "corporation", orderer.Value.Email().Value()
-		companyName = present(orderer.Value.CompanyName().Value())
-		corporateNumber = present(orderer.Value.CorporateNumber().Value())
+	case domain.Individual:
+		kind, email = "individual", orderer.Email().Value()
+		name = present(orderer.Name().Value())
+	case domain.Corporation:
+		kind, email = "corporation", orderer.Email().Value()
+		companyName = present(orderer.CompanyName().Value())
+		corporateNumber = present(orderer.CorporateNumber().Value())
 	}
 	orderID, charge := order.Id().Value(), order.Charge()
 

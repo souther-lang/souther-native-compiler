@@ -24,9 +24,9 @@ args, err := decode(req, checkoutRequest(r))
 answer, err := b.PlaceOrder.Call(r, orderID, args.userID, args.orderer)
 // ...
 switch answer := answer.(type) {
-case domain.EmptyCartOrOrderPlacedOrProductNotFoundOrSaleEndedOrderPlaced:
-	return cart.Commit(cart.Created([]byte(answer.Value.Order().Encode()))), nil
-case domain.EmptyCartOrOrderPlacedOrProductNotFoundOrSaleEndedEmptyCart:
+case domain.OrderPlaced:
+	return cart.Commit(cart.Created([]byte(answer.Order().Encode()))), nil
+case domain.EmptyCart:
 	return refused("empty_cart")
 // ...
 }
@@ -223,7 +223,7 @@ program and not a condition a handler answers. `internal/cart/misuse_test.go` ho
 | a route answering a response without saying whether what the request wrote is kept | does not compile | E0308 |
 
 A type switch over a behavior's answer is not checked for the cases it leaves out, as Rust's `match`
-is. Each case the model can answer is a type of its own, and a case added to the model reaches the
+is. Each case the model can answer is a type of the model, and a case added to the model reaches the
 route's `unanswered`, which is a 500, until the route says what the case is answered with.
 
 ## Building and running it
@@ -281,13 +281,16 @@ handler reads the rows and writes them out with an encoder.
 ## What reads differently in Go
 
 An answer no declaration names, such as `Product | ProductNotFound`, is an interface named after its
-members in the manifest's order (`ProductOrProductNotFound`), with a type for each member
-(`ProductOrProductNotFoundProductNotFound{Value: ...}`). The names are long, and they are the
-model's: a route's `case` says which member it answers without a table of its own.
+members in the manifest's order (`ProductOrProductNotFound`), and each member of it is the model's
+own type, `domain.Product` or `domain.ProductNotFound`. A route's `case` names the type the model
+answered, and an implementation answers one as it is: `loadProduct` returns the `ProductNotFound`
+it made. Go lets a package write a method only on its own types, so a member that is a primitive,
+such as `Int` in `Int | Free`, is held by a type of the union's instead (`FreeOrIntInt{Value: n}`);
+the cart has none.
 
-A sum the model declares, `Orderer`, has `Case()`, answering a type for each of its cases, and
-`issueQuote` takes a `Corporation`, so the quote route narrows the orderer with a type switch over
-both cases before it calls it.
+A sum the model declares, `Orderer`, has `Case()`, answering the value as the type of its case,
+`domain.Individual` or `domain.Corporation`. `issueQuote` takes a `Corporation`, so the quote route
+narrows the orderer with a type switch over both cases before it calls it.
 
 A value of the model is a struct holding a handle and the run it was made in. Reading a field copies
 what it holds into Go's own memory (`string`, `int64`, a slice), and nothing the application keeps

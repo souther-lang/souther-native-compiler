@@ -59,13 +59,13 @@ func addItem(b cart.Behaviors, r *model.Run, req *http.Request, _ *sql.Tx) (cart
 		return cart.Outcome{}, err
 	}
 	switch answer.(type) {
-	case domain.CartFullOrItemAddedOrProductNotFoundOrSaleEndedItemAdded:
+	case domain.ItemAdded:
 		return cart.Commit(cart.Created(nil)), nil
-	case domain.CartFullOrItemAddedOrProductNotFoundOrSaleEndedProductNotFound:
+	case domain.ProductNotFound:
 		return refused("product_not_found")
-	case domain.CartFullOrItemAddedOrProductNotFoundOrSaleEndedSaleEnded:
+	case domain.SaleEnded:
 		return refused("sale_ended")
-	case domain.CartFullOrItemAddedOrProductNotFoundOrSaleEndedCartFull:
+	case domain.CartFull:
 		return refused("cart_full")
 	}
 	return unanswered("addItemToCart", answer)
@@ -88,13 +88,13 @@ func checkout(b cart.Behaviors, r *model.Run, req *http.Request, _ *sql.Tx) (car
 		return cart.Outcome{}, err
 	}
 	switch answer := answer.(type) {
-	case domain.EmptyCartOrOrderPlacedOrProductNotFoundOrSaleEndedOrderPlaced:
-		return cart.Commit(cart.Created([]byte(answer.Value.Order().Encode()))), nil
-	case domain.EmptyCartOrOrderPlacedOrProductNotFoundOrSaleEndedEmptyCart:
+	case domain.OrderPlaced:
+		return cart.Commit(cart.Created([]byte(answer.Order().Encode()))), nil
+	case domain.EmptyCart:
 		return refused("empty_cart")
-	case domain.EmptyCartOrOrderPlacedOrProductNotFoundOrSaleEndedSaleEnded:
+	case domain.SaleEnded:
 		return refused("sale_ended")
-	case domain.EmptyCartOrOrderPlacedOrProductNotFoundOrSaleEndedProductNotFound:
+	case domain.ProductNotFound:
 		return refused("product_not_found")
 	}
 	return unanswered("placeOrder", answer)
@@ -109,9 +109,9 @@ func quote(b cart.Behaviors, r *model.Run, req *http.Request, _ *sql.Tx) (cart.O
 	// issueQuote takes a Corporation, so the orderer is narrowed here, over both of its cases.
 	var corporation domain.Corporation
 	switch orderer := args.orderer.Case().(type) {
-	case domain.OrdererCorporation:
-		corporation = orderer.Value
-	case domain.OrdererIndividual:
+	case domain.Corporation:
+		corporation = orderer
+	case domain.Individual:
 		return refused("quote_for_corporations_only")
 	}
 	quoteID, err := domain.NewQuoteId(r, uuid.NewString())
@@ -125,13 +125,13 @@ func quote(b cart.Behaviors, r *model.Run, req *http.Request, _ *sql.Tx) (cart.O
 		return cart.Outcome{}, err
 	}
 	switch answer := answer.(type) {
-	case domain.EmptyCartOrProductNotFoundOrQuotationOrSaleEndedQuotation:
-		return cart.Commit(cart.OK([]byte(answer.Value.Encode()))), nil
-	case domain.EmptyCartOrProductNotFoundOrQuotationOrSaleEndedEmptyCart:
+	case domain.Quotation:
+		return cart.Commit(cart.OK([]byte(answer.Encode()))), nil
+	case domain.EmptyCart:
 		return refused("empty_cart")
-	case domain.EmptyCartOrProductNotFoundOrQuotationOrSaleEndedSaleEnded:
+	case domain.SaleEnded:
 		return refused("sale_ended")
-	case domain.EmptyCartOrProductNotFoundOrQuotationOrSaleEndedProductNotFound:
+	case domain.ProductNotFound:
 		return refused("product_not_found")
 	}
 	return unanswered("issueQuote", answer)
