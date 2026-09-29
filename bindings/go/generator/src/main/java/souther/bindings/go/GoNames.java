@@ -31,14 +31,45 @@ final class GoNames {
             "switch", "type", "var");
 
     /**
-     * What a parameter or a local of the generated code may not be called, since it is written
-     * beside them: the keywords, what Go declares before any package does that the generated code
-     * uses, and what the generated code names itself.
+     * The identifiers Go declares before any package does (its universe block, which the language
+     * fixes): a generated body writes some of them (a type, {@code nil}, {@code len}, {@code make}),
+     * so a name of the model's that was one would shadow it there.
      */
-    private static final Set<String> TAKEN = Set.of("error", "string", "int64", "bool", "nil",
-            "true", "false", "byte", "any", "len", "make", "append", "panic", "recover", "uint8",
-            "uint32", "int32", "float64", "iota", "unsafe", "souther", "lib", "raoh", "r", "v", "fn",
-            "err", "json", "value", "run", "C", "b", "hosted", "impl", "userdata", "requirements", "failed", "reading", "made", "input");
+    private static final Set<String> UNIVERSE = Set.of("any", "bool", "byte", "comparable", "complex64",
+            "complex128", "error", "float32", "float64", "int", "int8", "int16", "int32", "int64",
+            "rune", "string", "uint", "uint8", "uint16", "uint32", "uint64", "uintptr", "true",
+            "false", "iota", "nil", "append", "cap", "clear", "close", "complex", "copy", "delete",
+            "imag", "len", "make", "max", "min", "new", "panic", "print", "println", "real",
+            "recover");
+
+    /** What a generated signature calls the run and the receiver of a method, which a caller reads. */
+    static final String RUN = "r";
+    static final Set<String> SIGNATURE = Set.of(RUN, "v", "b", "f");
+
+    /** What a generated file calls what it imports, apart from the packages of the binding. */
+    static final Set<String> ALIASES = Set.of("souther", "lib", "raoh", "unsafe", "C");
+
+    /**
+     * What a generated file calls each package of the binding it imports: this and a number. It is
+     * the one place that says so, and {@link Body.Imports} makes the names from it.
+     */
+    static final String MODULE_ALIAS = "m";
+
+    /**
+     * Whether {@code name} means something already where a generated function is written: a word of
+     * Go, an identifier Go declares, what a signature calls the run and a receiver, or what a file
+     * calls an import. Each is a closed set defined once; nothing else is reserved, since what the
+     * generator writes beyond them is claimed by {@link Names} around the model's names.
+     */
+    static boolean reserved(String name) {
+        return KEYWORDS.contains(name) || UNIVERSE.contains(name) || SIGNATURE.contains(name)
+                || ALIASES.contains(name) || isModuleAlias(name);
+    }
+
+    /** Whether {@code name} is what a generated file calls a package of the binding. */
+    static boolean isModuleAlias(String name) {
+        return name.matches(MODULE_ALIAS + "[0-9]+");
+    }
 
     /** Names a top module of the model may not be, since a directory of that name means more. */
     private static final Set<String> DIRECTORIES = Set.of("internal", "vendor", "testdata");
@@ -61,18 +92,17 @@ final class GoNames {
         return exported;
     }
 
-    /** What Go calls a parameter named {@code name}: as it is, or with an underscore after it. */
+    /**
+     * What Go calls a parameter named {@code name}: as it is, or with an underscore after it where
+     * the name means something already ({@link #reserved}). A caller reads what a function takes by
+     * the types and never by these names.
+     */
     static String local(String name, String what) {
         if (!isIdentifier(name) || name.equals("_")) {
             throw new NotBindable(what + " is named `" + name + "`, which Go takes for no name");
         }
-        return KEYWORDS.contains(name) || TAKEN.contains(name) || GENERATED.matcher(name).matches()
-                ? name + "_" : name;
+        return reserved(name) ? name + "_" : name;
     }
-
-    /** The locals the generated code makes of its own, each a base and a number. */
-    private static final java.util.regex.Pattern GENERATED =
-            java.util.regex.Pattern.compile("(g|a|text|at|held|option)[0-9]+");
 
     /**
      * The directories a module is written in, one for each of its dotted parts, each a name Go

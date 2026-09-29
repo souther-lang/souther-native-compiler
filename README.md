@@ -964,6 +964,9 @@ type and does not compile.
   runtime on one thread, are what Rust also reports at run time. They are errors
   (`ErrForeignHandle`, `ErrAlreadyRunning`). A library is told apart by the address of its
   `souther_mark`, so two `Library` values over one file are one runtime.
+- Every function of the binding that takes a run asks it first (`souther.Making(r)`), whatever it goes
+  on to do: calling a function of the host's own that touches no run is asked the same as calling the
+  library's, and a test holds the generated code to it.
 - Reading a value and copying what a call answered leave no arena-owned value with the caller, and
   need only the first two. Whatever makes a value needs the run to be the innermost, so a value made
   outside is read and handed to a computation inside `r.Scope(func(inner *Run) error { ... })`, and
@@ -1004,6 +1007,14 @@ surface of each is recorded under `bindings/go/runtime/protocol`, a test fails w
 what the record says, and a generated package does not compile against another protocol than the one it
 was written for. That is separate from the library's ABI generation, which is in the names of its
 functions.
+
+A parameter or a field is named as the model names it, with an underscore after it where the name
+means something in Go already (a word of the language, an identifier Go declares, what a signature calls
+the run and a receiver, what a file calls an import); a caller reads a function by its types and not by
+these names. What a generated function writes of its own is claimed around the model's names in one
+scope, so it yields to them and is never listed against them. Whatever a package imports is a package
+of a module the model refers to, which a test of the generator holds, so that the packages do not
+import one another in a cycle where the modules do not.
 
 Names ending in `__` (`Ref__`, `Word__`) are the binding's own, which one package hands another;
 Go has no way to keep them from a caller, as Rust does, and a host does not use them.

@@ -86,6 +86,7 @@ final class GoHost {
         List<String> vet = new ArrayList<>(List.of("vet"));
         for (Binding binding : bindings) {
             formatted(binding.generated());
+            askedTheRunFirst(binding.generated());
             vet.add(binding.importPath() + "/...");
         }
         vet.add("host");
@@ -93,6 +94,34 @@ final class GoHost {
         List<String> run = new ArrayList<>(List.of("run", "host"));
         run.addAll(arguments);
         return go(into, run);
+    }
+
+    /** A function of a generated package that takes a run, up to the end of it. */
+    private static final Pattern RUN_FUNCTION = Pattern.compile(
+            "(?ms)^func (?:\\([^)]*\\) )?\\w+\\(r \\*lib\\.Run[^\\n]*\\{\\n(.*?)\\n\\}\\n");
+
+    /**
+     * Refuses a generated function that takes a run and makes a computation in it without asking the
+     * run first. Every such function begins {@code souther.Making(r)}: the check is what a function
+     * that takes a run does, in the one place, and no function has it only because of what else it
+     * writes. So a function that calls the library ({@code souther.Called}) or a function of the
+     * host's ({@code Host__.Fn}) is held to it whatever it is made of.
+     */
+    private static void askedTheRunFirst(Generated binding) throws IOException {
+        for (Path file : binding.files()) {
+            if (!file.toString().endsWith(".go")) {
+                continue;
+            }
+            Matcher function = RUN_FUNCTION.matcher(Files.readString(file, StandardCharsets.UTF_8));
+            while (function.find()) {
+                String body = function.group(1);
+                boolean computes = body.contains("souther.Called(") || body.contains("Host__.Fn(");
+                if (computes && !body.startsWith("\tsouther.Making(r)\n")) {
+                    throw new AssertionError(file + " has a function that computes before it asks its run:\n"
+                            + function.group());
+                }
+            }
+        }
     }
 
     /**

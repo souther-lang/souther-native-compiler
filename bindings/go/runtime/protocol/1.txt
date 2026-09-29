@@ -58,6 +58,8 @@ func Call[B any](r *Run[B], native func() Status) error
 
 
 
+func Called[B any](r *Run[B], native func() Status) error
+
 func Constructed(err error) error
 
 func Crossing(err error) error

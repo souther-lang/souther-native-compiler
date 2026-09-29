@@ -154,22 +154,21 @@ sealed interface Crossing {
                 case BOOL -> body.open("if " + value).line(word + " = 1").close();
                 case STRING -> {
                     String text = body.temp("text");
-                    body.line(text + ", err := " + body.imports.souther() + ".String(" + body.run
+                    body.line(text + ", " + body.err() + " := " + body.imports.souther() + ".String(" + body.run
                             + ", " + value + ")").checked().line(word + " = " + text);
                 }
                 case DECIMAL -> {
-                    body.making();
                     body.line(word + " = " + body.imports.souther() + ".Decimal(" + body.run + ", "
                             + value + ")");
                 }
                 case DATE, TIME, DATETIME, INSTANT -> {
                     String at = body.temp("at");
-                    body.line(at + ", err := " + body.imports.souther() + "." + hand() + "("
+                    body.line(at + ", " + body.err() + " := " + body.imports.souther() + "." + hand() + "("
                             + body.run + ", " + value + ")").checked().line(word + " = " + at);
                 }
                 case HANDLE -> {
                     String at = body.temp("at");
-                    body.line(at + ", err := " + value + ".Ref__.In(" + body.run + ")").checked()
+                    body.line(at + ", " + body.err() + " := " + value + ".Ref__.In(" + body.run + ")").checked()
                             .line(word + " = " + at);
                 }
             }
@@ -511,7 +510,7 @@ sealed interface Crossing {
         @Override
         public void give(Body body, String value, List<String> into) {
             String at = body.temp("at");
-            body.line(at + ", err := " + imports(body) + name + "Word__(" + body.run + ", " + value
+            body.line(at + ", " + body.err() + " := " + imports(body) + name + "Word__(" + body.run + ", " + value
                     + ")").checked().line(into.getFirst() + " = " + at);
         }
 

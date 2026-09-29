@@ -194,6 +194,7 @@ public final class GoBindings {
         for (GoModule at : modules.values()) {
             module(at);
         }
+        assertImportsAreReferences();
         assertAcyclic();
         for (GoModule at : modules.values()) {
             moduleFile(at);
@@ -396,25 +397,33 @@ public final class GoBindings {
                 .append(" {\n\treturn ").append(name).append("{Host__: &").append(host)
                 .append("{f}}\n}\n");
 
-        // Call: a function of the host's is called as it is, and one the library made through the library.
-        List<String> before = new ArrayList<>(List.of("if f.Host__ != nil {",
-                "\tanswer, err := f.Host__.Fn(" + String.join(", ", java.util.stream.Stream
-                        .concat(java.util.stream.Stream.of("r"), inputs.stream()).toList()) + ")",
-                "\tif err != nil {",
-                "\t\treturn " + answers.zero(imports) + ", &" + souther + ".HostError{Err: err}",
-                "\t}", "\treturn answer, nil", "}"));
+        // Call: a function of the host's is called as it is, and one the library made through the
+        // library. Both ask the run first, as every function that takes one does.
+        Before hostBranch = frame -> {
+            Body body = frame.body();
+            String self = Objects.requireNonNull(frame.receiver());
+            String answer = body.names.fixed("answer");
+            body.open("if " + self + ".Host__ != nil");
+            body.line(answer + ", " + body.err() + " := " + self + ".Host__.Fn(" + String.join(", ",
+                    java.util.stream.Stream.concat(java.util.stream.Stream.of(frame.run()), inputs.stream())
+                            .toList()) + ")");
+            body.open("if " + body.err() + " != nil").line("return " + answers.zero(imports) + ", &"
+                    + souther + ".HostError{Err: " + body.err() + "}").close();
+            body.line("return " + answer + ", nil").close();
+            if (!called) {
+                body.line("panic(\"the library hands over no " + what + " it offers no way to call\")");
+                return null;
+            }
+            String function = body.names.fixed("function");
+            body.line(function + ", " + body.err() + " := " + self + ".Ref__.In(" + frame.run() + ")").checked();
+            return function;
+        };
+        Receiver receiver = new Receiver("f", name);
         if (called) {
-            before.addAll(List.of("function, err := f.Ref__.In(r)", "if err != nil {",
-                    "\treturn " + answers.zero(imports) + ", err", "}"));
-            out.append(function(at, "// Call calls it in r, with what it takes.", "func (f " + name
-                    + ") Call", inputs, takes, answers, crossing.call(), "function", false, before));
+            out.append(function(at, "// Call calls it in r, with what it takes.", "Call", receiver, inputs,
+                    takes, answers, crossing.call(), hostBranch, false));
         } else {
-            out.append("\n// Call calls it in r, with what it takes.\nfunc (f ").append(name)
-                    .append(") Call(").append(String.join(", ", parameters)).append(") (")
-                    .append(answers.type(imports)).append(", error) {\n");
-            before.forEach(it -> out.append("\t").append(it).append("\n"));
-            out.append("\tpanic(\"the library hands over no ").append(what)
-                    .append(" it offers no way to call\")\n}\n");
+            out.append(callOfWhatCannotBeCalled(at, receiver, inputs, takes, answers, hostBranch));
         }
 
         // Word__: the value as the library of r is handed it.
@@ -441,7 +450,7 @@ public final class GoBindings {
             at.items.append(out);
             hostCallback(at, GoNames.hostSymbol('f', importPath, module.name(), name),
                     "dispatch" + name,
-                    dispatch, "hosted.fn", making.implementation(), making.implement(), true,
+                    dispatch, "fn", making.implementation(), making.implement(), true,
                     handed, answering, inputs);
         } else {
             out.append("\tpanic(\"the library offers no way to make ").append(what)
@@ -449,6 +458,28 @@ public final class GoBindings {
             at.items.append(out);
         }
         return made;
+    }
+
+    /**
+     * {@code Call} of a function type whose values the library made cannot be called through the
+     * library: a host's own function is called, and asking a value of the library's is a program
+     * that could not be told the way to call one. It asks the run first, as the rest do.
+     */
+    private String callOfWhatCannotBeCalled(GoModule at, Receiver receiver, List<String> inputs,
+                                            List<Crossing> takes, Crossing answers, Before host) {
+        Body.Imports imports = at.imports;
+        Names scope = new Names(inputs);
+        String self = scope.fixed(receiver.name());
+        Body body = new Body(imports, at::shim, scope, GoNames.RUN,
+                "return " + answers.zero(imports) + ", " + scope.fixed("err"), 1);
+        body.line(imports.souther() + ".Making(" + GoNames.RUN + ")");
+        host.write(new Frame(body, GoNames.RUN, self));
+        List<String> parameters = new ArrayList<>(List.of(GoNames.RUN + " *" + imports.lib() + ".Run"));
+        for (int at2 = 0; at2 < takes.size(); at2++) {
+            parameters.add(inputs.get(at2) + " " + takes.get(at2).type(imports));
+        }
+        return "\n// Call calls it in r, with what it takes.\nfunc (" + self + " " + receiver.type() + ") Call("
+                + String.join(", ", parameters) + ") (" + answers.type(imports) + ", error) {\n" + body + "}\n";
     }
 
     /** The interface each union no declaration names is written as, by its members, once it is asked for. */
@@ -721,7 +752,7 @@ public final class GoBindings {
             out.append(arm.holds() == null ? "{}\n" : " {\n\tValue " + arm.holds() + "\n}\n");
             out.append("\nfunc (").append(variant).append(") ").append(marker).append("() {}\n");
         }
-        Body body = new Body(at.imports, at::shim, "run", "return", 1);
+        Body body = new Body(at.imports, at::shim, new Names(List.of()), "run", "return", 1);
         body.line("value := v.Ref__.Read()");
         body.line("run := v.Ref__.Run()");
         body.line("switch " + at.shim(Objects.requireNonNull(sum.which())) + "(run.Library().Symbol(\""
@@ -736,7 +767,7 @@ public final class GoBindings {
             } else if (arm.each() instanceof Case.Primitive p) {
                 Manifest.CaseCrossing crossing = manifest.crossing(p);
                 Crossing.Whole whole = Crossing.Whole.primitive(p.name(), crossing.holds());
-                Body inner = new Body(at.imports, at::shim, "run", "return", 2);
+                Body inner = new Body(at.imports, at::shim, new Names(List.of()), "run", "return", 2);
                 String word = inner.temp("held");
                 inner.line(word + " := " + at.shim(crossing.read()) + "(run.Library().Symbol(\""
                         + crossing.read().name() + "\"), value)");
@@ -752,12 +783,18 @@ public final class GoBindings {
         out.append("\n// Case is which case this value is, as the value of that case.\n")
                 .append("func (v ").append(it.name()).append(") Case() ").append(caseType)
                 .append(" {\n").append(body).append("}\n");
-        // A value of a case, or of a narrower sum, is a value of the sum as it is.
+        // A value of a case, or of a narrower sum, is a value of the sum as it is. What the
+        // conversion names has to be something this package may name: a case is one of the sum's own
+        // and its module is one the sum's depends on, and so is a narrower sum of this same
+        // package. A narrower sum of another module is not: nothing says that module is one this
+        // depends on, and the sum it is a part of is not one that module depends on, so a helper
+        // that named it would import the other way about. It is converted where its two sums are
+        // written, with Ref__, which both are held by.
         Set<String> mine = cases(sum);
         for (Declared other : declared.values()) {
             boolean within = switch (other.declaration()) {
                 case Declaration.Sum narrower -> other != it && mine.containsAll(cases(narrower))
-                        && !cases(narrower).equals(mine);
+                        && !cases(narrower).equals(mine) && other.importPath().equals(it.importPath());
                 default -> mine.contains(other.key());
             };
             if (within) {
@@ -794,7 +831,7 @@ public final class GoBindings {
         Crossing made = Crossing.Whole.handle(it);
         at.items.append(function(at, "// " + name + " is a value of `" + it.key() + "`, or an"
                 + " invariant_violation issue where what is handed over does not hold what the type"
-                + " states.", "func " + name, names, takes, made, construct.function(), null, true));
+                + " states.", name, null, names, takes, made, construct.function(), null, true));
     }
 
     /** {@code Decode<Type>}: a value of the type read out of its external form, or the issues found in it. */
@@ -805,16 +842,23 @@ public final class GoBindings {
         String name = at.names.claim("Decode" + it.name(), "the reader of `" + it.key() + "`");
         String souther = at.imports.souther();
         String unsafe = at.imports.unsafe();
-        Body body = new Body(at.imports, at::shim, "r", "return " + it.name() + "{}, err", 1);
-        body.line("fn := r.Library().Symbol(\"" + decode.name() + "\")");
-        body.line("var reading " + unsafe + ".Pointer");
-        body.line("failed := " + souther + ".Call(r, func() " + souther + ".Status {");
-        body.line("\treturn " + souther + ".Status(" + at.shim(decode) + "(fn, " + souther
-                + ".Bytes(json), C.int64_t(len(json)), &reading))");
+        Names scope = new Names(List.of("json"));
+        String err = scope.fixed("err");
+        Body body = new Body(at.imports, at::shim, scope, GoNames.RUN, "return " + it.name() + "{}, " + err, 1);
+        String fn = scope.fixed("fn");
+        String reading = scope.fixed("reading");
+        String failed = scope.fixed("failed");
+        String value = scope.fixed("value");
+        body.line(souther + ".Making(r)");
+        body.line(fn + " := r.Library().Symbol(\"" + decode.name() + "\")");
+        body.line("var " + reading + " " + unsafe + ".Pointer");
+        body.line(failed + " := " + souther + ".Called(r, func() " + souther + ".Status {");
+        body.line("\treturn " + souther + ".Status(" + at.shim(decode) + "(" + fn + ", " + souther
+                + ".Bytes(json), C.int64_t(len(json)), &" + reading + "))");
         body.line("})");
-        body.open("if failed != nil").line("return " + it.name() + "{}, failed").close();
-        body.line("value, err := " + souther + ".Reading(r, reading)").checked();
-        body.line("return " + it.name() + "{Ref__: " + souther + ".NewRef(r, value)}, nil");
+        body.open("if " + failed + " != nil").line("return " + it.name() + "{}, " + failed).close();
+        body.line(value + ", " + err + " := " + souther + ".Reading(r, " + reading + ")").checked();
+        body.line("return " + it.name() + "{Ref__: " + souther + ".NewRef(r, " + value + ")}, nil");
         at.items.append("\n// ").append(name).append(" is a value of `").append(it.key())
                 .append("` read out of its external form, or the issues found in it as a\n")
                 .append("// *raoh.Issues, or an invalid_format issue where the text is not JSON.\n")
@@ -848,7 +892,7 @@ public final class GoBindings {
         if (crossing == null) {
             return;
         }
-        Body body = new Body(at.imports, at::shim, "run", "return", 1);
+        Body body = new Body(at.imports, at::shim, new Names(List.of()), "run", "return", 1);
         body.line("value := v.Ref__.Read()");
         body.line("run := v.Ref__.Run()");
         List<String> rooms = Crossing.declare(body, "a", crossing.words());
@@ -890,8 +934,8 @@ public final class GoBindings {
                 case Manifest.Parameters.Positional positional -> java.util.stream.IntStream
                         .range(0, positional.types().size()).mapToObj(it -> "input" + it).toList();
             };
-            at.items.append(function(at, "// " + name + " calls " + what + ".", "func " + name,
-                    names, takes, answers, call.function(), "nil", false));
+            at.items.append(function(at, "// " + name + " calls " + what + ".", name, null,
+                    names, takes, answers, call.function(), frame -> "nil", false));
         }
     }
 
@@ -908,7 +952,7 @@ public final class GoBindings {
             }
             String what = "value `" + at.module.name() + "." + value.name() + "`";
             String name = at.names.claim(GoNames.exported(value.name(), what), what);
-            at.items.append(function(at, "// " + name + " reads " + what + ".", "func " + name,
+            at.items.append(function(at, "// " + name + " reads " + what + ".", name, null,
                     List.of(), List.of(), answers, read.function(), null, false));
         }
     }
@@ -925,39 +969,58 @@ public final class GoBindings {
         return List.of();
     }
 
-    /**
-     * A function declared as {@code declared}, calling {@code function} in the run it is handed and
-     * answering what it wrote.
-     *
-     * @param requirements what the function is called with first where it is a behavior's: a Go
-     *                     expression, or null for what is not one
-     * @param constructed  whether a call that says the invariant was not held comes to an issue
-     */
-    private String function(GoModule at, String doc, String declared, List<String> names,
-                            List<Crossing> takes, Crossing answers, Function function,
-                            @Nullable String requirements, boolean constructed) {
-        return function(at, doc, declared, names, takes, answers, function, requirements,
-                constructed, List.of());
+    /** What a function is written around: its run, its receiver where it is a method, and its body. */
+    private record Frame(Body body, String run, @Nullable String receiver) {
     }
 
     /**
-     * As above, where {@code before} is written first: what works out {@code requirements}, ending
-     * the function with {@code err} where it cannot.
+     * What a function writes before it calls the library, which may be a good deal (a host's own
+     * function is called and answered here) or nothing. It answers what the call is handed first,
+     * or null where it is handed nothing first.
      */
-    private String function(GoModule at, String doc, String declared, List<String> names,
-                            List<Crossing> takes, Crossing answers, Function function,
-                            @Nullable String requirements, boolean constructed,
-                            List<String> before) {
+    private interface Before {
+        @Nullable String write(Frame frame);
+    }
+
+    /** A method's receiver: the name a generated signature gives it, and its type. */
+    private record Receiver(String name, String type) {
+    }
+
+    /**
+     * A function called {@code name}, calling {@code function} in the run it is handed and
+     * answering what it wrote.
+     *
+     * <p>Whatever else it does, it asks {@code Making(r)} of its run first: the check is a thing every
+     * function that takes a run does, in one place, and is never something a function has because of
+     * what it happens to write. The call is then made with {@code Called}, which does not ask
+     * again.
+     *
+     * @param receiver    what a method is a method of, or null for a function
+     * @param names       what the model names each parameter
+     * @param before      what is written before the call, or null for nothing
+     * @param constructed whether a call that says the invariant was not held comes to an issue
+     */
+    private String function(GoModule at, String doc, String name, @Nullable Receiver receiver,
+                            List<String> names, List<Crossing> takes, Crossing answers,
+                            Function function, @Nullable Before before, boolean constructed) {
         Body.Imports imports = at.imports;
         String souther = imports.souther();
-        Body body = new Body(imports, at::shim, "r", "return " + answers.zero(imports) + ", err", 1);
-        List<String> parameters = new ArrayList<>(List.of("r *" + imports.lib() + ".Run"));
+        // The model's names first, so that whatever the function writes of its own yields to them.
+        Names scope = new Names(names);
+        String run = GoNames.RUN;
+        String self = receiver == null ? null : scope.fixed(receiver.name());
+        String err = scope.fixed("err");
+        Body body = new Body(imports, at::shim, scope, run, "return " + answers.zero(imports) + ", " + err, 1);
+        List<String> parameters = new ArrayList<>(List.of(run + " *" + imports.lib() + ".Run"));
         for (int at2 = 0; at2 < takes.size(); at2++) {
             parameters.add(names.get(at2) + " " + takes.get(at2).type(imports));
         }
-        before.forEach(body::line);
-        body.line("fn := r.Library().Symbol(\"" + function.name() + "\")");
-        List<String> handed = new ArrayList<>(List.of("fn"));
+        body.line(souther + ".Making(" + run + ")");
+        String requirements = before == null ? null : before.write(new Frame(body, run, self));
+        String fn = scope.fixed("fn");
+        String failed = scope.fixed("failed");
+        body.line(fn + " := " + run + ".Library().Symbol(\"" + function.name() + "\")");
+        List<String> handed = new ArrayList<>(List.of(fn));
         if (requirements != null) {
             handed.add(requirements);
         }
@@ -968,17 +1031,17 @@ public final class GoBindings {
         }
         List<String> rooms = Crossing.declare(body, "a", answers.words());
         rooms.forEach(room -> handed.add("&" + room));
-        body.line("failed := " + souther + ".Call(r, func() " + souther + ".Status {");
+        body.line(failed + " := " + souther + ".Called(" + run + ", func() " + souther + ".Status {");
         body.line("\treturn " + souther + ".Status(" + at.shim(function) + "("
                 + String.join(", ", handed) + "))");
         body.line("})");
-        body.open("if failed != nil").line("return " + answers.zero(imports) + ", "
-                + (constructed ? souther + ".Constructed(failed)" : "failed")).close();
+        body.open("if " + failed + " != nil").line("return " + answers.zero(imports) + ", "
+                + (constructed ? souther + ".Constructed(" + failed + ")" : failed)).close();
         body.line("return " + answers.of(body, rooms) + ", nil");
-        // A list or a union built here is made before the call is, so the run is asked first.
-        String making = body.makes() ? "\t" + souther + ".Making(r)\n" : "";
+        String declared = receiver == null ? "func " + name
+                : "func (" + self + " " + receiver.type() + ") " + name;
         return "\n" + doc + "\n" + declared + "(" + String.join(", ", parameters) + ") ("
-                + answers.type(imports) + ", error) {\n" + making + body + "}\n";
+                + answers.type(imports) + ", error) {\n" + body + "}\n";
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -1167,7 +1230,7 @@ public final class GoBindings {
                 .append("\t\tC.implement_").append(injection.implement())
                 .append("(fn, capability, hosted, userdata)\n\t})}\n}\n");
         hostCallback(at, GoNames.hostSymbol('i', importPath, module.name(), injection.name()),
-                "dispatch" + trait, hosted, "hosted.impl.Apply", injection.implementation(),
+                "dispatch" + trait, hosted, "impl.Apply", injection.implementation(),
                 injection.implement(), false, takes, answers, names);
     }
 
@@ -1185,7 +1248,8 @@ public final class GoBindings {
      * @param exported what the function is exported as, which no other of the program is ({@link GoNames#hostSymbol})
      * @param hosted   the type of what the library hands back first, holding the run its function
      *                 was made in as {@code origin}
-     * @param call     what calls the host's function, taking the run and what the library handed over
+     * @param call     what calls the host's function, as a member of the value the library hands back
+     *                 first, taking the run and what the library handed over
      * @param function whether what is implemented is a function value and not a behavior, which
      *                 answers the value the library made
      */
@@ -1197,6 +1261,10 @@ public final class GoBindings {
         String souther = imports.souther();
         String lib = imports.lib();
         String unsafe = imports.unsafe();
+        // The model's names for what the host's function takes are locals of the function that does
+        // the work, beside what it is handed: they are claimed first, and whatever else is written
+        // there yields to them.
+        Names scope = new Names(names);
         // What the library calls is declared with the declarations' own types, which the C compiler
         // holds it to (abi.c); what does the work is handed the same words as Go's own.
         List<String> exportedParameters = new ArrayList<>();
@@ -1214,17 +1282,17 @@ public final class GoBindings {
             String forward;
             if (word == Word.USERDATA && parameter.mode() == Parameter.Mode.GIVEN
                     && goParameters.isEmpty()) {
-                name = "userdata";
+                name = scope.fixed("userdata");
                 exportedType = goType = unsafe + ".Pointer";
                 forward = name;
             } else if (parameter.mode() == Parameter.Mode.GIVEN) {
-                name = "handed" + handedWords.size();
+                name = scope.temp("handed");
                 handedWords.add(name);
                 goType = Crossing.local(word, imports);
                 exportedType = scalar != null ? "C." + scalar : "C." + Objects.requireNonNull(address);
                 forward = scalar != null ? name : unsafe + ".Pointer(" + name + ")";
             } else if (parameter.mode() == Parameter.Mode.ROOM) {
-                name = "answer" + rooms.size();
+                name = scope.temp("answer");
                 rooms.add(name);
                 goType = "*" + Crossing.local(word, imports);
                 exportedType = "*C." + (scalar != null ? scalar : Objects.requireNonNull(address));
@@ -1262,9 +1330,14 @@ public final class GoBindings {
                     .append("\tf((souther_capability *)a0, (souther_hosted *)a1, ").append(exported)
                     .append(", a2);\n}\n");
         }
-        Body body = new Body(imports, at::shim, "run", "return " + souther + ".Crossing(err)", 2);
+        String run = scope.fixed("run");
+        String err = scope.fixed("err");
+        String answer = scope.fixed("answer");
+        String held = scope.fixed("hosted");
+        String userdata = goParameters.getFirst().split(" ")[0];
+        Body body = new Body(imports, at::shim, scope, run, "return " + souther + ".Crossing(" + err + ")", 2);
         int word = 0;
-        List<String> arguments = new ArrayList<>(List.of("run"));
+        List<String> arguments = new ArrayList<>(List.of(run));
         for (int place = 0; place < takes.size(); place++) {
             int wide = takes.get(place).words().size();
             body.line(names.get(place) + " := " + takes.get(place).of(body,
@@ -1272,10 +1345,11 @@ public final class GoBindings {
             word += wide;
             arguments.add(names.get(place));
         }
-        body.line("answer, err := " + call + "(" + String.join(", ", arguments) + ")");
-        body.open("if err != nil").line("return err").close();
+        body.line(answer + ", " + err + " := " + held + "." + call + "("
+                + String.join(", ", arguments) + ")");
+        body.open("if " + err + " != nil").line("return " + err).close();
         List<String> given = Crossing.declare(body, "g", answers.words());
-        answers.give(body, "answer", given);
+        answers.give(body, answer, given);
         for (int place = 0; place < given.size(); place++) {
             body.line("*" + rooms.get(place) + " = " + given.get(place));
         }
@@ -1283,10 +1357,11 @@ public final class GoBindings {
         at.items.append("\n// ").append(dispatch).append(" makes Go values of what the library handed over and"
                 + " calls the host's function in the run of\n// the call that reached it.\n")
                 .append("func ").append(dispatch).append("(").append(String.join(", ", goParameters))
-                .append(") C.uint32_t {\n\thosted := ").append(souther)
-                .append(".UserdataValue(userdata).(*").append(hosted).append(")\n")
-                .append("\treturn C.uint32_t(").append(souther).append(".Host(hosted.origin, func(run *")
-                .append(lib).append(".Run) error {\n").append(body).append("\t}))\n}\n");
+                .append(") C.uint32_t {\n\t").append(held).append(" := ").append(souther)
+                .append(".UserdataValue(").append(userdata).append(").(*").append(hosted).append(")\n")
+                .append("\treturn C.uint32_t(").append(souther).append(".Host(").append(held)
+                .append(".origin, func(").append(run).append(" *").append(lib).append(".Run) error {\n")
+                .append(body).append("\t}))\n}\n");
         at.callbacks.add(new Callback(exported, exportedParameters, dispatch + "("
                 + String.join(", ", forwarded) + ")", implementation.type()));
     }
@@ -1319,32 +1394,30 @@ public final class GoBindings {
         String souther = imports.souther();
         String unsafe = imports.unsafe();
         // A requirement is named after the behavior it is where no other is of that name, and
-        // after its place otherwise.
+        // after its place otherwise. Its name, the run's and what the function writes of its own are
+        // one scope: the names of the requirements are claimed first, and the rest yield.
         Map<String, Long> counted = requires.stream().collect(java.util.stream.Collectors.groupingBy(
                 Manifest.Required::name, java.util.stream.Collectors.counting()));
-        GoNames.Claimed claimed = new GoNames.Claimed("the parameters of the binding of " + what);
-        claimed.claim("r", "the run it is made in");
-        List<String> requirementNames = new ArrayList<>();
-        List<String> parameters = new ArrayList<>(List.of("r *" + lib + ".Run"));
+        Names scope = new Names(List.of());
+        scope.fixed(GoNames.RUN);
+        List<String> parameters = new ArrayList<>(List.of(GoNames.RUN + " *" + lib + ".Run"));
         List<String> capabilities = new ArrayList<>();
         for (int place = 0; place < requires.size(); place++) {
             Manifest.Required each = requires.get(place);
-            String name = counted.get(each.name()) == 1 ? GoNames.local(each.name(), "requirement `"
-                    + each.name() + "`") : "dependency" + place;
-            if (name.endsWith("_") || claimed.has(name)) {
-                name = "dependency" + place;
-            }
-            claimed.claim(name, "the requirement `" + each.key() + "`");
-            requirementNames.add(name);
+            String preferred = counted.get(each.name()) == 1 ? GoNames.local(each.name(),
+                    "requirement `" + each.name() + "`") : "dependency" + place;
+            String name = scope.fixed(preferred.endsWith("_") ? "dependency" + place : preferred);
             parameters.add(name + " " + behaviorTypes.get(each.key()).requirement(imports));
             capabilities.add(name + ".Cap__");
         }
         String bindClosure = "nil";
         StringBuilder bind = new StringBuilder();
         if (construction != null && construction.bind() != null) {
-            bind.append("\tfn := r.Library().Symbol(\"").append(construction.bind().name()).append("\")\n");
+            String fn = scope.fixed("fn");
+            bind.append("\t").append(fn).append(" := r.Library().Symbol(\"")
+                    .append(construction.bind().name()).append("\")\n");
             bindClosure = "func(capability, requirements " + unsafe + ".Pointer) {\n\t\t"
-                    + at.shim(construction.bind()) + "(fn, capability, requirements)\n\t}";
+                    + at.shim(construction.bind()) + "(" + fn + ", capability, requirements)\n\t}";
         }
         at.items.append("\n// ").append(it.capability()).append(" is `").append(it.key())
                 .append("` as an application holds it: bound to what stands for each behavior it\n")
@@ -1359,11 +1432,17 @@ public final class GoBindings {
                 .append("\treturn ").append(it.capability()).append("{Cap__: ").append(souther)
                 .append(".Bound(r, []").append(lib).append(".Capability{").append(String.join(", ", capabilities))
                 .append("}, ").append(bindClosure).append(")}\n}\n");
-        List<String> before = List.of("requirements, err := b.Cap__.Requirements(r)",
-                "if err != nil {", "\treturn " + answers.zero(imports) + ", err", "}");
+        // What is bound is asked what the call is handed first, after the run is asked.
+        Before requirementsOf = frame -> {
+            Body body = frame.body();
+            String requirements = body.names.fixed("requirements");
+            body.line(requirements + ", " + body.err() + " := " + frame.receiver() + ".Cap__.Requirements("
+                    + frame.run() + ")").checked();
+            return requirements;
+        };
         at.items.append(function(at, "// Call calls `" + it.key() + "` with what this was bound to.",
-                "func (b " + it.capability() + ") Call", names, takes, answers, call.function(),
-                "requirements", false, before));
+                "Call", new Receiver("b", it.capability()), names, takes, answers, call.function(),
+                requirementsOf, false));
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -1441,11 +1520,87 @@ public final class GoBindings {
     }
 
     /**
-     * Holds what is written to what Go asks: the packages import one another without a cycle. The
-     * model's modules do, and every import a package has is one of what its module depends on, since
-     * what belongs to a module is written in its package; so a cycle here is this generator writing
-     * a package that reaches another it has no reason to, and it is refused rather than left for a
-     * host's build to find.
+     * Holds what is written to what the model says. A package imports another only for a type the
+     * module it is written from refers to (a field, a parameter, an answer, a case, a union's member,
+     * a behavior it requires), and the model's modules do not depend on one another in a cycle, so
+     * the packages do not either. The first is what makes the second true, so it is asked for and
+     * not the second alone: a helper written for two types that relate as types and not as
+     * dependencies is an import the model has no reason for, which a cycle check finds only where a
+     * cycle happens to close, and then refuses a library that is right.
+     */
+    private void assertImportsAreReferences() {
+        Map<String, String> moduleOf = new LinkedHashMap<>();
+        modules.values().forEach(it -> moduleOf.put(it.importPath, it.module.name()));
+        for (GoModule at : modules.values()) {
+            Set<String> refers = referred(at.module);
+            for (String imported : at.imports.modulePaths()) {
+                if (!refers.contains(moduleOf.get(imported))) {
+                    throw new IllegalStateException("package " + at.importPath + " imports " + imported
+                            + ", which module " + at.module.name() + " does not refer to");
+                }
+            }
+        }
+    }
+
+    /** The modules whose types the manifest of {@code module} names anywhere. */
+    private static Set<String> referred(Manifest.Module module) {
+        Set<String> refers = new java.util.HashSet<>();
+        for (Declaration declaration : module.declarations()) {
+            declaration.fields().forEach(it -> refer(it.type(), refers));
+            if (declaration instanceof Declaration.Sum sum) {
+                sum.cases().forEach(it -> refer(it, refers));
+            }
+        }
+        for (Manifest.Behavior behavior : module.behaviors()) {
+            behavior.parameters().types().forEach(it -> refer(it, refers));
+            refer(behavior.answers().type(), refers);
+            if (behavior.answers().union() != null) {
+                behavior.answers().union().cases().forEach(it -> refer(it, refers));
+            }
+        }
+        for (Manifest.Injection injection : module.injections()) {
+            injection.parameters().forEach(it -> refer(it.type(), refers));
+            refer(injection.answers(), refers);
+        }
+        module.values().forEach(it -> refer(it.type(), refers));
+        for (Manifest.Construction construction : module.constructions()) {
+            construction.requires().forEach(it -> refers.add(it.module()));
+        }
+        return refers;
+    }
+
+    private static void refer(Case each, Set<String> refers) {
+        if (each instanceof Case.Declared declared) {
+            refers.add(declared.module());
+        }
+    }
+
+    private static void refer(Type type, Set<String> refers) {
+        switch (type) {
+            case Type.Declared it -> refers.add(it.module());
+            case Type.Union it -> it.cases().forEach(each -> refer(each, refers));
+            case Type.Option it -> refer(it.of(), refers);
+            case Type.ListOf it -> refer(it.of(), refers);
+            case Type.SetOf it -> refer(it.of(), refers);
+            case Type.MapOf it -> {
+                refer(it.key(), refers);
+                refer(it.value(), refers);
+            }
+            case Type.Tuple it -> it.of().forEach(each -> refer(each, refers));
+            case Type.Function it -> {
+                it.takes().forEach(each -> refer(each, refers));
+                refer(it.answers(), refers);
+            }
+            case Type.Primitive it -> { }
+            case Type.Nothing it -> { }
+            case Type.Never it -> { }
+        }
+    }
+
+    /**
+     * The packages import one another without a cycle, as Go asks. Every import being one the model
+     * refers to ({@link #assertImportsAreReferences}) makes this true; it is asked as well, so that
+     * a cycle is a refusal here that says which and not a build that fails for a host.
      */
     private void assertAcyclic() {
         Map<String, GoModule> byPath = new LinkedHashMap<>();

@@ -69,7 +69,7 @@ final class Body {
             if (importPath.equals(own)) {
                 return "";
             }
-            return modules.computeIfAbsent(importPath, it -> "m" + modules.size()) + ".";
+            return modules.computeIfAbsent(importPath, it -> GoNames.MODULE_ALIAS + modules.size()) + ".";
         }
 
         /** The import declarations, and nothing where the file imports nothing. */
@@ -109,11 +109,10 @@ final class Body {
 
     private final StringBuilder out = new StringBuilder();
     private int depth;
-    private int temps;
-    private boolean direct;
 
     final Imports imports;
     private final Shims shims;
+    final Names names;
 
     /** The Go expression of the run the function works in. */
     final String run;
@@ -121,9 +120,10 @@ final class Body {
     /** The statement that ends the function with the failure {@code err} holds. */
     final String fail;
 
-    Body(Imports imports, Shims shims, String run, String fail, int depth) {
+    Body(Imports imports, Shims shims, Names names, String run, String fail, int depth) {
         this.imports = imports;
         this.shims = shims;
+        this.names = names;
         this.run = run;
         this.fail = fail;
         this.depth = depth;
@@ -164,38 +164,28 @@ final class Body {
     /**
      * The call of {@code function}, a Go expression, which is made here and not through {@code
      * souther.Call}: what the library answers is a number or an address and no status, and it is
-     * made in the run the function works in. Noted, so the function begins by asking the run
-     * whether something may be made through it.
+     * made in the run the function works in.
      */
     String call(Function function, List<String> arguments) {
-        direct = true;
         List<String> handed = new java.util.ArrayList<>(List.of(run + ".Library().Symbol(\""
                 + function.name() + "\")"));
         handed.addAll(arguments);
         return shims.call(function) + "(" + String.join(", ", handed) + ")";
     }
 
-    /**
-     * Notes that something is made through the run by Go written here and not by a call of the
-     * library, which still makes it in the arena of the run's thread.
-     */
-    void making() {
-        direct = true;
-    }
-
-    /** Whether something was made through the run by a call written here, before the function's own. */
-    boolean makes() {
-        return direct;
-    }
-
-    /** A name no other of this function has. */
+    /** A name no other of this function has ({@link Names#temp}). */
     String temp(String base) {
-        return base + temps++;
+        return names.temp(base);
+    }
+
+    /** What this function calls the error it checks: a name of its own, however the model names things. */
+    String err() {
+        return names.fixed("err");
     }
 
     /** {@code if err != nil { fail }}. */
     Body checked() {
-        return open("if err != nil").line(fail).close();
+        return open("if " + err() + " != nil").line(fail).close();
     }
 
     @Override

@@ -204,7 +204,7 @@ func (r *Run[B]) checkReading() {
 	if !r.live.Load() {
 		misuse(ErrExpired)
 	}
-	if !r.thread.equal(currentThread()) {
+	if !r.thread.isCurrent() {
 		misuse(ErrRunOnAnotherGoroutine)
 	}
 }
@@ -301,6 +301,13 @@ func (v Ref[B]) checkUsable() {
 // [*HostError] where a host implementation answered one.
 func Call[B any](r *Run[B], native func() Status) error {
 	r.checkMaking()
+	return Called(r, native)
+}
+
+// Called is [Call] for a caller that has asked [Making] of r already, as every function a binding
+// generates does before anything else, so that the run is asked once and by the first thing a
+// function does, whatever it goes on to do. It is not the way to call for one that has not.
+func Called[B any](r *Run[B], native func() Status) error {
 	r.held.calls = append(r.held.calls, frame{})
 	depth := len(r.held.calls) - 1
 	var status Status
@@ -331,7 +338,7 @@ func Call[B any](r *Run[B], native func() Status) error {
 // open into this library on this thread has nowhere to keep what went wrong, and fails.
 func Host[B any](origin *Run[B], f func(*Run[B]) error) Status {
 	statuses := origin.lib.rt.statuses
-	if !origin.live.Load() || !origin.thread.equal(currentThread()) {
+	if !origin.live.Load() || !origin.thread.isCurrent() {
 		return statuses.hostException
 	}
 	inner := origin.innermost()
