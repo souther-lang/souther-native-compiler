@@ -14,9 +14,15 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
 
-pin="$(sed -n 's/^ *ref: \([0-9a-f]\{40\}\) *$/\1/p' .github/workflows/build.yml)"
-if [ -z "$pin" ]; then
-    echo "no pinned souther commit in .github/workflows/build.yml" >&2
+version="$(sed -n 's#^ *<souther.version>\(.*\)</souther.version> *$#\1#p' pom.xml)"
+if [ -z "$version" ]; then
+    echo "no souther.version in pom.xml" >&2
+    exit 2
+fi
+# The souther this build reads is the release its pom names, so the commit it stands at is the one
+# that release's tag points to. A snapshot has no tag, and is not something to place a fix against.
+if ! pin="$(gh api "repos/souther-lang/souther/commits/v$version" --jq .sha)"; then
+    echo "souther has no release tagged v$version, which pom.xml's souther.version names" >&2
     exit 2
 fi
 
