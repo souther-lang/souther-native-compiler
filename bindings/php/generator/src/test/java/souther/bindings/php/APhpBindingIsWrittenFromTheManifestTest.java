@@ -97,11 +97,11 @@ class APhpBindingIsWrittenFromTheManifestTest {
 
     /**
      * A {@code Date}, a {@code Time}, a {@code DateTime} and an {@code Instant} cross as words of
-     * their own, and this binding holds none of them yet: what takes or answers one is not written,
-     * where the rest of the module is, and generating is not refused for it.
+     * their own, which this binding holds as the runtime's classes: what takes or answers one is
+     * written as any other function is, and so is a value of the module that is one.
      */
     @Test
-    void aTemporalThisBindingHoldsNoTypeForIsNotWritten(@TempDir Path into) throws Exception {
+    void aTemporalIsWrittenAsAnyOtherPrimitiveIs(@TempDir Path into) throws Exception {
         NativeCompiler.Library library = NativeCompiler.library(Checked.of(List.of("""
                 module m exposing ( twice, shifted, clockOf, seen, moment )
 
@@ -125,10 +125,12 @@ class APhpBindingIsWrittenFromTheManifestTest {
 
         assertThat(written.resolve("M").resolve("Twice.php")).exists();
         String behaviors = Files.readString(written.resolve("M").resolve("Behaviors.php"));
-        assertThat(behaviors).contains("function twice(")
-                .doesNotContain("function shifted(", "function clockOf(", "function seen(");
-        // The one value is an `Instant`, so nothing of the module's values is written.
-        assertThat(written.resolve("M").resolve("Values.php")).doesNotExist();
+        assertThat(behaviors).contains("function twice(",
+                "function shifted(\\Souther\\Runtime\\Date $day, int $n): \\Souther\\Runtime\\Date",
+                "function clockOf(\\Souther\\Runtime\\DateTime $at): \\Souther\\Runtime\\Time",
+                "function seen(\\Souther\\Runtime\\Instant $at): int");
+        assertThat(Files.readString(written.resolve("M").resolve("Values.php")))
+                .contains("function moment(): \\Souther\\Runtime\\Instant");
     }
 
     /**

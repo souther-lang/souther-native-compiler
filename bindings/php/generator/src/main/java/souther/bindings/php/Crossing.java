@@ -73,13 +73,15 @@ sealed interface Crossing {
             case VALUE -> "souther_value";
             case STRING -> "souther_string";
             case DECIMAL -> "souther_decimal";
+            case DATE -> "souther_date";
+            case TIME -> "souther_time";
+            case DATETIME -> "souther_datetime";
+            case INSTANT -> "souther_instant";
             case LIST -> "souther_list";
             case FUNCTION -> "souther_function";
             case DECODED -> "souther_decoded";
-            // This binding holds none of the four temporals (`Whole#primitive` answers none for a
-            // pair carrying one), so no function writes one into PHP's room.
             case STATUS, CASE, OUTCOME, COUNT, MARK, BYTES, ISSUE, REQUIREMENTS, CAPABILITY,
-                 USERDATA, DATE, TIME, DATETIME, INSTANT ->
+                 USERDATA ->
                     throw new IllegalArgumentException("PHP holds no room for a " + word);
         };
     }
@@ -138,7 +140,7 @@ sealed interface Crossing {
     record Whole(Shape.Leaf shape, String phpType, Kind kind, @Nullable String declared)
             implements Given, Received {
 
-        enum Kind { INT, BOOL, STRING, DECIMAL, PRODUCT, SUM }
+        enum Kind { INT, BOOL, STRING, DECIMAL, DATE, TIME, DATETIME, INSTANT, PRODUCT, SUM }
 
         public Whole {
             Word is = switch (kind) {
@@ -146,6 +148,10 @@ sealed interface Crossing {
                 case BOOL -> Word.BOOL;
                 case STRING -> Word.STRING;
                 case DECIMAL -> Word.DECIMAL;
+                case DATE -> Word.DATE;
+                case TIME -> Word.TIME;
+                case DATETIME -> Word.DATETIME;
+                case INSTANT -> Word.INSTANT;
                 case PRODUCT, SUM -> Word.VALUE;
             };
             if (shape.word() != is) {
@@ -162,9 +168,12 @@ sealed interface Crossing {
          * it crosses as a {@code BOOL}, a {@code String} as a {@code string} where it crosses as a
          * {@code STRING}, and a {@code Decimal} as a {@code \\Souther\\Runtime\\Decimal}, its
          * integer and its scale, where it crosses as a {@code DECIMAL}, since no type of PHP's own
-         * keeps a scale below nought. Both are asked, the name and the word: what a primitive crosses as is
-         * the manifest's to say, and a {@code Decimal} said to cross as an {@code INT} is a pair
-         * this binding does not hold, and not an {@code int}. A value of a union carrying the
+         * keeps a scale below nought. A {@code Date}, a {@code Time}, a {@code DateTime} and an
+         * {@code Instant} are the runtime's class of the same name, held as their numbers, where
+         * each crosses as its own word: a {@code \\DateTimeInterface} is a moment in a zone,
+         * which none of them but an {@code Instant} is. Both are asked, the name and the word:
+         * what a primitive crosses as is the manifest's to say, and a {@code Decimal} said to cross
+         * as an {@code INT} is a pair this binding does not hold, and not an {@code int}. A value of a union carrying the
          * primitive is asked the same.
          */
         static @Nullable Whole primitive(String name, Word word) {
@@ -178,6 +187,18 @@ sealed interface Crossing {
                 case "Decimal" -> word == Word.DECIMAL
                         ? new Whole(new Shape.Leaf(word), "\\Souther\\Runtime\\Decimal",
                                 Kind.DECIMAL, null) : null;
+                case "Date" -> word == Word.DATE
+                        ? new Whole(new Shape.Leaf(word), "\\Souther\\Runtime\\Date", Kind.DATE, null)
+                        : null;
+                case "Time" -> word == Word.TIME
+                        ? new Whole(new Shape.Leaf(word), "\\Souther\\Runtime\\Time", Kind.TIME, null)
+                        : null;
+                case "DateTime" -> word == Word.DATETIME
+                        ? new Whole(new Shape.Leaf(word), "\\Souther\\Runtime\\DateTime",
+                                Kind.DATETIME, null) : null;
+                case "Instant" -> word == Word.INSTANT
+                        ? new Whole(new Shape.Leaf(word), "\\Souther\\Runtime\\Instant",
+                                Kind.INSTANT, null) : null;
                 default -> null;
             };
         }
@@ -202,6 +223,10 @@ sealed interface Crossing {
                 case BOOL -> "(" + value + " ? 1 : 0)";
                 case STRING -> session + "->string(" + value + ")";
                 case DECIMAL -> session + "->decimal(" + value + ")";
+                case DATE -> session + "->date(" + value + ")";
+                case TIME -> session + "->time(" + value + ")";
+                case DATETIME -> session + "->dateTime(" + value + ")";
+                case INSTANT -> session + "->instant(" + value + ")";
                 case PRODUCT, SUM -> value + "->nativeHandle()->borrow(" + session + ")";
             });
         }
@@ -212,7 +237,8 @@ sealed interface Crossing {
                 case INT -> "\\is_int(" + value + ")";
                 case BOOL -> "\\is_bool(" + value + ")";
                 case STRING -> "\\is_string(" + value + ")";
-                case DECIMAL, PRODUCT, SUM -> value + " instanceof " + phpType;
+                case DECIMAL, DATE, TIME, DATETIME, INSTANT, PRODUCT, SUM ->
+                        value + " instanceof " + phpType;
             };
         }
 
@@ -224,6 +250,10 @@ sealed interface Crossing {
                 case BOOL -> "(" + word + " !== 0)";
                 case STRING -> session + "->text(" + word + ")";
                 case DECIMAL -> session + "->amount(" + word + ")";
+                case DATE -> session + "->dateOf(" + word + ")";
+                case TIME -> session + "->timeOf(" + word + ")";
+                case DATETIME -> session + "->dateTimeOf(" + word + ")";
+                case INSTANT -> session + "->instantOf(" + word + ")";
                 case PRODUCT -> "new " + declared + "(" + session + "->held(" + word + "))";
                 case SUM -> declared + "::wrap(" + session + ", " + word + ")";
             };
@@ -664,7 +694,7 @@ sealed interface Crossing {
 
         public Member {
             boolean primitive = switch (whole.kind()) {
-                case INT, BOOL, STRING, DECIMAL -> true;
+                case INT, BOOL, STRING, DECIMAL, DATE, TIME, DATETIME, INSTANT -> true;
                 case PRODUCT, SUM -> false;
             };
             if (primitive != (carried != null)) {

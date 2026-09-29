@@ -16,7 +16,7 @@ abstract class Binding
      * binding generated before would call something this does not have, or call it as something it
      * is not; a binding says which it was generated for and refuses to load over any other.
      */
-    public const PROTOCOL = 9;
+    public const PROTOCOL = 10;
 
     /**
      * What each version of the protocol moved, by its number, oldest first. The versions before the
@@ -48,6 +48,11 @@ abstract class Binding
             . 'binding keeps for its type (Binding::hosting, FunctionSlot, Some)',
         9 => 'a Decimal is its integer and its scale, handed over and read back through the '
             . 'runtime (Decimal, Session::decimal, Session::amount)',
+        10 => 'a Date, a Time, a DateTime and an Instant are the runtime\'s, held as their numbers '
+            . 'and handed over and read back as the text java.time writes for them (Date, Time, '
+            . 'DateTime, Instant, Calendar, Session::date, Session::dateOf, Session::time, '
+            . 'Session::timeOf, Session::dateTime, Session::dateTimeOf, Session::instant, '
+            . 'Session::instantOf)',
     ];
 
     /**
