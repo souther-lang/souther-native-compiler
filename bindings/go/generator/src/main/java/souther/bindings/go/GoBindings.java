@@ -55,6 +55,12 @@ public final class GoBindings {
     static final String RUNTIME_VERSION = "v0.1.0";
 
     /**
+     * The protocol of the runtime module this writes for: what its public surface is, as recorded
+     * under {@code bindings/go/runtime/protocol}. A test holds it to the runtime's own.
+     */
+    static final int RUNTIME_PROTOCOL = 1;
+
+    /**
      * The version of Raoh the runtime module asks for, which a package that imports it asks for as
      * well; held to the runtime's own go.mod by a test.
      */
@@ -1092,11 +1098,6 @@ public final class GoBindings {
         };
     }
 
-    /** What a callback's parameter of {@code word} is in Go, as a value the library hands it. */
-    private static String handed(Word word, Body.Imports imports) {
-        return Crossing.local(word, imports);
-    }
-
     /** What C calls a parameter of a callback: a number, or a plain pointer. */
     private static String cType(Parameter parameter) {
         String number = scalar(parameter.word());
@@ -1526,6 +1527,9 @@ public final class GoBindings {
                 + " makes\n// its runs and values types of their own, and what it asks of a library.\n"
                 + "package binding\n\n"
                 + "import souther \"" + RUNTIME_MODULE + "\"\n\n"
+                + "// This binding is written for one protocol of the runtime, and does not compile against"
+                + " another:\n// the surface of each is recorded, and a change to it is a new one.\n"
+                + "var _ = [1]struct{}{}[souther.Protocol-" + RUNTIME_PROTOCOL + "]\n\n"
                 + "// Tag is this binding's: a run of another generated binding is not a run of this"
                 + " one.\ntype Tag struct{}\n\n"
                 + "// Spec is what this binding needs of a library.\n"

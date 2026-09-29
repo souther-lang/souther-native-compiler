@@ -983,6 +983,12 @@ library calls `Apply` in the run of the call that reached it. An error it return
 that call as a `*souther.HostError`, and a panic is caught before it reaches the library and raised
 again where the call returns.
 
+What a generated package may call of the runtime module is its protocol (`souther.Protocol`): the
+surface of each is recorded under `bindings/go/runtime/protocol`, a test fails where the surface is not
+what the record says, and a generated package does not compile against another protocol than the one it
+was written for. That is separate from the library's ABI generation, which is in the names of its
+functions.
+
 Names ending in `__` (`Ref__`, `Word__`) are the binding's own, which one package hands another;
 Go has no way to keep them from a caller, as Rust does, and a host does not use them.
 

@@ -206,14 +206,20 @@ class TheCommandFetchesWhatItNeedsOnFirstUseTest {
                     + "/souther-binding-rust-" + VERSION + ".jar";
             served.files.put(rustJar, rust);
             checksums.put(ReleaseChecksums.generator("rust"), Fetching.sha256(rust));
+            byte[] go = "a jar of Go".getBytes(StandardCharsets.UTF_8);
+            served.files.put("/maven/org/souther-lang/souther-binding-go/" + VERSION
+                    + "/souther-binding-go-" + VERSION + ".jar", go);
+            checksums.put(ReleaseChecksums.generator("go"), Fetching.sha256(go));
 
             Ran ran = run(fetching(served, into.resolve("cache"), VERSION, checksums), "--fetch");
 
             assertThat(ran.ended()).as(ran.said()).isZero();
             assertThat(ran.printed()).contains("the driver is this build's own")
-                    .contains("the PHP generator").contains("the Rust generator");
+                    .contains("the PHP generator").contains("the Rust generator")
+                    .contains("the Go generator");
             assertThat(into.resolve("cache/generators/souther-binding-php-" + VERSION + ".jar")).exists();
             assertThat(into.resolve("cache/generators/souther-binding-rust-" + VERSION + ".jar")).exists();
+            assertThat(into.resolve("cache/generators/souther-binding-go-" + VERSION + ".jar")).exists();
         }
     }
 
