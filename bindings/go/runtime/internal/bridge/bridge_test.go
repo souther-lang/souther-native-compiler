@@ -30,7 +30,6 @@ func TestMain(m *testing.M) {
 	}
 	build("fake")
 	build("second")
-	build("gen7", "-DABI=7")
 	build("nodouble", "-DNO_DOUBLE")
 	code := m.Run()
 	_ = os.RemoveAll(dir)
@@ -79,14 +78,6 @@ func TestAFileThatIsNoLibraryIsNotLoaded(t *testing.T) {
 	}
 	if _, err := bridge.Load(filepath.Join(libraries, "absent.dylib")); err == nil {
 		t.Fatal("loaded a file that is not there")
-	}
-}
-
-func TestALibraryOfAnotherABIGenerationIsRefused(t *testing.T) {
-	_, err := bridge.Load(path("gen7"))
-	var mismatch *souther.AbiMismatch
-	if !errors.As(err, &mismatch) || mismatch.Want != 8 {
-		t.Fatalf("got %v", err)
 	}
 }
 

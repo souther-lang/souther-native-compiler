@@ -32,9 +32,10 @@ func (r *Runtime) Identity() uintptr { return r.identity }
 
 // Library is a loaded library, of the binding B was made for.
 type Library[B any] struct {
-	rt      *Runtime
-	native  *Native
-	symbols map[string]unsafe.Pointer
+	rt       *Runtime
+	native   *Native
+	symbols  map[string]unsafe.Pointer
+	outcomes map[string]int32
 }
 
 // NewLibrary is the library whose runtime is rt.

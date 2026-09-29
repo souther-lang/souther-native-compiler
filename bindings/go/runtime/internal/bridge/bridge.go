@@ -44,7 +44,6 @@ type (
 
 // Spec is what this binding needs of a library.
 var Spec = souther.Spec{
-	ABI: 8,
 	Statuses: map[string]souther.Status{
 		"ANSWERED":                     0,
 		"INJECTION_UNBOUND":            0x7ffffffd,

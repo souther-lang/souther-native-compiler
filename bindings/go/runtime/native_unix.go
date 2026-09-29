@@ -47,26 +47,19 @@ func (n *Native) Symbol(name string) (unsafe.Pointer, bool) {
 	return at, at != nil
 }
 
-// Spec is what a generated binding needs of a library: the ABI generation its manifest was
-// written for, the statuses the manifest numbers, and every function the binding calls.
+// Spec is what a generated binding needs of a library: the statuses the manifest numbers, what a
+// reading comes to, and every function the binding calls.
 type Spec struct {
-	ABI      int
 	Statuses map[string]Status
+	// Outcomes is what a reading comes to, by the names the manifest gives them.
+	Outcomes map[string]int32
 	Symbols  []string
 }
 
-// AbiMismatch is a library that is not of the ABI generation the binding was generated for.
-type AbiMismatch struct {
-	Path string
-	Want int
-}
-
-func (e *AbiMismatch) Error() string {
-	return fmt.Sprintf("souther: %s is not a library of ABI generation %d, which this binding was generated for", e.Path, e.Want)
-}
-
 // MissingSymbols are functions the binding calls that the library file does not have. It is not
-// the library the binding was generated from.
+// the library the binding was generated from, or is one of another ABI generation: a function
+// generated for a behavior or a type has its generation in its name, so a library of another one
+// has none of them.
 type MissingSymbols struct {
 	Path  string
 	Names []string
@@ -79,11 +72,13 @@ func (e *MissingSymbols) Error() string {
 
 // Load opens the library file at path as the library of a binding of the tag B.
 //
-// It checks the ABI generation the binding was generated for, and that every function it calls is
-// there, so that a file of another library is refused here and not where a call reaches it. It
-// cannot tell a library from another that has the same functions under the same names with other
-// signatures, so the file is the library the binding was generated from: the caller holds that,
-// as for any unsafe load.
+// It checks that every function the binding calls is there, so that a file of another library, or
+// of another ABI generation, is refused here and not where a call reaches it. The generation is
+// not asked of the file by a symbol of its own: the one the runtime defines for it
+// (souther_runtime_abi_N) is there for the linker and is not exported. It cannot tell a library
+// from another that has the same functions under the same names with other signatures, so the
+// file is the library the binding was generated from: the caller holds that, as for any unsafe
+// load.
 func Load[B any](path string, spec Spec) (*Library[B], error) {
 	statuses, err := NewStatuses(spec.Statuses)
 	if err != nil {
@@ -92,9 +87,6 @@ func Load[B any](path string, spec Spec) (*Library[B], error) {
 	native, err := Open(path)
 	if err != nil {
 		return nil, err
-	}
-	if _, ok := native.Symbol(fmt.Sprintf("souther_runtime_abi_%d", spec.ABI)); !ok {
-		return nil, &AbiMismatch{path, spec.ABI}
 	}
 	symbols := make(map[string]unsafe.Pointer, len(spec.Symbols)+2)
 	var missing []string
@@ -114,7 +106,7 @@ func Load[B any](path string, spec Spec) (*Library[B], error) {
 		func(at int64) { C.call_reset(reset, C.int64_t(at)) },
 		statuses)
 	lib := NewLibrary[B](rt)
-	lib.native, lib.symbols = native, symbols
+	lib.native, lib.symbols, lib.outcomes = native, symbols, spec.Outcomes
 	return lib, nil
 }
 

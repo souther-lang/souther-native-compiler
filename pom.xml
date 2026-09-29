@@ -58,6 +58,7 @@
         <module>compiler</module>
         <module>bindings/php/generator</module>
         <module>bindings/rust/generator</module>
+        <module>bindings/go/generator</module>
         <module>launcher</module>
     </modules>
 
