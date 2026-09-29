@@ -20,11 +20,13 @@ final class Body {
     static final class Imports {
 
         static final String SOUTHER = "github.com/souther-lang/souther-native-compiler/bindings/go/runtime";
+        static final String RAOH = "github.com/raoh-project/raoh-go";
 
         private final String root;
         private boolean unsafe;
         private boolean souther;
         private boolean lib;
+        private boolean raoh;
         private final Map<String, String> modules = new LinkedHashMap<>();
         private final String own;
 
@@ -52,6 +54,11 @@ final class Body {
             return "lib";
         }
 
+        String raoh() {
+            raoh = true;
+            return "raoh";
+        }
+
         /** How this file names a package of the binding: unqualified where it is this one. */
         String module(String importPath) {
             if (importPath.equals(own)) {
@@ -70,6 +77,9 @@ final class Body {
             }
             if (lib) {
                 others.put(root, "\tlib \"" + root + "\"\n");
+            }
+            if (raoh) {
+                others.put(RAOH, "\t\"" + RAOH + "\"\n");
             }
             modules.forEach((path, alias) -> others.put(path, "\t" + alias + " \"" + path + "\"\n"));
             if (!unsafe && others.isEmpty()) {
@@ -158,6 +168,14 @@ final class Body {
                 + function.name() + "\")"));
         handed.addAll(arguments);
         return shims.call(function) + "(" + String.join(", ", handed) + ")";
+    }
+
+    /**
+     * Notes that something is made through the run by Go written here and not by a call of the
+     * library, which still makes it in the arena of the run's thread.
+     */
+    void making() {
+        direct = true;
     }
 
     /** Whether something was made through the run by a call written here, before the function's own. */

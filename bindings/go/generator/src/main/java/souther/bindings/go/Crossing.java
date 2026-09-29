@@ -72,7 +72,7 @@ sealed interface Crossing {
      */
     record Whole(Shape.Leaf shape, Kind kind, @Nullable Declared declared) implements Crossing {
 
-        enum Kind { INT, BOOL, STRING, HANDLE }
+        enum Kind { INT, BOOL, STRING, DECIMAL, DATE, TIME, DATETIME, INSTANT, HANDLE }
 
         /**
          * A value of the primitive {@code name} crossing as {@code word}, or null where this binding
@@ -83,6 +83,11 @@ sealed interface Crossing {
                 case "Int" -> word == Word.INT ? Kind.INT : null;
                 case "Bool" -> word == Word.BOOL ? Kind.BOOL : null;
                 case "String" -> word == Word.STRING ? Kind.STRING : null;
+                case "Decimal" -> word == Word.DECIMAL ? Kind.DECIMAL : null;
+                case "Date" -> word == Word.DATE ? Kind.DATE : null;
+                case "Time" -> word == Word.TIME ? Kind.TIME : null;
+                case "DateTime" -> word == Word.DATETIME ? Kind.DATETIME : null;
+                case "Instant" -> word == Word.INSTANT ? Kind.INSTANT : null;
                 default -> null;
             };
             return kind == null ? null : new Whole(new Shape.Leaf(word), kind, null);
@@ -99,6 +104,11 @@ sealed interface Crossing {
                 case INT -> "int64";
                 case BOOL -> "bool";
                 case STRING -> "string";
+                case DECIMAL -> imports.raoh() + ".Decimal";
+                case DATE -> imports.souther() + ".Date";
+                case TIME -> imports.souther() + ".Time";
+                case DATETIME -> imports.souther() + ".DateTime";
+                case INSTANT -> imports.souther() + ".Instant";
                 case HANDLE -> imports.module(declared.importPath()) + declared.name();
             };
         }
@@ -109,7 +119,30 @@ sealed interface Crossing {
                 case INT -> "0";
                 case BOOL -> "false";
                 case STRING -> "\"\"";
-                case HANDLE -> type(imports) + "{}";
+                case DECIMAL, DATE, TIME, DATETIME, INSTANT, HANDLE -> type(imports) + "{}";
+            };
+        }
+
+        /** The function of the runtime handing a value of this over as the word the library reads. */
+        private String hand() {
+            return switch (kind) {
+                case DATE -> "DateWord";
+                case TIME -> "TimeWord";
+                case DATETIME -> "DateTimeWord";
+                case INSTANT -> "InstantWord";
+                default -> throw new IllegalStateException(kind + " is handed over by no function of the runtime");
+            };
+        }
+
+        /** The function of the runtime reading what the library answered as a value of this. */
+        private String read() {
+            return switch (kind) {
+                case DECIMAL -> "Amount";
+                case DATE -> "DateOf";
+                case TIME -> "TimeOf";
+                case DATETIME -> "DateTimeOf";
+                case INSTANT -> "InstantOfWord";
+                default -> throw new IllegalStateException(kind + " is read by no function of the runtime");
             };
         }
 
@@ -123,6 +156,16 @@ sealed interface Crossing {
                     String text = body.temp("text");
                     body.line(text + ", err := " + body.imports.souther() + ".String(" + body.run
                             + ", " + value + ")").checked().line(word + " = " + text);
+                }
+                case DECIMAL -> {
+                    body.making();
+                    body.line(word + " = " + body.imports.souther() + ".Decimal(" + body.run + ", "
+                            + value + ")");
+                }
+                case DATE, TIME, DATETIME, INSTANT -> {
+                    String at = body.temp("at");
+                    body.line(at + ", err := " + body.imports.souther() + "." + hand() + "("
+                            + body.run + ", " + value + ")").checked().line(word + " = " + at);
                 }
                 case HANDLE -> {
                     String at = body.temp("at");
@@ -139,6 +182,8 @@ sealed interface Crossing {
                 case INT -> "int64(" + word + ")";
                 case BOOL -> word + " != 0";
                 case STRING -> body.imports.souther() + ".Text(" + body.run + ", " + word + ")";
+                case DECIMAL, DATE, TIME, DATETIME, INSTANT -> body.imports.souther() + "." + read()
+                        + "(" + body.run + ", " + word + ")";
                 case HANDLE -> type(body.imports) + "{Ref__: " + body.imports.souther() + ".NewRef("
                         + body.run + ", " + word + ")}";
             };
@@ -150,6 +195,11 @@ sealed interface Crossing {
                 case INT -> "Int";
                 case BOOL -> "Bool";
                 case STRING -> "String";
+                case DECIMAL -> "Decimal";
+                case DATE -> "Date";
+                case TIME -> "Time";
+                case DATETIME -> "DateTime";
+                case INSTANT -> "Instant";
                 case HANDLE -> declared.name();
             };
         }

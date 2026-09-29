@@ -23,6 +23,12 @@ static void *call_decoded_issue(void *fn, void *decoded, int64_t at) {
 	return ((void *(*)(void *, int64_t))fn)(decoded, at);
 }
 static void *call_issue_text(void *fn, void *issue) { return ((void *(*)(void *))fn)(issue); }
+static void *call_decimal_of_parts(void *fn, const uint8_t *bytes, int64_t length, int64_t scale) {
+	return ((void *(*)(const uint8_t *, int64_t, int64_t))fn)(bytes, length, scale);
+}
+static void *call_decimal_unscaled(void *fn, void *decimal) { return ((void *(*)(void *))fn)(decimal); }
+static int64_t call_decimal_scale(void *fn, void *decimal) { return ((int64_t (*)(void *))fn)(decimal); }
+static void *call_temporal(void *fn, void *text) { return ((void *(*)(void *))fn)(text); }
 */
 import "C"
 
@@ -104,6 +110,85 @@ func Addr[T any](s []T) unsafe.Pointer {
 		return unsafe.Pointer(&none[0])
 	}
 	return unsafe.Pointer(&s[0])
+}
+
+// Decimal is d as the library holds a Decimal, made in r. The unscaled digits are the integer's
+// text and never the value's written form, so they are never fallible on what a String holds.
+func Decimal[B any](r *Run[B], d raoh.Decimal) unsafe.Pointer {
+	r.checkMaking()
+	digits := d.Unscaled().String()
+	return C.call_decimal_of_parts(r.lib.Symbol("souther_decimal_of_parts"),
+		(*C.uint8_t)(unsafe.Pointer(unsafe.StringData(digits))), C.int64_t(len(digits)),
+		C.int64_t(d.Scale()))
+}
+
+// Amount is the Decimal the library answered, with the scale it has: 1.50 is 150 at scale 2 and 1.5
+// is 15 at scale 1, and Scale says which. Two are equal as amounts by Cmp, and as Go values only
+// where they are written alike.
+func Amount[B any](r *Run[B], word unsafe.Pointer) raoh.Decimal {
+	r.checkReading()
+	unscaled := Text(r, C.call_decimal_unscaled(r.lib.Symbol("souther_decimal_unscaled"), word))
+	scale := int64(C.call_decimal_scale(r.lib.Symbol("souther_decimal_scale"), word))
+	d, err := raoh.ParseDecimal(unscaled + "E" + strconv.FormatInt(-scale, 10))
+	if err != nil {
+		panic(fmt.Sprintf("souther: the library's Decimal is one: %v", err))
+	}
+	return d
+}
+
+// Temporal is the text of a temporal value handed to the library, which reads it as the value
+// whose name it is: the address of the value made by the function of the library at symbol.
+func temporal[B any](r *Run[B], symbol, text string) (unsafe.Pointer, error) {
+	iso, err := String(r, text)
+	if err != nil {
+		return nil, err
+	}
+	return C.call_temporal(r.lib.Symbol(symbol), iso), nil
+}
+
+// DateWord is date as the library holds a Date, made in r.
+func DateWord[B any](r *Run[B], date Date) (unsafe.Pointer, error) {
+	return temporal(r, "souther_date_of_iso", date.String())
+}
+
+// TimeWord is t as the library holds a Time, made in r.
+func TimeWord[B any](r *Run[B], t Time) (unsafe.Pointer, error) {
+	return temporal(r, "souther_time_of_iso", t.String())
+}
+
+// DateTimeWord is dt as the library holds a DateTime, made in r.
+func DateTimeWord[B any](r *Run[B], dt DateTime) (unsafe.Pointer, error) {
+	return temporal(r, "souther_datetime_of_iso", dt.String())
+}
+
+// InstantWord is i as the library holds an Instant, made in r.
+func InstantWord[B any](r *Run[B], i Instant) (unsafe.Pointer, error) {
+	return temporal(r, "souther_instant_of_iso", i.String())
+}
+
+func isoText[B any](r *Run[B], symbol string, word unsafe.Pointer) string {
+	r.checkReading()
+	return Text(r, C.call_temporal(r.lib.Symbol(symbol), word))
+}
+
+// DateOf is the Date the library answered.
+func DateOf[B any](r *Run[B], word unsafe.Pointer) Date {
+	return writtenDate(isoText(r, "souther_date_iso", word))
+}
+
+// TimeOf is the Time the library answered.
+func TimeOf[B any](r *Run[B], word unsafe.Pointer) Time {
+	return writtenTime(isoText(r, "souther_time_iso", word))
+}
+
+// DateTimeOf is the DateTime the library answered.
+func DateTimeOf[B any](r *Run[B], word unsafe.Pointer) DateTime {
+	return writtenDateTime(isoText(r, "souther_datetime_iso", word))
+}
+
+// InstantOfWord is the Instant the library answered.
+func InstantOfWord[B any](r *Run[B], word unsafe.Pointer) Instant {
+	return writtenInstant(isoText(r, "souther_instant_iso", word))
 }
 
 // Constructed is what a constructor's call came to: err where it answered, an
