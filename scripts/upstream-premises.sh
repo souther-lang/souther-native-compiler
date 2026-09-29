@@ -28,8 +28,10 @@ fi
 # so the commit is recorded beside the version. A tag is a name that can be moved, and asked alone
 # it would decide "fixed in the pinned souther" of a souther the build does not read. It is asked
 # only whether it still points at the recorded commit, which also catches a version raised
-# without its commit. souther-lang/souther#2047 asks for the commit in the artifact and a protected
-# tag, after which this copy can be read from what Maven fetched.
+# without its commit. Souther now refuses to move or delete a `v*` tag (souther-lang/souther#2047),
+# and writes the commit into each jar's manifest as `Implementation-Revision` from the first release
+# after 0.3.0, whose jar has none. Raising souther.version to such a release replaces this record
+# with a read of that entry from the jar, and souther.commit goes.
 if ! tagged="$(gh api "repos/souther-lang/souther/commits/v$version" --jq .sha)"; then
     echo "souther has no release tagged v$version, which pom.xml's souther.version names" >&2
     exit 2
