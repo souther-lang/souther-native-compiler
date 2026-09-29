@@ -74,8 +74,13 @@ jobs:
 
       # What a release does for the Go runtime, without one: the module is resolved by its path and its
       # version, from a tag made as the release makes it, with no `replace` (which the tests use, and
-      # nobody outside this clone has).
+      # nobody outside this clone has); and what would be refused is refused before anything is pushed.
       - run: scripts/verify-go-runtime-release.sh
+
+      # The runtime as this commit has it against the version it says it is: where that version is
+      # published, it has to be the runtime that was published, so a change to the runtime that leaves
+      # its version alone is found here and not by the release that would have failed on it.
+      - run: scripts/publish-go-runtime.sh --check origin HEAD
 
       # The Rust runtime says it builds with the rust-version Raoh asks for, which is older than the
       # toolchain this repository pins, and a dependency moving past it is found here and not by a

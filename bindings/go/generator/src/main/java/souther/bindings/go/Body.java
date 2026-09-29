@@ -19,7 +19,6 @@ final class Body {
      */
     static final class Imports {
 
-        static final String SOUTHER = "github.com/souther-lang/souther-native-compiler/bindings/go/runtime";
         static final String RAOH = "github.com/raoh-project/raoh-go";
 
         private final String root;
@@ -78,7 +77,7 @@ final class Body {
             // Each group in the order of its paths, as gofmt writes one.
             TreeMap<String, String> others = new TreeMap<>();
             if (souther) {
-                others.put(SOUTHER, "\tsouther \"" + SOUTHER + "\"\n");
+                others.put(RuntimeModule.THE.path(), "\tsouther \"" + RuntimeModule.THE.path() + "\"\n");
             }
             if (lib) {
                 others.put(root, "\tlib \"" + root + "\"\n");
