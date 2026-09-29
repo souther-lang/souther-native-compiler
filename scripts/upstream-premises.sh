@@ -14,15 +14,29 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
 
-version="$(sed -n 's#^ *<souther.version>\(.*\)</souther.version> *$#\1#p' pom.xml)"
-if [ -z "$version" ]; then
-    echo "no souther.version in pom.xml" >&2
+property() {
+    sed -n "s#^ *<$1>\\(.*\\)</$1> *\$#\\1#p" pom.xml
+}
+version="$(property souther.version)"
+pin="$(property souther.commit)"
+if [ -z "$version" ] || ! [[ "$pin" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "pom.xml needs souther.version and souther.commit, the 40-digit commit that release was built from" >&2
     exit 2
 fi
-# The souther this build reads is the release its pom names, so the commit it stands at is the one
-# that release's tag points to. A snapshot has no tag, and is not something to place a fix against.
-if ! pin="$(gh api "repos/souther-lang/souther/commits/v$version" --jq .sha)"; then
+# What a premise is held against is the souther this build reads, which is the artifact Maven
+# fetched for that version. The artifact is fixed, and carries no revision to read the commit from,
+# so the commit is recorded beside the version. A tag is a name that can be moved, and asked alone
+# it would decide "fixed in the pinned souther" of a souther the build does not read. It is asked
+# only whether it still points at the recorded commit, which also catches a version raised
+# without its commit. souther-lang/souther#2047 asks for the commit in the artifact and a protected
+# tag, after which this copy can be read from what Maven fetched.
+if ! tagged="$(gh api "repos/souther-lang/souther/commits/v$version" --jq .sha)"; then
     echo "souther has no release tagged v$version, which pom.xml's souther.version names" >&2
+    exit 2
+fi
+if [ "$tagged" != "$pin" ]; then
+    echo "v$version points at $tagged, and pom.xml's souther.commit says $pin: the tag was moved," >&2
+    echo "or souther.version was raised without souther.commit" >&2
     exit 2
 fi
 
