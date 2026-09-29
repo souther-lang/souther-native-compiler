@@ -97,7 +97,8 @@ what `KnownBindings` names, and nobody who does not use the Rust binding has the
 A bundle on a GitHub release can be replaced, so it is not taken on its own word. The SHA-256 of each
 bundle is written into the compiler's own artifact when it is released, and Maven Central does not let
 that be changed; a bundle that does not match is refused and not kept. A jar is held to the checksum
-Maven publishes beside it. `--offline` fetches nothing and uses only what is kept, and `--fetch`
+Maven publishes beside it. What is kept is trusted as a file in `~/.m2` is, and is not checked again
+when it is used. `--offline` fetches nothing and uses only what is kept, and `--fetch`
 fetches everything a command may need, so that a build that may not reach the network later can be
 prepared where one can. The Maven repository can be a mirror, named by `-Dsouther.maven.repository`.
 
