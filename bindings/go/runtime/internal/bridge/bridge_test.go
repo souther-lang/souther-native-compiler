@@ -301,3 +301,44 @@ func TestACapabilityUsedAfterItsRunEndedIsExpired(t *testing.T) {
 		return nil
 	})
 }
+
+func BenchmarkACallThroughItsAddress(b *testing.B) {
+	lib, err := bridge.Load(path("fake"))
+	if err != nil {
+		b.Fatal(err)
+	}
+	_ = lib.Run(func(r *bridge.Run) error {
+		for b.Loop() {
+			if _, err := bridge.Double(r, 21); err != nil {
+				b.Fatal(err)
+			}
+		}
+		return nil
+	})
+}
+
+func BenchmarkTheCheckAloneOfARun(b *testing.B) {
+	lib, err := bridge.Load(path("fake"))
+	if err != nil {
+		b.Fatal(err)
+	}
+	_ = lib.Run(func(r *bridge.Run) error {
+		for b.Loop() {
+			souther.Making(r)
+		}
+		return nil
+	})
+}
+
+func BenchmarkTheSymbolLookupAlone(b *testing.B) {
+	lib, err := bridge.Load(path("fake"))
+	if err != nil {
+		b.Fatal(err)
+	}
+	_ = lib.Run(func(r *bridge.Run) error {
+		for b.Loop() {
+			_ = r.Library().Symbol("fake_double")
+		}
+		return nil
+	})
+}

@@ -59,7 +59,8 @@ func Text[B any](r *Run[B], word unsafe.Pointer) string {
 		return ""
 	}
 	bytes := C.call_string_bytes(lib.Symbol("souther_string_bytes"), word)
-	return string(C.GoBytes(unsafe.Pointer(bytes), C.int(length)))
+	// Copied once, and by the length the library says and not one an int can hold.
+	return string(unsafe.Slice((*byte)(unsafe.Pointer(bytes)), length))
 }
 
 // String is text as the library holds a String, made in r, for a call about to be made in it.

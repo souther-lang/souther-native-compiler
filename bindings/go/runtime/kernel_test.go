@@ -255,6 +255,7 @@ func TestOneRuntimeHasARootRunOnEachThread(t *testing.T) {
 	var running, most atomic.Int32
 	var wg sync.WaitGroup
 	release := make(chan struct{})
+	opened := make(chan struct{}, 4)
 	for range 4 {
 		wg.Add(1)
 		go func() {
@@ -267,6 +268,7 @@ func TestOneRuntimeHasARootRunOnEachThread(t *testing.T) {
 						break
 					}
 				}
+				opened <- struct{}{}
 				<-release
 				running.Add(-1)
 				return nil
@@ -276,7 +278,8 @@ func TestOneRuntimeHasARootRunOnEachThread(t *testing.T) {
 			}
 		}()
 	}
-	for running.Load() < 4 {
+	for range 4 {
+		<-opened
 	}
 	close(release)
 	wg.Wait()

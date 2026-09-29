@@ -87,7 +87,7 @@ type Run[B any] struct {
 	thread thread
 	live   atomic.Bool
 	child  *Run[B]
-	frames []*frame
+	frames []frame
 	keep   []func()
 	// functions is the function value each function of the host's own was made into in this run,
 	// so that one handed over again is the value it was made into before.
@@ -232,8 +232,13 @@ func (v Ref[B]) Read() unsafe.Pointer {
 // another arena, which the computation would read as its own. Two handles on one library are one
 // runtime, and a value one made is the other's.
 func (v Ref[B]) In(run *Run[B]) (unsafe.Pointer, error) {
-	v.checkUsable()
-	run.checkMaking()
+	if v.run == run && run != nil {
+		// One run, asked once: making is a check of everything reading is.
+		run.checkMaking()
+	} else {
+		v.checkUsable()
+		run.checkMaking()
+	}
 	if v.run.lib.rt.identity != run.lib.rt.identity {
 		return nil, ErrForeignHandle
 	}
@@ -257,14 +262,19 @@ func (v Ref[B]) checkUsable() {
 // [*HostError] where a host implementation answered one.
 func Call[B any](r *Run[B], native func() Status) error {
 	r.checkMaking()
-	call := &frame{}
-	r.frames = append(r.frames, call)
+	r.frames = append(r.frames, frame{})
+	depth := len(r.frames) - 1
 	var status Status
+	var kept *caught
 	func() {
-		defer func() { r.frames = r.frames[:len(r.frames)-1] }()
+		// What a callback kept is read before the frame is dropped, on the way out either way.
+		defer func() {
+			kept = r.frames[depth].caught
+			r.frames = r.frames[:depth]
+		}()
 		status = native()
 	}()
-	return r.lib.rt.statuses.outcome(status, call.caught)
+	return r.lib.rt.statuses.outcome(status, kept)
 }
 
 // Host runs a host implementation of a behavior, which the library has just called back, in the
@@ -287,11 +297,13 @@ func Host[B any](origin *Run[B], f func(*Run[B]) error) Status {
 	if len(inner.frames) == 0 {
 		return statuses.hostException
 	}
-	call := inner.frames[len(inner.frames)-1]
+	// The frame is found again where a failure is kept: a call made meanwhile through this run
+	// may have moved the frames, and has dropped its own by then.
+	depth := len(inner.frames) - 1
 	keptOf := func(c caught) {
 		// The first is what the library was told of, and what it stopped for.
-		if call.caught == nil {
-			call.caught = &c
+		if inner.frames[depth].caught == nil {
+			inner.frames[depth].caught = &c
 		}
 	}
 	answered := func() (ok bool) {
