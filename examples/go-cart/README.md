@@ -230,10 +230,11 @@ declares every interface a union or a sum's cases is a sum type (`//sumtype:decl
 `scripts/go-cart-example.sh` runs [go-check-sumtype](https://github.com/alecthomas/go-check-sumtype)
 over the application with `-default-signifies-exhaustive=false`: a switch over one names every case,
 a `default` notwithstanding, and a case added to the model stops the build at every switch that does
-not answer it. The `default` each switch still has is what a program built without the check comes
-to at run time, a failure and a 500, never a row of the wrong shape. Where a route asks only whether
-a value is one case, as the quote route asks whether the orderer is a `Corporation`, it asks with a
-type assertion, which answers every case the model has or gains.
+not answer it. What a program built without the check comes to at run time is a failure and a 500,
+never a row of the wrong shape: `saveOrder`'s switch fails in its `default`, and a route's switch
+over a behavior's answer returns from each case it names and fails after it, in `unanswered`. Where
+a route asks only whether a value is one case, as the quote route asks whether the orderer is a
+`Corporation`, it asks with a type assertion, which answers every case the model has or gains.
 
 ## Building and running it
 
