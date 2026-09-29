@@ -15,6 +15,12 @@
     <name>Souther Native Launcher</name>
     <description>The command with the generators installed: the compiler together with the PHP and the Rust binding. Not published.</description>
 
+    <properties>
+        <!-- What the release publishes is what a user of the compiler fetches, and a launcher is what a
+             clone runs the command with. -->
+        <maven.deploy.skip>true</maven.deploy.skip>
+    </properties>
+
     <dependencies>
         <dependency>
             <groupId>org.souther-lang</groupId>

@@ -1,8 +1,14 @@
 #!/usr/bin/env bash
-# What a release is about to publish is what it checksummed. The generators' jars are built before the
-# compiler, and their checksums written into it; the publication is then built once more. So the jars
-# in the publication have to be the ones that were checksummed, which is to say that building them
-# twice writes the same bytes, and the compiler in it has to carry the file that was written.
+# What a release is about to publish is what it checksummed, and is what the modules say is published.
+#
+# The generators' jars are built before the compiler, and their checksums written into it; the
+# publication is then built once more. So each generator's jar in the publication has to be the jar
+# its own checksum is of, which is to say that building it twice writes the same bytes, and the
+# compiler in it has to carry the file that was written.
+#
+# And the publication holds the artifacts the modules publish and no others: the reactor is deployed
+# whole, and what is left out is left out by the module (`maven.deploy.skip`), so the set is read from
+# the poms, where a module that is not published says so, and compared with what was deployed.
 #
 # usage: scripts/verify-release-build.sh <maven repository> <version> <checksums file>
 set -euo pipefail
@@ -14,20 +20,28 @@ fi
 repository="$1"
 version="$2"
 checksums="$3"
+root="$(cd "$(dirname "$0")/.." && pwd)"
 
-found=0
-for jar in "$repository"/org/souther-lang/souther-binding-*/"$version"/souther-binding-*-"$version".jar; do
-    [ -e "$jar" ] || continue
-    sum="$(shasum -a 256 "$jar" | cut -d ' ' -f 1)"
-    if ! grep -q "^generator\..*=$sum\$" "$checksums"; then
-        echo "$jar is not the jar that was checksummed ($sum): the build is not reproducible" >&2
+# Each generator's jar is the one whose checksum is recorded under its id: swapped, two jars would be
+# held to each other's, and the compiler would refuse both when it fetched them.
+generators=0
+while IFS='=' read -r key sum; do
+    id="${key#generator.}"
+    artifact="souther-binding-$id"
+    jar="$repository/org/souther-lang/$artifact/$version/$artifact-$version.jar"
+    if [ ! -f "$jar" ]; then
+        echo "no $jar, and $key is checksummed" >&2
         exit 1
     fi
-    found=$((found + 1))
-done
-recorded="$(grep -c '^generator\.' "$checksums")"
-if [ "$found" -ne "$recorded" ]; then
-    echo "the publication holds $found generators, and $recorded were checksummed" >&2
+    actual="$(shasum -a 256 "$jar" | cut -d ' ' -f 1)"
+    if [ "$actual" != "$sum" ]; then
+        echo "$jar is $actual, and $key says $sum: the build is not reproducible, or the jars are swapped" >&2
+        exit 1
+    fi
+    generators=$((generators + 1))
+done < <(grep '^generator\.' "$checksums")
+if [ "$generators" -eq 0 ]; then
+    echo "no generator is checksummed in $checksums" >&2
     exit 1
 fi
 
@@ -36,4 +50,24 @@ if ! unzip -p "$compiler" souther/nativecode/release-checksums.properties | diff
     echo "$compiler does not carry the checksums that were written" >&2
     exit 1
 fi
-echo "the publication carries the checksums of $found generators and is what was checksummed"
+
+artifact_of() {
+    sed -n '/<\/parent>/,$ s#^ *<artifactId>\(.*\)</artifactId> *$#\1#p' "$1" | head -1
+}
+published="$(sed -n 's#^    <artifactId>\(.*\)</artifactId>$#\1#p' "$root/pom.xml" | head -1)"
+for module in $(sed -n 's#^ *<module>\(.*\)</module> *$#\1#p' "$root/pom.xml"); do
+    if ! grep -q '<maven.deploy.skip>true</maven.deploy.skip>' "$root/$module/pom.xml"; then
+        published="$published"$'\n'"$(artifact_of "$root/$module/pom.xml")"
+    fi
+done
+expected="$(printf '%s\n' "$published" | sort)"
+deployed="$(cd "$repository/org/souther-lang" && find . -mindepth 1 -maxdepth 1 -type d | sed 's#^\./##' | sort)"
+if [ "$expected" != "$deployed" ]; then
+    echo "the publication is not what the modules say is published" >&2
+    echo "the modules publish:" >&2
+    printf '  %s\n' $expected >&2
+    echo "deployed:" >&2
+    printf '  %s\n' $deployed >&2
+    exit 1
+fi
+echo "the publication is what was checksummed, and holds what the modules publish"

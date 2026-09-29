@@ -49,6 +49,9 @@ fixes it. The Rust runtime in `bindings/rust/runtime` is a crate of its own, whi
 lints and tests beside the Rust half, and the tests of a generated Rust binding build a host of it
 with Cargo, fetching what the runtime depends on the first time.
 
+The tests are told where the driver is by Maven, through the same property; a test run from an IDE
+names it the same way (`-Dsouther.native.driver=<clone>/native/target/debug/souther-native-driver`).
+
 ## Modules
 
 The build is one Maven reactor of five modules. `bindings/api` (`souther-bindings-api`) holds what a
@@ -104,7 +107,9 @@ fetches everything a command may need, so that a build that may not reach the ne
 prepared where one can. The Maven repository can be a mirror, named by `-Dsouther.maven.repository`.
 
 A build from a clone has no release to fetch from, and does not try: it uses the driver Cargo built,
-and the generators the launcher carries. In a clone:
+which `scripts/souther-native` names by `-Dsouther.native.driver`, and the generators the launcher
+carries. That property is the one place a driver is looked for. A compiler does not look in the
+directory it is run in, where a project of somebody else's could have an executable of the same name. In a clone:
 
     scripts/souther-native --library build/native --php build/php --namespace Acme\Shop model
 

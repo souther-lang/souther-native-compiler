@@ -21,7 +21,13 @@ import java.util.List;
  */
 public final class NativeCompiler {
 
-    /** Where the driver is, for a caller whose build puts it somewhere else. */
+    /**
+     * Where the driver is: the one place it is looked for. A clone names the one Cargo built
+     * ({@code scripts/souther-native} does, and so do the tests), and a released compiler names the one
+     * it fetched and checked. It is not looked for in the directory the command is run in, which a
+     * released compiler is run in the middle of somebody's project, and whose executable it would
+     * then run in place of the one it holds a checksum for.
+     */
     public static final String DRIVER_PROPERTY = "souther.native.driver";
 
     /**
@@ -35,18 +41,15 @@ public final class NativeCompiler {
      */
     private static final int NOT_LOWERED = 2;
 
-    private static final Path BUILT =
-            Path.of("native", "target", "debug", "souther-native-driver");
-
     private NativeCompiler() {
     }
 
     /**
-     * Whether there is a driver to hand a program to: one named by {@link #DRIVER_PROPERTY}, or the
-     * one a clone builds. Where there is not, a released compiler fetches its own.
+     * Whether a driver is named by {@link #DRIVER_PROPERTY}, and by nothing else. Where none is, a
+     * released compiler fetches its own.
      */
     public static boolean hasDriver() {
-        return System.getProperty(DRIVER_PROPERTY) != null || Files.isExecutable(BUILT);
+        return System.getProperty(DRIVER_PROPERTY) != null;
     }
 
     /** The object holding every behavior the program declares. */
@@ -180,8 +183,13 @@ public final class NativeCompiler {
         }
     }
 
-    private static Path driver() {
+    private static Path driver() throws IOException {
         String named = System.getProperty(DRIVER_PROPERTY);
-        return named == null ? BUILT : Path.of(named);
+        if (named == null) {
+            throw new IOException("no driver is named: " + DRIVER_PROPERTY + " is the one place it is"
+                    + " looked for (a released compiler fetches its own, and scripts/souther-native"
+                    + " names a clone's)");
+        }
+        return Path.of(named);
     }
 }

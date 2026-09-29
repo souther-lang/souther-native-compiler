@@ -42,6 +42,8 @@ class TheCatalogNamesTheArtifactsThatProvideItsGeneratorsTest {
         for (KnownBindings.Kind kind : KnownBindings.all()) {
             assertThat(kind.artifact()).startsWith(group + ":");
             String artifact = kind.artifact().substring(group.length() + 1);
+            assertThat(artifact).as("the release's scripts find a generator's jar by its id")
+                    .isEqualTo("souther-binding-" + kind.id());
             List<Path> named = directories.stream().filter(it -> artifactOf(it).equals(artifact))
                     .toList();
             assertThat(named).as("the module that is %s", kind.artifact()).hasSize(1);

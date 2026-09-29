@@ -305,6 +305,58 @@ class TheCommandFetchesWhatItNeedsOnFirstUseTest {
         }
     }
 
+    /**
+     * A released compiler is run in the middle of somebody's project, and an executable that the
+     * project has where a clone keeps its driver is not the driver: it is code the compiler holds no
+     * checksum for. The driver is the one named, or the one fetched and checked.
+     */
+    @Test
+    void aDriverInTheDirectoryTheCommandRunsInIsNotTheOneItRuns(@TempDir Path into) throws Exception {
+        String named = System.getProperty(NativeCompiler.DRIVER_PROPERTY);
+        Path decoy = Path.of("native", "target", "debug", "souther-native-driver");
+        try (Served served = new Served()) {
+            byte[] bundle = bundle(Map.of(NativeBundle.DRIVER, "#!/bin/sh\n",
+                    NativeBundle.ARCHIVE, "archive", NativeBundle.REQUIREMENTS, "-lm\n"));
+            Fetching fetching = releasedWith(served, into, bundle);
+            served.files.put(bundleAt(), bundle);
+            Files.createDirectories(decoy.getParent());
+            Files.writeString(decoy, "#!/bin/sh\nexit 0\n");
+            assertThat(decoy.toFile().setExecutable(true)).isTrue();
+            System.clearProperty(NativeCompiler.DRIVER_PROPERTY);
+            try {
+                assertThat(NativeCompiler.hasDriver()).as("nothing names a driver").isFalse();
+
+                Ran ran = run(fetching, "--fetch");
+
+                assertThat(ran.printed()).doesNotContain("this build's own")
+                        .contains("the driver " + into.resolve("cache/native"));
+                assertThat(served.asked).containsEntry(bundleAt(), 1);
+            } finally {
+                if (named != null) {
+                    System.setProperty(NativeCompiler.DRIVER_PROPERTY, named);
+                }
+                Files.deleteIfExists(decoy);
+                for (Path directory = decoy.getParent(); directory != null; directory = directory.getParent()) {
+                    Files.deleteIfExists(directory);
+                }
+            }
+        }
+    }
+
+    @Test
+    void noDriverNamedIsARefusalThatSaysWhereOneIsNamed() {
+        String named = System.getProperty(NativeCompiler.DRIVER_PROPERTY);
+        System.clearProperty(NativeCompiler.DRIVER_PROPERTY);
+        try {
+            assertThatThrownBy(() -> NativeCompiler.driven("{}")).isInstanceOf(IOException.class)
+                    .hasMessageContaining(NativeCompiler.DRIVER_PROPERTY);
+        } finally {
+            if (named != null) {
+                System.setProperty(NativeCompiler.DRIVER_PROPERTY, named);
+            }
+        }
+    }
+
     @Test
     void theDriverIsNotFetchedWhereTheCommandIsOffline(@TempDir Path into) throws Exception {
         try (Served served = new Served()) {
