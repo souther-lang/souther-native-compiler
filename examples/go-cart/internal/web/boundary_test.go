@@ -1,6 +1,7 @@
 package web
 
 import (
+	"encoding/json"
 	"errors"
 	"reflect"
 	"testing"
@@ -12,7 +13,7 @@ import (
 // it is missing.
 func recording(read *[]string, required ...string) raoh.Decoder[any, struct{}] {
 	return raoh.NewDecoder(func(in any) (struct{}, error) {
-		text, err := jsonText(in)
+		text, err := json.Marshal(in)
 		if err != nil {
 			return struct{}{}, err
 		}

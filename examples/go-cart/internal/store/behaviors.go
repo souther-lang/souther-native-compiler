@@ -25,7 +25,7 @@ func (s LoadProduct) Apply(r *model.Run, id domain.ProductId) (domain.ProductOrP
 	if err != nil {
 		return nil, err
 	}
-	product, err := read(r, productForm, row, domain.DecodeProduct)
+	product, err := domain.ProductDecoder(r).Decode(productForm.Encode(row))
 	return product, err
 }
 
@@ -53,7 +53,7 @@ func (s LoadCart) Apply(r *model.Run, userID domain.UserId) (domain.Cart, error)
 	if err != nil {
 		return domain.Cart{}, err
 	}
-	return read(r, cartForm, row, domain.DecodeCart)
+	return domain.CartDecoder(r).Decode(cartForm.Encode(row))
 }
 
 // SaveItem is saveItem. It takes the cart and the item out of the PendingItem the model built, adds
@@ -99,7 +99,7 @@ func (s PriceCart) Apply(r *model.Run, userID domain.UserId) (domain.PricedCartO
 	case err != nil:
 		return nil, err
 	}
-	priced, err := read(r, pricedCartForm, lines, domain.DecodePricedCart)
+	priced, err := domain.PricedCartDecoder(r).Decode(pricedCartForm.Encode(lines))
 	return priced, err
 }
 

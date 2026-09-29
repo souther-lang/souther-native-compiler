@@ -5,7 +5,7 @@ go 1.27
 require (
 	example.com/go-cart/model v0.0.0
 	github.com/google/uuid v1.6.0
-	github.com/raoh-project/raoh-go v0.0.0-20260929091357-2e815b39e491
+	github.com/raoh-project/raoh-go v0.0.0-20260929134234-af24f3ce21c6
 	github.com/souther-lang/souther-native-compiler/bindings/go/runtime v0.1.0
 	modernc.org/sqlite v1.60.1
 )

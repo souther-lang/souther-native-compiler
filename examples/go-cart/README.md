@@ -95,15 +95,16 @@ lowercased and shaped like one, a name is trimmed. Each of those is a raoh decod
 value in its form and refuses what cannot be written so, as one step. Trimming a name is not a rule
 the model could state instead: an invariant decides whether a value holds and never rewrites it.
 
-The model's constructors and decoders answer `(T, error)`, and the error of a refused value is a
-`*raoh.Issues`. That is exactly what raoh takes from a step, so they are steps of a raoh decoder as
-they stand, and a request is one decoder:
+The binding offers each type's decoder as a raoh decoder, `domain.QuantityDecoder(r)`, and each
+constructor answers `(T, error)` with a refused value's issues as a `*raoh.Issues`, which is exactly
+what raoh's `AndThen` takes. So the model's steps compose with the boundary's as they stand, and a
+request is one decoder:
 
 ```go
 raoh.Object(raoh.Fields().
 	Field("userId", id(r, domain.NewUserId)).
 	Field("productId", id(r, domain.NewProductId)).
-	Field("quantity", read(r, domain.DecodeQuantity)),
+	Field("quantity", domain.QuantityDecoder(r)),
 ).Map(func(u domain.UserId, p domain.ProductId, q domain.Quantity) addItemArgs {
 	return addItemArgs{u, p, q}
 })
@@ -125,7 +126,7 @@ Field("orderer", members([]member{
 	text("email", raoh.String().Trim().ToLower().Email()),
 	text("name", raoh.String().Trim()),
 	text("companyName", raoh.String().Trim()),
-}, read(r, domain.DecodeOrderer)))
+}, domain.OrdererDecoder(r)))
 ```
 
 What the model is handed of a member is what the boundary's decoder answered for it, and of a
@@ -146,8 +147,8 @@ first, and the model the other two.
 
 The database implementations read a row back through the model's decoder too. Each row is written
 by a raoh encoder in the form the model's type is written in, under the type's field names, and read
-by that type's decoder, so the model checks what the database holds as it checks what a client
-sends:
+by that type's raoh decoder, so the model checks what the database holds as it checks what a client
+sends, and the encoder and the decoder are the two sides of one form:
 
 ```go
 productForm = encode.Object(
@@ -156,7 +157,7 @@ productForm = encode.Object(
 	encode.Property("price", func(p productRow) int64 { return p.price }, encode.Int64()),
 )
 // ...
-product, err := read(r, productForm, row, domain.DecodeProduct)
+product, err := domain.ProductDecoder(r).Decode(productForm.Encode(row))
 ```
 
 A row the model refuses is the implementation's own failure: it comes back out of the call that

@@ -11,11 +11,9 @@ package store
 import (
 	"database/sql"
 	_ "embed"
-	"encoding/json"
 
 	"github.com/raoh-project/raoh-go/encode"
 
-	"example.com/go-cart/model"
 	"example.com/go-cart/model/com/example/cart/domain"
 )
 
@@ -75,17 +73,6 @@ var (
 		encode.Property("lines", func(lines []lineRow) []lineRow { return lines }, encode.List(lineForm)),
 	)
 )
-
-// read is row, written by form, as the model's decode reads it.
-func read[R, T any](r *model.Run, form encode.Encoder[R, map[string]any], row R,
-	decode func(*model.Run, []byte) (T, error)) (T, error) {
-	text, err := json.Marshal(form.Encode(row))
-	if err != nil {
-		var zero T
-		return zero, err
-	}
-	return decode(r, text)
-}
 
 // Assert that each implements the behavior the binding generates for it.
 var (

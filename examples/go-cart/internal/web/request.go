@@ -35,7 +35,7 @@ func addItemRequest(r *model.Run) raoh.Decoder[any, addItemArgs] {
 	return raoh.Object(raoh.Fields().
 		Field("userId", id(r, domain.NewUserId)).
 		Field("productId", id(r, domain.NewProductId)).
-		Field("quantity", read(r, domain.DecodeQuantity)),
+		Field("quantity", domain.QuantityDecoder(r)),
 	).Map(func(u domain.UserId, p domain.ProductId, q domain.Quantity) addItemArgs {
 		return addItemArgs{u, p, q}
 	})
@@ -54,7 +54,7 @@ func checkoutRequest(r *model.Run) raoh.Decoder[any, checkoutArgs] {
 			text("email", raoh.String().Trim().ToLower().Email()),
 			text("name", raoh.String().Trim()),
 			text("companyName", raoh.String().Trim()),
-		}, read(r, domain.DecodeOrderer))),
+		}, domain.OrdererDecoder(r))),
 	).Map(func(u domain.UserId, o domain.Orderer) checkoutArgs { return checkoutArgs{u, o} })
 }
 
