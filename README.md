@@ -1007,7 +1007,11 @@ type and does not compile.
 A product, a newtype and a unit are each a struct holding the value and the run it was made in, with
 a method for each field, `New<Type>` answering the value or an `invariant_violation` Raoh issue as an
 error, `Decode<Type>` answering the value or Raoh's issues (`*raoh.Issues`) or `invalid_format`,
-and `Encode`. A sum has `Case`, answering the value as the type of its case (`Owed`), which is
+`<Type>Decoder` and `Encode`. `<Type>Decoder(r)` is `Decode<Type>` as a raoh-go decoder of what a host
+decoded, reading in `r`, which a host composes with its own the way a JVM host composes a type's
+`decoder()`: the value it is handed is written back as the JSON it is, in the order of an object's
+members, and what the library finds wrong is an issue at the path it is reached at. A member that is
+not there is raoh's to report, as for any field. A sum has `Case`, answering the value as the type of its case (`Owed`), which is
 marked as one of the sum's cases, a case the model keeps being `<Sum>Kept`, and a `<Sum>From<Type>` for
 each case and each narrower sum. A case the language gives, or a primitive, is a type of the sum's
 own (`<Sum><Case>`), since Go lets a package write a method only on its own types.
