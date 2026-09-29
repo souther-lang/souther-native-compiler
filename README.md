@@ -910,7 +910,13 @@ is opened (`AlreadyRunning`).
 
 A product, a newtype and a unit are each a `Copy` handle, whose native value is not public either, with a reader for each field, `new`
 answering a `Construction` (the value, or an `invariant_violation` Raoh issue), `decode` answering a
-`Reading` (the value, or Raoh's issues, or `invalid_format`) and `encode`. A sum is a handle too, with
+`Reading` (the value, or Raoh's issues, or `invalid_format`), `decoder` and `encode`. `decoder` is
+`decode` as a raoh decoder of a `serde_json::Value`, which a host composes with its own the way a JVM
+host composes a type's `decoder()`: it reads in the run a `Decoding` lends the decoders of one decode
+(`Decoding::read`), which also makes a constructor into a decoder (`decoding.of`), and what the
+library finds wrong is an issue at the path it is reached at. A raoh decoder answers issues or a value
+and nothing else, so a step that ends the run for a reason of its own answers no issue, and the
+failure is what `Decoding::read` comes to. A sum is a handle too, with
 `case` answering an enum of its cases, a case the model keeps being `Kept`, and `From` each of its
 cases and each narrower sum. An `Int`, a `Bool` and a `String` are Rust's own, a `Decimal` the
 runtime's integer and scale as PHP's is, equal, ordered and hashed by amount as Souther compares two
