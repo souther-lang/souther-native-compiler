@@ -1013,10 +1013,14 @@ slices, a map's entries being tuples in the order the library has them, which th
 nothing of. A union no declaration names is an interface named after its members in the manifest's
 order (`FreeOrInt`), handed over as one of them and handed back where the library says its case. A
 member declared in the union's own package is a value of it as it is (`Free`); any other, a
-primitive or a type of another package, is held by a type of the union's (`FreeOrIntInt{Value: n}`). A union, like a function type, belongs to the module that says it: two modules
-that say one alike each have their own type, so that a package imports only what its module depends on
-(the modules do not depend on one another in a cycle, and a package imported for the sake of a shared
-type could make one). A function value is a type of its own (`FnIntToInt`), made by the library or by
+primitive or a type of another package, is held by a type of the union's (`FreeOrIntInt{Value: n}`).
+Every interface a union or a sum's cases is ends its doc comment with `//sumtype:decl`, so
+go-check-sumtype, or golangci-lint's gochecksumtype, fails a type switch over it that leaves a case
+out: Go does not, and the model's cases are closed. A test holds every such interface to it. A
+union, like a function type, belongs to the module that says it: two modules that say one alike each
+have their own type, so that a package imports only what its module depends on (the modules do not
+depend on one another in a cycle, and a package imported for the sake of a shared type could make
+one). A function value is a type of its own (`FnIntToInt`), made by the library or by
 `HostFnIntToInt` of a Go function, and called with `Call(r, ...)`, since a call makes values in the
 innermost run; a function of the host's handed over again and again in a run is one function value.
 

@@ -591,6 +591,7 @@ public final class GoBindings {
         out.append("\n// ").append(name).append(" is a value of `").append(what)
                 .append("`: one of its members. A type switch tells them apart: a member declared in\n")
                 .append("// this package is a value of it as it is, and any other is held by a type of its own.\n")
+                .append(SUM_TYPE)
                 .append("type ").append(name).append(" interface {\n\t").append(marker).append("()\n}\n");
         for (Crossing.OneOf.Member member : members) {
             if (member.itself()) {
@@ -681,6 +682,15 @@ public final class GoBindings {
     private record Arm(String variant, @Nullable String holds, @Nullable Case each, boolean itself) {
     }
 
+    /**
+     * What the doc comment of every interface a union or a sum's cases is ends with: the directive
+     * that declares it a sum type to go-check-sumtype (and golangci-lint's gochecksumtype), which
+     * fails a type switch over it that leaves a case out. Go does not check a type switch for the
+     * types it leaves out, and the model's cases are closed, so a host that runs the check learns of
+     * a case added to the model at every switch that does not answer it, when it builds.
+     */
+    static final String SUM_TYPE = "//\n//sumtype:decl\n";
+
     /** The variant every case of a sum the model keeps is, holding the value as the sum. */
     private static final String KEPT = "Kept";
 
@@ -749,6 +759,7 @@ public final class GoBindings {
         out.append("\n// ").append(caseType).append(" is the case a value of `").append(it.key())
                 .append("` is, as the value of that case. A type switch tells them apart: a case declared\n")
                 .append("// in this package is its own type, and any other is a type of its own.\n")
+                .append(SUM_TYPE)
                 .append("type ").append(caseType).append(" interface {\n\t").append(marker)
                 .append("()\n}\n");
         for (Arm arm : new LinkedHashSet<>(arms)) {
