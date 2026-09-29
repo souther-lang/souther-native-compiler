@@ -66,11 +66,11 @@ class ASumAndItsNarrowerSumAreOfOneModuleTest {
 
             func said(wide a.Wide) string {
             	switch wide.Case().(type) {
-            	case a.WideX:
+            	case a.X:
             		return "X"
-            	case a.WideY:
+            	case a.Y:
             		return "Y"
-            	case a.WideZ:
+            	case a.Z:
             		return "Z"
             	}
             	return "?"

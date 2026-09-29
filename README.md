@@ -1000,17 +1000,20 @@ type and does not compile.
 A product, a newtype and a unit are each a struct holding the value and the run it was made in, with
 a method for each field, `New<Type>` answering the value or an `invariant_violation` Raoh issue as an
 error, `Decode<Type>` answering the value or Raoh's issues (`*raoh.Issues`) or `invalid_format`,
-and `Encode`. A sum has `Case`, answering a type of its own for each case (`OutcomeOwed{Value: ...}`),
-a case the model keeps being `Kept`, and a `<Sum>From<Type>` for each case and each narrower sum.
+and `Encode`. A sum has `Case`, answering the value as the type of its case (`Owed`), which is
+marked as one of the sum's cases, a case the model keeps being `<Sum>Kept`, and a `<Sum>From<Type>` for
+each case and each narrower sum. A case the language gives, or a primitive, is a type of the sum's
+own (`<Sum><Case>`), since Go lets a package write a method only on its own types.
 An `Int`, a `Bool` and a `String` are Go's own, a `Decimal` is Raoh's with the scale it was written
 with, and a `Date`, a `Time`, a `DateTime` and an `Instant` are the runtime's, held as their numbers and
 checked where they are made, since the library ends the process on text that names none. An optional
 is a `souther.Option`, at every depth, since a pointer cannot tell an optional of nothing from
 nothing. A tuple is a `souther.Tuple2` and its like up to eight members, a list, a set and a map are
 slices, a map's entries being tuples in the order the library has them, which the language says
-nothing of. A union no declaration names is an interface with a type for each member, named after
-them in the manifest's order (`FreeOrInt`), handed over as one of them and handed back where the
-library says its case. A union, like a function type, belongs to the module that says it: two modules
+nothing of. A union no declaration names is an interface named after its members in the manifest's
+order (`FreeOrInt`), handed over as one of them and handed back where the library says its case. A
+member declared in the union's own package is a value of it as it is (`Free`); any other, a
+primitive or a type of another package, is held by a type of the union's (`FreeOrIntInt{Value: n}`). A union, like a function type, belongs to the module that says it: two modules
 that say one alike each have their own type, so that a package imports only what its module depends on
 (the modules do not depend on one another in a cycle, and a package imported for the sake of a shared
 type could make one). A function value is a type of its own (`FnIntToInt`), made by the library or by

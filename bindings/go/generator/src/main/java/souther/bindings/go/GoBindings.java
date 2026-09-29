@@ -555,7 +555,8 @@ public final class GoBindings {
                 case Case.Declared d -> {
                     Declared it = declared.get(d.module() + "." + d.name());
                     yield it == null ? null
-                            : new Crossing.OneOf.Member(it.name(), Crossing.Whole.handle(it), null, null);
+                            : new Crossing.OneOf.Member(it.name(), Crossing.Whole.handle(it), null, null,
+                            it.importPath().equals(at.importPath));
                 }
                 case Case.Primitive p -> {
                     Manifest.CaseCrossing crossing = manifest.crossing(p);
@@ -565,7 +566,7 @@ public final class GoBindings {
                         yield null;
                     }
                     yield new Crossing.OneOf.Member(p.name(), whole, crossing.make(),
-                            Objects.requireNonNull(crossing.read()));
+                            Objects.requireNonNull(crossing.read()), false);
                 }
                 case Case.Language l -> null;
             };
@@ -588,9 +589,16 @@ public final class GoBindings {
             case Case.Language l -> l.name();
         }).collect(java.util.stream.Collectors.joining(" | "));
         out.append("\n// ").append(name).append(" is a value of `").append(what)
-                .append("`: one of its members. A type switch tells them apart.\n")
+                .append("`: one of its members. A type switch tells them apart: a member declared in\n")
+                .append("// this package is a value of it as it is, and any other is held by a type of its own.\n")
                 .append("type ").append(name).append(" interface {\n\t").append(marker).append("()\n}\n");
         for (Crossing.OneOf.Member member : members) {
+            if (member.itself()) {
+                String type = member.whole().type(at.imports);
+                out.append("\n// ").append(marker).append(" makes a value of ").append(type)
+                        .append(" one of `").append(what).append("`.\n").append(noBody(type, marker));
+                continue;
+            }
             String variant = at.names.claim(name + member.variant(), "the member `" + member.variant()
                     + "` of the union `" + what + "`");
             out.append("\n// ").append(variant).append(" is the member ").append(member.variant())
@@ -664,10 +672,13 @@ public final class GoBindings {
      * One case of a sum as {@code Case} answers it: its variant, what it holds, and which case of
      * the model it is.
      *
-     * @param holds the Go type of the value of the case, or null where it holds none
-     * @param each  the case, or null for the one every case the model keeps is
+     * @param holds  the Go type of the value of the case, or null where it holds none
+     * @param each   the case, or null for the one every case the model keeps is
+     * @param itself whether the case's own type is a value of the sum's cases: a type declared in
+     *               the sum's package, which the method of the cases is written on. Any other case
+     *               is a type of the sum's, holding its value as {@code Value} where it has one.
      */
-    private record Arm(String variant, @Nullable String holds, @Nullable Case each) {
+    private record Arm(String variant, @Nullable String holds, @Nullable Case each, boolean itself) {
     }
 
     /** The variant every case of a sum the model keeps is, holding the value as the sum. */
@@ -685,21 +696,22 @@ public final class GoBindings {
         }
         List<Arm> arms = new ArrayList<>();
         Set<String> variants = new java.util.HashSet<>();
-        Arm kept = new Arm(KEPT, of.name(), null);
+        Arm kept = new Arm(KEPT, of.name(), null, false);
         for (Case each : sum.cases()) {
             Arm arm = switch (each) {
                 case Case.Declared d -> {
                     Declared it = declared.get(d.module() + "." + d.name());
                     yield it == null ? kept : new Arm(it.name(),
-                            at.imports.module(it.importPath()) + it.name(), each);
+                            at.imports.module(it.importPath()) + it.name(), each,
+                            it.importPath().equals(at.importPath));
                 }
                 case Case.Primitive p -> {
                     Word held = manifest.crossing(p).holds();
                     Crossing.Whole whole = held == null ? null : Crossing.Whole.primitive(p.name(), held);
-                    yield whole == null ? null : new Arm(p.name(), whole.type(at.imports), each);
+                    yield whole == null ? null : new Arm(p.name(), whole.type(at.imports), each, false);
                 }
                 case Case.Language l -> new Arm(GoNames.exported(l.name(), "case `" + l.name() + "`"),
-                        null, each);
+                        null, each, false);
             };
             if (arm == null || !variants.add(arm.variant()) && arm != kept) {
                 return null;
@@ -707,7 +719,7 @@ public final class GoBindings {
             arms.add(arm);
         }
         if (arms.contains(kept)
-                && arms.stream().anyMatch(it -> it != kept && it.variant().equals(KEPT))) {
+                && arms.stream().anyMatch(it -> it != kept && !it.itself() && it.variant().equals(KEPT))) {
             return null;
         }
         return arms;
@@ -735,10 +747,17 @@ public final class GoBindings {
         String marker = "is" + caseType;
         StringBuilder out = new StringBuilder();
         out.append("\n// ").append(caseType).append(" is the case a value of `").append(it.key())
-                .append("` is, holding the value of that case. A type switch tells them apart.\n")
+                .append("` is, as the value of that case. A type switch tells them apart: a case declared\n")
+                .append("// in this package is its own type, and any other is a type of its own.\n")
                 .append("type ").append(caseType).append(" interface {\n\t").append(marker)
                 .append("()\n}\n");
         for (Arm arm : new LinkedHashSet<>(arms)) {
+            if (arm.itself()) {
+                out.append("\n// ").append(marker).append(" makes a value of ").append(arm.holds())
+                        .append(" a case of `").append(it.key()).append("`.\n")
+                        .append(noBody(Objects.requireNonNull(arm.holds()), marker));
+                continue;
+            }
             String variant = it.name() + arm.variant();
             at.names.claim(variant, "the case `" + arm.variant() + "` of `" + it.key() + "`");
             out.append("\n// ").append(variant).append(" is the case ").append(arm.variant())
@@ -757,7 +776,9 @@ public final class GoBindings {
             String variant = it.name() + arm.variant();
             body.line("case " + place + ":");
             String held = souther + ".NewRef(run, value)";
-            if (arm.holds() == null) {
+            if (arm.itself()) {
+                body.line("\treturn " + arm.holds() + "{Ref__: " + held + "}");
+            } else if (arm.holds() == null) {
                 body.line("\treturn " + variant + "{}");
             } else if (arm.each() instanceof Case.Primitive p) {
                 Manifest.CaseCrossing crossing = manifest.crossing(p);

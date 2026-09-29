@@ -88,12 +88,12 @@ class AGoHostCallsALibraryThroughItsBindingTest {
 
             func said(outcome shop.Outcome) string {
             	switch it := outcome.Case().(type) {
-            	case shop.OutcomeFree:
+            	case shop.Free:
             		return "free"
-            	case shop.OutcomePaid:
-            		return fmt.Sprintf("paid %d", it.Value.Amount().Value())
-            	case shop.OutcomeOwed:
-            		return fmt.Sprintf("owed %d overdue %v", it.Value.Amount().Value(), it.Value.Overdue())
+            	case shop.Paid:
+            		return fmt.Sprintf("paid %d", it.Amount().Value())
+            	case shop.Owed:
+            		return fmt.Sprintf("owed %d overdue %v", it.Amount().Value(), it.Overdue())
             	case shop.OutcomeKept:
             		return "a case the model keeps"
             	}
