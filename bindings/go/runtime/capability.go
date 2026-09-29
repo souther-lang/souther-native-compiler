@@ -30,13 +30,13 @@ func Bound[B any](r *Run[B], requires []Capability[B], bind func(capability, req
 	c := Capability[B]{run: r, requires: append([]Capability[B](nil), requires...)}
 	if len(requires) > 0 {
 		layout := r.lib.layout
-		c.array = r.Room(uintptr(len(requires)) * layout.Pointer)
+		c.array = r.room(uintptr(len(requires)) * layout.Pointer)
 		for at, required := range requires {
 			*(*unsafe.Pointer)(unsafe.Add(c.array, uintptr(at)*layout.Pointer)) = required.at
 		}
 	}
 	if bind != nil {
-		c.at = r.Room(r.lib.layout.Capability)
+		c.at = r.room(r.lib.layout.Capability)
 		bind(c.at, c.array)
 	}
 	return c
@@ -49,8 +49,8 @@ func Bound[B any](r *Run[B], requires []Capability[B], bind func(capability, req
 func Implemented[B any](r *Run[B], dispatch any, implement func(capability, hosted, userdata unsafe.Pointer)) Capability[B] {
 	r.checkMaking()
 	c := Capability[B]{run: r}
-	c.at = r.Room(r.lib.layout.Capability)
-	implement(c.at, r.Room(r.lib.layout.Hosted), r.Userdata(dispatch))
+	c.at = r.room(r.lib.layout.Capability)
+	implement(c.at, r.room(r.lib.layout.Hosted), r.userdata(dispatch))
 	return c
 }
 
@@ -66,14 +66,6 @@ func (c Capability[B]) Requirements(r *Run[B]) (unsafe.Pointer, error) {
 		return nil, ErrForeignHandle
 	}
 	return c.array, nil
-}
-
-// Address is where the capability is, to hand to a function of the library that takes one. It
-// panics with a [*Misuse] where the run it was made in has ended, and is nil where no capability
-// was made because nothing requires the behavior.
-func (c Capability[B]) Address() unsafe.Pointer {
-	c.check()
-	return c.at
 }
 
 func (c Capability[B]) check() {
@@ -110,7 +102,7 @@ func HostFunction[B any](r *Run[B], key any, dispatch func() any, implement func
 		return made
 	}
 	// souther_hosted_function: what it is called through, and what it is read out of.
-	made := implement(r.Room(r.lib.layout.HostedFunction), r.Userdata(dispatch()))
+	made := implement(r.room(r.lib.layout.HostedFunction), r.userdata(dispatch()))
 	if r.held.functions == nil {
 		r.held.functions = make(map[any]unsafe.Pointer)
 	}

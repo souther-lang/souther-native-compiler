@@ -61,6 +61,7 @@ var Spec = souther.Spec{
 		Hosted:         uintptr(C.sizeof_souther_hosted),
 		HostedFunction: uintptr(C.sizeof_souther_hosted_function),
 	},
+	Outcomes: map[string]int32{"ISSUES": 1, "MALFORMED": 2, "VALUE": 0},
 	Statuses: map[string]souther.Status{
 		"ANSWERED":                     0,
 		"INJECTION_UNBOUND":            0x7ffffffd,
@@ -115,15 +116,9 @@ func Bind(r *Run, requires ...Capability) Capability {
 	})
 }
 
-// Call is the library calling the implementation through the capability.
-func Call(r *Run, c Capability, x int64) (int64, error) {
-	fn := r.Library().Symbol("fake_call")
-	var out C.int64_t
-	err := souther.Call(r, func() souther.Status {
-		return souther.Status(C.call_fake_call(fn, c.Address(), C.int64_t(x), &out))
-	})
-	return int64(out), err
-}
+// Call is the library calling the implementation through the capability, as a behavior bound to it
+// asks it: a capability is handed to the library only as what a behavior requires.
+func Call(r *Run, c Capability, x int64) (int64, error) { return RunBound(r, Bind(r, c), x) }
 
 // RunBound calls the behavior bound to what it requires, handing it what it requires.
 func RunBound(r *Run, bound Capability, x int64) (int64, error) {

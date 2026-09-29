@@ -53,9 +53,15 @@ final class Names {
         return name;
     }
 
+    /**
+     * {@code base}, or the first of {@code base_1}, {@code base_2}, ... that no name has. The
+     * generator may use a name that is reserved (the run's, a receiver's) as its own base: what is
+     * reserved is kept from the model's names, which are written around it, and never from the
+     * generator's.
+     */
     private String unused(String base) {
         String name = base;
-        for (int at = 1; taken.contains(name) || GoNames.reserved(name) && !base.equals(name); at++) {
+        for (int at = 1; taken.contains(name); at++) {
             name = base + "_" + at;
         }
         taken.add(name);

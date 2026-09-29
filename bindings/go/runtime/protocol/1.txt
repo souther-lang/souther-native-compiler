@@ -52,8 +52,6 @@ func Addr[T any](s []T) unsafe.Pointer
 
 func Amount[B any](r *Run[B], word unsafe.Pointer) raoh.Decimal
 
-func Bytes(b []byte) unsafe.Pointer
-
 func Call[B any](r *Run[B], native func() Status) error
 
 
@@ -86,14 +84,9 @@ func NewDate(year int32, month, day uint8) (Date, error)
 
 func NewInstant(second int64, nano uint32) (Instant, error)
 
-func NewStatuses(named map[string]Status) (Statuses, error)
-
-
 func NewTime(hour, minute, second uint8) (Time, error)
 
 func NoValue()
-
-func Open(path string) (*Native, error)
 
 func Reading[B any](r *Run[B], decoded unsafe.Pointer) (unsafe.Pointer, error)
 
@@ -124,8 +117,6 @@ func Bound[B any](r *Run[B], requires []Capability[B], bind func(capability, req
 
 
 func Implemented[B any](r *Run[B], dispatch any, implement func(capability, hosted, userdata unsafe.Pointer)) Capability[B]
-
-func (c Capability[B]) Address() unsafe.Pointer
 
 func (c Capability[B]) Requirements(r *Run[B]) (unsafe.Pointer, error)
 
@@ -185,8 +176,6 @@ type Layout struct {
 type Library[B any] struct {
 }
 
-func NewLibrary[B any](rt *Runtime) *Library[B]
-
 func (l *Library[B]) Run(f func(*Run[B]) error) error
 
 
@@ -206,14 +195,6 @@ type Misuse struct{ Err error }
 func (m *Misuse) Error() string
 
 func (m *Misuse) Unwrap() error
-
-type Native struct {
-}
-
-
-func (n *Native) Close()
-
-func (n *Native) Symbol(name string) (unsafe.Pointer, bool)
 
 type Option[T any] struct {
 }
@@ -245,26 +226,15 @@ type Run[B any] struct {
 }
 
 
-func (r *Run[B]) Keep(release func())
-
 func (r *Run[B]) Library() *Library[B]
-
-func (r *Run[B]) Room(size uintptr) unsafe.Pointer
 
 func (r *Run[B]) Scope(f func(*Run[B]) error) error
 
 
-func (r *Run[B]) Userdata(v any) unsafe.Pointer
-
 type Runtime struct {
 }
 
-func NewRuntime(identity uintptr, mark func() int64, reset func(int64), statuses Statuses) *Runtime
-
-
 func (r *Runtime) Identity() uintptr
-
-func (r *Runtime) Statuses() Statuses
 
 type Spec struct {
 	Layout   Layout
@@ -278,15 +248,6 @@ type Status = uint32
 func Host[B any](origin *Run[B], f func(*Run[B]) error) Status
 
 
-
-type Statuses struct {
-}
-
-func (s Statuses) Answered() Status
-
-func (s Statuses) HostException() Status
-
-func (s Statuses) Named(name string) (Status, bool)
 
 type Time struct {
 }
@@ -356,6 +317,10 @@ type Tuple8[A any, B any, C any, D any, E any, F any, G any, H any] struct {
 	V6 G
 	V7 H
 }
+
+type UnnamedOutcome struct{ Name string }
+
+func (e *UnnamedOutcome) Error() string
 
 type UnnamedStatus struct{ Name string }
 

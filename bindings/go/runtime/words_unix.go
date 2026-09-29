@@ -86,21 +86,11 @@ func String[B any](r *Run[B], text string) (unsafe.Pointer, error) {
 		return word, nil
 	}
 	const name = "REQUIRED_FORM_HAS_NO_PLACE"
-	status, ok := r.lib.rt.statuses.Named(name)
+	status, ok := r.lib.rt.statuses.status(name)
 	if !ok {
 		return nil, ErrProtocolViolation
 	}
 	return nil, &Abort{Status: status, Name: name}
-}
-
-// Bytes is where the bytes of b are, to hand to the library for the length of a call: an address
-// even where there are none, which the library then reads none of.
-func Bytes(b []byte) unsafe.Pointer {
-	if len(b) == 0 {
-		var none [1]byte
-		return unsafe.Pointer(&none[0])
-	}
-	return unsafe.Pointer(&b[0])
 }
 
 // Addr is where the elements of s are, to hand to the library for the length of a call: an address

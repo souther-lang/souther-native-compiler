@@ -1016,6 +1016,12 @@ scope, so it yields to them and is never listed against them. Whatever a package
 of a module the model refers to, which a test of the generator holds, so that the packages do not
 import one another in a cycle where the modules do not.
 
+What a host has no way to reach is not written, as in the PHP and the Rust bindings, and nothing says
+so where it is missing: a behavior, a value or a field the manifest says nothing reaches; a type Go
+has no way to hold here (a tuple of more than eight members, a set or a map where a function value
+takes or answers one, a union with a member the language gives that holds nothing); and a type or a
+function a name of the binding's own would have to be, where that name is another's in the package.
+
 Names ending in `__` (`Ref__`, `Word__`) are the binding's own, which one package hands another;
 Go has no way to keep them from a caller, as Rust does, and a host does not use them.
 

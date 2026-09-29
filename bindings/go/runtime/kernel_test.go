@@ -1,6 +1,6 @@
 // What a run does to a library's arena, over a stand-in for a library: a runtime whose arena is a
 // count of what was made, and a native call that calls a host implementation back.
-package souther_test
+package souther
 
 import (
 	"errors"
@@ -8,19 +8,17 @@ import (
 	"sync/atomic"
 	"testing"
 	"unsafe"
-
-	souther "github.com/souther-lang/souther-native-compiler/bindings/go/runtime"
 )
 
 const (
-	answered       souther.Status = 0
-	divisionByZero souther.Status = 4
-	hostException  souther.Status = 0x7fffffff
+	answered       Status = 0
+	divisionByZero Status = 4
+	hostException  Status = 0x7fffffff
 )
 
-func statuses(t *testing.T) souther.Statuses {
+func statuses(t *testing.T) statusTable {
 	t.Helper()
-	s, err := souther.NewStatuses(map[string]souther.Status{
+	s, err := newStatuses(map[string]Status{
 		"ANSWERED":                     answered,
 		"DIVISION_BY_ZERO":             divisionByZero,
 		"INJECTION_UNBOUND":            0x7ffffffd,
@@ -65,11 +63,11 @@ func (a *arena) make() unsafe.Pointer {
 
 func (a *arena) size() int64 { return a.mark() }
 
-func libraryOf[B any](t *testing.T, identity uintptr) (*souther.Library[B], *arena) {
+func libraryOf[B any](t *testing.T, identity uintptr) (*Library[B], *arena) {
 	t.Helper()
 	a := &arena{}
-	rt := souther.NewRuntime(identity, a.mark, a.reset, statuses(t))
-	return souther.NewLibrary[B](rt), a
+	rt := newRuntime(identity, a.mark, a.reset, statuses(t))
+	return newLibrary[B](rt), a
 }
 
 func misused(t *testing.T, want error, f func()) {
@@ -80,7 +78,7 @@ func misused(t *testing.T, want error, f func()) {
 		if got == nil {
 			t.Fatalf("no panic, want %v", want)
 		}
-		var m *souther.Misuse
+		var m *Misuse
 		err, _ := got.(error)
 		if !errors.As(err, &m) || !errors.Is(m, want) {
 			t.Fatalf("panicked with %v, want a misuse: %v", got, want)
@@ -91,10 +89,10 @@ func misused(t *testing.T, want error, f func()) {
 
 func TestARunDropsTheArenaBackToItsMarkWhenItReturns(t *testing.T) {
 	lib, a := libraryOf[tagA](t, 1)
-	err := lib.Run(func(r *souther.Run[tagA]) error {
+	err := lib.Run(func(r *Run[tagA]) error {
 		a.make()
 		a.make()
-		return r.Scope(func(in *souther.Run[tagA]) error {
+		return r.Scope(func(in *Run[tagA]) error {
 			a.make()
 			return nil
 		})
@@ -114,7 +112,7 @@ func TestARunDropsTheArenaBackWhenItPanics(t *testing.T) {
 	lib, a := libraryOf[tagA](t, 1)
 	func() {
 		defer func() { _ = recover() }()
-		_ = lib.Run(func(r *souther.Run[tagA]) error {
+		_ = lib.Run(func(r *Run[tagA]) error {
 			a.make()
 			panic("in the run")
 		})
@@ -123,7 +121,7 @@ func TestARunDropsTheArenaBackWhenItPanics(t *testing.T) {
 		t.Fatalf("the arena stands at %d after a run that panicked", got)
 	}
 	// The thread is free for a root run again: the panic left nothing open.
-	if err := lib.Run(func(*souther.Run[tagA]) error { return nil }); err != nil {
+	if err := lib.Run(func(*Run[tagA]) error { return nil }); err != nil {
 		t.Fatalf("a run after a run that panicked: %v", err)
 	}
 }
@@ -131,43 +129,43 @@ func TestARunDropsTheArenaBackWhenItPanics(t *testing.T) {
 func TestARunAnswersWhatItsFunctionReturns(t *testing.T) {
 	lib, _ := libraryOf[tagA](t, 1)
 	want := errors.New("from the function")
-	if got := lib.Run(func(*souther.Run[tagA]) error { return want }); got != want {
+	if got := lib.Run(func(*Run[tagA]) error { return want }); got != want {
 		t.Fatalf("got %v", got)
 	}
 }
 
 func TestAValueUsedAfterItsRunEndedIsExpired(t *testing.T) {
 	lib, a := libraryOf[tagA](t, 1)
-	var kept souther.Ref[tagA]
-	var run *souther.Run[tagA]
-	_ = lib.Run(func(r *souther.Run[tagA]) error {
-		kept = souther.NewRef(r, a.make())
+	var kept Ref[tagA]
+	var run *Run[tagA]
+	_ = lib.Run(func(r *Run[tagA]) error {
+		kept = NewRef(r, a.make())
 		run = r
 		return nil
 	})
-	misused(t, souther.ErrExpired, func() { kept.Read() })
-	misused(t, souther.ErrExpired, func() { _ = run.Scope(func(*souther.Run[tagA]) error { return nil }) })
+	misused(t, ErrExpired, func() { kept.Read() })
+	misused(t, ErrExpired, func() { _ = run.Scope(func(*Run[tagA]) error { return nil }) })
 }
 
 func TestAValueMadeInsideIsExpiredOnceTheScopeEnded(t *testing.T) {
 	lib, a := libraryOf[tagA](t, 1)
-	_ = lib.Run(func(r *souther.Run[tagA]) error {
-		var inner souther.Ref[tagA]
-		_ = r.Scope(func(in *souther.Run[tagA]) error {
-			inner = souther.NewRef(in, a.make())
+	_ = lib.Run(func(r *Run[tagA]) error {
+		var inner Ref[tagA]
+		_ = r.Scope(func(in *Run[tagA]) error {
+			inner = NewRef(in, a.make())
 			return nil
 		})
-		misused(t, souther.ErrExpired, func() { inner.Read() })
-		misused(t, souther.ErrExpired, func() { _, _ = inner.In(r) })
+		misused(t, ErrExpired, func() { inner.Read() })
+		misused(t, ErrExpired, func() { _, _ = inner.In(r) })
 		return nil
 	})
 }
 
 func TestAnOuterValueIsReadAndHandedToAComputationInsideAScope(t *testing.T) {
 	lib, a := libraryOf[tagA](t, 1)
-	_ = lib.Run(func(r *souther.Run[tagA]) error {
-		outer := souther.NewRef(r, a.make())
-		return r.Scope(func(in *souther.Run[tagA]) error {
+	_ = lib.Run(func(r *Run[tagA]) error {
+		outer := NewRef(r, a.make())
+		return r.Scope(func(in *Run[tagA]) error {
 			if outer.Read() == nil {
 				t.Error("an outer value is read inside a scope")
 			}
@@ -182,14 +180,14 @@ func TestAnOuterValueIsReadAndHandedToAComputationInsideAScope(t *testing.T) {
 
 func TestAComputationThroughARunWithARunInsideItIsNotTheInnermost(t *testing.T) {
 	lib, a := libraryOf[tagA](t, 1)
-	_ = lib.Run(func(r *souther.Run[tagA]) error {
-		outer := souther.NewRef(r, a.make())
-		return r.Scope(func(*souther.Run[tagA]) error {
-			misused(t, souther.ErrNotTheInnermostRun, func() {
-				_ = souther.Call(r, func() souther.Status { return answered })
+	_ = lib.Run(func(r *Run[tagA]) error {
+		outer := NewRef(r, a.make())
+		return r.Scope(func(*Run[tagA]) error {
+			misused(t, ErrNotTheInnermostRun, func() {
+				_ = Call(r, func() Status { return answered })
 			})
-			misused(t, souther.ErrNotTheInnermostRun, func() { _, _ = outer.In(r) })
-			misused(t, souther.ErrNotTheInnermostRun, func() { _ = r.Scope(func(*souther.Run[tagA]) error { return nil }) })
+			misused(t, ErrNotTheInnermostRun, func() { _, _ = outer.In(r) })
+			misused(t, ErrNotTheInnermostRun, func() { _ = r.Scope(func(*Run[tagA]) error { return nil }) })
 			// Reading is not making, and is good from the run outside.
 			if outer.Read() == nil {
 				t.Error("reading an outer value is not a computation")
@@ -201,18 +199,18 @@ func TestAComputationThroughARunWithARunInsideItIsNotTheInnermost(t *testing.T) 
 
 func TestARunAndItsValuesBelongToTheGoroutineThatOpenedThem(t *testing.T) {
 	lib, a := libraryOf[tagA](t, 1)
-	_ = lib.Run(func(r *souther.Run[tagA]) error {
-		v := souther.NewRef(r, a.make())
+	_ = lib.Run(func(r *Run[tagA]) error {
+		v := NewRef(r, a.make())
 		var wg sync.WaitGroup
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			misused(t, souther.ErrRunOnAnotherGoroutine, func() { v.Read() })
-			misused(t, souther.ErrRunOnAnotherGoroutine, func() { _, _ = v.In(r) })
-			misused(t, souther.ErrRunOnAnotherGoroutine, func() {
-				_ = souther.Call(r, func() souther.Status { return answered })
+			misused(t, ErrRunOnAnotherGoroutine, func() { v.Read() })
+			misused(t, ErrRunOnAnotherGoroutine, func() { _, _ = v.In(r) })
+			misused(t, ErrRunOnAnotherGoroutine, func() {
+				_ = Call(r, func() Status { return answered })
 			})
-			misused(t, souther.ErrRunOnAnotherGoroutine, func() { _ = r.Scope(func(*souther.Run[tagA]) error { return nil }) })
+			misused(t, ErrRunOnAnotherGoroutine, func() { _ = r.Scope(func(*Run[tagA]) error { return nil }) })
 		}()
 		wg.Wait()
 		return nil
@@ -220,19 +218,19 @@ func TestARunAndItsValuesBelongToTheGoroutineThatOpenedThem(t *testing.T) {
 }
 
 func TestAZeroValueHoldsNothing(t *testing.T) {
-	var v souther.Ref[tagA]
-	misused(t, souther.ErrNoValue, func() { v.Read() })
+	var v Ref[tagA]
+	misused(t, ErrNoValue, func() { v.Read() })
 }
 
 func TestASecondRootRunOfOneRuntimeOnOneThreadIsRefused(t *testing.T) {
 	lib, _ := libraryOf[tagA](t, 1)
 	// Another handle on the same arena is the same runtime.
-	other := souther.NewLibrary[tagA](souther.NewRuntime(1, func() int64 { return 0 }, func(int64) {}, statuses(t)))
-	_ = lib.Run(func(*souther.Run[tagA]) error {
-		if err := lib.Run(func(*souther.Run[tagA]) error { return nil }); !errors.Is(err, souther.ErrAlreadyRunning) {
+	other := newLibrary[tagA](newRuntime(1, func() int64 { return 0 }, func(int64) {}, statuses(t)))
+	_ = lib.Run(func(*Run[tagA]) error {
+		if err := lib.Run(func(*Run[tagA]) error { return nil }); !errors.Is(err, ErrAlreadyRunning) {
 			t.Errorf("a second root run through the same handle: %v", err)
 		}
-		if err := other.Run(func(*souther.Run[tagA]) error { return nil }); !errors.Is(err, souther.ErrAlreadyRunning) {
+		if err := other.Run(func(*Run[tagA]) error { return nil }); !errors.Is(err, ErrAlreadyRunning) {
 			t.Errorf("a second root run through another handle on the arena: %v", err)
 		}
 		return nil
@@ -242,8 +240,8 @@ func TestASecondRootRunOfOneRuntimeOnOneThreadIsRefused(t *testing.T) {
 func TestARootRunOfAnotherRuntimeIsOpenedInsideOne(t *testing.T) {
 	a, _ := libraryOf[tagA](t, 1)
 	b, _ := libraryOf[tagB](t, 2)
-	err := a.Run(func(*souther.Run[tagA]) error {
-		return b.Run(func(*souther.Run[tagB]) error { return nil })
+	err := a.Run(func(*Run[tagA]) error {
+		return b.Run(func(*Run[tagB]) error { return nil })
 	})
 	if err != nil {
 		t.Fatalf("a run of one library inside a run of another: %v", err)
@@ -260,7 +258,7 @@ func TestOneRuntimeHasARootRunOnEachThread(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			err := lib.Run(func(*souther.Run[tagA]) error {
+			err := lib.Run(func(*Run[tagA]) error {
 				now := running.Add(1)
 				for {
 					seen := most.Load()
@@ -290,11 +288,11 @@ func TestOneRuntimeHasARootRunOnEachThread(t *testing.T) {
 
 func TestAValueOfAnotherRuntimeIsRefusedBeforeTheCall(t *testing.T) {
 	lib, a := libraryOf[tagA](t, 1)
-	other := souther.NewLibrary[tagA](souther.NewRuntime(2, func() int64 { return 0 }, func(int64) {}, statuses(t)))
-	_ = lib.Run(func(r *souther.Run[tagA]) error {
-		mine := souther.NewRef(r, a.make())
-		return other.Run(func(o *souther.Run[tagA]) error {
-			if _, err := mine.In(o); !errors.Is(err, souther.ErrForeignHandle) {
+	other := newLibrary[tagA](newRuntime(2, func() int64 { return 0 }, func(int64) {}, statuses(t)))
+	_ = lib.Run(func(r *Run[tagA]) error {
+		mine := NewRef(r, a.make())
+		return other.Run(func(o *Run[tagA]) error {
+			if _, err := mine.In(o); !errors.Is(err, ErrForeignHandle) {
 				t.Errorf("a value another runtime made: %v", err)
 			}
 			return nil
@@ -304,15 +302,15 @@ func TestAValueOfAnotherRuntimeIsRefusedBeforeTheCall(t *testing.T) {
 
 func TestAValueOfAnotherHandleOnTheSameArenaIsGoodInThisOne(t *testing.T) {
 	lib, a := libraryOf[tagA](t, 1)
-	sameArena := souther.NewLibrary[tagA](souther.NewRuntime(1, a.mark, a.reset, statuses(t)))
-	_ = lib.Run(func(r *souther.Run[tagA]) error {
-		mine := souther.NewRef(r, a.make())
+	sameArena := newLibrary[tagA](newRuntime(1, a.mark, a.reset, statuses(t)))
+	_ = lib.Run(func(r *Run[tagA]) error {
+		mine := NewRef(r, a.make())
 		// Same identity, so same arena: it cannot be opened as a root through the other handle
 		// while this one is, and a scope of this run is the way in.
-		if err := sameArena.Run(func(*souther.Run[tagA]) error { return nil }); !errors.Is(err, souther.ErrAlreadyRunning) {
+		if err := sameArena.Run(func(*Run[tagA]) error { return nil }); !errors.Is(err, ErrAlreadyRunning) {
 			t.Errorf("another handle on the arena: %v", err)
 		}
-		return r.Scope(func(in *souther.Run[tagA]) error {
+		return r.Scope(func(in *Run[tagA]) error {
 			if _, err := mine.In(in); err != nil {
 				t.Errorf("a value of the same runtime: %v", err)
 			}
@@ -323,23 +321,23 @@ func TestAValueOfAnotherHandleOnTheSameArenaIsGoodInThisOne(t *testing.T) {
 
 func TestACallAnswersWhatItsStatusSays(t *testing.T) {
 	lib, _ := libraryOf[tagA](t, 1)
-	_ = lib.Run(func(r *souther.Run[tagA]) error {
-		if err := souther.Call(r, func() souther.Status { return answered }); err != nil {
+	_ = lib.Run(func(r *Run[tagA]) error {
+		if err := Call(r, func() Status { return answered }); err != nil {
 			t.Errorf("answered: %v", err)
 		}
-		var abort *souther.Abort
-		err := souther.Call(r, func() souther.Status { return divisionByZero })
+		var abort *Abort
+		err := Call(r, func() Status { return divisionByZero })
 		if !errors.As(err, &abort) || abort.Name != "DIVISION_BY_ZERO" || abort.Status != divisionByZero {
 			t.Errorf("an abort names the status: %v", err)
 		}
-		if err := souther.Call(r, func() souther.Status { return 0x7ffffffd }); !errors.Is(err, souther.ErrUnbound) {
+		if err := Call(r, func() Status { return 0x7ffffffd }); !errors.Is(err, ErrUnbound) {
 			t.Errorf("unbound: %v", err)
 		}
-		if err := souther.Call(r, func() souther.Status { return 0x7ffffffe }); !errors.Is(err, souther.ErrProtocolViolation) {
+		if err := Call(r, func() Status { return 0x7ffffffe }); !errors.Is(err, ErrProtocolViolation) {
 			t.Errorf("protocol violation: %v", err)
 		}
 		// A host that said it failed with nothing kept broke the protocol.
-		if err := souther.Call(r, func() souther.Status { return hostException }); !errors.Is(err, souther.ErrProtocolViolation) {
+		if err := Call(r, func() Status { return hostException }); !errors.Is(err, ErrProtocolViolation) {
 			t.Errorf("a failure with nothing kept: %v", err)
 		}
 		return nil
@@ -348,9 +346,9 @@ func TestACallAnswersWhatItsStatusSays(t *testing.T) {
 
 func TestAStatusAManifestDoesNotNameIsAnAbortWithoutAName(t *testing.T) {
 	lib, _ := libraryOf[tagA](t, 1)
-	_ = lib.Run(func(r *souther.Run[tagA]) error {
-		var abort *souther.Abort
-		err := souther.Call(r, func() souther.Status { return 99 })
+	_ = lib.Run(func(r *Run[tagA]) error {
+		var abort *Abort
+		err := Call(r, func() Status { return 99 })
 		if !errors.As(err, &abort) || abort.Name != "" || abort.Status != 99 {
 			t.Errorf("got %v", err)
 		}
@@ -359,28 +357,28 @@ func TestAStatusAManifestDoesNotNameIsAnAbortWithoutAName(t *testing.T) {
 }
 
 func TestStatusesNeedTheOnesAHostTellsApart(t *testing.T) {
-	_, err := souther.NewStatuses(map[string]souther.Status{"ANSWERED": 0})
-	var unnamed *souther.UnnamedStatus
+	_, err := newStatuses(map[string]Status{"ANSWERED": 0})
+	var unnamed *UnnamedStatus
 	if !errors.As(err, &unnamed) {
 		t.Fatalf("got %v", err)
 	}
 }
 
 // callback is the library calling a host implementation back in the middle of a call.
-func callback(origin *souther.Run[tagA], f func(*souther.Run[tagA]) error) souther.Status {
-	return souther.Host(origin, f)
+func callback(origin *Run[tagA], f func(*Run[tagA]) error) Status {
+	return Host(origin, f)
 }
 
 func TestAHostImplementationIsLentTheRunTheCallWasMadeIn(t *testing.T) {
 	lib, a := libraryOf[tagA](t, 1)
-	_ = lib.Run(func(r *souther.Run[tagA]) error {
-		return r.Scope(func(inner *souther.Run[tagA]) error {
-			var lent *souther.Run[tagA]
-			err := souther.Call(inner, func() souther.Status {
+	_ = lib.Run(func(r *Run[tagA]) error {
+		return r.Scope(func(inner *Run[tagA]) error {
+			var lent *Run[tagA]
+			err := Call(inner, func() Status {
 				// The implementation was made in the outer run, and is lent the innermost.
-				return callback(r, func(in *souther.Run[tagA]) error {
+				return callback(r, func(in *Run[tagA]) error {
 					lent = in
-					souther.NewRef(in, a.make())
+					NewRef(in, a.make())
 					return nil
 				})
 			})
@@ -398,11 +396,11 @@ func TestAHostImplementationIsLentTheRunTheCallWasMadeIn(t *testing.T) {
 func TestAHostImplementationsErrorIsAnsweredWhereTheLibraryReturns(t *testing.T) {
 	lib, _ := libraryOf[tagA](t, 1)
 	failed := errors.New("no such product")
-	_ = lib.Run(func(r *souther.Run[tagA]) error {
-		err := souther.Call(r, func() souther.Status {
-			return callback(r, func(*souther.Run[tagA]) error { return failed })
+	_ = lib.Run(func(r *Run[tagA]) error {
+		err := Call(r, func() Status {
+			return callback(r, func(*Run[tagA]) error { return failed })
 		})
-		var host *souther.HostError
+		var host *HostError
 		if !errors.As(err, &host) || !errors.Is(err, failed) {
 			t.Errorf("got %v", err)
 		}
@@ -412,14 +410,14 @@ func TestAHostImplementationsErrorIsAnsweredWhereTheLibraryReturns(t *testing.T)
 
 func TestAHostImplementationsPanicIsRaisedAgainWhereTheLibraryReturns(t *testing.T) {
 	lib, _ := libraryOf[tagA](t, 1)
-	_ = lib.Run(func(r *souther.Run[tagA]) error {
+	_ = lib.Run(func(r *Run[tagA]) error {
 		defer func() {
 			if got := recover(); got != "boom" {
 				t.Errorf("raised %v", got)
 			}
 		}()
-		_ = souther.Call(r, func() souther.Status {
-			status := callback(r, func(*souther.Run[tagA]) error { panic("boom") })
+		_ = Call(r, func() Status {
+			status := callback(r, func(*Run[tagA]) error { panic("boom") })
 			if status != hostException {
 				t.Errorf("the library was told %d, not that the implementation failed", status)
 			}
@@ -432,12 +430,12 @@ func TestAHostImplementationsPanicIsRaisedAgainWhereTheLibraryReturns(t *testing
 
 func TestWhatAnImplementationFailsToCrossIsWhatTheCallComesTo(t *testing.T) {
 	lib, _ := libraryOf[tagA](t, 1)
-	noPlace := &souther.Abort{Status: 5, Name: "REQUIRED_FORM_HAS_NO_PLACE"}
-	_ = lib.Run(func(r *souther.Run[tagA]) error {
-		err := souther.Call(r, func() souther.Status {
-			return callback(r, func(*souther.Run[tagA]) error { return souther.Crossing(noPlace) })
+	noPlace := &Abort{Status: 5, Name: "REQUIRED_FORM_HAS_NO_PLACE"}
+	_ = lib.Run(func(r *Run[tagA]) error {
+		err := Call(r, func() Status {
+			return callback(r, func(*Run[tagA]) error { return Crossing(noPlace) })
 		})
-		var host *souther.HostError
+		var host *HostError
 		if errors.As(err, &host) || err != error(noPlace) {
 			t.Errorf("a crossing failure comes to itself, not a host's: %v", err)
 		}
@@ -449,13 +447,13 @@ func TestACallbackThatCallsBackInKeepsEachFailureWithItsOwnCall(t *testing.T) {
 	lib, _ := libraryOf[tagA](t, 1)
 	outerFailure := errors.New("the outer implementation failed")
 	innerFailure := errors.New("the inner implementation failed")
-	_ = lib.Run(func(r *souther.Run[tagA]) error {
+	_ = lib.Run(func(r *Run[tagA]) error {
 		var inner error
-		outer := souther.Call(r, func() souther.Status {
-			return callback(r, func(in *souther.Run[tagA]) error {
+		outer := Call(r, func() Status {
+			return callback(r, func(in *Run[tagA]) error {
 				// The implementation calls the library, which calls another implementation back.
-				inner = souther.Call(in, func() souther.Status {
-					return callback(r, func(*souther.Run[tagA]) error { return innerFailure })
+				inner = Call(in, func() Status {
+					return callback(r, func(*Run[tagA]) error { return innerFailure })
 				})
 				return outerFailure
 			})
@@ -473,10 +471,10 @@ func TestACallbackThatCallsBackInKeepsEachFailureWithItsOwnCall(t *testing.T) {
 func TestTheFirstFailureOfACallIsTheOneItIsAnsweredWith(t *testing.T) {
 	lib, _ := libraryOf[tagA](t, 1)
 	first, second := errors.New("first"), errors.New("second")
-	_ = lib.Run(func(r *souther.Run[tagA]) error {
-		err := souther.Call(r, func() souther.Status {
-			callback(r, func(*souther.Run[tagA]) error { return first })
-			return callback(r, func(*souther.Run[tagA]) error { return second })
+	_ = lib.Run(func(r *Run[tagA]) error {
+		err := Call(r, func() Status {
+			callback(r, func(*Run[tagA]) error { return first })
+			return callback(r, func(*Run[tagA]) error { return second })
 		})
 		if !errors.Is(err, first) || errors.Is(err, second) {
 			t.Errorf("got %v", err)
@@ -488,9 +486,9 @@ func TestTheFirstFailureOfACallIsTheOneItIsAnsweredWith(t *testing.T) {
 func TestAKeptFailureIsWhatACallComesToWhateverStatusTheLibraryAnswered(t *testing.T) {
 	lib, _ := libraryOf[tagA](t, 1)
 	failed := errors.New("failed")
-	_ = lib.Run(func(r *souther.Run[tagA]) error {
-		err := souther.Call(r, func() souther.Status {
-			callback(r, func(*souther.Run[tagA]) error { return failed })
+	_ = lib.Run(func(r *Run[tagA]) error {
+		err := Call(r, func() Status {
+			callback(r, func(*Run[tagA]) error { return failed })
 			return divisionByZero
 		})
 		if !errors.Is(err, failed) {
@@ -502,8 +500,8 @@ func TestAKeptFailureIsWhatACallComesToWhateverStatusTheLibraryAnswered(t *testi
 
 func TestACallbackOutsideACallFails(t *testing.T) {
 	lib, _ := libraryOf[tagA](t, 1)
-	_ = lib.Run(func(r *souther.Run[tagA]) error {
-		if got := callback(r, func(*souther.Run[tagA]) error { return nil }); got != hostException {
+	_ = lib.Run(func(r *Run[tagA]) error {
+		if got := callback(r, func(*Run[tagA]) error { return nil }); got != hostException {
 			t.Errorf("no call is open, and the library was told %d", got)
 		}
 		return nil
@@ -513,10 +511,10 @@ func TestACallbackOutsideACallFails(t *testing.T) {
 func TestWhatARunKeptIsReleasedAfterTheArenaIsDroppedBack(t *testing.T) {
 	lib, a := libraryOf[tagA](t, 1)
 	var order []string
-	_ = lib.Run(func(r *souther.Run[tagA]) error {
+	_ = lib.Run(func(r *Run[tagA]) error {
 		a.make()
-		r.Keep(func() { order = append(order, "first kept") })
-		r.Keep(func() { order = append(order, "second kept") })
+		r.hold(func() { order = append(order, "first kept") })
+		r.hold(func() { order = append(order, "second kept") })
 		return nil
 	})
 	if len(order) != 2 || order[0] != "second kept" || order[1] != "first kept" {

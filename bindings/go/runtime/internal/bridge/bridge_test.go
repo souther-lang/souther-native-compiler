@@ -439,3 +439,13 @@ func allEmpty(v reflect.Value) bool {
 	}
 	return v.IsZero()
 }
+
+func TestASpecThatNamesNoOutcomeOfAReadingIsRefused(t *testing.T) {
+	spec := bridge.Spec
+	spec.Outcomes = nil
+	_, err := souther.Load[bridge.Tag](path("fake"), spec)
+	var unnamed *souther.UnnamedOutcome
+	if !errors.As(err, &unnamed) {
+		t.Fatalf("got %v", err)
+	}
+}

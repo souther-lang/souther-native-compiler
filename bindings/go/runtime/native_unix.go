@@ -29,29 +29,29 @@ var (
 	_ = [1]struct{}{}[int(unsafe.Sizeof(unsafe.Pointer(nil)))-int(C.sizeof_uintptr_t)]
 )
 
-// Native is a library file opened by path.
+// nativeFile is a library file opened by path.
 //
 // Every Souther library exports the same runtime functions, so a symbol is only looked up through
 // the handle of the file it is wanted from, which is opened RTLD_LOCAL and never linked: two
 // libraries in one program each keep their own arena.
-type Native struct{ handle unsafe.Pointer }
+type nativeFile struct{ handle unsafe.Pointer }
 
-// Open loads the library file at path.
-func Open(path string) (*Native, error) {
+// open loads the library file at path.
+func open(path string) (*nativeFile, error) {
 	name := C.CString(path)
 	defer C.free(unsafe.Pointer(name))
 	handle := C.dlopen(name, C.RTLD_NOW|C.RTLD_LOCAL)
 	if handle == nil {
 		return nil, fmt.Errorf("souther: cannot load %s: %s", path, C.GoString(C.dlerror()))
 	}
-	return &Native{handle}, nil
+	return &nativeFile{handle}, nil
 }
 
-// Close unloads the file. It is called only where nothing was taken from it.
-func (n *Native) Close() { C.dlclose(n.handle) }
+// close unloads the file. It is called only where nothing was taken from it.
+func (n *nativeFile) close() { C.dlclose(n.handle) }
 
-// Symbol is where the library file has name, and whether it has.
-func (n *Native) Symbol(name string) (unsafe.Pointer, bool) {
+// symbol is where the library file has name, and whether it has.
+func (n *nativeFile) symbol(name string) (unsafe.Pointer, bool) {
 	c := C.CString(name)
 	defer C.free(unsafe.Pointer(c))
 	at := C.dlsym(n.handle, c)
@@ -92,14 +92,20 @@ func (e *MissingSymbols) Error() string {
 // file is the library the binding was generated from: the caller holds that, as for any unsafe
 // load.
 func Load[B any](path string, spec Spec) (*Library[B], error) {
-	statuses, err := NewStatuses(spec.Statuses)
+	statuses, err := newStatuses(spec.Statuses)
 	if err != nil {
 		return nil, err
+	}
+	// What a reading came to is told by these two, and any other is that the text was not JSON.
+	for _, name := range []string{"VALUE", "ISSUES"} {
+		if _, ok := spec.Outcomes[name]; !ok {
+			return nil, &UnnamedOutcome{name}
+		}
 	}
 	if l := spec.Layout; l.Pointer == 0 || l.Capability == 0 || l.Hosted == 0 || l.HostedFunction == 0 {
 		return nil, errors.New("souther: the binding says nothing of the size of what a host lays out room for")
 	}
-	native, err := Open(path)
+	native, err := open(path)
 	if err != nil {
 		return nil, err
 	}
@@ -107,13 +113,13 @@ func Load[B any](path string, spec Spec) (*Library[B], error) {
 	loaded := false
 	defer func() {
 		if !loaded {
-			native.Close()
+			native.close()
 		}
 	}()
 	symbols := make(map[string]unsafe.Pointer, len(spec.Symbols)+2)
 	var missing []string
 	for _, name := range append([]string{"souther_mark", "souther_reset"}, spec.Symbols...) {
-		if at, ok := native.Symbol(name); ok {
+		if at, ok := native.symbol(name); ok {
 			symbols[name] = at
 		} else if !slices.Contains(missing, name) {
 			missing = append(missing, name)
@@ -123,11 +129,11 @@ func Load[B any](path string, spec Spec) (*Library[B], error) {
 		return nil, &MissingSymbols{path, missing}
 	}
 	mark, reset := symbols["souther_mark"], symbols["souther_reset"]
-	rt := NewRuntime(uintptr(mark),
+	rt := newRuntime(uintptr(mark),
 		func() int64 { return int64(C.call_mark(mark)) },
 		func(at int64) { C.call_reset(reset, C.int64_t(at)) },
 		statuses)
-	lib := NewLibrary[B](rt)
+	lib := newLibrary[B](rt)
 	lib.native, lib.symbols, lib.outcomes, lib.layout = native, symbols, spec.Outcomes, spec.Layout
 	// From here the library's functions are in use for as long as the program is: nothing says when
 	// the last value or function pointer taken from it is gone, so it is kept loaded.
@@ -135,11 +141,11 @@ func Load[B any](path string, spec Spec) (*Library[B], error) {
 	return lib, nil
 }
 
-// Room is memory of a host implementation for the library to keep, of size bytes, taken from C
+// room is memory of a host implementation for the library to keep, of size bytes, taken from C
 // memory and never from Go's heap, since the library holds it for as long as it may call the
 // implementation and cgo does not let C keep a Go pointer. It is zeroed, and freed once this run
 // ends. The size is the declarations' ([Layout]).
-func (r *Run[B]) Room(size uintptr) unsafe.Pointer {
+func (r *Run[B]) room(size uintptr) unsafe.Pointer {
 	r.checkReading()
 	at := C.calloc(1, C.size_t(size))
 	if at == nil {
@@ -149,10 +155,10 @@ func (r *Run[B]) Room(size uintptr) unsafe.Pointer {
 	return at
 }
 
-// Userdata is what a host implementation is handed back by the library: a cell of C memory
+// userdata is what a host implementation is handed back by the library: a cell of C memory
 // holding a [cgo.Handle] of v. The library keeps the cell and never a Go pointer. The cell is
 // freed and the handle deleted once this run ends, after which the library does not call it.
-func (r *Run[B]) Userdata(v any) unsafe.Pointer {
+func (r *Run[B]) userdata(v any) unsafe.Pointer {
 	r.checkReading()
 	cell := (*cgo.Handle)(C.calloc(1, C.sizeof_uintptr_t))
 	if cell == nil {
@@ -163,7 +169,7 @@ func (r *Run[B]) Userdata(v any) unsafe.Pointer {
 	return unsafe.Pointer(cell)
 }
 
-// UserdataValue is the v that [Run.Userdata] made userdata of.
+// UserdataValue is the v that [Run.userdata] made userdata of.
 func UserdataValue(userdata unsafe.Pointer) any {
 	return (*(*cgo.Handle)(userdata)).Value()
 }

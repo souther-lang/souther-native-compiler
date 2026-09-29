@@ -13,19 +13,16 @@ type Runtime struct {
 	identity uintptr
 	mark     func() int64
 	reset    func(int64)
-	statuses Statuses
+	statuses statusTable
 }
 
-// NewRuntime is the runtime of a library whose souther_mark is at identity.
+// newRuntime is the runtime of a library whose souther_mark is at identity.
 //
 // mark and reset are that library's souther_mark and souther_reset, and stay callable for as long
 // as the runtime is used. Two runtimes with one identity are two handles on one arena.
-func NewRuntime(identity uintptr, mark func() int64, reset func(int64), statuses Statuses) *Runtime {
+func newRuntime(identity uintptr, mark func() int64, reset func(int64), statuses statusTable) *Runtime {
 	return &Runtime{identity, mark, reset, statuses}
 }
-
-// Statuses is what each status the library answers is.
-func (r *Runtime) Statuses() Statuses { return r.statuses }
 
 // Identity is the address of the library's souther_mark.
 func (r *Runtime) Identity() uintptr { return r.identity }
@@ -33,7 +30,7 @@ func (r *Runtime) Identity() uintptr { return r.identity }
 // Library is a loaded library, of the binding B was made for.
 type Library[B any] struct {
 	rt       *Runtime
-	native   *Native
+	native   *nativeFile
 	symbols  map[string]unsafe.Pointer
 	outcomes map[string]int32
 	layout   Layout
@@ -56,8 +53,8 @@ type Layout struct {
 	HostedFunction uintptr
 }
 
-// NewLibrary is the library whose runtime is rt.
-func NewLibrary[B any](rt *Runtime) *Library[B] { return &Library[B]{rt: rt} }
+// newLibrary is the library whose runtime is rt.
+func newLibrary[B any](rt *Runtime) *Library[B] { return &Library[B]{rt: rt} }
 
 // Runtime is the runtime the library was built with.
 func (l *Library[B]) Runtime() *Runtime { return l.rt }
@@ -183,14 +180,6 @@ func within[B any](run *Run[B], f func(*Run[B]) error) error {
 		run.end()
 	}()
 	return f(run)
-}
-
-// Keep has release called once this run has ended and the arena has been dropped back, and
-// nothing in it reads what is released. It is what holds a host implementation's room and handle
-// for as long as the library may call it.
-func (r *Run[B]) Keep(release func()) {
-	r.checkReading()
-	r.hold(release)
 }
 
 // Library is the library this is a run of.

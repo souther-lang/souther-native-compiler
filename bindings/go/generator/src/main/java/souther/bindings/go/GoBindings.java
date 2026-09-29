@@ -854,7 +854,7 @@ public final class GoBindings {
         body.line("var " + reading + " " + unsafe + ".Pointer");
         body.line(failed + " := " + souther + ".Called(r, func() " + souther + ".Status {");
         body.line("\treturn " + souther + ".Status(" + at.shim(decode) + "(" + fn + ", " + souther
-                + ".Bytes(json), C.int64_t(len(json)), &" + reading + "))");
+                + ".Addr(json), C.int64_t(len(json)), &" + reading + "))");
         body.line("})");
         body.open("if " + failed + " != nil").line("return " + it.name() + "{}, " + failed).close();
         body.line(value + ", " + err + " := " + souther + ".Reading(r, " + reading + ")").checked();
@@ -1272,6 +1272,7 @@ public final class GoBindings {
         List<String> handedWords = new ArrayList<>();
         List<String> rooms = new ArrayList<>();
         List<String> forwarded = new ArrayList<>();
+        String userdata = null;
         for (Parameter parameter : implementation.takes()) {
             Word word = parameter.word();
             String scalar = CTypes.scalar(word);
@@ -1283,6 +1284,7 @@ public final class GoBindings {
             if (word == Word.USERDATA && parameter.mode() == Parameter.Mode.GIVEN
                     && goParameters.isEmpty()) {
                 name = scope.fixed("userdata");
+                userdata = name;
                 exportedType = goType = unsafe + ".Pointer";
                 forward = name;
             } else if (parameter.mode() == Parameter.Mode.GIVEN) {
@@ -1334,7 +1336,7 @@ public final class GoBindings {
         String err = scope.fixed("err");
         String answer = scope.fixed("answer");
         String held = scope.fixed("hosted");
-        String userdata = goParameters.getFirst().split(" ")[0];
+        Objects.requireNonNull(userdata, "what the library hands an implementation first is its userdata");
         Body body = new Body(imports, at::shim, scope, run, "return " + souther + ".Crossing(" + err + ")", 2);
         int word = 0;
         List<String> arguments = new ArrayList<>(List.of(run));

@@ -8,14 +8,22 @@ import (
 // Status is what a function of the library answers: whether it answered, and why not.
 type Status = uint32
 
-// Statuses is what each status a library answers is, by the names its manifest gives them.
-type Statuses struct {
+// statusTable is what each status a library answers is, by the names its manifest gives them.
+type statusTable struct {
 	answered          Status
 	unbound           Status
 	protocolViolation Status
 	hostException     Status
 	named             map[string]Status
 	names             map[Status]string
+}
+
+// UnnamedOutcome is what a reading comes to that a host has to tell apart and a manifest does not
+// name.
+type UnnamedOutcome struct{ Name string }
+
+func (e *UnnamedOutcome) Error() string {
+	return fmt.Sprintf("the library numbers no outcome %s of a reading", e.Name)
 }
 
 // UnnamedStatus is a status a host has to tell apart that a manifest does not name.
@@ -25,10 +33,10 @@ func (e *UnnamedStatus) Error() string {
 	return fmt.Sprintf("the library numbers no status %s", e.Name)
 }
 
-// NewStatuses reads the statuses a manifest names.
+// newStatuses reads the statuses a manifest names.
 //
 // It returns an [*UnnamedStatus] where one a host has to tell apart is not among them.
-func NewStatuses(named map[string]Status) (Statuses, error) {
+func newStatuses(named map[string]Status) (statusTable, error) {
 	of := func(name string) (Status, error) {
 		status, ok := named[name]
 		if !ok {
@@ -36,7 +44,7 @@ func NewStatuses(named map[string]Status) (Statuses, error) {
 		}
 		return status, nil
 	}
-	s := Statuses{named: make(map[string]Status, len(named)), names: make(map[Status]string, len(named))}
+	s := statusTable{named: make(map[string]Status, len(named)), names: make(map[Status]string, len(named))}
 	for name, status := range named {
 		s.named[name] = status
 		s.names[status] = name
@@ -52,20 +60,14 @@ func NewStatuses(named map[string]Status) (Statuses, error) {
 		{"HOST_EXCEPTION", &s.hostException},
 	} {
 		if *one.into, err = of(one.name); err != nil {
-			return Statuses{}, err
+			return statusTable{}, err
 		}
 	}
 	return s, nil
 }
 
-// Answered is the status a function answers where it answered.
-func (s Statuses) Answered() Status { return s.answered }
-
-// HostException is what a host implementation that failed answers the library.
-func (s Statuses) HostException() Status { return s.hostException }
-
-// Named is the status a manifest gives a name, and whether it does.
-func (s Statuses) Named(name string) (Status, bool) {
+// status is the status a manifest gives a name, and whether it does.
+func (s statusTable) status(name string) (Status, bool) {
 	status, ok := s.named[name]
 	return status, ok
 }
@@ -127,7 +129,7 @@ type caught struct {
 
 // answered is what a call that answered status comes to, where a host implementation it called
 // back left caught: a panic raised again, and a failure answered, whatever the status.
-func (s Statuses) outcome(status Status, c *caught) error {
+func (s statusTable) outcome(status Status, c *caught) error {
 	if c != nil {
 		if c.panicked {
 			panic(c.payload)
