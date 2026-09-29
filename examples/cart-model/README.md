@@ -1,12 +1,12 @@
 # cart-model
 
 The model every host's cart example runs: `cart.sou`, the module `com.example.cart.domain`.
-`examples/php-cart` and `examples/rust-cart` each build it into a library and a binding of their own
-language, and nothing of it is written again in either.
+`examples/php-cart`, `examples/rust-cart` and `examples/go-cart` each build it into a library and a
+binding of their own language, and nothing of it is written again in any of them.
 
 It is the `cart.sou` of the Java example,
 [`boundaries-not-layers/examples/raoh-souther`](https://github.com/kawasima/boundaries-not-layers/tree/main/examples/raoh-souther),
-with two changes.
+with three changes.
 
 The discount is `sub * 10 / 100` there. Since `/` answers the exact quotient, a `Rational`, which
 this backend has no representation of, it is said as `Int.truncatingDivide(sub * 10, 100)`,
@@ -18,6 +18,12 @@ points long, and a corporate number is a `CorporateNumber` of thirteen digits. T
 checks these with raoh before the model's decoder reads the orderer; here the model's decoder
 checks them itself, so no host says them again. What the model still leaves to a boundary is what
 it says it does: an email's shape, and that an id is a UUID.
+
+How long a quotation holds is stated here too. The Java example's `issueQuote` takes the date a
+quotation is valid until, and each host worked out thirty days from today on its own. Here it takes
+`today: Date` and the model says `validUntil = Date.addDays(30, today)`: what day it is is the
+host's to say, and the thirty days are the model's. `validUntil` is a `Date`, written as the same
+text it was as a `String`.
 
 What the model states is whether a value holds, never how it is written: an invariant decides and
 does not rewrite. So the canonical form of a client's text stays each host's boundary, as it is the

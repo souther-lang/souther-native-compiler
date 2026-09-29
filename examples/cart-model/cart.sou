@@ -42,7 +42,7 @@ data Cart = { id: CartId, currentQuantity: TotalQuantity }
 data OrderLine = { productId: ProductId, quantity: Quantity, unitPrice: Money }
 data Charge = { subtotal: Money, discount: Money, total: Money }
 data Order = { id: OrderId, userId: UserId, orderer: Orderer, lines: List<OrderLine>, charge: Charge }
-data Quotation = { id: QuoteId, userId: UserId, orderer: Orderer, lines: List<OrderLine>, charge: Charge, validUntil: String }
+data Quotation = { id: QuoteId, userId: UserId, orderer: Orderer, lines: List<OrderLine>, charge: Charge, validUntil: Date }
 
 // カートに入れようとしている明細。上限を超えないことは、この型の成立条件。
 data PendingItem = { cart: Cart, item: CartItem }
@@ -161,34 +161,35 @@ example placeOrder
             -> OrderPlaced { order = Order { id = OrderId("o"), userId = UserId("u-small"), orderer = Corporation { email = Email("sales@example.com"), companyName = CompanyName("Example Corp"), corporateNumber = CorporateNumber("1234567890123") }, lines = [ OrderLine { productId = ProductId("p-1"), quantity = Quantity(1), unitPrice = Money(1000) } ], charge = Charge { subtotal = Money(1000), discount = Money(0), total = Money(1000) } } }
 
 // 見積は法人限定。それを実行時の判定ではなく、注文者の型で表す。
-behavior issueQuote : (quoteId: QuoteId, userId: UserId, orderer: Corporation, validUntil: String) -> Quotation | EmptyCart | SaleEnded | ProductNotFound
+// 見積の有効期限は発行日から30日。今日が何日かはホストが渡し、期限の決め方はモデルが述べる。
+behavior issueQuote : (quoteId: QuoteId, userId: UserId, orderer: Corporation, today: Date) -> Quotation | EmptyCart | SaleEnded | ProductNotFound
     depends on priceCart
-let issueQuote (quoteId, userId, orderer, validUntil, priceCart) =
+let issueQuote (quoteId, userId, orderer, today, priceCart) =
     match priceCart(userId) with
         | SaleEnded -> SaleEnded
         | ProductNotFound -> ProductNotFound
         | PricedCart { lines } -> {
             guard length(lines) >= 1 else EmptyCart
-            Quotation { id = quoteId, userId = userId, orderer = orderer, lines = lines, charge = chargeOf(lines), validUntil = validUntil }
+            Quotation { id = quoteId, userId = userId, orderer = orderer, lines = lines, charge = chargeOf(lines), validUntil = Date.addDays(30, today) }
         }
 
 // priceCart の fake は placeOrder の example で定義済みのものを流用する。
 example issueQuote
     | "見積を発行できる" :
-        (QuoteId("q-1"), UserId("u-1"), Corporation { email = Email("sales@example.com"), companyName = CompanyName("Example Corp"), corporateNumber = CorporateNumber("1234567890123") }, "2026-08-31")
-            -> Quotation { id = QuoteId("q-1"), userId = UserId("u-1"), orderer = Corporation { email = Email("sales@example.com"), companyName = CompanyName("Example Corp"), corporateNumber = CorporateNumber("1234567890123") }, lines = [ OrderLine { productId = ProductId("p-1"), quantity = Quantity(3), unitPrice = Money(2000) } ], charge = Charge { subtotal = Money(6000), discount = Money(600), total = Money(5400) }, validUntil = "2026-08-31" }
+        (QuoteId("q-1"), UserId("u-1"), Corporation { email = Email("sales@example.com"), companyName = CompanyName("Example Corp"), corporateNumber = CorporateNumber("1234567890123") }, Date("2026-08-01"))
+            -> Quotation { id = QuoteId("q-1"), userId = UserId("u-1"), orderer = Corporation { email = Email("sales@example.com"), companyName = CompanyName("Example Corp"), corporateNumber = CorporateNumber("1234567890123") }, lines = [ OrderLine { productId = ProductId("p-1"), quantity = Quantity(3), unitPrice = Money(2000) } ], charge = Charge { subtotal = Money(6000), discount = Money(600), total = Money(5400) }, validUntil = Date("2026-08-31") }
     | "カートが空なら見積を発行できない" :
-        (QuoteId("q-2"), UserId("u-empty"), Corporation { email = Email("sales@example.com"), companyName = CompanyName("Example Corp"), corporateNumber = CorporateNumber("1234567890123") }, "2026-08-31") -> EmptyCart
+        (QuoteId("q-2"), UserId("u-empty"), Corporation { email = Email("sales@example.com"), companyName = CompanyName("Example Corp"), corporateNumber = CorporateNumber("1234567890123") }, Date("2026-08-01")) -> EmptyCart
     | "セール終了なら見積を発行できない" :
-        (QuoteId("q-3"), UserId("u-sale-ended"), Corporation { email = Email("sales@example.com"), companyName = CompanyName("Example Corp"), corporateNumber = CorporateNumber("1234567890123") }, "2026-08-31") -> SaleEnded
+        (QuoteId("q-3"), UserId("u-sale-ended"), Corporation { email = Email("sales@example.com"), companyName = CompanyName("Example Corp"), corporateNumber = CorporateNumber("1234567890123") }, Date("2026-08-01")) -> SaleEnded
     | "商品が見つからなければ見積を発行できない" :
-        (QuoteId("q-4"), UserId("u-404"), Corporation { email = Email("sales@example.com"), companyName = CompanyName("Example Corp"), corporateNumber = CorporateNumber("1234567890123") }, "2026-08-31") -> ProductNotFound
+        (QuoteId("q-4"), UserId("u-404"), Corporation { email = Email("sales@example.com"), companyName = CompanyName("Example Corp"), corporateNumber = CorporateNumber("1234567890123") }, Date("2026-08-01")) -> ProductNotFound
     | "メールアドレスは最短の3文字でも見積を発行できる" :
-        (QuoteId("q-5"), UserId("u-1"), Corporation { email = Email("a@b"), companyName = CompanyName("Example Corp"), corporateNumber = CorporateNumber("1234567890123") }, "2026-08-31")
-            -> Quotation { id = QuoteId("q-5"), userId = UserId("u-1"), orderer = Corporation { email = Email("a@b"), companyName = CompanyName("Example Corp"), corporateNumber = CorporateNumber("1234567890123") }, lines = [ OrderLine { productId = ProductId("p-1"), quantity = Quantity(3), unitPrice = Money(2000) } ], charge = Charge { subtotal = Money(6000), discount = Money(600), total = Money(5400) }, validUntil = "2026-08-31" }
+        (QuoteId("q-5"), UserId("u-1"), Corporation { email = Email("a@b"), companyName = CompanyName("Example Corp"), corporateNumber = CorporateNumber("1234567890123") }, Date("2026-08-01"))
+            -> Quotation { id = QuoteId("q-5"), userId = UserId("u-1"), orderer = Corporation { email = Email("a@b"), companyName = CompanyName("Example Corp"), corporateNumber = CorporateNumber("1234567890123") }, lines = [ OrderLine { productId = ProductId("p-1"), quantity = Quantity(3), unitPrice = Money(2000) } ], charge = Charge { subtotal = Money(6000), discount = Money(600), total = Money(5400) }, validUntil = Date("2026-08-31") }
     | "5000円未満なら割引はつかない" :
-        (QuoteId("q"), UserId("u-small"), Corporation { email = Email("sales@example.com"), companyName = CompanyName("Example Corp"), corporateNumber = CorporateNumber("1234567890123") }, "2026-08-31")
-            -> Quotation { id = QuoteId("q"), userId = UserId("u-small"), orderer = Corporation { email = Email("sales@example.com"), companyName = CompanyName("Example Corp"), corporateNumber = CorporateNumber("1234567890123") }, lines = [ OrderLine { productId = ProductId("p-1"), quantity = Quantity(1), unitPrice = Money(1000) } ], charge = Charge { subtotal = Money(1000), discount = Money(0), total = Money(1000) }, validUntil = "2026-08-31" }
+        (QuoteId("q"), UserId("u-small"), Corporation { email = Email("sales@example.com"), companyName = CompanyName("Example Corp"), corporateNumber = CorporateNumber("1234567890123") }, Date("2026-08-01"))
+            -> Quotation { id = QuoteId("q"), userId = UserId("u-small"), orderer = Corporation { email = Email("sales@example.com"), companyName = CompanyName("Example Corp"), corporateNumber = CorporateNumber("1234567890123") }, lines = [ OrderLine { productId = ProductId("p-1"), quantity = Quantity(1), unitPrice = Money(1000) } ], charge = Charge { subtotal = Money(1000), discount = Money(0), total = Money(1000) }, validUntil = Date("2026-08-31") }
 
 // 注入する behavior にも例を書いておくと、Java 実装が何を返すべきかがモデルに残る。
 // 実装はモデルの外にあるので、これらの行は pending（実装待ち）として数えられる。

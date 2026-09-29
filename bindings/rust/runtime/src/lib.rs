@@ -29,6 +29,7 @@
 
 mod bound;
 mod decimal;
+mod decoding;
 mod failure;
 mod keep;
 mod native;
@@ -37,6 +38,7 @@ mod temporal;
 
 pub use bound::{BindFn, Bound, Capability, Hosted, ImplementFn, Implemented, Made, Requirement};
 pub use decimal::{Decimal, NotADecimal};
+pub use decoding::{Answered, Decoding};
 pub use failure::{
     Abort, CallbackFailure, Failure, HostError, Status, Statuses, UnnamedStatus, crossing,
 };

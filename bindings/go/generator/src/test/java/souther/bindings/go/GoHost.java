@@ -87,6 +87,7 @@ final class GoHost {
         for (Binding binding : bindings) {
             formatted(binding.generated());
             askedTheRunFirst(binding.generated());
+            declaredSumTypes(binding.generated());
             vet.add(binding.importPath() + "/...");
         }
         vet.add("host");
@@ -124,12 +125,36 @@ final class GoHost {
         }
     }
 
+    /** A sealed interface: one unexported method and nothing else, which only this package can meet. */
+    private static final Pattern SEALED = Pattern.compile(
+            "(?m)^(?<doc>(?://[^\\n]*\\n)*)type (?<name>\\w+) interface \\{\\n\\t[a-z]\\w*\\(\\)\\n\\}\\n");
+
+    /**
+     * Refuses a sealed interface that is not declared a sum type to go-check-sumtype: every such
+     * interface is a union or a sum's cases, whose members the model closes, and a type switch over
+     * one that leaves a case out is found only where the check knows it is a sum.
+     */
+    private static void declaredSumTypes(Generated binding) throws IOException {
+        for (Path file : binding.files()) {
+            if (!file.toString().endsWith(".go")) {
+                continue;
+            }
+            Matcher sealed = SEALED.matcher(Files.readString(file, StandardCharsets.UTF_8));
+            while (sealed.find()) {
+                if (!sealed.group("doc").endsWith("//sumtype:decl\n")) {
+                    throw new AssertionError(file + " has a sealed interface " + sealed.group("name")
+                            + " that is not declared a sum type:\n" + sealed.group());
+                }
+            }
+        }
+    }
+
     /**
      * Refuses a generated file that gofmt would write differently: what the generator writes is
      * what a Go programmer would have, and a host that formats its dependencies is not left with a
      * diff.
      */
-    private static void formatted(Generated binding) throws IOException, InterruptedException {
+    static void formatted(Generated binding) throws IOException, InterruptedException {
         ProcessBuilder builder = new ProcessBuilder("gofmt", "-d", ".")
                 .directory(binding.root().toFile());
         Process process = builder.start();

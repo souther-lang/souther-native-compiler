@@ -80,7 +80,7 @@ class AGoHostHandsOverAndReadsBackATemporalTest {
             			switch it := made(cal.Parsed(r, ymd[0], ymd[1], ymd[2])).(type) {
             			case cal.DateOrMissingDate:
             				fmt.Printf("parsed: %s\\n", it.Value)
-            			case cal.DateOrMissingMissing:
+            			case cal.Missing:
             				fmt.Printf("parsed: missing\\n")
             			}
             		}

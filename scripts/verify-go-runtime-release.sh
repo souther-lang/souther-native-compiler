@@ -23,6 +23,16 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
 
+# What this clone is, which publishing reads and never changes: what it fetches goes to a
+# repository of its own. A shallow fetch into this one once marked the tag's commit shallow here and
+# cut the branch's history at it, so that a push of the next commit was refused.
+clone() {
+    git rev-parse --is-shallow-repository
+    cat "$(git rev-parse --git-common-dir)/shallow" 2>/dev/null || true
+    git for-each-ref --format='%(refname) %(objectname)' refs/heads refs/tags
+}
+before="$(clone)"
+
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
@@ -148,3 +158,5 @@ case "$said" in
     *"give it another version"*) echo "refused: a runtime that changed and kept its version" ;;
     *) fail "refused for another reason: $said" ;;
 esac
+
+[ "$(clone)" = "$before" ] || fail "publishing changed this clone: its shallow commits or its refs are not what they were"

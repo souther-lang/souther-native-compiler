@@ -20,6 +20,7 @@ use Model\Com\Example\Cart\Domain\Quotation;
 use Model\Com\Example\Cart\Domain\QuoteId;
 use Model\Com\Example\Cart\Domain\SaleEnded;
 use PDO;
+use Souther\Runtime\Date;
 
 /**
  * The HTTP boundary. A body is decoded into the arguments of a behavior, the behavior is called
@@ -86,9 +87,10 @@ final readonly class CartController
         if (!$orderer instanceof Corporation) {
             return Outcome::rollback(Response::unprocessable('quote_for_corporations_only'));
         }
-        $validUntil = (new \DateTimeImmutable('+30 days'))->format('Y-m-d');
+        // What day it is is the host's to say; how long a quotation holds is the model's.
+        $today = Date::of(new \DateTimeImmutable('today'));
 
-        $answer = ($this->issueQuote)(QuoteId::of(Uuid::v4())->getOrThrow(), $userId, $orderer, $validUntil);
+        $answer = ($this->issueQuote)(QuoteId::of(Uuid::v4())->getOrThrow(), $userId, $orderer, $today);
 
         return match ($answer::class) {
             Quotation::class => Outcome::commit(Response::ok($answer->encode())),

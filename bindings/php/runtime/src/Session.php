@@ -252,6 +252,57 @@ final class Session
             $ffi->souther_decimal_scale($decimal));
     }
 
+    /**
+     * @internal A `Date` as the library holds it, made in this run of the text that names it, which
+     * `Date` has already held to a day the library takes.
+     */
+    public function date(Date $date): CData
+    {
+        return $this->ffi()->souther_date_of_iso($this->string((string) $date));
+    }
+
+    /** @internal A `Date` the library answered, read out of the text it writes for one. */
+    public function dateOf(CData $date): Date
+    {
+        return Calendar::writtenDate($this->text($this->ffi()->souther_date_iso($date)));
+    }
+
+    /** @internal A `Time` as the library holds it, made in this run of the text that names it. */
+    public function time(Time $time): CData
+    {
+        return $this->ffi()->souther_time_of_iso($this->string((string) $time));
+    }
+
+    /** @internal A `Time` the library answered, read out of the text it writes for one. */
+    public function timeOf(CData $time): Time
+    {
+        return Calendar::writtenTime($this->text($this->ffi()->souther_time_iso($time)));
+    }
+
+    /** @internal A `DateTime` as the library holds it, made in this run of the text that names it. */
+    public function dateTime(DateTime $dateTime): CData
+    {
+        return $this->ffi()->souther_datetime_of_iso($this->string((string) $dateTime));
+    }
+
+    /** @internal A `DateTime` the library answered, read out of the text it writes for one. */
+    public function dateTimeOf(CData $dateTime): DateTime
+    {
+        return Calendar::writtenDateTime($this->text($this->ffi()->souther_datetime_iso($dateTime)));
+    }
+
+    /** @internal An `Instant` as the library holds it, made in this run of the text that names it. */
+    public function instant(Instant $instant): CData
+    {
+        return $this->ffi()->souther_instant_of_iso($this->string((string) $instant));
+    }
+
+    /** @internal An `Instant` the library answered, read out of the text it writes for one. */
+    public function instantOf(CData $instant): Instant
+    {
+        return Calendar::writtenInstant($this->text($this->ffi()->souther_instant_iso($instant)));
+    }
+
     /** @internal Bytes the library reads for the length of one call and does not keep. */
     public function bytes(string $bytes): CData
     {

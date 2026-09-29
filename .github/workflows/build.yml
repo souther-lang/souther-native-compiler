@@ -47,7 +47,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: bindings/go/runtime/go.mod
-          cache-dependency-path: bindings/go/runtime/go.sum
+          cache-dependency-path: |
+            bindings/go/runtime/go.sum
+            examples/go-cart/go.sum
 
       # The toolchain comes from rust-toolchain.toml, which rustup reads when cargo is first run
       # in the checkout. Nothing here names a version, so there is one place it is written.
@@ -99,6 +101,10 @@ jobs:
 
       # The same cart from Rust, over raoh and SQLite, and what rustc refuses a host of the model.
       - run: scripts/rust-cart-example.sh
+
+      # The same cart from Go, over raoh-go and SQLite, and what the Go runtime refuses where Rust's
+      # types do.
+      - run: scripts/go-cart-example.sh
 
   # Every souther issue this repository names is a premise that the pinned souther does not yet
   # answer it, and the code around the reference works around the gap. A premise the pin has

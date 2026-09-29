@@ -820,7 +820,7 @@ public final class RustBindings {
     private void handleType(RustModule at, Manifest.Module module, Declared it) {
         Declaration declaration = it.declaration();
         RustNames.Claimed methods = new RustNames.Claimed("the methods of `" + it.key() + "`");
-        for (String fixed : List.of("new", "decode", "encode")) {
+        for (String fixed : List.of("new", "decode", "decoder", "encode")) {
             methods.claim(fixed, "the generated `" + fixed + "`");
         }
         List<Manifest.Field> fields = declaration.fields();
@@ -914,6 +914,15 @@ public final class RustBindings {
                             })
                         })
                     }
+
+                    /// [`Self::decode`] as a raoh decoder of what a host decoded, reading in the run
+                    /// `decoding` lends: composed with a host's own decoders, its issues come back
+                    /// with theirs, at the path it is reached at.
+                    pub fn decoder<'a>(
+                        decoding: &'a crate::Decoding<'_, 'run>,
+                    ) -> impl crate::raoh::Decoder<crate::raoh::json::prelude::Value, Output = Self> + 'a {
+                        decoding.reading(Self::decode)
+                    }
                 """.formatted(it.key(), symbol(decode)));
     }
 
@@ -966,7 +975,7 @@ public final class RustBindings {
 
     private void sum(RustModule at, Manifest.Module module, Declared it, Declaration.Sum sum) {
         RustNames.Claimed methods = new RustNames.Claimed("the methods of `" + it.key() + "`");
-        for (String fixed : List.of("case", "decode", "encode")) {
+        for (String fixed : List.of("case", "decode", "decoder", "encode")) {
             methods.claim(fixed, "the generated `" + fixed + "`");
         }
         handleStruct(at, it, "A value of `" + it.key() + "`: one of its cases, which `case` says.",
@@ -1619,6 +1628,9 @@ public final class RustBindings {
 
                 /// A run as a closure is handed it, which derefs to the [`Run`].
                 pub type Scope<'run, 'outer> = souther_binding_runtime::Scope<'run, 'outer, Library>;
+
+                /// A run lent to the raoh decoders of one decode, which each type's `decoder` reads in.
+                pub type Decoding<'d, 'run> = souther_binding_runtime::Decoding<'d, 'run, Library>;
 
                 /// What the library numbers the statuses its functions answer.
                 const STATUSES: &[(&str, u32)] = &[%s];

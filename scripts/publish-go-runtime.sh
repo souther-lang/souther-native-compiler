@@ -76,8 +76,15 @@ fi
 standing="$(git ls-remote "$remote" "refs/tags/$tag" | cut -f1)"
 published=false
 if [ -n "$standing" ]; then
-    git fetch --quiet --depth=1 "$remote" "refs/tags/$tag"
-    if [ "$(git rev-parse "FETCH_HEAD:$directory")" != "$now" ]; then
+    # Read in a repository of its own and never in this one: a shallow fetch here would mark the
+    # tag's commit shallow in this clone, and cut its history there for everything that runs after.
+    looked="$(mktemp -d)"
+    git init --quiet --bare "$looked"
+    git -C "$looked" fetch --quiet --depth=1 "$(git remote get-url "$remote" 2>/dev/null || printf '%s' "$remote")" \
+        "refs/tags/$tag"
+    published_tree="$(git -C "$looked" rev-parse "FETCH_HEAD:$directory")"
+    rm -rf "$looked"
+    if [ "$published_tree" != "$now" ]; then
         refuse "the runtime is not what it was when $tag was published, and a published tag is not moved: give it another version in $directory/VERSION"
     fi
     published=true

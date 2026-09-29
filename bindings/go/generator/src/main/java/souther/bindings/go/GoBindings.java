@@ -55,13 +55,13 @@ public final class GoBindings {
      * The protocol of the runtime module this writes for: what its public surface is, as recorded
      * under {@code bindings/go/runtime/protocol}. A test holds it to the runtime's own.
      */
-    static final int RUNTIME_PROTOCOL = 1;
+    static final int RUNTIME_PROTOCOL = 2;
 
     /**
      * The version of Raoh the runtime module asks for, which a package that imports it asks for as
      * well; held to the runtime's own go.mod by a test.
      */
-    static final String RAOH_VERSION = "v0.0.0-20260929091357-2e815b39e491";
+    static final String RAOH_VERSION = "v0.0.0-20260929134234-af24f3ce21c6";
 
     /** The runtime module every import of it names, as the module says its own path. */
     private static final String RUNTIME_MODULE = RuntimeModule.THE.path();
@@ -555,7 +555,8 @@ public final class GoBindings {
                 case Case.Declared d -> {
                     Declared it = declared.get(d.module() + "." + d.name());
                     yield it == null ? null
-                            : new Crossing.OneOf.Member(it.name(), Crossing.Whole.handle(it), null, null);
+                            : new Crossing.OneOf.Member(it.name(), Crossing.Whole.handle(it), null, null,
+                            it.importPath().equals(at.importPath));
                 }
                 case Case.Primitive p -> {
                     Manifest.CaseCrossing crossing = manifest.crossing(p);
@@ -565,7 +566,7 @@ public final class GoBindings {
                         yield null;
                     }
                     yield new Crossing.OneOf.Member(p.name(), whole, crossing.make(),
-                            Objects.requireNonNull(crossing.read()));
+                            Objects.requireNonNull(crossing.read()), false);
                 }
                 case Case.Language l -> null;
             };
@@ -588,16 +589,23 @@ public final class GoBindings {
             case Case.Language l -> l.name();
         }).collect(java.util.stream.Collectors.joining(" | "));
         out.append("\n// ").append(name).append(" is a value of `").append(what)
-                .append("`: one of its members. A type switch tells them apart.\n")
+                .append("`: one of its members. A type switch tells them apart: a member declared in\n")
+                .append("// this package is a value of it as it is, and any other is held by a type of its own.\n")
+                .append(SUM_TYPE)
                 .append("type ").append(name).append(" interface {\n\t").append(marker).append("()\n}\n");
         for (Crossing.OneOf.Member member : members) {
+            if (member.itself()) {
+                String type = member.whole().type(at.imports);
+                out.append("\n// ").append(marker).append(" makes a value of ").append(type)
+                        .append(" one of `").append(what).append("`.\n").append(noBody(type, marker));
+                continue;
+            }
             String variant = at.names.claim(name + member.variant(), "the member `" + member.variant()
                     + "` of the union `" + what + "`");
             out.append("\n// ").append(variant).append(" is the member ").append(member.variant())
                     .append(" of `").append(what).append("`.\n").append("type ").append(variant)
                     .append(" struct {\n\tValue ").append(member.whole().type(at.imports))
-                    .append("\n}\n\nfunc (").append(variant).append(") ").append(marker)
-                    .append("() {}\n");
+                    .append("\n}\n\n").append(noBody(variant, marker));
         }
         at.items.append(out);
         return new UnionType(at.importPath, name, members);
@@ -665,11 +673,23 @@ public final class GoBindings {
      * One case of a sum as {@code Case} answers it: its variant, what it holds, and which case of
      * the model it is.
      *
-     * @param holds the Go type of the value of the case, or null where it holds none
-     * @param each  the case, or null for the one every case the model keeps is
+     * @param holds  the Go type of the value of the case, or null where it holds none
+     * @param each   the case, or null for the one every case the model keeps is
+     * @param itself whether the case's own type is a value of the sum's cases: a type declared in
+     *               the sum's package, which the method of the cases is written on. Any other case
+     *               is a type of the sum's, holding its value as {@code Value} where it has one.
      */
-    private record Arm(String variant, @Nullable String holds, @Nullable Case each) {
+    private record Arm(String variant, @Nullable String holds, @Nullable Case each, boolean itself) {
     }
+
+    /**
+     * What the doc comment of every interface a union or a sum's cases is ends with: the directive
+     * that declares it a sum type to go-check-sumtype (and golangci-lint's gochecksumtype), which
+     * fails a type switch over it that leaves a case out. Go does not check a type switch for the
+     * types it leaves out, and the model's cases are closed, so a host that runs the check learns of
+     * a case added to the model at every switch that does not answer it, when it builds.
+     */
+    static final String SUM_TYPE = "//\n//sumtype:decl\n";
 
     /** The variant every case of a sum the model keeps is, holding the value as the sum. */
     private static final String KEPT = "Kept";
@@ -686,21 +706,22 @@ public final class GoBindings {
         }
         List<Arm> arms = new ArrayList<>();
         Set<String> variants = new java.util.HashSet<>();
-        Arm kept = new Arm(KEPT, of.name(), null);
+        Arm kept = new Arm(KEPT, of.name(), null, false);
         for (Case each : sum.cases()) {
             Arm arm = switch (each) {
                 case Case.Declared d -> {
                     Declared it = declared.get(d.module() + "." + d.name());
                     yield it == null ? kept : new Arm(it.name(),
-                            at.imports.module(it.importPath()) + it.name(), each);
+                            at.imports.module(it.importPath()) + it.name(), each,
+                            it.importPath().equals(at.importPath));
                 }
                 case Case.Primitive p -> {
                     Word held = manifest.crossing(p).holds();
                     Crossing.Whole whole = held == null ? null : Crossing.Whole.primitive(p.name(), held);
-                    yield whole == null ? null : new Arm(p.name(), whole.type(at.imports), each);
+                    yield whole == null ? null : new Arm(p.name(), whole.type(at.imports), each, false);
                 }
                 case Case.Language l -> new Arm(GoNames.exported(l.name(), "case `" + l.name() + "`"),
-                        null, each);
+                        null, each, false);
             };
             if (arm == null || !variants.add(arm.variant()) && arm != kept) {
                 return null;
@@ -708,7 +729,7 @@ public final class GoBindings {
             arms.add(arm);
         }
         if (arms.contains(kept)
-                && arms.stream().anyMatch(it -> it != kept && it.variant().equals(KEPT))) {
+                && arms.stream().anyMatch(it -> it != kept && !it.itself() && it.variant().equals(KEPT))) {
             return null;
         }
         return arms;
@@ -736,17 +757,25 @@ public final class GoBindings {
         String marker = "is" + caseType;
         StringBuilder out = new StringBuilder();
         out.append("\n// ").append(caseType).append(" is the case a value of `").append(it.key())
-                .append("` is, holding the value of that case. A type switch tells them apart.\n")
+                .append("` is, as the value of that case. A type switch tells them apart: a case declared\n")
+                .append("// in this package is its own type, and any other is a type of its own.\n")
+                .append(SUM_TYPE)
                 .append("type ").append(caseType).append(" interface {\n\t").append(marker)
                 .append("()\n}\n");
         for (Arm arm : new LinkedHashSet<>(arms)) {
+            if (arm.itself()) {
+                out.append("\n// ").append(marker).append(" makes a value of ").append(arm.holds())
+                        .append(" a case of `").append(it.key()).append("`.\n")
+                        .append(noBody(Objects.requireNonNull(arm.holds()), marker));
+                continue;
+            }
             String variant = it.name() + arm.variant();
             at.names.claim(variant, "the case `" + arm.variant() + "` of `" + it.key() + "`");
             out.append("\n// ").append(variant).append(" is the case ").append(arm.variant())
                     .append(" of `").append(it.key()).append("`.\n").append("type ").append(variant)
                     .append(" struct");
             out.append(arm.holds() == null ? "{}\n" : " {\n\tValue " + arm.holds() + "\n}\n");
-            out.append("\nfunc (").append(variant).append(") ").append(marker).append("() {}\n");
+            out.append("\n").append(noBody(variant, marker));
         }
         Body body = new Body(at.imports, at::shim, new Names(List.of()), "run", "return", 1);
         body.line("value := v.Ref__.Read()");
@@ -758,7 +787,9 @@ public final class GoBindings {
             String variant = it.name() + arm.variant();
             body.line("case " + place + ":");
             String held = souther + ".NewRef(run, value)";
-            if (arm.holds() == null) {
+            if (arm.itself()) {
+                body.line("\treturn " + arm.holds() + "{Ref__: " + held + "}");
+            } else if (arm.holds() == null) {
                 body.line("\treturn " + variant + "{}");
             } else if (arm.each() instanceof Case.Primitive p) {
                 Manifest.CaseCrossing crossing = manifest.crossing(p);
@@ -861,6 +892,13 @@ public final class GoBindings {
                 .append("func ").append(name).append("(r *").append(at.imports.lib())
                 .append(".Run, json []byte) (").append(it.name()).append(", error) {\n").append(body)
                 .append("}\n");
+        String decoder = at.names.claim(it.name() + "Decoder", "the raoh decoder of `" + it.key() + "`");
+        at.items.append("\n// ").append(decoder).append(" is ").append(name)
+                .append(" as a raoh decoder of what a host decoded, reading in r:\n")
+                .append("// composed with a host's own decoders, its issues come back with theirs, at the path it is reached at.\n")
+                .append("func ").append(decoder).append("(r *").append(at.imports.lib()).append(".Run) ")
+                .append(at.imports.raoh()).append(".Decoder[any, ").append(it.name()).append("] {\n")
+                .append("\treturn ").append(souther).append(".Decoder(r, ").append(name).append(")\n}\n");
     }
 
     /** {@code Encode}: the value in its external form. */
@@ -1752,6 +1790,15 @@ public final class GoBindings {
                 + "\tHosted:         uintptr(C.sizeof_souther_hosted),\n"
                 + "\tHostedFunction: uintptr(C.sizeof_souther_hosted_function),\n}\n");
         file(List.of("internal", "binding", "abi.go"), go.toString());
+    }
+
+    /**
+     * The method {@code marker} of {@code receiver} with no body, as gofmt writes it: the braces on
+     * its line where the header up to them is shorter than 100 bytes, and on two lines otherwise.
+     */
+    static String noBody(String receiver, String marker) {
+        String header = "func (" + receiver + ") " + marker + "()";
+        return header + (header.getBytes(StandardCharsets.UTF_8).length < 100 ? " {}\n" : " {\n}\n");
     }
 
     /** The entries of a Go map literal, their values in one column, as gofmt writes them. */

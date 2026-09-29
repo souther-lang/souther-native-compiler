@@ -94,7 +94,7 @@ class AGoHostIsHandedAUnionTest {
             		if err != nil {
             			return nil, err
             		}
-            		return shop.OwedOrSettledSettled{Value: shop.SettledFromFree(free)}, nil
+            		return shop.SettledFromFree(free), nil
             	}
             	amount, err := shop.NewMoney(r, 1)
             	if err != nil {
@@ -104,7 +104,7 @@ class AGoHostIsHandedAUnionTest {
             	if err != nil {
             		return nil, err
             	}
-            	return shop.OwedOrSettledOwed{Value: owed}, nil
+            	return owed, nil
             }
 
             // halved chooses a quantity, and has nothing to say where there is none.
@@ -119,14 +119,14 @@ class AGoHostIsHandedAUnionTest {
 
             func said(charge shop.OwedOrSettled) string {
             	switch it := charge.(type) {
-            	case shop.OwedOrSettledOwed:
-            		return fmt.Sprintf("owed %d", it.Value.Amount().Value())
-            	case shop.OwedOrSettledSettled:
-            		switch settled := it.Value.Case().(type) {
-            		case shop.SettledFree:
+            	case shop.Owed:
+            		return fmt.Sprintf("owed %d", it.Amount().Value())
+            	case shop.Settled:
+            		switch settled := it.Case().(type) {
+            		case shop.Free:
             			return "free"
-            		case shop.SettledPaid:
-            			return fmt.Sprintf("paid %d", settled.Value.Amount().Value())
+            		case shop.Paid:
+            			return fmt.Sprintf("paid %d", settled.Amount().Value())
             		case shop.SettledKept:
             			return "a case the model keeps"
             		}
@@ -162,7 +162,7 @@ class AGoHostIsHandedAUnionTest {
             			switch it := made(shop.Rated(r, raoh.MustDecimal(amount))).(type) {
             			case shop.DecimalOrFreeDecimal:
             				fmt.Printf("rated: %se-%d\\n", it.Value.Unscaled(), it.Value.Scale())
-            			case shop.DecimalOrFreeFree:
+            			case shop.Free:
             				fmt.Printf("rated: free\\n")
             			}
             		}

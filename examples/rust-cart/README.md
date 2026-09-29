@@ -73,10 +73,10 @@ The rules are checked without a database. `fake loadCart` and the other fakes in
 for the injected behaviors, and the `example` rows run `addItemToCart`, `placeOrder` and
 `issueQuote` over them when `bin/build` compiles the model. Nothing here mocks a trait.
 
-The model is the same on every host. `examples/php-cart` and this one build one file,
+The model is the same on every host. `examples/php-cart`, `examples/go-cart` and this one build one file,
 `examples/cart-model/cart.sou`, and an order is written in the one encoding the model gives it, so
 a client does not know which host answered. What a field of a request may hold is in that file too:
-a corporate number of thirteen digits is `CorporateNumber`'s rule, and neither host says it again.
+a corporate number of thirteen digits is `CorporateNumber`'s rule, and no host says it again.
 
 What another host checks when it runs, rustc checks here. A value of the model lives in an arena
 that belongs to the run it was made in, and the run ends with the request. PHP throws `Expired` when
@@ -144,22 +144,26 @@ written so, as one step. Trimming a name is not a rule the model could state ins
 decides whether a value holds and never rewrites it, so a model asked to trim would keep
 `"  Taro  "` as it came.
 
-Where the boundary owns the value the model reads, an id, the two decoders are piped: the model
-reads what the boundary answered, and nothing where it refused. Where the model reads a value whole
+The model's decoders are the binding's: `Quantity::decoder(decoding)` reads a quantity as a raoh
+decoder, and `decoding.of(..)` makes a constructor into one, each reading in the run that a
+`Decoding` lends the decoders of one request (`Decoding::read`), and each reporting what the model
+finds wrong at the path it is reached at. Where the boundary owns the value the model reads, an id,
+the two decoders are piped: the model reads what the boundary answered, and nothing where it
+refused. Where the model reads a value whole
 and the boundary owns some of its members, an orderer's email and names, a `pipe` would stop at the
 first refusal, and an orderer whose email is refused would never reach the model, which alone can
 say that a corporation has no company name. So each member is decoded on its own, and the model
 reads the value whichever of them was refused (`http::boundary::members`):
 
 ```rust
-field("userId", model.after(uuid(), |run, id: &String| UserId::new(run, id))),
-field("orderer", model.members(
+field("userId", id(decoding, UserId::new)),
+field("orderer", boundary::members(
     vec![
         ("email", text(string().trim().lowercase().email())),
         ("name", text(string().trim())),
         ("companyName", text(string().trim())),
     ],
-    |run, it| Orderer::decode(run, &it.to_string()),
+    Orderer::decoder(decoding),
 )),
 ```
 

@@ -444,8 +444,8 @@ each as an address of a type of its own (`souther_date`, `souther_time`, `southe
 the other was meant has been handed something else; what a binding makes of it, text or a type of
 its own language's, is the binding's. The text a host hands over is one that names a value of the
 type, and one that does not ends the process as a `Decimal`'s integer that is no integer does: it is
-a boundary's decoder alone that reports outside text as an issue. The PHP binding holds none of the
-four yet. An optional crosses as a presence
+a boundary's decoder alone that reports outside text as an issue. The PHP binding holds each of the
+four as a class of its runtime, as the Go binding does. An optional crosses as a presence
 and then what it holds: a constructor takes a byte and the words of the value, which are ignored
 where the byte is nought, and a reader writes the byte, and the value only where there is one. Each
 optional says so of itself, so an optional of an optional is two presences, and absence at one depth
@@ -780,6 +780,13 @@ list read is copied into a PHP array when it is read, each element held as a fie
 A `Decimal` is a `Souther\Runtime\Decimal` both ways: its integer as a string of digits and its
 scale as an `int`, the two it is made of, since no type of PHP's own keeps a scale below nought. What
 PHP does with them — a `BcMath\Number`, text, a money library — is the application's.
+A `Date`, a `Time`, a `DateTime` and an `Instant` are `Souther\Runtime\Date` and the classes of the
+other three names, held as their numbers (a year, month and day; an hour, minute and second; the
+second from the epoch and the nanosecond), checked where they are made against what the type holds,
+and handed over as the text `java.time` writes for each, which is the text the library reads and
+writes back. None of them is a `\DateTimeInterface`, a moment in a zone, which only an `Instant` is
+and which does not reach every year one does; `Date::of` and `Instant::of` take one, and
+`Instant::toDateTime` gives one, to the microsecond.
 A module's classes build and read a list through that module's own functions and no other
 module's, every list a module's manifest entry says is held to what a list of its element is built
 and read through, and a module with a function handing a list across and nothing to build one
@@ -903,7 +910,13 @@ is opened (`AlreadyRunning`).
 
 A product, a newtype and a unit are each a `Copy` handle, whose native value is not public either, with a reader for each field, `new`
 answering a `Construction` (the value, or an `invariant_violation` Raoh issue), `decode` answering a
-`Reading` (the value, or Raoh's issues, or `invalid_format`) and `encode`. A sum is a handle too, with
+`Reading` (the value, or Raoh's issues, or `invalid_format`), `decoder` and `encode`. `decoder` is
+`decode` as a raoh decoder of a `serde_json::Value`, which a host composes with its own the way a JVM
+host composes a type's `decoder()`: it reads in the run a `Decoding` lends the decoders of one decode
+(`Decoding::read`), which also makes a constructor into a decoder (`decoding.of`), and what the
+library finds wrong is an issue at the path it is reached at. A raoh decoder answers issues or a value
+and nothing else, so a step that ends the run for a reason of its own answers no issue, and the
+failure is what `Decoding::read` comes to. A sum is a handle too, with
 `case` answering an enum of its cases, a case the model keeps being `Kept`, and `From` each of its
 cases and each narrower sum. An `Int`, a `Bool` and a `String` are Rust's own, a `Decimal` the
 runtime's integer and scale as PHP's is, equal, ordered and hashed by amount as Souther compares two
@@ -1000,20 +1013,31 @@ type and does not compile.
 A product, a newtype and a unit are each a struct holding the value and the run it was made in, with
 a method for each field, `New<Type>` answering the value or an `invariant_violation` Raoh issue as an
 error, `Decode<Type>` answering the value or Raoh's issues (`*raoh.Issues`) or `invalid_format`,
-and `Encode`. A sum has `Case`, answering a type of its own for each case (`OutcomeOwed{Value: ...}`),
-a case the model keeps being `Kept`, and a `<Sum>From<Type>` for each case and each narrower sum.
+`<Type>Decoder` and `Encode`. `<Type>Decoder(r)` is `Decode<Type>` as a raoh-go decoder of what a host
+decoded, reading in `r`, which a host composes with its own the way a JVM host composes a type's
+`decoder()`: the value it is handed is written back as the JSON it is, in the order of an object's
+members, and what the library finds wrong is an issue at the path it is reached at. A member that is
+not there is raoh's to report, as for any field. A sum has `Case`, answering the value as the type of its case (`Owed`), which is
+marked as one of the sum's cases, a case the model keeps being `<Sum>Kept`, and a `<Sum>From<Type>` for
+each case and each narrower sum. A case the language gives, or a primitive, is a type of the sum's
+own (`<Sum><Case>`), since Go lets a package write a method only on its own types.
 An `Int`, a `Bool` and a `String` are Go's own, a `Decimal` is Raoh's with the scale it was written
 with, and a `Date`, a `Time`, a `DateTime` and an `Instant` are the runtime's, held as their numbers and
 checked where they are made, since the library ends the process on text that names none. An optional
 is a `souther.Option`, at every depth, since a pointer cannot tell an optional of nothing from
 nothing. A tuple is a `souther.Tuple2` and its like up to eight members, a list, a set and a map are
 slices, a map's entries being tuples in the order the library has them, which the language says
-nothing of. A union no declaration names is an interface with a type for each member, named after
-them in the manifest's order (`FreeOrInt`), handed over as one of them and handed back where the
-library says its case. A union, like a function type, belongs to the module that says it: two modules
-that say one alike each have their own type, so that a package imports only what its module depends on
-(the modules do not depend on one another in a cycle, and a package imported for the sake of a shared
-type could make one). A function value is a type of its own (`FnIntToInt`), made by the library or by
+nothing of. A union no declaration names is an interface named after its members in the manifest's
+order (`FreeOrInt`), handed over as one of them and handed back where the library says its case. A
+member declared in the union's own package is a value of it as it is (`Free`); any other, a
+primitive or a type of another package, is held by a type of the union's (`FreeOrIntInt{Value: n}`).
+Every interface a union or a sum's cases is ends its doc comment with `//sumtype:decl`, so
+go-check-sumtype, or golangci-lint's gochecksumtype, fails a type switch over it that leaves a case
+out: Go does not, and the model's cases are closed. A test holds every such interface to it. A
+union, like a function type, belongs to the module that says it: two modules that say one alike each
+have their own type, so that a package imports only what its module depends on (the modules do not
+depend on one another in a cycle, and a package imported for the sake of a shared type could make
+one). A function value is a type of its own (`FnIntToInt`), made by the library or by
 `HostFnIntToInt` of a Go function, and called with `Call(r, ...)`, since a call makes values in the
 innermost run; a function of the host's handed over again and again in a run is one function value.
 
@@ -1053,6 +1077,13 @@ Go has no way to keep them from a caller, as Rust does, and a host does not use 
 The modules it writes need the Go the runtime module names, which Raoh's needs are part of. Raoh has no release, so the
 version the runtime and the generated `go.mod` require is a commit, which a test holds to one.
 Windows is not written yet (souther-native-compiler#96).
+
+`examples/go-cart` is the cart example as a Go application: `examples/cart-model` served by
+`net/http`, its HTTP boundary decoded by raoh-go with the model's constructors and decoders as steps
+of the same decoders, and its injected behaviors implemented over SQLite, each row written by a raoh
+encoder in the form the model reads. Besides the HTTP contract, its tests hold what the Go runtime
+refuses a host of the model where Rust's types do. `scripts/go-cart-example.sh` builds it and runs
+its tests in CI.
 
 ## Where a value lives
 

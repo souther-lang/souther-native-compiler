@@ -408,8 +408,30 @@ sealed interface Crossing {
         /**
          * One member: the type it is, how Go holds its value, and where it is a primitive, what
          * carries a value of it into the union and reads it back out.
+         *
+         * @param itself whether the member's own type is a value of the union: a type declared in
+         *               the union's package, which the union's method is written on. Any other
+         *               member, a primitive or a type of another package, which Go lets no package
+         *               write a method on but its own, is held by a type of the union's, as its
+         *               {@code Value}.
          */
-        record Member(String variant, Whole whole, @Nullable Function make, @Nullable Function read) {
+        record Member(String variant, Whole whole, @Nullable Function make, @Nullable Function read,
+                      boolean itself) {
+
+            /** The Go type a value of the union is, where it is this member. */
+            String type(Body.Imports imports, String union) {
+                return itself ? whole.type(imports) : union + variant;
+            }
+
+            /** The value of this member held by {@code held}, a value of the union of this member. */
+            String value(String held) {
+                return itself ? held : held + ".Value";
+            }
+
+            /** {@code value}, a value of this member, as a value of the union. */
+            String inUnion(String value, String union) {
+                return itself ? value : union + variant + "{Value: " + value + "}";
+            }
         }
 
         /** What the library says a value is: {@code which} counts the cases the union descends to. */
@@ -444,12 +466,12 @@ sealed interface Crossing {
             String it = body.temp("member");
             body.open("switch " + it + " := " + value + ".(type)");
             for (Member member : members) {
-                body.label("case " + type(body.imports) + member.variant() + ":");
+                body.label("case " + member.type(body.imports, type(body.imports)) + ":");
                 if (member.make() == null) {
-                    member.whole().give(body, it + ".Value", into);
+                    member.whole().give(body, member.value(it), into);
                 } else {
                     List<String> word = declare(body, "w", member.whole().words());
-                    member.whole().give(body, it + ".Value", word);
+                    member.whole().give(body, member.value(it), word);
                     body.line(into.getFirst() + " = " + body.call(member.make(), word));
                 }
             }
@@ -471,8 +493,8 @@ sealed interface Crossing {
                     held = body.temp("held");
                     body.line(held + " := " + body.call(member.read(), List.of(words.getFirst())));
                 }
-                body.line(union + " = " + type(body.imports) + member.variant() + "{Value: "
-                        + member.whole().of(body, List.of(held)) + "}");
+                body.line(union + " = " + member.inUnion(member.whole().of(body, List.of(held)),
+                        type(body.imports)));
             }
             body.label("default:")
                     .line("panic(\"the library answered a case the union does not have\")");
