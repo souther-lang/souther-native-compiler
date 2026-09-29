@@ -29,6 +29,8 @@
 #   commit   the runtime as of which commit (default HEAD)
 set -euo pipefail
 
+. "$(dirname "$0")/require-go.sh"
+
 check=false
 if [ "${1:-}" = "--check" ]; then
     check=true
@@ -85,7 +87,7 @@ fi
 fetches() {
     local asked
     asked="$(mktemp -d)"
-    printf 'module asked\n\ngo 1.27\n' > "$asked/go.mod"
+    printf 'module asked\n\ngo %s\n' "$go_version" > "$asked/go.mod"
     local fetched
     fetched="$(cd "$asked" && GOMODCACHE="$asked/mod" GOFLAGS=-modcacherw GOPROXY=direct GOSUMDB=off \
         go mod download -json "$module@v$version" 2>&1 || true)"

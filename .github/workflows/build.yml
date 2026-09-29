@@ -42,10 +42,11 @@ jobs:
           tools: composer
 
       # Go, which a Go binding is built with by cgo, and the Go runtime's tests are run with. The
-      # version is the one Raoh asks for, since a generated package imports it.
+      # version is the runtime module's own, from its go.mod: the one place it is said, and the one
+      # Raoh's need for a Go with generic methods is read from.
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.27'
+          go-version-file: bindings/go/runtime/go.mod
           cache-dependency-path: bindings/go/runtime/go.sum
 
       # The toolchain comes from rust-toolchain.toml, which rustup reads when cargo is first run

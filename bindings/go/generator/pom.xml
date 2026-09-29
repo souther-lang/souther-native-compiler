@@ -63,6 +63,12 @@
             <plugin>
                 <groupId>org.codehaus.mojo</groupId>
                 <artifactId>exec-maven-plugin</artifactId>
+                <configuration>
+                    <!-- The Go that is installed, and never another that Go would fetch on its own. -->
+                    <environmentVariables>
+                        <GOTOOLCHAIN>local</GOTOOLCHAIN>
+                    </environmentVariables>
+                </configuration>
                 <executions>
                     <!-- The Go runtime every Go binding runs on: a module of its own and not a part
                          of this one, since a host builds it and not this project. Held to gofmt, to

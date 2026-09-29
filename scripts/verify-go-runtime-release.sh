@@ -18,6 +18,8 @@
 # repository. What is published is HEAD, so what is not committed is not in it.
 set -euo pipefail
 
+. "$(dirname "$0")/require-go.sh"
+
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
 
@@ -63,7 +65,7 @@ mkdir -p "$work/host"
 cat > "$work/host/go.mod" <<GOMOD
 module host
 
-go 1.27
+go $go_version
 
 require $module v$version
 require $raoh

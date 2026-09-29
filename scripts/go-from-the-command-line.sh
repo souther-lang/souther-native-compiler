@@ -8,6 +8,8 @@
 # Needs Maven, Go and a C compiler: what `mvn test` needs.
 set -euo pipefail
 
+. "$(dirname "$0")/require-go.sh"
+
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
 
@@ -44,7 +46,7 @@ required="$(sed -nE "s#^[[:space:]]*$runtime (v[^[:space:]]+)\$#\1#p" "$app/go/g
 cat > "$app/host/go.mod" <<GOMOD
 module host
 
-go 1.27
+go $go_version
 
 require example.com/shop v0.0.0
 require $raoh

@@ -146,7 +146,7 @@ final class GoHost {
             throws IOException {
         Path host = into.resolve("host");
         Files.createDirectories(host);
-        StringBuilder work = new StringBuilder("go 1.27\n\nuse (\n");
+        StringBuilder work = new StringBuilder("go " + RuntimeModule.THE.go() + "\n\nuse (\n");
         StringBuilder require = new StringBuilder();
         StringBuilder replace = new StringBuilder();
         for (Binding binding : bindings) {
@@ -160,7 +160,7 @@ final class GoHost {
                 .append(RuntimeModule.THE.path()).append(" ").append(RuntimeModule.THE.requirement())
                 .append(" => ").append(RUNTIME).append("\n").append(replace);
         Files.writeString(into.resolve("go.work"), work.toString(), StandardCharsets.UTF_8);
-        Files.writeString(host.resolve("go.mod"), "module host\n\ngo 1.27\n\n" + require
+        Files.writeString(host.resolve("go.mod"), "module host\n\ngo " + RuntimeModule.THE.go() + "\n\n" + require
                 + "require github.com/raoh-project/raoh-go " + raohVersion() + "\n",
                 StandardCharsets.UTF_8);
         Files.writeString(host.resolve("main.go"), main, StandardCharsets.UTF_8);
@@ -190,6 +190,8 @@ final class GoHost {
             // A warning of the C compiler is a failure, whatever a developer's own settings add.
             builder.environment().put("CGO_CFLAGS", "-Wall -Wextra -Werror");
             builder.environment().remove("GOFLAGS");
+            // The Go that is installed, and never another that Go would fetch on its own.
+            builder.environment().put("GOTOOLCHAIN", "local");
             Process process = builder.start();
             String printed =
                     new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);

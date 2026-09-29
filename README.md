@@ -47,8 +47,9 @@ with no preprocessor does and run a generated PHP binding. Maven also runs Compo
 installed, for what the PHP runtime in `bindings/php/runtime` depends on, as its `composer.lock`
 fixes it. The Rust runtime in `bindings/rust/runtime` is a crate of its own, which Maven formats,
 lints and tests beside the Rust half, and the tests of a generated Rust binding build a host of it
-with Cargo, fetching what the runtime depends on the first time. Go 1.27 or later is needed too, with
-a C compiler, since a Go binding is built with cgo: Maven formats, vets and tests the Go runtime in
+with Cargo, fetching what the runtime depends on the first time. Go is needed too, the version the runtime
+module's `go.mod` names (the one place it is said; the workflows and the scripts read it from there),
+with a C compiler, since a Go binding is built with cgo: Maven formats, vets and tests the Go runtime in
 `bindings/go/runtime` under the race detector, and the tests of a generated Go binding build a host
 of it with the Go toolchain, fetching what the runtime depends on the first time.
 
@@ -1049,7 +1050,7 @@ function a name of the binding's own would have to be, where that name is anothe
 Names ending in `__` (`Ref__`, `Word__`) are the binding's own, which one package hands another;
 Go has no way to keep them from a caller, as Rust does, and a host does not use them.
 
-The package the module is imported as needs the Go that Raoh asks for. Raoh has no release, so the
+The modules it writes need the Go the runtime module names, which Raoh's needs are part of. Raoh has no release, so the
 version the runtime and the generated `go.mod` require is a commit, which a test holds to one.
 Windows is not written yet (souther-native-compiler#96).
 

@@ -18,10 +18,14 @@ import java.util.regex.Pattern;
  * published. That the two are not one number is not a matter of taste: a Go module at version 2 or
  * later has {@code /v2} in its path, which a compiler's major version has no reason to put there.
  *
+ * <p>The Go the module is written for is the {@code go} line of its {@code go.mod}, and the modules
+ * this writes say the same: what the runtime needs of Go is what a package that requires it needs.
+ *
  * @param path    the module's path, which every import of the runtime is written with
  * @param version the module's version, without the {@code v}
+ * @param go      the version of Go the module says it needs
  */
-record RuntimeModule(String path, String version) {
+record RuntimeModule(String path, String version, String go) {
 
     private static final String RESOURCES = "/souther/bindings/go/runtime/";
 
@@ -39,7 +43,11 @@ record RuntimeModule(String path, String version) {
         if (!path.find()) {
             throw new IllegalStateException("the runtime module's go.mod names no module");
         }
-        return new RuntimeModule(path.group(1), text("VERSION").strip());
+        Matcher go = Pattern.compile("(?m)^go\\s+(\\d[\\d.]*)\\s*$").matcher(mod);
+        if (!go.find()) {
+            throw new IllegalStateException("the runtime module's go.mod says no Go version");
+        }
+        return new RuntimeModule(path.group(1), text("VERSION").strip(), go.group(1));
     }
 
     private static String text(String name) {
