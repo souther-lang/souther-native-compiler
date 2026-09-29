@@ -109,6 +109,12 @@ jobs:
           name: maven-repository
           path: maven-repo
 
+      # The Go runtime is a module of its own in a directory of this repository, so its version is a tag
+      # of its own, bindings/go/runtime/v<version>, which the packages this release's generator writes
+      # require. It is the last thing before the release, once everything above has held, because a
+      # tag the Go proxy has fetched is not taken back; and the script asks whether it can be fetched.
+      - run: scripts/publish-go-runtime.sh "$VERSION" origin "$GITHUB_SHA"
+
       - run: >-
           gh release create "$GITHUB_REF_NAME" dist/*.zip "$CHECKSUMS" --verify-tag --generate-notes
           --title "$GITHUB_REF_NAME"

@@ -38,6 +38,8 @@ scripts/souther-native --library "$app/native" --go "$app/go" --package example.
 
 runtime="github.com/souther-lang/souther-native-compiler/bindings/go/runtime"
 raoh="$(sed -nE 's#^require (github.com/raoh-project/raoh-go) (.+)$#\1 \2#p' bindings/go/runtime/go.mod)"
+# The version the binding requires of the runtime, which a build from a clone leaves for a replace.
+required="$(sed -nE "s#^[[:space:]]*$runtime (v[^[:space:]]+)\$#\1#p" "$app/go/go.mod")"
 
 cat > "$app/host/go.mod" <<GOMOD
 module host
@@ -48,7 +50,7 @@ require example.com/shop v0.0.0
 require $raoh
 
 replace example.com/shop => ../go
-replace $runtime v0.1.0 => $root/bindings/go/runtime
+replace $runtime $required => $root/bindings/go/runtime
 GOMOD
 
 cat > "$app/host/main.go" <<'MAIN'

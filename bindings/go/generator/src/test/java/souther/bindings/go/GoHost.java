@@ -157,7 +157,7 @@ final class GoHost {
                     .append(relative).append("\n");
         }
         work.append("\t").append(RUNTIME).append("\n\t./host\n)\n\nreplace ")
-                .append(GoBindings.RUNTIME_MODULE_PATH).append(" ").append(GoBindings.RUNTIME_VERSION)
+                .append(GoBindings.RUNTIME_MODULE_PATH).append(" ").append(GoBindings.runtimeVersion())
                 .append(" => ").append(RUNTIME).append("\n").append(replace);
         Files.writeString(into.resolve("go.work"), work.toString(), StandardCharsets.UTF_8);
         Files.writeString(host.resolve("go.mod"), "module host\n\ngo 1.27\n\n" + require

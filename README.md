@@ -173,13 +173,19 @@ reaches it by patching it in from the clone:
 The library is loaded by path when the host runs, not linked. `scripts/rust-from-the-command-line.sh`
 does this in CI, as the PHP script does.
 
-A Go host requires the module `--go` wrote, and until the runtime module is published, reaches it by
-a `replace` to the clone. The package's import path has a `.` in its first part, as Go asks of a
-module another module requires:
+A Go host requires the module `--go` wrote, by path and with a `replace` to where it was written. The
+import path has a `.` in its first part, as Go asks of a module another module requires. The module
+requires the runtime at the release its generator is (`bindings/go/runtime/v<release>`, which a release
+publishes; see below), so a host built with a released compiler needs nothing more, and runs
+`go mod tidy` once, since the module carries no `go.sum`:
 
     require example.com/acme v0.0.0
     replace example.com/acme => ./build/go
-    replace github.com/souther-lang/souther-native-compiler/bindings/go/runtime v0.1.0 => <clone>/bindings/go/runtime
+
+A compiler built from a clone is no release, and its module requires what Go writes for a module that
+is put in place by a `replace`, which is what a clone does, since no such tag stands for it:
+
+    replace github.com/souther-lang/souther-native-compiler/bindings/go/runtime v0.0.0-00010101000000-000000000000 => <clone>/bindings/go/runtime
 
 The library is loaded by path when the host runs, not linked, and cgo is what builds the package, so
 a C compiler is needed. `scripts/go-from-the-command-line.sh` does this in CI.
@@ -197,6 +203,18 @@ It builds the generators' jars, and writes the SHA-256 of every bundle and every
 compiler's jar. It then builds the publication, as a Maven repository, and keeps it as the workflow's
 artifact `maven-repository`, with the compiler in it carrying those checksums, before it creates the
 GitHub release with the bundles.
+
+The Go runtime is a module of its own in a directory of this repository, so its version is a tag of its
+own, `bindings/go/runtime/v<version>`, with the module's path in it: the repository's `v<version>` is
+the version of no module in it. The release makes that tag (`scripts/publish-go-runtime.sh`) as the last
+thing before the GitHub release, since the Go module proxy keeps what it has fetched of a tag and does
+not take it back. A tag that already stands at another commit is refused, and the script asks whether
+the module can then be fetched by its path and its version from nothing local. What the packages the Go
+generator writes require of the runtime is the release the generator is, so a release is one generator
+and one runtime. `scripts/verify-go-runtime-release.sh` does the same to a repository that is only a
+directory, in every build: a host with no `replace` requires the module at a tag made that way, and is
+built. The tests that build a host do use a `replace`, since they run in a clone, so that is the one
+that holds the resolution.
 
 The checksums are a fact about builds that follow the commit, so the file is not committed, and a
 build of a release version that does not have every one of them fails

@@ -72,6 +72,11 @@ jobs:
       # on it with the runtime put in place from the clone calls the library.
       - run: scripts/go-from-the-command-line.sh
 
+      # What a release does for the Go runtime, without one: the module is resolved by its path and its
+      # version, from a tag made as the release makes it, with no `replace` (which the tests use, and
+      # nobody outside this clone has).
+      - run: scripts/verify-go-runtime-release.sh
+
       # The Rust runtime says it builds with the rust-version Raoh asks for, which is older than the
       # toolchain this repository pins, and a dependency moving past it is found here and not by a
       # host. The runtime's library only: its tests run on the pinned toolchain above.
