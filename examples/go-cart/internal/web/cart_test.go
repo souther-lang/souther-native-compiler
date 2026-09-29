@@ -422,7 +422,11 @@ func TestACorporationIsQuoted(t *testing.T) {
 	buyer := "11111111-1111-1111-1111-111111111116"
 	c.addItem(buyer, onSale, 8)
 
+	// The quotation holds for thirty days from the day it is issued, which is the model's rule; the
+	// day is the host's to say, and it says today, whichever side of midnight the request fell on.
+	before := time.Now()
 	a := c.checkout("/carts/quote", buyer, corporation())
+	after := time.Now()
 
 	expect(t, a, http.StatusOK, nil)
 	if id := a.field("id").(string); len(id) != 36 {
@@ -435,8 +439,10 @@ func TestACorporationIsQuoted(t *testing.T) {
 		normalized(t, object{"subtotal": 9600, "discount": 960, "total": 8640})) {
 		t.Errorf("the charge is %v", got)
 	}
-	if _, err := time.Parse(time.DateOnly, a.field("validUntil").(string)); err != nil {
-		t.Errorf("validUntil: %v", err)
+	validUntil := a.field("validUntil").(string)
+	if !slices.Contains([]string{before.AddDate(0, 0, 30).Format(time.DateOnly),
+		after.AddDate(0, 0, 30).Format(time.DateOnly)}, validUntil) {
+		t.Errorf("valid until %s, not thirty days from today", validUntil)
 	}
 }
 
@@ -503,15 +509,4 @@ func TestAProductGoneByCheckoutIs422(t *testing.T) {
 
 	expect(t, c.checkout("/carts/checkout", buyer, individual()), http.StatusUnprocessableEntity,
 		object{"error": "product_not_found"})
-}
-
-func TestTheFirstLineThatCannotBePricedSaysWhy(t *testing.T) {
-	// The lines are priced in the order of their products: the first ended its sale, the second is
-	// gone, and the answer is the first's.
-	buyer := "11111111-1111-1111-1111-11111111111f"
-	c := withdrawn(t, buyer, `UPDATE product SET on_sale = 0 WHERE product_id = '`+onSale+`';
-		DELETE FROM product WHERE product_id = '`+second+`'`)
-
-	expect(t, c.checkout("/carts/quote", buyer, corporation()), http.StatusUnprocessableEntity,
-		object{"error": "sale_ended"})
 }

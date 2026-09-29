@@ -3,7 +3,8 @@
 # building the application over the binding and running its tests, the HTTP contract and what the
 # runtime refuses a host of the model. The rows of cart.sou run in the build, so a model that
 # stopped holding them fails here too. The application and the binding are what gofmt writes,
-# go.mod and go.sum are what go mod tidy leaves, and go.mod names the Go the runtime module does.
+# go.mod and go.sum are what go mod tidy leaves, go.mod names the Go the runtime module does, and
+# no type switch over a union or a sum's cases leaves one out.
 #
 # Needs what go-from-the-command-line.sh needs. SQLite is modernc.org/sqlite, which is Go.
 set -euo pipefail
@@ -29,4 +30,10 @@ if [ -n "$unformatted" ]; then
 fi
 go mod tidy -diff
 go vet ./...
+# Every type switch over a union or a sum's cases names every case, a default notwithstanding: Go
+# does not check that, and the binding declares each such interface a sum type for this check.
+# Run at a fixed version rather than as a tool of the module, whose go line it would raise past the
+# runtime's. v0.4.0 does not see a sum type declared in another module, which the binding is.
+go run github.com/alecthomas/go-check-sumtype/cmd/go-check-sumtype@v0.5.0 \
+    -default-signifies-exhaustive=false ./...
 go test ./...

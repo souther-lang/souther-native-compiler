@@ -444,7 +444,11 @@ async fn a_corporation_is_quoted() {
     let user = "11111111-1111-1111-1111-111111111116";
     cart.add_item(user, ON_SALE, 8).await;
 
+    // The quotation holds for thirty days from the day it is issued, which is the model's rule; the
+    // day is the host's to say, and it says today, whichever side of midnight the request fell on.
+    let before = jiff::Zoned::now().date();
     let answer = cart.checkout("/carts/quote", user, corporation()).await;
+    let after = jiff::Zoned::now().date();
 
     assert_eq!(answer.status, StatusCode::OK);
     let quote = answer.body;
@@ -455,9 +459,12 @@ async fn a_corporation_is_quoted() {
         json!({ "subtotal": 9600, "discount": 960, "total": 8640 })
     );
     let valid_until = quote["validUntil"].as_str().unwrap();
+    let thirty = jiff::Span::new().days(30);
     assert!(
-        valid_until.parse::<jiff::civil::Date>().is_ok(),
-        "{valid_until}"
+        [before + thirty, after + thirty]
+            .iter()
+            .any(|day| day.to_string() == valid_until),
+        "valid until {valid_until}, not thirty days from today"
     );
 }
 
@@ -549,26 +556,5 @@ async fn a_product_gone_by_checkout_is_422() {
 
     assert_eq!(answer.status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(answer.body, json!({ "error": "product_not_found" }));
-    std::fs::remove_file(&database).unwrap();
-}
-
-#[tokio::test]
-async fn the_first_line_that_cannot_be_priced_says_why() {
-    // The lines are priced in the order of their products: the first ended its sale, the second is
-    // gone, and the answer is the first's.
-    let buyer = "11111111-1111-1111-1111-11111111111f";
-    let (cart, database) = withdrawn(
-        buyer,
-        &format!(
-            "UPDATE product SET on_sale = 0 WHERE product_id = '{ON_SALE}';
-             DELETE FROM product WHERE product_id = '{SECOND}';"
-        ),
-    )
-    .await;
-
-    let answer = cart.checkout("/carts/quote", buyer, corporation()).await;
-
-    assert_eq!(answer.status, StatusCode::UNPROCESSABLE_ENTITY);
-    assert_eq!(answer.body, json!({ "error": "sale_ended" }));
     std::fs::remove_file(&database).unwrap();
 }

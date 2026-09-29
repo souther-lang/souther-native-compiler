@@ -10,8 +10,9 @@ use super::{made, read};
 
 /// `priceCart` over SQLite. It reads every line of the cart with its product in one query, sees
 /// that each product is there and on sale, and answers the lines with their prices as a
-/// `PricedCart`. A product that is gone or no longer on sale ends it with the model's own case, the
-/// first such line in the order of the product ids deciding which.
+/// `PricedCart`. A product that is gone or no longer on sale ends it with the model's own case. Where
+/// several lines cannot be priced, which case answers is the first one read: the model states no
+/// order between them, and neither does the HTTP contract, so nothing may rely on one.
 ///
 /// Deciding that for each line stays here, in the implementation: the model has no traverse, and a
 /// fold cannot call another injected behavior. The products are joined to the lines rather than

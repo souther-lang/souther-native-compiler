@@ -16,7 +16,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/raoh-project/raoh-go"
-	"github.com/raoh-project/raoh-go/encode"
+	souther "github.com/souther-lang/souther-native-compiler/bindings/go/runtime"
 
 	"example.com/go-cart/internal/cart"
 	"example.com/go-cart/model"
@@ -106,21 +106,24 @@ func quote(b cart.Behaviors, r *model.Run, req *http.Request, _ *sql.Tx) (cart.O
 	if err != nil {
 		return cart.Outcome{}, err
 	}
-	// issueQuote takes a Corporation, so the orderer is narrowed here, over both of its cases.
-	var corporation domain.Corporation
-	switch orderer := args.orderer.Case().(type) {
-	case domain.Corporation:
-		corporation = orderer
-	case domain.Individual:
+	// issueQuote takes a Corporation, and the model says nothing else is quoted: an orderer of any
+	// other case, one the model has now or one it gains, is refused.
+	corporation, ok := args.orderer.Case().(domain.Corporation)
+	if !ok {
 		return refused("quote_for_corporations_only")
 	}
 	quoteID, err := domain.NewQuoteId(r, uuid.NewString())
 	if err != nil {
 		return cart.Outcome{}, fmt.Errorf("the model refused a quote id this host made: %w", err)
 	}
-	validUntil := encode.Date().Encode(time.Now().AddDate(0, 0, 30))
+	// What day it is is the host's to say; how long a quotation holds is the model's.
+	now := time.Now()
+	today, err := souther.NewDate(int32(now.Year()), uint8(now.Month()), uint8(now.Day()))
+	if err != nil {
+		return cart.Outcome{}, err
+	}
 
-	answer, err := b.IssueQuote.Call(r, quoteID, args.userID, corporation, validUntil)
+	answer, err := b.IssueQuote.Call(r, quoteID, args.userID, corporation, today)
 	if err != nil {
 		return cart.Outcome{}, err
 	}

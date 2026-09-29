@@ -93,7 +93,7 @@ func TestABehaviorKeptPastItsRequestIsNeverCalled(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if got := misuse(func() { _, _ = kept.Call(r, quoteID, domain.UserId{}, domain.Corporation{}, "") }); !errors.Is(got, souther.ErrExpired) {
+		if got := misuse(func() { _, _ = kept.Call(r, quoteID, domain.UserId{}, domain.Corporation{}, souther.Date{}) }); !errors.Is(got, souther.ErrExpired) {
 			t.Errorf("calling it came to %v", got)
 		}
 		return nil

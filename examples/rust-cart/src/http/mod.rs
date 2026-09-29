@@ -111,15 +111,24 @@ async fn quote(State(app): State<App>, body: String) -> Response {
             Construction::Value(quote_id) => quote_id,
             Construction::Rejected(issue) => return Ok(refused_what_the_host_made(&issue)),
         };
-        let valid_until = jiff::Zoned::now().date() + jiff::Span::new().days(30);
+        // What day it is is the host's to say; how long a quotation holds is the model's.
+        let today = jiff::Zoned::now().date();
+        let today = match model::Date::new(
+            today.year().into(),
+            today.month().unsigned_abs(),
+            today.day().unsigned_abs(),
+        ) {
+            Ok(today) => today,
+            Err(outside) => {
+                eprintln!("today is no day a Date holds: {outside}");
+                return Ok(Rollback(response::internal()));
+            }
+        };
         Ok(
-            match behaviors.issue_quote.call(
-                run,
-                quote_id,
-                user_id,
-                corporation,
-                &valid_until.to_string(),
-            )? {
+            match behaviors
+                .issue_quote
+                .call(run, quote_id, user_id, corporation, today)?
+            {
                 Quoted::Quotation(quotation) => Commit(response::ok(quotation.encode())),
                 Quoted::EmptyCart(_) => Rollback(response::unprocessable("empty_cart")),
                 Quoted::SaleEnded(_) => Rollback(response::unprocessable("sale_ended")),

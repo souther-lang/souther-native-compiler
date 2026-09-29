@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 
 	"github.com/google/uuid"
 
@@ -77,8 +78,9 @@ func (s SaveItem) Apply(r *model.Run, pending domain.PendingItem) (domain.ItemAd
 
 // PriceCart is priceCart. It reads every line of the cart with its product in one query, sees that
 // each product is there and on sale, and answers the lines with their prices as a PricedCart. A
-// product that is gone or no longer on sale ends it with the model's own case, the first such line
-// in the order of the product ids deciding which.
+// product that is gone or no longer on sale ends it with the model's own case. Where several lines
+// cannot be priced, which case answers is the first one read: the model states no order between
+// them, and neither does the HTTP contract, so nothing may rely on one.
 //
 // Deciding that for each line stays here, in the implementation: the model has no traverse, and a
 // fold cannot call another injected behavior. The products are joined to the lines rather than
@@ -156,6 +158,10 @@ func (s SaveOrder) Apply(r *model.Run, order domain.Order) (domain.OrderPlaced, 
 		kind, email = "corporation", orderer.Email().Value()
 		companyName = present(orderer.CompanyName().Value())
 		corporateNumber = present(orderer.CorporateNumber().Value())
+	default:
+		// A case the model gains has no columns here until they are written, and is not saved as
+		// a row of neither case. go-check-sumtype finds this switch first, when the binding is built.
+		return domain.OrderPlaced{}, fmt.Errorf("saveOrder has no row for an orderer that is a %T", orderer)
 	}
 	orderID, charge := order.Id().Value(), order.Charge()
 

@@ -11,9 +11,9 @@ into the model's values, and the behaviors the model asks a host for implemented
 
 The rules of the cart are in `examples/cart-model/cart.sou` and nowhere else: the capacity of 10000,
 which a `PendingItem` holds or is not built; the 10% discount at 5000 and above; that an empty cart
-is not ordered and a quotation is for a corporation. Its `example` rows state what each behavior
-answers, and they run when it is built, so a rule that stopped holding stops the build before Go is
-reached.
+is not ordered, and that a quotation is for a corporation and holds for thirty days. Its `example`
+rows state what each behavior answers, and they run when it is built, so a rule that stopped holding
+stops the build before Go is reached.
 
 The Go is three packages under `internal`. `web` reads a request into a behavior's arguments with
 raoh decoders, calls the behavior, and picks the response with a type switch over what it answered:
@@ -222,9 +222,17 @@ program and not a condition a handler answers. `internal/cart/misuse_test.go` ho
 | a behavior bound without one of the behaviors it depends on | does not compile | E0061 |
 | a route answering a response without saying whether what the request wrote is kept | does not compile | E0308 |
 
-A type switch over a behavior's answer is not checked for the cases it leaves out, as Rust's `match`
-is. Each case the model can answer is a type of the model, and a case added to the model reaches the
-route's `unanswered`, which is a 500, until the route says what the case is answered with.
+A type switch is not checked for the cases it leaves out, as Rust's `match` is, and a switch that
+forgets one goes on with what it did not set: `saveOrder` given an orderer of a case the model has
+gained would write a row of neither case, with no type and no email, and commit it. So the binding
+declares every interface a union or a sum's cases is a sum type (`//sumtype:decl`), and
+`scripts/go-cart-example.sh` runs [go-check-sumtype](https://github.com/alecthomas/go-check-sumtype)
+over the application with `-default-signifies-exhaustive=false`: a switch over one names every case,
+a `default` notwithstanding, and a case added to the model stops the build at every switch that does
+not answer it. The `default` each switch still has is what a program built without the check comes
+to at run time, a failure and a 500, never a row of the wrong shape. Where a route asks only whether
+a value is one case, as the quote route asks whether the orderer is a `Corporation`, it asks with a
+type assertion, which answers every case the model has or gains.
 
 ## Building and running it
 
@@ -232,6 +240,8 @@ What it needs is what the repository's own build needs: Maven, Go and a C compil
 cgo builds. SQLite is Go here, so nothing else is installed.
 
     bin/build
+    go run github.com/alecthomas/go-check-sumtype/cmd/go-check-sumtype@v0.5.0 \
+        -default-signifies-exhaustive=false ./...
     go test ./...
 
 `bin/build` runs the command line:
@@ -290,7 +300,10 @@ the cart has none.
 
 A sum the model declares, `Orderer`, has `Case()`, answering the value as the type of its case,
 `domain.Individual` or `domain.Corporation`. `issueQuote` takes a `Corporation`, so the quote route
-narrows the orderer with a type switch over both cases before it calls it.
+asks whether the orderer is one before it calls it, and refuses anything else.
+
+A `Date` is the runtime's `souther.Date`, held as its year, month and day. The quote route hands
+`issueQuote` today, and the model answers the quotation valid thirty days from it.
 
 A value of the model is a struct holding a handle and the run it was made in. Reading a field copies
 what it holds into Go's own memory (`string`, `int64`, a slice), and nothing the application keeps

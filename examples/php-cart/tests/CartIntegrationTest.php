@@ -315,14 +315,18 @@ final class CartIntegrationTest extends TestCase
         $user = '11111111-1111-1111-1111-111111111116';
         $this->addItem($user, self::ON_SALE, 8);
 
+        // The quotation holds for thirty days from the day it is issued, which is the model's rule;
+        // the day is the host's to say, and it says today, whichever side of midnight it fell on.
+        $before = (new \DateTimeImmutable('today +30 days'))->format('Y-m-d');
         $response = $this->checkout('/carts/quote', $user, self::corporation());
+        $after = (new \DateTimeImmutable('today +30 days'))->format('Y-m-d');
         $quote = self::body($response);
 
         self::assertSame(200, $response->status);
         self::assertMatchesRegularExpression('/^[0-9a-f-]{36}$/', $quote['id']);
         self::assertSame('Corporation', $quote['orderer']['type']);
         self::assertSame(['subtotal' => 9600, 'discount' => 960, 'total' => 8640], $quote['charge']);
-        self::assertMatchesRegularExpression('/^\d{4}-\d{2}-\d{2}$/', $quote['validUntil']);
+        self::assertContains($quote['validUntil'], [$before, $after]);
     }
 
     #[Test]
@@ -365,21 +369,6 @@ final class CartIntegrationTest extends TestCase
 
         self::assertSame(422, $response->status);
         self::assertSame(['error' => 'product_not_found'], self::body($response));
-    }
-
-    #[Test]
-    public function theFirstLineThatCannotBePricedSaysWhy(): void
-    {
-        // The lines are priced in the order of their products: the first ended its sale, the second
-        // is gone, and the answer is the first's.
-        $user = '11111111-1111-1111-1111-11111111111f';
-        $this->withdrawn($user, "UPDATE product SET on_sale = 0 WHERE product_id = '" . self::ON_SALE . "'");
-        $this->pdo->exec("DELETE FROM product WHERE product_id = '" . self::SECOND . "'");
-
-        $response = $this->checkout('/carts/quote', $user, self::corporation());
-
-        self::assertSame(422, $response->status);
-        self::assertSame(['error' => 'sale_ended'], self::body($response));
     }
 
     /**
