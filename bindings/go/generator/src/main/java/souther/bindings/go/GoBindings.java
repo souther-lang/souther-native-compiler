@@ -126,6 +126,10 @@ public final class GoBindings {
         final GoNames.Claimed names;
         final StringBuilder items = new StringBuilder();
         final Map<String, Function> shims = new LinkedHashMap<>();
+        /** What a host implements that the library calls back: each an exported function and what it needs declared. */
+        final List<Callback> callbacks = new ArrayList<>();
+        /** The C declarations and functions written beside the shims. */
+        final StringBuilder c = new StringBuilder();
 
         GoModule(Manifest.Module module, List<String> path) {
             this.module = module;
@@ -141,6 +145,16 @@ public final class GoBindings {
             symbols.add(function.name());
             return "C.call_" + function.name();
         }
+    }
+
+    /**
+     * A function of the library's a host implements: the exported function the library calls, which
+     * only hands what it is given to the function of the package that does the work.
+     *
+     * @param exported the name the library calls it by, which no other of the program has
+     * @param takes    what it is handed, one Go type for each C parameter
+     */
+    private record Callback(String exported, List<String> takes, String forwards) {
     }
 
     private void write() throws IOException {
@@ -162,6 +176,7 @@ public final class GoBindings {
                 declared.put(it.key(), it);
             }
         }
+        behaviorTypes();
         for (GoModule at : modules.values()) {
             module(at);
         }
@@ -393,6 +408,18 @@ public final class GoBindings {
         }
         behaviors(at);
         values(at);
+        for (Manifest.Injection injection : at.module.injections()) {
+            BehaviorType it = behaviorTypes.get(at.module.name() + "." + injection.name());
+            if (it != null) {
+                injected(at, injection, it);
+            }
+        }
+        for (Manifest.Behavior behavior : at.module.behaviors()) {
+            BehaviorType it = behaviorTypes.get(at.module.name() + "." + behavior.name());
+            if (it != null && !it.injected()) {
+                bound(at, behavior, it);
+            }
+        }
     }
 
     /** The struct a value of {@code it} is held as, with what reads it and makes it. */
@@ -585,7 +612,7 @@ public final class GoBindings {
         Crossing made = Crossing.Whole.handle(it);
         at.items.append(function(at, "// " + name + " is a value of `" + it.key() + "`, or an"
                 + " invariant_violation issue where what is handed over does not hold what the type"
-                + " states.", "func " + name, names, takes, made, construct.function(), false, true));
+                + " states.", "func " + name, names, takes, made, construct.function(), null, true));
     }
 
     /** {@code Decode<Type>}: a value of the type read out of its external form, or the issues found in it. */
@@ -682,7 +709,7 @@ public final class GoBindings {
                         .range(0, positional.types().size()).mapToObj(it -> "input" + it).toList();
             };
             at.items.append(function(at, "// " + name + " calls " + what + ".", "func " + name,
-                    names, takes, answers, call.function(), true, false));
+                    names, takes, answers, call.function(), "nil", false));
         }
     }
 
@@ -700,7 +727,7 @@ public final class GoBindings {
             String what = "value `" + at.module.name() + "." + value.name() + "`";
             String name = at.names.claim(GoNames.exported(value.name(), what), what);
             at.items.append(function(at, "// " + name + " reads " + what + ".", "func " + name,
-                    List.of(), List.of(), answers, read.function(), false, false));
+                    List.of(), List.of(), answers, read.function(), null, false));
         }
     }
 
@@ -720,13 +747,25 @@ public final class GoBindings {
      * A function declared as {@code declared}, calling {@code function} in the run it is handed and
      * answering what it wrote.
      *
-     * @param requirements whether the function is called with what a behavior requires, which is
-     *                     nothing here
+     * @param requirements what the function is called with first where it is a behavior's: a Go
+     *                     expression, or null for what is not one
      * @param constructed  whether a call that says the invariant was not held comes to an issue
      */
     private String function(GoModule at, String doc, String declared, List<String> names,
                             List<Crossing> takes, Crossing answers, Function function,
-                            boolean requirements, boolean constructed) {
+                            @Nullable String requirements, boolean constructed) {
+        return function(at, doc, declared, names, takes, answers, function, requirements,
+                constructed, List.of());
+    }
+
+    /**
+     * As above, where {@code before} is written first: what works out {@code requirements}, ending
+     * the function with {@code err} where it cannot.
+     */
+    private String function(GoModule at, String doc, String declared, List<String> names,
+                            List<Crossing> takes, Crossing answers, Function function,
+                            @Nullable String requirements, boolean constructed,
+                            List<String> before) {
         Body.Imports imports = at.imports;
         String souther = imports.souther();
         Body body = new Body(imports, at::shim, "r", "return " + answers.zero(imports) + ", err", 1);
@@ -734,10 +773,11 @@ public final class GoBindings {
         for (int at2 = 0; at2 < takes.size(); at2++) {
             parameters.add(names.get(at2) + " " + takes.get(at2).type(imports));
         }
+        before.forEach(body::line);
         body.line("fn := r.Library().Symbol(\"" + function.name() + "\")");
         List<String> handed = new ArrayList<>(List.of("fn"));
-        if (requirements) {
-            handed.add("nil");
+        if (requirements != null) {
+            handed.add(requirements);
         }
         for (int given = 0; given < takes.size(); given++) {
             List<String> words = Crossing.declare(body, "g", takes.get(given).words());
@@ -760,6 +800,354 @@ public final class GoBindings {
     }
 
     // ---------------------------------------------------------------------------------------------
+    // A behavior as an application holds one.
+
+    /**
+     * The types a behavior is written as: an interface a host implements and the type an
+     * implementation is made into, where the library asks a host to implement the behavior; and
+     * otherwise a type bound to what the behavior requires.
+     *
+     * @param type       the interface of an injected behavior, and the name a bound one is written
+     *                   under without its suffix
+     * @param capability what stands for the behavior where another requires it
+     */
+    private record BehaviorType(String module, String name, GoModule at, String type,
+                                String capability, boolean injected) {
+
+        String key() {
+            return module + "." + name;
+        }
+
+        /** What stands for the behavior, as the file being written names it. */
+        String requirement(Body.Imports imports) {
+            return imports.module(at.importPath) + capability;
+        }
+    }
+
+    /** The type of each behavior that has one, by {@code module.name}. */
+    private final Map<String, BehaviorType> behaviorTypes = new LinkedHashMap<>();
+
+    /**
+     * Which behaviors are written as types, of every module: each a host implements and can be
+     * handed across to, and each published behavior a host can call that requires something or is
+     * required, whose every requirement has a type too, since binding it hands one of each over.
+     *
+     * <p>The names are this generator's, the behavior's with a suffix, so a name another of the
+     * package already is leaves the behavior with no type rather than refusing the binding; what
+     * requires it has none either. What the model itself names is refused where Go will not take it.
+     */
+    private void behaviorTypes() {
+        Map<String, BehaviorType> candidates = new LinkedHashMap<>();
+        Map<String, List<Manifest.Required>> requires = new LinkedHashMap<>();
+        java.util.Set<String> required = new java.util.HashSet<>();
+        for (Manifest.Module module : manifest.modules()) {
+            for (Manifest.Construction construction : module.constructions()) {
+                construction.requires().forEach(it -> required.add(it.key()));
+            }
+        }
+        for (Manifest.Module module : manifest.modules()) {
+            GoModule at = modules.get(module.name());
+            for (Manifest.Injection injection : module.injections()) {
+                if (implementable(module, injection)) {
+                    String name = GoNames.exported(injection.name(), "behavior `" + module.name()
+                            + "." + injection.name() + "`");
+                    BehaviorType it = new BehaviorType(module.name(), injection.name(), at, name,
+                            name + "Implementation", true);
+                    candidates.put(it.key(), it);
+                    requires.put(it.key(), List.of());
+                }
+            }
+            for (Manifest.Behavior behavior : module.behaviors()) {
+                String key = module.name() + "." + behavior.name();
+                if (callable(module, behavior)
+                        && (!requiresOf(key).isEmpty() || required.contains(key))) {
+                    String name = GoNames.exported(behavior.name(), "behavior `" + key + "`");
+                    BehaviorType it = new BehaviorType(module.name(), behavior.name(), at, name,
+                            name + "Bound", false);
+                    candidates.put(it.key(), it);
+                    requires.put(it.key(), requiresOf(key));
+                }
+            }
+        }
+        // Each written name is claimed by one behavior only.
+        Map<String, Long> spelt = new LinkedHashMap<>();
+        for (BehaviorType it : candidates.values()) {
+            for (String name : generated(it)) {
+                spelt.merge(it.at().importPath + " " + name, 1L, Long::sum);
+            }
+        }
+        candidates.values().removeIf(it -> generated(it).stream().anyMatch(name ->
+                it.at().names.has(name) || spelt.get(it.at().importPath + " " + name) > 1));
+        boolean dropped = true;
+        while (dropped) {
+            dropped = candidates.values().removeIf(it -> requires.get(it.key()).stream()
+                    .anyMatch(each -> !candidates.containsKey(each.key())));
+        }
+        for (BehaviorType it : candidates.values()) {
+            for (String name : generated(it)) {
+                it.at().names.claim(name, "what is written for behavior `" + it.key() + "`");
+            }
+        }
+        behaviorTypes.putAll(candidates);
+    }
+
+    /** The names {@code it} takes in its package. */
+    private static List<String> generated(BehaviorType it) {
+        return it.injected()
+                ? List.of(it.type(), it.capability(), "Implement" + it.type(), "hosted" + it.type(),
+                        "dispatch" + it.type())
+                : List.of(it.capability(), "Bind" + it.type());
+    }
+
+    /** Whether a host can be handed what {@code injection} takes and hand back what it answers. */
+    private boolean implementable(Manifest.Module module, Manifest.Injection injection) {
+        return crossings(module, injection.parameters().stream().map(Manifest.NamedParameter::type)
+                .toList(), injection.signature().takes(), Manifest.Way.HANDED) != null
+                && crossing(module, injection.answers(), injection.signature().answers(),
+                Manifest.Way.GIVEN) != null;
+    }
+
+    /** Whether a host can call {@code behavior}, handing over what it takes and handed what it answers. */
+    private boolean callable(Manifest.Module module, Manifest.Behavior behavior) {
+        Manifest.Call call = behavior.call().available();
+        return call != null
+                && crossings(module, behavior.parameters().types(), call.signature().takes(),
+                Manifest.Way.GIVEN) != null
+                && answered(module, behavior.answers(), call.signature().answers()) != null;
+    }
+
+    /** The names a behavior's parameters are written under. */
+    private static List<String> parameterNames(Manifest.Parameters parameters, String what) {
+        GoNames.Claimed claimed = new GoNames.Claimed("the parameters of " + what);
+        return switch (parameters) {
+            case Manifest.Parameters.Named named -> named.parameters().stream()
+                    .map(it -> claimed.claim(GoNames.local(it.name(),
+                            "parameter `" + it.name() + "` of " + what),
+                            "parameter `" + it.name() + "`"))
+                    .toList();
+            case Manifest.Parameters.Positional positional -> java.util.stream.IntStream
+                    .range(0, positional.types().size()).mapToObj(it -> "input" + it).toList();
+        };
+    }
+
+    /** What a callback's parameter of {@code word} is in Go, as a value the library hands it. */
+    private static String handed(Word word, Body.Imports imports) {
+        return Crossing.local(word, imports);
+    }
+
+    /** What C calls a parameter of a callback: a number, or a plain pointer. */
+    private static String cType(Parameter parameter) {
+        String number = scalar(parameter.word());
+        return switch (parameter.mode()) {
+            case GIVEN -> number != null ? number : "void *";
+            case ROOM -> number != null ? number + " *" : "void **";
+            case SLICE -> throw new IllegalArgumentException("a callback is handed no slice");
+        };
+    }
+
+    /**
+     * The interface a host implements {@code injection} as, the type an implementation is made
+     * into that the library calls it through, and what the library calls: it makes Go values of
+     * what the library handed over, calls the implementation in the run of the call that reached
+     * it, and writes what it answered through the room the library handed over.
+     */
+    private void injected(GoModule at, Manifest.Injection injection, BehaviorType it) {
+        Manifest.Module module = at.module;
+        List<Crossing> takes = Objects.requireNonNull(crossings(module, injection.parameters()
+                .stream().map(Manifest.NamedParameter::type).toList(),
+                injection.signature().takes(), Manifest.Way.HANDED));
+        Crossing answers = Objects.requireNonNull(crossing(module, injection.answers(),
+                injection.signature().answers(), Manifest.Way.GIVEN));
+        String what = "behavior `" + it.key() + "`";
+        List<String> names = parameterNames(new Manifest.Parameters.Named(injection.parameters()),
+                what);
+        Body.Imports imports = at.imports;
+        String souther = imports.souther();
+        String lib = imports.lib();
+        String unsafe = imports.unsafe();
+        String trait = it.type();
+        String hosted = "hosted" + trait;
+        String dispatch = "dispatch" + trait;
+        String exported = "souther_host_" + (importPath + "_" + at.path.getLast() + "_" + injection.name())
+                .replaceAll("[^A-Za-z0-9_]", "_");
+        symbols.add(injection.implement());
+
+        List<String> parameters = new ArrayList<>(List.of("r *" + lib + ".Run"));
+        for (int place = 0; place < takes.size(); place++) {
+            parameters.add(names.get(place) + " " + takes.get(place).type(imports));
+        }
+        at.items.append("\n// ").append(trait).append(" is what implements `").append(it.key())
+                .append("`, which the library asks a host to implement. Made into a\n// ")
+                .append(it.capability()).append(" it is handed to what requires the behavior, and the"
+                        + " library calls Apply\n// wherever what was bound to it reaches the behavior.\n")
+                .append("type ").append(trait).append(" interface {\n")
+                .append("\t// Apply answers `").append(it.key()).append("` in r, the run of the call that reached\n")
+                .append("\t// it. An error returned here comes back out of that call, as a panic here does.\n")
+                .append("\tApply(").append(String.join(", ", parameters)).append(") (")
+                .append(answers.type(imports)).append(", error)\n}\n");
+        at.items.append("\n// ").append(it.capability()).append(" is an implementation of `")
+                .append(it.key()).append("`, made into a capability the library calls it through.\n")
+                .append("type ").append(it.capability()).append(" struct {\n")
+                .append("\t// Cap__ is what the binding hands to what requires the behavior.\n")
+                .append("\tCap__ ").append(lib).append(".Capability\n}\n");
+        at.items.append("\n// ").append(hosted).append(" is what the library hands back when it calls the"
+                + " implementation: the\n// implementation, and the run its capability was made in.\n")
+                .append("type ").append(hosted).append(" struct {\n\torigin *").append(lib)
+                .append(".Run\n\timpl   ").append(trait).append("\n}\n");
+        at.items.append("\n// Implement").append(trait).append(" makes a capability of impl as `")
+                .append(it.key()).append("`, held until r ends.\n")
+                .append("func Implement").append(trait).append("(r *").append(lib).append(".Run, impl ")
+                .append(trait).append(") ").append(it.capability()).append(" {\n")
+                .append("\tfn := r.Library().Symbol(\"").append(injection.implement()).append("\")\n")
+                .append("\treturn ").append(it.capability()).append("{Cap__: ").append(souther)
+                .append(".Implemented(r, &").append(hosted).append("{r, impl}, func(capability, hosted, userdata ")
+                .append(unsafe).append(".Pointer) {\n")
+                .append("\t\tC.implement_").append(injection.implement())
+                .append("(fn, capability, hosted, userdata)\n\t})}\n}\n");
+
+        // What the library calls: what it was handed first, what the behavior takes, and room for
+        // what it answers, as the manifest says the implementation's type is.
+        List<String> cParameters = new ArrayList<>();
+        List<String> goParameters = new ArrayList<>();
+        List<String> handedWords = new ArrayList<>();
+        List<String> rooms = new ArrayList<>();
+        List<String> forwarded = new ArrayList<>();
+        List<String> c = new ArrayList<>();
+        for (Parameter parameter : injection.implementation().takes()) {
+            String name;
+            String type;
+            if (parameter.word() == Word.USERDATA && parameter.mode() == Parameter.Mode.GIVEN
+                    && goParameters.isEmpty()) {
+                name = "userdata";
+                type = unsafe + ".Pointer";
+            } else if (parameter.mode() == Parameter.Mode.GIVEN) {
+                name = "handed" + handedWords.size();
+                handedWords.add(name);
+                type = handed(parameter.word(), imports);
+            } else {
+                name = "answer" + rooms.size();
+                rooms.add(name);
+                type = "*" + handed(parameter.word(), imports);
+            }
+            goParameters.add(name + " " + type);
+            forwarded.add(name);
+            cParameters.add(cType(parameter));
+        }
+        c.add("");
+        at.c.append("extern uint32_t ").append(exported).append("(")
+                .append(String.join(", ", cParameters)).append(");\n")
+                .append("static inline void implement_").append(injection.implement())
+                .append("(void *fn, void *a0, void *a1, void *a2) {\n")
+                .append("\t__typeof__(&").append(injection.implement()).append(") f = fn;\n")
+                .append("\tf((souther_capability *)a0, (souther_hosted *)a1, (")
+                .append(injection.implementation().type()).append(")").append(exported)
+                .append(", a2);\n}\n");
+
+        Body body = new Body(imports, at::shim, "run", "return " + souther + ".Crossing(err)", 2);
+        int word = 0;
+        List<String> arguments = new ArrayList<>(List.of("run"));
+        for (int place = 0; place < takes.size(); place++) {
+            int wide = takes.get(place).words().size();
+            body.line(names.get(place) + " := " + takes.get(place).of(body,
+                    handedWords.subList(word, word + wide)));
+            word += wide;
+            arguments.add(names.get(place));
+        }
+        body.line("answer, err := hosted.impl.Apply(" + String.join(", ", arguments) + ")");
+        body.open("if err != nil").line("return err").close();
+        List<String> given = Crossing.declare(body, "g", answers.words());
+        answers.give(body, "answer", given);
+        for (int place = 0; place < given.size(); place++) {
+            body.line("*" + rooms.get(place) + " = " + given.get(place));
+        }
+        body.line("return nil");
+        at.items.append("\n// ").append(dispatch).append(" makes Go values of what the library handed over and"
+                + " calls the implementation in the run of\n// the call that reached it.\n")
+                .append("func ").append(dispatch).append("(").append(String.join(", ", goParameters))
+                .append(") C.uint32_t {\n\thosted := ").append(souther)
+                .append(".UserdataValue(userdata).(*").append(hosted).append(")\n")
+                .append("\treturn C.uint32_t(").append(souther).append(".Host(hosted.origin, func(run *")
+                .append(lib).append(".Run) error {\n").append(body).append("\t}))\n}\n");
+        at.callbacks.add(new Callback(exported, goParameters, dispatch + "("
+                + String.join(", ", forwarded) + ")"));
+    }
+
+    /**
+     * The type an application binds {@code behavior} through and calls it on: a function binding it
+     * to what stands for each behavior it requires, and {@code Call}, calling it with the
+     * capabilities of what it was bound to, in the run it is handed.
+     */
+    private void bound(GoModule at, Manifest.Behavior behavior, BehaviorType it) {
+        Manifest.Module module = at.module;
+        Manifest.Call call = Objects.requireNonNull(behavior.call().available());
+        List<Crossing> takes = Objects.requireNonNull(crossings(module,
+                behavior.parameters().types(), call.signature().takes(), Manifest.Way.GIVEN));
+        Crossing answers = Objects.requireNonNull(answered(module, behavior.answers(),
+                call.signature().answers()));
+        String what = "behavior `" + it.key() + "`";
+        List<String> names = parameterNames(behavior.parameters(), what);
+        List<Manifest.Required> requires = requiresOf(it.key());
+        Manifest.Construction construction = null;
+        for (Manifest.Module each : manifest.modules()) {
+            for (Manifest.Construction c : each.constructions()) {
+                if ((each.name() + "." + c.name()).equals(it.key())) {
+                    construction = c;
+                }
+            }
+        }
+        Body.Imports imports = at.imports;
+        String lib = imports.lib();
+        String souther = imports.souther();
+        String unsafe = imports.unsafe();
+        // A requirement is named after the behavior it is where no other is of that name, and
+        // after its place otherwise.
+        Map<String, Long> counted = requires.stream().collect(java.util.stream.Collectors.groupingBy(
+                Manifest.Required::name, java.util.stream.Collectors.counting()));
+        GoNames.Claimed claimed = new GoNames.Claimed("the parameters of the binding of " + what);
+        claimed.claim("r", "the run it is made in");
+        List<String> requirementNames = new ArrayList<>();
+        List<String> parameters = new ArrayList<>(List.of("r *" + lib + ".Run"));
+        List<String> capabilities = new ArrayList<>();
+        for (int place = 0; place < requires.size(); place++) {
+            Manifest.Required each = requires.get(place);
+            String name = counted.get(each.name()) == 1 ? GoNames.local(each.name(), "requirement `"
+                    + each.name() + "`") : "dependency" + place;
+            if (name.endsWith("_") || claimed.has(name)) {
+                name = "dependency" + place;
+            }
+            claimed.claim(name, "the requirement `" + each.key() + "`");
+            requirementNames.add(name);
+            parameters.add(name + " " + behaviorTypes.get(each.key()).requirement(imports));
+            capabilities.add(name + ".Cap__");
+        }
+        String bindClosure = "nil";
+        StringBuilder bind = new StringBuilder();
+        if (construction != null && construction.bind() != null) {
+            bind.append("\tfn := r.Library().Symbol(\"").append(construction.bind().name()).append("\")\n");
+            bindClosure = "func(capability, requirements " + unsafe + ".Pointer) {\n\t\t"
+                    + at.shim(construction.bind()) + "(fn, capability, requirements)\n\t}";
+        }
+        at.items.append("\n// ").append(it.capability()).append(" is `").append(it.key())
+                .append("` as an application holds it: bound to what stands for each behavior it\n")
+                .append("// requires, which each call is made with.\n")
+                .append("type ").append(it.capability()).append(" struct {\n")
+                .append("\t// Cap__ is what the binding hands to what requires the behavior.\n")
+                .append("\tCap__ ").append(lib).append(".Capability\n}\n");
+        at.items.append("\n// Bind").append(it.type()).append(" is `").append(it.key())
+                .append("` bound to what stands for each behavior it requires, held until r ends.\n")
+                .append("func Bind").append(it.type()).append("(").append(String.join(", ", parameters))
+                .append(") ").append(it.capability()).append(" {\n").append(bind)
+                .append("\treturn ").append(it.capability()).append("{Cap__: ").append(souther)
+                .append(".Bound(r, []").append(lib).append(".Capability{").append(String.join(", ", capabilities))
+                .append("}, ").append(bindClosure).append(")}\n}\n");
+        List<String> before = List.of("requirements, err := b.Cap__.Requirements(r)",
+                "if err != nil {", "\treturn " + answers.zero(imports) + ", err", "}");
+        at.items.append(function(at, "// Call calls `" + it.key() + "` with what this was bound to.",
+                "func (b " + it.capability() + ") Call", names, takes, answers, call.function(),
+                "requirements", false, before));
+    }
+
+    // ---------------------------------------------------------------------------------------------
     // The files.
 
     private static String header() {
@@ -771,8 +1159,9 @@ public final class GoBindings {
         StringBuilder go = new StringBuilder(header());
         go.append("// Package ").append(pkg).append(" is module `").append(at.module.name())
                 .append("` of the model.\n").append("package ").append(pkg).append("\n\n");
-        if (!at.shims.isEmpty()) {
+        if (!at.shims.isEmpty() || at.c.length() > 0) {
             go.append("/*\n#include <stdint.h>\n#include \"souther.ffi.h\"\n\n");
+            go.append(at.c);
             at.shims.values().forEach(it -> go.append(shim(it)));
             go.append("*/\nimport \"C\"\n\n");
         }
@@ -784,7 +1173,24 @@ public final class GoBindings {
         List<String> file = new ArrayList<>(at.path);
         file.add("module.go");
         file(file, go.toString());
-        if (!at.shims.isEmpty()) {
+        if (!at.callbacks.isEmpty()) {
+            StringBuilder exports = new StringBuilder(header());
+            exports.append("package ").append(pkg).append("\n\n")
+                    .append("/*\n#include <stdint.h>\n*/\nimport \"C\"\n\n")
+                    .append("import \"unsafe\"\n\n")
+                    .append("// A file that exports a function has a preamble of declarations only, and the\n")
+                    .append("// function is only what the library calls: the work is done in module.go.\n");
+            for (Callback it : at.callbacks) {
+                exports.append("\n//export ").append(it.exported()).append("\nfunc ").append(it.exported())
+                        .append("(").append(String.join(", ", it.takes())).append(") C.uint32_t {\n")
+                        .append("\treturn ").append(it.forwards()).append("\n}\n");
+            }
+            exports.append("\nvar _ = unsafe.Pointer(nil)\n");
+            List<String> exported = new ArrayList<>(at.path);
+            exported.add("callbacks.go");
+            file(exported, exports.toString());
+        }
+        if (!at.shims.isEmpty() || at.c.length() > 0) {
             List<String> header = new ArrayList<>(at.path);
             header.add("souther.ffi.h");
             declarations(header);
@@ -865,7 +1271,10 @@ public final class GoBindings {
                     }
                 }
                 case ROOM -> {
-                    if (number != null) {
+                    if (it.word() == Word.CAPABILITY) {
+                        parameters.add("void *" + name);
+                        arguments.add("(souther_capability *)" + name);
+                    } else if (number != null) {
                         parameters.add(number + " *" + name);
                         arguments.add(name);
                     } else {
@@ -909,6 +1318,8 @@ public final class GoBindings {
                 + "type Run = souther.Run[binding.Tag]\n\n"
                 + "// Ref is a value of the library and the run it was made in.\n"
                 + "type Ref = souther.Ref[binding.Tag]\n\n"
+                + "// Capability stands for a behavior another requires, made in a run.\n"
+                + "type Capability = souther.Capability[binding.Tag]\n\n"
                 + "// Load opens the library file at path.\n//\n"
                 + "// It checks that every function this binding calls is there, which a library of another ABI"
                 + " generation\n// has none of. That path is the library this binding was generated from is"

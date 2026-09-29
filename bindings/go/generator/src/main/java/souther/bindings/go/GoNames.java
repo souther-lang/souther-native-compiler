@@ -38,7 +38,7 @@ final class GoNames {
     private static final Set<String> TAKEN = Set.of("error", "string", "int64", "bool", "nil",
             "true", "false", "byte", "any", "len", "make", "append", "panic", "recover", "uint8",
             "uint32", "int32", "float64", "iota", "unsafe", "souther", "lib", "raoh", "r", "v", "fn",
-            "err", "json", "value", "run", "C", "failed", "reading", "made", "input");
+            "err", "json", "value", "run", "C", "b", "hosted", "impl", "userdata", "requirements", "failed", "reading", "made", "input");
 
     /** Names a top module of the model may not be, since a directory of that name means more. */
     private static final Set<String> DIRECTORIES = Set.of("internal", "vendor", "testdata");

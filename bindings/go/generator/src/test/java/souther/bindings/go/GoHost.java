@@ -77,13 +77,14 @@ final class GoHost {
      * diff.
      */
     private static void formatted(Generated binding) throws IOException, InterruptedException {
-        ProcessBuilder builder = new ProcessBuilder("gofmt", "-l", ".")
+        ProcessBuilder builder = new ProcessBuilder("gofmt", "-d", ".")
                 .directory(binding.root().toFile());
         Process process = builder.start();
-        String listed = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        String difference =
+                new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
         process.waitFor();
-        if (!listed.isEmpty()) {
-            throw new AssertionError("gofmt would change what the generator wrote:\n" + listed);
+        if (!difference.isEmpty()) {
+            throw new AssertionError("gofmt would change what the generator wrote:\n" + difference);
         }
     }
 
