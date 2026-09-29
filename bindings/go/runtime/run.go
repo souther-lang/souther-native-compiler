@@ -31,10 +31,14 @@ func (r *Runtime) Statuses() Statuses { return r.statuses }
 func (r *Runtime) Identity() uintptr { return r.identity }
 
 // Library is a loaded library, of the binding B was made for.
-type Library[B any] struct{ rt *Runtime }
+type Library[B any] struct {
+	rt      *Runtime
+	native  *Native
+	symbols map[string]unsafe.Pointer
+}
 
 // NewLibrary is the library whose runtime is rt.
-func NewLibrary[B any](rt *Runtime) *Library[B] { return &Library[B]{rt} }
+func NewLibrary[B any](rt *Runtime) *Library[B] { return &Library[B]{rt: rt} }
 
 // Runtime is the runtime the library was built with.
 func (l *Library[B]) Runtime() *Runtime { return l.rt }
