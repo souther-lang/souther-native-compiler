@@ -1,0 +1,76 @@
+name: release
+
+# What a release publishes, from a `v<version>` tag: the driver for each platform, as a bundle on
+# the GitHub release; and the compiler, built with the SHA-256 of each bundle written into it, so
+# that what a released compiler fetches from the release is held to what this built. An asset of a
+# release can be replaced. The compiler on Maven Central cannot, so the trust rests there.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  bundle:
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - platform: linux-x86_64
+            on: ubuntu-latest
+          - platform: linux-aarch64
+            on: ubuntu-24.04-arm
+          - platform: macos-aarch64
+            on: macos-latest
+          - platform: macos-x86_64
+            on: macos-15-intel
+    runs-on: ${{ matrix.on }}
+    steps:
+      - uses: actions/checkout@v5
+
+      # The toolchain comes from rust-toolchain.toml, as it does in the build.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native
+
+      - run: scripts/package-native-bundle.sh "${GITHUB_REF_NAME#v}" "${{ matrix.platform }}" dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bundle-${{ matrix.platform }}
+          path: dist/*
+
+  release:
+    needs: bundle
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: bundle-*
+          merge-multiple: true
+          path: dist
+
+      # Written into the compiler's own artifact, which is the one place a bundle's checksum is
+      # held where a release asset being replaced does not reach it.
+      - run: scripts/record-bundle-checksums.sh dist compiler/src/main/resources/souther/nativecode/native-bundles.properties
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+
+      # The tag names the version. The build runs without the Rust half's checks: what is released
+      # is what the tag's own build has already passed.
+      - run: |
+          mvn --batch-mode versions:set -DnewVersion="${GITHUB_REF_NAME#v}" -DprocessAllModules
+          mvn --batch-mode -DskipTests -Dexec.skip=true package
+
+      - run: >-
+          gh release create "$GITHUB_REF_NAME" dist/*.zip --verify-tag --generate-notes
+          --title "$GITHUB_REF_NAME"
+        env:
+          GH_TOKEN: ${{ github.token }}
