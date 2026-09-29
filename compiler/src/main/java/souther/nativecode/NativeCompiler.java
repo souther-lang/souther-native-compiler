@@ -41,6 +41,14 @@ public final class NativeCompiler {
     private NativeCompiler() {
     }
 
+    /**
+     * Whether there is a driver to hand a program to: one named by {@link #DRIVER_PROPERTY}, or the
+     * one a clone builds. Where there is not, a released compiler fetches its own.
+     */
+    public static boolean hasDriver() {
+        return System.getProperty(DRIVER_PROPERTY) != null || Files.isExecutable(BUILT);
+    }
+
     /** The object holding every behavior the program declares. */
     public static byte[] compile(CheckedProgram program) throws IOException, InterruptedException {
         return driven(ProgramWriter.written(program));

@@ -33,11 +33,26 @@
 
     <build>
         <plugins>
-            <!-- What the tests share, for the modules that test against these helpers. -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-jar-plugin</artifactId>
                 <executions>
+                    <!-- What starts the command from the artifact (jbang runs the jar's main class),
+                         and what says which release this is: the version a released compiler
+                         fetches its generators and its driver at. A build from a clone has no such
+                         entry, which is how it knows it has no release to fetch from. -->
+                    <execution>
+                        <id>default-jar</id>
+                        <configuration>
+                            <archive>
+                                <manifest>
+                                    <mainClass>souther.nativecode.Main</mainClass>
+                                    <addDefaultImplementationEntries>true</addDefaultImplementationEntries>
+                                </manifest>
+                            </archive>
+                        </configuration>
+                    </execution>
+                    <!-- What the tests share, for the modules that test against these helpers. -->
                     <execution>
                         <goals>
                             <goal>test-jar</goal>
