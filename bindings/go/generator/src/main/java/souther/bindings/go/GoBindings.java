@@ -55,13 +55,13 @@ public final class GoBindings {
      * The protocol of the runtime module this writes for: what its public surface is, as recorded
      * under {@code bindings/go/runtime/protocol}. A test holds it to the runtime's own.
      */
-    static final int RUNTIME_PROTOCOL = 1;
+    static final int RUNTIME_PROTOCOL = 2;
 
     /**
      * The version of Raoh the runtime module asks for, which a package that imports it asks for as
      * well; held to the runtime's own go.mod by a test.
      */
-    static final String RAOH_VERSION = "v0.0.0-20260929091357-2e815b39e491";
+    static final String RAOH_VERSION = "v0.0.0-20260929134234-af24f3ce21c6";
 
     /** The runtime module every import of it names, as the module says its own path. */
     private static final String RUNTIME_MODULE = RuntimeModule.THE.path();
@@ -892,6 +892,13 @@ public final class GoBindings {
                 .append("func ").append(name).append("(r *").append(at.imports.lib())
                 .append(".Run, json []byte) (").append(it.name()).append(", error) {\n").append(body)
                 .append("}\n");
+        String decoder = at.names.claim(it.name() + "Decoder", "the raoh decoder of `" + it.key() + "`");
+        at.items.append("\n// ").append(decoder).append(" is ").append(name)
+                .append(" as a raoh decoder of what a host decoded, reading in r:\n")
+                .append("// composed with a host's own decoders, its issues come back with theirs, at the path it is reached at.\n")
+                .append("func ").append(decoder).append("(r *").append(at.imports.lib()).append(".Run) ")
+                .append(at.imports.raoh()).append(".Decoder[any, ").append(it.name()).append("] {\n")
+                .append("\treturn ").append(souther).append(".Decoder(r, ").append(name).append(")\n}\n");
     }
 
     /** {@code Encode}: the value in its external form. */
