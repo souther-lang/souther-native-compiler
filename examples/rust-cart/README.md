@@ -73,10 +73,10 @@ The rules are checked without a database. `fake loadCart` and the other fakes in
 for the injected behaviors, and the `example` rows run `addItemToCart`, `placeOrder` and
 `issueQuote` over them when `bin/build` compiles the model. Nothing here mocks a trait.
 
-The model is the same on every host. `examples/php-cart` and this one build one file,
+The model is the same on every host. `examples/php-cart`, `examples/go-cart` and this one build one file,
 `examples/cart-model/cart.sou`, and an order is written in the one encoding the model gives it, so
 a client does not know which host answered. What a field of a request may hold is in that file too:
-a corporate number of thirteen digits is `CorporateNumber`'s rule, and neither host says it again.
+a corporate number of thirteen digits is `CorporateNumber`'s rule, and no host says it again.
 
 What another host checks when it runs, rustc checks here. A value of the model lives in an arena
 that belongs to the run it was made in, and the run ends with the request. PHP throws `Expired` when

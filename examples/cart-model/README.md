@@ -1,8 +1,8 @@
 # cart-model
 
 The model every host's cart example runs: `cart.sou`, the module `com.example.cart.domain`.
-`examples/php-cart` and `examples/rust-cart` each build it into a library and a binding of their own
-language, and nothing of it is written again in either.
+`examples/php-cart`, `examples/rust-cart` and `examples/go-cart` each build it into a library and a
+binding of their own language, and nothing of it is written again in any of them.
 
 It is the `cart.sou` of the Java example,
 [`boundaries-not-layers/examples/raoh-souther`](https://github.com/kawasima/boundaries-not-layers/tree/main/examples/raoh-souther),

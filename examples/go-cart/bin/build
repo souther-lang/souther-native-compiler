@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Builds examples/cart-model, the model every host's cart runs, into build/native (the shared
+# library) and build/go (its binding, the module example.com/go-cart/model) with the command line
+# souther-native-compiler offers, run from the root of the clone this example is in. The rows of
+# cart.sou run as part of the compile, and a row that does not hold refuses the build before Go is
+# reached.
+set -euo pipefail
+
+here="$(cd "$(dirname "$0")/.." && pwd)"
+root="$(cd "$here/../.." && pwd)"
+
+cd "$root"
+scripts/souther-native --library "$here/build/native" --go "$here/build/go" \
+    --package example.com/go-cart/model "$root/examples/cart-model"

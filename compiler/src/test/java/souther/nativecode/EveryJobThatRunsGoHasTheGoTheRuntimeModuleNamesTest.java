@@ -90,7 +90,7 @@ class EveryJobThatRunsGoHasTheGoTheRuntimeModuleNamesTest {
                 }
             }
         }
-        assertThat(held).as("the scripts that run Go").isEqualTo(3);
+        assertThat(held).as("the scripts that run Go").isEqualTo(4);
     }
 
     @Test

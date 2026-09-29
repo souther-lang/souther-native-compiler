@@ -1054,6 +1054,13 @@ The modules it writes need the Go the runtime module names, which Raoh's needs a
 version the runtime and the generated `go.mod` require is a commit, which a test holds to one.
 Windows is not written yet (souther-native-compiler#96).
 
+`examples/go-cart` is the cart example as a Go application: `examples/cart-model` served by
+`net/http`, its HTTP boundary decoded by raoh-go with the model's constructors and decoders as steps
+of the same decoders, and its injected behaviors implemented over SQLite, each row written by a raoh
+encoder in the form the model reads. Besides the HTTP contract, its tests hold what the Go runtime
+refuses a host of the model where Rust's types do. `scripts/go-cart-example.sh` builds it and runs
+its tests in CI.
+
 ## Where a value lives
 
 In an arena the caller brackets. Nothing frees a Souther value on its own: what a run makes is
