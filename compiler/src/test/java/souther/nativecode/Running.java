@@ -82,6 +82,21 @@ final class Running {
     private final CheckedProgram program;
     private final List<NativeArtifacts.Bytes> alongside;
 
+    /**
+     * What the object carries that a harness here can call, asked of the object once: the program
+     * and what is linked beside it decide it, and neither changes for as long as this Running is
+     * asked anything.
+     */
+    private @Nullable List<Entry> entries;
+
+    /**
+     * The executable for each set of stand-ins, by what they state. The program and what is linked
+     * beside it are this Running's, so the stand-ins are all that is left to decide the harness,
+     * and a question asked again against the same ones is asked of the executable already linked
+     * rather than of a program written out, a harness generated and both compared again.
+     */
+    private final Map<List<StoodIn>, Path> executables = new java.util.HashMap<>();
+
     private Running(CheckedProgram program, List<NativeArtifacts.Bytes> alongside) {
         this.program = program;
         this.alongside = alongside;
@@ -503,9 +518,16 @@ final class Running {
      * different stand-ins are two executables. Which entry is run is not: it is handed to the
      * process, so the linker is asked once for however many behaviors and rows are asked about.
      */
-    private Path linked(List<StandsIn> standIns) throws IOException, InterruptedException {
-        return NativeArtifacts.executable(program, alongside,
-                harnessFor(entries(), standIns));
+    private synchronized Path linked(List<StandsIn> standIns)
+            throws IOException, InterruptedException {
+        List<StoodIn> stated = standIns.stream().map(StandsIn::stated).toList();
+        Path executable = executables.get(stated);
+        if (executable == null) {
+            executable = NativeArtifacts.executable(program, alongside,
+                    harnessFor(entries(), standIns));
+            executables.put(stated, executable);
+        }
+        return executable;
     }
 
     /**
@@ -517,6 +539,13 @@ final class Running {
      * anyway would fail to link for it.
      */
     private List<Entry> entries() throws IOException, InterruptedException {
+        if (entries == null) {
+            entries = entriesCarried();
+        }
+        return entries;
+    }
+
+    private List<Entry> entriesCarried() throws IOException, InterruptedException {
         Set<String> carried = NativeArtifacts.built(program).defined();
         List<Entry> entries = new ArrayList<>();
         for (CheckedModule module : program.modules()) {
