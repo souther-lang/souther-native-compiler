@@ -30,10 +30,11 @@ final class RustHost {
     static final Path RUNTIME = Repository.file("bindings", "rust", "runtime").toAbsolutePath();
 
     /**
-     * Where every host is built: the runtime's own target, so what a host shares with the runtime
-     * (the runtime itself, Raoh and what those depend on) is built once, by whichever of the
-     * runtime's tests and the hosts gets to it first, and is what CI's cache of that target keeps
-     * from one run to the next.
+     * Where every host is built: the runtime's own target. Within a run, what a host shares with
+     * the runtime (the runtime itself, Raoh and what those depend on) is built once, by whichever
+     * of the runtime's tests and the hosts gets to it first. Between runs, CI's cache of that
+     * target keeps the dependencies and not the runtime: rust-cache drops a workspace's own crates
+     * and whatever else is not one of its dependencies, the hosts among them.
      */
     private static final Path TARGET = RUNTIME.resolve("target");
 
