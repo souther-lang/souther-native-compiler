@@ -2,6 +2,7 @@ package cart
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/raoh-project/raoh-go"
@@ -24,6 +25,21 @@ func Commit(r Response) Outcome { return Outcome{keep: true, response: r} }
 
 // Rollback is a command that was refused, or wrote nothing worth keeping: what it wrote is dropped.
 func Rollback(r Response) Outcome { return Outcome{keep: false, response: r} }
+
+// ClientError is a request the client got wrong: a body that is not JSON, not what the route reads,
+// or longer than a body may be. Err holds the *raoh.Issues found in it, or raoh.ErrInputTooLarge.
+type ClientError struct{ Err error }
+
+func (e *ClientError) Error() string { return e.Err.Error() }
+
+func (e *ClientError) Unwrap() error { return e.Err }
+
+func (e *ClientError) response() Response {
+	if issues, ok := errors.AsType[*raoh.Issues](e.Err); ok {
+		return BadRequest(issues)
+	}
+	return TooLarge()
+}
 
 // Response is a status and, where there is one, a body that is JSON.
 type Response struct {

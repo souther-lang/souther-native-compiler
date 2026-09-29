@@ -26,8 +26,8 @@ var (
 	seed string
 )
 
-// Prepare gives db the schema and seeds it with the demo user and products.
-func Prepare(db *sql.DB) error {
+// Install gives db the schema and seeds it with the demo user and products.
+func Install(db *sql.DB) error {
 	if _, err := db.Exec(schema); err != nil {
 		return err
 	}

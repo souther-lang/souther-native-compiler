@@ -33,7 +33,7 @@ func recording(read *[]string, required ...string) raoh.Decoder[any, struct{}] {
 
 func email() member { return text("email", raoh.String().Trim().ToLower().Email()) }
 
-func decode(t *testing.T, d raoh.Decoder[any, struct{}], text string) []string {
+func issuePaths(t *testing.T, d raoh.Decoder[any, struct{}], text string) []string {
 	t.Helper()
 	_, err := raoh.DecodeJSON([]byte(text), d)
 	if err == nil {
@@ -53,7 +53,7 @@ func decode(t *testing.T, d raoh.Decoder[any, struct{}], text string) []string {
 func TestTheModelReadsWhatTheBoundaryWrote(t *testing.T) {
 	var read []string
 
-	decode(t, members([]member{email()}, recording(&read, "email")), `{"email":" A@Example.COM "}`)
+	issuePaths(t, members([]member{email()}, recording(&read, "email")), `{"email":" A@Example.COM "}`)
 
 	if want := []string{`{"email":"a@example.com"}`}; !reflect.DeepEqual(read, want) {
 		t.Fatalf("the model read %v", read)
@@ -63,7 +63,7 @@ func TestTheModelReadsWhatTheBoundaryWrote(t *testing.T) {
 func TestTheModelIsNeverHandedWhatTheBoundaryRefused(t *testing.T) {
 	var read []string
 
-	paths := decode(t, members([]member{email()}, recording(&read, "email", "city")),
+	paths := issuePaths(t, members([]member{email()}, recording(&read, "email", "city")),
 		`{"email":" X ","city":"Tokyo"}`)
 
 	if want := []string{`{"city":"Tokyo"}`}; !reflect.DeepEqual(read, want) {
@@ -77,7 +77,7 @@ func TestTheModelIsNeverHandedWhatTheBoundaryRefused(t *testing.T) {
 func TestTheModelReadsTheRestWhicheverMemberWasRefused(t *testing.T) {
 	var read []string
 
-	paths := decode(t, members([]member{email()}, recording(&read, "email", "city")),
+	paths := issuePaths(t, members([]member{email()}, recording(&read, "email", "city")),
 		`{"email":"not-an-email"}`)
 
 	if want := []string{"/email", "/city"}; !reflect.DeepEqual(paths, want) {
@@ -94,7 +94,7 @@ func TestOnlyTheRefusedMembersOwnPathIsTakenForTheBoundarys(t *testing.T) {
 	})}
 	var read []string
 
-	paths := decode(t, members([]member{address}, recording(&read, "address", "addressee")),
+	paths := issuePaths(t, members([]member{address}, recording(&read, "address", "addressee")),
 		`{"address":{"postcode":1}}`)
 
 	if want := []string{"/address/postcode", "/addressee"}; !reflect.DeepEqual(paths, want) {
@@ -109,7 +109,7 @@ func TestAMemberIsReadWhereTheValueIs(t *testing.T) {
 		Field("orderer", members([]member{email()}, recording(&read, "email", "name"))),
 	).Map(func(struct{}) struct{} { return struct{}{} })
 
-	paths := decode(t, whole, `{"orderer":{"email":"x"}}`)
+	paths := issuePaths(t, whole, `{"orderer":{"email":"x"}}`)
 
 	if want := []string{"/orderer/email", "/orderer/name"}; !reflect.DeepEqual(paths, want) {
 		t.Fatalf("issues at %v", paths)

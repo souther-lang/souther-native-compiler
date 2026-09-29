@@ -22,10 +22,8 @@ func listItems(_ cart.Behaviors, r *model.Run, req *http.Request, tx *sql.Tx) (c
 		query[name] = values[0]
 	}
 	asked, err := listRequest(r).Decode(query)
-	if response, ok := refusal(err); ok {
-		return cart.Rollback(response), nil
-	} else if err != nil {
-		return cart.Outcome{}, err
+	if err != nil {
+		return cart.Outcome{}, clientError(err)
 	}
 
 	found, err := list(tx, asked)

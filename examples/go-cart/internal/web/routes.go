@@ -11,7 +11,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"time"
 
@@ -50,10 +49,8 @@ func route(app *cart.App, h handler) http.Handler {
 
 // addItem is POST /carts/items.
 func addItem(b cart.Behaviors, r *model.Run, req *http.Request, _ *sql.Tx) (cart.Outcome, error) {
-	args, err := raoh.DecodeJSONFrom(req.Body, maxBody, addItemRequest(r))
-	if response, ok := refusal(err); ok {
-		return cart.Rollback(response), nil
-	} else if err != nil {
+	args, err := decode(req, addItemRequest(r))
+	if err != nil {
 		return cart.Outcome{}, err
 	}
 
@@ -76,15 +73,14 @@ func addItem(b cart.Behaviors, r *model.Run, req *http.Request, _ *sql.Tx) (cart
 
 // checkout is POST /carts/checkout.
 func checkout(b cart.Behaviors, r *model.Run, req *http.Request, _ *sql.Tx) (cart.Outcome, error) {
-	args, err := raoh.DecodeJSONFrom(req.Body, maxBody, checkoutRequest(r))
-	if response, ok := refusal(err); ok {
-		return cart.Rollback(response), nil
-	} else if err != nil {
+	args, err := decode(req, checkoutRequest(r))
+	if err != nil {
 		return cart.Outcome{}, err
 	}
+	// An id this host made that the model refuses is the host's fault, and a 500.
 	orderID, err := domain.NewOrderId(r, uuid.NewString())
 	if err != nil {
-		return refusedWhatTheHostMade(err)
+		return cart.Outcome{}, fmt.Errorf("the model refused an order id this host made: %w", err)
 	}
 
 	answer, err := b.PlaceOrder.Call(r, orderID, args.userID, args.orderer)
@@ -106,10 +102,8 @@ func checkout(b cart.Behaviors, r *model.Run, req *http.Request, _ *sql.Tx) (car
 
 // quote is POST /carts/quote, for a corporation only.
 func quote(b cart.Behaviors, r *model.Run, req *http.Request, _ *sql.Tx) (cart.Outcome, error) {
-	args, err := raoh.DecodeJSONFrom(req.Body, maxBody, checkoutRequest(r))
-	if response, ok := refusal(err); ok {
-		return cart.Rollback(response), nil
-	} else if err != nil {
+	args, err := decode(req, checkoutRequest(r))
+	if err != nil {
 		return cart.Outcome{}, err
 	}
 	// issueQuote takes a Corporation, so the orderer is narrowed here, over both of its cases.
@@ -122,7 +116,7 @@ func quote(b cart.Behaviors, r *model.Run, req *http.Request, _ *sql.Tx) (cart.O
 	}
 	quoteID, err := domain.NewQuoteId(r, uuid.NewString())
 	if err != nil {
-		return refusedWhatTheHostMade(err)
+		return cart.Outcome{}, fmt.Errorf("the model refused a quote id this host made: %w", err)
 	}
 	validUntil := encode.Date().Encode(time.Now().AddDate(0, 0, 30))
 
@@ -143,32 +137,25 @@ func quote(b cart.Behaviors, r *model.Run, req *http.Request, _ *sql.Tx) (cart.O
 	return unanswered("issueQuote", answer)
 }
 
-// refusal is the response a body that was not read comes to: a 400 with the issues found in it,
-// or a 413 where it is longer than a body may be. Anything else is no refusal of the client's.
-func refusal(err error) (cart.Response, bool) {
-	if issues, ok := errors.AsType[*raoh.Issues](err); ok {
-		return cart.BadRequest(issues), true
+// decode is req's body read by d. A body that is not JSON, not what d reads, or longer than a body
+// may be is the client's, a [*cart.ClientError]; any other error is not.
+func decode[T any](req *http.Request, d raoh.Decoder[any, T]) (T, error) {
+	value, err := raoh.DecodeJSONFrom(req.Body, maxBody, d)
+	return value, clientError(err)
+}
+
+// clientError is err as the client's where it is the issues found in what the client sent, or a body
+// too long, and err as it is otherwise.
+func clientError(err error) error {
+	if _, ok := errors.AsType[*raoh.Issues](err); ok || errors.Is(err, raoh.ErrInputTooLarge) {
+		return &cart.ClientError{Err: err}
 	}
-	if errors.Is(err, raoh.ErrInputTooLarge) {
-		return cart.TooLarge(), true
-	}
-	return cart.Response{}, false
+	return err
 }
 
 // refused is a business case the model answered, by name. It keeps nothing.
 func refused(name string) (cart.Outcome, error) {
 	return cart.Rollback(cart.Unprocessable(name)), nil
-}
-
-// refusedWhatTheHostMade is what a request comes to where the model refused a value this host made
-// on its own, such as an id: the fault is the host's, not the client's, so it is a 500 and nothing
-// is kept. Which values the model admits is the model's to say, and nothing here assumes the answer.
-func refusedWhatTheHostMade(err error) (cart.Outcome, error) {
-	if _, ok := errors.AsType[*raoh.Issues](err); !ok {
-		return cart.Outcome{}, err
-	}
-	slog.Error("the model refused a value the host made", "issues", err)
-	return cart.Rollback(cart.Internal()), nil
 }
 
 // unanswered is a case a behavior answered that its route has no answer for. Go does not check

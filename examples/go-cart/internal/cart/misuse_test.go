@@ -18,7 +18,7 @@ import (
 
 func load(t *testing.T) *model.Library {
 	t.Helper()
-	library, err := model.Load(cart.Library())
+	library, err := model.Load(cart.Library("../../build/native"))
 	if err != nil {
 		t.Fatalf("run bin/build first: %v", err)
 	}

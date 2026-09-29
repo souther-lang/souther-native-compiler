@@ -36,7 +36,7 @@ type object = map[string]any
 
 var library = sync.OnceValue(func() *model.Library {
 	// The library bin/build wrote beside the binding this test was compiled against.
-	library, err := model.Load(cart.Library())
+	library, err := model.Load(cart.Library("../../build/native"))
 	if err != nil {
 		panic("run bin/build first: " + err.Error())
 	}
@@ -170,13 +170,97 @@ func normalized(t *testing.T, v any) any {
 	return back
 }
 
-func TestAnItemOnSaleIsAdded(t *testing.T) {
-	expect(t, newClient(t).addItem(user, onSale, 8), http.StatusCreated, nil)
+func TestAnItemIsAddedWhereTheModelSaysItIs(t *testing.T) {
+	for _, each := range []struct {
+		name      string
+		productID string
+		quantity  int64
+		status    int
+		body      any
+	}{
+		{"an item on sale", onSale, 8, http.StatusCreated, nil},
+		{"a quantity over the capacity", onSale, 10001, http.StatusUnprocessableEntity, object{"error": "cart_full"}},
+		{"an item no longer on sale", offSale, 1, http.StatusUnprocessableEntity, object{"error": "sale_ended"}},
+		{"a product nobody sells", "55555555-5555-5555-5555-555555555555", 1, http.StatusUnprocessableEntity,
+			object{"error": "product_not_found"}},
+	} {
+		t.Run(each.name, func(t *testing.T) {
+			expect(t, newClient(t).addItem(user, each.productID, each.quantity), each.status, each.body)
+		})
+	}
 }
 
-func TestAQuantityOverTheCapacityIs422(t *testing.T) {
-	expect(t, newClient(t).addItem(user, onSale, 10001), http.StatusUnprocessableEntity,
-		object{"error": "cart_full"})
+func TestABodyTheRouteCannotReadIsTheClients(t *testing.T) {
+	for _, each := range []struct {
+		name   string
+		body   any
+		status int
+		paths  []string
+	}{
+		{"a quantity of none", object{"userId": user, "productId": onSale, "quantity": 0},
+			http.StatusBadRequest, []string{"/quantity"}},
+		{"no quantity", object{"userId": user, "productId": onSale}, http.StatusBadRequest, []string{"/quantity"}},
+		{"not JSON", "{", http.StatusBadRequest, []string{""}},
+		{"longer than a body may be", strings.Repeat(" ", 1<<20+1), http.StatusRequestEntityTooLarge, nil},
+	} {
+		t.Run(each.name, func(t *testing.T) {
+			a := newClient(t).post("/carts/items", each.body)
+
+			expect(t, a, each.status, nil)
+			if each.paths != nil {
+				expectIssues(t, a, each.paths...)
+			}
+		})
+	}
+}
+
+func TestAnIDIsAUUIDAsThisAPIWritesOne(t *testing.T) {
+	// Upper case is written in lower case; a UUID in another notation is not how an id is written.
+	for _, each := range []struct {
+		name, userID string
+		status       int
+	}{
+		{"in upper case", strings.ToUpper(user), http.StatusCreated},
+		{"braced", "{" + user + "}", http.StatusBadRequest},
+		{"without hyphens", strings.ReplaceAll(user, "-", ""), http.StatusBadRequest},
+	} {
+		t.Run(each.name, func(t *testing.T) {
+			expect(t, newClient(t).addItem(each.userID, onSale, 1), each.status, nil)
+		})
+	}
+}
+
+func TestAnOrdererThatDoesNotDecodeIs400WithEveryIssueInIt(t *testing.T) {
+	for _, each := range []struct {
+		name    string
+		userID  string
+		orderer object
+		paths   []string
+	}{
+		{"a corporate number other than thirteen digits", user,
+			with(corporation(), "corporateNumber", "12345"), []string{"/orderer/corporateNumber"}},
+		// That a name is not blank is PersonName's rule, and the model's decoder reports it.
+		{"a name of nothing but spaces", user, with(individual(), "name", "   "), []string{"/orderer/name"}},
+		{"an orderer of no known type", user, with(individual(), "type", "Robot"), []string{"/orderer/type"}},
+		// The email is not shaped like one, which the boundary finds; the corporation has no company
+		// name and no corporate number, which only the model can say.
+		{"a member the boundary refuses keeps the model from reading nothing else", user,
+			object{"type": "Corporation", "email": "not-an-email"},
+			[]string{"/orderer/companyName", "/orderer/corporateNumber", "/orderer/email"}},
+		// A name that is no text is refused by the boundary, which trims it, and by the model, which
+		// reads a PersonName. The boundary's issue says what form it was not in, and is the one kept.
+		{"a member both refuse is answered once, by the boundary", user, with(individual(), "name", 5),
+			[]string{"/orderer/name"}},
+		// raoh finds that the user is no UUID. The model finds that a corporation has a company name
+		// and a corporate number, which raoh, reading the fields that are there, has no way to know.
+		{"every issue of a request at once, whichever step found it", "not-a-uuid",
+			object{"type": "Corporation", "email": "info@acme.co.jp"},
+			[]string{"/orderer/companyName", "/orderer/corporateNumber", "/userId"}},
+	} {
+		t.Run(each.name, func(t *testing.T) {
+			expectIssues(t, newClient(t).checkout("/carts/checkout", each.userID, each.orderer), each.paths...)
+		})
+	}
 }
 
 func TestATotalExactlyAtTheCapacityIsAdded(t *testing.T) {
@@ -185,16 +269,6 @@ func TestATotalExactlyAtTheCapacityIsAdded(t *testing.T) {
 	expect(t, c.addItem(user, onSale, 9998), http.StatusCreated, nil)
 	expect(t, c.addItem(user, onSale, 2), http.StatusCreated, nil)
 	expect(t, c.addItem(user, onSale, 1), http.StatusUnprocessableEntity, nil)
-}
-
-func TestAnItemNoLongerOnSaleIs422(t *testing.T) {
-	expect(t, newClient(t).addItem(user, offSale, 1), http.StatusUnprocessableEntity,
-		object{"error": "sale_ended"})
-}
-
-func TestAProductNobodySellsIs422(t *testing.T) {
-	expect(t, newClient(t).addItem(user, "55555555-5555-5555-5555-555555555555", 1),
-		http.StatusUnprocessableEntity, object{"error": "product_not_found"})
 }
 
 func TestAnIDThatIsNotAUUIDIs400WithRaohsIssue(t *testing.T) {
@@ -208,33 +282,6 @@ func TestAnIDThatIsNotAUUIDIs400WithRaohsIssue(t *testing.T) {
 	if _, ok := a.field("errors").(object); !ok {
 		t.Fatalf("no errors by path: %v", a.body)
 	}
-}
-
-func TestAnIDIsAUUIDAsThisAPIWritesOne(t *testing.T) {
-	// Upper case is written in lower case; a UUID in another notation is not how an id is written.
-	c := newClient(t)
-
-	expect(t, c.addItem(strings.ToUpper(user), onSale, 1), http.StatusCreated, nil)
-	expectIssues(t, c.addItem("{"+user+"}", onSale, 1), "/userId")
-	expectIssues(t, c.addItem(strings.ReplaceAll(user, "-", ""), onSale, 1), "/userId")
-}
-
-func TestAQuantityOfNoneIs400(t *testing.T) {
-	expectIssues(t, newClient(t).addItem(user, onSale, 0), "/quantity")
-}
-
-func TestAMissingQuantityIs400(t *testing.T) {
-	expectIssues(t, newClient(t).post("/carts/items", object{"userId": user, "productId": onSale}),
-		"/quantity")
-}
-
-func TestABodyThatIsNotJSONIs400(t *testing.T) {
-	expect(t, newClient(t).post("/carts/items", "{"), http.StatusBadRequest, nil)
-}
-
-func TestABodyLongerThanARequestMayBeIs413(t *testing.T) {
-	expect(t, newClient(t).post("/carts/items", strings.Repeat(" ", 1<<20+1)),
-		http.StatusRequestEntityTooLarge, object{"error": "too_large"})
 }
 
 func TestAnAddedItemIsListed(t *testing.T) {
@@ -297,21 +344,6 @@ func TestACorporationChecksOutWithoutTheDiscountUnder5000(t *testing.T) {
 	}
 }
 
-func TestACorporateNumberOtherThanThirteenDigitsIs400(t *testing.T) {
-	c := newClient(t)
-	buyer := "11111111-1111-1111-1111-111111111115"
-	c.addItem(buyer, onSale, 1)
-
-	expectIssues(t, c.checkout("/carts/checkout", buyer, with(corporation(), "corporateNumber", "12345")),
-		"/orderer/corporateNumber")
-}
-
-func TestANameOfNothingButSpacesIs400(t *testing.T) {
-	// That a name is not blank is PersonName's rule, and the model's decoder reports it.
-	expectIssues(t, newClient(t).checkout("/carts/checkout", user, with(individual(), "name", "   ")),
-		"/orderer/name")
-}
-
 func TestANameIsKeptWithoutTheSpacesAroundIt(t *testing.T) {
 	// Trimming is how the boundary writes a name, not a rule the model states, so the model is
 	// handed the name without them and its bound is on what it keeps.
@@ -341,21 +373,6 @@ func TestACompanyNameIsKeptWithoutTheSpacesAroundIt(t *testing.T) {
 	}
 }
 
-func TestAMemberTheBoundaryRefusesDoesNotKeepTheModelFromReadingTheRest(t *testing.T) {
-	// The email is not shaped like one, which the boundary finds; the corporation has no company
-	// name and no corporate number, which only the model can say.
-	a := newClient(t).checkout("/carts/checkout", user, object{"type": "Corporation", "email": "not-an-email"})
-
-	expectIssues(t, a, "/orderer/companyName", "/orderer/corporateNumber", "/orderer/email")
-}
-
-func TestAMemberBothRefuseIsAnsweredOnceByTheBoundary(t *testing.T) {
-	// A name that is no text is refused by the boundary, which trims it, and by the model, which
-	// reads a PersonName. The boundary's issue says what form it was not in, and is the one kept.
-	expectIssues(t, newClient(t).checkout("/carts/checkout", user, with(individual(), "name", 5)),
-		"/orderer/name")
-}
-
 func TestARefusedCommandKeepsNothingItWroteOnTheWay(t *testing.T) {
 	// loadCart makes a new user's cart row before the capacity is decided. A command the model
 	// refuses keeps nothing, and one it answers keeps what it wrote.
@@ -382,11 +399,6 @@ func TestARefusedCommandKeepsNothingItWroteOnTheWay(t *testing.T) {
 	}
 }
 
-func TestAnOrdererOfNoKnownTypeIs400(t *testing.T) {
-	expectIssues(t, newClient(t).checkout("/carts/checkout", user, with(individual(), "type", "Robot")),
-		"/orderer/type")
-}
-
 func TestAFieldTheOrderersCaseHasIsMissingIs400(t *testing.T) {
 	// Which fields an individual has is the model's to say, and its decoder says it.
 	orderer := individual()
@@ -398,15 +410,6 @@ func TestAFieldTheOrderersCaseHasIsMissingIs400(t *testing.T) {
 	if code := a.field("issues").([]any)[0].(object)["code"]; code != "missing_field" {
 		t.Fatalf("the code is %v", code)
 	}
-}
-
-func TestEveryIssueOfARequestIsAnsweredAtOnceWhicheverStepFoundIt(t *testing.T) {
-	// raoh finds that the user is no UUID. The model finds that a corporation has a company name
-	// and a corporate number, which raoh, reading the fields that are there, has no way to know.
-	a := newClient(t).checkout("/carts/checkout", "not-a-uuid",
-		object{"type": "Corporation", "email": "info@acme.co.jp"})
-
-	expectIssues(t, a, "/orderer/companyName", "/orderer/corporateNumber", "/userId")
 }
 
 func TestAnEmptyCartDoesNotCheckOut(t *testing.T) {

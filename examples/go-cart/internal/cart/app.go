@@ -6,6 +6,7 @@ package cart
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -39,7 +40,7 @@ type Work func(b Behaviors, r *model.Run, tx *sql.Tx) (Outcome, error)
 // application does, and an example has no need of a pool to say so.
 func New(library *model.Library, db *sql.DB) (*App, error) {
 	db.SetMaxOpenConns(1)
-	if err := store.Prepare(db); err != nil {
+	if err := store.Install(db); err != nil {
 		return nil, err
 	}
 	return &App{library: library, db: db}, nil
@@ -52,24 +53,28 @@ func New(library *model.Library, db *sql.DB) (*App, error) {
 // the model made in it is good until it ends. library.Run holds the goroutine on its thread until
 // then, so a handler needs no thread of its own: the request's goroutine is the run's. What comes
 // back out of the run is a [Response], whose body is text by then.
+//
+// An error work returns is a 500, except a [*ClientError], which is the client's: a 400 with the
+// issues found in the request, or a 413. Either way nothing is kept.
 func (a *App) Handle(ctx context.Context, work Work) (response Response) {
 	tx, err := a.db.BeginTx(ctx, nil)
 	if err != nil {
-		return internal(err)
+		return failed(err)
 	}
+	// Whatever the request comes to, what it wrote is dropped unless it is committed below.
+	defer tx.Rollback()
 	// A panic in an implementation comes back out of the call that reached it, never through the
-	// library, and ends here. What the request wrote is dropped.
+	// library, and ends here.
 	defer func() {
 		if p := recover(); p != nil {
-			_ = tx.Rollback()
-			response = internal(fmt.Errorf("panic: %v", p))
+			response = failed(fmt.Errorf("panic: %v", p))
 		}
 	}()
 
 	var outcome Outcome
 	err = a.library.Run(func(r *model.Run) error {
 		// An implementation holds the transaction, and what stands for it is held until the run
-		// ends, so none of them is called once the transaction is committed or rolled back below.
+		// ends, so none of them is called once the transaction is committed or rolled back.
 		priceCart := domain.ImplementPriceCart(r, store.PriceCart{Tx: tx})
 		b := Behaviors{
 			AddItemToCart: domain.BindAddItemToCart(r,
@@ -84,25 +89,22 @@ func (a *App) Handle(ctx context.Context, work Work) (response Response) {
 		outcome, err = work(b, r, tx)
 		return err
 	})
+	if client, ok := errors.AsType[*ClientError](err); ok {
+		return client.response()
+	}
 	if err != nil {
-		// The run ended for a reason the library numbers, or an implementation failed.
-		_ = tx.Rollback()
-		return internal(err)
+		// The run ended for a reason the library numbers, an implementation failed, or the route did.
+		return failed(err)
 	}
-
-	if !outcome.keep {
-		if err := tx.Rollback(); err != nil {
-			return internal(err)
+	if outcome.keep {
+		if err := tx.Commit(); err != nil {
+			return failed(err)
 		}
-		return outcome.response
-	}
-	if err := tx.Commit(); err != nil {
-		return internal(err)
 	}
 	return outcome.response
 }
 
-func internal(reason error) Response {
+func failed(reason error) Response {
 	slog.Error("a request ended without an answer", "reason", reason)
 	return Internal()
 }

@@ -19,7 +19,7 @@ The Go is three packages under `internal`. `web` reads a request into a behavior
 raoh decoders, calls the behavior, and picks the response with a type switch over what it answered:
 
 ```go
-args, err := raoh.DecodeJSONFrom(req.Body, maxBody, checkoutRequest(r))
+args, err := decode(req, checkoutRequest(r))
 // ...
 answer, err := b.PlaceOrder.Call(r, orderID, args.userID, args.orderer)
 // ...
@@ -193,11 +193,16 @@ whether what the request wrote is kept. That the domain answered is not that its
 kept. `loadCart` makes a new user's cart row before the capacity is decided, and a command the model
 then refuses (`CartFull`) must not leave that row behind. So every case of every route says which,
 `Commit` for the answer a command succeeds with and `Rollback` for every refusal. A route answers an
-`Outcome` and not a `Response`, so a route that forgets to say does not compile. A request that ends
-without an answer, where the run ends for a reason the library numbers or an implementation fails, is
-rolled back and answered with a 500. A panic in an implementation does not unwind through the
-library: the binding catches it and raises it again where the call into the library returns, and
-`Handle` rolls the transaction back and answers a 500.
+`Outcome` and not a `Response`, so a route that forgets to say does not compile.
+
+Anything else a route comes to is an `error`, returned as Go returns one, and `Handle` decides the
+response in one place. A request the client got wrong is a `*cart.ClientError`, which `decode`
+makes of the issues raoh and the model found in a body, and is a 400 with those issues, or a 413 for
+a body over a mebibyte. Any other error, where the run ends for a reason the library numbers, an
+implementation fails, or the model refuses an id the host made, is a 500. A panic in an
+implementation does not unwind through the library: the binding catches it and raises it again
+where the call into the library returns, and `Handle` answers a 500. The transaction is rolled back
+by a `defer` unless the `Outcome` says to commit, so none of these keeps anything.
 
 The database is used one connection at a time. SQLite writes one transaction at a time whatever the
 application does, and a pool would not change what this example shows.
@@ -248,7 +253,9 @@ To serve it:
 
     go run .
 
-The database is `build/cart.sqlite` unless `CART_DATABASE` names another file. It is seeded with the
+It serves on `localhost:8080` (`-addr`), loads the library from `build/native` (`-library`), and
+keeps the database in `build/cart.sqlite` unless `-db` or `CART_DATABASE` names another file, and
+stops on an interrupt once the requests it is answering are answered. The database is seeded with the
 user `11111111-1111-1111-1111-111111111111`, a product on sale at 1200
 (`33333333-3333-3333-3333-333333333333`) and one no longer on sale
 (`44444444-4444-4444-4444-444444444444`).
