@@ -83,7 +83,26 @@ and one output inside another, is the command's own.
 ## From the command line
 
 What the API builds, the command line builds too, so an application needs no Java of its own to
-build what it runs. In a clone:
+build what it runs. Only a JVM is needed to start it, through [jbang](https://www.jbang.dev/):
+
+    jbang souther-native@souther-lang/souther-native-compiler \
+        --library build/native --php build/php --namespace Acme\Shop model
+
+The compiler is one artifact, and what a command needs beyond it is fetched the first time it needs
+it and kept in `~/.souther` (`$SOUTHER_HOME` where it is set). That is the driver for the platform
+it runs on, from the GitHub release of its own version, and the generator of each binding that is
+asked for, from Maven Central at that version. Nothing else is ever fetched: what a flag can bring is
+what `KnownBindings` names, and nobody who does not use the Rust binding has the Rust generator.
+
+A bundle on a GitHub release can be replaced, so it is not taken on its own word. The SHA-256 of each
+bundle is written into the compiler's own artifact when it is released, and Maven Central does not let
+that be changed; a bundle that does not match is refused and not kept. A jar is held to the checksum
+Maven publishes beside it. `--offline` fetches nothing and uses only what is kept, and `--fetch`
+fetches everything a command may need, so that a build that may not reach the network later can be
+prepared where one can. The Maven repository can be a mirror, named by `-Dsouther.maven.repository`.
+
+A build from a clone has no release to fetch from, and does not try: it uses the driver Cargo built,
+and the generators the launcher carries. In a clone:
 
     scripts/souther-native --library build/native --php build/php --namespace Acme\Shop model
 
@@ -94,9 +113,10 @@ wrote everything, 1 where the build is refused (a compile error, what this backe
 yet, or a name from the model a binding's language will not take), and 2 where the command is
 refused.
 
-    souther-native [-cp <path>] -o <object> <source>...
-    souther-native [-cp <path>] --library <dir> [--with <object>]...
+    souther-native [--offline] [-cp <path>] -o <object> <source>...
+    souther-native [--offline] [-cp <path>] --library <dir> [--with <object>]...
                    [--php <dir> --namespace <ns>] [--rust <dir> --crate <name>] <source>...
+    souther-native --fetch
 
 A source is a `.sou` file or a directory holding some. `--library` writes what a host is handed
 (below) into its directory, `--php` the PHP binding of it and `--rust` the Rust one, each from the
@@ -140,6 +160,17 @@ reaches it by patching it in from the clone:
 
 The library is loaded by path when the host runs, not linked. `scripts/rust-from-the-command-line.sh`
 does this in CI, as the PHP script does.
+
+## Releasing
+
+A release is a `v<version>` tag, and `.github/workflows/release.yml` does what the tag names. It builds
+the driver on each of the four platforms (Linux and macOS, on x86_64 and aarch64) and packs it with
+the runtime archive and the file of what linking that needs, by `scripts/package-native-bundle.sh`.
+It writes the SHA-256 of each bundle into `native-bundles.properties`, by
+`scripts/record-bundle-checksums.sh`, which is not committed and is built into the compiler's jar. It
+builds the jars at the version the tag names, and creates the GitHub release with the bundles. A test
+holds the platforms the workflow builds, the packing script accepts and the compiler names to be the
+same four.
 
 ## Where it runs
 
