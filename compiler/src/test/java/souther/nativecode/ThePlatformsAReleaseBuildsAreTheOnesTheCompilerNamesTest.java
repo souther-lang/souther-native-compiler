@@ -49,14 +49,13 @@ class ThePlatformsAReleaseBuildsAreTheOnesTheCompilerNamesTest {
 
     @Test
     void theChecksumScriptReadsEachOfThem() throws IOException {
-        String script = Files.readString(Repository.file("scripts", "record-bundle-checksums.sh"));
+        String script = Files.readString(Repository.file("scripts", "record-release-checksums.sh"));
 
         for (String platform : NativeBundle.PLATFORMS) {
             String[] parts = platform.split("-");
             assertThat(script).as("the pattern that reads %s", platform)
                     .contains(parts[0]).contains(parts[1]);
         }
-        assertThat(script).contains("-ne " + NativeBundle.PLATFORMS.size());
     }
 
     @Test

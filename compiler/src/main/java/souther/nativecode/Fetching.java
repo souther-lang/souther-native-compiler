@@ -2,17 +2,12 @@ package souther.nativecode;
 
 import org.jspecify.annotations.Nullable;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.UncheckedIOException;
 import java.net.URI;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.Map;
-import java.util.Properties;
 
 /**
  * What a command may fetch, from where, and where it keeps what it has fetched.
@@ -23,15 +18,16 @@ import java.util.Properties;
  * rather than fetching whatever is newest.
  *
  * <p>The generators are read from Maven Central and can be read from a mirror, named by the property
- * {@code souther.maven.repository}. The bundles are read from the GitHub release of the version, and
- * an asset there can be replaced, so it cannot vouch for itself: each bundle's SHA-256 is in
- * {@code checksums}, which is written into the compiler's own artifact when it is released, and a
- * bundle that does not match is refused.
+ * {@code souther.maven.repository}. The bundles are read from the GitHub release of the version. What
+ * is fetched from either is run, and neither can vouch for what it serves: an asset of a release can
+ * be replaced, and a mirror is somebody else's. So every file is held to the SHA-256 in
+ * {@code checksums} ({@link ReleaseChecksums}), which is written into the compiler's own artifact
+ * when it is released, and one that does not match is refused.
  *
  * @param cache     where fetched files are kept, one directory a kind and a version
  * @param offline   whether nothing is to be fetched, so that only what is kept is used
  * @param version   the release this is, or null where this is not one
- * @param checksums the SHA-256 of each platform's bundle, by the platform's name
+ * @param checksums the SHA-256 of each file a release fetches, by {@link ReleaseChecksums}' keys
  */
 record Fetching(Path cache, boolean offline, URI maven, URI releases, @Nullable String version,
                 Map<String, String> checksums, Downloads downloads) {
@@ -39,7 +35,6 @@ record Fetching(Path cache, boolean offline, URI maven, URI releases, @Nullable 
     static final String MAVEN_PROPERTY = "souther.maven.repository";
     static final String RELEASES_PROPERTY = "souther.releases";
     static final String HOME_VARIABLE = "SOUTHER_HOME";
-    private static final String CHECKSUMS = "/souther/nativecode/native-bundles.properties";
 
     Fetching {
         checksums = Map.copyOf(checksums);
@@ -54,7 +49,8 @@ record Fetching(Path cache, boolean offline, URI maven, URI releases, @Nullable 
                 URI.create(System.getProperty(MAVEN_PROPERTY, "https://repo1.maven.org/maven2")),
                 URI.create(System.getProperty(RELEASES_PROPERTY,
                         "https://github.com/souther-lang/souther-native-compiler/releases/download")),
-                Main.class.getPackage().getImplementationVersion(), released(), Downloads.http());
+                Main.class.getPackage().getImplementationVersion(), ReleaseChecksums.carried(),
+                Downloads.http());
     }
 
     Fetching withOffline(boolean offline) {
@@ -85,19 +81,5 @@ record Fetching(Path cache, boolean offline, URI maven, URI releases, @Nullable 
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("every Java has SHA-256", e);
         }
-    }
-
-    private static Map<String, String> released() {
-        Map<String, String> read = new HashMap<>();
-        try (InputStream in = Fetching.class.getResourceAsStream(CHECKSUMS)) {
-            if (in != null) {
-                Properties properties = new Properties();
-                properties.load(in);
-                properties.forEach((platform, sum) -> read.put(platform.toString(), sum.toString()));
-            }
-        } catch (IOException e) {
-            throw new UncheckedIOException(e);
-        }
-        return read;
     }
 }

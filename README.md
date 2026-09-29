@@ -94,11 +94,12 @@ it runs on, from the GitHub release of its own version, and the generator of eac
 asked for, from Maven Central at that version. Nothing else is ever fetched: what a flag can bring is
 what `KnownBindings` names, and nobody who does not use the Rust binding has the Rust generator.
 
-A bundle on a GitHub release can be replaced, so it is not taken on its own word. The SHA-256 of each
-bundle is written into the compiler's own artifact when it is released, and Maven Central does not let
-that be changed; a bundle that does not match is refused and not kept. A jar is held to the checksum
-Maven publishes beside it. What is kept is trusted as a file in `~/.m2` is, and is not checked again
-when it is used. `--offline` fetches nothing and uses only what is kept, and `--fetch`
+What is fetched is run, and neither place it is fetched from can say what it is: an asset of a GitHub
+release can be replaced, and a Maven repository can be a mirror. So the SHA-256 of each bundle and of
+each generator's jar is written into the compiler's own artifact when it is released, Maven Central
+does not let that artifact be changed, and anything fetched that does not match is refused and not
+kept. A checksum served beside a file is never asked for. What is kept is trusted as a file in `~/.m2`
+is, and is not checked again when it is used. `--offline` fetches nothing and uses only what is kept, and `--fetch`
 fetches everything a command may need, so that a build that may not reach the network later can be
 prepared where one can. The Maven repository can be a mirror, named by `-Dsouther.maven.repository`.
 
@@ -167,11 +168,20 @@ does this in CI, as the PHP script does.
 A release is a `v<version>` tag, and `.github/workflows/release.yml` does what the tag names. It builds
 the driver on each of the four platforms (Linux and macOS, on x86_64 and aarch64) and packs it with
 the runtime archive and the file of what linking that needs, by `scripts/package-native-bundle.sh`.
-It writes the SHA-256 of each bundle into `native-bundles.properties`, by
-`scripts/record-bundle-checksums.sh`, which is not committed and is built into the compiler's jar. It
-builds the jars at the version the tag names, and creates the GitHub release with the bundles. A test
-holds the platforms the workflow builds, the packing script accepts and the compiler names to be the
-same four.
+It builds the generators' jars, and writes the SHA-256 of every bundle and every jar into
+`release-checksums.properties` (`scripts/record-release-checksums.sh`), which is built into the
+compiler's jar. It then builds the publication, as a Maven repository, and keeps it as the workflow's
+artifact `maven-repository`, with the compiler in it carrying those checksums, before it creates the
+GitHub release with the bundles.
+
+The checksums are a fact about builds that follow the commit, so the file is not committed, and a
+build of a release version that does not have every one of them fails
+(`ReleaseChecksums`, checked when the compiler is packaged, and not left out by `-Dexec.skip`). A
+clone cannot rebuild a release into a compiler that fetches nothing it can check. The generators' jars
+are built twice, before their checksums are written and after, and have to be the same bytes
+(`project.build.outputTimestamp` is fixed for it), which `scripts/verify-release-build.sh` checks
+of what is about to be published. Tests hold the places that name the platforms, and the path of the
+file, to one answer.
 
 ## Where it runs
 

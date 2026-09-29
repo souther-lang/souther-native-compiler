@@ -43,6 +43,14 @@
         <assertj.version>3.27.6</assertj.version>
         <jackson.version>3.2.2</jackson.version>
         <raoh.version>0.8.0</raoh.version>
+        <!-- What every file a jar holds is dated, so that building the same sources twice writes the same
+             jar. The release embeds the checksum of each generator's jar in the compiler, and what it
+             publishes has to be what it checksummed. -->
+        <project.build.outputTimestamp>2026-01-01T00:00:00Z</project.build.outputTimestamp>
+        <!-- Whether the build is not to check that a release version carries its checksums: only the
+             release workflow's first pass, which builds the generators whose checksums are to be
+             written into the compiler, and throws that compiler away. -->
+        <souther.skipReleaseCheck>false</souther.skipReleaseCheck>
     </properties>
 
     <modules>

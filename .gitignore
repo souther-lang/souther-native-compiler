@@ -2,4 +2,4 @@ target/
 native/target/
 *.iml
 .idea/
-compiler/src/main/resources/souther/nativecode/native-bundles.properties
+compiler/src/main/resources/souther/nativecode/release-checksums.properties

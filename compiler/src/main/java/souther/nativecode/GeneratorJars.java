@@ -2,20 +2,18 @@ package souther.nativecode;
 
 import java.io.IOException;
 import java.net.URI;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
-import java.util.Locale;
 
 /**
  * The jar of a generator the catalog names, kept where the command finds it next time.
  *
  * <p>Only what the catalog names is fetched, at this compiler's own version and from the repository
  * this is configured with, so a flag on a command line cannot make the compiler run anything else.
- * What Maven publishes beside a jar is its checksum, and what is compared is the jar against that:
- * it finds a jar that came damaged, and says nothing of a repository that serves both wrong, which
- * is what the repository being Maven Central, and being fixed once published, is for.
+ * The jar is held to the SHA-256 this compiler was released with, and to nothing that the repository
+ * says of itself: a checksum served beside a jar is served by whoever serves the jar, and Maven
+ * Central does not require one.
  */
 final class GeneratorJars {
 
@@ -35,15 +33,19 @@ final class GeneratorJars {
             throw new NotFetched(kind.artifact() + ":" + version
                     + " is not kept, and this is offline");
         }
+        String expected = fetching.checksums().get(ReleaseChecksums.generator(kind.id()));
+        if (expected == null) {
+            throw new NotFetched("this compiler was released with no checksum for the " + kind.display()
+                    + " generator, so it will not take one");
+        }
         String base = fetching.maven().toString().replaceAll("/+$", "");
         URI jar = URI.create(base + "/" + coordinates[0].replace('.', '/') + "/" + coordinates[1]
                 + "/" + version + "/" + name);
         try {
             byte[] bytes = fetching.downloads().get(jar);
-            String said = new String(fetching.downloads().get(URI.create(jar + ".sha256")),
-                    StandardCharsets.UTF_8).trim().split("\\s+")[0].toLowerCase(Locale.ROOT);
-            if (!said.equals(Fetching.sha256(bytes))) {
-                throw new NotFetched(jar + " does not match its checksum: refused, and not kept");
+            if (!expected.equals(Fetching.sha256(bytes))) {
+                throw new NotFetched(jar + " does not match the checksum this compiler was released"
+                        + " with: refused, and not kept");
             }
             Files.createDirectories(kept.getParent());
             Path partial = Files.createTempFile(kept.getParent(), name, ".partial");

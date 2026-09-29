@@ -74,7 +74,7 @@ final class NativeBundle {
             throw new NotFetched("the driver for " + platform + " " + version
                     + " is not kept, and this is offline");
         }
-        String expected = fetching.checksums().get(platform);
+        String expected = fetching.checksums().get(ReleaseChecksums.bundle(platform));
         if (expected == null) {
             throw new NotFetched("this compiler was released with no checksum for the driver for "
                     + platform + ", so it will not take one");

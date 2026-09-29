@@ -33,9 +33,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * this platform. What it fetched is kept, so the next command fetches nothing, and it fetches
  * nothing where it is told not to.
  *
- * <p>A jar is held to the checksum Maven publishes beside it. A bundle is held to the checksum this
- * compiler was released with, since an asset of a GitHub release can be replaced, and holds three
- * files and no others. What does not match, or is not what it is to be, is refused and not kept.
+ * <p>A jar and a bundle are held to the checksum this compiler was released with, and to nothing that
+ * what serves them says of itself: an asset of a GitHub release can be replaced, and a Maven
+ * repository can be a mirror. A bundle holds three files and no others. What does not match, or is
+ * not what it is to be, is refused and not kept.
  *
  * <p>Read over HTTP from a server of the test's own, so that what is asked and what is kept are what
  * a real fetch would do.
@@ -80,11 +81,11 @@ class TheCommandFetchesWhatItNeedsOnFirstUseTest {
             return URI.create("http://127.0.0.1:" + server.getAddress().getPort() + path);
         }
 
-        void serveGenerator() throws IOException {
+        /** Serves the generator's jar, and answers the checksum the release carries for it. */
+        Map<String, String> serveGenerator() throws IOException {
             byte[] jar = jar();
             files.put(JAR, jar);
-            files.put(JAR + ".sha256", (Fetching.sha256(jar) + "  souther-binding-php\n")
-                    .getBytes(StandardCharsets.UTF_8));
+            return Map.of(ReleaseChecksums.generator("php"), Fetching.sha256(jar));
         }
 
         @Override
@@ -105,8 +106,8 @@ class TheCommandFetchesWhatItNeedsOnFirstUseTest {
     @Test
     void aGeneratorThatIsNotThereIsFetchedOnceAndThenKept(@TempDir Path into) throws Exception {
         try (Served served = new Served()) {
-            served.serveGenerator();
-            Fetching fetching = fetching(served, into.resolve("cache"), VERSION, Map.of());
+            Map<String, String> checksums = served.serveGenerator();
+            Fetching fetching = fetching(served, into.resolve("cache"), VERSION, checksums);
 
             Ran first = build(into, "first", fetching);
             Ran second = build(into, "second", fetching);
@@ -116,22 +117,30 @@ class TheCommandFetchesWhatItNeedsOnFirstUseTest {
             assertThat(into.resolve("first/out/fetched.txt")).exists();
             assertThat(second.ended()).as(second.said()).isZero();
             assertThat(into.resolve("second/out/fetched.txt")).exists();
-            assertThat(served.asked).as("the jar is asked for once").containsEntry(JAR, 1);
+            assertThat(served.asked).as("the jar is asked for once, and nothing beside it")
+                    .containsOnlyKeys(JAR).containsEntry(JAR, 1);
             assertThat(into.resolve("cache/generators/souther-binding-php-" + VERSION + ".jar"))
                     .exists();
         }
     }
 
+    /**
+     * A repository that serves another jar, and a checksum beside it that agrees, is not believed:
+     * what a jar is held to is what the compiler was released with.
+     */
     @Test
-    void aJarThatDoesNotMatchItsChecksumIsRefusedAndNotKept(@TempDir Path into) throws Exception {
+    void aJarThatIsNotTheOneTheReleaseNamedIsRefusedWhateverIsServedBesideIt(@TempDir Path into)
+            throws Exception {
         try (Served served = new Served()) {
-            served.serveGenerator();
-            served.files.put(JAR + ".sha256", "00".repeat(32).getBytes(StandardCharsets.UTF_8));
+            Map<String, String> checksums = served.serveGenerator();
+            byte[] replaced = bytes("another jar");
+            served.files.put(JAR, replaced);
+            served.files.put(JAR + ".sha256", bytes(Fetching.sha256(replaced)));
 
-            Ran ran = build(into, "built", fetching(served, into.resolve("cache"), VERSION, Map.of()));
+            Ran ran = build(into, "built", fetching(served, into.resolve("cache"), VERSION, checksums));
 
             assertThat(ran.ended()).isEqualTo(2);
-            assertThat(ran.said()).contains("does not match its checksum");
+            assertThat(ran.said()).contains("does not match the checksum this compiler was released with");
             Path generators = into.resolve("cache/generators");
             assertThat(Files.exists(generators) ? list(generators) : List.<Path>of())
                     .as("nothing is kept").isEmpty();
@@ -140,10 +149,23 @@ class TheCommandFetchesWhatItNeedsOnFirstUseTest {
     }
 
     @Test
-    void nothingIsFetchedWhereTheCommandIsOffline(@TempDir Path into) throws Exception {
+    void aReleaseThatCarriesNoChecksumForAGeneratorTakesNoJar(@TempDir Path into) throws Exception {
         try (Served served = new Served()) {
             served.serveGenerator();
-            Fetching fetching = fetching(served, into.resolve("cache"), VERSION, Map.of());
+
+            Ran ran = build(into, "built", fetching(served, into.resolve("cache"), VERSION, Map.of()));
+
+            assertThat(ran.ended()).isEqualTo(2);
+            assertThat(ran.said()).contains("no checksum for the PHP generator");
+            assertThat(served.asked).isEmpty();
+        }
+    }
+
+    @Test
+    void nothingIsFetchedWhereTheCommandIsOffline(@TempDir Path into) throws Exception {
+        try (Served served = new Served()) {
+            Map<String, String> checksums = served.serveGenerator();
+            Fetching fetching = fetching(served, into.resolve("cache"), VERSION, checksums);
 
             Ran nothingKept = build(into, "a", fetching, "--offline");
             Ran fetched = build(into, "b", fetching);
@@ -162,11 +184,11 @@ class TheCommandFetchesWhatItNeedsOnFirstUseTest {
     @Test
     void nothingIsFetchedFromABuildThatIsNotARelease(@TempDir Path into) throws Exception {
         try (Served served = new Served()) {
-            served.serveGenerator();
+            Map<String, String> checksums = served.serveGenerator();
 
             for (String version : new String[] {null, "1.2.3-SNAPSHOT"}) {
                 Ran ran = build(into, "v" + version, fetching(served, into.resolve("cache"), version,
-                        Map.of()));
+                        checksums));
 
                 assertThat(ran.ended()).isEqualTo(2);
                 assertThat(ran.said()).contains("not a release");
@@ -178,14 +200,14 @@ class TheCommandFetchesWhatItNeedsOnFirstUseTest {
     @Test
     void fetchWritesNothingButFetchesWhatIsMissing(@TempDir Path into) throws Exception {
         try (Served served = new Served()) {
-            served.serveGenerator();
+            Map<String, String> checksums = new java.util.HashMap<>(served.serveGenerator());
             byte[] rust = "a jar".getBytes(StandardCharsets.UTF_8);
             String rustJar = "/maven/org/souther-lang/souther-binding-rust/" + VERSION
                     + "/souther-binding-rust-" + VERSION + ".jar";
             served.files.put(rustJar, rust);
-            served.files.put(rustJar + ".sha256", Fetching.sha256(rust).getBytes(StandardCharsets.UTF_8));
+            checksums.put(ReleaseChecksums.generator("rust"), Fetching.sha256(rust));
 
-            Ran ran = run(fetching(served, into.resolve("cache"), VERSION, Map.of()), "--fetch");
+            Ran ran = run(fetching(served, into.resolve("cache"), VERSION, checksums), "--fetch");
 
             assertThat(ran.ended()).as(ran.said()).isZero();
             assertThat(ran.printed()).contains("the driver is this build's own")
@@ -312,7 +334,7 @@ class TheCommandFetchesWhatItNeedsOnFirstUseTest {
     /** A fetching whose release carries the checksum of {@code bundle} for this platform. */
     private static Fetching releasedWith(Served served, Path into, byte[] bundle) throws Exception {
         return fetching(served, into.resolve("cache"), VERSION,
-                Map.of(NativeBundle.platform(), Fetching.sha256(bundle)));
+                Map.of(ReleaseChecksums.bundle(NativeBundle.platform()), Fetching.sha256(bundle)));
     }
 
     private static String bundleAt() throws Exception {

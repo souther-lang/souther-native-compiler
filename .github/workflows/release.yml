@@ -47,6 +47,8 @@ jobs:
     # The one job that writes: it creates the release.
     permissions:
       contents: write
+    env:
+      CHECKSUMS: compiler/src/main/resources/souther/nativecode/release-checksums.properties
     steps:
       - uses: actions/checkout@v5
 
@@ -56,24 +58,51 @@ jobs:
           merge-multiple: true
           path: dist
 
-      # Written into the compiler's own artifact, which is the one place a bundle's checksum is
-      # held where a release asset being replaced does not reach it.
-      - run: scripts/record-bundle-checksums.sh dist compiler/src/main/resources/souther/nativecode/native-bundles.properties
-
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '25'
           cache: maven
 
-      # The tag names the version. The build runs without the Rust half's checks: what is released
-      # is what the tag's own build has already passed.
-      - run: |
-          mvn --batch-mode versions:set -DnewVersion="${GITHUB_REF_NAME#v}" -DprocessAllModules
-          mvn --batch-mode -DskipTests -Dexec.skip=true package
+      - name: The version the tag names
+        run: |
+          echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+          mvn --batch-mode versions:set -DnewVersion="${GITHUB_REF_NAME#v}" -DprocessAllModules -DgenerateBackupPoms=false
+
+      # The generators come first, because the compiler carries the checksum of their jars. The compiler
+      # this builds is thrown away, and is not held to carrying the checksums that are not yet written.
+      - name: The generators
+        run: >-
+          mvn --batch-mode -DskipTests -Dexec.skip=true -Dsouther.skipReleaseCheck=true
+          -pl bindings/php/generator,bindings/rust/generator -am package
+
+      # Written into the compiler's own artifact, which is the one place these are held where a release
+      # asset being replaced, or a mirror, does not reach them.
+      - name: The checksums of everything the compiler fetches
+        run: >-
+          scripts/record-release-checksums.sh "$CHECKSUMS" dist
+          "php=bindings/php/generator/target/souther-binding-php-$VERSION.jar"
+          "rust=bindings/rust/generator/target/souther-binding-rust-$VERSION.jar"
+
+      # What is published, as a Maven repository: built once, here, with the checksums in the compiler.
+      # The build refuses a release version that does not carry all of them.
+      - name: The publication
+        run: >-
+          mvn --batch-mode -DskipTests -Dexec.skip=true deploy
+          -DaltDeploymentRepository=release::file:./maven-repo
+
+      - run: scripts/verify-release-build.sh maven-repo "$VERSION" "$CHECKSUMS"
+
+      # What Maven Central is to be given. It is the only copy of a compiler that carries these
+      # checksums: they are not committed, so a rebuild from the tag has none, and a release version is
+      # not built without them.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: maven-repository
+          path: maven-repo
 
       - run: >-
-          gh release create "$GITHUB_REF_NAME" dist/*.zip --verify-tag --generate-notes
+          gh release create "$GITHUB_REF_NAME" dist/*.zip "$CHECKSUMS" --verify-tag --generate-notes
           --title "$GITHUB_REF_NAME"
         env:
           GH_TOKEN: ${{ github.token }}

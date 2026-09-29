@@ -64,6 +64,26 @@
                 <groupId>org.codehaus.mojo</groupId>
                 <artifactId>exec-maven-plugin</artifactId>
                 <executions>
+                    <!-- A release version is not built without the checksums of what it fetches, which the
+                         release writes into the compiler. They are not committed, so a clone rebuilding a
+                         release would otherwise make a compiler that fetches nothing it can check, and
+                         publish it. Its own skip, set explicitly, so that `-Dexec.skip` (which leaves out
+                         Cargo) does not leave this out. -->
+                    <execution>
+                        <id>release-checksums</id>
+                        <phase>prepare-package</phase>
+                        <goals>
+                            <goal>java</goal>
+                        </goals>
+                        <configuration>
+                            <skip>${souther.skipReleaseCheck}</skip>
+                            <mainClass>souther.nativecode.ReleaseChecksums</mainClass>
+                            <arguments>
+                                <argument>${project.version}</argument>
+                                <argument>${project.build.outputDirectory}/souther/nativecode/release-checksums.properties</argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
                     <!-- Before the Java tests, because one of them reaches the driver over the
                          process boundary and a clone that had not built it would report the
                          boundary as broken. -->
