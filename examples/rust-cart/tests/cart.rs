@@ -489,3 +489,86 @@ async fn an_empty_cart_is_not_quoted() {
     assert_eq!(answer.status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(answer.body, json!({ "error": "empty_cart" }));
 }
+
+/// A product on sale that `withdrawn` adds beside the seeded one.
+const SECOND: &str = "33333333-3333-3333-3333-333333333334";
+
+/// A cart over a database of its own in which the products in the buyer's cart are changed by
+/// `change` once they are in it. Beside the seeded product on sale, the cart holds `SECOND`.
+async fn withdrawn(buyer: &str, change: &str) -> (Cart, std::path::PathBuf) {
+    let database = std::env::temp_dir().join(format!("rust-cart-{}.sqlite", uuid::Uuid::new_v4()));
+    let cart = Cart::over(Connection::open(&database).unwrap());
+    Connection::open(&database)
+        .unwrap()
+        .execute(
+            "INSERT INTO product (product_id, name, on_sale, price) VALUES (?1, 'Filter Papers', 1, 300)",
+            [SECOND],
+        )
+        .unwrap();
+    assert_eq!(
+        cart.add_item(buyer, ON_SALE, 1).await.status,
+        StatusCode::CREATED
+    );
+    assert_eq!(
+        cart.add_item(buyer, SECOND, 1).await.status,
+        StatusCode::CREATED
+    );
+    Connection::open(&database)
+        .unwrap()
+        .execute_batch(change)
+        .unwrap();
+    (cart, database)
+}
+
+#[tokio::test]
+async fn a_product_no_longer_on_sale_by_checkout_is_422() {
+    let buyer = "11111111-1111-1111-1111-11111111111d";
+    let (cart, database) = withdrawn(
+        buyer,
+        &format!("UPDATE product SET on_sale = 0 WHERE product_id = '{SECOND}'"),
+    )
+    .await;
+
+    let answer = cart.checkout("/carts/checkout", buyer, individual()).await;
+
+    assert_eq!(answer.status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(answer.body, json!({ "error": "sale_ended" }));
+    std::fs::remove_file(&database).unwrap();
+}
+
+#[tokio::test]
+async fn a_product_gone_by_checkout_is_422() {
+    let buyer = "11111111-1111-1111-1111-11111111111e";
+    let (cart, database) = withdrawn(
+        buyer,
+        &format!("DELETE FROM product WHERE product_id = '{SECOND}'"),
+    )
+    .await;
+
+    let answer = cart.checkout("/carts/checkout", buyer, individual()).await;
+
+    assert_eq!(answer.status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(answer.body, json!({ "error": "product_not_found" }));
+    std::fs::remove_file(&database).unwrap();
+}
+
+#[tokio::test]
+async fn the_first_line_that_cannot_be_priced_says_why() {
+    // The lines are priced in the order of their products: the first ended its sale, the second is
+    // gone, and the answer is the first's.
+    let buyer = "11111111-1111-1111-1111-11111111111f";
+    let (cart, database) = withdrawn(
+        buyer,
+        &format!(
+            "UPDATE product SET on_sale = 0 WHERE product_id = '{ON_SALE}';
+             DELETE FROM product WHERE product_id = '{SECOND}';"
+        ),
+    )
+    .await;
+
+    let answer = cart.checkout("/carts/quote", buyer, corporation()).await;
+
+    assert_eq!(answer.status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(answer.body, json!({ "error": "sale_ended" }));
+    std::fs::remove_file(&database).unwrap();
+}

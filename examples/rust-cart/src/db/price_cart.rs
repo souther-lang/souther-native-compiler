@@ -3,17 +3,19 @@ use model::com::example::cart::domain::{
     SaleEnded, UserId,
 };
 use model::{HostError, Run};
-use rusqlite::{Connection, OptionalExtension};
+use rusqlite::Connection;
 use serde_json::json;
 
 use super::{made, read};
 
-/// `priceCart` over SQLite. It reads every line of the cart, looks each product up to see that it
-/// is there and on sale, and answers the lines with their prices as a `PricedCart`. A product that
-/// is gone or no longer on sale ends it with the model's own case.
+/// `priceCart` over SQLite. It reads every line of the cart with its product in one query, sees
+/// that each product is there and on sale, and answers the lines with their prices as a
+/// `PricedCart`. A product that is gone or no longer on sale ends it with the model's own case, the
+/// first such line in the order of the product ids deciding which.
 ///
-/// The loop that asks for each line's product stays here, in the implementation: the model has no
-/// traverse, and a fold cannot call another injected behavior.
+/// Deciding that for each line stays here, in the implementation: the model has no traverse, and a
+/// fold cannot call another injected behavior. The products are joined to the lines rather than
+/// asked for one by one, so a cart is one query however many lines it has.
 pub struct SqlPriceCart<'tx>(pub &'tx Connection);
 
 impl PriceCart for SqlPriceCart<'_> {
@@ -23,27 +25,25 @@ impl PriceCart for SqlPriceCart<'_> {
         user_id: UserId<'run>,
     ) -> Result<Priced<'run>, HostError> {
         let mut items = self.0.prepare(
-            "SELECT ci.product_id, ci.quantity
+            "SELECT ci.product_id, ci.quantity, p.on_sale, p.price
              FROM cart_item ci
              JOIN cart c ON c.cart_id = ci.cart_id
+             LEFT JOIN product p ON p.product_id = ci.product_id
              WHERE c.user_id = ?1
              ORDER BY ci.product_id",
         )?;
-        let mut product = self
-            .0
-            .prepare("SELECT on_sale, price FROM product WHERE product_id = ?1")?;
 
         let mut lines = Vec::new();
         for item in items.query_map([user_id.value()], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, Option<bool>>(2)?,
+                row.get::<_, Option<i64>>(3)?,
+            ))
         })? {
-            let (product_id, quantity) = item?;
-            let found = product
-                .query_row([&product_id], |row| {
-                    Ok((row.get::<_, bool>(0)?, row.get::<_, i64>(1)?))
-                })
-                .optional()?;
-            let Some((on_sale, price)) = found else {
+            let (product_id, quantity, on_sale, price) = item?;
+            let (Some(on_sale), Some(price)) = (on_sale, price) else {
                 return Ok(Priced::ProductNotFound(made(ProductNotFound::new(run))?));
             };
             if !on_sale {

@@ -82,59 +82,73 @@ func (s SaveItem) Apply(r *model.Run, pending domain.PendingItem) (domain.ItemAd
 	return domain.NewItemAdded(r, item.ProductId(), item.Quantity())
 }
 
-// PriceCart is priceCart. It reads every line of the cart, looks each product up to see that it is
-// there and on sale, and answers the lines with their prices as a PricedCart. A product that is
-// gone or no longer on sale ends it with the model's own case.
+// PriceCart is priceCart. It reads every line of the cart with its product in one query, sees that
+// each product is there and on sale, and answers the lines with their prices as a PricedCart. A
+// product that is gone or no longer on sale ends it with the model's own case, the first such line
+// in the order of the product ids deciding which.
 //
-// The loop that asks for each line's product stays here, in the implementation: the model has no
-// traverse, and a fold cannot call another injected behavior.
+// Deciding that for each line stays here, in the implementation: the model has no traverse, and a
+// fold cannot call another injected behavior. The products are joined to the lines rather than
+// asked for one by one, so a cart is one query however many lines it has.
 type PriceCart struct{ Tx *sql.Tx }
 
 func (s PriceCart) Apply(r *model.Run, userID domain.UserId) (domain.PricedCartOrProductNotFoundOrSaleEnded, error) {
-	lines, err := s.lines(userID.Value())
-	if err != nil {
+	lines, ended, err := s.lines(userID.Value())
+	switch {
+	case err != nil:
 		return nil, err
-	}
-	for i := range lines {
-		var onSale bool
-		err := s.Tx.QueryRow(`SELECT on_sale, price FROM product WHERE product_id = ?`, lines[i].productID).
-			Scan(&onSale, &lines[i].unitPrice)
-		if errors.Is(err, sql.ErrNoRows) {
-			none, err := domain.NewProductNotFound(r)
-			return domain.PricedCartOrProductNotFoundOrSaleEndedProductNotFound{Value: none}, err
-		}
-		if err != nil {
-			return nil, err
-		}
-		if !onSale {
-			ended, err := domain.NewSaleEnded(r)
-			return domain.PricedCartOrProductNotFoundOrSaleEndedSaleEnded{Value: ended}, err
-		}
+	case ended == productGone:
+		none, err := domain.NewProductNotFound(r)
+		return domain.PricedCartOrProductNotFoundOrSaleEndedProductNotFound{Value: none}, err
+	case ended == saleOver:
+		over, err := domain.NewSaleEnded(r)
+		return domain.PricedCartOrProductNotFoundOrSaleEndedSaleEnded{Value: over}, err
 	}
 	priced, err := read(r, pricedCartForm, lines, domain.DecodePricedCart)
 	return domain.PricedCartOrProductNotFoundOrSaleEndedPricedCart{Value: priced}, err
 }
 
-// lines are the lines of the user's cart, without their prices.
-func (s PriceCart) lines(user string) ([]lineRow, error) {
+// unpriced is why a cart has no price, or that it has one.
+type unpriced int
+
+const (
+	priced unpriced = iota
+	productGone
+	saleOver
+)
+
+// lines are the lines of the user's cart with their prices, or why the first line without one has
+// none.
+func (s PriceCart) lines(user string) ([]lineRow, unpriced, error) {
 	rows, err := s.Tx.Query(`
-		SELECT ci.product_id, ci.quantity
-		FROM cart_item ci JOIN cart c ON c.cart_id = ci.cart_id
+		SELECT ci.product_id, ci.quantity, p.on_sale, p.price
+		FROM cart_item ci
+		JOIN cart c ON c.cart_id = ci.cart_id
+		LEFT JOIN product p ON p.product_id = ci.product_id
 		WHERE c.user_id = ?
 		ORDER BY ci.product_id`, user)
 	if err != nil {
-		return nil, err
+		return nil, priced, err
 	}
 	defer rows.Close()
 	var lines []lineRow
 	for rows.Next() {
 		var line lineRow
-		if err := rows.Scan(&line.productID, &line.quantity); err != nil {
-			return nil, err
+		var onSale sql.NullBool
+		var price sql.NullInt64
+		if err := rows.Scan(&line.productID, &line.quantity, &onSale, &price); err != nil {
+			return nil, priced, err
 		}
+		if !onSale.Valid || !price.Valid {
+			return nil, productGone, nil
+		}
+		if !onSale.Bool {
+			return nil, saleOver, nil
+		}
+		line.unitPrice = price.Int64
 		lines = append(lines, line)
 	}
-	return lines, rows.Err()
+	return lines, priced, rows.Err()
 }
 
 // SaveOrder is saveOrder: one row for the order and one for each of its lines. The orderer is laid
@@ -163,12 +177,16 @@ func (s SaveOrder) Apply(r *model.Run, order domain.Order) (domain.OrderPlaced, 
 		charge.Total().Value(), kind, email, name, companyName, corporateNumber); err != nil {
 		return domain.OrderPlaced{}, err
 	}
+	insert, err := s.Tx.Prepare(`
+		INSERT INTO order_line (order_line_id, order_id, product_id, quantity, unit_price)
+		VALUES (?, ?, ?, ?, ?)`)
+	if err != nil {
+		return domain.OrderPlaced{}, err
+	}
+	defer insert.Close()
 	for _, line := range order.Lines() {
-		if _, err := s.Tx.Exec(`
-			INSERT INTO order_line (order_line_id, order_id, product_id, quantity, unit_price)
-			VALUES (?, ?, ?, ?, ?)`,
-			uuid.NewString(), orderID, line.ProductId().Value(), line.Quantity().Value(),
-			line.UnitPrice().Value()); err != nil {
+		if _, err := insert.Exec(uuid.NewString(), orderID, line.ProductId().Value(),
+			line.Quantity().Value(), line.UnitPrice().Value()); err != nil {
 			return domain.OrderPlaced{}, err
 		}
 	}

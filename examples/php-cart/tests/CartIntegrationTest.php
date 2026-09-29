@@ -25,6 +25,8 @@ final class CartIntegrationTest extends TestCase
     private const USER = '11111111-1111-1111-1111-111111111111';
     private const ON_SALE = '33333333-3333-3333-3333-333333333333';
     private const OFF_SALE = '44444444-4444-4444-4444-444444444444';
+    /** A product on sale that `withdrawn` adds beside the seeded one. */
+    private const SECOND = '33333333-3333-3333-3333-333333333334';
 
     private CartApplication $app;
 
@@ -339,6 +341,58 @@ final class CartIntegrationTest extends TestCase
 
         self::assertSame(422, $response->status);
         self::assertSame(['error' => 'empty_cart'], self::body($response));
+    }
+
+    #[Test]
+    public function aProductNoLongerOnSaleByCheckoutIs422(): void
+    {
+        $user = '11111111-1111-1111-1111-11111111111d';
+        $this->withdrawn($user, "UPDATE product SET on_sale = 0 WHERE product_id = '" . self::SECOND . "'");
+
+        $response = $this->checkout('/carts/checkout', $user, self::individual());
+
+        self::assertSame(422, $response->status);
+        self::assertSame(['error' => 'sale_ended'], self::body($response));
+    }
+
+    #[Test]
+    public function aProductGoneByCheckoutIs422(): void
+    {
+        $user = '11111111-1111-1111-1111-11111111111e';
+        $this->withdrawn($user, "DELETE FROM product WHERE product_id = '" . self::SECOND . "'");
+
+        $response = $this->checkout('/carts/checkout', $user, self::individual());
+
+        self::assertSame(422, $response->status);
+        self::assertSame(['error' => 'product_not_found'], self::body($response));
+    }
+
+    #[Test]
+    public function theFirstLineThatCannotBePricedSaysWhy(): void
+    {
+        // The lines are priced in the order of their products: the first ended its sale, the second
+        // is gone, and the answer is the first's.
+        $user = '11111111-1111-1111-1111-11111111111f';
+        $this->withdrawn($user, "UPDATE product SET on_sale = 0 WHERE product_id = '" . self::ON_SALE . "'");
+        $this->pdo->exec("DELETE FROM product WHERE product_id = '" . self::SECOND . "'");
+
+        $response = $this->checkout('/carts/quote', $user, self::corporation());
+
+        self::assertSame(422, $response->status);
+        self::assertSame(['error' => 'sale_ended'], self::body($response));
+    }
+
+    /**
+     * Puts the seeded product on sale and SECOND in the cart of $userId, then changes the products
+     * by $change.
+     */
+    private function withdrawn(string $userId, string $change): void
+    {
+        $this->pdo->exec("INSERT INTO product (product_id, name, on_sale, price) VALUES ('"
+            . self::SECOND . "', 'Filter Papers', 1, 300)");
+        self::assertSame(201, $this->addItem($userId, self::ON_SALE, 1)->status);
+        self::assertSame(201, $this->addItem($userId, self::SECOND, 1)->status);
+        $this->pdo->exec($change);
     }
 
     private function addItem(string $userId, string $productId, int $quantity): Response

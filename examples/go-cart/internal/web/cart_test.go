@@ -459,3 +459,56 @@ func TestAPageFurtherThanAnyIsEmpty(t *testing.T) {
 		"total": 1, "page": 9223372036854775807, "size": 20, "items": []any{},
 	})
 }
+
+// withdrawn is a client over a database of its own in which the products in the buyer's cart are
+// changed by change once they are in it. Beside the seeded product on sale, the cart holds second.
+func withdrawn(t *testing.T, buyer string, change string) client {
+	t.Helper()
+	database := filepath.Join(t.TempDir(), "cart.sqlite")
+	c := over(t, database)
+	db, err := sql.Open("sqlite", database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`INSERT INTO product (product_id, name, on_sale, price) VALUES (?, 'Filter Papers', 1, 300)`,
+		second); err != nil {
+		t.Fatal(err)
+	}
+	expect(t, c.addItem(buyer, onSale, 1), http.StatusCreated, nil)
+	expect(t, c.addItem(buyer, second, 1), http.StatusCreated, nil)
+	if _, err := db.Exec(change); err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+// second is a product on sale that withdrawn adds beside the seeded one.
+const second = "33333333-3333-3333-3333-333333333334"
+
+func TestAProductNoLongerOnSaleByCheckoutIs422(t *testing.T) {
+	buyer := "11111111-1111-1111-1111-11111111111d"
+	c := withdrawn(t, buyer, `UPDATE product SET on_sale = 0 WHERE product_id = '`+second+`'`)
+
+	expect(t, c.checkout("/carts/checkout", buyer, individual()), http.StatusUnprocessableEntity,
+		object{"error": "sale_ended"})
+}
+
+func TestAProductGoneByCheckoutIs422(t *testing.T) {
+	buyer := "11111111-1111-1111-1111-11111111111e"
+	c := withdrawn(t, buyer, `DELETE FROM product WHERE product_id = '`+second+`'`)
+
+	expect(t, c.checkout("/carts/checkout", buyer, individual()), http.StatusUnprocessableEntity,
+		object{"error": "product_not_found"})
+}
+
+func TestTheFirstLineThatCannotBePricedSaysWhy(t *testing.T) {
+	// The lines are priced in the order of their products: the first ended its sale, the second is
+	// gone, and the answer is the first's.
+	buyer := "11111111-1111-1111-1111-11111111111f"
+	c := withdrawn(t, buyer, `UPDATE product SET on_sale = 0 WHERE product_id = '`+onSale+`';
+		DELETE FROM product WHERE product_id = '`+second+`'`)
+
+	expect(t, c.checkout("/carts/quote", buyer, corporation()), http.StatusUnprocessableEntity,
+		object{"error": "sale_ended"})
+}
