@@ -3,10 +3,14 @@ name: build
 # On both of them, because what this project writes is decided by the host: the object's format,
 # what the linker wants, and how a symbol is spelt once it is in one. A green build on one of them
 # says nothing about the other.
+#
+# Also what a release runs on the commit it is made from (release.yml calls it): a release is not
+# replaced once it is out, and a commit that once passed is not shown to be this one.
 on:
   push:
     branches: [main, develop]
   pull_request:
+  workflow_call:
 
 jobs:
   build:

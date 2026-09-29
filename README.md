@@ -49,6 +49,9 @@ fixes it. The Rust runtime in `bindings/rust/runtime` is a crate of its own, whi
 lints and tests beside the Rust half, and the tests of a generated Rust binding build a host of it
 with Cargo, fetching what the runtime depends on the first time.
 
+The tests are told where the driver is by Maven, through the same property; a test run from an IDE
+names it the same way (`-Dsouther.native.driver=<clone>/native/target/debug/souther-native-driver`).
+
 ## Modules
 
 The build is one Maven reactor of five modules. `bindings/api` (`souther-bindings-api`) holds what a
@@ -83,7 +86,30 @@ and one output inside another, is the command's own.
 ## From the command line
 
 What the API builds, the command line builds too, so an application needs no Java of its own to
-build what it runs. In a clone:
+build what it runs. Only a JVM is needed to start it, through [jbang](https://www.jbang.dev/):
+
+    jbang souther-native@souther-lang/souther-native-compiler \
+        --library build/native --php build/php --namespace Acme\Shop model
+
+The compiler is one artifact, and what a command needs beyond it is fetched the first time it needs
+it and kept in `~/.souther` (`$SOUTHER_HOME` where it is set). That is the driver for the platform
+it runs on, from the GitHub release of its own version, and the generator of each binding that is
+asked for, from Maven Central at that version. Nothing else is ever fetched: what a flag can bring is
+what `KnownBindings` names, and nobody who does not use the Rust binding has the Rust generator.
+
+What is fetched is run, and neither place it is fetched from can say what it is: an asset of a GitHub
+release can be replaced, and a Maven repository can be a mirror. So the SHA-256 of each bundle and of
+each generator's jar is written into the compiler's own artifact when it is released, Maven Central
+does not let that artifact be changed, and anything fetched that does not match is refused and not
+kept. A checksum served beside a file is never asked for. What is kept is trusted as a file in `~/.m2`
+is, and is not checked again when it is used. `--offline` fetches nothing and uses only what is kept, and `--fetch`
+fetches everything a command may need, so that a build that may not reach the network later can be
+prepared where one can. The Maven repository can be a mirror, named by `-Dsouther.maven.repository`.
+
+A build from a clone has no release to fetch from, and does not try: it uses the driver Cargo built,
+which `scripts/souther-native` names by `-Dsouther.native.driver`, and the generators the launcher
+carries. That property is the one place a driver is looked for. A compiler does not look in the
+directory it is run in, where a project of somebody else's could have an executable of the same name. In a clone:
 
     scripts/souther-native --library build/native --php build/php --namespace Acme\Shop model
 
@@ -94,9 +120,10 @@ wrote everything, 1 where the build is refused (a compile error, what this backe
 yet, or a name from the model a binding's language will not take), and 2 where the command is
 refused.
 
-    souther-native [-cp <path>] -o <object> <source>...
-    souther-native [-cp <path>] --library <dir> [--with <object>]...
+    souther-native [--offline] [-cp <path>] -o <object> <source>...
+    souther-native [--offline] [-cp <path>] --library <dir> [--with <object>]...
                    [--php <dir> --namespace <ns>] [--rust <dir> --crate <name>] <source>...
+    souther-native --fetch
 
 A source is a `.sou` file or a directory holding some. `--library` writes what a host is handed
 (below) into its directory, `--php` the PHP binding of it and `--rust` the Rust one, each from the
@@ -140,6 +167,29 @@ reaches it by patching it in from the clone:
 
 The library is loaded by path when the host runs, not linked. `scripts/rust-from-the-command-line.sh`
 does this in CI, as the PHP script does.
+
+## Releasing
+
+A release is a `v<version>` tag, and `.github/workflows/release.yml` does what the tag names. A tag can
+be put on any commit, and a release is not replaced once it is out, so the first thing it does is run
+the build (`build.yml`, called from it) on the commit that is tagged, and nothing after it starts unless
+that passes; a test holds every job of the release to waiting for it. It then builds
+the driver on each of the four platforms (Linux and macOS, on x86_64 and aarch64) and packs it with
+the runtime archive and the file of what linking that needs, by `scripts/package-native-bundle.sh`.
+It builds the generators' jars, and writes the SHA-256 of every bundle and every jar into
+`release-checksums.properties` (`scripts/record-release-checksums.sh`), which is built into the
+compiler's jar. It then builds the publication, as a Maven repository, and keeps it as the workflow's
+artifact `maven-repository`, with the compiler in it carrying those checksums, before it creates the
+GitHub release with the bundles.
+
+The checksums are a fact about builds that follow the commit, so the file is not committed, and a
+build of a release version that does not have every one of them fails
+(`ReleaseChecksums`, checked when the compiler is packaged, and not left out by `-Dexec.skip`). A
+clone cannot rebuild a release into a compiler that fetches nothing it can check. The generators' jars
+are built twice, before their checksums are written and after, and have to be the same bytes
+(`project.build.outputTimestamp` is fixed for it), which `scripts/verify-release-build.sh` checks
+of what is about to be published. Tests hold the places that name the platforms, and the path of the
+file, to one answer.
 
 ## Where it runs
 

@@ -1,0 +1,115 @@
+name: release
+
+# What a release publishes, from a `v<version>` tag: the driver for each platform, as a bundle on
+# the GitHub release; and the compiler, built with the SHA-256 of each bundle written into it, so
+# that what a released compiler fetches from the release is held to what this built. An asset of a
+# release can be replaced. The compiler on Maven Central cannot, so the trust rests there.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  # The build of the commit that is tagged, run here and not remembered from when it was pushed: a tag
+  # can be put on any commit, and what is published from a commit that does not pass is a compiler that
+  # every user of that version fetches from. Nothing below runs unless it passes.
+  ci:
+    uses: ./.github/workflows/build.yml
+
+  bundle:
+    needs: ci
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - platform: linux-x86_64
+            on: ubuntu-latest
+          - platform: linux-aarch64
+            on: ubuntu-24.04-arm
+          - platform: macos-aarch64
+            on: macos-latest
+          - platform: macos-x86_64
+            on: macos-15-intel
+    runs-on: ${{ matrix.on }}
+    steps:
+      - uses: actions/checkout@v5
+
+      # The toolchain comes from rust-toolchain.toml, as it does in the build.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native
+
+      - run: scripts/package-native-bundle.sh "${GITHUB_REF_NAME#v}" "${{ matrix.platform }}" dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bundle-${{ matrix.platform }}
+          path: dist/*
+
+  release:
+    needs: bundle
+    runs-on: ubuntu-latest
+    # The one job that writes: it creates the release.
+    permissions:
+      contents: write
+    env:
+      CHECKSUMS: compiler/src/main/resources/souther/nativecode/release-checksums.properties
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: bundle-*
+          merge-multiple: true
+          path: dist
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+
+      - name: The version the tag names
+        run: |
+          echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+          mvn --batch-mode versions:set -DnewVersion="${GITHUB_REF_NAME#v}" -DprocessAllModules -DgenerateBackupPoms=false
+
+      # The generators come first, because the compiler carries the checksum of their jars. The compiler
+      # this builds is thrown away, and is not held to carrying the checksums that are not yet written.
+      - name: The generators
+        run: >-
+          mvn --batch-mode -DskipTests -Dexec.skip=true -Dsouther.skipReleaseCheck=true
+          -pl bindings/php/generator,bindings/rust/generator -am package
+
+      # Written into the compiler's own artifact, which is the one place these are held where a release
+      # asset being replaced, or a mirror, does not reach them.
+      - name: The checksums of everything the compiler fetches
+        run: >-
+          scripts/record-release-checksums.sh "$CHECKSUMS" dist
+          "php=bindings/php/generator/target/souther-binding-php-$VERSION.jar"
+          "rust=bindings/rust/generator/target/souther-binding-rust-$VERSION.jar"
+
+      # What is published, as a Maven repository: built once, here, with the checksums in the compiler.
+      # The build refuses a release version that does not carry all of them.
+      - name: The publication
+        run: >-
+          mvn --batch-mode -DskipTests -Dexec.skip=true deploy
+          -DaltDeploymentRepository=release::file:./maven-repo
+
+      - run: scripts/verify-release-build.sh maven-repo "$VERSION" "$CHECKSUMS"
+
+      # What Maven Central is to be given. It is the only copy of a compiler that carries these
+      # checksums: they are not committed, so a rebuild from the tag has none, and a release version is
+      # not built without them.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: maven-repository
+          path: maven-repo
+
+      - run: >-
+          gh release create "$GITHUB_REF_NAME" dist/*.zip "$CHECKSUMS" --verify-tag --generate-notes
+          --title "$GITHUB_REF_NAME"
+        env:
+          GH_TOKEN: ${{ github.token }}

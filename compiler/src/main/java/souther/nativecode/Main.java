@@ -63,11 +63,14 @@ public final class Main {
             }
             asked.append("]");
         }
-        return "usage: souther-native [-cp <path>] -o <object> <source>...\n"
-                + "       souther-native [-cp <path>] --library <dir> [--with <object>]...\n"
+        return "usage: souther-native [--offline] [-cp <path>] -o <object> <source>...\n"
+                + "       souther-native [--offline] [-cp <path>] --library <dir> [--with <object>]...\n"
                 + "                      " + asked + "\n"
                 + "                      <source>...\n"
+                + "       souther-native --fetch\n"
                 + "\n"
+                + "  --offline           fetch nothing: use only the driver and the generators already kept\n"
+                + "  --fetch             fetch the driver and every generator this does not have, and end\n"
                 + "  -cp <path>          the class path of other builds the program imports, as the souther\n"
                 + "                      command takes it (also --class-path)\n"
                 + "  -o <object>         where to write the object file\n"
@@ -82,6 +85,10 @@ public final class Main {
 
         /** One object file. */
         record ObjectFile(Path into) implements Output {
+        }
+
+        /** What this needs and does not have, fetched: a command of its own, and writes no build. */
+        record Fetch() implements Output {
         }
 
         /** A library, reaching {@code alongside}, and each binding of it asked for. */
@@ -108,9 +115,9 @@ public final class Main {
 
     /**
      * A command as read: what it writes, from which sources, reading the other builds they import
-     * from {@code classPath}.
+     * from {@code classPath}, and whether it may fetch what it needs and does not have.
      */
-    record Command(Output output, List<Path> sources, List<Path> classPath) {
+    record Command(Output output, List<Path> sources, List<Path> classPath, boolean offline) {
 
         CheckedProgram checked(List<String> read) {
             return classPath.isEmpty() ? CheckedProgram.of(read)
@@ -133,10 +140,15 @@ public final class Main {
     }
 
     static int run(String[] args, PrintStream out, PrintStream problems) {
-        return run(args, out, problems, Bindings.installed());
+        return run(args, out, problems, Bindings.installed(), Fetching.standard());
     }
 
     static int run(String[] args, PrintStream out, PrintStream problems, Bindings generators) {
+        return run(args, out, problems, generators, Fetching.standard());
+    }
+
+    static int run(String[] args, PrintStream out, PrintStream problems, Bindings generators,
+                   Fetching allowed) {
         Command command;
         try {
             command = read(args);
@@ -146,6 +158,10 @@ public final class Main {
             }
             problems.print(USAGE);
             return WRONG_COMMAND;
+        }
+        Fetching fetching = allowed.withOffline(command.offline()).saying(problems);
+        if (command.output() instanceof Output.Fetch) {
+            return fetched(out, problems, generators, fetching);
         }
 
         List<Path> files;
@@ -166,7 +182,9 @@ public final class Main {
                 read.add(Files.readString(file, StandardCharsets.UTF_8));
             }
             switch (command.output()) {
+                case Output.Fetch fetch -> throw new IllegalStateException("handled above");
                 case Output.ObjectFile object -> {
+                    driver(fetching);
                     byte[] written = NativeCompiler.compile(command.checked(read));
                     if (object.into().getParent() != null) {
                         Files.createDirectories(object.into().getParent());
@@ -177,7 +195,7 @@ public final class Main {
                 case Output.Library library -> {
                     Map<HostBinding, BindingGenerator> generating = new LinkedHashMap<>();
                     for (HostBinding binding : library.bindings()) {
-                        BindingGenerator generator = generators.generatorFor(binding.kind());
+                        BindingGenerator generator = generator(generators, fetching, binding.kind());
                         try {
                             generator.preflight(binding.into(), binding.options());
                         } catch (NotBindable e) {
@@ -186,6 +204,7 @@ public final class Main {
                         }
                         generating.put(binding, generator);
                     }
+                    driver(fetching);
                     List<byte[]> alongside = new ArrayList<>(library.alongside().size());
                     for (Path object : library.alongside()) {
                         alongside.add(Files.readAllBytes(object));
@@ -209,9 +228,6 @@ public final class Main {
                     }
                 }
             }
-        } catch (BindingUnavailable e) {
-            problems.println(e.getMessage());
-            return WRONG_COMMAND;
         } catch (CompileException e) {
             problems.println(e.getMessage());
             return REFUSED;
@@ -232,6 +248,60 @@ public final class Main {
     }
 
     /**
+     * The generator of {@code kind}: an installed one, or, where there is none, the one the
+     * catalog's artifact provides, fetched once and kept.
+     */
+    private static BindingGenerator generator(Bindings generators, Fetching fetching,
+                                              KnownBindings.Kind kind) throws IOException {
+        try {
+            return generators.generatorFor(kind);
+        } catch (BindingUnavailable missing) {
+            try {
+                return generators.load(GeneratorJars.fetch(fetching, kind), kind);
+            } catch (NotFetched cannot) {
+                throw new NotFetched(missing.getMessage() + ": " + cannot.getMessage(), cannot);
+            }
+        }
+    }
+
+    /**
+     * The driver a program is handed to, where the build has none of its own: the bundle of this
+     * release for this platform, fetched once and kept. Named by the property that says where the
+     * driver is, which is how everything that hands it a program finds it.
+     */
+    private static void driver(Fetching fetching) throws NotFetched {
+        if (!NativeCompiler.hasDriver()) {
+            System.setProperty(NativeCompiler.DRIVER_PROPERTY,
+                    NativeBundle.locate(fetching).toString());
+        }
+    }
+
+    /** {@code --fetch}: what a command may need and this does not have, fetched, and nothing built. */
+    private static int fetched(PrintStream out, PrintStream problems, Bindings generators,
+                               Fetching fetching) {
+        try {
+            if (NativeCompiler.hasDriver()) {
+                out.println("the driver is this build's own");
+            } else {
+                out.println("the driver " + NativeBundle.locate(fetching));
+            }
+            for (KnownBindings.Kind kind : KnownBindings.all()) {
+                try {
+                    generators.generatorFor(kind);
+                    out.println("the " + kind.display() + " generator is installed");
+                } catch (BindingUnavailable missing) {
+                    out.println("the " + kind.display() + " generator "
+                            + GeneratorJars.fetch(fetching, kind));
+                }
+            }
+            return WROTE_IT;
+        } catch (IOException e) {
+            problems.println(e.getMessage());
+            return WRONG_COMMAND;
+        }
+    }
+
+    /**
      * The command {@code args} say, or why they say none: an option that belongs to one output
      * named with the other, or with what it goes with missing, is refused here rather than read as
      * something the command did not mean.
@@ -244,9 +314,13 @@ public final class Main {
         Map<KnownBindings.Kind, Map<String, String>> qualified = new HashMap<>();
         List<Path> sources = new ArrayList<>();
         List<Path> classPath = new ArrayList<>();
+        boolean offline = false;
+        boolean fetch = false;
         for (int at = 0; at < args.length; at++) {
             String held = args[at];
             switch (held) {
+                case "--offline" -> offline = true;
+                case "--fetch" -> fetch = true;
                 case "-o" -> object = once(held, object, Path.of(valueOf(args, ++at, held)));
                 case "--library" -> library = once(held, library, Path.of(valueOf(args, ++at, held)));
                 case "-cp", "--class-path" -> {
@@ -276,6 +350,16 @@ public final class Main {
                 }
             }
         }
+        if (fetch) {
+            if (offline) {
+                throw new NotACommand("--fetch and --offline ask for opposite things");
+            }
+            if (object != null || library != null || !sources.isEmpty() || !alongside.isEmpty()
+                    || !classPath.isEmpty() || !asked.isEmpty() || !qualified.isEmpty()) {
+                throw new NotACommand("--fetch is a command of its own, and takes nothing else");
+            }
+            return new Command(new Output.Fetch(), List.of(), List.of(), false);
+        }
         if (sources.isEmpty()) {
             throw new NotACommand(null);
         }
@@ -300,7 +384,7 @@ public final class Main {
                 throw new NotACommand(null);
             }
             return new Command(new Output.ObjectFile(object), List.copyOf(sources),
-                    List.copyOf(classPath));
+                    List.copyOf(classPath), offline);
         }
         for (KnownBindings.Kind kind : KnownBindings.all()) {
             if (!asked.containsKey(kind) && qualified.containsKey(kind)) {
@@ -330,7 +414,7 @@ public final class Main {
             }
         }
         return new Command(new Output.Library(library, alongside, bindings),
-                List.copyOf(sources), List.copyOf(classPath));
+                List.copyOf(sources), List.copyOf(classPath), offline);
     }
 
     private record Named(String option, boolean given) {
