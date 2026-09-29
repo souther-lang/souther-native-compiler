@@ -36,9 +36,11 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      # The toolchain comes from rust-toolchain.toml, as it does in the build.
+      # The toolchain comes from rust-toolchain.toml, and the key from what rust-cache does not read
+      # itself, as they do in the build (whose workflow says why).
       - uses: Swatinem/rust-cache@v2
         with:
+          key: ${{ hashFiles('native/Cargo.toml', '**/.cargo/config.toml', '**/.cargo/config') }}
           workspaces: native
 
       - run: scripts/package-native-bundle.sh "${GITHUB_REF_NAME#v}" "${{ matrix.platform }}" dist

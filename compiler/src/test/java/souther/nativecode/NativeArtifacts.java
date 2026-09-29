@@ -10,9 +10,12 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.WeakHashMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -41,9 +44,13 @@ final class NativeArtifacts {
      */
     static final class Bytes {
         private final byte[] held;
+        private final int hash;
 
         Bytes(byte[] given) {
             this.held = given.clone();
+            // Worked out once: nothing writes to what is held, and a key hashed again on every
+            // lookup costs the lookup as much as the bytes are long.
+            this.hash = Arrays.hashCode(held);
         }
 
         byte[] copy() {
@@ -57,7 +64,7 @@ final class NativeArtifacts {
 
         @Override
         public int hashCode() {
-            return Arrays.hashCode(held);
+            return hash;
         }
     }
 
@@ -70,6 +77,18 @@ final class NativeArtifacts {
             defined = Set.copyOf(defined);
         }
     }
+
+    /**
+     * The transport document of each program, written once for as long as the program is. Every
+     * artifact is kept under the document, so a lookup that wrote the program out again to find
+     * its key cost as much as the program is long each time it was made, and found what it had
+     * found before. A program is equal only to itself, so this holds each one by identity; weakly,
+     * so one no test holds any more is not kept for it.
+     */
+    private static final Map<CheckedProgram, String> DOCUMENTS =
+            Collections.synchronizedMap(new WeakHashMap<>());
+
+    private static final ConcurrentMap<String, AtomicInteger> WRITTEN = new ConcurrentHashMap<>();
 
     private static final ConcurrentMap<String, Built> OBJECTS = new ConcurrentHashMap<>();
     private static final ConcurrentMap<Linked, Path> EXECUTABLES = new ConcurrentHashMap<>();
@@ -115,13 +134,28 @@ final class NativeArtifacts {
         return built(program).bytes().copy();
     }
 
+    /** The program as the driver is handed it, written the first time it is asked for. */
+    static String document(CheckedProgram program) {
+        return DOCUMENTS.computeIfAbsent(program, it -> {
+            String document = ProgramWriter.written(it);
+            WRITTEN.computeIfAbsent(document, d -> new AtomicInteger()).incrementAndGet();
+            return document;
+        });
+    }
+
+    /** How many times this program was written out, for a test holding that to be once. */
+    static int writingsOf(CheckedProgram program) {
+        AtomicInteger count = WRITTEN.get(document(program));
+        return count == null ? 0 : count.get();
+    }
+
     static Built built(CheckedProgram program) throws IOException, InterruptedException {
-        String document = ProgramWriter.written(program);
+        String document = document(program);
         try {
             return OBJECTS.computeIfAbsent(document, ignored -> {
                 try {
                     COMPILED.computeIfAbsent(document, d -> new AtomicInteger()).incrementAndGet();
-                    byte[] bytes = NativeCompiler.compile(program);
+                    byte[] bytes = NativeCompiler.driven(document);
                     return new Built(new Bytes(bytes), definedIn(bytes));
                 } catch (IOException e) {
                     throw new UncheckedIOException(e);
@@ -138,7 +172,7 @@ final class NativeArtifacts {
     /** The executable the linker makes of these, which is one wherever and however often asked. */
     static Path executable(CheckedProgram program, List<Bytes> alongside, String harness)
             throws IOException, InterruptedException {
-        String document = ProgramWriter.written(program);
+        String document = document(program);
         Linked key = new Linked(document, List.copyOf(alongside), harness);
         Path already = EXECUTABLES.get(key);
         if (already != null) {
@@ -172,13 +206,13 @@ final class NativeArtifacts {
 
     /** How many times this program was compiled, for a test holding that to be once. */
     static int compilationsOf(CheckedProgram program) {
-        AtomicInteger count = COMPILED.get(ProgramWriter.written(program));
+        AtomicInteger count = COMPILED.get(document(program));
         return count == null ? 0 : count.get();
     }
 
     /** How many executables were linked of this program, whatever they were linked with. */
     static int linksOf(CheckedProgram program) {
-        AtomicInteger count = LINKED.get(ProgramWriter.written(program));
+        AtomicInteger count = LINKED.get(document(program));
         return count == null ? 0 : count.get();
     }
 

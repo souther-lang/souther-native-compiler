@@ -53,8 +53,18 @@ jobs:
 
       # The toolchain comes from rust-toolchain.toml, which rustup reads when cargo is first run
       # in the checkout. Nothing here names a version, so there is one place it is written.
+      #
+      # rust-cache keys what it restores on the manifests of each workspace's packages and its lock,
+      # and nothing else a build reads: not a virtual workspace's root (native/Cargo.toml, with its
+      # profiles and dependency features) and not a Cargo config. A key that matches in full is not
+      # saved again, so a change to one of those was rebuilt on every run from a cache that never
+      # caught up. The key here is those files and no more: it is part of the key a run falls back
+      # to as well, so a file rust-cache already hashes put here would turn a change it restores
+      # most of into a build from nothing. EveryRustCacheIsKeptUnderWhatDecidesTheBuildTest holds
+      # every virtual root in the repository to this list.
       - uses: Swatinem/rust-cache@v2
         with:
+          key: ${{ hashFiles('native/Cargo.toml', '**/.cargo/config.toml', '**/.cargo/config') }}
           workspaces: |
             native
             bindings/rust/runtime
