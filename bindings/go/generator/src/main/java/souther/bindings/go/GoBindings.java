@@ -164,9 +164,11 @@ public final class GoBindings {
      * only hands what it is given to the function of the package that does the work.
      *
      * @param exported the name the library calls it by, which no other of the program has
-     * @param takes    what it is handed, one Go type for each C parameter
+     * @param takes    what it is handed, one Go type for each C parameter, as the declarations
+     *                 spell it
+     * @param type     the type the declarations say a function that implements it is of
      */
-    private record Callback(String exported, List<String> takes, String forwards) {
+    private record Callback(String exported, List<String> takes, String forwards, String type) {
     }
 
     private void write() throws IOException {
@@ -1110,16 +1112,6 @@ public final class GoBindings {
         };
     }
 
-    /** What C calls a parameter of a callback: a number, or a plain pointer. */
-    private static String cType(Parameter parameter) {
-        String number = scalar(parameter.word());
-        return switch (parameter.mode()) {
-            case GIVEN -> number != null ? number : "void *";
-            case ROOM -> number != null ? number + " *" : "void **";
-            case SLICE -> throw new IllegalArgumentException("a callback is handed no slice");
-        };
-    }
-
     /**
      * The interface a host implements {@code injection} as, the type an implementation is made
      * into that the library calls it through, and what the library calls ({@link #hostCallback}).
@@ -1205,45 +1197,70 @@ public final class GoBindings {
         String souther = imports.souther();
         String lib = imports.lib();
         String unsafe = imports.unsafe();
-        List<String> cParameters = new ArrayList<>();
+        // What the library calls is declared with the declarations' own types, which the C compiler
+        // holds it to (abi.c); what does the work is handed the same words as Go's own.
+        List<String> exportedParameters = new ArrayList<>();
         List<String> goParameters = new ArrayList<>();
         List<String> handedWords = new ArrayList<>();
         List<String> rooms = new ArrayList<>();
         List<String> forwarded = new ArrayList<>();
         for (Parameter parameter : implementation.takes()) {
+            Word word = parameter.word();
+            String scalar = CTypes.scalar(word);
+            String address = CTypes.opaque(word);
             String name;
-            String type;
-            if (parameter.word() == Word.USERDATA && parameter.mode() == Parameter.Mode.GIVEN
+            String exportedType;
+            String goType;
+            String forward;
+            if (word == Word.USERDATA && parameter.mode() == Parameter.Mode.GIVEN
                     && goParameters.isEmpty()) {
                 name = "userdata";
-                type = unsafe + ".Pointer";
+                exportedType = goType = unsafe + ".Pointer";
+                forward = name;
             } else if (parameter.mode() == Parameter.Mode.GIVEN) {
                 name = "handed" + handedWords.size();
                 handedWords.add(name);
-                type = Crossing.local(parameter.word(), imports);
-            } else {
+                goType = Crossing.local(word, imports);
+                exportedType = scalar != null ? "C." + scalar : "C." + Objects.requireNonNull(address);
+                forward = scalar != null ? name : unsafe + ".Pointer(" + name + ")";
+            } else if (parameter.mode() == Parameter.Mode.ROOM) {
                 name = "answer" + rooms.size();
                 rooms.add(name);
-                type = "*" + Crossing.local(parameter.word(), imports);
+                goType = "*" + Crossing.local(word, imports);
+                exportedType = "*C." + (scalar != null ? scalar : Objects.requireNonNull(address));
+                forward = scalar != null ? name : "(*" + unsafe + ".Pointer)(" + unsafe + ".Pointer("
+                        + name + "))";
+            } else {
+                throw new IllegalArgumentException("a callback is handed no slice");
             }
-            goParameters.add(name + " " + type);
-            forwarded.add(name);
-            cParameters.add(cType(parameter));
+            goParameters.add(name + " " + goType);
+            exportedParameters.add(name + " " + exportedType);
+            forwarded.add(forward);
         }
-        at.c.append("extern uint32_t ").append(exported).append("(")
-                .append(String.join(", ", cParameters)).append(");\n");
+        // The exported function is declared as the declarations say the implementation is, and the C
+        // compiler is asked whether what Go exports is that (abi.c): no cast says it is.
+        at.c.append("extern __typeof__(*(").append(implementation.type()).append(")0) ")
+                .append(exported).append(";\n");
         if (function) {
-            at.c.append("static inline void *implement_").append(implement)
+            at.c.append("_Static_assert(__builtin_types_compatible_p(__typeof__(&").append(implement)
+                    .append("), souther_function (*)(souther_hosted_function *, ")
+                    .append(implementation.type()).append(", void *)),\n\t\"").append(implement)
+                    .append(" is not the function the manifest says it is\");\n")
+                    .append("static inline void *implement_").append(implement)
                     .append("(void *fn, void *a0, void *a1) {\n")
                     .append("\t__typeof__(&").append(implement).append(") f = fn;\n")
-                    .append("\treturn (void *)f((souther_hosted_function *)a0, (")
-                    .append(implementation.type()).append(")").append(exported).append(", a1);\n}\n");
+                    .append("\treturn (void *)f((souther_hosted_function *)a0, ").append(exported)
+                    .append(", a1);\n}\n");
         } else {
-            at.c.append("static inline void implement_").append(implement)
+            at.c.append("_Static_assert(__builtin_types_compatible_p(__typeof__(&").append(implement)
+                    .append("), void (*)(souther_capability *, souther_hosted *, ")
+                    .append(implementation.type()).append(", void *)),\n\t\"").append(implement)
+                    .append(" is not the function the manifest says it is\");\n")
+                    .append("static inline void implement_").append(implement)
                     .append("(void *fn, void *a0, void *a1, void *a2) {\n")
                     .append("\t__typeof__(&").append(implement).append(") f = fn;\n")
-                    .append("\tf((souther_capability *)a0, (souther_hosted *)a1, (")
-                    .append(implementation.type()).append(")").append(exported).append(", a2);\n}\n");
+                    .append("\tf((souther_capability *)a0, (souther_hosted *)a1, ").append(exported)
+                    .append(", a2);\n}\n");
         }
         Body body = new Body(imports, at::shim, "run", "return " + souther + ".Crossing(err)", 2);
         int word = 0;
@@ -1270,8 +1287,8 @@ public final class GoBindings {
                 .append(".UserdataValue(userdata).(*").append(hosted).append(")\n")
                 .append("\treturn C.uint32_t(").append(souther).append(".Host(hosted.origin, func(run *")
                 .append(lib).append(".Run) error {\n").append(body).append("\t}))\n}\n");
-        at.callbacks.add(new Callback(exported, goParameters, dispatch + "("
-                + String.join(", ", forwarded) + ")"));
+        at.callbacks.add(new Callback(exported, exportedParameters, dispatch + "("
+                + String.join(", ", forwarded) + ")", implementation.type()));
     }
 
     /**
@@ -1378,7 +1395,7 @@ public final class GoBindings {
         if (!at.callbacks.isEmpty()) {
             StringBuilder exports = new StringBuilder(header());
             exports.append("package ").append(pkg).append("\n\n")
-                    .append("/*\n#include <stdint.h>\n*/\nimport \"C\"\n\n")
+                    .append("/*\n#include <stdint.h>\n#include \"souther.ffi.h\"\n*/\nimport \"C\"\n\n")
                     .append("import \"unsafe\"\n\n")
                     .append("// A file that exports a function has a preamble of declarations only, and the\n")
                     .append("// function is only what the library calls: the work is done in module.go.\n");
@@ -1391,6 +1408,20 @@ public final class GoBindings {
             List<String> exported = new ArrayList<>(at.path);
             exported.add("callbacks.go");
             file(exported, exports.toString());
+            // What Go exports is what the declarations say an implementation is: a C file of the
+            // package sees both, and the compiler says whether they are one type.
+            StringBuilder abi = new StringBuilder("/* Generated by souther-native-compiler from souther.json."
+                    + " Written again on every build. */\n\n"
+                    + "/* What callbacks.go includes is in this, and the declarations have no guard. */\n"
+                    + "#include \"_cgo_export.h\"\n\n");
+            for (Callback it : at.callbacks) {
+                abi.append("_Static_assert(__builtin_types_compatible_p(__typeof__(&").append(it.exported())
+                        .append("), ").append(it.type()).append("),\n\t\"").append(it.exported())
+                        .append(" is not what the library declares an implementation as\");\n");
+            }
+            List<String> check = new ArrayList<>(at.path);
+            check.add("abi.c");
+            file(check, abi.toString());
         }
         if (!at.shims.isEmpty() || at.c.length() > 0) {
             List<String> header = new ArrayList<>(at.path);
@@ -1446,40 +1477,11 @@ public final class GoBindings {
     // ---------------------------------------------------------------------------------------------
     // What a call to a function through its address is in C.
 
-    /** What C calls the type of a word that is a number. */
-    private static @Nullable String scalar(Word word) {
-        return switch (word) {
-            case STATUS, CASE -> "uint32_t";
-            case INT, COUNT, MARK -> "int64_t";
-            case BOOL -> "uint8_t";
-            case OUTCOME -> "int32_t";
-            default -> null;
-        };
-    }
-
-    /** What the declarations call the type of a word that is an address of the library's. */
-    private static @Nullable String opaque(Word word) {
-        return switch (word) {
-            case VALUE -> "souther_value";
-            case STRING -> "souther_string";
-            case DECIMAL -> "souther_decimal";
-            case DATE -> "souther_date";
-            case TIME -> "souther_time";
-            case DATETIME -> "souther_datetime";
-            case INSTANT -> "souther_instant";
-            case DECODED -> "souther_decoded";
-            case ISSUE -> "souther_issue";
-            case LIST -> "souther_list";
-            case FUNCTION -> "souther_function";
-            default -> null;
-        };
-    }
-
     /**
-     * The C function that calls {@code function} through the address a library has for it, since
-     * cgo cannot call one. Its type is the one the declarations say the symbol has, so a call that
-     * does not fit them does not compile; an address of the library's crosses as a plain pointer
-     * and is given the declarations' type here.
+     * The C that calls {@code function} through the address a library has for it, since cgo cannot
+     * call one, and asserts that the function the declarations declare is of the type its words make
+     * ({@link CTypes#asserted}). A number crosses as itself and an address as a plain pointer, given
+     * the declarations' type here, where the assertion has held it to what they say.
      */
     private static String shim(Function function) {
         List<String> parameters = new ArrayList<>(List.of("void *fn"));
@@ -1487,52 +1489,36 @@ public final class GoBindings {
         int place = 0;
         for (Parameter it : function.takes()) {
             String name = "a" + place++;
-            String number = scalar(it.word());
-            String address = opaque(it.word());
-            switch (it.mode()) {
-                case GIVEN -> {
-                    if (number != null) {
-                        parameters.add(number + " " + name);
-                        arguments.add(name);
-                    } else if (address != null) {
-                        parameters.add("void *" + name);
-                        arguments.add("(" + address + ")" + name);
-                    } else {
-                        parameters.add("void *" + name);
-                        arguments.add(switch (it.word()) {
-                            case BYTES -> "(const uint8_t *)" + name;
-                            case REQUIREMENTS -> "(const souther_capability *const *)" + name;
-                            default -> name;
-                        });
-                    }
-                }
-                case ROOM -> {
-                    if (it.word() == Word.CAPABILITY) {
-                        parameters.add("void *" + name);
-                        arguments.add("(souther_capability *)" + name);
-                    } else if (number != null) {
-                        parameters.add(number + " *" + name);
-                        arguments.add(name);
-                    } else {
-                        parameters.add("void **" + name);
-                        arguments.add("(" + address + " *)" + name);
-                    }
-                }
-                case SLICE -> {
-                    parameters.add("const void *" + name);
-                    arguments.add(number != null ? "(const " + number + " *)" + name
-                            : "(const " + address + " *)" + name);
-                }
+            String exact = CTypes.parameter(it);
+            boolean number = it.mode() != Parameter.Mode.SLICE && it.word() != Word.CAPABILITY
+                    && CTypes.scalar(it.word()) != null;
+            if (number && it.mode() == Parameter.Mode.GIVEN) {
+                parameters.add(exact + " " + name);
+                arguments.add(name);
+            } else if (number) {
+                parameters.add(exact + name);
+                arguments.add(name);
+            } else if (it.mode() == Parameter.Mode.ROOM && CTypes.opaque(it.word()) != null) {
+                parameters.add("void **" + name);
+                arguments.add("(" + exact + ")" + name);
+            } else if (it.mode() == Parameter.Mode.SLICE) {
+                parameters.add("const void *" + name);
+                arguments.add("(" + exact + ")" + name);
+            } else {
+                parameters.add("void *" + name);
+                arguments.add("(" + exact + ")" + name);
             }
         }
         Word answers = function.answers();
-        String returns = answers == null ? "void" : scalar(answers) != null ? scalar(answers)
-                : "void *";
+        boolean answersNumber = answers != null && CTypes.scalar(answers) != null;
+        String returns = answers == null ? "void" : answersNumber ? CTypes.scalar(answers) : "void *";
+        String expected = "expected_" + function.name();
         String call = "f(" + String.join(", ", arguments) + ")";
-        return "static inline " + returns + " call_" + function.name() + "("
-                + String.join(", ", parameters) + ") {\n\t__typeof__(&" + function.name()
-                + ") f = fn;\n\t" + (answers == null ? "" : "return ")
-                + (answers != null && scalar(answers) == null ? "(void *)" : "") + call + ";\n}\n";
+        return CTypes.asserted(function, function.name())
+                + "static inline " + returns + " call_" + function.name() + "("
+                + String.join(", ", parameters) + ") {\n\t" + expected + " f = (" + expected
+                + ")fn;\n\t" + (answers == null ? "" : "return ")
+                + (answers != null && !answersNumber ? "(void *)" : "") + call + ";\n}\n";
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -1578,7 +1564,7 @@ public final class GoBindings {
                 + "// Tag is this binding's: a run of another generated binding is not a run of this"
                 + " one.\ntype Tag struct{}\n\n"
                 + "// Spec is what this binding needs of a library.\n"
-                + "var Spec = souther.Spec{\n"
+                + "var Spec = souther.Spec{\n\tLayout: layout,\n"
                 + "\tStatuses: map[string]souther.Status{\n");
         aligned(go, manifest.statuses());
         go.append("\t},\n\tOutcomes: map[string]int32{\n");
@@ -1589,6 +1575,30 @@ public final class GoBindings {
         all.forEach(name -> go.append("\t\t\"").append(name).append("\",\n"));
         go.append("\t},\n}\n");
         file(List.of("internal", "binding", "binding.go"), go.toString());
+        abi();
+        declarations(List.of("internal", "binding", "souther.ffi.h"));
+    }
+
+    /**
+     * What the runtime module calls of the library and lays out room for, asked of the declarations
+     * and not worked out: the runtime's functions are asserted, by the C compiler, to be of the
+     * type their words make ({@link CTypes#asserted}), and each size is the compiler's
+     * {@code sizeof} of what the declarations declare.
+     */
+    private void abi() throws IOException {
+        StringBuilder go = new StringBuilder(header());
+        go.append("package binding\n\n/*\n#include <stdint.h>\n#include \"souther.ffi.h\"\n\n"
+                + "typedef const souther_capability *souther_capability_ref;\n\n");
+        new TreeMap<>(RuntimeFunctions.CALLED).forEach((name, function) ->
+                go.append(CTypes.asserted(function, name)));
+        go.append("*/\nimport \"C\"\n\nimport souther \"" + RUNTIME_MODULE + "\"\n\n"
+                + "// layout is what the declarations say a host lays out room for.\n"
+                + "var layout = souther.Layout{\n"
+                + "\tPointer:        uintptr(C.sizeof_souther_capability_ref),\n"
+                + "\tCapability:     uintptr(C.sizeof_souther_capability),\n"
+                + "\tHosted:         uintptr(C.sizeof_souther_hosted),\n"
+                + "\tHostedFunction: uintptr(C.sizeof_souther_hosted_function),\n}\n");
+        file(List.of("internal", "binding", "abi.go"), go.toString());
     }
 
     /** The entries of a Go map literal, their values in one column, as gofmt writes them. */

@@ -19,10 +19,6 @@ type Capability[B any] struct {
 	array unsafe.Pointer
 }
 
-// pointerSize is what an address takes: a capability is two of them, and so is what a host's
-// implementation is read out of.
-const pointerSize = unsafe.Sizeof(uintptr(0))
-
 // Bound is a behavior bound to what stands for each behavior it requires, in the order it requires
 // them, and its own capability where something may require it: bind is the library's function that
 // writes it, handed room for it and the address of the capabilities of what it requires.
@@ -33,13 +29,14 @@ func Bound[B any](r *Run[B], requires []Capability[B], bind func(capability, req
 	r.checkMaking()
 	c := Capability[B]{run: r, requires: append([]Capability[B](nil), requires...)}
 	if len(requires) > 0 {
-		c.array = r.Room(uintptr(len(requires)) * pointerSize)
+		layout := r.lib.layout
+		c.array = r.Room(uintptr(len(requires)) * layout.Pointer)
 		for at, required := range requires {
-			*(*unsafe.Pointer)(unsafe.Add(c.array, uintptr(at)*pointerSize)) = required.at
+			*(*unsafe.Pointer)(unsafe.Add(c.array, uintptr(at)*layout.Pointer)) = required.at
 		}
 	}
 	if bind != nil {
-		c.at = r.Room(2 * pointerSize)
+		c.at = r.Room(r.lib.layout.Capability)
 		bind(c.at, c.array)
 	}
 	return c
@@ -52,8 +49,8 @@ func Bound[B any](r *Run[B], requires []Capability[B], bind func(capability, req
 func Implemented[B any](r *Run[B], dispatch any, implement func(capability, hosted, userdata unsafe.Pointer)) Capability[B] {
 	r.checkMaking()
 	c := Capability[B]{run: r}
-	c.at = r.Room(2 * pointerSize)
-	implement(c.at, r.Room(2*pointerSize), r.Userdata(dispatch))
+	c.at = r.Room(r.lib.layout.Capability)
+	implement(c.at, r.Room(r.lib.layout.Hosted), r.Userdata(dispatch))
 	return c
 }
 
@@ -109,14 +106,14 @@ func (c Capability[B]) of(identity uintptr) bool {
 // was made into the first time, however often the library calls it.
 func HostFunction[B any](r *Run[B], key any, dispatch func() any, implement func(room, userdata unsafe.Pointer) unsafe.Pointer) unsafe.Pointer {
 	r.checkMaking()
-	if made, ok := r.functions[key]; ok {
+	if made, ok := r.held.functions[key]; ok {
 		return made
 	}
 	// souther_hosted_function: what it is called through, and what it is read out of.
-	made := implement(r.Room(3*pointerSize), r.Userdata(dispatch()))
-	if r.functions == nil {
-		r.functions = make(map[any]unsafe.Pointer)
+	made := implement(r.Room(r.lib.layout.HostedFunction), r.Userdata(dispatch()))
+	if r.held.functions == nil {
+		r.held.functions = make(map[any]unsafe.Pointer)
 	}
-	r.functions[key] = made
+	r.held.functions[key] = made
 	return made
 }

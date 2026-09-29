@@ -11,6 +11,10 @@ typedef struct souther_hosted {
     void *implementation;
     void *userdata;
 } souther_hosted;
+typedef struct souther_hosted_function {
+    void *invoke;
+    souther_hosted hosted;
+} souther_hosted_function;
 typedef souther_status (*fake_implementation)(void *, int64_t, int64_t *);
 
 souther_status fake_call(const souther_capability *, int64_t, int64_t *);

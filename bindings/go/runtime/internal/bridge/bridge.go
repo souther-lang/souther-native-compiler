@@ -9,6 +9,8 @@ package bridge
 /*
 #include "testdata/fake.h"
 
+typedef const souther_capability *souther_capability_ref;
+
 extern souther_status bridgeImplementation(void *, int64_t, int64_t *);
 
 // A function is called through its address: cgo cannot call one. Its type is what the
@@ -50,8 +52,15 @@ type (
 	Run     = souther.Run[Tag]
 )
 
-// Spec is what this binding needs of a library.
+// Spec is what this binding needs of a library. What a host lays out room for is as big as the
+// declarations say, which the C compiler is asked and this is not told.
 var Spec = souther.Spec{
+	Layout: souther.Layout{
+		Pointer:        uintptr(C.sizeof_souther_capability_ref),
+		Capability:     uintptr(C.sizeof_souther_capability),
+		Hosted:         uintptr(C.sizeof_souther_hosted),
+		HostedFunction: uintptr(C.sizeof_souther_hosted_function),
+	},
 	Statuses: map[string]souther.Status{
 		"ANSWERED":                     0,
 		"INJECTION_UNBOUND":            0x7ffffffd,

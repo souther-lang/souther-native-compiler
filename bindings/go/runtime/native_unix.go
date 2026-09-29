@@ -14,11 +14,19 @@ static void call_reset(void *fn, int64_t mark) { ((void (*)(int64_t))fn)(mark); 
 import "C"
 
 import (
+	"errors"
 	"fmt"
 	"runtime/cgo"
 	"slices"
 	"strings"
 	"unsafe"
+)
+
+// A cgo.Handle is a uintptr, and a cell of C memory holds one where the library keeps it; and
+// what a C pointer takes is what a Go pointer does, since both are written into C memory here.
+var (
+	_ = [1]struct{}{}[int(unsafe.Sizeof(cgo.Handle(0)))-int(C.sizeof_uintptr_t)]
+	_ = [1]struct{}{}[int(unsafe.Sizeof(unsafe.Pointer(nil)))-int(C.sizeof_uintptr_t)]
 )
 
 // Native is a library file opened by path.
@@ -39,6 +47,9 @@ func Open(path string) (*Native, error) {
 	return &Native{handle}, nil
 }
 
+// Close unloads the file. It is called only where nothing was taken from it.
+func (n *Native) Close() { C.dlclose(n.handle) }
+
 // Symbol is where the library file has name, and whether it has.
 func (n *Native) Symbol(name string) (unsafe.Pointer, bool) {
 	c := C.CString(name)
@@ -50,6 +61,7 @@ func (n *Native) Symbol(name string) (unsafe.Pointer, bool) {
 // Spec is what a generated binding needs of a library: the statuses the manifest numbers, what a
 // reading comes to, and every function the binding calls.
 type Spec struct {
+	Layout   Layout
 	Statuses map[string]Status
 	// Outcomes is what a reading comes to, by the names the manifest gives them.
 	Outcomes map[string]int32
@@ -84,10 +96,20 @@ func Load[B any](path string, spec Spec) (*Library[B], error) {
 	if err != nil {
 		return nil, err
 	}
+	if l := spec.Layout; l.Pointer == 0 || l.Capability == 0 || l.Hosted == 0 || l.HostedFunction == 0 {
+		return nil, errors.New("souther: the binding says nothing of the size of what a host lays out room for")
+	}
 	native, err := Open(path)
 	if err != nil {
 		return nil, err
 	}
+	// The file is unloaded where nothing comes of loading it: nothing has been handed out of it yet.
+	loaded := false
+	defer func() {
+		if !loaded {
+			native.Close()
+		}
+	}()
 	symbols := make(map[string]unsafe.Pointer, len(spec.Symbols)+2)
 	var missing []string
 	for _, name := range append([]string{"souther_mark", "souther_reset"}, spec.Symbols...) {
@@ -106,20 +128,24 @@ func Load[B any](path string, spec Spec) (*Library[B], error) {
 		func(at int64) { C.call_reset(reset, C.int64_t(at)) },
 		statuses)
 	lib := NewLibrary[B](rt)
-	lib.native, lib.symbols, lib.outcomes = native, symbols, spec.Outcomes
+	lib.native, lib.symbols, lib.outcomes, lib.layout = native, symbols, spec.Outcomes, spec.Layout
+	// From here the library's functions are in use for as long as the program is: nothing says when
+	// the last value or function pointer taken from it is gone, so it is kept loaded.
+	loaded = true
 	return lib, nil
 }
 
-// Room is memory of a host implementation for the library to keep, taken from C memory and never
-// from Go's heap, since the library holds it for as long as it may call the implementation and
-// cgo does not let C keep a Go pointer. It is zeroed, and freed once this run ends.
+// Room is memory of a host implementation for the library to keep, of size bytes, taken from C
+// memory and never from Go's heap, since the library holds it for as long as it may call the
+// implementation and cgo does not let C keep a Go pointer. It is zeroed, and freed once this run
+// ends. The size is the declarations' ([Layout]).
 func (r *Run[B]) Room(size uintptr) unsafe.Pointer {
 	r.checkReading()
 	at := C.calloc(1, C.size_t(size))
 	if at == nil {
 		panic("souther: out of memory")
 	}
-	r.keep = append(r.keep, func() { C.free(at) })
+	r.hold(func() { C.free(at) })
 	return at
 }
 
@@ -128,12 +154,12 @@ func (r *Run[B]) Room(size uintptr) unsafe.Pointer {
 // freed and the handle deleted once this run ends, after which the library does not call it.
 func (r *Run[B]) Userdata(v any) unsafe.Pointer {
 	r.checkReading()
-	cell := (*cgo.Handle)(C.calloc(1, C.size_t(unsafe.Sizeof(cgo.Handle(0)))))
+	cell := (*cgo.Handle)(C.calloc(1, C.sizeof_uintptr_t))
 	if cell == nil {
 		panic("souther: out of memory")
 	}
 	*cell = cgo.NewHandle(v)
-	r.keep = append(r.keep, func() { cell.Delete(); C.free(unsafe.Pointer(cell)) })
+	r.hold(func() { cell.Delete(); C.free(unsafe.Pointer(cell)) })
 	return unsafe.Pointer(cell)
 }
 

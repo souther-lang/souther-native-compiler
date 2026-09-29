@@ -5,8 +5,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"testing"
+	"unsafe"
+	"weak"
 
 	souther "github.com/souther-lang/souther-native-compiler/bindings/go/runtime"
 	"github.com/souther-lang/souther-native-compiler/bindings/go/runtime/internal/bridge"
@@ -30,7 +33,7 @@ func TestMain(m *testing.M) {
 	}
 	build("fake")
 	build("second")
-	build("nodouble", "-DNO_DOUBLE")
+	build("nodouble", "-DNO_DOUBLE", "-DNO_TLS")
 	code := m.Run()
 	_ = os.RemoveAll(dir)
 	os.Exit(code)
@@ -341,4 +344,98 @@ func BenchmarkTheSymbolLookupAlone(b *testing.B) {
 		}
 		return nil
 	})
+}
+
+func TestAFileThatFailedToLoadIsUnloaded(t *testing.T) {
+	unloaded := filepath.Join(t.TempDir(), "unloaded")
+	t.Setenv("SOUTHER_FAKE_UNLOADED", unloaded)
+	if _, err := bridge.Load(path("nodouble")); err == nil {
+		t.Fatal("loaded a file that lacks what the binding calls")
+	}
+	said, err := os.ReadFile(unloaded)
+	if err != nil || string(said) != "x" {
+		t.Fatalf("the file was not unloaded: %q, %v", said, err)
+	}
+}
+
+func TestWhatARunKeptForTheHostIsLetGoOfWhenItEnds(t *testing.T) {
+	lib := load(t, "fake")
+	type witness struct{ bytes [64]byte }
+	seen := &witness{}
+	watch := weak.Make(seen)
+	var kept *bridge.Run
+	_ = lib.Run(func(r *bridge.Run) error {
+		kept = r
+		captured := seen
+		// A function of the host's, held by what says which function it is.
+		host := &struct{ fn func() *witness }{func() *witness { return captured }}
+		souther.HostFunction(r, host, func() any { return host },
+			func(room, userdata unsafe.Pointer) unsafe.Pointer { return room })
+		return nil
+	})
+	seen = nil
+	runtime.GC()
+	runtime.GC()
+	if watch.Value() != nil {
+		t.Fatal("what the host gave a run is held by it after it ended")
+	}
+	// A run a host keeps after it ended is expired, and says who it was and nothing more.
+	runtime.KeepAlive(kept)
+}
+
+// A run that ended holds nothing but what says which run it was. Every field there is or will be is
+// held to it, so that what a run comes to keep, and lets go of one place and not another, is found
+// here and not by a program that keeps a run after it ended.
+func TestARunThatEndedHoldsOnlyWhoItWas(t *testing.T) {
+	lib := load(t, "fake")
+	var ended *bridge.Run
+	_ = lib.Run(func(r *bridge.Run) error {
+		ended = r
+		// Everything a run comes to keep, kept.
+		_ = r.Scope(func(inner *bridge.Run) error {
+			impl := bridge.Implement(inner, double{})
+			_, _ = bridge.Call(inner, impl, 1)
+			_ = bridge.Bind(inner, impl)
+			souther.HostFunction(inner, new(int), func() any { return 1 },
+				func(room, userdata unsafe.Pointer) unsafe.Pointer { return room })
+			return nil
+		})
+		_ = souther.Call(r, func() souther.Status { return 0 })
+		failing := bridge.Implement(r, panicking{})
+		func() {
+			defer func() { _ = recover() }()
+			_, _ = bridge.Call(r, failing, 1)
+		}()
+		return nil
+	})
+	whoItWas := map[string]bool{"lib": true, "thread": true, "live": true}
+	value := reflect.ValueOf(ended).Elem()
+	for at := range value.NumField() {
+		name := value.Type().Field(at).Name
+		if whoItWas[name] {
+			continue
+		}
+		if !allEmpty(value.Field(at)) {
+			t.Errorf("a run that ended still holds its %s", name)
+		}
+	}
+}
+
+// allEmpty is whether nothing is referred to by what is held: a nil or an empty thing, whatever it
+// is made of, and no spare room beyond it.
+func allEmpty(v reflect.Value) bool {
+	switch v.Kind() {
+	case reflect.Pointer, reflect.Map, reflect.Func, reflect.Interface:
+		return v.IsNil()
+	case reflect.Slice:
+		return v.IsNil()
+	case reflect.Struct:
+		for at := range v.NumField() {
+			if !allEmpty(v.Field(at)) {
+				return false
+			}
+		}
+		return true
+	}
+	return v.IsZero()
 }

@@ -2,12 +2,20 @@
    souther_reset over it, the ABI marker, a behavior that answers, and a behavior a host
    implements, which it calls back through the capability it was handed. */
 #include "fake.h"
+#include <stdio.h>
+#include <stdlib.h>
 
 #ifndef ABI
 #define ABI 8
 #endif
 
+/* A library with a thread-local variable is one macOS does not unload, as the real one is; a test of
+   unloading one that failed to load asks a library without one. */
+#ifdef NO_TLS
+static int64_t arena;
+#else
 static __thread int64_t arena;
+#endif
 
 int64_t souther_mark(void) { return arena; }
 void souther_reset(int64_t mark) { arena = mark; }
@@ -58,4 +66,16 @@ void fake_bind(souther_capability *into, const souther_capability *const *requir
 /* A behavior bound to what it requires: it asks the first requirement. */
 souther_status fake_run(const souther_capability *const *requirements, int64_t x, int64_t *out) {
     return fake_call(requirements[0], x, out);
+}
+
+/* Says that the file was unloaded, for a test that asks whether a load that failed unloaded it. */
+__attribute__((destructor)) static void unloaded(void) {
+    const char *where = getenv("SOUTHER_FAKE_UNLOADED");
+    if (where != NULL) {
+        FILE *file = fopen(where, "a");
+        if (file != NULL) {
+            fputs("x", file);
+            fclose(file);
+        }
+    }
 }

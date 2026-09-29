@@ -36,6 +36,24 @@ type Library[B any] struct {
 	native   *Native
 	symbols  map[string]unsafe.Pointer
 	outcomes map[string]int32
+	layout   Layout
+}
+
+// Layout is what the library's declarations say a host lays out room for, in bytes, as the C
+// compiler says them: the size of a pointer, of a capability, of what a host's implementation is
+// read out of, and of what a function value of the host's is. It is never worked out here, since it
+// is the declarations' and not this package's: a room a size too small is one the library writes
+// past.
+type Layout struct {
+	// Pointer is the size of a pointer to a capability, which the capabilities of what a behavior
+	// requires are laid out as an array of.
+	Pointer uintptr
+	// Capability is the size of souther_capability.
+	Capability uintptr
+	// Hosted is the size of souther_hosted.
+	Hosted uintptr
+	// HostedFunction is the size of souther_hosted_function.
+	HostedFunction uintptr
 }
 
 // NewLibrary is the library whose runtime is rt.
@@ -86,12 +104,36 @@ type Run[B any] struct {
 	lib    *Library[B]
 	thread thread
 	live   atomic.Bool
-	child  *Run[B]
-	frames []frame
-	keep   []func()
+	// held is everything the run keeps for as long as it lasts, and nothing else does: it is one
+	// value so that it is let go of at once, all of it, and a run that a host keeps after it ended
+	// (which is not refused, and is only expired) holds no more than what says who it was.
+	// A test holds every other field to being empty once the run has ended.
+	held  held
+	child *Run[B]
+}
+
+// held is what a run keeps until it ends.
+type held struct {
+	// calls are the calls into the library going on in the run, the innermost last.
+	calls []frame
+	// release are what frees what the library reads, called in the opposite order.
+	release []func()
 	// functions is the function value each function of the host's own was made into in this run,
-	// so that one handed over again is the value it was made into before.
+	// so that one handed over again is the value it was made into before. Its keys are the host's
+	// functions, and its values are addresses in memory that is freed with the run.
 	functions map[any]unsafe.Pointer
+}
+
+// hold has release called once this run has ended and the arena has been dropped back.
+func (r *Run[B]) hold(release func()) { r.held.release = append(r.held.release, release) }
+
+// end lets go of everything the run held: what frees what the library read is called, and then
+// nothing is left that refers to what the host gave it.
+func (r *Run[B]) end() {
+	for i := len(r.held.release) - 1; i >= 0; i-- {
+		r.held.release[i]()
+	}
+	r.held = held{}
 }
 
 // frame is a call into the library that is going on in a run, and what a host implementation it
@@ -138,10 +180,7 @@ func within[B any](run *Run[B], f func(*Run[B]) error) error {
 	defer func() {
 		run.live.Store(false)
 		rt.reset(mark)
-		for i := len(run.keep) - 1; i >= 0; i-- {
-			run.keep[i]()
-		}
-		run.keep = nil
+		run.end()
 	}()
 	return f(run)
 }
@@ -151,7 +190,7 @@ func within[B any](run *Run[B], f func(*Run[B]) error) error {
 // for as long as the library may call it.
 func (r *Run[B]) Keep(release func()) {
 	r.checkReading()
-	r.keep = append(r.keep, release)
+	r.hold(release)
 }
 
 // Library is the library this is a run of.
@@ -262,15 +301,17 @@ func (v Ref[B]) checkUsable() {
 // [*HostError] where a host implementation answered one.
 func Call[B any](r *Run[B], native func() Status) error {
 	r.checkMaking()
-	r.frames = append(r.frames, frame{})
-	depth := len(r.frames) - 1
+	r.held.calls = append(r.held.calls, frame{})
+	depth := len(r.held.calls) - 1
 	var status Status
 	var kept *caught
 	func() {
 		// What a callback kept is read before the frame is dropped, on the way out either way.
 		defer func() {
-			kept = r.frames[depth].caught
-			r.frames = r.frames[:depth]
+			kept = r.held.calls[depth].caught
+			// Nothing of what a callback kept stays in the slice's spare room.
+			r.held.calls[depth] = frame{}
+			r.held.calls = r.held.calls[:depth]
 		}()
 		status = native()
 	}()
@@ -294,16 +335,16 @@ func Host[B any](origin *Run[B], f func(*Run[B]) error) Status {
 		return statuses.hostException
 	}
 	inner := origin.innermost()
-	if len(inner.frames) == 0 {
+	if len(inner.held.calls) == 0 {
 		return statuses.hostException
 	}
 	// The frame is found again where a failure is kept: a call made meanwhile through this run
 	// may have moved the frames, and has dropped its own by then.
-	depth := len(inner.frames) - 1
+	depth := len(inner.held.calls) - 1
 	keptOf := func(c caught) {
 		// The first is what the library was told of, and what it stopped for.
-		if inner.frames[depth].caught == nil {
-			inner.frames[depth].caught = &c
+		if inner.held.calls[depth].caught == nil {
+			inner.held.calls[depth].caught = &c
 		}
 	}
 	answered := func() (ok bool) {

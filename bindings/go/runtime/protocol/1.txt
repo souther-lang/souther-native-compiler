@@ -173,6 +173,13 @@ func (i Instant) String() string
 
 func (i Instant) Time() time.Time
 
+type Layout struct {
+	Pointer uintptr
+	Capability uintptr
+	Hosted uintptr
+	HostedFunction uintptr
+}
+
 type Library[B any] struct {
 }
 
@@ -201,6 +208,8 @@ func (m *Misuse) Unwrap() error
 type Native struct {
 }
 
+
+func (n *Native) Close()
 
 func (n *Native) Symbol(name string) (unsafe.Pointer, bool)
 
@@ -256,6 +265,7 @@ func (r *Runtime) Identity() uintptr
 func (r *Runtime) Statuses() Statuses
 
 type Spec struct {
+	Layout   Layout
 	Statuses map[string]Status
 	Outcomes map[string]int32
 	Symbols  []string

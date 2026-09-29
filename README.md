@@ -933,7 +933,20 @@ program each keep their own arena. `Load` checks that every function the binding
 ABI generation is in the name of each function generated for a behavior or a type, so a library of
 another one has none of them. The runtime's own marker (`souther_runtime_abi_<n>`) is for the linker
 and is not exported, so it cannot be asked. That the file is the library the binding was generated
-from is the caller's to hold, as it is for `Library::load` in Rust.
+from is the caller's to hold, as it is for `Library::load` in Rust. A library stays loaded for as long
+as the program is, since nothing says when the last value or function pointer taken from it is gone;
+one that failed to load is unloaded.
+
+Go says none of the C ABI itself. What a host lays out room for (a capability, what a host's
+implementation is read out of, a function value of the host's, an array of the capabilities a behavior
+requires) is the C compiler's `sizeof` of what `souther.ffi.h` declares, given to the runtime as a
+`Layout`. Each function a package calls, and each function Go exports for the library to call back, is
+asserted by the C compiler (`_Static_assert` over `__builtin_types_compatible_p`) to be of the type the
+manifest's words make of it, so a number of another width or an address of another type is a build that
+fails and not a call that converts one into the other; the runtime module's own calls are held to the
+same words by a test. What Go exports is one name of the whole program, so it is an injective encoding of
+the binding's import path, the module and the behavior, and never a spelling of them with what Go does
+not take in a name replaced: two bindings in one program, and two modules ending alike, link together.
 
 A run is bracketed on one OS thread. The arena is per thread, and Go moves a goroutine between them,
 so `library.Run(func(r *Run) error { ... })` holds the goroutine on its thread from the mark to the
@@ -969,7 +982,10 @@ nothing. A tuple is a `souther.Tuple2` and its like up to eight members, a list,
 slices, a map's entries being tuples in the order the library has them, which the language says
 nothing of. A union no declaration names is an interface with a type for each member, named after
 them in the manifest's order (`FreeOrInt`), handed over as one of them and handed back where the
-library says its case. A function value is a type of its own (`FnIntToInt`), made by the library or by
+library says its case. A union, like a function type, belongs to the module that says it: two modules
+that say one alike each have their own type, so that a package imports only what its module depends on
+(the modules do not depend on one another in a cycle, and a package imported for the sake of a shared
+type could make one). A function value is a type of its own (`FnIntToInt`), made by the library or by
 `HostFnIntToInt` of a Go function, and called with `Call(r, ...)`, since a call makes values in the
 innermost run; a function of the host's handed over again and again in a run is one function value.
 
