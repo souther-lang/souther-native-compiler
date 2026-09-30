@@ -310,23 +310,54 @@ class AManifestIsReadAsTheDriverPromisesItTest {
     }
 
     /**
-     * Which shape a type crosses in is the driver's to say, and is read as it says it, whatever the
-     * type: a `Date` said to cross as two words, as a later driver may say, is read, and not held
-     * to how any type crosses today. What is held is that each function takes and answers the words
-     * of the shapes said beside it.
+     * Which word a value crosses as is the driver's to say, and is read as it says it, whatever the
+     * type: a member of a pair said to be a `Date` where it crosses as a whole number, as a later
+     * driver may say, is read as a date crossing as that word, and not held to how any type
+     * crosses today.
      */
     @Test
-    void aShapeIsReadAsTheDriverSaysItWhateverTheType(@TempDir Path into) throws Exception {
+    void aWordIsReadAsTheDriverSaysItWhateverTheType(@TempDir Path into) throws Exception {
         NativeCompiler.Library library = built(into, SHAPED);
 
         Manifest read = readAfter(into, library, "shaped", module -> {
-            ObjectNode pair = (ObjectNode) module.get("values").get(0);
-            pair.set("type", JSON.readTree("{\"kind\": \"primitive\", \"name\": \"Date\"}"));
+            ObjectNode pair = (ObjectNode) named(module.get("values"), "pair");
+            ((ArrayNode) pair.get("type").get("of")).set(0,
+                    JSON.readTree("{\"kind\": \"primitive\", \"name\": \"Date\"}"));
         });
 
-        Manifest.PublishedValue pair = read.modules().getFirst().values().getFirst();
-        assertThat(pair.type()).isEqualTo(new Manifest.Type.Primitive(Manifest.Primitive.DATE));
-        assertThat(pair.read().available()).isNotNull();
+        Manifest.PublishedValue pair = read.modules().getFirst().values().stream()
+                .filter(it -> it.name().equals("pair")).findFirst().orElseThrow();
+        Manifest.Call answered = (Manifest.Call) pair.read().available();
+        assertThat(((ValueCrossing.Tuple) answered.crossings().answers()).members().getFirst())
+                .isEqualTo(new ValueCrossing.Primitive(
+                        new Manifest.Type.Primitive(Manifest.Primitive.DATE), Manifest.Word.INT));
+    }
+
+    /**
+     * A shape is what a value of its type is taken apart into, and the command pairs the two once,
+     * as it reads them: a `Date` said to cross as a product of two words is no value of a `Date`
+     * at all, and the manifest is refused rather than handed to a generator to pair its own way.
+     */
+    @Test
+    void aShapeNoValueOfItsTypeIsIsRefused(@TempDir Path into) throws Exception {
+        NativeCompiler.Library library = built(into, SHAPED);
+
+        assertThatThrownBy(() -> readAfter(into, library, "shaped", module -> {
+            ObjectNode pair = (ObjectNode) named(module.get("values"), "pair");
+            pair.set("type", JSON.readTree("{\"kind\": \"primitive\", \"name\": \"Date\"}"));
+        }))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("module `shaped` says")
+                .hasMessageContaining("which no value of it is");
+    }
+
+    private static JsonNode named(JsonNode all, String name) {
+        for (JsonNode it : all) {
+            if (it.get("name").stringValue().equals(name)) {
+                return it;
+            }
+        }
+        throw new IllegalArgumentException("nothing named " + name);
     }
 
     /**

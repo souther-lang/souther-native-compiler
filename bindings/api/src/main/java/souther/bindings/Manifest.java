@@ -26,10 +26,13 @@ import java.util.Set;
  * ({@link Module}), and what constructing a behavior requires by being closed over the whole.
  *
  * <p>How a value crosses is what the driver decided and the manifest says ({@link Shape}); nothing
- * here works it out again from the model, and nothing holds a shape to the type it is said beside:
- * which shape a type crosses in is the driver's to choose, and a shape it chooses later for a type
- * is read the day it is written. What a generator adds is whether its own language has a way to
- * hold what crosses, and a pair of a type and a shape it has none for is one it does not bind.
+ * here works it out again from the model. The command pairs each value's type with the shape it
+ * crosses in once, as it reads the manifest, and a generator is handed the pair as a
+ * {@link ValueCrossing}, never a type beside a shape to pair its own way. Which word a type crosses
+ * as is the driver's to choose, and a word it chooses later for a type is read the day it is
+ * written; a shape no value of the type is taken apart into is refused. What a generator adds is
+ * whether its own language has a way to hold what crosses, and a crossing it has none for is one
+ * it does not bind.
  */
 public final class Manifest {
 
@@ -144,37 +147,10 @@ public final class Manifest {
      * reaches: each one a host hands over or is handed only through the runtime.
      */
     private static List<Case> carriedIn(Module module) {
-        List<Crossed> crossed = new ArrayList<>();
-        for (Behavior behavior : module.behaviors()) {
-            if (behavior.call() instanceof Reach.Available<Call>(Call call)) {
-                crossed.addAll(Crossed.of(behavior.parameters().types(), call.signature().takes()));
-                crossed.add(new Crossed(behavior.answers().type(), call.signature().answers()));
-            }
-        }
-        for (Injection injection : module.injections()) {
-            crossed.addAll(Crossed.of(injection.parameters().stream().map(NamedParameter::type)
-                    .toList(), injection.signature().takes()));
-            crossed.add(new Crossed(injection.answers(), injection.signature().answers()));
-        }
-        for (PublishedValue value : module.values()) {
-            if (value.read() instanceof Reach.Available<Call>(Call call)) {
-                crossed.add(new Crossed(value.type(), call.signature().answers()));
-            }
-        }
-        for (Declaration declaration : module.declarations()) {
-            for (Field field : declaration.fields()) {
-                if (field.read() instanceof Reach.Available<Read>(Read read)) {
-                    crossed.add(new Crossed(field.type(), read.answers()));
-                }
-            }
-            if (Declaration.built(declaration) instanceof Construct construct) {
-                crossed.addAll(Crossed.of(declaration.fields().stream().map(Field::type).toList(),
-                        construct.takes()));
-            }
-        }
         List<Case> carried = new ArrayList<>();
-        for (Crossed it : crossed) {
-            it.carried(carried);
+        for (ValueCrossing crossing : Module.crossed(module.behaviors(), module.injections(),
+                module.values(), module.declarations())) {
+            carried(crossing, carried);
         }
         for (Declaration declaration : module.declarations()) {
             if (declaration instanceof Declaration.Sum sum && sum.which() != null) {
@@ -185,55 +161,27 @@ public final class Manifest {
         return carried;
     }
 
-    /** A type, and the shape a value of it crosses in. */
-    private record Crossed(Type type, Shape shape) {
-
-        private static List<Crossed> of(List<Type> types, List<Shape> shapes) {
-            List<Crossed> crossed = new ArrayList<>();
-            for (int at = 0; at < types.size(); at++) {
-                crossed.add(new Crossed(types.get(at), shapes.get(at)));
+    /**
+     * Every case no declaration names of a union that crosses in {@code crossing} as one value,
+     * into {@code carried}: where a union crosses as a {@code VALUE}, a value of such a case is made
+     * and read through the runtime ({@link Manifest#cases}).
+     */
+    private static void carried(ValueCrossing crossing, List<Case> carried) {
+        switch (crossing) {
+            case ValueCrossing.Union it -> {
+                if (it.word() == Word.VALUE) {
+                    it.type().cases().stream().filter(c -> !(c instanceof Case.Declared))
+                            .forEach(carried::add);
+                }
             }
-            return crossed;
-        }
-
-        /**
-         * Every case no declaration names of a union that crosses here as one value, into {@code
-         * carried}: where the manifest says a union crosses as a {@code VALUE}, a value of such a
-         * case is made and read through the runtime ({@link Manifest#cases}). Followed only where
-         * the type and the shape are made alike; how else a type crosses is the driver's to say, and
-         * nothing here holds it to one way.
-         */
-        private void carried(List<Case> carried) {
-            switch (shape) {
-                case Shape.Leaf leaf -> {
-                    if (type instanceof Type.Union union && leaf.word() == Word.VALUE) {
-                        union.cases().stream().filter(it -> !(it instanceof Case.Declared))
-                                .forEach(carried::add);
-                    }
-                }
-                case Shape.Option option -> {
-                    if (type instanceof Type.Option it) {
-                        new Crossed(it.of(), option.of()).carried(carried);
-                    }
-                }
-                case Shape.Product product -> {
-                    if (type instanceof Type.Tuple it && it.of().size() == product.of().size()) {
-                        of(it.of(), product.of()).forEach(member -> member.carried(carried));
-                    }
-                }
-                case Shape.ListOf list -> {
-                    if (Type.listed(type) instanceof Type element) {
-                        new Crossed(element, list.element()).carried(carried);
-                    }
-                }
-                case Shape.FunctionOf function -> {
-                    if (type instanceof Type.Function it
-                            && it.takes().size() == function.signature().takes().size()) {
-                        of(it.takes(), function.signature().takes())
-                                .forEach(taken -> taken.carried(carried));
-                        new Crossed(it.answers(), function.signature().answers()).carried(carried);
-                    }
-                }
+            case ValueCrossing.Primitive it -> { }
+            case ValueCrossing.Handle it -> { }
+            case ValueCrossing.Optional it -> carried(it.of(), carried);
+            case ValueCrossing.Tuple it -> it.members().forEach(member -> carried(member, carried));
+            case ValueCrossing.Listed it -> carried(it.element(), carried);
+            case ValueCrossing.FunctionValue it -> {
+                it.takes().forEach(taken -> carried(taken, carried));
+                carried(it.answers(), carried);
             }
         }
     }
@@ -443,33 +391,54 @@ public final class Manifest {
     }
 
     /** A behavior's or a published value's call, and the shape each value it takes and answers crosses in. */
-    public record Call(Function function, Signature signature) {
+    /**
+     * What a function takes and answers, each as the value it is crossing in the shape it crosses
+     * in: what a behavior, a published value or a behavior a host implements is called with and
+     * answers.
+     */
+    public record Crossings(List<ValueCrossing> takes, ValueCrossing answers) {
+
+        public Crossings {
+            takes = List.copyOf(takes);
+        }
+
+        /** The shapes the values cross in. */
+        public Signature signature() {
+            return new Signature(ValueCrossing.shapes(takes), answers.shape());
+        }
+    }
+
+    /** A behavior's or a published value's call, and how each value it takes and answers crosses. */
+    public record Call(Function function, Crossings crossings) {
 
         /**
          * Refuses this unless its function takes what it was constructed with first where
-         * {@code constructed}, then what the signature takes, then room for what it answers, and
-         * answers a status.
+         * {@code constructed}, then what it takes, then room for what it answers, and answers a
+         * status.
          */
         private void calls(boolean constructed) {
+            Signature signature = crossings.signature();
             function.takes(constructed ? List.of(Parameter.given(Word.REQUIREMENTS)) : List.of(),
                     signature.takes(), List.of(signature.answers()), Word.STATUS);
         }
     }
 
-    /** A declared type's constructor, and the shape each field is handed over in. */
-    public record Construct(Function function, List<Shape> takes) {
+    /** A declared type's constructor, and how each field is handed over. */
+    public record Construct(Function function, List<ValueCrossing> takes) {
 
         public Construct {
             takes = List.copyOf(takes);
-            function.takes(List.of(), takes, List.of(new Shape.Leaf(Word.VALUE)), Word.STATUS);
+            function.takes(List.of(), ValueCrossing.shapes(takes),
+                    List.of(new Shape.Leaf(Word.VALUE)), Word.STATUS);
         }
     }
 
-    /** A field's reader, and the shape the field is handed over in. */
-    public record Read(Function function, Shape answers) {
+    /** A field's reader, and how the field is handed over. */
+    public record Read(Function function, ValueCrossing answers) {
 
         public Read {
-            function.takes(List.of(Parameter.given(Word.VALUE)), List.of(), List.of(answers), null);
+            function.takes(List.of(Parameter.given(Word.VALUE)), List.of(),
+                    List.of(answers.shape()), null);
         }
     }
 
@@ -511,29 +480,6 @@ public final class Manifest {
                     functions)) {
                 offered(name, crossing.shape(), crossing.way(), listed, called);
             }
-        }
-
-        /**
-         * What this module says a list whose elements cross in {@code element} is built and read
-         * through.
-         *
-         * @throws IllegalArgumentException where it says nothing of one
-         */
-        public ListCrossing listOf(Shape element) {
-            return lists.stream().filter(it -> it.element().equals(element)).findFirst()
-                    .orElseThrow(() -> new IllegalArgumentException("module `" + name
-                            + "` says nothing of a list of " + element));
-        }
-
-        /**
-         * What this module says a function value of {@code signature} is called and made through.
-         *
-         * @throws IllegalArgumentException where it says nothing of one
-         */
-        public FunctionCrossing functionOf(Signature signature) {
-            return functions.stream().filter(it -> it.signature().equals(signature)).findFirst()
-                    .orElseThrow(() -> new IllegalArgumentException("module `" + name
-                            + "` says nothing of a function value of " + signature));
         }
 
         /**
@@ -579,6 +525,43 @@ public final class Manifest {
             }
         }
 
+        /**
+         * Every value that crosses anywhere in a module made of these, as it crosses: what each
+         * behavior, published value and behavior a host implements takes and answers, what each
+         * constructor takes, and each field read.
+         */
+        private static List<ValueCrossing> crossed(List<Behavior> behaviors, List<Injection> injections,
+                                                   List<PublishedValue> values,
+                                                   List<Declaration> declarations) {
+            List<ValueCrossing> crossed = new ArrayList<>();
+            java.util.function.Consumer<Crossings> both = it -> {
+                crossed.addAll(it.takes());
+                crossed.add(it.answers());
+            };
+            behaviors.forEach(it -> {
+                if (it.call().available() instanceof Call call) {
+                    both.accept(call.crossings());
+                }
+            });
+            injections.forEach(it -> both.accept(it.crossings()));
+            values.forEach(it -> {
+                if (it.read().available() instanceof Call call) {
+                    both.accept(call.crossings());
+                }
+            });
+            for (Declaration declaration : declarations) {
+                if (Declaration.built(declaration) instanceof Construct construct) {
+                    crossed.addAll(construct.takes());
+                }
+                for (Field field : declaration.fields()) {
+                    if (field.read().available() instanceof Read read) {
+                        crossed.add(read.answers());
+                    }
+                }
+            }
+            return crossed;
+        }
+
         /** A shape said somewhere in a module, and the way a value crossing in it crosses there. */
         private record Crossing(Shape shape, Way way) {
         }
@@ -602,22 +585,22 @@ public final class Manifest {
             };
             behaviors.forEach(it -> {
                 if (it.call().available() instanceof Call call) {
-                    signed.accept(call.signature(), Way.GIVEN);
+                    signed.accept(call.crossings().signature(), Way.GIVEN);
                 }
             });
-            injections.forEach(it -> signed.accept(it.signature(), Way.HANDED));
+            injections.forEach(it -> signed.accept(it.crossings().signature(), Way.HANDED));
             values.forEach(it -> {
                 if (it.read().available() instanceof Call call) {
-                    signed.accept(call.signature(), Way.GIVEN);
+                    signed.accept(call.crossings().signature(), Way.GIVEN);
                 }
             });
             for (Declaration declaration : declarations) {
                 if (Declaration.built(declaration) instanceof Construct construct) {
-                    construct.takes().forEach(it -> crossings.add(new Crossing(it, Way.GIVEN)));
+                    construct.takes().forEach(it -> crossings.add(new Crossing(it.shape(), Way.GIVEN)));
                 }
                 for (Field field : declaration.fields()) {
                     if (field.read().available() instanceof Read read) {
-                        crossings.add(new Crossing(read.answers(), Way.HANDED));
+                        crossings.add(new Crossing(read.answers().shape(), Way.HANDED));
                     }
                 }
             }
@@ -738,6 +721,9 @@ public final class Manifest {
         public Behavior {
             if (call.available() instanceof Call it) {
                 it.calls(true);
+                agree(ValueCrossing.types(it.crossings().takes()), parameters.types(),
+                        "what " + name + " takes");
+                agree(it.crossings().answers().type(), answers.type(), "what " + name + " answers");
             }
             UnionAnswer union = answers.union();
             if (union != null && (union.which() != null) != (call.available() != null)) {
@@ -805,6 +791,13 @@ public final class Manifest {
      * case in it, and a binding telling a value apart by which of none it is would have nothing to
      * make of it.
      */
+    /** Refuses {@code crossing} as {@code of} unless it is what the model says it is. */
+    private static void agree(Object crossing, Object said, String of) {
+        if (!crossing.equals(said)) {
+            throw new IllegalArgumentException(of + " crosses as " + crossing + ", and is " + said);
+        }
+    }
+
     private static List<Case> oneOrMore(List<Case> cases, String of) {
         if (cases.isEmpty()) {
             throw new IllegalArgumentException(of + " with no case in it");
@@ -847,11 +840,15 @@ public final class Manifest {
      * capability, room for a souther_hosted, the implementation, what it is handed first)}.
      */
     public record Injection(String name, List<NamedParameter> parameters, Type answers,
-                            Signature signature, Implementation implementation, String implement) {
+                            Crossings crossings, Implementation implementation, String implement) {
 
         public Injection {
             parameters = List.copyOf(parameters);
-            implementation.answering(signature);
+            implementation.answering(crossings.signature());
+            agree(ValueCrossing.types(crossings.takes()),
+                    parameters.stream().map(NamedParameter::type).toList(),
+                    "what " + name + " takes");
+            agree(crossings.answers().type(), answers, "what " + name + " answers");
         }
     }
 
@@ -878,10 +875,11 @@ public final class Manifest {
         public PublishedValue {
             if (read.available() instanceof Call call) {
                 call.calls(false);
-                if (!call.signature().takes().isEmpty()) {
+                if (!call.crossings().takes().isEmpty()) {
                     throw new IllegalArgumentException("the value " + name + " is read by a"
-                            + " function taking " + call.signature().takes());
+                            + " function taking " + call.crossings().signature().takes());
                 }
+                agree(call.crossings().answers().type(), type, "the value " + name);
             }
         }
     }
@@ -919,18 +917,31 @@ public final class Manifest {
 
         @Nullable Function encode();
 
+        /** Refuses a constructor that takes other than the fields it builds, in order. */
+        private static void constructs(String name, List<Field> fields, Reach<Construct> construct) {
+            if (construct.available() instanceof Construct it) {
+                agree(ValueCrossing.types(it.takes()), fields.stream().map(Field::type).toList(),
+                        "what constructs " + name);
+            }
+        }
+
         record Product(String name, List<Field> fields, Reach<Construct> construct,
                        @Nullable Function decode, @Nullable Function decodeHost,
                        @Nullable Function encode) implements Declaration {
 
             public Product {
                 fields = List.copyOf(fields);
+                constructs(name, fields, construct);
             }
         }
 
         record Newtype(String name, Field field, Reach<Construct> construct,
                        @Nullable Function decode, @Nullable Function decodeHost,
                        @Nullable Function encode) implements Declaration {
+
+            public Newtype {
+                constructs(name, List.of(field), construct);
+            }
 
             @Override
             public List<Field> fields() {
@@ -941,6 +952,10 @@ public final class Manifest {
         record Unit(String name, Reach<Construct> construct, @Nullable Function decode,
                     @Nullable Function decodeHost, @Nullable Function encode)
                 implements Declaration {
+
+            public Unit {
+                constructs(name, List.of(), construct);
+            }
 
             @Override
             public List<Field> fields() {
@@ -971,6 +986,12 @@ public final class Manifest {
 
     /** A field, and what a host reads it through, or why nothing does. */
     public record Field(String name, Type type, Reach<Read> read) {
+
+        public Field {
+            if (read.available() instanceof Read it) {
+                agree(it.answers().type(), type, "the field " + name);
+            }
+        }
     }
 
     /**

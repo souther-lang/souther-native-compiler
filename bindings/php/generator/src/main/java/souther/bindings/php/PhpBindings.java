@@ -242,9 +242,9 @@ public final class PhpBindings {
                 String key = module.name() + "." + behavior.name();
                 Manifest.Call call = behavior.call().available();
                 if (call != null
-                        && crossings.givens(behavior.parameters().types(), call.signature().takes())
+                        && crossings.givens(call.crossings().takes())
                         != null
-                        && crossings.received(behavior.answers(), call.signature().answers(), key)
+                        && crossings.received(behavior.answers(), call.crossings().answers(), key)
                         != null) {
                     candidates.put(key, new BehaviorClass(module.name(), behavior.name(), namespace,
                             PhpNames.capitalized(behavior.name()), false));
@@ -344,21 +344,17 @@ public final class PhpBindings {
          * holding a value that does not cross as the manifest says is this binding's own mistake,
          * found where it is made rather than at a call.
          */
-        @Nullable Given given(Type type, Shape shape) {
-            ValueCrossing zipped = ValueCrossing.of(module, type, shape);
-            return zipped == null ? null : given(zipped);
-        }
-
-        private @Nullable Given given(ValueCrossing value) {
+        @Nullable Given given(ValueCrossing value) {
             return agreeing(heldGiven(value), value.shape());
         }
 
         private @Nullable Given heldGiven(ValueCrossing value) {
             return switch (value) {
                 case ValueCrossing.Primitive it -> Whole.primitive(it.type().primitive(), it.word());
-                case ValueCrossing.Handle it -> whole(it.type().module(), it.type().name());
+                case ValueCrossing.Handle it -> it.word() == Word.VALUE
+                        ? whole(it.type().module(), it.type().name()) : null;
                 case ValueCrossing.Union it -> {
-                    List<Member> members = members(it.type());
+                    List<Member> members = it.word() == Word.VALUE ? members(it.type()) : null;
                     yield members == null ? null : new OneOf(it.type(), members);
                 }
                 case ValueCrossing.Optional it -> given(it.of()) instanceof Given of
@@ -381,19 +377,15 @@ public final class PhpBindings {
          * handed to PHP only as a behavior's answer, which says which case it is. A leaf is held as
          * {@link #given} says, and what is made is held to the shape the manifest says the same way.
          */
-        @Nullable Received received(Type type, Shape shape) {
-            ValueCrossing zipped = ValueCrossing.of(module, type, shape);
-            return zipped == null ? null : received(zipped);
-        }
-
-        private @Nullable Received received(ValueCrossing value) {
+        @Nullable Received received(ValueCrossing value) {
             return agreeing(heldReceived(value), value.shape());
         }
 
         private @Nullable Received heldReceived(ValueCrossing value) {
             return switch (value) {
                 case ValueCrossing.Primitive it -> Whole.primitive(it.type().primitive(), it.word());
-                case ValueCrossing.Handle it -> whole(it.type().module(), it.type().name());
+                case ValueCrossing.Handle it -> it.word() == Word.VALUE
+                        ? whole(it.type().module(), it.type().name()) : null;
                 case ValueCrossing.Union it -> null;
                 case ValueCrossing.Optional it -> received(it.of()) instanceof Received of
                         ? new ReceivedOptional(of) : null;
@@ -436,13 +428,13 @@ public final class PhpBindings {
          * and is still a value of the sum the union names. A case neither way is a union PHP cannot
          * be handed.
          */
-        @Nullable Received received(Manifest.Answer answer, Shape shape, String what) {
+        @Nullable Received received(Manifest.Answer answer, ValueCrossing value, String what) {
             if (!(answer.type() instanceof Type.Union union)) {
-                return received(answer.type(), shape);
+                return received(value);
             }
             // Held as the object of the class of the case it is, whose handle crosses as a
             // `VALUE`, as a value of a union PHP hands over is.
-            if (!(shape instanceof Shape.Leaf leaf) || leaf.word() != Word.VALUE) {
+            if (!(value instanceof ValueCrossing.Union crossing) || crossing.word() != Word.VALUE) {
                 return null;
             }
             Manifest.UnionAnswer told = Objects.requireNonNull(answer.union());
@@ -469,19 +461,14 @@ public final class PhpBindings {
                 made.add(it);
             }
             return agreeing(new Told(told.which(), members.stream().map(it -> it.whole().phpType())
-                    .collect(Collectors.joining("|")), made, quotedInSingle("`" + what + "`")), shape);
+                    .collect(Collectors.joining("|")), made, quotedInSingle("`" + what + "`")), value.shape());
         }
 
         /**
          * How PHP hands over each of {@code types} in its shape, or null where any of them has no
          * way, or the two say different counts.
          */
-        @Nullable List<Given> givens(List<Type> types, List<Shape> shapes) {
-            List<ValueCrossing> zipped = ValueCrossing.all(module, types, shapes);
-            return zipped == null ? null : givens(zipped);
-        }
-
-        private @Nullable List<Given> givens(List<ValueCrossing> values) {
+        @Nullable List<Given> givens(List<ValueCrossing> values) {
             List<Given> crossings = new ArrayList<>();
             for (ValueCrossing value : values) {
                 Given crossing = given(value);
@@ -497,12 +484,7 @@ public final class PhpBindings {
          * How PHP is handed each of {@code types} in its shape, or null where any of them has no
          * way, or the two say different counts.
          */
-        @Nullable List<Received> receiveds(List<Type> types, List<Shape> shapes) {
-            List<ValueCrossing> zipped = ValueCrossing.all(module, types, shapes);
-            return zipped == null ? null : receiveds(zipped);
-        }
-
-        private @Nullable List<Received> receiveds(List<ValueCrossing> values) {
+        @Nullable List<Received> receiveds(List<ValueCrossing> values) {
             List<Received> crossings = new ArrayList<>();
             for (ValueCrossing value : values) {
                 Received crossing = received(value);
@@ -772,7 +754,7 @@ public final class PhpBindings {
     private void of(StringBuilder php, Declared it, List<Manifest.Field> fields,
                     Manifest.Construct construct) {
         List<Given> crossings = in(it.module())
-                .givens(fields.stream().map(Manifest.Field::type).toList(), construct.takes());
+                .givens(construct.takes());
         if (crossings == null) {
             return;
         }
@@ -904,7 +886,7 @@ public final class PhpBindings {
         if (read == null) {
             return;
         }
-        Received crossing = in(it.module()).received(field.type(), read.answers());
+        Received crossing = in(it.module()).received(read.answers());
         if (crossing == null) {
             return;
         }
@@ -1031,9 +1013,8 @@ public final class PhpBindings {
                 continue;
             }
             Crossings crossings = in(module.name());
-            List<Given> takes = crossings.givens(behavior.parameters().types(),
-                    call.signature().takes());
-            Received answers = crossings.received(behavior.answers(), call.signature().answers(),
+            List<Given> takes = crossings.givens(call.crossings().takes());
+            Received answers = crossings.received(behavior.answers(), call.crossings().answers(),
                     module.name() + "." + behavior.name());
             if (takes == null || answers == null) {
                 continue;
@@ -1087,8 +1068,7 @@ public final class PhpBindings {
             if (read == null) {
                 continue;
             }
-            Received answers = in(module.name()).received(value.type(),
-                    read.signature().answers());
+            Received answers = in(module.name()).received(read.crossings().answers());
             if (answers == null) {
                 continue;
             }
@@ -1190,13 +1170,10 @@ public final class PhpBindings {
             parameters.add("?callable $" + name + " = null");
             entries.add("'" + module.name() + "." + injection.name() + "' => $" + name);
             Crossings crossings = in(module.name());
-            List<String> types = Objects.requireNonNull(crossings.receiveds(
-                            injection.parameters().stream().map(Manifest.NamedParameter::type)
-                                    .toList(), injection.signature().takes())).stream()
+            List<String> types = Objects.requireNonNull(crossings.receiveds(injection.crossings().takes())).stream()
                     .map(Crossing::phpDocType).toList();
             described.add("     * @param (callable(" + String.join(", ", types) + "): "
-                    + Objects.requireNonNull(crossings.given(injection.answers(),
-                            injection.signature().answers())).phpDocType() + ")|null $" + name);
+                    + Objects.requireNonNull(crossings.given(injection.crossings().answers())).phpDocType() + ")|null $" + name);
         }
         if (parameters.isEmpty()) {
             return;
@@ -1231,9 +1208,8 @@ public final class PhpBindings {
      */
     private @Nullable String adapter(Manifest.Module module, Manifest.Injection injection) {
         Crossings crossings = in(module.name());
-        List<Received> takes = crossings.receiveds(injection.parameters().stream()
-                .map(Manifest.NamedParameter::type).toList(), injection.signature().takes());
-        Given answers = crossings.given(injection.answers(), injection.signature().answers());
+        List<Received> takes = crossings.receiveds(injection.crossings().takes());
+        Given answers = crossings.given(injection.crossings().answers());
         if (takes == null || answers == null) {
             return null;
         }
@@ -1289,11 +1265,8 @@ public final class PhpBindings {
         // and an override is not held to them.
         List<String> names = PhpNames.ownParameters(injection.parameters().stream()
                 .map(Manifest.NamedParameter::name).toList(), "input");
-        List<Received> takes = Objects.requireNonNull(crossings.receiveds(injection.parameters()
-                .stream().map(Manifest.NamedParameter::type).toList(),
-                injection.signature().takes()));
-        Given answers = Objects.requireNonNull(crossings.given(injection.answers(),
-                injection.signature().answers()));
+        List<Received> takes = Objects.requireNonNull(crossings.receiveds(injection.crossings().takes()));
+        Given answers = Objects.requireNonNull(crossings.given(injection.crossings().answers()));
         List<String> parameters = new ArrayList<>();
         List<String> described = new ArrayList<>();
         for (int at = 0; at < takes.size(); at++) {

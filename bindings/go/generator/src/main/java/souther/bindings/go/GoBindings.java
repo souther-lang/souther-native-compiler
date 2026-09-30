@@ -186,26 +186,16 @@ public final class GoBindings {
     // ---------------------------------------------------------------------------------------------
     // What a model type crosses as.
 
-    /**
-     * How a value of {@code type} crosses in {@code shape}, the way {@code way} says, in a function
-     * of {@code module}'s, or null where this binding has no way to hold it: a pair of a type and a
-     * shape it knows no way to hold, a declared type it has no handle for, a union no declaration
-     * names where nothing says which case it is, and a function value.
-     */
-    private @Nullable Crossing crossing(Manifest.Module module, Type type, Shape shape,
-                                        Manifest.Way way) {
-        ValueCrossing zipped = ValueCrossing.of(module, type, shape);
-        return zipped == null ? null : held(module, zipped, way);
-    }
-
     /** How Go holds {@code value}, crossing the way {@code way} says, or null where it has no way. */
     private @Nullable Crossing held(Manifest.Module module, ValueCrossing value, Manifest.Way way) {
         Crossing made = switch (value) {
             case ValueCrossing.Primitive it -> Crossing.Whole.primitive(it.type().primitive(), it.word());
-            case ValueCrossing.Handle it -> handle(it.type().module(), it.type().name());
+            case ValueCrossing.Handle it -> it.word() == Word.VALUE
+                    ? handle(it.type().module(), it.type().name()) : null;
             // Handed to Go only as a behavior's answer, which says which case it is
             // (`answered`): anywhere else Go would be handed a value of it told nothing.
-            case ValueCrossing.Union it -> way == Manifest.Way.GIVEN ? oneOf(module, it.type(), null) : null;
+            case ValueCrossing.Union it -> it.word() == Word.VALUE && way == Manifest.Way.GIVEN
+                    ? oneOf(module, it.type(), null) : null;
             case ValueCrossing.Optional it -> held(module, it.of(), way) instanceof Crossing of
                     ? new Crossing.Optional(of) : null;
             case ValueCrossing.Tuple it -> {
@@ -235,16 +225,6 @@ public final class GoBindings {
         return made;
     }
 
-    /**
-     * How each of {@code types} crosses in its shape, or null where any of them has no way, or the
-     * two say different counts.
-     */
-    private @Nullable List<Crossing> crossings(Manifest.Module module, List<Type> types,
-                                               List<Shape> shapes, Manifest.Way way) {
-        List<ValueCrossing> zipped = ValueCrossing.all(module, types, shapes);
-        return zipped == null ? null : helds(module, zipped, way);
-    }
-
     /** How Go holds each of {@code values}, or null where it has no way to hold any of them. */
     private @Nullable List<Crossing> helds(Manifest.Module module, List<ValueCrossing> values,
                                            Manifest.Way way) {
@@ -264,12 +244,13 @@ public final class GoBindings {
      * union no declaration names as the type of the member the case the library says it is belongs
      * to, and anything else as a value of its type is handed.
      */
-    private @Nullable Crossing answered(Manifest.Module module, Manifest.Answer answer, Shape shape) {
+    private @Nullable Crossing answered(Manifest.Module module, Manifest.Answer answer,
+                                        ValueCrossing value) {
         if (!(answer.type() instanceof Type.Union union)) {
-            return crossing(module, answer.type(), shape, Manifest.Way.HANDED);
+            return held(module, value, Manifest.Way.HANDED);
         }
         Manifest.UnionAnswer told = Objects.requireNonNull(answer.union());
-        if (!(shape instanceof Shape.Leaf leaf) || leaf.word() != Word.VALUE || told.which() == null) {
+        if (!(value instanceof ValueCrossing.Union it) || it.word() != Word.VALUE || told.which() == null) {
             return null;
         }
         return oneOf(module, union, told);
@@ -811,9 +792,7 @@ public final class GoBindings {
     /** {@code New<Type>}: the value, or the invariant it does not hold as an issue. */
     private void construct(GoModule at, Declared it, Manifest.Construct construct) {
         List<Manifest.Field> fields = it.declaration().fields();
-        List<Crossing> takes = crossings(at.module,
-                fields.stream().map(Manifest.Field::type).toList(), construct.takes(),
-                Manifest.Way.GIVEN);
+        List<Crossing> takes = helds(at.module, construct.takes(), Manifest.Way.GIVEN);
         if (takes == null) {
             return;
         }
@@ -894,7 +873,7 @@ public final class GoBindings {
         if (read == null) {
             return;
         }
-        Crossing crossing = crossing(at.module, field.type(), read.answers(), Manifest.Way.HANDED);
+        Crossing crossing = held(at.module, read.answers(), Manifest.Way.HANDED);
         if (crossing == null) {
             return;
         }
@@ -922,9 +901,8 @@ public final class GoBindings {
             if (call == null || !requiresOf(at.module.name() + "." + behavior.name()).isEmpty()) {
                 continue;
             }
-            List<Crossing> takes = crossings(at.module, behavior.parameters().types(),
-                    call.signature().takes(), Manifest.Way.GIVEN);
-            Crossing answers = answered(at.module, behavior.answers(), call.signature().answers());
+            List<Crossing> takes = helds(at.module, call.crossings().takes(), Manifest.Way.GIVEN);
+            Crossing answers = answered(at.module, behavior.answers(), call.crossings().answers());
             if (takes == null || answers == null) {
                 continue;
             }
@@ -951,8 +929,7 @@ public final class GoBindings {
             if (read == null) {
                 continue;
             }
-            Crossing answers = crossing(at.module, value.type(), read.signature().answers(),
-                    Manifest.Way.HANDED);
+            Crossing answers = held(at.module, read.crossings().answers(), Manifest.Way.HANDED);
             if (answers == null) {
                 continue;
             }
@@ -1152,19 +1129,16 @@ public final class GoBindings {
 
     /** Whether a host can be handed what {@code injection} takes and hand back what it answers. */
     private boolean implementable(Manifest.Module module, Manifest.Injection injection) {
-        return crossings(module, injection.parameters().stream().map(Manifest.NamedParameter::type)
-                .toList(), injection.signature().takes(), Manifest.Way.HANDED) != null
-                && crossing(module, injection.answers(), injection.signature().answers(),
-                Manifest.Way.GIVEN) != null;
+        return helds(module, injection.crossings().takes(), Manifest.Way.HANDED) != null
+                && held(module, injection.crossings().answers(), Manifest.Way.GIVEN) != null;
     }
 
     /** Whether a host can call {@code behavior}, handing over what it takes and handed what it answers. */
     private boolean callable(Manifest.Module module, Manifest.Behavior behavior) {
         Manifest.Call call = behavior.call().available();
         return call != null
-                && crossings(module, behavior.parameters().types(), call.signature().takes(),
-                Manifest.Way.GIVEN) != null
-                && answered(module, behavior.answers(), call.signature().answers()) != null;
+                && helds(module, call.crossings().takes(), Manifest.Way.GIVEN) != null
+                && answered(module, behavior.answers(), call.crossings().answers()) != null;
     }
 
     /** The names a behavior's parameters are written under. */
@@ -1187,11 +1161,8 @@ public final class GoBindings {
      */
     private void injected(GoModule at, Manifest.Injection injection, BehaviorType it) {
         Manifest.Module module = at.module;
-        List<Crossing> takes = Objects.requireNonNull(crossings(module, injection.parameters()
-                .stream().map(Manifest.NamedParameter::type).toList(),
-                injection.signature().takes(), Manifest.Way.HANDED));
-        Crossing answers = Objects.requireNonNull(crossing(module, injection.answers(),
-                injection.signature().answers(), Manifest.Way.GIVEN));
+        List<Crossing> takes = Objects.requireNonNull(helds(module, injection.crossings().takes(), Manifest.Way.HANDED));
+        Crossing answers = Objects.requireNonNull(held(module, injection.crossings().answers(), Manifest.Way.GIVEN));
         String what = "behavior `" + it.key() + "`";
         List<String> names = parameterNames(new Manifest.Parameters.Named(injection.parameters()),
                 what);
@@ -1382,10 +1353,8 @@ public final class GoBindings {
     private void bound(GoModule at, Manifest.Behavior behavior, BehaviorType it) {
         Manifest.Module module = at.module;
         Manifest.Call call = Objects.requireNonNull(behavior.call().available());
-        List<Crossing> takes = Objects.requireNonNull(crossings(module,
-                behavior.parameters().types(), call.signature().takes(), Manifest.Way.GIVEN));
-        Crossing answers = Objects.requireNonNull(answered(module, behavior.answers(),
-                call.signature().answers()));
+        List<Crossing> takes = Objects.requireNonNull(helds(module, call.crossings().takes(), Manifest.Way.GIVEN));
+        Crossing answers = Objects.requireNonNull(answered(module, behavior.answers(), call.crossings().answers()));
         String what = "behavior `" + it.key() + "`";
         List<String> names = parameterNames(behavior.parameters(), what);
         List<Manifest.Required> requires = requiresOf(it.key());

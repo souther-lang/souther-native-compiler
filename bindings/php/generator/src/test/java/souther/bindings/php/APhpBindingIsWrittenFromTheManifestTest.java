@@ -73,9 +73,9 @@ class APhpBindingIsWrittenFromTheManifestTest {
     }
 
     /**
-     * A type crossing in a shape this binding knows no way to hold it in is not written, and the
-     * manifest saying so is not refused: which shape a type crosses in is the driver's, and what
-     * PHP can hold of it is this binding's own.
+     * A type crossing as a word this binding knows no way to hold it in is not written, and the
+     * manifest saying so is not refused: which word a type crosses as is the driver's, and what PHP
+     * can hold of it is this binding's own.
      */
     @Test
     void aTypeInAShapeThisBindingCannotHoldIsNotWritten(@TempDir Path into) throws Exception {
@@ -87,8 +87,9 @@ class APhpBindingIsWrittenFromTheManifestTest {
                 let other: (Int, Bool) = (4, false)
                 """)), into.resolve("native"));
 
-        generatedAfter(into, library, "m", module -> ((ObjectNode) module.get("values").get(0))
-                .set("type", JSON.readTree("{\"kind\":\"primitive\",\"name\":\"Decimal\"}")));
+        generatedAfter(into, library, "m", module -> ((ArrayNode) module.get("values").get(0)
+                .get("type").get("of"))
+                .set(0, JSON.readTree("{\"kind\":\"primitive\",\"name\":\"Decimal\"}")));
 
         assertThat(Files.readString(into.resolve("php").resolve("M").resolve("Values.php")))
                 .contains("function other(").doesNotContain("function pair(");

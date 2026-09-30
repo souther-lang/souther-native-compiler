@@ -1,30 +1,28 @@
 package souther.bindings;
 
-import org.jspecify.annotations.Nullable;
 import souther.bindings.Manifest.FunctionCrossing;
 import souther.bindings.Manifest.ListCrossing;
-import souther.bindings.Manifest.Module;
 import souther.bindings.Manifest.Shape;
 import souther.bindings.Manifest.Type;
 import souther.bindings.Manifest.Way;
 import souther.bindings.Manifest.Word;
 
-import java.util.ArrayList;
 import java.util.List;
 
 /**
- * A value of a type crossing in a shape, the two taken apart together once: what every generator
- * would otherwise walk for itself before it could say what its language holds.
+ * A value of a type crossing in a shape: the two taken apart together, by the command, before a
+ * generator is handed the model.
  *
- * <p>The manifest says a type beside the shape it crosses in ({@link Shape}), and a generator
- * needs both at every level: which primitive a word is, which tuple a product is, what a list or a
- * function value of this shape is reached through. {@link #of} pairs them, checks that they agree
- * (an option with an option, a tuple with a product of as many members, a list, a set or a map
- * with a list of what it holds, a function with a function of as many parameters), and finds what
- * the module says each list and function value is reached through. What is left to a generator is
- * what its language makes of each part, and whether it has a way to hold it at all.
+ * <p>Wherever the model says a value crosses — what a behavior, an injection or a function value
+ * takes and answers, a published value, a field, what a constructor takes, a list's element — it
+ * says it as one of these, and never as a type beside a shape a generator would pair itself. Each
+ * record holds its parts to agreeing where it is made (an option with an option, a tuple with a
+ * product of as many members, a list, a set or a map with a list of what it holds, a function with
+ * a function of as many parameters), so one that says a type crosses in a shape it cannot is one
+ * no one can make. What is left to a generator is what its language makes of each part, and
+ * whether it has a way to hold it at all.
  *
- * <p>A leaf keeps the pair of its type and its word rather than a rule of which word a primitive
+ * <p>A leaf keeps the pair of its type and its word rather than a rule of which word a type
  * crosses as: which word a type crosses in is the driver's to choose, and a generator asks of the
  * pair whether its language can hold it.
  */
@@ -33,7 +31,7 @@ public sealed interface ValueCrossing {
     /** The type the value is, as the model says it. */
     Type type();
 
-    /** The shape the value crosses in, as the manifest says it. */
+    /** The shape the value crosses in. */
     Shape shape();
 
     /** A value of a primitive, crossing as one word. */
@@ -45,30 +43,33 @@ public sealed interface ValueCrossing {
         }
     }
 
-    /** A value of a declared type, crossing as the address of it ({@link Word#VALUE}). */
-    record Handle(Type.Declared type) implements ValueCrossing {
+    /** A value of a declared type, crossing as one word: the address of it, as the driver has it. */
+    record Handle(Type.Declared type, Word word) implements ValueCrossing {
 
         @Override
         public Shape shape() {
-            return new Shape.Leaf(Word.VALUE);
+            return new Shape.Leaf(word);
         }
     }
 
     /**
-     * A value of a union no declaration names, crossing as the address of it ({@link Word#VALUE}).
-     * A host told nothing of which case it is has no way to hold one, which is each generator's to
-     * say where it is handed one.
+     * A value of a union no declaration names, crossing as one word. A host told nothing of which
+     * case it is has no way to hold one, which is each generator's to say where it is handed one.
      */
-    record Union(Type.Union type) implements ValueCrossing {
+    record Union(Type.Union type, Word word) implements ValueCrossing {
 
         @Override
         public Shape shape() {
-            return new Shape.Leaf(Word.VALUE);
+            return new Shape.Leaf(word);
         }
     }
 
     /** An optional: a presence, then what it holds where it holds something. */
     record Optional(Type.Option type, ValueCrossing of) implements ValueCrossing {
+
+        public Optional {
+            agree(of.type(), type.of(), "what an optional holds");
+        }
 
         @Override
         public Shape shape() {
@@ -81,6 +82,8 @@ public sealed interface ValueCrossing {
 
         public Tuple {
             members = List.copyOf(members);
+            agree(members.stream().map(ValueCrossing::type).toList(), type.of(),
+                    "the members of a tuple");
         }
 
         @Override
@@ -95,6 +98,18 @@ public sealed interface ValueCrossing {
      */
     record Listed(Type type, ValueCrossing element, ListCrossing crossing)
             implements ValueCrossing {
+
+        public Listed {
+            Type listed = Type.listed(type);
+            if (listed == null) {
+                throw new IllegalArgumentException(type + " is no list, set or map");
+            }
+            agree(element.type(), listed, "what a list holds");
+            if (!crossing.element().equals(element.shape())) {
+                throw new IllegalArgumentException("a list of " + element.shape() + " is built and"
+                        + " read through the functions for a list of " + crossing.element());
+            }
+        }
 
         @Override
         public Shape shape() {
@@ -114,12 +129,25 @@ public sealed interface ValueCrossing {
      * A function value: what it takes and answers, each crossing as the signature says, and what
      * the module says a function value of that signature is called and made through.
      */
-    record FunctionValue(Type.Function type, Shape.FunctionOf shape, List<ValueCrossing> takes,
-                         ValueCrossing answers, FunctionCrossing crossing)
-            implements ValueCrossing {
+    record FunctionValue(Type.Function type, List<ValueCrossing> takes, ValueCrossing answers,
+                         FunctionCrossing crossing) implements ValueCrossing {
 
         public FunctionValue {
             takes = List.copyOf(takes);
+            agree(takes.stream().map(ValueCrossing::type).toList(), type.takes(),
+                    "what a function value takes");
+            agree(answers.type(), type.answers(), "what a function value answers");
+            Manifest.Signature signature = new Manifest.Signature(shapes(takes), answers.shape());
+            if (!crossing.signature().equals(signature)) {
+                throw new IllegalArgumentException("a function value of " + signature
+                        + " is called and made through the functions for one of "
+                        + crossing.signature());
+            }
+        }
+
+        @Override
+        public Shape.FunctionOf shape() {
+            return new Shape.FunctionOf(new Manifest.Signature(shapes(takes), answers.shape()));
         }
 
         /**
@@ -133,55 +161,20 @@ public sealed interface ValueCrossing {
         }
     }
 
-    /**
-     * A value of {@code type} crossing in {@code shape} in a function of {@code module}'s, or null
-     * where the two do not agree: a shape of one kind beside a type of another, a product beside a
-     * tuple of another count, a leaf beside a type no word is, or a declared type or a union
-     * beside any word but {@link Word#VALUE}.
-     */
-    static @Nullable ValueCrossing of(Module module, Type type, Shape shape) {
-        return switch (shape) {
-            case Shape.Leaf leaf -> switch (type) {
-                case Type.Primitive it -> new Primitive(it, leaf.word());
-                case Type.Declared it -> leaf.word() == Word.VALUE ? new Handle(it) : null;
-                case Type.Union it -> leaf.word() == Word.VALUE ? new Union(it) : null;
-                default -> null;
-            };
-            case Shape.Option option -> type instanceof Type.Option it
-                    && of(module, it.of(), option.of()) instanceof ValueCrossing of
-                    ? new Optional(it, of) : null;
-            case Shape.Product product -> type instanceof Type.Tuple it
-                    && all(module, it.of(), product.of()) instanceof List<ValueCrossing> members
-                    ? new Tuple(it, members) : null;
-            case Shape.ListOf list -> Type.listed(type) instanceof Type listed
-                    && of(module, listed, list.element()) instanceof ValueCrossing element
-                    ? new Listed(type, element, module.listOf(list.element())) : null;
-            case Shape.FunctionOf function -> type instanceof Type.Function it
-                    && all(module, it.takes(), function.signature().takes())
-                    instanceof List<ValueCrossing> takes
-                    && of(module, it.answers(), function.signature().answers())
-                    instanceof ValueCrossing answers
-                    ? new FunctionValue(it, function, takes, answers,
-                            module.functionOf(function.signature())) : null;
-        };
+    /** The shapes of each of {@code crossings}, in order. */
+    static List<Shape> shapes(List<ValueCrossing> crossings) {
+        return crossings.stream().map(ValueCrossing::shape).toList();
     }
 
-    /**
-     * Each of {@code types} crossing in the shape beside it, or null where the two say different
-     * counts or any pair does not agree.
-     */
-    static @Nullable List<ValueCrossing> all(Module module, List<Type> types, List<Shape> shapes) {
-        if (types.size() != shapes.size()) {
-            return null;
+    /** The types of each of {@code crossings}, in order. */
+    static List<Type> types(List<ValueCrossing> crossings) {
+        return crossings.stream().map(ValueCrossing::type).toList();
+    }
+
+    /** Refuses {@code crossing} as {@code of} unless it is a value of {@code type}. */
+    private static void agree(Object crossing, Object type, String of) {
+        if (!crossing.equals(type)) {
+            throw new IllegalArgumentException(of + " crosses as " + crossing + ", and is " + type);
         }
-        List<ValueCrossing> made = new ArrayList<>();
-        for (int at = 0; at < types.size(); at++) {
-            ValueCrossing it = of(module, types.get(at), shapes.get(at));
-            if (it == null) {
-                return null;
-            }
-            made.add(it);
-        }
-        return made;
     }
 }

@@ -4,6 +4,7 @@ import net.unit8.raoh.Result;
 import net.unit8.raoh.decode.Decoder;
 import souther.bindings.Manifest;
 import souther.bindings.Manifest.*;
+import souther.bindings.ValueCrossing;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -220,17 +221,122 @@ public final class ManifestReader {
                         .<Reach<T>>map(it -> new Reach.Unavailable<>()), Set.of("unavailable")));
     }
 
-    private static final Decoder<JsonNode, Call> CALL = combine(
-            field("function", FUNCTION),
-            field("signature", SIGNATURE)).strict(Call::new);
+    /** A call as the manifest writes it: the function, and the shapes beside it. */
+    private record RawCall(Function function, Signature signature) {
+    }
 
-    private static final Decoder<JsonNode, Construct> CONSTRUCT = combine(
-            field("function", FUNCTION),
-            field("takes", list(SHAPE))).strict(Construct::new);
+    private record RawConstruct(Function function, List<Shape> takes) {
+    }
 
-    private static final Decoder<JsonNode, Read> READ = combine(
+    private record RawRead(Function function, Shape answers) {
+    }
+
+    private static final Decoder<JsonNode, RawCall> CALL = combine(
             field("function", FUNCTION),
-            field("answers", SHAPE)).strict(Read::new);
+            field("signature", SIGNATURE)).strict(RawCall::new);
+
+    private static final Decoder<JsonNode, RawConstruct> CONSTRUCT = combine(
+            field("function", FUNCTION),
+            field("takes", list(SHAPE))).strict(RawConstruct::new);
+
+    private static final Decoder<JsonNode, RawRead> READ = combine(
+            field("function", FUNCTION),
+            field("answers", SHAPE)).strict(RawRead::new);
+
+    /** {@code reach} with what reaches the value made by {@code made}, and why nothing does kept. */
+    private static <A, B> Reach<B> mapped(Reach<A> reach, java.util.function.Function<A, B> made) {
+        return switch (reach) {
+            case Reach.Available<A>(A it) -> new Reach.Available<>(made.apply(it));
+            case Reach.Unavailable<A> it -> new Reach.Unavailable<>();
+        };
+    }
+
+    /**
+     * What a module says each value that crosses its functions is, taken apart with the shape it
+     * crosses in: the one place a type and a shape are paired, so a generator is handed the pair
+     * and never pairs them itself.
+     *
+     * <p>A leaf pairs with any word, since which word a type crosses as is the driver's to choose;
+     * anything else that does not pair — a tuple's count, an option beside what is none, a list
+     * or a function value the module says nothing to reach — is the driver and this command
+     * disagreeing, and the manifest is refused.
+     */
+    private record Zip(String module, List<ListCrossing> lists, List<FunctionCrossing> functions) {
+
+        ValueCrossing of(Type type, Shape shape) {
+            return switch (shape) {
+                case Shape.Leaf leaf -> switch (type) {
+                    case Type.Primitive it -> new ValueCrossing.Primitive(it, leaf.word());
+                    case Type.Declared it -> new ValueCrossing.Handle(it, leaf.word());
+                    case Type.Union it -> new ValueCrossing.Union(it, leaf.word());
+                    default -> throw disagreeing(type, shape);
+                };
+                case Shape.Option option -> {
+                    if (!(type instanceof Type.Option it)) {
+                        throw disagreeing(type, shape);
+                    }
+                    yield new ValueCrossing.Optional(it, of(it.of(), option.of()));
+                }
+                case Shape.Product product -> {
+                    if (!(type instanceof Type.Tuple it)) {
+                        throw disagreeing(type, shape);
+                    }
+                    yield new ValueCrossing.Tuple(it, all(it.of(), product.of()));
+                }
+                case Shape.ListOf list -> {
+                    Type listed = Type.listed(type);
+                    if (listed == null) {
+                        throw disagreeing(type, shape);
+                    }
+                    ListCrossing crossing = lists.stream()
+                            .filter(it -> it.element().equals(list.element())).findFirst()
+                            .orElseThrow(() -> new IllegalArgumentException("module `" + module
+                                    + "` hands a list of " + list.element() + " across and says"
+                                    + " nothing to reach one through"));
+                    yield new ValueCrossing.Listed(type, of(listed, list.element()), crossing);
+                }
+                case Shape.FunctionOf function -> {
+                    if (!(type instanceof Type.Function it)) {
+                        throw disagreeing(type, shape);
+                    }
+                    FunctionCrossing crossing = functions.stream()
+                            .filter(f -> f.signature().equals(function.signature())).findFirst()
+                            .orElseThrow(() -> new IllegalArgumentException("module `" + module
+                                    + "` hands a function of " + function.signature()
+                                    + " across and says nothing to reach one through"));
+                    yield new ValueCrossing.FunctionValue(it,
+                            all(it.takes(), function.signature().takes()),
+                            of(it.answers(), function.signature().answers()), crossing);
+                }
+            };
+        }
+
+        List<ValueCrossing> all(List<Type> types, List<Shape> shapes) {
+            if (types.size() != shapes.size()) {
+                throw new IllegalArgumentException("module `" + module + "` says " + types.size()
+                        + " values cross as " + shapes.size() + " shapes: " + types + " as "
+                        + shapes);
+            }
+            List<ValueCrossing> zipped = new java.util.ArrayList<>();
+            for (int at = 0; at < types.size(); at++) {
+                zipped.add(of(types.get(at), shapes.get(at)));
+            }
+            return zipped;
+        }
+
+        Crossings crossings(List<Type> takes, Type answers, Signature signature) {
+            return new Crossings(all(takes, signature.takes()), of(answers, signature.answers()));
+        }
+
+        Call call(RawCall raw, List<Type> takes, Type answers) {
+            return new Call(raw.function(), crossings(takes, answers, raw.signature()));
+        }
+
+        private IllegalArgumentException disagreeing(Type type, Shape shape) {
+            return new IllegalArgumentException("module `" + module + "` says " + type
+                    + " crosses in " + shape + ", which no value of it is");
+        }
+    }
 
     private static final Decoder<JsonNode, NamedParameter> NAMED_PARAMETER = combine(
             field("name", string()), field("type", TYPE)).strict(NamedParameter::new);
@@ -253,11 +359,15 @@ public final class ManifestReader {
             field("module", string()),
             field("name", string())).strict(Required::new);
 
-    private static final Decoder<JsonNode, Behavior> BEHAVIOR = combine(
-            field("name", string()),
-            field("parameters", PARAMETERS),
-            field("answers", ANSWER),
-            field("call", reach(CALL))).strict(Behavior::new);
+    private static Decoder<JsonNode, Behavior> behavior(Zip zip) {
+        return combine(
+                field("name", string()),
+                field("parameters", PARAMETERS),
+                field("answers", ANSWER),
+                field("call", reach(CALL))).strict((name, parameters, answers, call) ->
+                new Behavior(name, parameters, answers, mapped(call,
+                        raw -> zip.call(raw, parameters.types(), answers.type()))));
+    }
 
     private static final Decoder<JsonNode, Construction> CONSTRUCTION = combine(
             field("name", string()),
@@ -269,44 +379,64 @@ public final class ManifestReader {
             field("takes", list(PARAMETER)),
             field("answers", WORD)).strict(Implementation::new);
 
-    private static final Decoder<JsonNode, Injection> INJECTION = combine(
-            field("name", string()),
-            field("parameters", list(NAMED_PARAMETER)),
-            field("answers", TYPE),
-            field("signature", SIGNATURE),
-            field("implementation", IMPLEMENTATION),
-            field("implement", string())).strict(Injection::new);
+    private static Decoder<JsonNode, Injection> injection(Zip zip) {
+        return combine(
+                field("name", string()),
+                field("parameters", list(NAMED_PARAMETER)),
+                field("answers", TYPE),
+                field("signature", SIGNATURE),
+                field("implementation", IMPLEMENTATION),
+                field("implement", string()))
+                .strict((name, parameters, answers, signature, implementation, implement) ->
+                        new Injection(name, parameters, answers, zip.crossings(
+                                parameters.stream().map(NamedParameter::type).toList(), answers,
+                                signature), implementation, implement));
+    }
 
-    private static final Decoder<JsonNode, PublishedValue> VALUE = combine(
-            field("name", string()),
-            field("type", TYPE),
-            field("read", reach(CALL))).strict(PublishedValue::new);
+    private static Decoder<JsonNode, PublishedValue> value(Zip zip) {
+        return combine(
+                field("name", string()),
+                field("type", TYPE),
+                field("read", reach(CALL))).strict((name, type, read) ->
+                new PublishedValue(name, type, mapped(read, raw -> zip.call(raw, List.of(), type))));
+    }
 
-    private static final Decoder<JsonNode, Field> FIELD = combine(
-            field("name", string()),
-            field("type", TYPE),
-            field("read", reach(READ))).strict(Field::new);
+    private static Decoder<JsonNode, Field> fieldOf(Zip zip) {
+        return combine(
+                field("name", string()),
+                field("type", TYPE),
+                field("read", reach(READ))).strict((name, type, read) ->
+                new Field(name, type, mapped(read,
+                        raw -> new Read(raw.function(), zip.of(type, raw.answers())))));
+    }
 
-    private static final Decoder<JsonNode, Declaration> DECLARATION = oneOf(
+    /** What constructs a value of a declaration of {@code fields}, each field's crossing paired. */
+    private static Reach<Construct> built(Zip zip, List<Field> fields, Reach<RawConstruct> raw) {
+        return mapped(raw, it -> new Construct(it.function(),
+                zip.all(fields.stream().map(Field::type).toList(), it.takes())));
+    }
+
+    private static Decoder<JsonNode, Declaration> declaration(Zip zip) {
+        return oneOf(
             combine(field("kind", literal("product")), field("name", string()),
-                    field("fields", list(FIELD)), field("construct", reach(CONSTRUCT)),
+                    field("fields", list(fieldOf(zip))), field("construct", reach(CONSTRUCT)),
                     nullableField("decode", FUNCTION), nullableField("decodehost", FUNCTION),
                     nullableField("encode", FUNCTION))
                     .strict((kind, name, fields, construct, decode, decodeHost, encode) ->
-                            new Declaration.Product(name, fields, construct, decode, decodeHost,
+                            new Declaration.Product(name, fields, built(zip, fields, construct), decode, decodeHost,
                                     encode)),
             combine(field("kind", literal("newtype")), field("name", string()),
-                    field("field", FIELD), field("construct", reach(CONSTRUCT)),
+                    field("field", fieldOf(zip)), field("construct", reach(CONSTRUCT)),
                     nullableField("decode", FUNCTION), nullableField("decodehost", FUNCTION),
                     nullableField("encode", FUNCTION))
                     .strict((kind, name, held, construct, decode, decodeHost, encode) ->
-                            new Declaration.Newtype(name, held, construct, decode, decodeHost,
+                            new Declaration.Newtype(name, held, built(zip, List.of(held), construct), decode, decodeHost,
                                     encode)),
             combine(field("kind", literal("unit")), field("name", string()),
                     field("construct", reach(CONSTRUCT)), nullableField("decode", FUNCTION),
                     nullableField("decodehost", FUNCTION), nullableField("encode", FUNCTION))
                     .strict((kind, name, construct, decode, decodeHost, encode) ->
-                            new Declaration.Unit(name, construct, decode, decodeHost, encode)),
+                            new Declaration.Unit(name, built(zip, List.of(), construct), decode, decodeHost, encode)),
             combine(field("kind", literal("sum")), field("name", string()),
                     field("cases", list(CASE)), nullableField("case", FUNCTION),
                     nullableField("decode", FUNCTION), nullableField("decodehost", FUNCTION),
@@ -314,6 +444,7 @@ public final class ManifestReader {
                     .strict((kind, name, cases, which, decode, decodeHost, encode) ->
                             new Declaration.Sum(name, cases, which, decode, decodeHost,
                                     encode)));
+    }
 
     private static final Decoder<JsonNode, ListRead> LIST_READ = combine(
             field("length", FUNCTION),
@@ -333,15 +464,24 @@ public final class ManifestReader {
             nullableField("call", FUNCTION),
             nullableField("make", FUNCTION_MAKING)).strict(FunctionCrossing::new);
 
-    private static final Decoder<JsonNode, Manifest.Module> MODULE = combine(
-            field("name", string()),
-            field("behaviors", list(BEHAVIOR)),
-            field("constructions", list(CONSTRUCTION)),
-            field("injections", list(INJECTION)),
-            field("values", list(VALUE)),
-            field("declarations", list(DECLARATION)),
-            field("lists", list(LIST_CROSSING)),
-            field("functions", list(FUNCTION_CROSSING))).strict(Manifest.Module::new);
+    /**
+     * A module, in two steps: what it says each list and function value is reached through, and
+     * then everything else, each value that crosses paired with its shape against those.
+     */
+    private static final Decoder<JsonNode, Manifest.Module> MODULE = (node, path) ->
+            combine(field("name", string()),
+                    field("lists", list(LIST_CROSSING)),
+                    field("functions", list(FUNCTION_CROSSING))).map(Zip::new).decode(node, path)
+                    .flatMap(zip -> combine(
+                            field("name", string()),
+                            field("behaviors", list(behavior(zip))),
+                            field("constructions", list(CONSTRUCTION)),
+                            field("injections", list(injection(zip))),
+                            field("values", list(value(zip))),
+                            field("declarations", list(declaration(zip))),
+                            field("lists", list(LIST_CROSSING)),
+                            field("functions", list(FUNCTION_CROSSING)))
+                            .strict(Manifest.Module::new).decode(node, path));
 
     private static final Decoder<JsonNode, Manifest> MANIFEST = combine(
             field("format", string()),
