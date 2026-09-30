@@ -57,6 +57,12 @@ public final class NativeCompiler {
         return driven(ProgramWriter.written(program));
     }
 
+    /** As {@link #compile(CheckedProgram)}, handed to {@code driver}. */
+    public static byte[] compile(CheckedProgram program, Path driver)
+            throws IOException, InterruptedException {
+        return run(ProgramWriter.written(program), List.of(), driver);
+    }
+
     /**
      * What a build for a host writes: the object; a header a C or C++ compiler includes; the
      * declarations it includes, which are C and nothing a preprocessor has to run over, for an FFI
@@ -102,13 +108,49 @@ public final class NativeCompiler {
     }
 
     /**
-     * The driver of this release for this platform, fetched and kept where it is not, held to the
-     * checksum the release carries for it, and unpacked for this process from the bytes that were
-     * hashed; refused where this is not a release. Each call unpacks it again, so a caller that builds
-     * many libraries asks once.
+     * The driver of release {@code release} for this platform: fetched and kept where it is not, held
+     * to the checksum that release carries, and unpacked for the caller from the bytes that were
+     * hashed. The caller owns it, and {@link ReleasedDriver#close} deletes it. Refused where this
+     * compiler is not that release, or where what came with it is of another release: a driver and a
+     * checksum are one release's, and a caller asking for one release's driver from another's
+     * compiler would get the wrong one.
      */
-    public static Path releasedDriver() throws IOException {
-        return NativeBundle.locate(Fetching.standard());
+    public static ReleasedDriver releasedDriver(String release) throws IOException {
+        Fetching fetching = Fetching.standard();
+        if (!release.equals(fetching.version())) {
+            throw new NotFetched("the driver of " + release + " is asked of souther-native-compiler "
+                    + fetching.version() + ": the testkit, the compiler and the API are to be of one"
+                    + " release");
+        }
+        Holding held = new Holding();
+        try (Holding building = new Holding()) {
+            building.hold(held, held::close);
+            Path driver = NativeBundle.unpacked(held, fetching);
+            building.handOver();
+            return new ReleasedDriver(driver, held);
+        }
+    }
+
+    /** A driver unpacked for whoever asked for it, deleted when they close it. */
+    public static final class ReleasedDriver implements AutoCloseable {
+
+        private final Path path;
+        private final Holding held;
+
+        private ReleasedDriver(Path path, Holding held) {
+            this.path = path;
+            this.held = held;
+        }
+
+        /** Where the driver is. */
+        public Path path() {
+            return path;
+        }
+
+        @Override
+        public void close() throws IOException {
+            held.close();
+        }
     }
 
     /**

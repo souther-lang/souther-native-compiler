@@ -97,10 +97,23 @@ class TheCommandFetchesWhatItNeedsOnFirstUseTest {
     private record Ran(int ended, String printed, String said) {
     }
 
+    /** What each test unpacked, let go of once it is done. */
+    private final Holding held = new Holding();
+
+    @org.junit.jupiter.api.AfterEach
+    void letGo() throws IOException {
+        held.close();
+    }
+
+    /** The driver {@code fetching} unpacks, owned by the test. */
+    private Path unpacked(Fetching fetching) throws NotFetched {
+        return NativeBundle.unpacked(held, fetching);
+    }
+
     private static Fetching fetching(Served served, Path cache, String version,
                                      Map<String, String> checksums) {
         return new Fetching(cache, false, served.at("/maven"), served.at("/releases"), version,
-                checksums, Downloads.http());
+                version, checksums, Downloads.http());
     }
 
     @Test
@@ -287,8 +300,8 @@ class TheCommandFetchesWhatItNeedsOnFirstUseTest {
             Fetching fetching = releasedWith(served, into, bundle);
             served.files.put(bundleAt(), bundle);
 
-            Path driver = NativeBundle.locate(fetching);
-            Path again = NativeBundle.locate(fetching);
+            Path driver = unpacked(fetching);
+            Path again = unpacked(fetching);
 
             assertThat(driver).isExecutable().hasFileName(NativeBundle.DRIVER);
             assertThat(driver.resolveSibling(NativeBundle.ARCHIVE)).hasContent("archive");
@@ -315,17 +328,17 @@ class TheCommandFetchesWhatItNeedsOnFirstUseTest {
             Fetching fetching = releasedWith(served, into, bundle);
             served.files.put(bundleAt(), bundle);
 
-            Path driver = NativeBundle.locate(fetching);
+            Path driver = unpacked(fetching);
             Files.writeString(driver, "#!/bin/sh\necho replaced\n");
-            Path next = NativeBundle.locate(fetching.withOffline(true));
+            Path next = unpacked(fetching.withOffline(true));
             assertThat(next).hasContent("#!/bin/sh\n").isExecutable();
             assertThat(served.asked).containsEntry(bundleAt(), 1);
 
             Files.write(keptBundle(into), bytes("not the bundle"));
-            assertThatThrownBy(() -> NativeBundle.locate(fetching.withOffline(true)))
+            assertThatThrownBy(() -> unpacked(fetching.withOffline(true)))
                     .isInstanceOf(NotFetched.class).hasMessageContaining("offline");
             assertThat(keptBundle(into)).as("one that does not match is not kept").doesNotExist();
-            assertThat(NativeBundle.locate(fetching)).hasContent("#!/bin/sh\n");
+            assertThat(unpacked(fetching)).hasContent("#!/bin/sh\n");
             assertThat(served.asked).containsEntry(bundleAt(), 2);
         }
     }
@@ -341,7 +354,7 @@ class TheCommandFetchesWhatItNeedsOnFirstUseTest {
             Fetching fetching = releasedWith(served, into, named);
             served.files.put(bundleAt(), replaced);
 
-            assertThatThrownBy(() -> NativeBundle.locate(fetching)).isInstanceOf(NotFetched.class)
+            assertThatThrownBy(() -> unpacked(fetching)).isInstanceOf(NotFetched.class)
                     .hasMessageContaining("does not match the checksum");
             assertThat(nothingKept(into)).isTrue();
         }
@@ -370,7 +383,7 @@ class TheCommandFetchesWhatItNeedsOnFirstUseTest {
                 Fetching fetching = releasedWith(served, into, bundle);
                 served.files.put(bundleAt(), bundle);
 
-                assertThatThrownBy(() -> NativeBundle.locate(fetching)).as(each.getKey())
+                assertThatThrownBy(() -> unpacked(fetching)).as(each.getKey())
                         .isInstanceOf(NotFetched.class);
                 assertThat(nothingKept(into)).as(each.getKey()).isTrue();
             }
@@ -385,7 +398,7 @@ class TheCommandFetchesWhatItNeedsOnFirstUseTest {
                     NativeBundle.REQUIREMENTS, "r"));
             served.files.put(bundleAt(), bundle);
 
-            assertThatThrownBy(() -> NativeBundle.locate(
+            assertThatThrownBy(() -> unpacked(
                     fetching(served, into.resolve("cache"), VERSION, Map.of())))
                     .isInstanceOf(NotFetched.class).hasMessageContaining("no checksum");
             assertThat(served.asked).isEmpty();
@@ -416,7 +429,7 @@ class TheCommandFetchesWhatItNeedsOnFirstUseTest {
                 Ran ran = run(fetching, "--fetch");
 
                 assertThat(ran.printed()).doesNotContain("this build's own")
-                        .contains("the driver " + into.resolve("cache/run"));
+                        .contains("the driver " + into.resolve("cache/native"));
                 assertThat(served.asked).containsEntry(bundleAt(), 1);
             } finally {
                 if (named != null) {
@@ -452,7 +465,7 @@ class TheCommandFetchesWhatItNeedsOnFirstUseTest {
             Fetching fetching = releasedWith(served, into, bundle).withOffline(true);
             served.files.put(bundleAt(), bundle);
 
-            assertThatThrownBy(() -> NativeBundle.locate(fetching)).isInstanceOf(NotFetched.class)
+            assertThatThrownBy(() -> unpacked(fetching)).isInstanceOf(NotFetched.class)
                     .hasMessageContaining("offline");
             assertThat(served.asked).isEmpty();
         }
@@ -468,6 +481,127 @@ class TheCommandFetchesWhatItNeedsOnFirstUseTest {
                 .isInstanceOf(NotFetched.class);
         assertThatThrownBy(() -> NativeBundle.platform("Linux", "riscv64"))
                 .isInstanceOf(NotFetched.class);
+    }
+
+    /**
+     * {@code --fetch} prepares the cache and nothing that runs: it keeps the bundle and the jars, and
+     * leaves no copy of a jar in the temporary directory and no driver unpacked, since nothing would
+     * own them.
+     */
+    @Test
+    void fetchKeepsWhatIsFetchedAndMakesNothingToRun(@TempDir Path into) throws Exception {
+        String named = System.getProperty(NativeCompiler.DRIVER_PROPERTY);
+        try (Served served = new Served()) {
+            byte[] bundle = bundle(Map.of(NativeBundle.DRIVER, "#!/bin/sh\n",
+                    NativeBundle.ARCHIVE, "archive", NativeBundle.REQUIREMENTS, "-lm\n"));
+            served.files.put(bundleAt(), bundle);
+            Map<String, String> checksums = new java.util.HashMap<>(served.serveGenerator());
+            checksums.put(ReleaseChecksums.bundle(NativeBundle.platform()), Fetching.sha256(bundle));
+            for (String id : List.of("rust", "go")) {
+                byte[] jar = bytes("a jar of " + id);
+                served.files.put("/maven/org/souther-lang/souther-binding-" + id + "/" + VERSION
+                        + "/souther-binding-" + id + "-" + VERSION + ".jar", jar);
+                checksums.put(ReleaseChecksums.generator(id), Fetching.sha256(jar));
+            }
+            Path temporary = Path.of(System.getProperty("java.io.tmpdir"));
+            List<Path> before = copies(temporary);
+            System.clearProperty(NativeCompiler.DRIVER_PROPERTY);
+
+            Ran ran = run(fetching(served, into.resolve("cache"), VERSION, checksums), "--fetch");
+
+            assertThat(ran.ended()).as(ran.said()).isZero();
+            assertThat(ran.printed()).contains("the driver " + keptBundle(into))
+                    .contains(kept(into, "php", checksums.get(ReleaseChecksums.generator("php")))
+                            .toString());
+            assertThat(copies(temporary)).as("no copy of a jar").isEqualTo(before);
+            assertThat(into.resolve("cache/run")).as("no driver unpacked").doesNotExist();
+        } finally {
+            if (named != null) {
+                System.setProperty(NativeCompiler.DRIVER_PROPERTY, named);
+            }
+        }
+    }
+
+    /**
+     * A directory a use unpacked into is deleted by another use only once its user is gone, which is
+     * where its lock can be taken, and never for its age alone: one in use for longer than any age is
+     * left, one old and not in use is deleted, and one too young to have been locked is left.
+     */
+    @Test
+    void anUnpackedDriverIsDeletedByAnotherUseOnlyWhereItsUserIsGone(@TempDir Path into)
+            throws Exception {
+        try (Served served = new Served()) {
+            byte[] bundle = bundle(Map.of(NativeBundle.DRIVER, "#!/bin/sh\n",
+                    NativeBundle.ARCHIVE, "archive", NativeBundle.REQUIREMENTS, "-lm\n"));
+            Fetching fetching = releasedWith(served, into, bundle);
+            served.files.put(bundleAt(), bundle);
+            java.nio.file.attribute.FileTime longAgo = java.nio.file.attribute.FileTime.from(
+                    java.time.Instant.now().minus(java.time.Duration.ofDays(30)));
+
+            Path inUse = unpacked(fetching).getParent();
+            Files.setLastModifiedTime(inUse, longAgo);
+            Path gone = Files.createDirectories(into.resolve("cache/run/native-gone"));
+            Files.writeString(gone.resolve(NativeBundle.LOCK), "");
+            Files.writeString(gone.resolve(NativeBundle.DRIVER), "left by a process that ended");
+            Files.setLastModifiedTime(gone, longAgo);
+            Path young = Files.createDirectories(into.resolve("cache/run/native-young"));
+
+            unpacked(fetching);
+
+            assertThat(inUse.resolve(NativeBundle.DRIVER)).as("in use, however old").exists();
+            assertThat(gone).as("old, and no one holds it").doesNotExist();
+            assertThat(young).as("too young to have been locked").exists();
+        }
+    }
+
+    /** Letting go of what unpacked the driver deletes it. */
+    @Test
+    void anUnpackedDriverIsDeletedWhenItsOwnerLetsGo(@TempDir Path into) throws Exception {
+        try (Served served = new Served()) {
+            byte[] bundle = bundle(Map.of(NativeBundle.DRIVER, "#!/bin/sh\n",
+                    NativeBundle.ARCHIVE, "archive", NativeBundle.REQUIREMENTS, "-lm\n"));
+            Fetching fetching = releasedWith(served, into, bundle);
+            served.files.put(bundleAt(), bundle);
+
+            Path driver;
+            try (Holding owner = new Holding()) {
+                driver = NativeBundle.unpacked(owner, fetching);
+                assertThat(driver).isExecutable();
+            }
+
+            assertThat(driver.getParent()).doesNotExist();
+        }
+    }
+
+    /**
+     * A release is its compiler and the API it was built with, of one version: an API of another
+     * release beside it, which a build resolving versions can put there, is refused before anything is
+     * fetched; and the testkit's release asks for its own release's driver, which a compiler of
+     * another refuses.
+     */
+    @Test
+    void aReleaseRunsOnlyWithTheApiAndTestkitOfItsOwnRelease(@TempDir Path into) throws Exception {
+        try (Served served = new Served()) {
+            Map<String, String> checksums = served.serveGenerator();
+            Fetching mixed = new Fetching(into.resolve("cache"), false, served.at("/maven"),
+                    served.at("/releases"), VERSION, "1.2.2", checksums, Downloads.http());
+
+            Ran ran = build(into, "built", mixed);
+
+            assertThat(ran.ended()).isEqualTo(2);
+            assertThat(ran.said()).contains("souther-bindings-api 1.2.2")
+                    .contains("of one release");
+            assertThat(served.asked).isEmpty();
+        }
+        assertThatThrownBy(() -> NativeCompiler.releasedDriver("9.9.9"))
+                .isInstanceOf(NotFetched.class).hasMessageContaining("of one release");
+    }
+
+    private static List<Path> copies(Path temporary) throws IOException {
+        try (Stream<Path> held = Files.list(temporary)) {
+            return held.filter(it -> it.getFileName().toString().startsWith("souther-generator-"))
+                    .sorted().toList();
+        }
     }
 
     /** A fetching whose release carries the checksum of {@code bundle} for this platform. */

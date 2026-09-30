@@ -37,8 +37,8 @@ record GeneratorSpec(GeneratorRef ref, IdRule rule, String display) {
     static GeneratorSpec standard(KnownBindings.Kind kind, Fetching fetching) throws NotFetched {
         IdRule rule = new IdRule.Exactly(kind.id());
         String display = "the " + kind.display() + " generator";
-        String version = fetching.version();
-        if (version == null || version.endsWith("-SNAPSHOT")) {
+        if (!fetching.isRelease()) {
+            String version = fetching.version();
             String named = System.getProperty(DEVELOPMENT_PROPERTY + kind.id());
             if (named == null) {
                 throw new NotFetched(kind.flag() + " needs " + display + ", and this is not a release"
@@ -48,6 +48,7 @@ record GeneratorSpec(GeneratorRef ref, IdRule rule, String display) {
             }
             return new GeneratorSpec(new GeneratorRef.Local(Path.of(named)), rule, display);
         }
+        String version = fetching.release();
         String sha256 = fetching.checksums().get(ReleaseChecksums.generator(kind.id()));
         if (sha256 == null) {
             throw new NotFetched("this compiler was released with no checksum for " + display

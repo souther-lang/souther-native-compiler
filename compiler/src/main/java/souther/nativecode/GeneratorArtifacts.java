@@ -29,23 +29,42 @@ final class GeneratorArtifacts {
     private GeneratorArtifacts() {
     }
 
-    /** The jar {@code ref} points at, verified, as a copy of this command's own. */
-    static VerifiedJar materialize(Fetching fetching, GeneratorRef ref) throws NotFetched {
+    /**
+     * The jar {@code maven} names, kept, and fetched first where it is not kept or no longer matches:
+     * what {@code --fetch} prepares, which is the cache and nothing that runs.
+     */
+    static Path kept(Fetching fetching, GeneratorRef.Maven maven) throws NotFetched {
+        fetched(fetching, maven);
+        return keptAt(fetching, maven);
+    }
+
+    /**
+     * The jar {@code ref} points at, verified, as a copy of this command's own, which {@code held}
+     * owns and deletes when it lets go. There is no copy without an owner.
+     */
+    static VerifiedJar materialize(Holding held, Fetching fetching, GeneratorRef ref)
+            throws NotFetched {
         byte[] bytes = switch (ref) {
             case GeneratorRef.Maven maven -> fetched(fetching, maven);
             case GeneratorRef.Local local -> read(local);
         };
-        String sha256 = Fetching.sha256(bytes);
-        try (Holding held = new Holding()) {
+        try {
             Path directory = Files.createTempDirectory("souther-generator-");
-            VerifiedJar jar = new VerifiedJar(directory.resolve("generator.jar"), ref, sha256);
+            VerifiedJar jar = new VerifiedJar(directory.resolve("generator.jar"), ref,
+                    Fetching.sha256(bytes));
             held.hold(jar, jar::discard);
             Files.write(jar.jar(), bytes);
-            held.handOver();
             return jar;
         } catch (IOException e) {
             throw new NotFetched("could not copy " + ref + " to load it: " + e.getMessage(), e);
         }
+    }
+
+    private static Path keptAt(Fetching fetching, GeneratorRef.Maven maven) {
+        MavenCoordinate coordinate = maven.coordinate();
+        return fetching.cache().resolve("generators").resolve(coordinate.group().replace('.', '/'))
+                .resolve(coordinate.artifact()).resolve(coordinate.version())
+                .resolve(maven.sha256() + ".jar");
     }
 
     private static byte[] read(GeneratorRef.Local local) throws NotFetched {
@@ -61,9 +80,7 @@ final class GeneratorArtifacts {
     /** The bytes of the jar {@code maven} names, kept or fetched, and matching its digest. */
     private static byte[] fetched(Fetching fetching, GeneratorRef.Maven maven) throws NotFetched {
         MavenCoordinate coordinate = maven.coordinate();
-        Path kept = fetching.cache().resolve("generators").resolve(coordinate.group().replace('.', '/'))
-                .resolve(coordinate.artifact()).resolve(coordinate.version())
-                .resolve(maven.sha256() + ".jar");
+        Path kept = keptAt(fetching, maven);
         try {
             if (Files.isRegularFile(kept)) {
                 byte[] bytes = Files.readAllBytes(kept);

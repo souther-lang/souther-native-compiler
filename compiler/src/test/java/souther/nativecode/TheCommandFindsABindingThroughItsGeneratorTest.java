@@ -345,7 +345,7 @@ class TheCommandFindsABindingThroughItsGeneratorTest {
     /** As a build from a clone runs, with nothing to fetch. */
     static Fetching unreleased(Path cache) {
         return new Fetching(cache, false, URI.create("http://127.0.0.1:9/maven"),
-                URI.create("http://127.0.0.1:9/releases"), null, Map.of(), address -> {
+                URI.create("http://127.0.0.1:9/releases"), null, null, Map.of(), address -> {
                     throw new IOException("a build that is not a release fetches nothing: " + address);
                 });
     }

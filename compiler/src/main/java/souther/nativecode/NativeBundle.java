@@ -6,7 +6,11 @@ import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
-import java.nio.file.attribute.FileTime;
+import java.nio.channels.FileChannel;
+import java.nio.channels.FileLock;
+import java.nio.channels.OverlappingFileLockException;
+import java.nio.file.StandardOpenOption;
+import java.util.List;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Comparator;
@@ -29,9 +33,11 @@ import java.util.zip.ZipInputStream;
  * native/<version>/souther-native-<version>-<platform>.zip}, read and held to its checksum again
  * each time it is used, and fetched again, or refused offline, where it no longer matches. What runs
  * is never the kept file. The three files are unpacked from the bytes that were just hashed into a
- * directory this process made for itself, under {@code run/}, and deleted when the process ends, so
- * that what runs is what was hashed, as it is for a generator's jar ({@link GeneratorArtifacts}). A
- * directory left there by a process that did not end cleanly is deleted a day later.
+ * directory of the use's own, under {@code run/}, so that what runs is what was hashed, as it is for
+ * a generator's jar ({@link GeneratorArtifacts}). The directory has an owner from the moment it is
+ * made ({@link Holding}), which locks it while it is in use and deletes it when done. One left by a
+ * process that did not end cleanly is deleted by another once its lock can be taken, which is only
+ * once nothing holds it.
  */
 final class NativeBundle {
 
@@ -40,23 +46,14 @@ final class NativeBundle {
     static final String REQUIREMENTS = "libsouther_native_runtime.link";
     private static final Set<String> FILES = Set.of(DRIVER, ARCHIVE, REQUIREMENTS);
 
-    /** How long a directory a process unpacked into is left before another deletes it. */
-    private static final Duration LEFT = Duration.ofDays(1);
+    /** The file each directory a use unpacks into holds, locked for as long as it is in use. */
+    static final String LOCK = ".in-use";
 
-    /** The directories this process unpacked into, deleted when it ends. */
-    private static final Set<Path> UNPACKED = java.util.concurrent.ConcurrentHashMap.newKeySet();
-
-    static {
-        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            for (Path directory : UNPACKED) {
-                try {
-                    delete(directory);
-                } catch (IOException ignored) {
-                    // Left for the next process to delete, a day on.
-                }
-            }
-        }, "souther-native-bundle-cleanup"));
-    }
+    /**
+     * How old a directory has to be before another process asks whether its user is gone: long enough
+     * that a directory is locked before anyone asks, between its making and its lock.
+     */
+    private static final Duration SETTLED = Duration.ofMinutes(10);
 
     /**
      * The platforms a release publishes a bundle for, which the release workflow builds and
@@ -88,10 +85,52 @@ final class NativeBundle {
     }
 
     /**
-     * The driver for this platform, in a directory of this process's own unpacked from the kept
-     * bundle, which is fetched first where it is not kept or no longer matches.
+     * The bundle of this release for this platform, kept, and fetched first where it is not kept or
+     * no longer matches: what {@code --fetch} prepares, which is the cache and nothing that runs.
      */
-    static Path locate(Fetching fetching) throws NotFetched {
+    static Path kept(Fetching fetching) throws NotFetched {
+        return verified(fetching).kept();
+    }
+
+    /**
+     * The driver for this platform, unpacked from the bytes of the kept bundle just held to their
+     * checksum into a directory of this use's own, which {@code held} owns: it holds the directory's
+     * lock while it is in use, and deletes the directory when it lets go. There is no driver without
+     * an owner.
+     */
+    static Path unpacked(Holding held, Fetching fetching) throws NotFetched {
+        Verified bundle = verified(fetching);
+        try {
+            Path run = Files.createDirectories(fetching.cache().resolve("run"));
+            abandonedIn(run);
+            Path directory = Files.createTempDirectory(run, "native-");
+            held.hold(directory, () -> delete(directory));
+            FileChannel channel = FileChannel.open(directory.resolve(LOCK),
+                    StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
+            held.hold(channel, channel::close);
+            FileLock lock = channel.lock();
+            // Deleted while it is still locked, so that no other process takes it between the two.
+            held.hold(lock, () -> {
+                try {
+                    delete(directory);
+                } finally {
+                    lock.release();
+                }
+            });
+            unpack(bundle.bytes(), directory);
+            return directory.resolve(DRIVER);
+        } catch (NotFetched e) {
+            throw e;
+        } catch (IOException e) {
+            throw new NotFetched("could not unpack the driver: " + e.getMessage(), e);
+        }
+    }
+
+    /** The kept bundle and its bytes, held to the checksum just now. */
+    private record Verified(Path kept, byte[] bytes) {
+    }
+
+    private static Verified verified(Fetching fetching) throws NotFetched {
         String version = fetching.release();
         String platform = platform();
         String expected = fetching.checksums().get(ReleaseChecksums.bundle(platform));
@@ -111,21 +150,7 @@ final class NativeBundle {
                     URI.create(fetching.releases().toString().replaceAll("/+$", "") + "/v" + version
                             + "/" + name));
         }
-        try (Holding held = new Holding()) {
-            Path run = Files.createDirectories(fetching.cache().resolve("run"));
-            leftBefore(run, Instant.now().minus(LEFT));
-            Path directory = Files.createTempDirectory(run, "native-");
-            held.hold(directory, () -> delete(directory));
-            unpack(bytes, directory);
-            UNPACKED.add(directory);
-            held.handOver();
-            return directory.resolve(DRIVER);
-        } catch (NotFetched e) {
-            throw e;
-        } catch (IOException e) {
-            throw new NotFetched("could not unpack the driver for " + platform + ": "
-                    + e.getMessage(), e);
-        }
+        return new Verified(kept, bytes);
     }
 
     /**
@@ -186,21 +211,47 @@ final class NativeBundle {
         return bytes;
     }
 
-    /** Deletes what a process unpacked into {@code run} and left there before {@code before}. */
-    private static void leftBefore(Path run, Instant before) {
-        try (Stream<Path> left = Files.list(run)) {
-            for (Path directory : left.toList()) {
-                try {
-                    FileTime modified = Files.getLastModifiedTime(directory);
-                    if (modified.toInstant().isBefore(before)) {
-                        delete(directory);
-                    }
-                } catch (IOException ignored) {
-                    // Another process deleting it too, or one that cannot be: tried again next time.
+    /**
+     * Deletes what a use unpacked into {@code run} and whose user is gone. A directory's user holds
+     * its lock for as long as it uses it, whatever its age, so a directory is deleted only where its
+     * lock can be taken, which is where no process holds it, and only once it is old enough to have
+     * been locked. Its age alone says nothing of whether a process that runs for days still runs it.
+     */
+    private static void abandonedIn(Path run) {
+        Instant settled = Instant.now().minus(SETTLED);
+        List<Path> directories;
+        try (Stream<Path> listed = Files.list(run)) {
+            directories = listed.toList();
+        } catch (IOException e) {
+            return;
+        }
+        for (Path directory : directories) {
+            try {
+                if (Files.getLastModifiedTime(directory).toInstant().isAfter(settled)) {
+                    continue;
                 }
+                Path lock = directory.resolve(LOCK);
+                if (!Files.exists(lock)) {
+                    // Made and never locked by a process that ended between the two.
+                    delete(directory);
+                    continue;
+                }
+                try (FileChannel channel = FileChannel.open(lock, StandardOpenOption.WRITE)) {
+                    FileLock taken = channel.tryLock();
+                    if (taken == null) {
+                        continue;
+                    }
+                    try {
+                        delete(directory);
+                    } finally {
+                        taken.release();
+                    }
+                } catch (OverlappingFileLockException e) {
+                    // This process uses it.
+                }
+            } catch (IOException ignored) {
+                // Deleted by another process as well, or not to be deleted now: asked again later.
             }
-        } catch (IOException ignored) {
-            // Nothing to delete that can be listed.
         }
     }
 

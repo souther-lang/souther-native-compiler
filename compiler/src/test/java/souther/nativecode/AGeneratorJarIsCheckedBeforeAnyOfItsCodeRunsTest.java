@@ -109,7 +109,7 @@ class AGeneratorJarIsCheckedBeforeAnyOfItsCodeRunsTest {
         MavenCoordinate coordinate = MavenCoordinate.parse("com.acme:souther-binding-kotlin:1.2.0");
         Fetching fetching = new Fetching(into.resolve("cache"), false,
                 java.net.URI.create("http://repository.invalid/maven"),
-                java.net.URI.create("http://repository.invalid/releases"), "1.0.0", Map.of(),
+                java.net.URI.create("http://repository.invalid/releases"), "1.0.0", "1.0.0", Map.of(),
                 address -> served);
         GeneratorSpec spec = new GeneratorSpec(new GeneratorRef.Maven(coordinate, "0".repeat(64)),
                 new IdRule.External(), "the generator");

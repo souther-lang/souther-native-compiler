@@ -209,8 +209,11 @@ public final class Main {
             switch (command.output()) {
                 case Output.Fetch fetch -> throw new IllegalStateException("handled above");
                 case Output.ObjectFile object -> {
-                    driver(fetching);
-                    byte[] written = NativeCompiler.compile(command.checked(read));
+                    byte[] written;
+                    try (Holding held = new Holding()) {
+                        written = NativeCompiler.compile(command.checked(read),
+                                driver(held, fetching));
+                    }
                     if (object.into().getParent() != null) {
                         Files.createDirectories(object.into().getParent());
                     }
@@ -270,13 +273,13 @@ public final class Main {
                     return WRONG_COMMAND;
                 }
             }
-            driver(fetching);
+            Path driver = driver(held, fetching);
             List<byte[]> alongside = new ArrayList<>(library.alongside().size());
             for (Path object : library.alongside()) {
                 alongside.add(Files.readAllBytes(object));
             }
             NativeCompiler.Library built = NativeCompiler.library(
-                    command.checked(read), alongside, library.into());
+                    command.checked(read), alongside, library.into(), driver);
             out.println("wrote the library " + library.into() + " from " + sources(files));
             BindingInput input = new BindingInput(ManifestReader.read(built.manifest()),
                     Declarations.at(built.declarations()));
@@ -319,32 +322,34 @@ public final class Main {
     }
 
     /**
-     * The driver a program is handed to, where the build has none of its own: the bundle of this
-     * release for this platform, fetched once and kept. Named by the property that says where the
-     * driver is, which is how everything that hands it a program finds it.
+     * The driver a program is handed to: the one {@link NativeCompiler#DRIVER_PROPERTY} names, which a
+     * clone's build names and which is not this command's to delete; or, where none is named, the
+     * bundle of this release for this platform, unpacked for this command and owned by {@code held}.
+     * It is handed to the compiler, and no property is set for it.
      */
-    private static void driver(Fetching fetching) throws NotFetched {
-        if (!NativeCompiler.hasDriver()) {
-            System.setProperty(NativeCompiler.DRIVER_PROPERTY,
-                    NativeBundle.locate(fetching).toString());
-        }
+    private static Path driver(Holding held, Fetching fetching) throws NotFetched {
+        String named = System.getProperty(NativeCompiler.DRIVER_PROPERTY);
+        return named != null ? Path.of(named) : NativeBundle.unpacked(held, fetching);
     }
 
-    /** {@code --fetch}: what a command may need and this does not have, fetched, and nothing built. */
+    /**
+     * {@code --fetch}: what a command may need and this does not have, fetched and kept, and nothing
+     * built. It prepares the cache and nothing that runs: no copy of a jar and no driver unpacked.
+     */
     private static int fetched(PrintStream out, PrintStream problems, Fetching fetching) {
         try {
             if (NativeCompiler.hasDriver()) {
                 out.println("the driver is this build's own");
             } else {
-                out.println("the driver " + NativeBundle.locate(fetching));
+                out.println("the driver " + NativeBundle.kept(fetching));
             }
             for (KnownBindings.Kind kind : KnownBindings.all()) {
                 GeneratorSpec spec = GeneratorSpec.standard(kind, fetching);
-                if (spec.ref() instanceof GeneratorRef.Local local) {
-                    out.println(spec.display() + " is this build's own, " + local.path());
-                } else {
-                    out.println(spec.display() + " "
-                            + GeneratorArtifacts.materialize(fetching, spec.ref()).jar());
+                switch (spec.ref()) {
+                    case GeneratorRef.Local local ->
+                            out.println(spec.display() + " is this build's own, " + local.path());
+                    case GeneratorRef.Maven maven -> out.println(spec.display() + " "
+                            + GeneratorArtifacts.kept(fetching, maven));
                 }
             }
             return WROTE_IT;

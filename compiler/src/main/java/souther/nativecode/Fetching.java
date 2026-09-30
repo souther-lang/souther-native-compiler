@@ -1,6 +1,7 @@
 package souther.nativecode;
 
 import org.jspecify.annotations.Nullable;
+import souther.bindings.BindingApi;
 
 import java.net.URI;
 import java.nio.file.Path;
@@ -27,10 +28,11 @@ import java.util.Map;
  * @param cache     where fetched files are kept, one directory a kind and a version
  * @param offline   whether nothing is to be fetched, so that only what is kept is used
  * @param version   the release this is, or null where this is not one
+ * @param api       the release of the API this runs with, which a release is to be of too
  * @param checksums the SHA-256 of each file a release fetches, by {@link ReleaseChecksums}' keys
  */
 record Fetching(Path cache, boolean offline, URI maven, URI releases, @Nullable String version,
-                Map<String, String> checksums, Downloads downloads) {
+                @Nullable String api, Map<String, String> checksums, Downloads downloads) {
 
     static final String MAVEN_PROPERTY = "souther.maven.repository";
     static final String RELEASES_PROPERTY = "souther.releases";
@@ -49,30 +51,45 @@ record Fetching(Path cache, boolean offline, URI maven, URI releases, @Nullable 
                 URI.create(System.getProperty(MAVEN_PROPERTY, "https://repo1.maven.org/maven2")),
                 URI.create(System.getProperty(RELEASES_PROPERTY,
                         "https://github.com/souther-lang/souther-native-compiler/releases/download")),
-                Main.class.getPackage().getImplementationVersion(), ReleaseChecksums.carried(),
+                Main.class.getPackage().getImplementationVersion(),
+                BindingApi.class.getPackage().getImplementationVersion(), ReleaseChecksums.carried(),
                 Downloads.http());
     }
 
     Fetching withOffline(boolean offline) {
-        return new Fetching(cache, offline, maven, releases, version, checksums, downloads);
+        return new Fetching(cache, offline, maven, releases, version, api, checksums, downloads);
     }
 
     /** As this, saying on {@code where} what it is about to fetch, since that takes a while. */
     Fetching saying(java.io.PrintStream where) {
         Downloads inner = downloads;
-        return new Fetching(cache, offline, maven, releases, version, checksums, address -> {
+        return new Fetching(cache, offline, maven, releases, version, api, checksums, address -> {
             where.println("fetching " + address);
             return inner.get(address);
         });
     }
 
-    /** The release this is, or why it is not one. */
+    /**
+     * The release this is, or why it is not one. A release is the compiler and the API it was built
+     * with, of one version: what it fetches is that version's, and an API of another release on the
+     * class path beside it, which a build resolving versions can put there, is refused rather than run
+     * with.
+     */
     String release() throws NotFetched {
-        if (version == null || version.endsWith("-SNAPSHOT")) {
+        if (!isRelease()) {
             throw new NotFetched("this is not a release" + (version == null ? "" : " (" + version + ")")
                     + ", so there is nothing published to fetch it from");
         }
+        if (!version.equals(api)) {
+            throw new NotFetched("souther-native-compiler " + version + " runs with souther-bindings-api "
+                    + (api == null ? "of no release" : api) + ": the two are to be of one release");
+        }
         return version;
+    }
+
+    /** Whether this is a release, which {@link #release} then holds to its API. */
+    boolean isRelease() {
+        return Release.is(version);
     }
 
     static String sha256(byte[] bytes) {

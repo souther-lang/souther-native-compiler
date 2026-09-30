@@ -45,8 +45,7 @@ final class Bindings {
     static Generator load(Fetching fetching, GeneratorSpec spec)
             throws IOException, GeneratorFailed {
         try (Holding held = new Holding()) {
-            VerifiedJar jar = GeneratorArtifacts.materialize(fetching, spec.ref());
-            held.hold(jar, jar::discard);
+            VerifiedJar jar = GeneratorArtifacts.materialize(held, fetching, spec.ref());
             GeneratorDescriptor descriptor = GeneratorDescriptor.read(jar);
             descriptor.check(spec.rule(), jar);
             String named = spec.rule() instanceof IdRule.Exactly ? spec.display()

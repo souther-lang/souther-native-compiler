@@ -79,7 +79,7 @@ public final class ReleaseChecksums {
      * is a snapshot is not a release, and is not held to it.
      */
     static void check(String version, Path file) throws IOException {
-        if (version.endsWith("-SNAPSHOT")) {
+        if (!Release.is(version)) {
             return;
         }
         Map<String, String> found;

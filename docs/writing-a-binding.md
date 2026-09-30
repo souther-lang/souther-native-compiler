@@ -299,7 +299,9 @@ void theBindingIsWritten(@TempDir Path into) throws Exception {
 
 A released testkit fetches the driver of its release for the platform it runs on, and holds it to the
 checksum that release's compiler carries, as the command does; an author needs no driver of their own
-and sets no property. `compile` takes several sources, one module each.
+and sets no property. The testkit, the compiler and the API are one release, and a build that
+resolves versions so that they are not (a project depending on another version of the compiler
+directly, say) is refused rather than run with another release's driver. `compile` takes several sources, one module each.
 
 The standard generators' tests build their libraries through the testkit too, and then compile and
 run what the generator wrote with the host's own toolchain: a PHP linter and PHP, Cargo, and the Go
