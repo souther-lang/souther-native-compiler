@@ -101,7 +101,7 @@ built, and each refusal is exercised. The tests that build a host do use a `repl
 in a clone, so that is what holds the resolution.
 
 The checksums are a fact about builds that follow the commit, so the file is not committed, and a
-build of a release version that does not have every one of them fails (`ReleaseChecksums`, checked
+build of a release version that does not have every one of them fails ([`ReleaseChecksums`](../compiler/src/main/java/souther/nativecode/ReleaseChecksums.java), checked
 when the compiler is packaged). The check has a skip of its own, `souther.skipReleaseCheck`, so
 `-Dexec.skip`, which leaves Cargo out, does not leave it out; the release sets that skip only where
 it builds the generators, whose compiler is thrown away. A clone cannot rebuild a release into a

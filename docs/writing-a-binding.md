@@ -13,7 +13,7 @@ one, which the written source calls into and which loads the library and calls t
 generator knows the runtime's surface, since it writes calls to it, and the two move together. The
 command knows neither.
 
-Today the command runs only the generators its catalog names (`KnownBindings`), installed with it or
+Today the command runs only the generators its catalog names ([`KnownBindings`](../compiler/src/main/java/souther/nativecode/KnownBindings.java)), installed with it or
 fetched from Maven Central at its own version. Nothing here depends on that: a generator is held to
 this interface whoever wrote it.
 
@@ -28,7 +28,7 @@ name without its dashes.
 Then, for each binding asked for, the command finds its generator: one installed with the command,
 through `ServiceLoader`, or, where there is none, the jar the catalog names, fetched and held to the
 checksum the compiler was released with. It never holds a generator itself. Every call into one goes
-through one type (`Bindings.Generator`), which tells a generator's failure apart from the command's
+through one type ([`Bindings.Generator`](../compiler/src/main/java/souther/nativecode/Bindings.java)), which tells a generator's failure apart from the command's
 by where it was thrown: what a generator's code throws, an `IOException` among it, is said as that
 generator's failure, in one line.
 
@@ -39,7 +39,7 @@ A directory holding anything else is refused rather than deleted. A refusal here
 with 2, and nothing is built.
 
 The library is built next, and the command reads the manifest the driver wrote beside it into the
-model (`ManifestReader`). That model and the C declarations the driver wrote are the `BindingInput`
+model ([`ManifestReader`](../compiler/src/main/java/souther/nativecode/ManifestReader.java)). That model and the C declarations the driver wrote are the [`BindingInput`](../bindings/api/src/main/java/souther/bindings/BindingInput.java)
 every generator is handed. Each generator writes into an empty directory of its own beside where its
 binding goes, and only once every generator asked has written its own does the command put each in
 place, whole, with its mark. So a generator that refuses or fails leaves every directory a binding
@@ -50,8 +50,8 @@ generator's failure, ends the command with 1.
 
 ## The interface a generator implements
 
-`BindingGenerator` has three methods. `id` answers the id the catalog names the generator by.
-`preflight` is handed the options and refuses, with `NotBindable`, what would be refused whatever
+[`BindingGenerator`](../bindings/api/src/main/java/souther/bindings/BindingGenerator.java) has three methods. `id` answers the id the catalog names the generator by.
+`preflight` is handed the options and refuses, with [`NotBindable`](../bindings/api/src/main/java/souther/bindings/NotBindable.java), what would be refused whatever
 the model says: an option missing, or a value the language will not take, such as a namespace PHP
 will not take or a crate name Cargo will not take. `generate` is handed the input, the empty
 directory and the options, and writes the binding; it refuses with `NotBindable` what only the model
@@ -74,7 +74,7 @@ reach. A test holds every member of what the API offers to being public or priva
 
 ## The model
 
-`BindingInput` holds the `Manifest` and the `Declarations`. The declarations are the C the driver
+`BindingInput` holds the [`Manifest`](../bindings/api/src/main/java/souther/bindings/Manifest.java) and the [`Declarations`](../bindings/api/src/main/java/souther/bindings/Declarations.java). The declarations are the C the driver
 wrote for an FFI to read (`souther.ffi.h`), which a binding may carry beside itself and load the
 library through: a generator can copy them (`Declarations.copyTo`) and can do nothing else with them,
 since what they say about the ABI is the driver's answer, and a generator that read it would be
@@ -94,7 +94,7 @@ Everything a host reaches is a `Reach`: `Available` with what reaches it, or `Un
 the model has the thing and a host has no way to it. A generator writes nothing for what is
 unavailable, and says nothing where it is missing.
 
-A value that crosses, wherever it crosses, is a `ValueCrossing`: what a behavior, a published value
+A value that crosses, wherever it crosses, is a [`ValueCrossing`](../bindings/api/src/main/java/souther/bindings/ValueCrossing.java): what a behavior, a published value
 or an implemented behavior takes and answers (`Crossings`), what a constructor takes, a field read,
 a list's element, and what a function value takes and answers. It is the value's type and the shape
 it crosses in taken apart together, once, by the command, and a generator folds it and never pairs a
@@ -113,7 +113,7 @@ a generator writes the type its language holds a word in from that and from noth
 `Function` in the model is a symbol the library defines, with the words it takes (given, room, or a
 slice of as many as a count says) and the word it answers.
 
-Names a generator writes are claimed in the scope its language reads them in (`Claimed`), so two
+Names a generator writes are claimed in the scope its language reads them in ([`Claimed`](../bindings/api/src/main/java/souther/bindings/Claimed.java)), so two
 things given one name are refused with both named, rather than written as two a compiler refuses. A
 name the model gives that the language will not take is refused, with the name, rather than spelt
 some other way. A name the generator makes for what it adds beside the model is never a reason to

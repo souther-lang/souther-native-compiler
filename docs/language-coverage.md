@@ -294,5 +294,5 @@ one document happened to bring could never be.
 Everything else the language admits says so rather than being written as whatever it resembles. A
 closed set crosses whole — every operator and every primitive — and the driver answers whether it
 can write one; a node whose shape on the wire has not been designed cannot be written at all, and
-the writer says so. Either way it is `NotLowered`, which is not what a program the language refuses
+the writer says so. Either way it is [`NotLowered`](../compiler/src/main/java/souther/nativecode/NotLowered.java), which is not what a program the language refuses
 gets.

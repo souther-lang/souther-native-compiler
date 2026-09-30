@@ -16,7 +16,7 @@ A build for a host writes five things into a directory: the object, `souther.o`;
 every function a host calls, `souther.ffi.h`; a header a C or C++ compiler includes, `souther.h`; a
 manifest, `souther.json`; and a shared library of the object and the runtime, `libsouther.dylib` or
 `libsouther.so`. The driver writes them when run with `--library <directory>`, and
-`NativeCompiler.library` is that from Java. Every function a host calls is put on one surface where
+[`NativeCompiler.library`](../compiler/src/main/java/souther/nativecode/NativeCompiler.java) is that from Java. Every function a host calls is put on one surface where
 its code is emitted, and the declarations, the manifest and what the library exports are each
 written from that surface, so none of them names a function the others do not. A test holds the
 three, and what the object defines, to one set.
@@ -48,9 +48,9 @@ a new generation, and another that a generation has no record.
 
 A host asks a library which generation it answers to before it calls anything else, with
 `uint32_t souther_abi_generation(void)`, and refuses one it was not written for. That function is
-outside every generation: its name, its signature and how it is called are the same in each, and no
-new generation can change them, which a test of its own holds. A library without it is of generation
-8 or earlier.
+outside the generations: its name, its signature and how it is called are the same in every one
+from 9 on, and no new generation can change them, which a test of its own holds. A library without it
+is of generation 8 or earlier.
 
 The functions a host calls for a module carry the generation in their name, so a library of another
 generation has none of the names a binding looks up. The runtime's own functions carry none, since
