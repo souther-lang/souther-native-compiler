@@ -5,23 +5,20 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 /**
- * A generator's jar whose bytes were just held to their digest, at a place nothing but this command
- * writes to: what is loaded is this file, never the path or the address it was pointed at.
+ * A generator's jar whose bytes were just held to their digest, written from those very bytes to a
+ * place this command made for it alone: what is loaded is this file, and never the path, the address
+ * or the kept copy it was pointed at, each of which could be other bytes by the time a class is read.
  *
- * @param jar      the bytes that were hashed, and that are loaded
- * @param ref      what the jar was pointed at by
- * @param sha256   the SHA-256 of {@code jar}
- * @param snapshot whether {@code jar} is a copy made for this command alone, which {@link #discard}
- *                 deletes; a jar kept in the cache is not one
+ * @param jar    the copy of the bytes that were hashed, which is what is loaded
+ * @param ref    what the jar was pointed at by
+ * @param sha256 the SHA-256 of those bytes
  */
-record VerifiedJar(Path jar, GeneratorRef ref, String sha256, boolean snapshot) {
+record VerifiedJar(Path jar, GeneratorRef ref, String sha256) {
 
-    /** Deletes the jar where it is this command's own copy, and leaves a kept one. */
+    /** Deletes the copy, which nothing else holds. */
     void discard() throws IOException {
-        if (snapshot) {
-            Files.deleteIfExists(jar);
-            Files.deleteIfExists(jar.getParent());
-        }
+        Files.deleteIfExists(jar);
+        Files.deleteIfExists(jar.getParent());
     }
 
     /** What the mark of a binding it wrote records of it. */

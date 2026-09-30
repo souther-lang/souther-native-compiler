@@ -7,12 +7,14 @@
 //! without a word (souther-native-compiler#107: `souther_string_concat` began to write its answer
 //! through room).
 //!
-//! So each generation has a record of the contract as it was when the generation ended, in
-//! `generations/<n>.txt`, one line for each function either side calls, each case a host reads and
-//! each number the two sides share. What is held is that nothing the record for the current
-//! generation says has changed: a line added is a function no object of that generation calls, and
-//! is compatible, and a line changed or gone is a contract that moved and needs the next
-//! generation. A generation that moves records the contract it starts from.
+//! So each generation has a record of its contract in `generations/<n>.txt`, one line for each
+//! function either side calls, each case a host reads and each number the two sides share. An object
+//! or a host can be built on any day of a generation's life, against anything the generation offered
+//! that day, so the record is a ledger of everything the generation has ever offered, and only grows.
+//! A line gone or changed is a contract that moved and needs the next generation, which records the
+//! contract it starts from. A line the contract has and the record does not is an addition: it is
+//! compatible, and is recorded under the current generation before it is released, so that taking it
+//! away later is seen as the break it is. Both fail, each saying which it is.
 //!
 //! The lines are read off the tables themselves, and the numbers are the list below, which a scan
 //! of the source holds to every number the crate states.
@@ -114,14 +116,28 @@ fn record(generation: u32) -> PathBuf {
         .join(format!("{generation}.txt"))
 }
 
-/// Writes the record for the generation this build is, for the day a generation moves:
-/// `ABI_RECORD=1 cargo test -p souther-native-abi --test generation -- --ignored`. It refuses to
-/// overwrite one, since a record is what its generation was.
+/// Records the contract under the generation this build is:
+/// `cargo test -p souther-native-abi --test generation -- --ignored`. A generation's first record is
+/// its whole contract; after that the record only grows, and a contract that lost a recorded line is
+/// refused here, since that needs the next generation and not a record of this one.
 #[test]
 #[ignore = "writes a record"]
-fn write_the_record_of_this_generation() {
+fn record_this_generation() {
     let path = record(ABI_GENERATION);
-    assert!(!path.exists(), "{} is written already", path.display());
+    if let Ok(recorded) = std::fs::read_to_string(&path) {
+        let now = surface();
+        let gone: Vec<&str> = recorded
+            .lines()
+            .skip(1)
+            .filter(|line| !now.contains(*line))
+            .collect();
+        assert!(
+            gone.is_empty(),
+            "not recorded: what generation {ABI_GENERATION} offered is gone, which needs the next \
+             generation:\n{}",
+            gone.join("\n")
+        );
+    }
     let mut text = format!("generation {ABI_GENERATION}\n");
     for line in surface() {
         text.push_str(&line);
@@ -131,12 +147,12 @@ fn write_the_record_of_this_generation() {
 }
 
 #[test]
-fn the_current_generation_has_a_record_and_nothing_it_says_has_changed() {
+fn the_current_generations_ledger_is_the_contract_exactly() {
     let path = record(ABI_GENERATION);
     let recorded = std::fs::read_to_string(&path).unwrap_or_else(|_| {
         panic!(
             "no record of generation {ABI_GENERATION} at {}: a generation that moves records the \
-             contract it starts from (see `write_the_record_of_this_generation`)",
+             contract it starts from (see `record_this_generation`)",
             path.display()
         )
     });
@@ -146,12 +162,29 @@ fn the_current_generation_has_a_record_and_nothing_it_says_has_changed() {
         Some(format!("generation {ABI_GENERATION}").as_str())
     );
     let now = surface();
-    let moved: Vec<&str> = lines.filter(|line| !now.contains(*line)).collect();
+    let held: BTreeSet<&str> = lines.collect();
+    let moved: Vec<&str> = held
+        .iter()
+        .copied()
+        .filter(|line| !now.contains(*line))
+        .collect();
     assert!(
         moved.is_empty(),
         "the contract of generation {ABI_GENERATION} moved, and an object built before it calls \
          what it no longer is. Add a generation to `GENERATIONS` and record it. What moved:\n{}",
         moved.join("\n")
+    );
+    let added: Vec<&str> = now
+        .iter()
+        .map(String::as_str)
+        .filter(|line| !held.contains(line))
+        .collect();
+    assert!(
+        added.is_empty(),
+        "the contract of generation {ABI_GENERATION} gained what it has not recorded; it is \
+         compatible, and is recorded under generation {ABI_GENERATION} so that taking it away \
+         later is seen (see `record_this_generation`). What was added:\n{}",
+        added.join("\n")
     );
 }
 

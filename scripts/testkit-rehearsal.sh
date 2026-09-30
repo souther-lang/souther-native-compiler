@@ -19,11 +19,12 @@ set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 version="0.0.0-rehearsal"
+# Whatever this makes is deleted however it ends: the worktree, and the publication rehearsed in it.
 scratch="$(mktemp -d "${TMPDIR:-/tmp}/souther-testkit-rehearsal.XXXXXX")"
+trap 'git -C "$root" worktree remove --force "$scratch/checkout" 2>/dev/null || true; rm -rf "$scratch"' EXIT
 checkout="$scratch/checkout"
 
 git -C "$root" worktree add --quiet --detach "$checkout" HEAD
-trap 'git -C "$root" worktree remove --force "$checkout"' EXIT
 # Cargo's own output is shared with the clone's, so the driver's dependencies are not built again.
 mkdir -p "$root/native/target"
 ln -s "$root/native/target" "$checkout/native/target"

@@ -218,13 +218,7 @@ public final class Main {
                     out.println("wrote " + object.into() + " from " + sources(files));
                 }
                 case Output.Library library -> {
-                    List<Bindings.Generator> opened = new ArrayList<>();
-                    try {
-                        return written(command, library, files, read, fetching, opened, out,
-                                problems);
-                    } finally {
-                        closed(opened);
-                    }
+                    return written(command, library, files, read, fetching, out, problems);
                 }
             }
         } catch (GeneratorFailed e) {
@@ -253,80 +247,74 @@ public final class Main {
      * The library and each binding of it asked for. Every generator is loaded and asked its
      * {@code preflight}, and every directory checked, before the library is built; every binding is
      * written before any is put in place, so that one refused or failed leaves every directory as it
-     * was. The generators it loaded are left in {@code opened}, for the caller to close.
+     * was. What it holds on the way, each generator loaded and each directory being written, is let
+     * go of on every way out, whatever was thrown: a generator closed, and a directory not put in
+     * place dropped.
      */
     private static int written(Command command, Output.Library library, List<Path> files,
-                               List<String> read, Fetching fetching,
-                               List<Bindings.Generator> opened, PrintStream out,
+                               List<String> read, Fetching fetching, PrintStream out,
                                PrintStream problems)
             throws IOException, GeneratorFailed, InterruptedException {
-        for (HostBinding binding : library.bindings()) {
-            Bindings.Generator generator =
-                    Bindings.load(fetching, GeneratorSpec.of(binding.asked(), fetching));
-            opened.add(generator);
-            try {
-                generator.preflight(binding.options());
-                BindingDirectory.replaceable(binding.into(), generator.id());
-            } catch (NotBindable e) {
-                problems.println(e.getMessage());
-                return WRONG_COMMAND;
+        try (Holding held = new Holding()) {
+            List<Bindings.Generator> generators = new ArrayList<>();
+            for (HostBinding binding : library.bindings()) {
+                Bindings.Generator generator =
+                        Bindings.load(fetching, GeneratorSpec.of(binding.asked(), fetching));
+                held.hold(generator, () -> closed(generator, problems));
+                generators.add(generator);
+                try {
+                    generator.preflight(binding.options());
+                    BindingDirectory.replaceable(binding.into(), generator.id());
+                } catch (NotBindable e) {
+                    problems.println(e.getMessage());
+                    return WRONG_COMMAND;
+                }
             }
-        }
-        driver(fetching);
-        List<byte[]> alongside = new ArrayList<>(library.alongside().size());
-        for (Path object : library.alongside()) {
-            alongside.add(Files.readAllBytes(object));
-        }
-        NativeCompiler.Library built = NativeCompiler.library(
-                command.checked(read), alongside, library.into());
-        out.println("wrote the library " + library.into() + " from " + sources(files));
-        BindingInput input = new BindingInput(ManifestReader.read(built.manifest()),
-                Declarations.at(built.declarations()));
-        List<BindingDirectory> staged = new ArrayList<>();
-        try {
-            for (int at = 0; at < opened.size(); at++) {
+            driver(fetching);
+            List<byte[]> alongside = new ArrayList<>(library.alongside().size());
+            for (Path object : library.alongside()) {
+                alongside.add(Files.readAllBytes(object));
+            }
+            NativeCompiler.Library built = NativeCompiler.library(
+                    command.checked(read), alongside, library.into());
+            out.println("wrote the library " + library.into() + " from " + sources(files));
+            BindingInput input = new BindingInput(ManifestReader.read(built.manifest()),
+                    Declarations.at(built.declarations()));
+            List<BindingDirectory> staged = new ArrayList<>();
+            for (int at = 0; at < generators.size(); at++) {
                 HostBinding binding = library.bindings().get(at);
-                Bindings.Generator generator = opened.get(at);
+                Bindings.Generator generator = generators.get(at);
                 BindingDirectory directory = BindingDirectory.staging(binding.into(),
                         new BindingDirectory.Mark(generator.id(), generator.artifact()));
+                held.hold(directory, directory::abandon);
                 staged.add(directory);
                 try {
                     generator.generate(input, directory.staging(), binding.options());
                 } catch (NotBindable e) {
                     problems.println("the binding " + binding.into() + " is not written: "
                             + e.getMessage());
-                    abandoned(staged);
                     return REFUSED;
                 }
             }
-        } catch (IOException | GeneratorFailed e) {
-            abandoned(staged);
-            throw e;
-        }
-        for (int at = 0; at < staged.size(); at++) {
-            staged.get(at).commit();
-            out.println("wrote the binding " + library.bindings().get(at).into() + " with "
-                    + opened.get(at).named());
-        }
-        return WROTE_IT;
-    }
-
-    /** Lets go of every generator loaded, whatever became of the command. */
-    private static void closed(List<Bindings.Generator> opened) {
-        for (Bindings.Generator generator : opened) {
-            try {
-                generator.close();
-            } catch (IOException ignored) {
-                // A copy of a jar left in the temporary directory is the system's to clear, and
-                // nothing the command wrote depends on it.
+            for (int at = 0; at < staged.size(); at++) {
+                staged.get(at).commit();
+                out.println("wrote the binding " + library.bindings().get(at).into() + " with "
+                        + generators.get(at).named());
             }
+            return WROTE_IT;
         }
     }
 
-    /** Drops every binding written so far, none of which was put in place. */
-    private static void abandoned(List<BindingDirectory> staged) throws IOException {
-        for (BindingDirectory directory : staged) {
-            directory.abandon();
+    /**
+     * Lets go of {@code generator}. A copy of its jar that could not be deleted is said, and left to
+     * the system's temporary directory: nothing the command wrote depends on it.
+     */
+    private static void closed(Bindings.Generator generator, PrintStream problems) {
+        try {
+            generator.close();
+        } catch (IOException e) {
+            problems.println("could not delete the copy of " + generator.named() + "'s jar: "
+                    + e.getMessage());
         }
     }
 

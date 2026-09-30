@@ -28,7 +28,11 @@ import java.util.stream.Stream;
  * a binding of the same generator, which the one file {@value #MARK} says; a directory holding
  * anything else, a binding of another host among it, is refused rather than deleted.
  *
- * <p>The mark is a versioned JSON document, read strictly. It names the generator by the id its jar
+ * <p>The mark is a versioned JSON document. Its {@code "format"}, {@code "version"} and
+ * {@code "generator"} mean the same in every version, and are all that decides whether a directory
+ * may be replaced ({@link #owner}), so that a command reading a mark a later one wrote still knows
+ * whose it is; the rest of a mark of this version is read strictly ({@link #read}). It names the
+ * generator by the id its jar
  * says, which is what owns the directory, so a generator moving to a newer version replaces what an
  * older one wrote. Beside it the mark records the artifact that wrote it: the coordinate and the
  * SHA-256 of a jar fetched from a repository, and only the SHA-256 of a jar on this machine, whose
@@ -43,6 +47,10 @@ public final class BindingDirectory {
     private static final String FORMAT = "souther-binding";
     private static final int VERSION = 1;
     private static final Pattern SHA256 = Pattern.compile("[0-9a-f]{64}");
+
+    /** A generator's id, of either namespace ({@link IdRule}). */
+    private static final Pattern GENERATOR = Pattern.compile(IdRule.RESERVED.pattern() + "|"
+            + IdRule.QUALIFIED.pattern());
     private static final JsonMapper JSON = JsonMapper.builder().build();
 
     /** The jar a binding was written by, as its mark records it. */
@@ -79,9 +87,17 @@ public final class BindingDirectory {
      */
     public static Path replaceable(Path target, String generator) throws IOException {
         Path absolute = target.toAbsolutePath().normalize();
-        if (Files.exists(absolute) && !ours(absolute, generator)) {
+        if (!Files.exists(absolute) || empty(absolute)) {
+            return absolute;
+        }
+        String owner = owner(absolute);
+        if (owner == null) {
             throw new NotBindable(absolute + " holds files a binding did not write,"
                     + " and a binding replaces the directory it is written to whole");
+        }
+        if (!owner.equals(generator)) {
+            throw new NotBindable(absolute + " holds the binding the generator " + owner + " wrote,"
+                    + " which " + generator + " does not replace");
         }
         return absolute;
     }
@@ -113,14 +129,12 @@ public final class BindingDirectory {
      */
     public static Path written(Path target, Mark mark, Writing writing) throws IOException {
         BindingDirectory directory = staging(target, mark);
-        try {
+        try (Holding held = new Holding()) {
+            held.hold(directory, directory::abandon);
             writing.into(directory.staging());
-        } catch (IOException | RuntimeException e) {
-            directory.abandon();
-            throw e;
+            directory.commit();
+            return directory.target();
         }
-        directory.commit();
-        return directory.target();
     }
 
     /** Where the binding is written until it is put in place. */
@@ -153,28 +167,59 @@ public final class BindingDirectory {
         remove(former);
     }
 
-    /** Drops what was written, where it is not to be put in place. */
+    /**
+     * Drops what was written, where it was not put in place; after {@link #commit} there is nothing
+     * left to drop, and this does nothing.
+     */
     public void abandon() throws IOException {
         remove(staging);
     }
 
-    /** Whether {@code directory} is empty, or a binding {@code generator} wrote. */
-    private static boolean ours(Path directory, String generator) throws IOException {
+    private static boolean empty(Path directory) throws IOException {
         if (!Files.isDirectory(directory)) {
             return false;
         }
         try (Stream<Path> entries = Files.list(directory)) {
-            List<Path> held = entries.toList();
-            if (held.isEmpty()) {
-                return true;
-            }
+            return entries.findAny().isEmpty();
         }
+    }
+
+    /**
+     * The generator that owns {@code directory}, as its mark says in any version of the mark; null
+     * where it is not a directory, or holds no mark this format has ever written.
+     */
+    private static String owner(Path directory) throws IOException {
         Path mark = directory.resolve(MARK);
-        if (!Files.isRegularFile(mark)) {
-            return false;
+        if (!Files.isDirectory(directory) || !Files.isRegularFile(mark)) {
+            return null;
         }
-        Mark said = read(Files.readString(mark, StandardCharsets.UTF_8));
-        return said != null && said.generator().equals(generator);
+        return owner(Files.readString(mark, StandardCharsets.UTF_8));
+    }
+
+    /**
+     * Who owns the directory a mark stands in, read from what every version of the mark says alike:
+     * {@code "format"}, a {@code "version"} of 1 or later, and {@code "generator"}. Those members mean
+     * the same in every version, so a directory a later command marked is owned by the same generator
+     * here, and what else a later version says is not read. Null where it is not such a mark.
+     */
+    static String owner(String text) {
+        JsonNode said;
+        try {
+            said = JSON.readTree(text);
+        } catch (JacksonException e) {
+            return null;
+        }
+        if (!said.isObject() || !said.path("format").isString()
+                || !FORMAT.equals(said.get("format").asString()) || !said.path("version").isInt()
+                || said.get("version").asInt() < 1 || !said.path("generator").isString()
+                || !GENERATOR.matcher(said.get("generator").asString()).matches()) {
+            return null;
+        }
+        if (said.get("version").asInt() == VERSION && read(text) == null) {
+            // A mark of this very version is read whole, and one that is not what it says is not one.
+            return null;
+        }
+        return said.get("generator").asString();
     }
 
     /** {@code mark} as the file says it. */

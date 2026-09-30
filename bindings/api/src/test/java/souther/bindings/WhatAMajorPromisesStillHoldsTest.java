@@ -7,7 +7,6 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Stream;
@@ -17,33 +16,31 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * What a generator compiled against {@link BindingApi#MAJOR} depends on is still true of the classes.
  *
- * <p>The major is a number somebody moves by hand, on the day the API stops being what a generator
- * compiled before expects; nothing fails on that day if the number is left where it is. So each major
- * has a record of its surface as it was when it began ({@code generations/<major>.txt}, written by
- * {@link #writeTheRecordOfThisMajor}), and what is held is that nothing the record of the current
- * major says has changed. A line added is a type or a member no generator of that major uses, and is
- * compatible; a line changed or gone is a surface that moved, and needs the next major, which records
- * the surface it begins with.
+ * <p>A generator compiled against major N may use anything the API offered under N on the day it was
+ * compiled, and that day can be any day of N's life. So the record of a major is a ledger of every
+ * line the API has ever offered under it ({@code generations/<major>.txt}), and it only grows: a line
+ * the classes no longer have is a promise broken, and needs the next major, which records the surface
+ * it begins with; a line the classes have and the record does not is an addition, compatible, and
+ * recorded under the current major before it is released, so that removing it later is seen as the
+ * break it is. Both fail here, each saying which it is. {@link #recordThisMajor} writes the record,
+ * and refuses to where a recorded line is gone.
  */
 class WhatAMajorPromisesStillHoldsTest {
 
     @Test
-    void nothingTheRecordOfTheCurrentMajorSaysHasChanged() throws Exception {
+    void theCurrentMajorsLedgerIsTheSurfaceExactly() throws Exception {
         Path record = record(BindingApi.MAJOR);
         assertThat(record).as("the record of major %d: a major that moves records the surface it"
-                + " begins with (see writeTheRecordOfThisMajor)", BindingApi.MAJOR).exists();
-        List<String> recorded = Files.readAllLines(record, StandardCharsets.UTF_8);
-        assertThat(recorded.getFirst()).isEqualTo("major " + BindingApi.MAJOR);
-
+                + " begins with (see recordThisMajor)", BindingApi.MAJOR).exists();
+        List<String> recorded = recorded(record);
         Set<String> now = ApiSurface.of(BindingApi.class);
-        List<String> moved = new ArrayList<>();
-        for (String line : recorded.subList(1, recorded.size())) {
-            if (!now.contains(line)) {
-                moved.add(line);
-            }
-        }
-        assertThat(moved).as("the surface of major %d moved, and a generator compiled against it"
-                + " no longer means what it did: raise BindingApi.MAJOR and record it. What moved",
+
+        assertThat(gone(recorded, now)).as("the surface of major %d lost what it promised, and a"
+                + " generator compiled against it no longer runs as it did: raise BindingApi.MAJOR and"
+                + " record the new major. What is gone", BindingApi.MAJOR).isEmpty();
+        assertThat(added(recorded, now)).as("the surface of major %d gained what it has not"
+                + " recorded; it is compatible, and is recorded under major %d so that taking it away"
+                + " later is seen (see recordThisMajor). What was added", BindingApi.MAJOR,
                 BindingApi.MAJOR).isEmpty();
     }
 
@@ -78,22 +75,42 @@ class WhatAMajorPromisesStillHoldsTest {
     }
 
     /**
-     * Writes the record of this major, for the day the major moves:
+     * Records the surface under this major:
      * {@code mvn -pl bindings/api test -Dtest=WhatAMajorPromisesStillHoldsTest
-     * -Dsouther.bindings.record=true}. It refuses to overwrite one, since a record is what its major
-     * was.
+     * -Dsouther.bindings.record=true}. A major's first record is its whole surface; after that the
+     * record only grows, and a surface that lost a recorded line is refused here, since that needs the
+     * next major and not a record of this one.
      */
     @Test
     @EnabledIfSystemProperty(named = "souther.bindings.record", matches = "true")
-    void writeTheRecordOfThisMajor() throws Exception {
+    void recordThisMajor() throws Exception {
         Path record = record(BindingApi.MAJOR);
-        assertThat(record).as("written already").doesNotExist();
+        Set<String> now = ApiSurface.of(BindingApi.class);
+        if (Files.exists(record)) {
+            assertThat(gone(recorded(record), now)).as("not recorded: what major %d promised is"
+                    + " gone, which needs the next major", BindingApi.MAJOR).isEmpty();
+        }
         StringBuilder text = new StringBuilder("major " + BindingApi.MAJOR + "\n");
-        for (String line : ApiSurface.of(BindingApi.class)) {
+        for (String line : now) {
             text.append(line).append('\n');
         }
         Files.createDirectories(record.getParent());
         Files.writeString(record, text, StandardCharsets.UTF_8);
+    }
+
+    private static List<String> recorded(Path record) throws IOException {
+        List<String> lines = Files.readAllLines(record, StandardCharsets.UTF_8);
+        assertThat(lines.getFirst()).isEqualTo("major " + BindingApi.MAJOR);
+        return lines.subList(1, lines.size());
+    }
+
+    private static List<String> gone(List<String> recorded, Set<String> now) {
+        return recorded.stream().filter(line -> !now.contains(line)).toList();
+    }
+
+    private static List<String> added(List<String> recorded, Set<String> now) {
+        Set<String> held = new java.util.HashSet<>(recorded);
+        return now.stream().filter(line -> !held.contains(line)).toList();
     }
 
     private static Path record(int major) {

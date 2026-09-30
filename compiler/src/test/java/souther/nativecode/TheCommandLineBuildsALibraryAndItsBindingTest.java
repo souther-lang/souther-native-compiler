@@ -112,14 +112,18 @@ class TheCommandLineBuildsALibraryAndItsBindingTest {
         Main.Command command = Main.read(new String[]{"--library", "out",
                 "--binding", "com.acme:souther-binding-kotlin:1.2.0@sha256:" + digest, "kotlin",
                 "--binding-option", "package=com.acme.shop", "--binding-option", "style=a=b",
-                "--binding", "build/generator.jar", "local", "m.sou"});
+                "--binding", "build/generator.jar", "local",
+                "--binding", "/tmp/build@experimental/g:1.jar", "at", "m.sou"});
 
         assertThat(command.output()).isEqualTo(new Main.Output.Library(Path.of("out"), List.of(),
                 List.of(new Main.HostBinding(new Main.Asked.External(new GeneratorRef.Maven(
                                 MavenCoordinate.parse("com.acme:souther-binding-kotlin:1.2.0"), digest)),
                                 Path.of("kotlin"), Map.of("package", "com.acme.shop", "style", "a=b")),
                         new Main.HostBinding(new Main.Asked.External(new GeneratorRef.Local(
-                                Path.of("build/generator.jar"))), Path.of("local"), Map.of()))));
+                                Path.of("build/generator.jar"))), Path.of("local"), Map.of()),
+                        new Main.HostBinding(new Main.Asked.External(new GeneratorRef.Local(
+                                Path.of("/tmp/build@experimental/g:1.jar"))), Path.of("at"),
+                                Map.of()))));
     }
 
     @Test
@@ -131,6 +135,10 @@ class TheCommandLineBuildsALibraryAndItsBindingTest {
                 "com.acme:kotlin:1.2.0@md5:" + digest, "kotlin", "m.sou");
         refused("a digest that is not one", "--library", "out", "--binding",
                 "com.acme:kotlin:1.2.0@sha256:abc", "kotlin", "m.sou");
+        refused("neither a jar nor a coordinate", "--library", "out", "--binding",
+                "build/generator", "kotlin", "m.sou");
+        refused("a coordinate of two parts", "--library", "out", "--binding",
+                "com.acme:kotlin@sha256:" + digest, "kotlin", "m.sou");
         refused("a --binding with no directory", "--library", "out", "m.sou", "--binding",
                 "g.jar");
         refused("an option with no --binding", "--library", "out", "--binding-option", "a=b",

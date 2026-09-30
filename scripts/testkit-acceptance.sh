@@ -21,6 +21,7 @@ bundles="$(cd "$3" && pwd)"
 root="$(cd "$(dirname "$0")/.." && pwd)"
 
 scratch="$(mktemp -d "${TMPDIR:-/tmp}/souther-testkit-acceptance.XXXXXX")"
+trap 'rm -rf "$scratch"' EXIT
 
 # The release's assets as NativeBundle reads them: <root>/v<version>/<asset>. A file: address reads
 # this layout as an https: one reads the release's, so the same lookup and the same check run.
@@ -38,7 +39,7 @@ SOUTHER_HOME="$scratch/home" mvn --batch-mode \
     test
 
 # The driver it built with is the release's, fetched into the cache and not taken from anywhere else.
-if ! compgen -G "$scratch/home/native/$version/*/souther-native-driver" > /dev/null; then
+if ! compgen -G "$scratch/home/native/$version/souther-native-$version-*.zip" > /dev/null; then
     echo "the testkit built without fetching the driver of $version" >&2
     exit 1
 fi

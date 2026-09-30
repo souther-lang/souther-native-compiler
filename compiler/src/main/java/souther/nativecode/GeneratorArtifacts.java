@@ -8,40 +8,67 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 
 /**
- * A generator's jar as the command runs it: its bytes held to their digest, at a place only this
- * command writes, before anything the jar says of itself is read.
+ * A generator's jar as the command runs it: its bytes read once, held to their digest, and written
+ * from those same bytes to a copy of this command's own, before anything the jar says of itself is
+ * read.
  *
  * <p>A jar fetched from a repository is held to the SHA-256 it was named with, and to nothing the
  * repository says of it: a checksum served beside a jar is served by whoever serves the jar. What
  * matches is kept under its coordinate and its digest, so that other bytes under the same coordinate
- * are another artifact, and a kept jar is hashed again each time it is used; one that no longer
- * matches is dropped and fetched again, or refused offline. A jar on this machine is copied first
- * and the copy hashed and loaded, so a jar replaced between the hashing and the loading is not what
- * runs.
+ * are another artifact, and a kept jar is read and hashed again each time it is used; one that no
+ * longer matches is dropped and fetched again, or refused offline. A jar on this machine is read and
+ * hashed the same way, with no digest to hold it to.
+ *
+ * <p>Neither the kept jar nor the jar on this machine is what is loaded. A class loader reads its jar
+ * when it needs a class, which can be long after the jar was hashed, and by then another process can
+ * have replaced the file. What is loaded is always the private copy written from the bytes that were
+ * hashed ({@link VerifiedJar}), so remote and local jars are run, and let go of, the one way.
  */
 final class GeneratorArtifacts {
 
     private GeneratorArtifacts() {
     }
 
-    /** The jar {@code ref} points at, verified. */
+    /** The jar {@code ref} points at, verified, as a copy of this command's own. */
     static VerifiedJar materialize(Fetching fetching, GeneratorRef ref) throws NotFetched {
-        return switch (ref) {
+        byte[] bytes = switch (ref) {
             case GeneratorRef.Maven maven -> fetched(fetching, maven);
-            case GeneratorRef.Local local -> snapshot(local);
+            case GeneratorRef.Local local -> read(local);
         };
+        String sha256 = Fetching.sha256(bytes);
+        try (Holding held = new Holding()) {
+            Path directory = Files.createTempDirectory("souther-generator-");
+            VerifiedJar jar = new VerifiedJar(directory.resolve("generator.jar"), ref, sha256);
+            held.hold(jar, jar::discard);
+            Files.write(jar.jar(), bytes);
+            held.handOver();
+            return jar;
+        } catch (IOException e) {
+            throw new NotFetched("could not copy " + ref + " to load it: " + e.getMessage(), e);
+        }
     }
 
-    private static VerifiedJar fetched(Fetching fetching, GeneratorRef.Maven maven)
-            throws NotFetched {
+    private static byte[] read(GeneratorRef.Local local) throws NotFetched {
+        try {
+            return Files.readAllBytes(local.path());
+        } catch (NoSuchFileException e) {
+            throw new NotFetched("there is no jar at " + local.path(), e);
+        } catch (IOException e) {
+            throw new NotFetched("could not read " + local.path() + ": " + e.getMessage(), e);
+        }
+    }
+
+    /** The bytes of the jar {@code maven} names, kept or fetched, and matching its digest. */
+    private static byte[] fetched(Fetching fetching, GeneratorRef.Maven maven) throws NotFetched {
         MavenCoordinate coordinate = maven.coordinate();
         Path kept = fetching.cache().resolve("generators").resolve(coordinate.group().replace('.', '/'))
                 .resolve(coordinate.artifact()).resolve(coordinate.version())
                 .resolve(maven.sha256() + ".jar");
         try {
             if (Files.isRegularFile(kept)) {
-                if (Fetching.sha256(Files.readAllBytes(kept)).equals(maven.sha256())) {
-                    return new VerifiedJar(kept, maven, maven.sha256(), false);
+                byte[] bytes = Files.readAllBytes(kept);
+                if (Fetching.sha256(bytes).equals(maven.sha256())) {
+                    return bytes;
                 }
                 // Not what was kept: another process, or the disk, changed it. Never run, and asked
                 // for again as if it had never been kept.
@@ -68,44 +95,15 @@ final class GeneratorArtifacts {
         try {
             Files.createDirectories(kept.getParent());
             Path partial = Files.createTempFile(kept.getParent(), maven.sha256(), ".partial");
-            try {
+            try (Holding held = new Holding()) {
+                held.hold(partial, () -> Files.deleteIfExists(partial));
                 Files.write(partial, bytes);
                 Files.move(partial, kept, StandardCopyOption.ATOMIC_MOVE,
                         StandardCopyOption.REPLACE_EXISTING);
-            } finally {
-                Files.deleteIfExists(partial);
             }
         } catch (IOException e) {
             throw new NotFetched("could not keep " + jar + ": " + e.getMessage(), e);
         }
-        return new VerifiedJar(kept, maven, maven.sha256(), false);
-    }
-
-    private static VerifiedJar snapshot(GeneratorRef.Local local) throws NotFetched {
-        Path copy;
-        try {
-            Path directory = Files.createTempDirectory("souther-generator-");
-            copy = directory.resolve("generator.jar");
-            try {
-                Files.copy(local.path(), copy);
-            } catch (IOException e) {
-                Files.deleteIfExists(directory);
-                throw e;
-            }
-        } catch (NoSuchFileException e) {
-            throw new NotFetched("there is no jar at " + local.path(), e);
-        } catch (IOException e) {
-            throw new NotFetched("could not read " + local.path() + ": " + e.getMessage(), e);
-        }
-        try {
-            return new VerifiedJar(copy, local, Fetching.sha256(Files.readAllBytes(copy)), true);
-        } catch (IOException e) {
-            try {
-                new VerifiedJar(copy, local, "", true).discard();
-            } catch (IOException ignored) {
-                e.addSuppressed(ignored);
-            }
-            throw new NotFetched("could not read the copy of " + local.path() + ": " + e.getMessage(), e);
-        }
+        return bytes;
     }
 }

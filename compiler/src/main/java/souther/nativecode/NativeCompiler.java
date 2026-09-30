@@ -102,8 +102,10 @@ public final class NativeCompiler {
     }
 
     /**
-     * The driver of this release for this platform, fetched and kept where it is not, and held to the
-     * checksum the release carries for it; refused where this is not a release.
+     * The driver of this release for this platform, fetched and kept where it is not, held to the
+     * checksum the release carries for it, and unpacked for this process from the bytes that were
+     * hashed; refused where this is not a release. Each call unpacks it again, so a caller that builds
+     * many libraries asks once.
      */
     public static Path releasedDriver() throws IOException {
         return NativeBundle.locate(Fetching.standard());

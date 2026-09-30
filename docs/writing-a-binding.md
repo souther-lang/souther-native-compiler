@@ -37,8 +37,11 @@ is used. `--binding-option key=value` belongs to the `--binding` before it and m
 command splits it at the first `=`, and refuses a key named twice for one binding.
 
 An author's own build is named by the path of its jar, `--binding build/libs/generator.jar out/kotlin`,
-and no digest is asked for. The command copies the jar and loads the copy, so a jar rebuilt while
-the command runs is not what runs.
+and no digest is asked for; a path always ends in `.jar`, and a coordinate never does, so neither is
+taken for the other. Whichever way a jar was named, the command reads it once, hashes those bytes,
+and loads a copy it writes from them for itself: never the kept jar or the path, which another
+process could replace before a class is read, so what runs is what was hashed. The copy is deleted
+once the command is done with the generator, or at once where the jar is refused.
 
 The three bindings the command ships are the same thing reached another way. A released command
 fetches the jar its catalog names at its own version, held to the SHA-256 the release carries for it;
@@ -73,8 +76,10 @@ runs nothing.
 
 The command never holds a generator itself. Every call into one goes through one type
 (`Bindings.Generator`), which tells a generator's failure apart from the command's by where it was
-thrown: what a generator's code throws, an `IOException` among it, is said as that generator's
-failure, in one line.
+thrown: whatever a generator's code throws, an `IOException` or an `Error` of its own among it, is said
+as that generator's failure, in one line, and only what ends the JVM (`VirtualMachineError`) is not.
+Whatever the command was holding when it was thrown, a copy of a jar, a loader, a directory being
+written, is let go of.
 
 Each generator's `BindingGenerator#preflight` is asked before anything is built, and the directory
 each binding goes to is checked: it has to be absent, empty, or a binding the same generator wrote,
@@ -111,7 +116,10 @@ The mark is JSON, with a version, and is read strictly:
 ```
 
 What owns the directory is `"generator"`, the id the jar says, so a newer version of a generator
-replaces what an older one wrote. `"artifact"` records which jar wrote it and decides nothing. A jar
+replaces what an older one wrote. `"artifact"` records which jar wrote it and decides nothing.
+`"format"`, `"version"` and `"generator"` mean the same in every version of the mark, and are all a
+command reads to decide whether it may replace the directory, so a directory a later command marked
+is still its generator's to an earlier one. A jar
 read from a path is recorded by its digest alone (`"kind" : "local"`): the path is where one run
 found it, and would carry a user's directories into the output.
 
@@ -147,7 +155,10 @@ member's signature or declared nullness changed, or an abstract method of an int
 added or removed, each moves the major. The surface each major promises is recorded in
 [`bindings/api/generations/`](../bindings/api/generations/), and
 [`WhatAMajorPromisesStillHoldsTest`](../bindings/api/src/test/java/souther/bindings/WhatAMajorPromisesStillHoldsTest.java)
-fails when a line recorded for the current major is no longer true. It sees structure and declared
+fails when a line recorded for the current major is no longer true. The record is a ledger that
+only grows, since a generator may be compiled on any day of a major's life: what is added under a
+major is recorded under it before it is released, and the test fails on an addition not yet
+recorded too, so that taking it away later is seen as a break. It sees structure and declared
 nullness; a method that keeps both and comes to answer something else moves the major too, and that
 part is kept by whoever changes it.
 

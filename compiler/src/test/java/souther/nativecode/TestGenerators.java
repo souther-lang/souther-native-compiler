@@ -89,6 +89,29 @@ public final class TestGenerators {
         }
     }
 
+    /** Throws an {@link Error} of its own where it is asked to preflight. */
+    public static final class ErringAhead extends Recording {
+        @Override
+        public void preflight(Map<String, String> options) {
+            throw new AssertionError("the generator's own assertion, ahead");
+        }
+    }
+
+    /** Throws an {@link Error} of its own where it is asked to generate. */
+    public static final class Erring extends Recording {
+        @Override
+        public void generate(BindingInput input, Path into, Map<String, String> options) {
+            throw new AssertionError("the generator's own assertion");
+        }
+    }
+
+    /** Throws an {@link Error} of its own where it is made. */
+    public static final class ErringToBeMade extends Recording {
+        public ErringToBeMade() {
+            throw new AssertionError("the generator's own assertion, made");
+        }
+    }
+
     /** Says when its class is initialized and when it is made: neither is to happen before its checks. */
     public static final class Watched extends Recording {
         static {

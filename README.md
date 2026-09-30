@@ -94,7 +94,8 @@ GitHub release can be replaced, and a Maven repository can be a mirror. So the S
 and of each generator's jar is written into the compiler's own artifact when it is released, Maven
 Central does not let that artifact be changed, and anything fetched that does not match is refused
 and not kept. A checksum served beside a file is never asked for. What is kept is checked again each
-time it is used, and fetched again where it no longer matches. `--offline` fetches nothing and uses only
+time it is used, and fetched again where it no longer matches; and what runs is never the kept file,
+but a copy the command writes for itself from the bytes it just checked. `--offline` fetches nothing and uses only
 what is kept, and `--fetch` fetches everything a command may need, so that a build that may not
 reach the network later can be prepared where one can. The Maven repository can be a mirror, named
 by `-Dsouther.maven.repository`.

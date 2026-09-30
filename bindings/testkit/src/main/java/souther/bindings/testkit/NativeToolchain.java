@@ -17,13 +17,21 @@ import java.nio.file.Path;
  */
 final class NativeToolchain {
 
+    /** The released driver, unpacked for this process once and used by every library it builds. */
+    private static Path released;
+
     private NativeToolchain() {
     }
 
     static Path driver() throws IOException {
         String version = NativeToolchain.class.getPackage().getImplementationVersion();
         if (version != null && !version.endsWith("-SNAPSHOT")) {
-            return NativeCompiler.releasedDriver();
+            synchronized (NativeToolchain.class) {
+                if (released == null) {
+                    released = NativeCompiler.releasedDriver();
+                }
+                return released;
+            }
         }
         String named = System.getProperty(NativeCompiler.DRIVER_PROPERTY);
         if (named == null || !Files.isExecutable(Path.of(named))) {

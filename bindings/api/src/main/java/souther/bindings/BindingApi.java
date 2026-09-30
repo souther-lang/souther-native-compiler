@@ -19,11 +19,14 @@ package souther.bindings;
  * supertypes change, or when the abstract methods of an interface or class nothing seals change. An
  * added type, or an added member that asks nothing of what implements this API, does not move it.
  *
- * <p>The surface each major promises is recorded in {@code bindings/api/generations/<major>.txt},
- * and a test fails when a line recorded for {@link #MAJOR} is no longer true of the classes. That
- * test sees structure and declared nullness. A method that keeps both and comes to answer something
- * else has changed what it means without the test seeing it, and moves the major all the same: that
- * part of the promise is kept by whoever changes it.
+ * <p>What each major has promised is recorded in {@code bindings/api/generations/<major>.txt}, a
+ * ledger that only grows: a generator may be compiled against the API on any day of a major's life,
+ * so everything added under the major is recorded under it before it is released, and a test fails
+ * both when a recorded line is no longer true of the classes (the major moves) and when the classes
+ * offer a line not yet recorded (it is recorded). That test sees structure and declared nullness. A
+ * method that keeps both and comes to answer something else has changed what it means without the
+ * test seeing it, and moves the major all the same: that part of the promise is kept by whoever
+ * changes it.
  */
 public final class BindingApi {
 

@@ -36,41 +36,45 @@ final class Bindings {
     private Bindings() {
     }
 
-    /** The generator {@code spec} names, verified, checked and constructed, or why not. */
+    /**
+     * The generator {@code spec} names, verified, checked and constructed, or why not. What the load
+     * makes on the way, the copy of the jar and the loader, is the load's until the generator is
+     * made, and is let go of on every way out that does not make it; only a generator made is handed
+     * them ({@link Holding}).
+     */
     static Generator load(Fetching fetching, GeneratorSpec spec)
             throws IOException, GeneratorFailed {
-        VerifiedJar jar = GeneratorArtifacts.materialize(fetching, spec.ref());
-        try {
+        try (Holding held = new Holding()) {
+            VerifiedJar jar = GeneratorArtifacts.materialize(fetching, spec.ref());
+            held.hold(jar, jar::discard);
             GeneratorDescriptor descriptor = GeneratorDescriptor.read(jar);
             descriptor.check(spec.rule(), jar);
             String named = spec.rule() instanceof IdRule.Exactly ? spec.display()
                     : "the generator " + descriptor.id();
             GeneratorLoader loader = new GeneratorLoader(jar.jar());
+            held.hold(loader, loader::close);
+            // Found and none constructed or initialized, so none of the jar's code runs; a service
+            // file naming a class that is not there, does not link, or is not a generator is a jar
+            // that is not one.
+            List<ServiceLoader.Provider<BindingGenerator>> providers;
             try {
-                List<ServiceLoader.Provider<BindingGenerator>> providers;
-                try {
-                    providers = ServiceLoader.load(BindingGenerator.class, loader).stream().toList();
-                } catch (ServiceConfigurationError | LinkageError e) {
-                    throw new NotAGenerator(jar.ref() + " names a generator that does not load: "
-                            + e.getMessage(), e);
-                }
-                // Counted before any is constructed, so a jar naming none or two runs nothing.
-                if (providers.size() != 1) {
-                    throw new NotAGenerator(jar.ref() + " provides " + providers.size()
-                            + " generators in META-INF/services/" + BindingGenerator.class.getName()
-                            + ", and a generator's jar provides exactly one");
-                }
-                ServiceLoader.Provider<BindingGenerator> provider = providers.getFirst();
-                BindingGenerator generator = GeneratorFailed.asking(named,
-                        () -> within(loader, provider::get));
-                return new Generator(named, descriptor, jar, loader, generator);
-            } catch (IOException | GeneratorFailed | RuntimeException e) {
-                loader.close();
-                throw e;
+                providers = ServiceLoader.load(BindingGenerator.class, loader).stream().toList();
+            } catch (ServiceConfigurationError | LinkageError e) {
+                throw new NotAGenerator(jar.ref() + " names a generator that does not load: "
+                        + e.getMessage(), e);
             }
-        } catch (IOException | GeneratorFailed | RuntimeException e) {
-            jar.discard();
-            throw e;
+            // Counted before any is constructed, so a jar naming none or two runs nothing.
+            if (providers.size() != 1) {
+                throw new NotAGenerator(jar.ref() + " provides " + providers.size()
+                        + " generators in META-INF/services/" + BindingGenerator.class.getName()
+                        + ", and a generator's jar provides exactly one");
+            }
+            ServiceLoader.Provider<BindingGenerator> provider = providers.getFirst();
+            BindingGenerator generator = GeneratorFailed.asking(named,
+                    () -> within(loader, provider::get));
+            Generator made = new Generator(named, descriptor, jar, loader, generator);
+            held.handOver();
+            return made;
         }
     }
 

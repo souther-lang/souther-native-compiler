@@ -29,6 +29,10 @@
 #   commit   the runtime as of which commit (default HEAD)
 set -euo pipefail
 
+# Every directory this makes is made in one, deleted however this ends.
+scratch="$(mktemp -d)"
+trap 'rm -rf "$scratch"' EXIT
+
 . "$(dirname "$0")/require-go.sh"
 
 check=false
@@ -78,12 +82,11 @@ published=false
 if [ -n "$standing" ]; then
     # Read in a repository of its own and never in this one: a shallow fetch here would mark the
     # tag's commit shallow in this clone, and cut its history there for everything that runs after.
-    looked="$(mktemp -d)"
+    looked="$(mktemp -d "$scratch/looked.XXXXXX")"
     git init --quiet --bare "$looked"
     git -C "$looked" fetch --quiet --depth=1 "$(git remote get-url "$remote" 2>/dev/null || printf '%s' "$remote")" \
         "refs/tags/$tag"
     published_tree="$(git -C "$looked" rev-parse "FETCH_HEAD:$directory")"
-    rm -rf "$looked"
     if [ "$published_tree" != "$now" ]; then
         refuse "the runtime is not what it was when $tag was published, and a published tag is not moved: give it another version in $directory/VERSION"
     fi
@@ -93,12 +96,11 @@ fi
 # Whether the module can be fetched by its path and version: from nothing local.
 fetches() {
     local asked
-    asked="$(mktemp -d)"
+    asked="$(mktemp -d "$scratch/asked.XXXXXX")"
     printf 'module asked\n\ngo %s\n' "$go_version" > "$asked/go.mod"
     local fetched
     fetched="$(cd "$asked" && GOMODCACHE="$asked/mod" GOFLAGS=-modcacherw GOPROXY=direct GOSUMDB=off \
         go mod download -json "$module@v$version" 2>&1 || true)"
-    rm -rf "$asked"
     if printf '%s' "$fetched" | grep -q '"Error"\|^go: '; then
         echo "$module@v$version cannot be fetched:" >&2
         printf '%s\n' "$fetched" >&2
@@ -108,8 +110,7 @@ fetches() {
 
 # A rehearsal, in a repository that is only a directory, which Git is told stands where GitHub does.
 if ! $published; then
-    rehearsal="$(mktemp -d)"
-    trap 'rm -rf "$rehearsal"' EXIT
+    rehearsal="$(mktemp -d "$scratch/rehearsal.XXXXXX")"
     git init --quiet --bare "$rehearsal/remote.git"
     # A clone that is shallow has no history to send, and sends what it has.
     git -C "$rehearsal/remote.git" config receive.shallowUpdate true

@@ -131,6 +131,66 @@ class TheCommandFindsABindingThroughItsGeneratorTest {
         }
     }
 
+    /**
+     * What a generator throws is its own whatever its type, an {@link Error} among it: at every moment
+     * the command calls it, it is said in one line as the generator's failure, and nothing the command
+     * was writing is left, the directory it was writing the binding into among it.
+     */
+    @Test
+    void anErrorOfTheGeneratorsOwnIsItsFailureAndLeavesNothing(@TempDir Path into)
+            throws Exception {
+        Path model = model(into);
+        Map<Class<? extends TestGenerators.Recording>, String> thrown = Map.of(
+                TestGenerators.ErringAhead.class, "the generator's own assertion, ahead",
+                TestGenerators.Erring.class, "the generator's own assertion",
+                TestGenerators.ErringToBeMade.class, "the generator's own assertion, made");
+        for (Map.Entry<Class<? extends TestGenerators.Recording>, String> each : thrown.entrySet()) {
+            Path jar = GeneratorJar.of("acme.erring", each.getKey())
+                    .writtenTo(into.resolve("jars/" + each.getKey().getSimpleName() + ".jar"));
+
+            Ran ran = run("--library", into.resolve("native").toString(), "--binding",
+                    jar.toString(), into.resolve("out").toString(), model.toString());
+
+            assertThat(ran.ended()).as(ran.said()).isEqualTo(1);
+            assertThat(ran.said()).contains("the generator acme.erring failed, and wrote nothing: "
+                    + "java.lang.AssertionError: " + each.getValue()).doesNotContain("\tat ");
+            try (var beside = Files.list(into)) {
+                assertThat(beside.map(it -> it.getFileName().toString()))
+                        .as("nothing left beside where the binding was to go")
+                        .allMatch(it -> List.of("jars", "model", "native").contains(it));
+            }
+        }
+    }
+
+    /**
+     * A mark says who owns its directory in every version of the mark alike, so a directory a later
+     * command marked is still its generator's here; and a directory another generator owns is refused
+     * with that generator named.
+     */
+    @Test
+    void aDirectoryIsOwnedByWhatItsMarkSaysInAnyVersion(@TempDir Path into) throws Exception {
+        Path model = model(into);
+        Path jar = GeneratorJar.of("acme.owner", TestGenerators.Recording.class)
+                .writtenTo(into.resolve("jars/owner.jar"));
+        Path out = Files.createDirectories(into.resolve("out"));
+        Files.writeString(out.resolve(BindingDirectory.MARK), """
+                {"format": "souther-binding", "version": 7, "generator": "acme.owner",
+                 "provenance": {"whatever": "a later version says"}}
+                """);
+
+        Ran later = run("--library", into.resolve("native").toString(), "--binding",
+                jar.toString(), out.toString(), model.toString());
+        assertThat(later.ended()).as(later.said()).isZero();
+
+        Files.writeString(out.resolve(BindingDirectory.MARK), """
+                {"format": "souther-binding", "version": 7, "generator": "acme.another"}
+                """);
+        Ran another = run("--library", into.resolve("native").toString(), "--binding",
+                jar.toString(), out.toString(), model.toString());
+        assertThat(another.ended()).isEqualTo(2);
+        assertThat(another.said()).contains("the binding the generator acme.another wrote");
+    }
+
     @Test
     void aGeneratorThatRefusesAheadStopsTheBuildBeforeTheLibraryIsWritten(@TempDir Path into)
             throws Exception {
@@ -177,7 +237,8 @@ class TheCommandFindsABindingThroughItsGeneratorTest {
                 .isEqualTo(new BindingDirectory.Mark("acme.owner", new BindingDirectory.Artifact.Local(
                         Fetching.sha256(Files.readAllBytes(newer)))));
         assertThat(refused.ended()).isEqualTo(2);
-        assertThat(refused.said()).contains("holds files a binding did not write");
+        assertThat(refused.said()).contains("the binding the generator acme.owner wrote")
+                .contains("which acme.another does not replace");
 
         Files.writeString(out.resolve(BindingDirectory.MARK), "generator=acme.owner\n");
         Ran oldMark = run("--library", into.resolve("native").toString(), "--binding",

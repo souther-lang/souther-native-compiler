@@ -288,22 +288,26 @@ class TheCommandFetchesWhatItNeedsOnFirstUseTest {
             served.files.put(bundleAt(), bundle);
 
             Path driver = NativeBundle.locate(fetching);
-            NativeBundle.locate(fetching);
+            Path again = NativeBundle.locate(fetching);
 
             assertThat(driver).isExecutable().hasFileName(NativeBundle.DRIVER);
             assertThat(driver.resolveSibling(NativeBundle.ARCHIVE)).hasContent("archive");
             assertThat(driver.resolveSibling(NativeBundle.REQUIREMENTS)).hasContent("-lm\n");
             assertThat(served.asked).containsEntry(bundleAt(), 1);
+            assertThat(keptBundle(into)).as("what is kept is the bundle as it was fetched")
+                    .hasBinaryContent(bundle);
+            assertThat(again).as("each is unpacked where only its own use runs it")
+                    .isNotEqualTo(driver).hasContent("#!/bin/sh\n");
         }
     }
 
     /**
-     * The kept bundle is the source of truth for the files unpacked from it: one of them changed or
-     * gone is unpacked again from a bundle that still matches, offline as well and fetching nothing.
-     * A kept bundle that no longer matches is not kept, and is fetched again or refused offline.
+     * What runs is unpacked from the bytes just held to the checksum, into a directory of this use's
+     * own, and never the kept file: a driver changed after one use is not what the next runs. A kept
+     * bundle that no longer matches is not kept: refused offline, and fetched again.
      */
     @Test
-    void aKeptBundleRebuildsWhatWasUnpackedFromItAndOneChangedIsFetchedAgain(@TempDir Path into)
+    void whatRunsIsUnpackedFromWhatWasHashedAndAChangedBundleIsFetchedAgain(@TempDir Path into)
             throws Exception {
         try (Served served = new Served()) {
             byte[] bundle = bundle(Map.of(NativeBundle.DRIVER, "#!/bin/sh\n",
@@ -313,23 +317,16 @@ class TheCommandFetchesWhatItNeedsOnFirstUseTest {
 
             Path driver = NativeBundle.locate(fetching);
             Files.writeString(driver, "#!/bin/sh\necho replaced\n");
-            assertThat(NativeBundle.locate(fetching.withOffline(true))).isEqualTo(driver);
-            assertThat(driver).hasContent("#!/bin/sh\n").isExecutable();
-            Files.delete(driver.resolveSibling(NativeBundle.ARCHIVE));
-            Files.writeString(driver.resolveSibling("extra"), "beside it");
-            NativeBundle.locate(fetching.withOffline(true));
-            assertThat(driver.resolveSibling(NativeBundle.ARCHIVE)).hasContent("archive");
-            assertThat(driver.resolveSibling("extra")).doesNotExist();
-            assertThat(served.asked).as("nothing fetched for what the bundle rebuilt")
-                    .containsEntry(bundleAt(), 1);
+            Path next = NativeBundle.locate(fetching.withOffline(true));
+            assertThat(next).hasContent("#!/bin/sh\n").isExecutable();
+            assertThat(served.asked).containsEntry(bundleAt(), 1);
 
-            Files.write(driver.resolveSibling(NativeBundle.KEPT), bytes("not the bundle"));
+            Files.write(keptBundle(into), bytes("not the bundle"));
             assertThatThrownBy(() -> NativeBundle.locate(fetching.withOffline(true)))
                     .isInstanceOf(NotFetched.class).hasMessageContaining("offline");
-            NativeBundle.locate(fetching);
-
+            assertThat(keptBundle(into)).as("one that does not match is not kept").doesNotExist();
+            assertThat(NativeBundle.locate(fetching)).hasContent("#!/bin/sh\n");
             assertThat(served.asked).containsEntry(bundleAt(), 2);
-            assertThat(driver).hasContent("#!/bin/sh\n");
         }
     }
 
@@ -419,7 +416,7 @@ class TheCommandFetchesWhatItNeedsOnFirstUseTest {
                 Ran ran = run(fetching, "--fetch");
 
                 assertThat(ran.printed()).doesNotContain("this build's own")
-                        .contains("the driver " + into.resolve("cache/native"));
+                        .contains("the driver " + into.resolve("cache/run"));
                 assertThat(served.asked).containsEntry(bundleAt(), 1);
             } finally {
                 if (named != null) {
@@ -484,16 +481,26 @@ class TheCommandFetchesWhatItNeedsOnFirstUseTest {
                 + ".zip";
     }
 
-    /** Whether the cache holds no driver and nothing half unpacked. */
+    /** Where the bundle of this platform is kept. */
+    private static Path keptBundle(Path into) throws Exception {
+        return into.resolve("cache/native/" + VERSION + "/souther-native-" + VERSION + "-"
+                + NativeBundle.platform() + ".zip");
+    }
+
+    /** Whether the cache holds no bundle, nothing half written, and no driver unpacked. */
     private static boolean nothingKept(Path into) throws IOException {
-        Path native_ = into.resolve("cache/native");
-        if (!Files.exists(native_)) {
-            return true;
+        for (String under : List.of("cache/native", "cache/run")) {
+            Path directory = into.resolve(under);
+            if (!Files.exists(directory)) {
+                continue;
+            }
+            try (Stream<Path> kept = Files.walk(directory)) {
+                if (kept.anyMatch(Files::isRegularFile)) {
+                    return false;
+                }
+            }
         }
-        try (Stream<Path> kept = Files.walk(native_)) {
-            return kept.noneMatch(each -> Files.isRegularFile(each)
-                    || each.getFileName().toString().contains(".partial"));
-        }
+        return true;
     }
 
     private static List<Path> list(Path directory) throws IOException {

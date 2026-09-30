@@ -1,16 +1,15 @@
 package souther.nativecode;
 
-import java.io.IOException;
 import java.io.ByteArrayInputStream;
+import java.io.IOException;
 import java.net.URI;
-import java.nio.file.AtomicMoveNotSupportedException;
-import java.nio.file.DirectoryNotEmptyException;
-import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.FileTime;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.Comparator;
-import java.util.HashSet;
 import java.util.Locale;
 import java.util.Set;
 import java.util.stream.Stream;
@@ -21,16 +20,18 @@ import java.util.zip.ZipInputStream;
  * The driver, with what it links beside it, as a release publishes it for one platform.
  *
  * <p>The driver reads the runtime archive and the file of what linking it needs from beside itself,
- * so what is fetched is the three together, and is kept in one directory. The bundle is held to the
- * SHA-256 this compiler was released with, since a release asset is not something that cannot be
- * replaced; and holds exactly those three files, so that an archive that names a path outside its own
- * directory cannot write there.
+ * so what is fetched is the three together. The bundle is held to the SHA-256 this compiler was
+ * released with, since a release asset is not something that cannot be replaced; and holds exactly
+ * those three files, so that an archive that names a path outside its own directory cannot write
+ * there.
  *
- * <p>The bundle as it was fetched is kept beside what was unpacked from it, and is what the cache
- * holds: the three files are made from it, and are used only while they are still what it holds. A
- * kept bundle that still matches the checksum is the source of truth, and files missing or changed
- * beside it are unpacked from it again, offline as well, fetching nothing. A bundle missing, or one
- * that no longer matches, is not kept: fetched again, or refused offline.
+ * <p>What is kept is the bundle as it was fetched, and nothing made from it: {@code
+ * native/<version>/souther-native-<version>-<platform>.zip}, read and held to its checksum again
+ * each time it is used, and fetched again, or refused offline, where it no longer matches. What runs
+ * is never the kept file. The three files are unpacked from the bytes that were just hashed into a
+ * directory this process made for itself, under {@code run/}, and deleted when the process ends, so
+ * that what runs is what was hashed, as it is for a generator's jar ({@link GeneratorArtifacts}). A
+ * directory left there by a process that did not end cleanly is deleted a day later.
  */
 final class NativeBundle {
 
@@ -39,8 +40,23 @@ final class NativeBundle {
     static final String REQUIREMENTS = "libsouther_native_runtime.link";
     private static final Set<String> FILES = Set.of(DRIVER, ARCHIVE, REQUIREMENTS);
 
-    /** The bundle as it was fetched, kept beside what was unpacked from it. */
-    static final String KEPT = "bundle.zip";
+    /** How long a directory a process unpacked into is left before another deletes it. */
+    private static final Duration LEFT = Duration.ofDays(1);
+
+    /** The directories this process unpacked into, deleted when it ends. */
+    private static final Set<Path> UNPACKED = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    static {
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            for (Path directory : UNPACKED) {
+                try {
+                    delete(directory);
+                } catch (IOException ignored) {
+                    // Left for the next process to delete, a day on.
+                }
+            }
+        }, "souther-native-bundle-cleanup"));
+    }
 
     /**
      * The platforms a release publishes a bundle for, which the release workflow builds and
@@ -71,41 +87,71 @@ final class NativeBundle {
         return system + "-" + machine;
     }
 
-    /** The driver for this platform, fetched and kept if it is not. */
+    /**
+     * The driver for this platform, in a directory of this process's own unpacked from the kept
+     * bundle, which is fetched first where it is not kept or no longer matches.
+     */
     static Path locate(Fetching fetching) throws NotFetched {
         String version = fetching.release();
         String platform = platform();
-        Path dir = fetching.cache().resolve("native").resolve(version).resolve(platform);
         String expected = fetching.checksums().get(ReleaseChecksums.bundle(platform));
         if (expected == null) {
             throw new NotFetched("this compiler was released with no checksum for the driver for "
                     + platform + ", so it will not take one");
         }
-        try {
-            byte[] kept = Files.isRegularFile(dir.resolve(KEPT))
-                    ? Files.readAllBytes(dir.resolve(KEPT)) : null;
-            if (kept != null && Fetching.sha256(kept).equals(expected)) {
-                if (!unpackedFrom(dir, kept)) {
-                    // The files beside a bundle that matches are what was made from it, and are
-                    // made again from it: nothing is fetched for them.
-                    kept(dir, kept, expected);
-                }
-                return dir.resolve(DRIVER);
+        String name = "souther-native-" + version + "-" + platform + ".zip";
+        Path kept = fetching.cache().resolve("native").resolve(version).resolve(name);
+        byte[] bytes = kept(kept, expected);
+        if (bytes == null) {
+            if (fetching.offline()) {
+                throw new NotFetched("the driver for " + platform + " " + version
+                        + " is not kept, and this is offline");
             }
-            // No bundle, or one that is not what was fetched: never run, and asked for again.
-            delete(dir);
+            bytes = fetched(fetching, kept, expected,
+                    URI.create(fetching.releases().toString().replaceAll("/+$", "") + "/v" + version
+                            + "/" + name));
+        }
+        try (Holding held = new Holding()) {
+            Path run = Files.createDirectories(fetching.cache().resolve("run"));
+            leftBefore(run, Instant.now().minus(LEFT));
+            Path directory = Files.createTempDirectory(run, "native-");
+            held.hold(directory, () -> delete(directory));
+            unpack(bytes, directory);
+            UNPACKED.add(directory);
+            held.handOver();
+            return directory.resolve(DRIVER);
         } catch (NotFetched e) {
             throw e;
         } catch (IOException e) {
-            throw new NotFetched("could not read the kept driver in " + dir + ": " + e.getMessage(), e);
+            throw new NotFetched("could not unpack the driver for " + platform + ": "
+                    + e.getMessage(), e);
         }
-        if (fetching.offline()) {
-            throw new NotFetched("the driver for " + platform + " " + version
-                    + " is not kept, and this is offline");
+    }
+
+    /**
+     * The bytes of the bundle kept at {@code kept}, where they still match {@code expected}; null
+     * where none is kept, and where one that no longer matches was, which is deleted.
+     */
+    private static byte[] kept(Path kept, String expected) throws NotFetched {
+        try {
+            if (!Files.isRegularFile(kept)) {
+                return null;
+            }
+            byte[] bytes = Files.readAllBytes(kept);
+            if (Fetching.sha256(bytes).equals(expected)) {
+                return bytes;
+            }
+            // Not what was fetched: never run, and asked for again.
+            Files.delete(kept);
+            return null;
+        } catch (IOException e) {
+            throw new NotFetched("could not read the kept " + kept + ": " + e.getMessage(), e);
         }
-        String base = fetching.releases().toString().replaceAll("/+$", "");
-        URI bundle = URI.create(base + "/v" + version + "/souther-native-" + version + "-"
-                + platform + ".zip");
+    }
+
+    /** The bundle at {@code bundle}, held to {@code expected}, and kept at {@code kept}. */
+    private static byte[] fetched(Fetching fetching, Path kept, String expected, URI bundle)
+            throws NotFetched {
         byte[] bytes;
         try {
             bytes = fetching.downloads().get(bundle);
@@ -116,92 +162,76 @@ final class NativeBundle {
             throw new NotFetched(bundle + " does not match the checksum this compiler was released"
                     + " with: refused, and not kept");
         }
+        // A bundle holding what it is not to is refused and not kept.
         try {
-            kept(dir, bytes, expected);
+            files(bytes);
         } catch (NotFetched e) {
             throw e;
         } catch (IOException e) {
+            throw new NotFetched("could not read " + bundle + ": " + e.getMessage(), e);
+        }
+        try {
+            Files.createDirectories(kept.getParent());
+            Path partial = Files.createTempFile(kept.getParent(), kept.getFileName().toString(),
+                    ".partial");
+            try (Holding held = new Holding()) {
+                held.hold(partial, () -> Files.deleteIfExists(partial));
+                Files.write(partial, bytes);
+                Files.move(partial, kept, StandardCopyOption.ATOMIC_MOVE,
+                        StandardCopyOption.REPLACE_EXISTING);
+            }
+        } catch (IOException e) {
             throw new NotFetched("could not keep " + bundle + ": " + e.getMessage(), e);
         }
-        return dir.resolve(DRIVER);
+        return bytes;
+    }
+
+    /** Deletes what a process unpacked into {@code run} and left there before {@code before}. */
+    private static void leftBefore(Path run, Instant before) {
+        try (Stream<Path> left = Files.list(run)) {
+            for (Path directory : left.toList()) {
+                try {
+                    FileTime modified = Files.getLastModifiedTime(directory);
+                    if (modified.toInstant().isBefore(before)) {
+                        delete(directory);
+                    }
+                } catch (IOException ignored) {
+                    // Another process deleting it too, or one that cannot be: tried again next time.
+                }
+            }
+        } catch (IOException ignored) {
+            // Nothing to delete that can be listed.
+        }
     }
 
     /**
-     * {@code bytes}, a bundle whose SHA-256 is {@code expected}, kept in {@code dir} with the three
-     * files unpacked from it, in place of whatever was there, unless another command already kept it.
+     * The three files {@code bundle} holds, by name, or why it is not a bundle: an entry that is not
+     * one of them, one of them twice, or one missing.
      */
-    private static void kept(Path dir, byte[] bytes, String expected) throws IOException {
-        Files.createDirectories(dir.getParent());
-        Path staging = Files.createTempDirectory(dir.getParent(), dir.getFileName() + ".partial");
-        try {
-            unpack(bytes, staging);
-            Files.write(staging.resolve(KEPT), bytes);
-            if (Files.exists(dir)) {
-                Path former = Files.createTempDirectory(dir.getParent(), dir.getFileName() + ".former");
-                Files.delete(former);
-                Files.move(dir, former, StandardCopyOption.ATOMIC_MOVE);
-                delete(former);
-            }
-            place(staging, dir, expected);
-        } finally {
-            delete(staging);
-        }
-    }
-
-    /** Whether {@code dir} holds exactly the three files {@code bundle} holds, each as it holds it. */
-    private static boolean unpackedFrom(Path dir, byte[] bytes) throws IOException {
-        if (!Files.isExecutable(dir.resolve(DRIVER))) {
-            return false;
-        }
-        Set<String> seen = new HashSet<>();
-        try (ZipInputStream zip = new ZipInputStream(new ByteArrayInputStream(bytes))) {
-            for (ZipEntry entry = zip.getNextEntry(); entry != null; entry = zip.getNextEntry()) {
-                Path file = dir.resolve(entry.getName());
-                if (!FILES.contains(entry.getName()) || !seen.add(entry.getName())
-                        || !Files.isRegularFile(file)
-                        || !java.util.Arrays.equals(Files.readAllBytes(file), zip.readAllBytes())) {
-                    return false;
-                }
-            }
-        }
-        try (Stream<Path> held = Files.list(dir)) {
-            return seen.equals(FILES) && held.count() == FILES.size() + 1;
-        }
-    }
-
-    private static void unpack(byte[] bundle, Path into) throws IOException {
-        Set<String> seen = new HashSet<>();
+    private static java.util.Map<String, byte[]> files(byte[] bundle) throws IOException {
+        java.util.Map<String, byte[]> files = new java.util.HashMap<>();
         try (ZipInputStream zip = new ZipInputStream(new ByteArrayInputStream(bundle))) {
             for (ZipEntry entry = zip.getNextEntry(); entry != null; entry = zip.getNextEntry()) {
                 String name = entry.getName();
-                if (entry.isDirectory() || !FILES.contains(name) || !seen.add(name)) {
+                if (entry.isDirectory() || !FILES.contains(name) || files.containsKey(name)) {
                     throw new NotFetched("the bundle holds \"" + name + "\", which is not one of "
                             + "the three files it is to hold, once each: refused");
                 }
-                Files.write(into.resolve(name), zip.readAllBytes());
+                files.put(name, zip.readAllBytes());
             }
         }
-        if (!seen.equals(FILES)) {
-            throw new NotFetched("the bundle holds " + seen + ", and is to hold " + FILES);
+        if (!files.keySet().equals(FILES)) {
+            throw new NotFetched("the bundle holds " + files.keySet() + ", and is to hold " + FILES);
+        }
+        return files;
+    }
+
+    private static void unpack(byte[] bundle, Path into) throws IOException {
+        for (java.util.Map.Entry<String, byte[]> file : files(bundle).entrySet()) {
+            Files.write(into.resolve(file.getKey()), file.getValue());
         }
         if (!into.resolve(DRIVER).toFile().setExecutable(true, false)) {
             throw new NotFetched("the driver cannot be made executable in " + into);
-        }
-    }
-
-    /** Puts what was unpacked where it is kept, in one move, unless another command already did. */
-    private static void place(Path staging, Path dir, String expected) throws IOException {
-        try {
-            Files.move(staging, dir, StandardCopyOption.ATOMIC_MOVE);
-        } catch (FileAlreadyExistsException | DirectoryNotEmptyException e) {
-            Path bundle = dir.resolve(KEPT);
-            if (!Files.isRegularFile(bundle)
-                    || !Fetching.sha256(Files.readAllBytes(bundle)).equals(expected)
-                    || !unpackedFrom(dir, Files.readAllBytes(bundle))) {
-                throw e;
-            }
-        } catch (AtomicMoveNotSupportedException e) {
-            throw new NotFetched("the cache cannot be written in one move: " + e.getMessage(), e);
         }
     }
 
