@@ -77,6 +77,7 @@ fn surface() -> BTreeSet<String> {
         lines.insert(format!("status {name} = {status}"));
     }
     lines.insert(format!("answers {IMPLEMENTATION_ANSWERS:?}"));
+    lines.insert(format!("reserved {RESERVED:?}"));
     for word in HostWord::ALL {
         lines.insert(format!(
             "word {}: {:?}",

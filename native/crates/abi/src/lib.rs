@@ -3680,6 +3680,15 @@ pub type Status = u32;
 /// The pointer holds the answer.
 pub const ANSWERED: Status = 0;
 
+/// The statuses this crate keeps for what no Souther computation answers: the top sixteen numbers
+/// below 2³¹. Every host status and every status only a row brings about is one of these, and
+/// every number a language abort is given is above [`ANSWERED`] and below them.
+///
+/// A status is a `u32`, and the numbers stop at 2³¹ − 1 all the same: a header names each status
+/// as an enumerator, and C gives an enumerator the range of an `int`, so a status past it is one a
+/// header could not name.
+pub const RESERVED: std::ops::RangeInclusive<Status> = 0x7fff_fff0..=0x7fff_ffff;
+
 /// A behavior was called through a requirement it was handed no capability for: the requirements
 /// were null, or the address standing for one of them was.
 ///
@@ -3708,10 +3717,8 @@ pub const INJECTION_PROTOCOL_VIOLATION: Status = 0x7fff_fffe;
 /// is not called a platform failure.
 pub const HOST_EXCEPTION: Status = 0x7fff_ffff;
 
-/// The statuses no Souther computation answers, by the names a host is told them under.
-///
-/// Numbered from the top of what a C `int` holds, which is what a header's enumeration is, so the
-/// numbers a language abort is given, counted up from one, never reach them.
+/// The statuses no Souther computation answers, by the names a host is told them under: each in
+/// [`RESERVED`].
 pub const HOST_STATUSES: &[(&str, Status)] = &[
     ("INJECTION_UNBOUND", INJECTION_UNBOUND),
     ("INJECTION_PROTOCOL_VIOLATION", INJECTION_PROTOCOL_VIOLATION),
@@ -4400,18 +4407,19 @@ mod tests {
     }
 
     /// What a host brings about is told apart by number alone, from `ANSWERED` and from each
-    /// other, and stays inside what a C `int` holds, which is what a header's enumeration is.
+    /// other, and is one of the reserved numbers, which all stay inside what a header's
+    /// enumeration holds.
     #[test]
     fn what_a_host_brings_about_is_a_number_of_its_own() {
+        assert!(i32::try_from(*super::RESERVED.end()).is_ok());
+        assert!(!super::RESERVED.contains(&super::ANSWERED));
         let mut seen = vec![super::ANSWERED];
-        for (name, number) in HOST_STATUSES {
+        for (name, number) in HOST_STATUSES.iter().chain(EXAMPLE_STATUSES) {
             assert!(!seen.contains(number), "{name} answers {number} twice");
-            assert!(i32::try_from(*number).is_ok(), "{name} is past a C int");
-            seen.push(*number);
-        }
-        for (name, number) in EXAMPLE_STATUSES {
-            assert!(!seen.contains(number), "{name} answers {number} twice");
-            assert!(i32::try_from(*number).is_ok(), "{name} is past a C int");
+            assert!(
+                super::RESERVED.contains(number),
+                "{name} is not a reserved number"
+            );
             seen.push(*number);
         }
         assert!(!IMPLEMENTATION_ANSWERS.contains(&INJECTION_UNBOUND));

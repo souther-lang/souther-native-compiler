@@ -259,6 +259,7 @@ host RuntimeFunction { name: "souther_string_length", takes: [Given(String)], an
 host RuntimeFunction { name: "souther_string_of_utf8", takes: [Given(Bytes), Given(Count), Room(String)], answers: Some(Bool) }
 host RuntimeFunction { name: "souther_time_of_parts", takes: [Given(Int), Given(Int), Given(Int), Room(Time)], answers: Some(Bool) }
 host RuntimeFunction { name: "souther_time_parts", takes: [Given(Time), Room(Int), Room(Int), Room(Int)], answers: None }
+reserved 2147483632..=2147483647
 runtime says souther_runtime_abi_9
 scope arena: one to each thread
 scope close-order: the innermost open scope of the calling thread, and no other
