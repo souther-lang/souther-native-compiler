@@ -22,11 +22,12 @@ import java.util.List;
 public final class NativeCompiler {
 
     /**
-     * Where the driver is: the one place it is looked for. A clone names the one Cargo built
-     * ({@code scripts/souther-native} does, and so do the tests), and a released compiler names the one
-     * it fetched and checked. It is not looked for in the directory the command is run in, which a
-     * released compiler is run in the middle of somebody's project, and whose executable it would
-     * then run in place of the one it holds a checksum for.
+     * Where the driver is in a build that is not a release: the one place such a build looks for it.
+     * A clone names the one Cargo built ({@code scripts/souther-native} does, and so do the tests). A
+     * release never reads it, and runs the driver of its own release, verified and unpacked for the
+     * command, as it runs only the generators its checksums name. A driver is never looked for in the
+     * directory the command is run in, which a released compiler is run in the middle of somebody's
+     * project, and whose executable it would then run in place of the one it holds a checksum for.
      */
     public static final String DRIVER_PROPERTY = "souther.native.driver";
 
@@ -42,14 +43,6 @@ public final class NativeCompiler {
     private static final int NOT_LOWERED = 2;
 
     private NativeCompiler() {
-    }
-
-    /**
-     * Whether a driver is named by {@link #DRIVER_PROPERTY}, and by nothing else. Where none is, a
-     * released compiler fetches its own.
-     */
-    public static boolean hasDriver() {
-        return System.getProperty(DRIVER_PROPERTY) != null;
     }
 
     /** The object holding every behavior the program declares. */
@@ -249,11 +242,19 @@ public final class NativeCompiler {
     }
 
     private static Path driver() throws IOException {
+        return namedDriver();
+    }
+
+    /**
+     * The driver {@link #DRIVER_PROPERTY} names, which a build that is not a release runs: the one
+     * its clone built. A release reads no such property, and runs the driver of its own release.
+     */
+    static Path namedDriver() throws IOException {
         String named = System.getProperty(DRIVER_PROPERTY);
         if (named == null) {
-            throw new IOException("no driver is named: " + DRIVER_PROPERTY + " is the one place it is"
-                    + " looked for (a released compiler fetches its own, and scripts/souther-native"
-                    + " names a clone's)");
+            throw new IOException("no driver is named: " + DRIVER_PROPERTY + " is the one place a"
+                    + " build that is not a release looks for one (scripts/souther-native names a"
+                    + " clone's, and a release runs its own)");
         }
         return Path.of(named);
     }

@@ -170,7 +170,14 @@ public final class Main {
     }
 
     static int run(String[] args, PrintStream out, PrintStream problems) {
-        return run(args, out, problems, Fetching.standard());
+        Fetching fetching;
+        try {
+            fetching = Fetching.standard();
+        } catch (NotFetched e) {
+            problems.println(e.getMessage());
+            return WRONG_COMMAND;
+        }
+        return run(args, out, problems, fetching);
     }
 
     static int run(String[] args, PrintStream out, PrintStream problems, Fetching allowed) {
@@ -322,14 +329,17 @@ public final class Main {
     }
 
     /**
-     * The driver a program is handed to: the one {@link NativeCompiler#DRIVER_PROPERTY} names, which a
-     * clone's build names and which is not this command's to delete; or, where none is named, the
-     * bundle of this release for this platform, unpacked for this command and owned by {@code held}.
-     * It is handed to the compiler, and no property is set for it.
+     * The driver a program is handed to. A release runs the bundle of its own release for this
+     * platform, verified and unpacked for this command, which {@code held} owns, and reads no property
+     * naming another: what it runs is what it holds a checksum for, as for its generators. A build that
+     * is not a release has no bundle, and runs the driver its clone built, named by
+     * {@link NativeCompiler#DRIVER_PROPERTY}, which is not this command's to delete.
      */
-    private static Path driver(Holding held, Fetching fetching) throws NotFetched {
-        String named = System.getProperty(NativeCompiler.DRIVER_PROPERTY);
-        return named != null ? Path.of(named) : NativeBundle.unpacked(held, fetching);
+    private static Path driver(Holding held, Fetching fetching) throws IOException {
+        if (fetching.isRelease()) {
+            return NativeBundle.unpacked(held, fetching);
+        }
+        return NativeCompiler.namedDriver();
     }
 
     /**
@@ -338,10 +348,10 @@ public final class Main {
      */
     private static int fetched(PrintStream out, PrintStream problems, Fetching fetching) {
         try {
-            if (NativeCompiler.hasDriver()) {
-                out.println("the driver is this build's own");
-            } else {
+            if (fetching.isRelease()) {
                 out.println("the driver " + NativeBundle.kept(fetching));
+            } else {
+                out.println("the driver is this build's own, " + NativeCompiler.namedDriver());
             }
             for (KnownBindings.Kind kind : KnownBindings.all()) {
                 GeneratorSpec spec = GeneratorSpec.standard(kind, fetching);

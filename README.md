@@ -103,9 +103,10 @@ by `-Dsouther.maven.repository`.
 A build from a clone has no release to fetch from, and does not try: it uses the driver Cargo built,
 which `scripts/souther-native` names by `-Dsouther.native.driver`, and the jars of the generators the
 same build made, which it names by `-Dsouther.generator.<id>` and the command loads as it loads any
-generator's jar. That property is the one place a driver is looked for; a compiler does not look in the
-directory it is run in, where a project of somebody else's could have an executable of the same
-name. In a clone:
+generator's jar. That property is the one place such a build looks for a driver, and a release never
+reads it, as it reads no property naming a generator: a release runs only what its checksums name. A
+compiler does not look in the directory it is run in, where a project of somebody else's could have
+an executable of the same name. In a clone:
 
     scripts/souther-native --library build/native --php build/php --namespace Acme\Shop model
 

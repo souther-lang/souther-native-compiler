@@ -38,22 +38,40 @@ record Fetching(Path cache, boolean offline, URI maven, URI releases, @Nullable 
     static final String RELEASES_PROPERTY = "souther.releases";
     static final String HOME_VARIABLE = "SOUTHER_HOME";
 
+    /**
+     * A release is the compiler and the API it was built with, of one version, and nothing is made of
+     * one that is not: an API of another release on the class path beside it, which a build resolving
+     * versions can put there, is refused here, before the command does anything, whichever way it then
+     * goes.
+     */
     Fetching {
         checksums = Map.copyOf(checksums);
+        if (Release.is(version) && !version.equals(api)) {
+            throw new IllegalArgumentException("souther-native-compiler " + version
+                    + " runs with souther-bindings-api " + (api == null ? "of no release" : api)
+                    + ": the two are to be of one release");
+        }
     }
 
-    /** As the environment says: the cache in {@code $SOUTHER_HOME} or {@code ~/.souther}. */
-    static Fetching standard() {
+    /**
+     * As the environment says: the cache in {@code $SOUTHER_HOME} or {@code ~/.souther}; refused where
+     * the compiler and the API beside it are not of one release.
+     */
+    static Fetching standard() throws NotFetched {
         String home = System.getenv(HOME_VARIABLE);
         Path cache = home != null && !home.isBlank() ? Path.of(home)
                 : Path.of(System.getProperty("user.home"), ".souther");
-        return new Fetching(cache, false,
-                URI.create(System.getProperty(MAVEN_PROPERTY, "https://repo1.maven.org/maven2")),
-                URI.create(System.getProperty(RELEASES_PROPERTY,
-                        "https://github.com/souther-lang/souther-native-compiler/releases/download")),
-                Main.class.getPackage().getImplementationVersion(),
-                BindingApi.class.getPackage().getImplementationVersion(), ReleaseChecksums.carried(),
-                Downloads.http());
+        try {
+            return new Fetching(cache, false,
+                    URI.create(System.getProperty(MAVEN_PROPERTY, "https://repo1.maven.org/maven2")),
+                    URI.create(System.getProperty(RELEASES_PROPERTY,
+                            "https://github.com/souther-lang/souther-native-compiler/releases/download")),
+                    Main.class.getPackage().getImplementationVersion(),
+                    BindingApi.class.getPackage().getImplementationVersion(),
+                    ReleaseChecksums.carried(), Downloads.http());
+        } catch (IllegalArgumentException mixed) {
+            throw new NotFetched(mixed.getMessage(), mixed);
+        }
     }
 
     Fetching withOffline(boolean offline) {
@@ -69,25 +87,16 @@ record Fetching(Path cache, boolean offline, URI maven, URI releases, @Nullable 
         });
     }
 
-    /**
-     * The release this is, or why it is not one. A release is the compiler and the API it was built
-     * with, of one version: what it fetches is that version's, and an API of another release on the
-     * class path beside it, which a build resolving versions can put there, is refused rather than run
-     * with.
-     */
+    /** The release this is, or why it is not one. */
     String release() throws NotFetched {
         if (!isRelease()) {
             throw new NotFetched("this is not a release" + (version == null ? "" : " (" + version + ")")
                     + ", so there is nothing published to fetch it from");
         }
-        if (!version.equals(api)) {
-            throw new NotFetched("souther-native-compiler " + version + " runs with souther-bindings-api "
-                    + (api == null ? "of no release" : api) + ": the two are to be of one release");
-        }
         return version;
     }
 
-    /** Whether this is a release, which {@link #release} then holds to its API. */
+    /** Whether this is a release. */
     boolean isRelease() {
         return Release.is(version);
     }

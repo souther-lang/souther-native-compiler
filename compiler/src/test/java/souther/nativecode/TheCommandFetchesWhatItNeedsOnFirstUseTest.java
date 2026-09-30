@@ -82,10 +82,17 @@ class TheCommandFetchesWhatItNeedsOnFirstUseTest {
         }
 
         /** Serves the generator's jar, and answers the checksum the release carries for it. */
-        Map<String, String> serveGenerator() throws IOException {
+        /**
+         * Serves the generator's jar, and the bundle of the driver this build made as the release's,
+         * and answers the checksums the release carries for them: a release runs its own driver and
+         * no other, so a release a test builds with is one whose driver it fetches.
+         */
+        Map<String, String> serveGenerator() throws Exception {
             byte[] jar = jar();
             files.put(JAR, jar);
-            return Map.of(ReleaseChecksums.generator("php"), Fetching.sha256(jar));
+            files.put(bundleAt(), BUILT.bundle());
+            return Map.of(ReleaseChecksums.generator("php"), Fetching.sha256(jar),
+                    ReleaseChecksums.bundle(NativeBundle.platform()), BUILT.sha256());
         }
 
         @Override
@@ -130,8 +137,9 @@ class TheCommandFetchesWhatItNeedsOnFirstUseTest {
             assertThat(into.resolve("first/out/fetched.txt")).exists();
             assertThat(second.ended()).as(second.said()).isZero();
             assertThat(into.resolve("second/out/fetched.txt")).exists();
-            assertThat(served.asked).as("the jar is asked for once, and nothing beside it")
-                    .containsOnlyKeys(JAR).containsEntry(JAR, 1);
+            assertThat(served.asked).as("the jar and the driver are asked for once, and nothing beside")
+                    .containsOnlyKeys(JAR, bundleAt()).containsEntry(JAR, 1)
+                    .containsEntry(bundleAt(), 1);
             assertThat(kept(into, "php", checksums.get(ReleaseChecksums.generator("php"))))
                     .as("kept under its coordinate and its digest").exists();
         }
@@ -275,7 +283,8 @@ class TheCommandFetchesWhatItNeedsOnFirstUseTest {
             Ran ran = run(fetching(served, into.resolve("cache"), VERSION, checksums), "--fetch");
 
             assertThat(ran.ended()).as(ran.said()).isZero();
-            assertThat(ran.printed()).contains("the driver is this build's own")
+            assertThat(ran.printed()).as("a release keeps its own driver, whatever is named")
+                    .contains("the driver " + keptBundle(into)).doesNotContain("this build's own")
                     .contains("the PHP generator").contains("the Rust generator")
                     .contains("the Go generator");
             for (String id : List.of("php", "rust", "go")) {
@@ -424,7 +433,8 @@ class TheCommandFetchesWhatItNeedsOnFirstUseTest {
             assertThat(decoy.toFile().setExecutable(true)).isTrue();
             System.clearProperty(NativeCompiler.DRIVER_PROPERTY);
             try {
-                assertThat(NativeCompiler.hasDriver()).as("nothing names a driver").isFalse();
+                assertThat(System.getProperty(NativeCompiler.DRIVER_PROPERTY))
+                        .as("nothing names a driver").isNull();
 
                 Ran ran = run(fetching, "--fetch");
 
@@ -492,11 +502,7 @@ class TheCommandFetchesWhatItNeedsOnFirstUseTest {
     void fetchKeepsWhatIsFetchedAndMakesNothingToRun(@TempDir Path into) throws Exception {
         String named = System.getProperty(NativeCompiler.DRIVER_PROPERTY);
         try (Served served = new Served()) {
-            byte[] bundle = bundle(Map.of(NativeBundle.DRIVER, "#!/bin/sh\n",
-                    NativeBundle.ARCHIVE, "archive", NativeBundle.REQUIREMENTS, "-lm\n"));
-            served.files.put(bundleAt(), bundle);
             Map<String, String> checksums = new java.util.HashMap<>(served.serveGenerator());
-            checksums.put(ReleaseChecksums.bundle(NativeBundle.platform()), Fetching.sha256(bundle));
             for (String id : List.of("rust", "go")) {
                 byte[] jar = bytes("a jar of " + id);
                 served.files.put("/maven/org/souther-lang/souther-binding-" + id + "/" + VERSION
@@ -574,27 +580,58 @@ class TheCommandFetchesWhatItNeedsOnFirstUseTest {
     }
 
     /**
-     * A release is its compiler and the API it was built with, of one version: an API of another
-     * release beside it, which a build resolving versions can put there, is refused before anything is
-     * fetched; and the testkit's release asks for its own release's driver, which a compiler of
-     * another refuses.
+     * A release is its compiler and the API it was built with, of one version, and a command of one
+     * that is not is not made at all: whatever it goes on to do, a program built with a driver named
+     * or a binding of someone else's alone, it never reaches a step that could forget to ask. The
+     * testkit's release asks for its own release's driver, which a compiler of another refuses.
      */
     @Test
-    void aReleaseRunsOnlyWithTheApiAndTestkitOfItsOwnRelease(@TempDir Path into) throws Exception {
-        try (Served served = new Served()) {
-            Map<String, String> checksums = served.serveGenerator();
-            Fetching mixed = new Fetching(into.resolve("cache"), false, served.at("/maven"),
-                    served.at("/releases"), VERSION, "1.2.2", checksums, Downloads.http());
-
-            Ran ran = build(into, "built", mixed);
-
-            assertThat(ran.ended()).isEqualTo(2);
-            assertThat(ran.said()).contains("souther-bindings-api 1.2.2")
-                    .contains("of one release");
-            assertThat(served.asked).isEmpty();
-        }
+    void aReleaseIsOneWithItsApiAndTestkitOrIsNotMade(@TempDir Path into) {
+        assertThatThrownBy(() -> new Fetching(into.resolve("cache"), false,
+                URI.create("http://127.0.0.1:9/maven"), URI.create("http://127.0.0.1:9/releases"),
+                VERSION, "1.2.2", Map.of(), Downloads.http()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("souther-bindings-api 1.2.2").hasMessageContaining("of one release");
+        assertThatThrownBy(() -> new Fetching(into.resolve("cache"), false,
+                URI.create("http://127.0.0.1:9/maven"), URI.create("http://127.0.0.1:9/releases"),
+                VERSION, null, Map.of(), Downloads.http()))
+                .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> NativeCompiler.releasedDriver("9.9.9"))
                 .isInstanceOf(NotFetched.class).hasMessageContaining("of one release");
+    }
+
+    /**
+     * A release runs the driver of its own release and reads no property naming another, as it runs
+     * only the generators its checksums name: a program built by a release with a driver named beside
+     * it is built by the one it fetched and checked, and the one named never runs.
+     */
+    @Test
+    void aReleaseRunsItsOwnDriverWhateverIsNamed(@TempDir Path into) throws Exception {
+        String named = System.getProperty(NativeCompiler.DRIVER_PROPERTY);
+        Path decoy = into.resolve("decoy");
+        Path ran = into.resolve("the decoy ran");
+        Files.writeString(decoy, "#!/bin/sh\ntouch '" + ran + "'\nexit 1\n");
+        assertThat(decoy.toFile().setExecutable(true)).isTrue();
+        try (Served served = new Served()) {
+            Map<String, String> checksums = served.serveGenerator();
+            Fetching fetching = fetching(served, into.resolve("cache"), VERSION, checksums);
+            Path model = Files.createDirectories(into.resolve("model"));
+            Files.writeString(model.resolve("money.sou"), MONEY, StandardCharsets.UTF_8);
+            System.setProperty(NativeCompiler.DRIVER_PROPERTY, decoy.toString());
+
+            Ran object = run(fetching, "-o", into.resolve("money.o").toString(), model.toString());
+
+            assertThat(object.ended()).as(object.said()).isZero();
+            assertThat(into.resolve("money.o")).isNotEmptyFile();
+            assertThat(ran).as("the driver named beside a release").doesNotExist();
+            assertThat(served.asked).containsEntry(bundleAt(), 1);
+        } finally {
+            if (named == null) {
+                System.clearProperty(NativeCompiler.DRIVER_PROPERTY);
+            } else {
+                System.setProperty(NativeCompiler.DRIVER_PROPERTY, named);
+            }
+        }
     }
 
     private static List<Path> copies(Path temporary) throws IOException {
@@ -689,6 +726,30 @@ class TheCommandFetchesWhatItNeedsOnFirstUseTest {
             }
         }
         return out.toByteArray();
+    }
+
+    /** The driver this build made, bundled as a release bundles it, once for every test here. */
+    private static final Bundled BUILT = new Bundled();
+
+    private static final class Bundled {
+        private byte[] bundle;
+
+        synchronized byte[] bundle() throws IOException {
+            if (bundle == null) {
+                Map<String, byte[]> files = new LinkedHashMap<>();
+                for (String name : List.of(NativeBundle.DRIVER, NativeBundle.ARCHIVE,
+                        NativeBundle.REQUIREMENTS)) {
+                    files.put(name, Files.readAllBytes(
+                            Repository.file("native", "target", "debug", name)));
+                }
+                bundle = zip(files);
+            }
+            return bundle;
+        }
+
+        String sha256() throws IOException {
+            return Fetching.sha256(bundle());
+        }
     }
 
     /** A jar of the generator a test serves, found the way a real one is: through its service file. */
