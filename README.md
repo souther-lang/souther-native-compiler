@@ -432,11 +432,12 @@ that is a sum counts as its own cases, since a value of it is one of them. It is
 not the union's, which has no name to be spelt under.
 
 How a value crosses is decided once, as the shape it crosses in, and the manifest says that shape
-beside every function that hands one across. An `Int` crosses as 64 bits, a `Bool` as a byte, and
-text and a value of a declared type or of a union as an address. A `Decimal` crosses as an address
-of type `souther_decimal`, which a host makes through `souther_decimal_of_parts`, handing its
-integer as integer text in bytes and its scale, and reads back through `souther_decimal_unscaled`
-and `souther_decimal_scale`: the two numbers the language says a `Decimal` is, and not its text,
+beside every function that hands one across. An `Int` crosses as 64 bits, a `Bool` as a byte
+without a sign, and text and a value of a declared type or of a union as an address. The library
+answers a `Bool` as nought or one, and reads any byte but nought a host hands it as true. A
+`Decimal` crosses as an address of type `souther_decimal`, which a host makes through
+`souther_decimal_of_parts`, handing its integer as integer text in bytes and its scale, and reads
+back through `souther_decimal_unscaled` and `souther_decimal_scale`: the two numbers the language says a `Decimal` is, and not its text,
 which would be one spelling among several. A `Date`, a `Time`, a `DateTime` and an `Instant` cross
 each as an address of a type of its own (`souther_date`, `souther_time`, `souther_datetime` and
 `souther_instant`), which a host makes of the numbers the value means, each an `int64_t`

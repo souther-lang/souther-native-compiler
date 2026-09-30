@@ -22,7 +22,7 @@
 use crate::collection::{Hash, souther_hash_combine};
 use crate::external::{Form, handed};
 use crate::kernels::answered;
-use crate::{Comparison, Count, souther_alloc};
+use crate::{Bool, Comparison, Count, souther_alloc};
 use souther_native_abi::{
     DATE_DAYS, DATE_TIME_SECONDS, HASH_START, INSTANT_SECONDS, SECONDS_PER_DAY, SLOT,
 };
@@ -556,7 +556,7 @@ pub unsafe extern "C" fn souther_date_of_parts(
     month: i64,
     date: i64,
     out: *mut *mut Date,
-) -> i8 {
+) -> Bool {
     unsafe { answered(civil_day(year, month, date).map(date_of), out) }
 }
 
@@ -588,7 +588,7 @@ pub unsafe extern "C" fn souther_time_of_parts(
     minute: i64,
     second: i64,
     out: *mut *mut Time,
-) -> i8 {
+) -> Bool {
     unsafe { answered(clock_second(hour, minute, second).map(time_of), out) }
 }
 
@@ -629,7 +629,7 @@ pub unsafe extern "C" fn souther_datetime_of_parts(
     minute: i64,
     second: i64,
     out: *mut *mut DateTime,
-) -> i8 {
+) -> Bool {
     let named = civil_day(year, month, date)
         .zip(clock_second(hour, minute, second))
         .map(|(day, of_day)| date_time_of(day * SECONDS_PER_DAY + of_day));
@@ -678,7 +678,7 @@ pub unsafe extern "C" fn souther_instant_of_parts(
     second: i64,
     nano: i64,
     out: *mut *mut Instant,
-) -> i8 {
+) -> Bool {
     let named = (INSTANT_SECONDS.contains(&second) && (0..1_000_000_000).contains(&nano))
         .then(|| instant_of(second, nano));
     unsafe { answered(named, out) }
@@ -861,7 +861,7 @@ pub unsafe extern "C" fn souther_date_add_days(
     days: i64,
     of: *const Date,
     out: *mut *mut Date,
-) -> i8 {
+) -> Bool {
     let shifted = unsafe { day(of) }
         .checked_add(days)
         .filter(|it| (MIN_DAY..=MAX_DAY).contains(it));
@@ -878,7 +878,7 @@ pub unsafe extern "C" fn souther_date_add_months(
     months: i64,
     of: *const Date,
     out: *mut *mut Date,
-) -> i8 {
+) -> Bool {
     let (year, month, date) = civil_from_days(unsafe { day(of) });
     let shifted = (year * 12 + month - 1)
         .checked_add(months)
@@ -902,7 +902,7 @@ pub unsafe extern "C" fn souther_date_add_years(
     years: i64,
     of: *const Date,
     out: *mut *mut Date,
-) -> i8 {
+) -> Bool {
     let (year, month, date) = civil_from_days(unsafe { day(of) });
     let shifted = year
         .checked_add(years)
@@ -964,7 +964,7 @@ pub unsafe extern "C" fn souther_date_from_parts(
     month: i64,
     date: i64,
     out: *mut *mut Date,
-) -> i8 {
+) -> Bool {
     unsafe { answered(civil_day(year, month, date).map(date_of), out) }
 }
 
@@ -980,7 +980,7 @@ pub unsafe extern "C" fn souther_time_from_parts(
     minute: i64,
     second: i64,
     out: *mut *mut Time,
-) -> i8 {
+) -> Bool {
     unsafe { answered(clock_second(hour, minute, second).map(time_of), out) }
 }
 
@@ -1016,7 +1016,7 @@ pub unsafe extern "C" fn souther_time_second(of: *const Time) -> i64 {
 
 /// A shift of a `DateTime` by so many seconds a unit is, written through `out` where what it
 /// shifts to is one a `DateTime` holds.
-unsafe fn shifted(of: *const DateTime, unit: i64, count: i64, out: *mut *mut DateTime) -> i8 {
+unsafe fn shifted(of: *const DateTime, unit: i64, count: i64, out: *mut *mut DateTime) -> Bool {
     let second = count
         .checked_mul(unit)
         .and_then(|seconds| unsafe { local_second(of) }.checked_add(seconds))
@@ -1034,7 +1034,7 @@ pub unsafe extern "C" fn souther_datetime_add_minutes(
     minutes: i64,
     of: *const DateTime,
     out: *mut *mut DateTime,
-) -> i8 {
+) -> Bool {
     unsafe { shifted(of, 60, minutes, out) }
 }
 
@@ -1048,7 +1048,7 @@ pub unsafe extern "C" fn souther_datetime_add_hours(
     hours: i64,
     of: *const DateTime,
     out: *mut *mut DateTime,
-) -> i8 {
+) -> Bool {
     unsafe { shifted(of, 3600, hours, out) }
 }
 
@@ -1062,7 +1062,7 @@ pub unsafe extern "C" fn souther_datetime_add_days(
     days: i64,
     of: *const DateTime,
     out: *mut *mut DateTime,
-) -> i8 {
+) -> Bool {
     unsafe { shifted(of, SECONDS_PER_DAY, days, out) }
 }
 
@@ -1177,41 +1177,65 @@ mod tests {
         let scope = souther_scope_open();
         let mut out = std::ptr::null_mut();
         let jan31 = date_of(days_from_civil(2026, 1, 31));
-        assert_eq!(unsafe { souther_date_add_months(1, jan31, &mut out) }, 1);
+        assert_eq!(
+            unsafe { souther_date_add_months(1, jan31, &mut out) },
+            Bool::TRUE
+        );
         assert_eq!(civil(out), (2026, 2, 28));
-        assert_eq!(unsafe { souther_date_add_months(-13, jan31, &mut out) }, 1);
+        assert_eq!(
+            unsafe { souther_date_add_months(-13, jan31, &mut out) },
+            Bool::TRUE
+        );
         assert_eq!(civil(out), (2024, 12, 31));
         let leap = date_of(days_from_civil(2024, 2, 29));
-        assert_eq!(unsafe { souther_date_add_years(1, leap, &mut out) }, 1);
+        assert_eq!(
+            unsafe { souther_date_add_years(1, leap, &mut out) },
+            Bool::TRUE
+        );
         assert_eq!(civil(out), (2025, 2, 28));
-        assert_eq!(unsafe { souther_date_add_years(4, leap, &mut out) }, 1);
+        assert_eq!(
+            unsafe { souther_date_add_years(4, leap, &mut out) },
+            Bool::TRUE
+        );
         assert_eq!(civil(out), (2028, 2, 29));
         let last = date_of(MAX_DAY);
-        assert_eq!(unsafe { souther_date_add_days(1, last, &mut out) }, 0);
+        assert_eq!(
+            unsafe { souther_date_add_days(1, last, &mut out) },
+            Bool::FALSE
+        );
         assert_eq!(
             unsafe { souther_date_add_days(i64::MAX, last, &mut out) },
-            0
+            Bool::FALSE
         );
-        assert_eq!(unsafe { souther_date_add_months(1, last, &mut out) }, 0);
-        assert_eq!(unsafe { souther_date_add_years(1, last, &mut out) }, 0);
+        assert_eq!(
+            unsafe { souther_date_add_months(1, last, &mut out) },
+            Bool::FALSE
+        );
+        assert_eq!(
+            unsafe { souther_date_add_years(1, last, &mut out) },
+            Bool::FALSE
+        );
         assert_eq!(
             unsafe { souther_date_add_years(i64::MIN, last, &mut out) },
-            0
+            Bool::FALSE
         );
-        assert_eq!(unsafe { souther_date_add_days(-1, last, &mut out) }, 1);
+        assert_eq!(
+            unsafe { souther_date_add_days(-1, last, &mut out) },
+            Bool::TRUE
+        );
         let first = date_time_of(MIN_LOCAL);
         let mut moved = std::ptr::null_mut();
         assert_eq!(
             unsafe { souther_datetime_add_minutes(-1, first, &mut moved) },
-            0
+            Bool::FALSE
         );
         assert_eq!(
             unsafe { souther_datetime_add_hours(i64::MIN, first, &mut moved) },
-            0
+            Bool::FALSE
         );
         assert_eq!(
             unsafe { souther_datetime_add_days(1, first, &mut moved) },
-            1
+            Bool::TRUE
         );
         souther_scope_close(scope);
     }
@@ -1245,7 +1269,7 @@ mod tests {
         let scope = souther_scope_open();
         let mut out = std::ptr::null_mut();
         unsafe {
-            assert_eq!(souther_date_from_parts(2024, 2, 29, &mut out), 1);
+            assert_eq!(souther_date_from_parts(2024, 2, 29, &mut out), Bool::TRUE);
             assert_eq!(
                 (
                     souther_date_year(out),
@@ -1264,10 +1288,13 @@ mod tests {
                 (i64::MAX, 1, 1),
                 (2026, i64::MAX, 1),
             ] {
-                assert_eq!(souther_date_from_parts(year, month, date, &mut out), 0);
+                assert_eq!(
+                    souther_date_from_parts(year, month, date, &mut out),
+                    Bool::FALSE
+                );
             }
             let mut time = std::ptr::null_mut();
-            assert_eq!(souther_time_from_parts(23, 59, 59, &mut time), 1);
+            assert_eq!(souther_time_from_parts(23, 59, 59, &mut time), Bool::TRUE);
             assert_eq!(
                 (
                     souther_time_hour(time),
@@ -1277,7 +1304,10 @@ mod tests {
                 (23, 59, 59)
             );
             for (hour, minute, second) in [(24, 0, 0), (0, 60, 0), (0, 0, 60), (-1, 0, 0)] {
-                assert_eq!(souther_time_from_parts(hour, minute, second, &mut time), 0);
+                assert_eq!(
+                    souther_time_from_parts(hour, minute, second, &mut time),
+                    Bool::FALSE
+                );
             }
         }
         souther_scope_close(scope);
@@ -1290,23 +1320,26 @@ mod tests {
         let scope = souther_scope_open();
         unsafe {
             let mut date = std::ptr::null_mut();
-            assert_eq!(souther_date_of_parts(2026, 7, 25, &mut date), 1);
+            assert_eq!(souther_date_of_parts(2026, 7, 25, &mut date), Bool::TRUE);
             assert_eq!(civil(date), (2026, 7, 25));
             for (year, month, day) in [(2026, 2, 30), (2026, -1, 1), (MAX_YEAR + 1, 1, 1)] {
-                assert_eq!(souther_date_of_parts(year, month, day, &mut date), 0);
+                assert_eq!(
+                    souther_date_of_parts(year, month, day, &mut date),
+                    Bool::FALSE
+                );
             }
 
             let mut time = std::ptr::null_mut();
-            assert_eq!(souther_time_of_parts(9, 30, 5, &mut time), 1);
+            assert_eq!(souther_time_of_parts(9, 30, 5, &mut time), Bool::TRUE);
             let (mut hour, mut minute, mut second) = (0, 0, 0);
             souther_time_parts(time, &mut hour, &mut minute, &mut second);
             assert_eq!((hour, minute, second), (9, 30, 5));
-            assert_eq!(souther_time_of_parts(24, 0, 0, &mut time), 0);
+            assert_eq!(souther_time_of_parts(24, 0, 0, &mut time), Bool::FALSE);
 
             let mut local = std::ptr::null_mut();
             assert_eq!(
                 souther_datetime_of_parts(-1, 12, 31, 23, 59, 59, &mut local),
-                1
+                Bool::TRUE
             );
             let mut parts = [0; 6];
             let [y, m, d, h, mi, s] = &mut parts;
@@ -1314,26 +1347,32 @@ mod tests {
             assert_eq!(parts, [-1, 12, 31, 23, 59, 59]);
             assert_eq!(
                 souther_datetime_of_parts(2026, 7, 25, 9, 60, 0, &mut local),
-                0
+                Bool::FALSE
             );
             assert_eq!(
                 souther_datetime_of_parts(MIN_YEAR, 1, 1, 0, 0, 0, &mut local),
-                1
+                Bool::TRUE
             );
             assert_eq!(local_second(local), MIN_LOCAL);
             assert_eq!(
                 souther_datetime_of_parts(MAX_YEAR, 12, 31, 23, 59, 59, &mut local),
-                1
+                Bool::TRUE
             );
             assert_eq!(local_second(local), MAX_LOCAL);
 
             let mut instant = std::ptr::null_mut();
             let mut together = std::ptr::null_mut();
-            assert_eq!(souther_instant_of_parts(-1, 999_999_999, &mut instant), 1);
+            assert_eq!(
+                souther_instant_of_parts(-1, 999_999_999, &mut instant),
+                Bool::TRUE
+            );
             let (mut s, mut n) = (0, 0);
             souther_instant_parts(instant, &mut s, &mut n);
             assert_eq!((s, n), (-1, 999_999_999));
-            assert_eq!(souther_instant_of_parts(-1, 999_999_999, &mut together), 1);
+            assert_eq!(
+                souther_instant_of_parts(-1, 999_999_999, &mut together),
+                Bool::TRUE
+            );
             assert_eq!(souther_instant_compare(instant, together), Comparison(0));
             for (second, nano) in [
                 (0, -1),
@@ -1341,11 +1380,14 @@ mod tests {
                 (MIN_MOMENT - 1, 0),
                 (MAX_MOMENT + 1, 0),
             ] {
-                assert_eq!(souther_instant_of_parts(second, nano, &mut instant), 0);
+                assert_eq!(
+                    souther_instant_of_parts(second, nano, &mut instant),
+                    Bool::FALSE
+                );
             }
             assert_eq!(
                 souther_instant_of_parts(MAX_MOMENT, 999_999_999, &mut instant),
-                1
+                Bool::TRUE
             );
         }
         souther_scope_close(scope);

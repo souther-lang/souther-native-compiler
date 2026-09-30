@@ -1583,7 +1583,7 @@ pub const HOST_INPUT_CONTRACT: &[(&str, &str)] = &[
         "read for as many as the count says where the count is above nought; a count below \
          nought is a datum refused, and what the bytes say is a datum",
     ),
-    ("bool", "a byte, true where it is not nought"),
+    ("bool", "a byte without a sign, true where it is not nought"),
     (
         "handle",
         "one the library answered, of the type the function names, whose scope is open on the \
@@ -1623,7 +1623,7 @@ pub const SCOPE_CONTRACT: &[(&str, &str)] = &[
 /// A key and a string handed in are strings of that same layout, not NUL-terminated text: a key a
 /// compile writes is a literal in the object, and a string a run worked out is in the arena.
 pub const EXTERNAL_NULL: &str = "souther_external_null";
-/// `(i8) -> form`: any value but 0 is true.
+/// `(bool) -> form`: any value but 0 is true.
 pub const EXTERNAL_BOOL: &str = "souther_external_bool";
 /// `(i64) -> form`.
 pub const EXTERNAL_INT: &str = "souther_external_int";
@@ -1689,9 +1689,9 @@ pub const DECODE_ABANDON: &str = "souther_decode_abandon";
 pub const PATH_BELOW: &str = "souther_path_below";
 /// `(path, i64) -> path`: the place of an array's element, by its index.
 pub const PATH_AT: &str = "souther_path_at";
-/// `(node, path, reading) -> i8`: whether it is an object.
+/// `(node, path, reading) -> bool`: whether it is an object.
 pub const READ_OBJECT: &str = "souther_read_object";
-/// `(node, path, reading) -> i8`: whether it is an array.
+/// `(node, path, reading) -> bool`: whether it is an array.
 pub const READ_ARRAY: &str = "souther_read_array";
 /// `(node) -> i64`: how many elements an array holds, asked of one `READ_ARRAY` said is one.
 pub const READ_ARRAY_LENGTH: &str = "souther_read_array_length";
@@ -1716,77 +1716,77 @@ pub const READ_MEMBER_VALUE: &str = "souther_read_member_value";
 pub const PATH_BELOW_MEMBER: &str = "souther_path_below_member";
 /// `(path, reading)`: two of a map's keys are one key once each is read as the key's type.
 pub const READ_DUPLICATE_KEY: &str = "souther_read_duplicate_key";
-/// `(node) -> i8`: whether it is `null`.
+/// `(node) -> bool`: whether it is `null`.
 pub const READ_NULL: &str = "souther_read_null";
-/// `(node, path, reading, out) -> i8`: an `Int` written through `out`.
+/// `(node, path, reading, out) -> bool`: an `Int` written through `out`.
 ///
 /// A scalar reader writes `out` whatever it answers: the value where it read one, and nought, or
 /// null for text, where it did not and recorded why. So a caller's room holds something the reader
 /// wrote after every call, the same as a type's reader, which writes its value or nothing whenever
 /// it answers `ANSWERED`.
 pub const READ_INT: &str = "souther_read_int";
-/// `(node, path, reading, out) -> i8`: a `Bool` written through `out` as one byte.
+/// `(node, path, reading, out) -> bool`: a `Bool` written through `out` as one byte.
 pub const READ_BOOL: &str = "souther_read_bool";
-/// `(node, path, reading, out) -> i8`: a string of this crate's layout written through `out`.
+/// `(node, path, reading, out) -> bool`: a string of this crate's layout written through `out`.
 pub const READ_STRING: &str = "souther_read_string";
-/// `(node, path, reading, out) -> i8`: a `Decimal` written through `out`, at the scale the number
+/// `(node, path, reading, out) -> bool`: a `Decimal` written through `out`, at the scale the number
 /// was spelt at.
 pub const READ_DECIMAL: &str = "souther_read_decimal";
-/// `(node, path, reading, out) -> i8`: a `Date` written through `out`, where the node is text that
+/// `(node, path, reading, out) -> bool`: a `Date` written through `out`, where the node is text that
 /// names one.
 pub const READ_DATE: &str = "souther_read_date";
-/// `(node, path, reading, out) -> i8`: a `Time`, as [`READ_DATE`].
+/// `(node, path, reading, out) -> bool`: a `Time`, as [`READ_DATE`].
 pub const READ_TIME: &str = "souther_read_time";
-/// `(node, path, reading, out) -> i8`: a `DateTime`, as [`READ_DATE`].
+/// `(node, path, reading, out) -> bool`: a `DateTime`, as [`READ_DATE`].
 pub const READ_DATETIME: &str = "souther_read_datetime";
-/// `(node, path, reading, out) -> i8`: an `Instant`, as [`READ_DATE`], from text written in UTC or
+/// `(node, path, reading, out) -> bool`: an `Instant`, as [`READ_DATE`], from text written in UTC or
 /// with an offset, as the moment it names.
 pub const READ_INSTANT: &str = "souther_read_instant";
-/// `(node, path, reading) -> i8`: whether it is text naming a case.
+/// `(node, path, reading) -> bool`: whether it is text naming a case.
 pub const READ_CASE: &str = "souther_read_case";
 /// `(node, key string, path, reading) -> node`: the text an object names its case with under a
 /// key, null where it names none.
 pub const READ_TAG: &str = "souther_read_tag";
-/// `(node, name string) -> i8`: whether the text is that name.
+/// `(node, name string) -> bool`: whether the text is that name.
 pub const READ_IS: &str = "souther_read_is";
 /// `(node, path, reading)`: the text names no case there is.
 pub const READ_NOT_A_CASE: &str = "souther_read_not_a_case";
 /// `(path, reading, module string, name string, clause string)`: a value read there breaks a
 /// clause, the clause's name null where it has none.
 pub const READ_INVARIANT: &str = "souther_read_invariant";
-/// `(path, reading, string, i64) -> i8`: whether the text holds at least that many characters,
+/// `(path, reading, string, i64) -> bool`: whether the text holds at least that many characters,
 /// having recorded Raoh's `too_short` where it does not.
 pub const READ_MIN_LENGTH: &str = "souther_read_min_length";
-/// `(path, reading, string, i64) -> i8`: at most that many, `too_long`.
+/// `(path, reading, string, i64) -> bool`: at most that many, `too_long`.
 pub const READ_MAX_LENGTH: &str = "souther_read_max_length";
-/// `(path, reading, string, i64) -> i8`: exactly that many, `invalid_length`.
+/// `(path, reading, string, i64) -> bool`: exactly that many, `invalid_length`.
 pub const READ_FIXED_LENGTH: &str = "souther_read_fixed_length";
-/// `(path, reading, string, machine, written string) -> i8`: whether the pattern matches the whole
+/// `(path, reading, string, machine, written string) -> bool`: whether the pattern matches the whole
 /// text, `invalid_format` with the pattern as written.
 pub const READ_PATTERN: &str = "souther_read_pattern";
-/// `(path, reading, i64, i64) -> i8`: at least the bound, `out_of_range.minimum`.
+/// `(path, reading, i64, i64) -> bool`: at least the bound, `out_of_range.minimum`.
 pub const READ_INT_MIN: &str = "souther_read_int_min";
-/// `(path, reading, i64, i64) -> i8`: at most the bound, `out_of_range.maximum`.
+/// `(path, reading, i64, i64) -> bool`: at most the bound, `out_of_range.maximum`.
 pub const READ_INT_MAX: &str = "souther_read_int_max";
-/// `(path, reading, i64) -> i8`: above nought, `out_of_range.positive`.
+/// `(path, reading, i64) -> bool`: above nought, `out_of_range.positive`.
 pub const READ_INT_POSITIVE: &str = "souther_read_int_positive";
-/// `(path, reading, i64) -> i8`: not below nought, `out_of_range.non_negative`.
+/// `(path, reading, i64) -> bool`: not below nought, `out_of_range.non_negative`.
 pub const READ_INT_NON_NEGATIVE: &str = "souther_read_int_non_negative";
-/// `(path, reading, decimal, decimal) -> i8`: at least the bound by amount.
+/// `(path, reading, decimal, decimal) -> bool`: at least the bound by amount.
 pub const READ_DECIMAL_MIN: &str = "souther_read_decimal_min";
-/// `(path, reading, decimal, decimal) -> i8`: at most the bound by amount.
+/// `(path, reading, decimal, decimal) -> bool`: at most the bound by amount.
 pub const READ_DECIMAL_MAX: &str = "souther_read_decimal_max";
-/// `(path, reading, decimal) -> i8`: above nought.
+/// `(path, reading, decimal) -> bool`: above nought.
 pub const READ_DECIMAL_POSITIVE: &str = "souther_read_decimal_positive";
-/// `(path, reading, decimal) -> i8`: not below nought.
+/// `(path, reading, decimal) -> bool`: not below nought.
 pub const READ_DECIMAL_NON_NEGATIVE: &str = "souther_read_decimal_non_negative";
-/// `(path, reading, list) -> i8`: one element or more, `too_small.nonempty`.
+/// `(path, reading, list) -> bool`: one element or more, `too_small.nonempty`.
 pub const READ_LIST_NON_EMPTY: &str = "souther_read_list_non_empty";
-/// `(path, reading, list, i64) -> i8`: at least that many elements, `too_small`.
+/// `(path, reading, list, i64) -> bool`: at least that many elements, `too_small`.
 pub const READ_LIST_MIN_SIZE: &str = "souther_read_list_min_size";
-/// `(path, reading, list, i64) -> i8`: at most that many, `too_big`.
+/// `(path, reading, list, i64) -> bool`: at most that many, `too_big`.
 pub const READ_LIST_MAX_SIZE: &str = "souther_read_list_max_size";
-/// `(path, reading, list, i64) -> i8`: exactly that many, `invalid_size`.
+/// `(path, reading, list, i64) -> bool`: exactly that many, `invalid_size`.
 pub const READ_LIST_FIXED_SIZE: &str = "souther_read_list_fixed_size";
 /// `(list, hasher, equality) -> list`: the elements the list holds more than once, each once, in
 /// the order their repetition was found.
@@ -1794,11 +1794,11 @@ pub const LIST_DUPLICATES: &str = "souther_list_duplicates";
 /// `(path, reading, form)`: a list held no element twice and does, `duplicate_element` with the
 /// form of the elements it repeats, which it takes.
 pub const READ_DUPLICATES: &str = "souther_read_duplicates";
-/// `(path, reading, map) -> i8`: one entry or more, `too_small.nonempty`.
+/// `(path, reading, map) -> bool`: one entry or more, `too_small.nonempty`.
 pub const READ_MAP_NON_EMPTY: &str = "souther_read_map_non_empty";
-/// `(path, reading, map, i64) -> i8`: at least that many entries, `too_small`.
+/// `(path, reading, map, i64) -> bool`: at least that many entries, `too_small`.
 pub const READ_MAP_MIN_SIZE: &str = "souther_read_map_min_size";
-/// `(path, reading, map, i64) -> i8`: at most that many, `too_big`.
+/// `(path, reading, map, i64) -> bool`: at most that many, `too_big`.
 pub const READ_MAP_MAX_SIZE: &str = "souther_read_map_max_size";
 
 /// What a host asks a reading once a decoder has answered it. `(reading) -> i32`, one of the three
@@ -1848,7 +1848,8 @@ pub enum HostWord {
     Status,
     /// An `Int`: sixty-four bits, signed.
     Int,
-    /// A `Bool`, or whether an optional holds a value: one byte, nought or one.
+    /// A `Bool`, or whether an optional holds a value: one byte without a sign, which the library
+    /// answers as nought or one and reads as true wherever it is not nought.
     Bool,
     /// Which of a sum's cases a value is, as its place among them.
     Case,
@@ -1910,8 +1911,8 @@ pub enum HostWord {
 /// here, which the record of a generation holds.
 ///
 /// Unsigned and signed are said apart though a machine integer has no sign, because a host's
-/// language does: a `Bool` is a byte a host reads as nought or one, and an `Outcome` a number a
-/// host may be handed below nought.
+/// language does: a `Bool` is a byte a host may hand over as any of its values, and an `Outcome` a
+/// number a host may be handed below nought.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Representation {
     /// Eight bits, read without a sign.
@@ -2103,7 +2104,7 @@ impl HostLeaf {
 pub enum HostShape {
     /// One word that is the value itself.
     Leaf(HostLeaf),
-    /// An optional: whether there is a value, as a [`HostWord::Bool`] that is nought or one, and
+    /// An optional: whether there is a value, as a [`HostWord::Bool`], and
     /// then the words of the value, which are read only where there is one and written only where
     /// there is one. Each optional says so of itself, so an optional of an optional is two
     /// presences, and absence at one depth is not absence at another.

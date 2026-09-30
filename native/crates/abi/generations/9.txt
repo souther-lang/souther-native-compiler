@@ -259,7 +259,7 @@ host RuntimeFunction { name: "souther_string_length", takes: [Given(String)], an
 host RuntimeFunction { name: "souther_string_of_utf8", takes: [Given(Bytes), Given(Count), Room(String)], answers: Some(Bool) }
 host RuntimeFunction { name: "souther_time_of_parts", takes: [Given(Int), Given(Int), Given(Int), Room(Time)], answers: Some(Bool) }
 host RuntimeFunction { name: "souther_time_parts", takes: [Given(Time), Room(Int), Room(Int), Room(Int)], answers: None }
-input bool: a byte, true where it is not nought
+input bool: a byte without a sign, true where it is not nought
 input bytes: read for as many as the count says where the count is above nought; a count below nought is a datum refused, and what the bytes say is a datum
 input datum: answered whatever it is; one a function does not take is refused by what it answers, and ends nothing
 input handle: one the library answered, of the type the function names, whose scope is open on the calling thread

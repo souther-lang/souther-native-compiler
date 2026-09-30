@@ -22,7 +22,7 @@ use crate::amount::{Amount, Rounding};
 use crate::collection::{Hash, hash_of_parts};
 use crate::external::Form;
 use crate::kernels::answered;
-use crate::{Comparison, Count, Text, Value, souther_alloc, string_of, text};
+use crate::{Bool, Comparison, Count, Text, Value, souther_alloc, string_of, text};
 use souther_native_abi::{SLOT, WHICH};
 use std::ptr;
 
@@ -173,7 +173,7 @@ pub unsafe extern "C" fn souther_decimal_of_parts(
     length: Count,
     scale: i64,
     out: *mut *mut Decimal,
-) -> i8 {
+) -> Bool {
     let named = usize::try_from(length.0).ok().and_then(|held| {
         let bytes = if held == 0 {
             &[][..]
@@ -263,8 +263,8 @@ pub unsafe extern "C" fn souther_decimal_hash(at: *const Decimal) -> Hash {
 ///
 /// As [`souther_decimal_unscaled`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_decimal_is_zero(at: *const Decimal) -> i8 {
-    i8::from(unsafe { amount(at) }.is_zero())
+pub unsafe extern "C" fn souther_decimal_is_zero(at: *const Decimal) -> Bool {
+    Bool::from(unsafe { amount(at) }.is_zero())
 }
 
 /// The unary `-`.
@@ -287,7 +287,7 @@ pub unsafe extern "C" fn souther_decimal_add(
     left: *const Decimal,
     right: *const Decimal,
     out: *mut *mut Decimal,
-) -> i8 {
+) -> Bool {
     let sum = unsafe { amount(left).add(&amount(right)) };
     unsafe { answered(sum.as_ref().map(decimal_of), out) }
 }
@@ -302,7 +302,7 @@ pub unsafe extern "C" fn souther_decimal_subtract(
     left: *const Decimal,
     right: *const Decimal,
     out: *mut *mut Decimal,
-) -> i8 {
+) -> Bool {
     let difference = unsafe { amount(left).subtract(&amount(right)) };
     unsafe { answered(difference.as_ref().map(decimal_of), out) }
 }
@@ -317,7 +317,7 @@ pub unsafe extern "C" fn souther_decimal_multiply(
     left: *const Decimal,
     right: *const Decimal,
     out: *mut *mut Decimal,
-) -> i8 {
+) -> Bool {
     let product = unsafe { amount(left).multiply(&amount(right)) };
     unsafe { answered(product.as_ref().map(decimal_of), out) }
 }
@@ -339,7 +339,7 @@ pub unsafe extern "C" fn souther_decimal_to_int(
     mode: *const Value,
     at: *const Decimal,
     out: *mut i64,
-) -> i8 {
+) -> Bool {
     let whole = unsafe { amount(at).to_int(rounding(mode)) };
     unsafe { answered(whole, out) }
 }
@@ -356,7 +356,7 @@ pub unsafe extern "C" fn souther_decimal_round(
     mode: *const Value,
     at: *const Decimal,
     out: *mut *mut Decimal,
-) -> i8 {
+) -> Bool {
     let rounded = unsafe { amount(at).round(scale, rounding(mode)) };
     unsafe { answered(rounded.as_ref().map(decimal_of), out) }
 }
@@ -375,7 +375,7 @@ pub unsafe extern "C" fn souther_decimal_divide(
     scale: i64,
     mode: *const Value,
     out: *mut *mut Decimal,
-) -> i8 {
+) -> Bool {
     let quotient = unsafe { amount(dividend).divide(&amount(divisor), scale, rounding(mode)) };
     unsafe { answered(quotient.as_ref().map(decimal_of), out) }
 }
@@ -386,7 +386,7 @@ pub unsafe extern "C" fn souther_decimal_divide(
 ///
 /// As [`crate::souther_string_compare`], and `out` is room for the address of a `Decimal`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_string_to_decimal(s: *const Text, out: *mut *mut Decimal) -> i8 {
+pub unsafe extern "C" fn souther_string_to_decimal(s: *const Text, out: *mut *mut Decimal) -> Bool {
     let read = souther_text::decimal_text(unsafe { text(&s) }).map(Amount::of_decimal_text);
     unsafe { answered(read.as_ref().map(decimal_of), out) }
 }
@@ -402,7 +402,7 @@ pub unsafe extern "C" fn souther_string_to_decimal(s: *const Text, out: *mut *mu
 pub unsafe extern "C" fn souther_string_from_decimal(
     at: *const Decimal,
     out: *mut *mut Text,
-) -> i8 {
+) -> Bool {
     let written = unsafe { amount(at) }.plain_text();
     unsafe { answered(written.as_deref().map(string_of), out) }
 }
@@ -428,7 +428,7 @@ mod tests {
         let mut out = std::ptr::null_mut();
         let admitted =
             unsafe { souther_string_of_utf8(text.as_ptr(), Count(text.len() as i64), &mut out) };
-        assert_eq!(admitted, 1, "test text has a place");
+        assert_eq!(admitted, Bool::TRUE, "test text has a place");
         out
     }
 
@@ -446,7 +446,7 @@ mod tests {
                 &mut out,
             )
         };
-        assert_eq!(made, 1, "{unscaled} at {scale} names a Decimal");
+        assert_eq!(made, Bool::TRUE, "{unscaled} at {scale} names a Decimal");
         out
     }
 
@@ -509,7 +509,7 @@ mod tests {
         ] {
             assert_eq!(
                 unsafe { souther_decimal_to_int(mode(token), value, &mut whole) },
-                1
+                Bool::TRUE
             );
             assert_eq!(whole, answer);
         }
@@ -522,16 +522,19 @@ mod tests {
         let scope = souther_scope_open();
         let mut out: *mut Decimal = ptr::null_mut();
         let tiny = of("1", 2147483647);
-        assert_eq!(unsafe { souther_decimal_multiply(tiny, tiny, &mut out) }, 0);
+        assert_eq!(
+            unsafe { souther_decimal_multiply(tiny, tiny, &mut out) },
+            Bool::FALSE
+        );
         assert!(out.is_null());
         assert_eq!(
             unsafe { souther_decimal_round(2147483648, mode(&UP), tiny, &mut out) },
-            0
+            Bool::FALSE
         );
         assert!(out.is_null());
         assert_eq!(
             unsafe { souther_string_to_decimal(made("1e5"), &mut out) },
-            0
+            Bool::FALSE
         );
         assert!(out.is_null());
         souther_scope_close(scope);
@@ -543,12 +546,12 @@ mod tests {
         let mut out: *mut Decimal = ptr::null_mut();
         assert_eq!(
             unsafe { souther_decimal_add(of("15", 1), of("225", 2), &mut out) },
-            1
+            Bool::TRUE
         );
         assert_eq!(parts(out), ("375".to_string(), 2));
         assert_eq!(
             unsafe { souther_decimal_divide(of("10", 0), of("3", 0), 2, mode(&HALF_UP), &mut out) },
-            1
+            Bool::TRUE
         );
         assert_eq!(parts(out), ("333".to_string(), 2));
         assert_eq!(
@@ -567,17 +570,17 @@ mod tests {
             unsafe { souther_decimal_compare(of("-1", 0), of("0", 3)) }.0,
             -1
         );
-        assert_eq!(unsafe { souther_decimal_is_zero(of("0", 9)) }, 1);
-        assert_eq!(unsafe { souther_decimal_is_zero(of("1", 9)) }, 0);
+        assert_eq!(unsafe { souther_decimal_is_zero(of("0", 9)) }, Bool::TRUE);
+        assert_eq!(unsafe { souther_decimal_is_zero(of("1", 9)) }, Bool::FALSE);
         assert_eq!(
             unsafe { souther_string_to_decimal(made("001.50"), &mut out) },
-            1
+            Bool::TRUE
         );
         assert_eq!(parts(out), ("150".to_string(), 2));
         let mut text = std::ptr::null_mut();
         assert_eq!(
             unsafe { souther_string_from_decimal(of("100000", 3), &mut text) },
-            1
+            Bool::TRUE
         );
         assert_eq!(said(text), "100.000");
         souther_scope_close(scope);
@@ -592,13 +595,13 @@ mod tests {
         for scale in [1_500_000_000, -1_500_000_000] {
             assert_eq!(
                 unsafe { souther_string_from_decimal(of("1", scale), &mut text) },
-                0,
+                Bool::FALSE,
                 "{scale}"
             );
         }
         assert_eq!(
             unsafe { souther_string_from_decimal(of("1", -3), &mut text) },
-            1
+            Bool::TRUE
         );
         assert_eq!(said(text), "1000");
         souther_scope_close(scope);
@@ -654,16 +657,16 @@ mod tests {
                     &mut out,
                 )
             };
-            assert_eq!(made, 0, "{unscaled:?} at {scale}");
+            assert_eq!(made, Bool::FALSE, "{unscaled:?} at {scale}");
         }
         let invalid = [0xff_u8, b'1'];
         assert_eq!(
             unsafe { souther_decimal_of_parts(invalid.as_ptr(), Count(2), 0, &mut out) },
-            0
+            Bool::FALSE
         );
         assert_eq!(
             unsafe { souther_decimal_of_parts(invalid.as_ptr(), Count(-1), 0, &mut out) },
-            0
+            Bool::FALSE
         );
         assert_eq!(parts(of("-120", 2)), (String::from("-120"), 2));
         souther_scope_close(scope);

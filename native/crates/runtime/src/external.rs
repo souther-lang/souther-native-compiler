@@ -7,6 +7,7 @@
 //! in `souther-native-abi`.
 
 use super::{Text, string_of, text};
+use crate::Bool;
 use crate::amount::Amount;
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -43,8 +44,8 @@ pub extern "C" fn souther_external_null() -> *mut Form {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn souther_external_bool(value: i8) -> *mut Form {
-    handed(Form::Bool(value != 0))
+pub extern "C" fn souther_external_bool(value: Bool) -> *mut Form {
+    handed(Form::Bool(value != Bool::FALSE))
 }
 
 #[unsafe(no_mangle)]
@@ -429,7 +430,7 @@ mod tests {
         let admitted = unsafe {
             souther_string_of_utf8(text.as_ptr(), crate::Count(text.len() as i64), &mut out)
         };
-        assert_eq!(admitted, 1, "test text has a place");
+        assert_eq!(admitted, Bool::TRUE, "test text has a place");
         out
     }
 
@@ -513,8 +514,8 @@ mod tests {
     fn each_kind_is_written_as_the_json_it_is() {
         let scope = souther_scope_open();
         assert_eq!(json(souther_external_null()), "null");
-        assert_eq!(json(souther_external_bool(1)), "true");
-        assert_eq!(json(souther_external_bool(0)), "false");
+        assert_eq!(json(souther_external_bool(Bool::TRUE)), "true");
+        assert_eq!(json(souther_external_bool(Bool::FALSE)), "false");
         assert_eq!(json(souther_external_int(42)), "42");
         assert_eq!(
             json(unsafe { souther_external_string(string("abc")) }),
@@ -528,7 +529,7 @@ mod tests {
     #[test]
     fn a_truth_is_any_byte_but_nought() {
         let scope = souther_scope_open();
-        assert_eq!(json(souther_external_bool(-1)), "true");
+        assert_eq!(json(souther_external_bool(Bool(255))), "true");
         souther_scope_close(scope);
     }
 

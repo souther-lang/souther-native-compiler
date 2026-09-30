@@ -29,7 +29,7 @@ use crate::temporal::{
     Date, DateTime, Instant, Time, date_of, date_time_of, instant_of, parse_date, parse_date_time,
     parse_instant, parse_time, time_of,
 };
-use crate::{Count, STRING_HOLDS, Text, Value, souther_alloc, string_of, text};
+use crate::{Bool, Count, STRING_HOLDS, Text, Value, souther_alloc, string_of, text};
 use souther_native_abi::{DECODED_ISSUES, DECODED_MALFORMED, DECODED_VALUE};
 use std::ptr;
 
@@ -349,13 +349,13 @@ pub unsafe extern "C" fn souther_read_array(
     node: *const Node,
     path: *const Path,
     decoding: *mut Decoding,
-) -> i8 {
+) -> Bool {
     let node = unsafe { &*node };
     if node.length().is_some() {
-        return 1;
+        return Bool::TRUE;
     }
     unsafe { mismatched(decoding, path, node, "an array") };
-    0
+    Bool::FALSE
 }
 
 /// How many elements the array `node` holds.
@@ -395,13 +395,13 @@ pub unsafe extern "C" fn souther_read_object(
     node: *const Node,
     path: *const Path,
     decoding: *mut Decoding,
-) -> i8 {
+) -> Bool {
     let node = unsafe { &*node };
     if node.is_object() {
-        return 1;
+        return Bool::TRUE;
     }
     unsafe { mismatched(decoding, path, node, "an object") };
-    0
+    Bool::FALSE
 }
 
 /// The member of the object `node` under `key`, or null where the object has none.
@@ -501,8 +501,8 @@ pub unsafe extern "C" fn souther_read_missing(path: *const Path, decoding: *mut 
 /// # Safety
 /// `node` is a place in a document being read.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_read_null(node: *const Node) -> i8 {
-    i8::from(matches!(unsafe { &*node }, Node::Null))
+pub unsafe extern "C" fn souther_read_null(node: *const Node) -> Bool {
+    Bool::from(matches!(unsafe { &*node }, Node::Null))
 }
 
 /// Writes what a scalar reader read through `out`, and answers whether it read one.
@@ -512,10 +512,10 @@ pub unsafe extern "C" fn souther_read_null(node: *const Node) -> i8 {
 /// before the call, whichever way the call went — the same holds of a reader of a declared type,
 /// which writes its value or nothing whenever it answers — and the rule is kept here, once, rather
 /// than by each reader remembering it.
-unsafe fn answered<T>(out: *mut T, read: Option<T>, none: T) -> i8 {
+unsafe fn answered<T>(out: *mut T, read: Option<T>, none: T) -> Bool {
     let there = read.is_some();
     unsafe { out.write(read.unwrap_or(none)) };
-    i8::from(there)
+    Bool::from(there)
 }
 
 /// An `Int`, written through `out`, where `node` writes one: a whole number, as digits with no
@@ -529,7 +529,7 @@ pub unsafe extern "C" fn souther_read_int(
     path: *const Path,
     decoding: *mut Decoding,
     out: *mut i64,
-) -> i8 {
+) -> Bool {
     let read = unsafe { int(&*node, path, decoding) };
     unsafe { answered(out, read, 0) }
 }
@@ -582,16 +582,16 @@ pub unsafe extern "C" fn souther_read_bool(
     node: *const Node,
     path: *const Path,
     decoding: *mut Decoding,
-    out: *mut i8,
-) -> i8 {
+    out: *mut Bool,
+) -> Bool {
     let read = match unsafe { &*node } {
-        Node::Bool(truth) => Some(i8::from(*truth)),
+        Node::Bool(truth) => Some(Bool::from(*truth)),
         other => {
             unsafe { mismatched(decoding, path, other, "Bool") };
             None
         }
     };
-    unsafe { answered(out, read, 0) }
+    unsafe { answered(out, read, Bool::FALSE) }
 }
 
 /// A `String`, written through `out` as a string of the runtime's layout in the arena, where
@@ -605,7 +605,7 @@ pub unsafe extern "C" fn souther_read_string(
     path: *const Path,
     decoding: *mut Decoding,
     out: *mut *mut Text,
-) -> i8 {
+) -> Bool {
     let read = match unsafe { &*node } {
         Node::String(written) => {
             unsafe { admitted_text(written, STRING_HOLDS, path, decoding) }.map(|it| string_of(&it))
@@ -634,7 +634,7 @@ pub unsafe extern "C" fn souther_read_decimal(
     path: *const Path,
     decoding: *mut Decoding,
     out: *mut *mut Decimal,
-) -> i8 {
+) -> Bool {
     let read = match unsafe { &*node } {
         Node::Number(written) => {
             let read = Amount::of_json_number(written);
@@ -693,7 +693,7 @@ pub unsafe extern "C" fn souther_read_date(
     path: *const Path,
     decoding: *mut Decoding,
     out: *mut *mut Date,
-) -> i8 {
+) -> Bool {
     let read = unsafe { temporal_text(&*node, path, decoding) }.and_then(|written| {
         let day = parse_date(written.as_bytes());
         if day.is_none() {
@@ -715,7 +715,7 @@ pub unsafe extern "C" fn souther_read_time(
     path: *const Path,
     decoding: *mut Decoding,
     out: *mut *mut Time,
-) -> i8 {
+) -> Bool {
     let read = unsafe { temporal_text(&*node, path, decoding) }.and_then(|written| {
         let second = parse_time(written.as_bytes());
         if second.is_err() {
@@ -736,7 +736,7 @@ pub unsafe extern "C" fn souther_read_datetime(
     path: *const Path,
     decoding: *mut Decoding,
     out: *mut *mut DateTime,
-) -> i8 {
+) -> Bool {
     let read = unsafe { temporal_text(&*node, path, decoding) }.and_then(|written| {
         let second = parse_date_time(written.as_bytes());
         if second.is_err() {
@@ -759,7 +759,7 @@ pub unsafe extern "C" fn souther_read_instant(
     path: *const Path,
     decoding: *mut Decoding,
     out: *mut *mut Instant,
-) -> i8 {
+) -> Bool {
     let read = unsafe { temporal_text(&*node, path, decoding) }.and_then(|written| {
         let moment = parse_instant(written.as_bytes());
         if moment.is_none() {
@@ -778,12 +778,12 @@ unsafe fn read_case(
     capacity: souther_text::Capacity,
     path: *const Path,
     decoding: *mut Decoding,
-) -> i8 {
+) -> Bool {
     let Node::String(written) = node else {
         unsafe { mismatched(decoding, path, node, "a case") };
-        return 0;
+        return Bool::FALSE;
     };
-    i8::from(unsafe { admitted_text(written, capacity, path, decoding) }.is_some())
+    Bool::from(unsafe { admitted_text(written, capacity, path, decoding) }.is_some())
 }
 
 /// Whether `node` is text naming a case, having recorded that it is not where it is not, or that
@@ -799,7 +799,7 @@ pub unsafe extern "C" fn souther_read_case(
     node: *const Node,
     path: *const Path,
     decoding: *mut Decoding,
-) -> i8 {
+) -> Bool {
     unsafe { read_case(&*node, STRING_HOLDS, path, decoding) }
 }
 
@@ -828,7 +828,7 @@ pub unsafe extern "C" fn souther_read_tag(
         };
         return ptr::null();
     };
-    if unsafe { souther_read_case(tag, path, decoding) } == 0 {
+    if unsafe { souther_read_case(tag, path, decoding) } == Bool::FALSE {
         return ptr::null();
     }
     tag
@@ -842,13 +842,13 @@ pub unsafe extern "C" fn souther_read_tag(
 /// `path` or `decoding` to report a refusal with, because admission was already settled there, and
 /// asking again of the same text cannot answer differently.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_read_is(node: *const Node, name: *const Text) -> i8 {
+pub unsafe extern "C" fn souther_read_is(node: *const Node, name: *const Text) -> Bool {
     let Node::String(written) = (unsafe { &*node }) else {
         panic!("souther_read_case admitted this node, which holds a string and no other form");
     };
     let admitted = souther_text::admitted(written, STRING_HOLDS)
         .expect("souther_read_case admitted this text");
-    i8::from(admitted.as_bytes() == unsafe { text(&name) }.as_bytes())
+    Bool::from(admitted.as_bytes() == unsafe { text(&name) }.as_bytes())
 }
 
 /// Records that the text `node` writes names none of the cases there are, at `path`.
@@ -919,11 +919,11 @@ unsafe fn meets(
     code: &str,
     key: Option<&str>,
     meta: impl FnOnce() -> Vec<(&'static str, Said)>,
-) -> i8 {
+) -> Bool {
     if !holds {
         unsafe { found(decoding, code, key, path, meta()) };
     }
-    i8::from(holds)
+    Bool::from(holds)
 }
 
 /// How many characters `value` holds, counted as `String.length` counts them.
@@ -952,7 +952,7 @@ pub unsafe extern "C" fn souther_read_min_length(
     decoding: *mut Decoding,
     value: *const Text,
     n: i64,
-) -> i8 {
+) -> Bool {
     let actual = unsafe { characters(value) };
     unsafe {
         meets(actual >= n, decoding, path, "too_short", None, || {
@@ -971,7 +971,7 @@ pub unsafe extern "C" fn souther_read_max_length(
     decoding: *mut Decoding,
     value: *const Text,
     n: i64,
-) -> i8 {
+) -> Bool {
     let actual = unsafe { characters(value) };
     unsafe {
         meets(actual <= n, decoding, path, "too_long", None, || {
@@ -990,7 +990,7 @@ pub unsafe extern "C" fn souther_read_fixed_length(
     decoding: *mut Decoding,
     value: *const Text,
     n: i64,
-) -> i8 {
+) -> Bool {
     let actual = unsafe { characters(value) };
     unsafe {
         meets(actual == n, decoding, path, "invalid_length", None, || {
@@ -1015,8 +1015,8 @@ pub unsafe extern "C" fn souther_read_pattern(
     value: *const Text,
     machine: *const u32,
     written: *const Text,
-) -> i8 {
-    let holds = unsafe { crate::souther_string_matches(machine, value) } != 0;
+) -> Bool {
+    let holds = unsafe { crate::souther_string_matches(machine, value) } != Bool::FALSE;
     unsafe {
         meets(holds, decoding, path, "invalid_format", None, || {
             vec![("pattern", words(text(&written).as_str()))]
@@ -1034,7 +1034,7 @@ pub unsafe extern "C" fn souther_read_int_min(
     decoding: *mut Decoding,
     value: i64,
     n: i64,
-) -> i8 {
+) -> Bool {
     unsafe {
         meets(
             value >= n,
@@ -1057,7 +1057,7 @@ pub unsafe extern "C" fn souther_read_int_max(
     decoding: *mut Decoding,
     value: i64,
     n: i64,
-) -> i8 {
+) -> Bool {
     unsafe {
         meets(
             value <= n,
@@ -1079,7 +1079,7 @@ pub unsafe extern "C" fn souther_read_int_positive(
     path: *const Path,
     decoding: *mut Decoding,
     value: i64,
-) -> i8 {
+) -> Bool {
     unsafe {
         meets(
             value > 0,
@@ -1102,7 +1102,7 @@ pub unsafe extern "C" fn souther_read_int_non_negative(
     path: *const Path,
     decoding: *mut Decoding,
     value: i64,
-) -> i8 {
+) -> Bool {
     unsafe {
         meets(
             value >= 0,
@@ -1132,7 +1132,7 @@ pub unsafe extern "C" fn souther_read_decimal_min(
     decoding: *mut Decoding,
     value: *const Decimal,
     n: *const Decimal,
-) -> i8 {
+) -> Bool {
     let holds = unsafe { amount(value).compare(&amount(n)) }.is_ge();
     unsafe {
         meets(
@@ -1156,7 +1156,7 @@ pub unsafe extern "C" fn souther_read_decimal_max(
     decoding: *mut Decoding,
     value: *const Decimal,
     n: *const Decimal,
-) -> i8 {
+) -> Bool {
     let holds = unsafe { amount(value).compare(&amount(n)) }.is_le();
     unsafe {
         meets(
@@ -1185,7 +1185,7 @@ pub unsafe extern "C" fn souther_read_decimal_positive(
     path: *const Path,
     decoding: *mut Decoding,
     value: *const Decimal,
-) -> i8 {
+) -> Bool {
     let holds = unsafe { sign_of(value) }.is_gt();
     unsafe {
         meets(
@@ -1209,7 +1209,7 @@ pub unsafe extern "C" fn souther_read_decimal_non_negative(
     path: *const Path,
     decoding: *mut Decoding,
     value: *const Decimal,
-) -> i8 {
+) -> Bool {
     let holds = unsafe { sign_of(value) }.is_ge();
     unsafe {
         meets(
@@ -1227,7 +1227,7 @@ pub unsafe extern "C" fn souther_read_decimal_non_negative(
 /// `nonempty` is `too_small` under `too_small.nonempty` with `min` one and `actual` nought, a least
 /// size `too_small` with `min`, a most `too_big` with `max`, an exact one `invalid_size` with
 /// `expected`, each with the `actual` size.
-unsafe fn sized(decoding: *mut Decoding, path: *const Path, actual: i64, bound: Bound) -> i8 {
+unsafe fn sized(decoding: *mut Decoding, path: *const Path, actual: i64, bound: Bound) -> Bool {
     let (holds, code, key, name, n) = match bound {
         Bound::NonEmpty => (
             actual > 0,
@@ -1264,7 +1264,7 @@ pub unsafe extern "C" fn souther_read_list_non_empty(
     path: *const Path,
     decoding: *mut Decoding,
     value: *const crate::List,
-) -> i8 {
+) -> Bool {
     unsafe { sized(decoding, path, elements_of(value), Bound::NonEmpty) }
 }
 
@@ -1278,7 +1278,7 @@ pub unsafe extern "C" fn souther_read_list_min_size(
     decoding: *mut Decoding,
     value: *const crate::List,
     n: i64,
-) -> i8 {
+) -> Bool {
     unsafe { sized(decoding, path, elements_of(value), Bound::AtLeast(n)) }
 }
 
@@ -1292,7 +1292,7 @@ pub unsafe extern "C" fn souther_read_list_max_size(
     decoding: *mut Decoding,
     value: *const crate::List,
     n: i64,
-) -> i8 {
+) -> Bool {
     unsafe { sized(decoding, path, elements_of(value), Bound::AtMost(n)) }
 }
 
@@ -1306,7 +1306,7 @@ pub unsafe extern "C" fn souther_read_list_fixed_size(
     decoding: *mut Decoding,
     value: *const crate::List,
     n: i64,
-) -> i8 {
+) -> Bool {
     unsafe { sized(decoding, path, elements_of(value), Bound::Exactly(n)) }
 }
 
@@ -1345,7 +1345,7 @@ pub unsafe extern "C" fn souther_read_map_non_empty(
     path: *const Path,
     decoding: *mut Decoding,
     value: *const crate::Map,
-) -> i8 {
+) -> Bool {
     unsafe {
         sized(
             decoding,
@@ -1366,7 +1366,7 @@ pub unsafe extern "C" fn souther_read_map_min_size(
     decoding: *mut Decoding,
     value: *const crate::Map,
     n: i64,
-) -> i8 {
+) -> Bool {
     unsafe {
         sized(
             decoding,
@@ -1387,7 +1387,7 @@ pub unsafe extern "C" fn souther_read_map_max_size(
     decoding: *mut Decoding,
     value: *const crate::Map,
     n: i64,
-) -> i8 {
+) -> Bool {
     unsafe {
         sized(
             decoding,
@@ -1513,7 +1513,7 @@ mod tests {
         let mut out = ptr::null_mut();
         let admitted =
             unsafe { souther_string_of_utf8(value.as_ptr(), Count(value.len() as i64), &mut out) };
-        assert_eq!(admitted, 1, "test text has a place");
+        assert_eq!(admitted, Bool::TRUE, "test text has a place");
         out
     }
 
@@ -1557,7 +1557,7 @@ mod tests {
                 &mut out,
             )
         };
-        if read == 1 {
+        if read == Bool::TRUE {
             unsafe { souther_decode_abandon(decoding) };
             Ok(out)
         } else {
@@ -1573,21 +1573,24 @@ mod tests {
         let decoding = begun("{}");
         let root = unsafe { souther_decode_root(decoding) };
         let mut int = -7;
-        let mut truth = 7;
+        let mut truth = Bool(7);
         let mut text = literal("before");
         unsafe {
-            assert_eq!(souther_read_int(root, ptr::null(), decoding, &mut int), 0);
+            assert_eq!(
+                souther_read_int(root, ptr::null(), decoding, &mut int),
+                Bool::FALSE
+            );
             assert_eq!(
                 souther_read_bool(root, ptr::null(), decoding, &mut truth),
-                0
+                Bool::FALSE
             );
             assert_eq!(
                 souther_read_string(root, ptr::null(), decoding, &mut text),
-                0
+                Bool::FALSE
             );
             souther_decode_abandon(decoding);
         }
-        assert_eq!((int, truth, text), (0, 0, ptr::null_mut()));
+        assert_eq!((int, truth, text), (0, Bool::FALSE, ptr::null_mut()));
         souther_scope_close(scope);
     }
 
@@ -1657,13 +1660,16 @@ mod tests {
         let decoding = begun("[1, true]");
         let root = unsafe { souther_decode_root(decoding) };
         unsafe {
-            assert_eq!(souther_read_array(root, ptr::null(), decoding), 1);
+            assert_eq!(souther_read_array(root, ptr::null(), decoding), Bool::TRUE);
             assert_eq!(souther_read_array_length(root), Count(2));
             let second = souther_read_element(root, Count(1));
             let at = souther_path_at(souther_path_below(ptr::null(), literal("xs")), Count(1));
             let mut out = 0;
-            assert_eq!(souther_read_int(second, at, decoding, &mut out), 0);
-            assert_eq!(souther_read_array(second, at, decoding), 0);
+            assert_eq!(
+                souther_read_int(second, at, decoding, &mut out),
+                Bool::FALSE
+            );
+            assert_eq!(souther_read_array(second, at, decoding), Bool::FALSE);
         }
         assert_eq!(
             issues(decoding),
@@ -1689,11 +1695,11 @@ mod tests {
                 &mut out,
             )
         };
-        assert_eq!(read, 1);
+        assert_eq!(read, Bool::TRUE);
         assert_eq!(said(out), "\u{304c}");
         assert_eq!(
             unsafe { souther_read_is(souther_decode_root(decoding), literal("\u{304c}")) },
-            1
+            Bool::TRUE
         );
         unsafe { souther_decode_abandon(decoding) };
         souther_scope_close(scope);
@@ -1749,7 +1755,11 @@ mod tests {
                 decoding,
             )
         };
-        assert_eq!(gated, 0, "a case name past capacity is not admitted");
+        assert_eq!(
+            gated,
+            Bool::FALSE,
+            "a case name past capacity is not admitted"
+        );
         let found = issues(decoding);
         assert_eq!(found.len(), 1, "{found:?}");
         assert!(found[0].contains("invalid_format"), "{found:?}");
@@ -1800,7 +1810,7 @@ mod tests {
                 &mut out,
             )
         };
-        assert_eq!(made, 1, "{unscaled} at {scale} names a Decimal");
+        assert_eq!(made, Bool::TRUE, "{unscaled} at {scale} names a Decimal");
         out
     }
 
@@ -1838,7 +1848,13 @@ mod tests {
                 souther_read_list_fixed_size(at("o"), decoding, ints(&[1, 2]), 2),
             ]
         };
-        assert_eq!(held, [0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1]);
+        assert_eq!(
+            held.map(Bool::is),
+            [
+                false, true, false, false, false, false, false, false, true, false, false, false,
+                false, false, false, false, false, true
+            ]
+        );
         assert_eq!(
             issues(decoding),
             vec![
@@ -1870,8 +1886,8 @@ mod tests {
         extern "C" fn hash(value: i64) -> crate::Hash {
             crate::Hash(value)
         }
-        extern "C" fn equal(a: i64, b: i64) -> i8 {
-            i8::from(a == b)
+        extern "C" fn equal(a: i64, b: i64) -> Bool {
+            Bool::from(a == b)
         }
         let repeated =
             unsafe { crate::souther_list_duplicates(ints(&[3, 1, 3, 2, 1, 3]), hash, equal) };

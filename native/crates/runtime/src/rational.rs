@@ -39,7 +39,7 @@ use crate::decimal::{Decimal, amount, decimal_of, rounding};
 use crate::enclosure::Enclosure;
 use crate::kernels::answered;
 use crate::magnitude::Magnitude;
-use crate::{Comparison, Count, Value, souther_alloc};
+use crate::{Bool, Comparison, Count, Value, souther_alloc};
 use souther_native_abi::SLOT;
 use std::cmp::Ordering;
 
@@ -823,8 +823,8 @@ pub unsafe extern "C" fn souther_rational_negate(at: *const Rational) -> *mut Ra
 ///
 /// As [`souther_rational_from_decimal`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_rational_is_zero(at: *const Rational) -> i8 {
-    i8::from(unsafe { ratio(at) }.is_zero())
+pub unsafe extern "C" fn souther_rational_is_zero(at: *const Rational) -> Bool {
+    Bool::from(unsafe { ratio(at) }.is_zero())
 }
 
 /// Whether a `Rational` is a whole number.
@@ -833,8 +833,8 @@ pub unsafe extern "C" fn souther_rational_is_zero(at: *const Rational) -> i8 {
 ///
 /// As [`souther_rational_from_decimal`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_rational_is_whole(at: *const Rational) -> i8 {
-    i8::from(unsafe { ratio(at) }.is_whole())
+pub unsafe extern "C" fn souther_rational_is_whole(at: *const Rational) -> Bool {
+    Bool::from(unsafe { ratio(at) }.is_whole())
 }
 
 /// Whether a `Rational` has a finite decimal spelling.
@@ -843,8 +843,8 @@ pub unsafe extern "C" fn souther_rational_is_whole(at: *const Rational) -> i8 {
 ///
 /// As [`souther_rational_from_decimal`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_rational_has_finite_decimal(at: *const Rational) -> i8 {
-    i8::from(unsafe { ratio(at) }.has_finite_decimal())
+pub unsafe extern "C" fn souther_rational_has_finite_decimal(at: *const Rational) -> Bool {
+    Bool::from(unsafe { ratio(at) }.has_finite_decimal())
 }
 
 /// Two `Rational`s by exact value, whatever their exponents: `==`, `<` and `Rational.compare`.
@@ -907,7 +907,7 @@ pub unsafe extern "C" fn souther_rational_add(
     left: *const Rational,
     right: *const Rational,
     out: *mut *mut Rational,
-) -> i8 {
+) -> Bool {
     let sum = unsafe { ratio(left).add(&ratio(right)) };
     unsafe { answered(sum.as_ref().map(rational_of), out) }
 }
@@ -922,7 +922,7 @@ pub unsafe extern "C" fn souther_rational_subtract(
     left: *const Rational,
     right: *const Rational,
     out: *mut *mut Rational,
-) -> i8 {
+) -> Bool {
     let difference = unsafe { ratio(left).subtract(&ratio(right)) };
     unsafe { answered(difference.as_ref().map(rational_of), out) }
 }
@@ -937,7 +937,7 @@ pub unsafe extern "C" fn souther_rational_multiply(
     left: *const Rational,
     right: *const Rational,
     out: *mut *mut Rational,
-) -> i8 {
+) -> Bool {
     let product = unsafe { ratio(left).multiply(&ratio(right)) };
     unsafe { answered(product.as_ref().map(rational_of), out) }
 }
@@ -953,7 +953,7 @@ pub unsafe extern "C" fn souther_rational_divide(
     dividend: *const Rational,
     divisor: *const Rational,
     out: *mut *mut Rational,
-) -> i8 {
+) -> Bool {
     let quotient = unsafe { ratio(dividend).divide(&ratio(divisor)) };
     unsafe { answered(quotient.as_ref().map(rational_of), out) }
 }
@@ -965,7 +965,7 @@ pub unsafe extern "C" fn souther_rational_divide(
 ///
 /// As [`souther_rational_from_decimal`], and `out` is room for an `Int`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_rational_to_whole(at: *const Rational, out: *mut i64) -> i8 {
+pub unsafe extern "C" fn souther_rational_to_whole(at: *const Rational, out: *mut i64) -> Bool {
     unsafe { answered(ratio(at).to_whole(), out) }
 }
 
@@ -979,7 +979,7 @@ pub unsafe extern "C" fn souther_rational_to_whole(at: *const Rational, out: *mu
 pub unsafe extern "C" fn souther_rational_to_finite_decimal(
     at: *const Rational,
     out: *mut *mut Decimal,
-) -> i8 {
+) -> Bool {
     let written = unsafe { ratio(at) }.to_finite_decimal();
     unsafe { answered(written.as_ref().map(decimal_of), out) }
 }
@@ -995,7 +995,7 @@ pub unsafe extern "C" fn souther_rational_to_int(
     mode: *const Value,
     at: *const Rational,
     out: *mut i64,
-) -> i8 {
+) -> Bool {
     let whole = unsafe { ratio(at).to_int(rounding(mode)) };
     unsafe { answered(whole, out) }
 }
@@ -1012,7 +1012,7 @@ pub unsafe extern "C" fn souther_rational_to_decimal(
     mode: *const Value,
     at: *const Rational,
     out: *mut *mut Decimal,
-) -> i8 {
+) -> Bool {
     let rounded = unsafe { ratio(at).to_decimal(scale, rounding(mode)) };
     unsafe { answered(rounded.as_ref().map(decimal_of), out) }
 }
@@ -1275,17 +1275,23 @@ mod tests {
         let one_third = {
             let mut out = std::ptr::null_mut();
             let one = souther_rational_from_int(1);
-            assert_eq!(unsafe { souther_rational_divide(one, third, &mut out) }, 1);
+            assert_eq!(
+                unsafe { souther_rational_divide(one, third, &mut out) },
+                Bool::TRUE
+            );
             out
         };
         assert_eq!(
             unsafe { souther_rational_compare(one_third, third) },
             Comparison(-1)
         );
-        assert_eq!(unsafe { souther_rational_is_whole(one_third) }, 0);
-        assert_eq!(unsafe { souther_rational_is_whole(third) }, 1);
+        assert_eq!(unsafe { souther_rational_is_whole(one_third) }, Bool::FALSE);
+        assert_eq!(unsafe { souther_rational_is_whole(third) }, Bool::TRUE);
         let mut whole = 0;
-        assert_eq!(unsafe { souther_rational_to_whole(third, &mut whole) }, 1);
+        assert_eq!(
+            unsafe { souther_rational_to_whole(third, &mut whole) },
+            Bool::TRUE
+        );
         assert_eq!(whole, 3);
         souther_scope_close(scope);
     }

@@ -28,7 +28,7 @@
 //! asked for is worked out under the type at the site that asks.
 
 use crate::kernels::{answered, list_of};
-use crate::{Count, List, souther_alloc};
+use crate::{Bool, Count, List, souther_alloc};
 use souther_native_abi::{LIST_LENGTH, NOTHING, list_at, member_at, room_for_members};
 
 /// A set, as the functions here take and answer one: an address only this file reads behind.
@@ -60,7 +60,7 @@ pub type Hasher = unsafe extern "C" fn(i64) -> Hash;
 
 /// Whether two values are equal, as generated code works it out for the type at the site that
 /// asks: nought or one.
-pub type Equality = unsafe extern "C" fn(i64, i64) -> i8;
+pub type Equality = unsafe extern "C" fn(i64, i64) -> Bool;
 
 /// How many members a set holds, and how many keys a map: the JVM's number, what a
 /// `java.util.Set` or `Map` counts its size in, as a list's bound is (`lists::LIST_HOLDS` in the
@@ -220,7 +220,7 @@ impl Trie {
 ///
 /// `entry` is an entry this file wrote, and `equal` takes two values of the key's type.
 unsafe fn same(entry: *const u64, hash: u64, key: i64, equal: Equality) -> bool {
-    unsafe { entry.read() == hash && equal(entry.add(1).read() as i64, key) != 0 }
+    unsafe { entry.read() == hash && equal(entry.add(1).read() as i64, key) != Bool::FALSE }
 }
 
 /// The entry at `entry`.
@@ -380,7 +380,7 @@ unsafe fn put(node: u64, shift: u32, entry: Entry, equal: Equality, on_equal: On
         };
     }
     let there = unsafe { read_entry(word as *const u64) };
-    if there.hash == entry.hash && unsafe { equal(there.key, entry.key) } != 0 {
+    if there.hash == entry.hash && unsafe { equal(there.key, entry.key) } != Bool::FALSE {
         return match unsafe { arrived_at(word, &entry, on_equal) } {
             None => Put::Kept,
             Some(arrived) => {
@@ -517,7 +517,7 @@ pub unsafe extern "C" fn souther_set_insert(
     hash: Hasher,
     equal: Equality,
     out: *mut *const Set,
-) -> i8 {
+) -> Bool {
     let trie = unsafe { Trie::at(set) };
     let entry = unsafe { member(element, hash) };
     let with = unsafe { trie.with(entry, equal, OnEqual::Keep) };
@@ -566,7 +566,7 @@ pub unsafe extern "C" fn souther_set_contains(
     element: i64,
     hash: Hasher,
     equal: Equality,
-) -> i8 {
+) -> Bool {
     let trie = unsafe { Trie::at(set) };
     unsafe { trie.find(hash(element).0 as u64, element, equal) }
         .is_some()
@@ -588,7 +588,7 @@ pub unsafe extern "C" fn souther_set_union(
     b: *const Set,
     equal: Equality,
     out: *mut *const Set,
-) -> i8 {
+) -> Bool {
     let (larger, smaller) = unsafe { larger_first(a, b) };
     let mut union = larger;
     for entry in unsafe { smaller.entries() } {
@@ -724,7 +724,7 @@ pub unsafe extern "C" fn souther_list_duplicates(
 ///
 /// As [`souther_set_union`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_set_equal(a: *const Set, b: *const Set, equal: Equality) -> i8 {
+pub unsafe extern "C" fn souther_set_equal(a: *const Set, b: *const Set, equal: Equality) -> Bool {
     let (a, b) = unsafe { (Trie::at(a), Trie::at(b)) };
     let same = a.size == b.size
         && unsafe { a.entries() }
@@ -786,7 +786,7 @@ pub unsafe extern "C" fn souther_map_contains_key(
     key: i64,
     hash: Hasher,
     equal: Equality,
-) -> i8 {
+) -> Bool {
     let trie = unsafe { Trie::at(map) };
     unsafe { trie.find(hash(key).0 as u64, key, equal) }
         .is_some()
@@ -827,7 +827,7 @@ pub unsafe extern "C" fn souther_map_insert(
     hash: Hasher,
     equal: Equality,
     out: *mut *const Map,
-) -> i8 {
+) -> Bool {
     let trie = unsafe { Trie::at(map) };
     let entry = Entry {
         hash: unsafe { hash(key) }.0 as u64,
@@ -934,12 +934,13 @@ pub unsafe extern "C" fn souther_map_equal(
     b: *const Map,
     keys: Equality,
     values: Equality,
-) -> i8 {
+) -> Bool {
     let (a, b) = unsafe { (Trie::at(a), Trie::at(b)) };
     let same = a.size == b.size
         && unsafe { a.entries() }.iter().all(|entry| {
-            unsafe { b.find(entry.hash, entry.key, keys) }
-                .is_some_and(|there| unsafe { values(entry.value, read_entry(there).value) != 0 })
+            unsafe { b.find(entry.hash, entry.key, keys) }.is_some_and(|there| unsafe {
+                values(entry.value, read_entry(there).value) != Bool::FALSE
+            })
         });
     same.into()
 }
@@ -1022,7 +1023,7 @@ mod tests {
         Hash(key & 1)
     }
 
-    unsafe extern "C" fn numbers(a: i64, b: i64) -> i8 {
+    unsafe extern "C" fn numbers(a: i64, b: i64) -> Bool {
         (a == b).into()
     }
 
@@ -1035,14 +1036,17 @@ mod tests {
         let mut out = std::ptr::null();
         assert_eq!(
             unsafe { souther_set_insert(set, element, hash, numbers, &mut out) },
-            1
+            Bool::TRUE
         );
         out
     }
 
     fn union(a: *const Set, b: *const Set) -> *const Set {
         let mut out = std::ptr::null();
-        assert_eq!(unsafe { souther_set_union(a, b, numbers, &mut out) }, 1);
+        assert_eq!(
+            unsafe { souther_set_union(a, b, numbers, &mut out) },
+            Bool::TRUE
+        );
         out
     }
 
@@ -1091,8 +1095,14 @@ mod tests {
             }
             assert_eq!(members(set), vec![1, 2, 3, 4, 5, 6, 9]);
             assert_eq!(unsafe { souther_set_size(set) }, 7);
-            assert_eq!(unsafe { souther_set_contains(set, 9, hash, numbers) }, 1);
-            assert_eq!(unsafe { souther_set_contains(set, 7, hash, numbers) }, 0);
+            assert_eq!(
+                unsafe { souther_set_contains(set, 9, hash, numbers) },
+                Bool::TRUE
+            );
+            assert_eq!(
+                unsafe { souther_set_contains(set, 7, hash, numbers) },
+                Bool::FALSE
+            );
             let fewer = unsafe { souther_set_remove(set, 4, hash, numbers) };
             assert_eq!(members(fewer), vec![1, 2, 3, 5, 6, 9]);
             assert_eq!(
@@ -1130,14 +1140,23 @@ mod tests {
         let backwards: Vec<i64> = many.iter().rev().copied().collect();
         let one = set_of(&many, spread);
         let other = set_of(&backwards, spread);
-        assert_eq!(unsafe { souther_set_equal(one, other, numbers) }, 1);
+        assert_eq!(
+            unsafe { souther_set_equal(one, other, numbers) },
+            Bool::TRUE
+        );
         assert_eq!(unsafe { souther_set_hash(one) }, unsafe {
             souther_set_hash(other)
         });
         let fewer = unsafe { souther_set_remove(other, 250, spread, numbers) };
-        assert_eq!(unsafe { souther_set_equal(one, fewer, numbers) }, 0);
+        assert_eq!(
+            unsafe { souther_set_equal(one, fewer, numbers) },
+            Bool::FALSE
+        );
         let swapped = inserted(fewer, 1000, spread);
-        assert_eq!(unsafe { souther_set_equal(one, swapped, numbers) }, 0);
+        assert_eq!(
+            unsafe { souther_set_equal(one, swapped, numbers) },
+            Bool::FALSE
+        );
         souther_scope_close(scope);
     }
 
@@ -1154,13 +1173,13 @@ mod tests {
         let mut out = std::ptr::null();
         assert_eq!(
             unsafe { souther_set_insert(full, 1, spread, numbers, &mut out) },
-            0
+            Bool::FALSE
         );
         assert!(out.is_null(), "nothing is written where it takes none");
         let one = set_of(&[1], spread);
         assert_eq!(
             unsafe { souther_set_union(full, one, numbers, &mut out) },
-            0
+            Bool::FALSE
         );
         let full_map: *const Map = Trie {
             size: HOLDS,
@@ -1169,7 +1188,7 @@ mod tests {
         .kept();
         let mut map_out = std::ptr::null();
         let wrote = unsafe { souther_map_insert(full_map, 1, 1, spread, numbers, &mut map_out) };
-        assert_eq!(wrote, 0);
+        assert_eq!(wrote, Bool::FALSE);
         souther_scope_close(scope);
     }
 
@@ -1194,7 +1213,7 @@ mod tests {
                 souther_rational_from_int(bottom),
                 &mut out,
             );
-            assert_eq!(wrote, 1);
+            assert_eq!(wrote, Bool::TRUE);
             crate::rational::souther_rational_hash(out)
         };
         assert_eq!(ratio(1, 2), ratio(2, 4));
@@ -1205,7 +1224,7 @@ mod tests {
 
     /// Keys equal where their last digits are, as `1.0` and `1.00` are one `Decimal`: equal, and
     /// told apart by what they are.
-    unsafe extern "C" fn by_last_digit(a: i64, b: i64) -> i8 {
+    unsafe extern "C" fn by_last_digit(a: i64, b: i64) -> Bool {
         (a.rem_euclid(10) == b.rem_euclid(10)).into()
     }
 
@@ -1227,7 +1246,7 @@ mod tests {
                 let mut out = std::ptr::null();
                 let wrote =
                     unsafe { souther_map_insert(map, *key, *value, hash, by_last_digit, &mut out) };
-                assert_eq!(wrote, 1);
+                assert_eq!(wrote, Bool::TRUE);
                 out
             })
     }
@@ -1299,7 +1318,7 @@ mod tests {
                 let mut out = std::ptr::null();
                 let wrote =
                     unsafe { souther_map_insert(map, *key, *value, hash, numbers, &mut out) };
-                assert_eq!(wrote, 1);
+                assert_eq!(wrote, Bool::TRUE);
                 out
             })
     }
@@ -1328,11 +1347,14 @@ mod tests {
             assert_eq!(keys, vec![1, 2, 3]);
             let pairs = unsafe { souther_map_to_list(map) };
             let back = unsafe { souther_map_from_list(pairs, hash, numbers) };
-            assert_eq!(unsafe { souther_map_equal(map, back, numbers, numbers) }, 1);
+            assert_eq!(
+                unsafe { souther_map_equal(map, back, numbers, numbers) },
+                Bool::TRUE
+            );
             let other = map_of(&[(1, 11), (2, 20), (3, 31)], hash);
             assert_eq!(
                 unsafe { souther_map_equal(map, other, numbers, numbers) },
-                0
+                Bool::FALSE
             );
             assert_eq!(unsafe { souther_map_hash(map, spread) }, unsafe {
                 souther_map_hash(back, spread)
