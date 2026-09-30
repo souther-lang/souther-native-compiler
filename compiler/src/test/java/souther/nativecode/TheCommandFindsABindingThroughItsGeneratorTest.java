@@ -186,7 +186,7 @@ class TheCommandFindsABindingThroughItsGeneratorTest {
     }
 
     @Test
-    void theUnavailableBindingIsAnAnswerDistinctFromAWrongCommand() {
+    void theUnavailableBindingIsAnAnswerDistinctFromAWrongCommand() throws Exception {
         Bindings none = Bindings.of(List.of());
 
         assertThatThrownBy(() -> none.generatorFor(KnownBindings.askedBy("--php").orElseThrow()))
@@ -198,7 +198,35 @@ class TheCommandFindsABindingThroughItsGeneratorTest {
     void twoGeneratorsForOneIdAreRefusedAndNotOneChosen() {
         assertThatThrownBy(() -> Bindings.of(
                 List.of(new Recording("php", null), new Recording("php", null))))
-                .isInstanceOf(IllegalStateException.class).hasMessageContaining("\"php\"");
+                .isInstanceOf(NotInstalled.class).hasMessageContaining("\"php\"");
+    }
+
+    /**
+     * Finding the generators installed with the command runs their code, as asking one to
+     * generate does: one that throws when asked its id, or answers none, is the installation's
+     * failure, said in one line and not as a trace, and so are two that answer to one id.
+     */
+    @Test
+    void aGeneratorThatCannotBeFoundIsSaidInOneLine() {
+        Recording throwing = new Recording("php", null) {
+            @Override
+            public String id() {
+                throw new IllegalStateException("the generator's own bug");
+            }
+        };
+        for (List<BindingGenerator> installed : List.of(List.<BindingGenerator>of(throwing),
+                List.<BindingGenerator>of(new Recording(null, null)),
+                List.<BindingGenerator>of(new Recording("php", null), new Recording("php", null)))) {
+            ByteArrayOutputStream said = new ByteArrayOutputStream();
+            int ended = Main.run(new String[] {"--help"},
+                    new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8),
+                    new PrintStream(said, true, StandardCharsets.UTF_8), installed);
+
+            String told = said.toString(StandardCharsets.UTF_8);
+            assertThat(ended).as(told).isEqualTo(1);
+            assertThat(told).isNotBlank().doesNotContain("\tat ");
+            assertThat(told.strip().lines()).hasSize(1);
+        }
     }
 
     @Test

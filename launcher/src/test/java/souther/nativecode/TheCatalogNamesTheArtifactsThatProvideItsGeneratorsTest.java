@@ -51,7 +51,7 @@ class TheCatalogNamesTheArtifactsThatProvideItsGeneratorsTest {
             Path services = named.getFirst()
                     .resolve("src/main/resources/META-INF/services/souther.bindings.BindingGenerator");
             assertThat(Files.readAllLines(services)).as("what %s provides", kind.artifact())
-                    .contains(Bindings.installed().generatorFor(kind).getClass().getName());
+                    .contains(Bindings.installed().generatorFor(kind).implementation());
         }
     }
 

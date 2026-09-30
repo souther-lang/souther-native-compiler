@@ -125,6 +125,30 @@ class TheCommandFetchesWhatItNeedsOnFirstUseTest {
     }
 
     /**
+     * A jar the release named that provides no generator for the id it was fetched for is not what
+     * the catalog said it was: the fetch's refusal, and no generator's failure, since no generator
+     * of it was asked anything.
+     */
+    @Test
+    void aJarThatProvidesNoGeneratorIsTheFetchesRefusalAndNoGeneratorsFailure(@TempDir Path into)
+            throws Exception {
+        try (Served served = new Served()) {
+            ByteArrayOutputStream empty = new ByteArrayOutputStream();
+            new JarOutputStream(empty).close();
+            byte[] jar = empty.toByteArray();
+            served.files.put(JAR, jar);
+            Map<String, String> checksums =
+                    Map.of(ReleaseChecksums.generator("php"), Fetching.sha256(jar));
+
+            Ran ran = build(into, "built", fetching(served, into.resolve("cache"), VERSION, checksums));
+
+            assertThat(ran.ended()).as(ran.said()).isEqualTo(2);
+            assertThat(ran.said()).contains("provides no generator for \"php\"")
+                    .doesNotContain("generator failed");
+        }
+    }
+
+    /**
      * A repository that serves another jar, and a checksum beside it that agrees, is not believed:
      * what a jar is held to is what the compiler was released with.
      */
@@ -224,7 +248,7 @@ class TheCommandFetchesWhatItNeedsOnFirstUseTest {
     }
 
     @Test
-    void fetchIsACommandOfItsOwn() {
+    void fetchIsACommandOfItsOwn() throws Exception {
         for (String[] command : new String[][] {{"--fetch", "--offline"}, {"--fetch", "m.sou"},
                 {"--fetch", "--library", "out"}, {"--fetch", "-o", "a.o"}}) {
             assertThatThrownBy(() -> Main.read(command)).isInstanceOf(Main.NotACommand.class);
@@ -350,7 +374,7 @@ class TheCommandFetchesWhatItNeedsOnFirstUseTest {
     }
 
     @Test
-    void noDriverNamedIsARefusalThatSaysWhereOneIsNamed() {
+    void noDriverNamedIsARefusalThatSaysWhereOneIsNamed() throws Exception {
         String named = System.getProperty(NativeCompiler.DRIVER_PROPERTY);
         System.clearProperty(NativeCompiler.DRIVER_PROPERTY);
         try {
@@ -429,7 +453,7 @@ class TheCommandFetchesWhatItNeedsOnFirstUseTest {
         return run(fetching, command);
     }
 
-    private static Ran run(Fetching fetching, String... command) {
+    private static Ran run(Fetching fetching, String... command) throws NotInstalled {
         ByteArrayOutputStream printed = new ByteArrayOutputStream();
         ByteArrayOutputStream said = new ByteArrayOutputStream();
         int ended = Main.run(command, new PrintStream(printed, true, StandardCharsets.UTF_8),
