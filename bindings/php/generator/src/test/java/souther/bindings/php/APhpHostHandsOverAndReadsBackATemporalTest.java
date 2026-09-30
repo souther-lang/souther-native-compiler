@@ -175,10 +175,8 @@ class APhpHostHandsOverAndReadsBackATemporalTest {
                 library.library().toString()));
 
         assertThat(said).isEqualTo(ANSWERED);
-        for (Path file : binding.files()) {
-            if (file.toString().endsWith(".php")) {
-                assertThat(Php.compiles(file)).as("%s", file).isTrue();
-            }
-        }
+        assertThat(Php.compiles(binding.files().stream()
+                .filter(file -> file.toString().endsWith(".php")).toList()))
+                .allSatisfy((file, compiles) -> assertThat(compiles).as("%s", file).isTrue());
     }
 }

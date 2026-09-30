@@ -41,10 +41,11 @@ abstraction over the two is written to make it look as though something is.
 
 Cargo is what builds the Rust half; Maven runs it. The toolchain is pinned in
 `rust-toolchain.toml`, so a clone needs rustup and nothing else installed by hand for it. A C and a
-C++ compiler are needed too, by the tests that link what came out and run it, and PHP 8.2 or later
+C++ compiler are needed too, by the tests that link what came out and run it, and PHP 8.3 or later
 with the `ffi` and `intl` extensions, by the tests that read what a host is handed the way an FFI
-with no preprocessor does and run a generated PHP binding. Maven also runs Composer, which has to be
-installed, for what the PHP runtime in `bindings/php/runtime` depends on, as its `composer.lock`
+with no preprocessor does and run a generated PHP binding. A binding runs on PHP 8.2; the tests ask
+for 8.3 because they have one PHP lint many files, which 8.3 is the first to do. Maven also runs
+Composer, which has to be installed, for what the PHP runtime in `bindings/php/runtime` depends on, as its `composer.lock`
 fixes it. The Rust runtime in `bindings/rust/runtime` is a crate of its own, which Maven formats,
 lints and tests beside the Rust half, and the tests of a generated Rust binding build a host of it
 with Cargo, fetching what the runtime depends on the first time. Go is needed too, the version the runtime
