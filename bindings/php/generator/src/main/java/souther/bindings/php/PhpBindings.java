@@ -371,7 +371,7 @@ public final class PhpBindings {
         private @Nullable Given heldGiven(Type type, Shape shape) {
             return switch (shape) {
                 case Shape.Leaf leaf -> switch (type) {
-                    case Type.Primitive it -> Whole.primitive(it.name(), leaf.word());
+                    case Type.Primitive it -> Whole.primitive(it.primitive(), leaf.word());
                     case Type.Declared it ->
                             leaf.word() == Word.VALUE ? whole(it.module(), it.name()) : null;
                     case Type.Union union -> {
@@ -421,7 +421,7 @@ public final class PhpBindings {
         private @Nullable Received heldReceived(Type type, Shape shape) {
             return switch (shape) {
                 case Shape.Leaf leaf -> switch (type) {
-                    case Type.Primitive it -> Whole.primitive(it.name(), leaf.word());
+                    case Type.Primitive it -> Whole.primitive(it.primitive(), leaf.word());
                     case Type.Declared it ->
                             leaf.word() == Word.VALUE ? whole(it.module(), it.name()) : null;
                     default -> null;
@@ -634,7 +634,7 @@ public final class PhpBindings {
     private @Nullable Member carried(Case.Primitive of) {
         Manifest.CaseCrossing crossing = manifest.crossing(of);
         Word held = crossing.holds();
-        Whole whole = held == null ? null : Whole.primitive(of.name(), held);
+        Whole whole = held == null ? null : Whole.primitive(of.primitive(), held);
         return whole == null ? null : new Member(whole, crossing);
     }
 
@@ -718,7 +718,7 @@ public final class PhpBindings {
     private static Set<String> cases(Declaration.Sum sum) {
         return sum.cases().stream().map(it -> switch (it) {
             case Case.Declared d -> d.module() + "." + d.name();
-            case Case.Primitive p -> "primitive:" + p.name();
+            case Case.Primitive p -> "primitive:" + p.primitive().spelt();
             case Case.Language l -> "language:" + l.name();
         }).collect(Collectors.toCollection(LinkedHashSet::new));
     }

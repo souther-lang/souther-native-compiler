@@ -4,6 +4,7 @@ import souther.bindings.BindingInput;
 import souther.bindings.Declarations;
 import souther.bindings.Generated;
 import souther.bindings.Manifest;
+import souther.nativecode.ManifestReader;
 import souther.nativecode.NativeCompiler;
 
 import java.io.IOException;
@@ -44,7 +45,7 @@ final class RustHost {
     /** The binding of {@code library} generated into {@code into} as the crate {@code crate}. */
     static Generated generated(NativeCompiler.Library library, Path into, String crate)
             throws IOException {
-        return RustBindings.generate(new BindingInput(Manifest.read(library.manifest()),
+        return RustBindings.generate(new BindingInput(ManifestReader.read(library.manifest()),
                 Declarations.at(library.declarations())), into, crate);
     }
 

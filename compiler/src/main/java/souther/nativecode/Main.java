@@ -212,7 +212,7 @@ public final class Main {
                     NativeCompiler.Library built = NativeCompiler.library(
                             command.checked(read), alongside, library.into());
                     out.println("wrote the library " + library.into() + " from " + sources(files));
-                    BindingInput input = new BindingInput(Manifest.read(built.manifest()),
+                    BindingInput input = new BindingInput(ManifestReader.read(built.manifest()),
                             Declarations.at(built.declarations()));
                     for (Map.Entry<HostBinding, BindingGenerator> each : generating.entrySet()) {
                         HostBinding binding = each.getKey();

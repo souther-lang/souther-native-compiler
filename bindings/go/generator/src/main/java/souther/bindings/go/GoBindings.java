@@ -211,7 +211,7 @@ public final class GoBindings {
                                         Manifest.Way way) {
         Crossing made = switch (shape) {
             case Shape.Leaf leaf -> switch (type) {
-                case Type.Primitive it -> Crossing.Whole.primitive(it.name(), leaf.word());
+                case Type.Primitive it -> Crossing.Whole.primitive(it.primitive(), leaf.word());
                 case Type.Declared it -> leaf.word() == Word.VALUE ? handle(it.module(), it.name())
                         : null;
                 // Handed to Go only as a behavior's answer, which says which case it is
@@ -559,11 +559,11 @@ public final class GoBindings {
                 case Case.Primitive p -> {
                     Manifest.CaseCrossing crossing = manifest.crossing(p);
                     Word held = crossing.holds();
-                    Crossing.Whole whole = held == null ? null : Crossing.Whole.primitive(p.name(), held);
+                    Crossing.Whole whole = held == null ? null : Crossing.Whole.primitive(p.primitive(), held);
                     if (whole == null) {
                         yield null;
                     }
-                    yield new Crossing.OneOf.Member(p.name(), whole, crossing.make(),
+                    yield new Crossing.OneOf.Member(p.primitive().spelt(), whole, crossing.make(),
                             Objects.requireNonNull(crossing.read()), false);
                 }
                 case Case.Language l -> null;
@@ -583,7 +583,7 @@ public final class GoBindings {
         StringBuilder out = new StringBuilder();
         String what = union.cases().stream().map(it -> switch (it) {
             case Case.Declared d -> d.module() + "." + d.name();
-            case Case.Primitive p -> p.name();
+            case Case.Primitive p -> p.primitive().spelt();
             case Case.Language l -> l.name();
         }).collect(java.util.stream.Collectors.joining(" | "));
         out.append("\n// ").append(name).append(" is a value of `").append(what)
@@ -715,8 +715,8 @@ public final class GoBindings {
                 }
                 case Case.Primitive p -> {
                     Word held = manifest.crossing(p).holds();
-                    Crossing.Whole whole = held == null ? null : Crossing.Whole.primitive(p.name(), held);
-                    yield whole == null ? null : new Arm(p.name(), whole.type(at.imports), each, false);
+                    Crossing.Whole whole = held == null ? null : Crossing.Whole.primitive(p.primitive(), held);
+                    yield whole == null ? null : new Arm(p.primitive().spelt(), whole.type(at.imports), each, false);
                 }
                 case Case.Language l -> new Arm(GoNames.exported(l.name(), "case `" + l.name() + "`"),
                         null, each, false);
@@ -736,7 +736,7 @@ public final class GoBindings {
     private static Set<String> cases(Declaration.Sum sum) {
         return sum.cases().stream().map(it -> switch (it) {
             case Case.Declared d -> d.module() + "." + d.name();
-            case Case.Primitive p -> "primitive:" + p.name();
+            case Case.Primitive p -> "primitive:" + p.primitive().spelt();
             case Case.Language l -> "language:" + l.name();
         }).collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
     }
@@ -791,7 +791,7 @@ public final class GoBindings {
                 body.line("\treturn " + variant + "{}");
             } else if (arm.each() instanceof Case.Primitive p) {
                 Manifest.CaseCrossing crossing = manifest.crossing(p);
-                Crossing.Whole whole = Crossing.Whole.primitive(p.name(), crossing.holds());
+                Crossing.Whole whole = Crossing.Whole.primitive(p.primitive(), crossing.holds());
                 Body inner = new Body(at.imports, at::shim, new Names(List.of()), "run", "return", 2);
                 String word = inner.temp("held");
                 inner.line(word + " := " + at.shim(crossing.read()) + "(run.Library().Symbol(\""

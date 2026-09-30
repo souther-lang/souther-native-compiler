@@ -216,7 +216,7 @@ public final class RustBindings {
                                         Manifest.Way way) {
         Crossing made = switch (shape) {
             case Shape.Leaf leaf -> switch (type) {
-                case Type.Primitive it -> Crossing.Whole.primitive(it.name(), leaf.word());
+                case Type.Primitive it -> Crossing.Whole.primitive(it.primitive(), leaf.word());
                 case Type.Declared it -> leaf.word() == Word.VALUE ? handle(it.module(), it.name())
                         : null;
                 // Handed to Rust only as a behavior's answer, which says which case it is
@@ -385,8 +385,8 @@ public final class RustBindings {
                     Manifest.CaseCrossing crossing = manifest.crossing(p);
                     Word held = crossing.holds();
                     Crossing.Whole whole = held == null ? null
-                            : Crossing.Whole.primitive(p.name(), held);
-                    yield whole == null ? null : new Crossing.OneOf.Member(p.name(), whole,
+                            : Crossing.Whole.primitive(p.primitive(), held);
+                    yield whole == null ? null : new Crossing.OneOf.Member(p.primitive().spelt(), whole,
                             symbol(crossing.make()), symbol(Objects.requireNonNull(crossing.read())));
                 }
                 case Case.Language l -> null;
@@ -410,7 +410,7 @@ public final class RustBindings {
                 + "),\n").collect(Collectors.joining());
         String what = union.cases().stream().map(it -> switch (it) {
             case Case.Declared d -> d.module() + "." + d.name();
-            case Case.Primitive p -> p.name();
+            case Case.Primitive p -> p.primitive().spelt();
             case Case.Language l -> l.name();
         }).collect(Collectors.joining(" | "));
         at.items.append("""
@@ -1069,8 +1069,8 @@ public final class RustBindings {
                 case Case.Primitive p -> {
                     Manifest.CaseCrossing crossing = manifest.crossing(p);
                     Word held = crossing.holds();
-                    Crossing.Whole whole = held == null ? null : Crossing.Whole.primitive(p.name(), held);
-                    yield whole == null ? null : new CaseArm(p.name(), whole.owned(),
+                    Crossing.Whole whole = held == null ? null : Crossing.Whole.primitive(p.primitive(), held);
+                    yield whole == null ? null : new CaseArm(p.primitive().spelt(), whole.owned(),
                             carried(symbol(Objects.requireNonNull(crossing.read())), whole));
                 }
                 case Case.Language l -> RustNames.takes(RustNames.capitalized(l.name()))
@@ -1103,7 +1103,7 @@ public final class RustBindings {
     private static Set<String> cases(Declaration.Sum sum) {
         return sum.cases().stream().map(it -> switch (it) {
             case Case.Declared d -> d.module() + "." + d.name();
-            case Case.Primitive p -> "primitive:" + p.name();
+            case Case.Primitive p -> "primitive:" + p.primitive().spelt();
             case Case.Language l -> "language:" + l.name();
         }).collect(Collectors.toCollection(LinkedHashSet::new));
     }

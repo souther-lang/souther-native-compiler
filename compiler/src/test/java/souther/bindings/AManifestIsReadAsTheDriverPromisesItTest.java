@@ -1,5 +1,7 @@
 package souther.bindings;
 
+import souther.nativecode.ManifestReader;
+
 import souther.nativecode.Checked;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -86,7 +88,7 @@ class AManifestIsReadAsTheDriverPromisesItTest {
         changing.accept(manifest);
         Path changed = into.resolve("changed.json");
         Files.writeString(changed, JSON.writeValueAsString(manifest), StandardCharsets.UTF_8);
-        return Manifest.read(changed);
+        return ManifestReader.read(changed);
     }
 
     /** The behavior named {@code name} of {@code module}. */
@@ -114,7 +116,7 @@ class AManifestIsReadAsTheDriverPromisesItTest {
         }
         Path changed = into.resolve("changed.json");
         Files.writeString(changed, JSON.writeValueAsString(manifest), StandardCharsets.UTF_8);
-        return Manifest.read(changed);
+        return ManifestReader.read(changed);
     }
 
     /**
@@ -123,9 +125,8 @@ class AManifestIsReadAsTheDriverPromisesItTest {
      */
     @Test
     void theManifestTheDriverWroteIsRead(@TempDir Path into) throws Exception {
-        Manifest read = Manifest.read(built(into, CONSTRUCTED).manifest());
+        Manifest read = ManifestReader.read(built(into, CONSTRUCTED).manifest());
 
-        assertThat(read.abi()).isEqualTo(Manifest.ABI);
         assertThat(read.cases()).extracting(it -> it.make().name()).contains("souther_case_int_make");
         assertThat(read.modules()).extracting(Manifest.Module::name).containsExactly("demo");
     }
@@ -140,7 +141,7 @@ class AManifestIsReadAsTheDriverPromisesItTest {
         Path earlier = Path.of("src", "test", "resources", "souther", "bindings",
                 "interface-v3.json");
 
-        assertThatThrownBy(() -> Manifest.read(earlier))
+        assertThatThrownBy(() -> ManifestReader.read(earlier))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("is version 3 of souther-native-interface for ABI generation"
                         + " 3, and this generator reads version 15")
@@ -176,7 +177,7 @@ class AManifestIsReadAsTheDriverPromisesItTest {
             ((ArrayNode) at.get("takes")).remove(2);
         }))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("souther" + Manifest.ABI + "_m_stock_l_value_at");
+                .hasMessageContaining("souther" + ManifestReader.ABI + "_m_stock_l_value_at");
     }
 
     /**
@@ -205,7 +206,7 @@ class AManifestIsReadAsTheDriverPromisesItTest {
             }
         }))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("hands across Primitive[name=Int], and nothing of how a value"
+                .hasMessageContaining("hands across Primitive[primitive=INT], and nothing of how a value"
                         + " of it is made or read");
     }
 
@@ -323,7 +324,7 @@ class AManifestIsReadAsTheDriverPromisesItTest {
         });
 
         Manifest.PublishedValue pair = read.modules().getFirst().values().getFirst();
-        assertThat(pair.type()).isEqualTo(new Manifest.Type.Primitive("Date"));
+        assertThat(pair.type()).isEqualTo(new Manifest.Type.Primitive(Manifest.Primitive.DATE));
         assertThat(pair.read().available()).isNotNull();
     }
 
@@ -352,7 +353,7 @@ class AManifestIsReadAsTheDriverPromisesItTest {
         NativeCompiler.Library library = Documents.library(Documents.FUNCTIONS,
                 into.resolve("native"));
 
-        assertThat(Manifest.read(library.manifest()).modules().getFirst().functions())
+        assertThat(ManifestReader.read(library.manifest()).modules().getFirst().functions())
                 .isNotEmpty();
         assertThatThrownBy(() -> readAfter(into, library, "m",
                 module -> ((ArrayNode) module.get("functions")).remove(0)))
@@ -363,7 +364,7 @@ class AManifestIsReadAsTheDriverPromisesItTest {
     /** Why nothing reaches a value is read as the reason and where it stands. */
     @Test
     void whyNothingReachesAValueIsRead(@TempDir Path into) throws Exception {
-        Manifest read = Manifest.read(built(into, SHAPED).manifest());
+        Manifest read = ManifestReader.read(built(into, SHAPED).manifest());
 
         Manifest.PublishedValue either = read.modules().getFirst().values().stream()
                 .filter(it -> it.name().equals("either")).findFirst().orElseThrow();

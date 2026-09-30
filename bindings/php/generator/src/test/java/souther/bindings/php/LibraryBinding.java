@@ -4,6 +4,7 @@ import souther.bindings.BindingInput;
 import souther.bindings.Declarations;
 import souther.bindings.Generated;
 import souther.bindings.Manifest;
+import souther.nativecode.ManifestReader;
 import souther.nativecode.NativeCompiler;
 
 import java.io.IOException;
@@ -24,7 +25,7 @@ final class LibraryBinding {
     static Generated generated(Path manifest, Path declarations, Path into, String namespace)
             throws IOException {
         return PhpBindings.generate(
-                new BindingInput(Manifest.read(manifest), Declarations.at(declarations)), into,
+                new BindingInput(ManifestReader.read(manifest), Declarations.at(declarations)), into,
                 namespace);
     }
 }

@@ -78,17 +78,18 @@ sealed interface Crossing {
          * A value of the primitive {@code name} crossing as {@code word}, or null where this binding
          * has no way to hold that pair. Both are asked, the name and the word.
          */
-        static @Nullable Whole primitive(String name, Word word) {
-            Kind kind = switch (name) {
-                case "Int" -> word == Word.INT ? Kind.INT : null;
-                case "Bool" -> word == Word.BOOL ? Kind.BOOL : null;
-                case "String" -> word == Word.STRING ? Kind.STRING : null;
-                case "Decimal" -> word == Word.DECIMAL ? Kind.DECIMAL : null;
-                case "Date" -> word == Word.DATE ? Kind.DATE : null;
-                case "Time" -> word == Word.TIME ? Kind.TIME : null;
-                case "DateTime" -> word == Word.DATETIME ? Kind.DATETIME : null;
-                case "Instant" -> word == Word.INSTANT ? Kind.INSTANT : null;
-                default -> null;
+        static @Nullable Whole primitive(Manifest.Primitive primitive, Word word) {
+            Kind kind = switch (primitive) {
+                case INT -> word == Word.INT ? Kind.INT : null;
+                case BOOL -> word == Word.BOOL ? Kind.BOOL : null;
+                case STRING -> word == Word.STRING ? Kind.STRING : null;
+                case DECIMAL -> word == Word.DECIMAL ? Kind.DECIMAL : null;
+                case DATE -> word == Word.DATE ? Kind.DATE : null;
+                case TIME -> word == Word.TIME ? Kind.TIME : null;
+                case DATETIME -> word == Word.DATETIME ? Kind.DATETIME : null;
+                case INSTANT -> word == Word.INSTANT ? Kind.INSTANT : null;
+                // Held by objects and never handed to a host.
+                case RATIONAL -> null;
             };
             return kind == null ? null : new Whole(new Shape.Leaf(word), kind, null);
         }

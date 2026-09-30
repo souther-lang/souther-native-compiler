@@ -29,6 +29,19 @@
             <groupId>org.souther-lang</groupId>
             <artifactId>souther-runtime</artifactId>
         </dependency>
+        <!-- What reads the manifest the driver writes, which is this command's and no generator's. -->
+        <dependency>
+            <groupId>net.unit8.raoh</groupId>
+            <artifactId>raoh</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>net.unit8.raoh</groupId>
+            <artifactId>raoh-json</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>tools.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
     </dependencies>
 
     <build>

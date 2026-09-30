@@ -5,6 +5,7 @@ import souther.nativecode.Checked;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import souther.bindings.Manifest;
+import souther.nativecode.ManifestReader;
 import souther.bindings.Manifest.Case;
 import souther.bindings.Manifest.Function;
 import souther.bindings.Manifest.Parameter;
@@ -41,7 +42,7 @@ class WhatAPhpRecordHoldsIsItsOwnTest {
                 null);
         Crossing.Member missing = new Crossing.Member(
                 Crossing.Whole.product("\\Acme\\M\\Missing"), null);
-        Crossing.Whole count = java.util.Objects.requireNonNull(Crossing.Whole.primitive("Int", Word.INT));
+        Crossing.Whole count = java.util.Objects.requireNonNull(Crossing.Whole.primitive(souther.bindings.Manifest.Primitive.INT, Word.INT));
         Function which = new Function("which", List.of(Parameter.given(Word.VALUE)), Word.CASE);
 
         Owning owning = new Owning();
@@ -51,7 +52,7 @@ class WhatAPhpRecordHoldsIsItsOwnTest {
                 List.of(found, missing), "`m.find`"));
         owning.walk(new Crossing.GivenTuple(List.of(count, count)));
         owning.walk(new Crossing.ReceivedTuple(List.of(count, count)));
-        Manifest.FunctionCrossing crossing = Manifest.read(Documents.library(Documents.FUNCTIONS,
+        Manifest.FunctionCrossing crossing = ManifestReader.read(Documents.library(Documents.FUNCTIONS,
                 into.resolve("functions")).manifest()).modules().getFirst().functions().getFirst();
         owning.walk(new Crossing.GivenFunction(List.of(count), count, crossing, "\\Acme\\Binding",
                 java.util.Objects.requireNonNull(crossing.make()).implement() + "#0"));

@@ -2,6 +2,7 @@ package souther.bindings.php;
 
 import souther.bindings.Generated;
 import souther.bindings.Manifest;
+import souther.nativecode.ManifestReader;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import souther.nativecode.Documents;
@@ -146,9 +147,9 @@ class APhpHostCallsAndHandsOverAFunctionValueTest {
                         "public static function twice(): \\Closure");
         assertThat(Files.readString(binding.root().resolve("Binding.php")))
                 .containsOnlyOnce("new \\Souther\\Runtime\\FunctionSlot($library, "
-                        + "'souther" + Manifest.ABI + "_m_m_fn_f1_int_int_implementation'")
+                        + "'souther" + ManifestReader.ABI + "_m_m_fn_f1_int_int_implementation'")
                 // PHP is handed `twice` and never hands one over, so it is only called.
-                .doesNotContain("souther" + Manifest.ABI + "_m_m_fn_f2_f1_int_int_int_int_implement");
+                .doesNotContain("souther" + ManifestReader.ABI + "_m_m_fn_f2_f1_int_int_int_int_implement");
         assertThat(Php.compiles(binding.files().stream()
                 .filter(file -> file.toString().endsWith(".php")).toList()))
                 .allSatisfy((file, compiles) -> assertThat(compiles).as("%s", file).isTrue());

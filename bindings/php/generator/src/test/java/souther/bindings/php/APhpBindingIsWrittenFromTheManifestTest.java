@@ -2,6 +2,7 @@ package souther.bindings.php;
 
 import souther.bindings.Generated;
 import souther.bindings.Manifest;
+import souther.nativecode.ManifestReader;
 import souther.nativecode.Checked;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -265,7 +266,7 @@ class APhpBindingIsWrittenFromTheManifestTest {
         assertThat(written).contains(
                 "find(int $id):"
                         + " \\Acme\\Billing\\M\\Found|\\Acme\\Billing\\M\\Missing",
-                "$session->ffi()->souther" + Manifest.ABI + "_m_m_b_find_answer_case($answer)",
+                "$session->ffi()->souther" + ManifestReader.ABI + "_m_m_b_find_answer_case($answer)",
                 "0 => new \\Acme\\Billing\\M\\Found($session->held($answer))",
                 "1 => new \\Acme\\Billing\\M\\Missing($session->held($answer))");
         assertThat(generated.files()).extracting(it -> generated.root().relativize(it).toString())
@@ -714,10 +715,10 @@ class APhpBindingIsWrittenFromTheManifestTest {
                 LibraryBinding.generated(twoModules(into), into.resolve("php"), "Acme\\Billing");
 
         assertThat(Files.readString(generated.root().resolve("Shop").resolve("Cart.php")))
-                .contains("souther" + Manifest.ABI + "_m_shop_l_value_construct", "souther" + Manifest.ABI + "_m_shop_l_value_at")
-                .doesNotContain("souther" + Manifest.ABI + "_m_stock_");
+                .contains("souther" + ManifestReader.ABI + "_m_shop_l_value_construct", "souther" + ManifestReader.ABI + "_m_shop_l_value_at")
+                .doesNotContain("souther" + ManifestReader.ABI + "_m_stock_");
         assertThat(Files.readString(generated.root().resolve("Stock").resolve("Bin.php")))
-                .contains("souther" + Manifest.ABI + "_m_stock_l_value_construct", "souther" + Manifest.ABI + "_m_stock_l_value_at")
-                .doesNotContain("souther" + Manifest.ABI + "_m_shop_");
+                .contains("souther" + ManifestReader.ABI + "_m_stock_l_value_construct", "souther" + ManifestReader.ABI + "_m_stock_l_value_at")
+                .doesNotContain("souther" + ManifestReader.ABI + "_m_shop_");
     }
 }

@@ -53,7 +53,7 @@ final class Running {
      * not answer to is exactly the silent ABI mismatch embedding this in the symbol exists to turn
      * into a linker error instead.
      */
-    static final String ABI = String.valueOf(Manifest.ABI);
+    static final String ABI = String.valueOf(ManifestReader.ABI);
 
     /**
      * {@code text}, a harness or a symbol a test writes, with every {@code souther@} spelt as

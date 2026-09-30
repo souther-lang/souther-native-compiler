@@ -1,5 +1,7 @@
 package souther.bindings;
 
+import souther.nativecode.ManifestReader;
+
 import souther.nativecode.Checked;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -68,9 +70,9 @@ class WhatARecordHoldsIsItsOwnTest {
 
     @Test
     void everyCollectionARecordHoldsIsItsOwn(@TempDir Path into) throws Exception {
-        Manifest manifest = Manifest.read(NativeCompiler.library(
+        Manifest manifest = ManifestReader.read(NativeCompiler.library(
                 Checked.of(List.of(EVERYTHING)), into).manifest());
-        Manifest functions = Manifest.read(Documents.library(Documents.FUNCTIONS,
+        Manifest functions = ManifestReader.read(Documents.library(Documents.FUNCTIONS,
                 into.resolve("functions")).manifest());
         Owning owning = new Owning();
         owning.walk(manifest.cases());
@@ -91,7 +93,7 @@ class WhatARecordHoldsIsItsOwnTest {
     /** The manifest's own collections are its own too, and cannot be changed through. */
     @Test
     void aManifestAnswersNothingItCanBeChangedThrough(@TempDir Path into) throws Exception {
-        Manifest manifest = Manifest.read(NativeCompiler.library(
+        Manifest manifest = ManifestReader.read(NativeCompiler.library(
                 Checked.of(List.of(EVERYTHING)), into).manifest());
 
         assertThat(List.of(manifest.cases(), manifest.modules(), manifest.statuses().keySet(),
