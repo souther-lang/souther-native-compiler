@@ -13,26 +13,68 @@ one, which the written source calls into and which loads the library and calls t
 generator knows the runtime's surface, since it writes calls to it, and the two move together. The
 command knows neither.
 
-Today the command runs only the generators its catalog names
-([`KnownBindings`](../compiler/src/main/java/souther/nativecode/KnownBindings.java)), installed with
-it or fetched from Maven Central at its own version. Nothing here depends on that: a generator is
-held to this interface whoever wrote it.
+The command ships three generators, which its catalog names
+([`KnownBindings`](../compiler/src/main/java/souther/nativecode/KnownBindings.java)) and asks for by
+their own flags, and runs a generator of anyone else's that it is pointed at with `--binding`. Both
+are a jar, and the command runs both the same way.
+
+## Pointing the command at a generator
+
+A generator of someone else's is named by its Maven coordinate and the SHA-256 of its jar:
+
+```text
+souther-native --library out/native \
+    --binding com.acme:souther-binding-kotlin:1.2.0@sha256:<64 hex> out/kotlin \
+    --binding-option package=com.acme.shop \
+    src/
+```
+
+The digest is required, and nothing is trusted on first use: a coordinate says where to fetch the
+jar from, and the digest which bytes it has to be. Other bytes under the same coordinate are another
+artifact, so a fetched jar is kept under its coordinate and its digest, in
+`$SOUTHER_HOME/generators/<group>/<artifact>/<version>/<sha256>.jar`, and hashed again each time it
+is used. `--binding-option key=value` belongs to the `--binding` before it and may be repeated; the
+command splits it at the first `=`, and refuses a key named twice for one binding.
+
+An author's own build is named by the path of its jar, `--binding build/libs/generator.jar out/kotlin`,
+and no digest is asked for. The command copies the jar and loads the copy, so a jar rebuilt while
+the command runs is not what runs.
+
+The three bindings the command ships are the same thing reached another way. A released command
+fetches the jar its catalog names at its own version, held to the SHA-256 the release carries for it;
+a clone's build names the jars its reactor made with `-Dsouther.generator.<id>`, as
+[`scripts/souther-native`](../scripts/souther-native) does. From there
+([`GeneratorSpec`](../compiler/src/main/java/souther/nativecode/GeneratorSpec.java)) nothing tells
+them apart from a jar named with `--binding`.
+
+The digest decides whether code runs. The class loader below decides only what that code can see; it
+is not a sandbox, and a generator runs with the command's rights, as a Maven plugin does.
 
 ## How the command runs a generator
 
-The command reads its whole command line before any generator is found. Which bindings there are,
-the flag that asks for each and the options each takes are its catalog's, and nothing else's, since
-a generator that is not installed yet cannot say what it takes. A generator is asked for by the id
-the catalog names it by, and handed the options the catalog names for it, keyed by the option's
-name without its dashes.
+The command reads its whole command line before anything is run. Then, for each binding asked for,
+it runs the generator's jar through a fixed order, in which each step runs nothing the one before did
+not allow ([`Bindings`](../compiler/src/main/java/souther/nativecode/Bindings.java)):
 
-Then, for each binding asked for, the command finds its generator: one installed with the command,
-through `ServiceLoader`, or, where there is none, the jar the catalog names, fetched and held to the
-checksum the compiler was released with. It never holds a generator itself. Every call into one goes
-through one type
-([`Bindings.Generator`](../compiler/src/main/java/souther/nativecode/Bindings.java)), which tells a
-generator's failure apart from the command's by where it was thrown: what a generator's code throws,
-an `IOException` among it, is said as that generator's failure, in one line.
+```text
+bytes verified → MANIFEST.MF (id, API major, ABI generations) → which id it may be
+    → its own class loader → exactly one provider → constructed → preflight → generate
+```
+
+Nothing a jar says of itself is read before its digest has matched
+([`GeneratorArtifacts`](../compiler/src/main/java/souther/nativecode/GeneratorArtifacts.java)). What
+its manifest says is checked before any of its code runs
+([`GeneratorDescriptor`](../compiler/src/main/java/souther/nativecode/GeneratorDescriptor.java)): a
+jar that says it is another generator than the one asked for, one of the catalog's when it was named
+with `--binding`, or that was written against another major of the API or for ABI generations that
+leave out the one the command writes, is refused in one line, before the library is built. The
+providers its service file names are counted before any is constructed, so a jar naming none or two
+runs nothing.
+
+The command never holds a generator itself. Every call into one goes through one type
+(`Bindings.Generator`), which tells a generator's failure apart from the command's by where it was
+thrown: what a generator's code throws, an `IOException` among it, is said as that generator's
+failure, in one line.
 
 Each generator's `BindingGenerator#preflight` is asked before anything is built, and the directory
 each binding goes to is checked: it has to be absent, empty, or a binding the same generator wrote,
@@ -53,17 +95,83 @@ system while the bindings are put in place is the one thing that can leave some 
 others, since several directories are never replaced as one. A refusal from
 `BindingGenerator#generate`, or a generator's failure, ends the command with 1.
 
+The mark is JSON, with a version, and is read strictly:
+
+```json
+{
+  "format" : "souther-binding",
+  "version" : 1,
+  "generator" : "com.acme.kotlin",
+  "artifact" : {
+    "kind" : "maven",
+    "coordinate" : "com.acme:souther-binding-kotlin:1.3.0",
+    "sha256" : "..."
+  }
+}
+```
+
+What owns the directory is `"generator"`, the id the jar says, so a newer version of a generator
+replaces what an older one wrote. `"artifact"` records which jar wrote it and decides nothing. A jar
+read from a path is recorded by its digest alone (`"kind" : "local"`): the path is where one run
+found it, and would carry a user's directories into the output.
+
+## The jar a generator is
+
+A generator is one self-contained jar. The command resolves no POM for it, and a library it needs it
+carries inside the jar, shaded. It does not carry `souther-bindings-api`.
+
+Its `META-INF/MANIFEST.MF` says which generator it is and what it is compatible with
+([`BindingApi`](../bindings/api/src/main/java/souther/bindings/BindingApi.java)):
+
+```text
+Souther-Binding-Id: com.acme.kotlin
+Souther-Binding-Api: 1
+Souther-Abi-Generations: 9
+```
+
+`Souther-Binding-Id` is the generator, the same across its versions: lowercase letters, digits, `.`,
+`_` and `-`, and none of the ids the catalog names (`php`, `rust`, `go`). `Souther-Binding-Api` is
+the major of this API the generator was compiled against, which the command runs only where it is its
+own. `Souther-Abi-Generations` is every ABI generation the code the generator writes, and the host
+runtime that code calls, are built for, as integers separated by commas and no ranges; the command
+runs a generator only where the generation it writes is among them.
+
+The major is a promise: a command of major N runs every generator already compiled against major N,
+without recompiling it, with the same meaning. Linking is not enough for that, since a generator
+switching over every case of a sealed type still links once a case is added and no longer means what
+it did. So a case added to a sealed type, a constant to an enum, a record's components changed, a
+member's signature or declared nullness changed, or an abstract method of an interface nothing seals
+added or removed, each moves the major. The surface each major promises is recorded in
+[`bindings/api/generations/`](../bindings/api/generations/), and
+[`WhatAMajorPromisesStillHoldsTest`](../bindings/api/src/test/java/souther/bindings/WhatAMajorPromisesStillHoldsTest.java)
+fails when a line recorded for the current major is no longer true. It sees structure and declared
+nullness; a method that keeps both and comes to answer something else moves the major too, and that
+part is kept by whoever changes it.
+
+The jar names exactly one implementation of `BindingGenerator` in
+`META-INF/services/souther.bindings.BindingGenerator`, with a public constructor that takes nothing.
+
+The command loads it behind a class loader of its own
+([`GeneratorLoader`](../compiler/src/main/java/souther/nativecode/GeneratorLoader.java)), whose
+parent is the JDK's platform loader. What a generator can resolve is the JDK, the package
+`souther.bindings`, which is always the command's own copy, and what its own jar holds. The compiler
+and the libraries it is written with are not in that loader's graph, so a generator that happened to
+use one fails at once and not on the day the compiler changes it. The thread a generator is called on
+has its loader as the context class loader, so a library inside the jar that looks up services finds
+the jar's. An annotation class the loader cannot see, such as JSpecify's, does not stop a class from
+loading; reading such annotations reflectively is not part of what a generator may count on.
+
 ## The interface a generator implements
 
-[`BindingGenerator`](../bindings/api/src/main/java/souther/bindings/BindingGenerator.java) has three
-methods. `BindingGenerator#id` answers the id the catalog names the generator by.
-`BindingGenerator#preflight` is handed the options and refuses, with
+[`BindingGenerator`](../bindings/api/src/main/java/souther/bindings/BindingGenerator.java) has two
+methods. `BindingGenerator#preflight` is handed the options and refuses, with
 [`NotBindable`](../bindings/api/src/main/java/souther/bindings/NotBindable.java), what would be
-refused whatever the model says: an option missing, or a value the language will not take, such as a
-namespace PHP will not take or a crate name Cargo will not take. `BindingGenerator#generate` is
-handed the input, the empty directory and the options, and writes the binding; it refuses with
-`NotBindable` what only the model can say, a name in it the language will not take. The two moments
-are apart because the second needs a library the first is meant to spare building.
+refused whatever the model says: a key it does not take, an option missing, or a value the language
+will not take, such as a namespace PHP will not take or a crate name Cargo will not take.
+`BindingGenerator#generate` is handed the input, the empty directory and the options, and writes the
+binding; it refuses with `NotBindable` what only the model can say, a name in it the language will
+not take. The two moments are apart because the second needs a library the first is meant to spare
+building. Which generator it is, the jar says, and not the code.
 
 A generator writes files into the directory it is handed and does nothing else to the file system.
 Where the binding goes, what was there before and putting it in place are the command's. The input
@@ -72,12 +180,9 @@ changes nothing it is handed. Anything a generator throws other than `NotBindabl
 failure, which the command reports as that; a generator does not need to catch its own mistakes to
 be polite about them.
 
-A generator is found through `ServiceLoader`, so its jar names its class in
-`META-INF/services/souther.bindings.BindingGenerator`. It depends on `souther-bindings-api` and on
-nothing else of this project, and the standard generators import nothing outside `souther.bindings`.
-What the command is, what a checked program is and how the manifest is written are all out of its
-reach. A test holds every member of what the API offers to being public or private and nothing
-between
+A generator depends on `souther-bindings-api` and on nothing else of this project. What the command
+is, what a checked program is and how the manifest is written are all out of its reach. A test holds
+every member of what the API offers to being public or private and nothing between
 ([`WhatAGeneratorReachesIsPublicTest`](../bindings/api/src/test/java/souther/bindings/WhatAGeneratorReachesIsPublicTest.java)).
 
 ## The model
@@ -158,8 +263,39 @@ and [Go](../bindings/go/runtime/README.md).
 
 ## Testing a generator
 
-The standard generators' tests build a library from Souther source with the compiler, hand what it
-wrote to the generator, and then compile and run what the generator wrote with the host's own
-toolchain: a PHP linter and PHP, Cargo, and the Go toolchain with cgo. They use the compiler's test
-support and the driver of a checkout, found through `-Dsouther.native.driver`, which a generator
-outside this repository does not have yet.
+`souther-bindings-testkit` builds a library from Souther source with the compiler and the driver of
+the release it belongs to, and hands over what the command would hand a generator
+([`SoutherBindingTest`](../bindings/testkit/src/main/java/souther/bindings/testkit/SoutherBindingTest.java)).
+It writes where the test tells it, and keeps no directory of its own:
+
+```java
+@Test
+void theBindingIsWritten(@TempDir Path into) throws Exception {
+    TestLibrary library = SoutherBindingTest.compile(into.resolve("native"), """
+            module shop exposing ( total )
+            ...
+            """);
+    Path binding = Files.createDirectories(into.resolve("binding"));
+
+    new KotlinBindingGenerator().generate(library.bindingInput(), binding, Map.of("package", "shop"));
+
+    // compile and run what was written with the host's own toolchain, loading library.library()
+}
+```
+
+A released testkit fetches the driver of its release for the platform it runs on, and holds it to the
+checksum that release's compiler carries, as the command does; an author needs no driver of their own
+and sets no property. `compile` takes several sources, one module each.
+
+The standard generators' tests build their libraries through the testkit too, and then compile and
+run what the generator wrote with the host's own toolchain: a PHP linter and PHP, Cargo, and the Go
+toolchain with cgo. In this repository the testkit is not a release, and is handed the driver the
+same build made. A few of those tests need what no Souther source writes, a manifest changed by hand
+or a document the compiler does not write yet, and build with the compiler's own test support.
+
+That the testkit is enough on its own is held by a project outside the reactor,
+[`bindings/testkit/acceptance`](../bindings/testkit/acceptance/), which depends on the API and the
+testkit and on nothing else of this project. [`scripts/testkit-acceptance.sh`](../scripts/testkit-acceptance.sh)
+runs its test against a publication before it is published: the release runs it on what it is about
+to release, and the build rehearses a release for the platform it runs on
+([`scripts/testkit-rehearsal.sh`](../scripts/testkit-rehearsal.sh)).

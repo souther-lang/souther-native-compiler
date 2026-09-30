@@ -39,7 +39,7 @@ abstraction over the two is written to make it look as though something is.
 
 ## Building
 
-    mvn test
+    mvn verify
 
 Cargo is what builds the Rust half; Maven runs it, and formats, lints and tests it as well. The
 toolchain is pinned in [`rust-toolchain.toml`](../rust-toolchain.toml), so a clone needs rustup and
