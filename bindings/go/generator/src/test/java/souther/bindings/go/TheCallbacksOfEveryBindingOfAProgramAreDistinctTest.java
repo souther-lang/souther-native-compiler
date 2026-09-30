@@ -1,9 +1,11 @@
 package souther.bindings.go;
 
+import souther.bindings.testkit.SoutherBindingTest;
+import souther.bindings.testkit.TestLibrary;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import souther.nativecode.Checked;
-import souther.nativecode.NativeCompiler;
+
+
 
 import java.nio.file.Path;
 import java.util.List;
@@ -86,10 +88,8 @@ class TheCallbacksOfEveryBindingOfAProgramAreDistinctTest {
 
     @Test
     void twoBindingsAndTwoModulesEndingAlikeAreOneProgram(@TempDir Path into) throws Exception {
-        NativeCompiler.Library one = NativeCompiler.library(Checked.of(List.of(AX, BX)),
-                into.resolve("native1"));
-        NativeCompiler.Library two = NativeCompiler.library(Checked.of(List.of(AX, BX)),
-                into.resolve("native2"));
+        TestLibrary one = SoutherBindingTest.compile(into.resolve("native1"), AX, BX);
+        TestLibrary two = SoutherBindingTest.compile(into.resolve("native2"), AX, BX);
         // Two import paths that spell alike once what Go does not take in a name is set aside.
         var first = GoHost.generated(one, into.resolve("binding1"), "example.com/a-b");
         var second = GoHost.generated(two, into.resolve("binding2"), "example.com/a_b");

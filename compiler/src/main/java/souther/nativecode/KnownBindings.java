@@ -6,11 +6,12 @@ import java.util.Optional;
 /**
  * The bindings this compiler writes, and what each is asked for on the command line.
  *
- * <p>The one place that says there is a PHP, a Rust and a Go binding: what the command reads its
- * options from, what its usage says, and, where a generator is not among those installed, which
- * artifact would bring it. It is closed, since what is fetched and run on the strength of a flag is
- * only ever what this names, and it is not derived from the generators found, because a generator
- * that is not there cannot say that it is missing.
+ * <p>The one place that says there is a PHP, a Rust and a Go binding: what the command reads their
+ * options from, what its usage says, which artifact a release fetches for each, and which ids a jar
+ * named with {@code --binding} may not say it is. It is closed, since what a flag of the catalog
+ * fetches and runs is only ever what this names, and it is not derived from the generators found,
+ * because a generator that is not there cannot say that it is missing. A generator of anyone else's
+ * is named on the command line with its digest, and is not this catalog's.
  *
  * <p>It says how a binding is asked for and nothing of what the asking means. What a namespace, a
  * crate or a package is, and whether one is acceptable, is the generator's to say.
@@ -18,7 +19,7 @@ import java.util.Optional;
 public final class KnownBindings {
 
     /**
-     * One binding: the id its generator answers to, the option that asks for it (whose value is the
+     * One binding: the id its generator's jar says it is, the option that asks for it (whose value is the
      * directory it is written into), and the options that qualify it, each named without dashes.
      *
      * @param artifact {@code groupId:artifactId} of the generator, whose version is this

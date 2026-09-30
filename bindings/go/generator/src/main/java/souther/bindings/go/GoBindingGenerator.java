@@ -12,11 +12,6 @@ import java.util.Map;
 public final class GoBindingGenerator implements BindingGenerator {
 
     @Override
-    public String id() {
-        return "go";
-    }
-
-    @Override
     public void preflight(Map<String, String> options) {
         GoBindings.refuseAhead(importPath(options));
     }
@@ -28,6 +23,12 @@ public final class GoBindingGenerator implements BindingGenerator {
     }
 
     private static String importPath(Map<String, String> options) {
+        for (String key : options.keySet()) {
+            if (!key.equals("package")) {
+                throw new NotBindable("the Go binding takes no option \"" + key + "\"; it takes"
+                        + " package");
+            }
+        }
         String path = options.get("package");
         if (path == null) {
             throw new NotBindable("--go wants --package, the import path of the package the binding"

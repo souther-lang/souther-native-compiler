@@ -22,7 +22,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.ServiceLoader;
 import java.util.stream.Stream;
 
 /**
@@ -32,8 +31,9 @@ import java.util.stream.Stream;
  * <p>Nothing here decides what a library or a binding is. The program is checked once, the driver
  * writes the library from it ({@link NativeCompiler#library}), and each binding is generated from
  * the manifest the driver wrote ({@link BindingGenerator#generate}), never from the program a
- * second time. Which bindings there are is {@link KnownBindings}, and each is written by the
- * generator that answers to its id, which this does not know beyond that.
+ * second time. A binding is written by a generator's jar: one the catalog names
+ * ({@link KnownBindings}), or one named with {@code --binding} by its coordinate and digest or its
+ * path. Both come to one {@link GeneratorSpec}, and are run the one way {@link Bindings} runs a jar.
  *
  * <p>Each directory is replaced whole by what writes it, and each is a directory of its own: a
  * binding refused after its library was written leaves the new library and the binding that was
@@ -67,6 +67,7 @@ public final class Main {
         return "usage: souther-native [--offline] [-cp <path>] -o <object> <source>...\n"
                 + "       souther-native [--offline] [-cp <path>] --library <dir> [--with <object>]...\n"
                 + "                      " + asked + "\n"
+                + "                      [--binding <generator> <dir> [--binding-option <key>=<value>]...]...\n"
                 + "                      <source>...\n"
                 + "       souther-native --fetch\n"
                 + "\n"
@@ -78,6 +79,11 @@ public final class Main {
                 + "  --library <dir>     where to write the library: object, headers, manifest, shared library\n"
                 + "  --with <object>     the object another build the program reaches was compiled to\n"
                 + described
+                + "  --binding <generator> <dir>\n"
+                + "                      where to write the binding a generator of someone else's writes; the\n"
+                + "                      generator is groupId:artifactId:version@sha256:<hex>, or a path to a jar\n"
+                + "  --binding-option <key>=<value>\n"
+                + "                      an option of the --binding before it, split at the first =\n"
                 + "  <source>            a .sou file, or a directory holding some\n";
     }
 
@@ -104,13 +110,36 @@ public final class Main {
     }
 
     /**
-     * A binding of the library for one host's language, where it is written, and the options it was
-     * asked with, each named without its dashes. What they mean is its generator's.
+     * The generator a binding was asked for with: a flag of the catalog, or {@code --binding} and a
+     * jar. What the command reads and nothing more; which jar that is, is {@link GeneratorSpec#of}.
      */
-    record HostBinding(KnownBindings.Kind kind, Path into, Map<String, String> options) {
+    sealed interface Asked {
+
+        /** A binding of the catalog, by its flag. */
+        record Standard(KnownBindings.Kind kind) implements Asked {
+        }
+
+        /** A generator named with {@code --binding}. */
+        record External(GeneratorRef ref) implements Asked {
+        }
+    }
+
+    /**
+     * A binding of the library for one host's language, where it is written, and the options it was
+     * asked with, each keyed by name. What they mean is its generator's.
+     */
+    record HostBinding(Asked asked, Path into, Map<String, String> options) {
 
         HostBinding {
             options = Map.copyOf(options);
+        }
+
+        /** The option that asked for it, as a refusal of the command line names it. */
+        String option() {
+            return switch (asked) {
+                case Asked.Standard standard -> standard.kind().flag();
+                case Asked.External external -> "--binding " + external.ref();
+            };
         }
     }
 
@@ -141,29 +170,17 @@ public final class Main {
     }
 
     static int run(String[] args, PrintStream out, PrintStream problems) {
-        return run(args, out, problems, ServiceLoader.load(BindingGenerator.class));
-    }
-
-    /** As the command runs with {@code installed} the generators installed with it. */
-    static int run(String[] args, PrintStream out, PrintStream problems,
-                   Iterable<BindingGenerator> installed) {
-        Bindings generators;
+        Fetching fetching;
         try {
-            generators = Bindings.of(installed);
-        } catch (NotInstalled e) {
-            // The installation's failure, said as that and not as a trace.
+            fetching = Fetching.standard();
+        } catch (NotFetched e) {
             problems.println(e.getMessage());
-            return REFUSED;
+            return WRONG_COMMAND;
         }
-        return run(args, out, problems, generators, Fetching.standard());
+        return run(args, out, problems, fetching);
     }
 
-    static int run(String[] args, PrintStream out, PrintStream problems, Bindings generators) {
-        return run(args, out, problems, generators, Fetching.standard());
-    }
-
-    static int run(String[] args, PrintStream out, PrintStream problems, Bindings generators,
-                   Fetching allowed) {
+    static int run(String[] args, PrintStream out, PrintStream problems, Fetching allowed) {
         Command command;
         try {
             command = read(args);
@@ -176,7 +193,7 @@ public final class Main {
         }
         Fetching fetching = allowed.withOffline(command.offline()).saying(problems);
         if (command.output() instanceof Output.Fetch) {
-            return fetched(out, problems, generators, fetching);
+            return fetched(out, problems, fetching);
         }
 
         List<Path> files;
@@ -199,8 +216,11 @@ public final class Main {
             switch (command.output()) {
                 case Output.Fetch fetch -> throw new IllegalStateException("handled above");
                 case Output.ObjectFile object -> {
-                    driver(fetching);
-                    byte[] written = NativeCompiler.compile(command.checked(read));
+                    byte[] written;
+                    try (Holding held = new Holding()) {
+                        written = NativeCompiler.compile(command.checked(read),
+                                driver(held, fetching));
+                    }
                     if (object.into().getParent() != null) {
                         Files.createDirectories(object.into().getParent());
                     }
@@ -208,60 +228,7 @@ public final class Main {
                     out.println("wrote " + object.into() + " from " + sources(files));
                 }
                 case Output.Library library -> {
-                    Map<HostBinding, Bindings.Generator> generating = new LinkedHashMap<>();
-                    for (HostBinding binding : library.bindings()) {
-                        Bindings.Generator generator =
-                                generator(generators, fetching, binding.kind());
-                        try {
-                            generator.preflight(binding.options());
-                            BindingDirectory.replaceable(binding.into(), binding.kind().id());
-                        } catch (NotBindable e) {
-                            problems.println(e.getMessage());
-                            return WRONG_COMMAND;
-                        }
-                        generating.put(binding, generator);
-                    }
-                    driver(fetching);
-                    List<byte[]> alongside = new ArrayList<>(library.alongside().size());
-                    for (Path object : library.alongside()) {
-                        alongside.add(Files.readAllBytes(object));
-                    }
-                    NativeCompiler.Library built = NativeCompiler.library(
-                            command.checked(read), alongside, library.into());
-                    out.println("wrote the library " + library.into() + " from " + sources(files));
-                    BindingInput input = new BindingInput(ManifestReader.read(built.manifest()),
-                            Declarations.at(built.declarations()));
-                    // Every binding is written before any is put in place, so that one refused or
-                    // failed leaves every directory as it was.
-                    List<BindingDirectory> staged = new ArrayList<>();
-                    try {
-                        for (Map.Entry<HostBinding, Bindings.Generator> each
-                                : generating.entrySet()) {
-                            HostBinding binding = each.getKey();
-                            BindingDirectory directory =
-                                    BindingDirectory.staging(binding.into(), binding.kind().id());
-                            staged.add(directory);
-                            try {
-                                each.getValue().generate(input, directory.staging(),
-                                        binding.options());
-                            } catch (NotBindable e) {
-                                problems.println("the " + binding.kind().display()
-                                        + " binding is not written: " + e.getMessage());
-                                abandoned(staged);
-                                return REFUSED;
-                            }
-                        }
-                    } catch (IOException | GeneratorFailed e) {
-                        abandoned(staged);
-                        throw e;
-                    }
-                    int at = 0;
-                    for (HostBinding binding : generating.keySet()) {
-                        BindingDirectory directory = staged.get(at++);
-                        directory.commit();
-                        out.println("wrote the " + binding.kind().display() + " binding "
-                                + binding.into());
-                    }
+                    return written(command, library, files, read, fetching, out, problems);
                 }
             }
         } catch (GeneratorFailed e) {
@@ -286,61 +253,113 @@ public final class Main {
         return WROTE_IT;
     }
 
-    /** Drops every binding written so far, none of which was put in place. */
-    private static void abandoned(List<BindingDirectory> staged) throws IOException {
-        for (BindingDirectory directory : staged) {
-            directory.abandon();
-        }
-    }
-
     /**
-     * The generator of {@code kind}: an installed one, or, where there is none, the one the
-     * catalog's artifact provides, fetched once and kept.
+     * The library and each binding of it asked for. Every generator is loaded and asked its
+     * {@code preflight}, and every directory checked, before the library is built; every binding is
+     * written before any is put in place, so that one refused or failed leaves every directory as it
+     * was. What it holds on the way, each generator loaded and each directory being written, is let
+     * go of on every way out, whatever was thrown: a generator closed, and a directory not put in
+     * place dropped.
      */
-    private static Bindings.Generator generator(Bindings generators, Fetching fetching,
-                                                KnownBindings.Kind kind)
-            throws IOException, GeneratorFailed {
-        try {
-            return generators.generatorFor(kind);
-        } catch (BindingUnavailable missing) {
-            Path jar;
-            try {
-                jar = GeneratorJars.fetch(fetching, kind);
-            } catch (NotFetched cannot) {
-                throw new NotFetched(missing.getMessage() + ": " + cannot.getMessage(), cannot);
+    private static int written(Command command, Output.Library library, List<Path> files,
+                               List<String> read, Fetching fetching, PrintStream out,
+                               PrintStream problems)
+            throws IOException, GeneratorFailed, InterruptedException {
+        try (Holding held = new Holding()) {
+            List<Bindings.Generator> generators = new ArrayList<>();
+            for (HostBinding binding : library.bindings()) {
+                Bindings.Generator generator =
+                        Bindings.load(fetching, GeneratorSpec.of(binding.asked(), fetching));
+                held.hold(generator, () -> closed(generator, problems));
+                generators.add(generator);
+                try {
+                    generator.preflight(binding.options());
+                    BindingDirectory.replaceable(binding.into(), generator.id());
+                } catch (NotBindable e) {
+                    problems.println(e.getMessage());
+                    return WRONG_COMMAND;
+                }
             }
-            return generators.load(jar, kind);
+            Path driver = driver(held, fetching);
+            List<byte[]> alongside = new ArrayList<>(library.alongside().size());
+            for (Path object : library.alongside()) {
+                alongside.add(Files.readAllBytes(object));
+            }
+            NativeCompiler.Library built = NativeCompiler.library(
+                    command.checked(read), alongside, library.into(), driver);
+            out.println("wrote the library " + library.into() + " from " + sources(files));
+            BindingInput input = new BindingInput(ManifestReader.read(built.manifest()),
+                    Declarations.at(built.declarations()));
+            List<BindingDirectory> staged = new ArrayList<>();
+            for (int at = 0; at < generators.size(); at++) {
+                HostBinding binding = library.bindings().get(at);
+                Bindings.Generator generator = generators.get(at);
+                BindingDirectory directory = BindingDirectory.staging(binding.into(),
+                        new BindingDirectory.Mark(generator.id(), generator.artifact()));
+                held.hold(directory, directory::abandon);
+                staged.add(directory);
+                try {
+                    generator.generate(input, directory.staging(), binding.options());
+                } catch (NotBindable e) {
+                    problems.println("the binding " + binding.into() + " is not written: "
+                            + e.getMessage());
+                    return REFUSED;
+                }
+            }
+            for (int at = 0; at < staged.size(); at++) {
+                staged.get(at).commit();
+                out.println("wrote the binding " + library.bindings().get(at).into() + " with "
+                        + generators.get(at).named());
+            }
+            return WROTE_IT;
         }
     }
 
     /**
-     * The driver a program is handed to, where the build has none of its own: the bundle of this
-     * release for this platform, fetched once and kept. Named by the property that says where the
-     * driver is, which is how everything that hands it a program finds it.
+     * Lets go of {@code generator}. A copy of its jar that could not be deleted is said, and left to
+     * the system's temporary directory: nothing the command wrote depends on it.
      */
-    private static void driver(Fetching fetching) throws NotFetched {
-        if (!NativeCompiler.hasDriver()) {
-            System.setProperty(NativeCompiler.DRIVER_PROPERTY,
-                    NativeBundle.locate(fetching).toString());
+    private static void closed(Bindings.Generator generator, PrintStream problems) {
+        try {
+            generator.close();
+        } catch (IOException e) {
+            problems.println("could not delete the copy of " + generator.named() + "'s jar: "
+                    + e.getMessage());
         }
     }
 
-    /** {@code --fetch}: what a command may need and this does not have, fetched, and nothing built. */
-    private static int fetched(PrintStream out, PrintStream problems, Bindings generators,
-                               Fetching fetching) {
+    /**
+     * The driver a program is handed to. A release runs the bundle of its own release for this
+     * platform, verified and unpacked for this command, which {@code held} owns, and reads no property
+     * naming another: what it runs is what it holds a checksum for, as for its generators. A build that
+     * is not a release has no bundle, and runs the driver its clone built, named by
+     * {@link NativeCompiler#DRIVER_PROPERTY}, which is not this command's to delete.
+     */
+    private static Path driver(Holding held, Fetching fetching) throws IOException {
+        if (fetching.isRelease()) {
+            return NativeBundle.unpacked(held, fetching);
+        }
+        return NativeCompiler.namedDriver();
+    }
+
+    /**
+     * {@code --fetch}: what a command may need and this does not have, fetched and kept, and nothing
+     * built. It prepares the cache and nothing that runs: no copy of a jar and no driver unpacked.
+     */
+    private static int fetched(PrintStream out, PrintStream problems, Fetching fetching) {
         try {
-            if (NativeCompiler.hasDriver()) {
-                out.println("the driver is this build's own");
+            if (fetching.isRelease()) {
+                out.println("the driver " + NativeBundle.kept(fetching));
             } else {
-                out.println("the driver " + NativeBundle.locate(fetching));
+                out.println("the driver is this build's own, " + NativeCompiler.namedDriver());
             }
             for (KnownBindings.Kind kind : KnownBindings.all()) {
-                try {
-                    generators.generatorFor(kind);
-                    out.println("the " + kind.display() + " generator is installed");
-                } catch (BindingUnavailable missing) {
-                    out.println("the " + kind.display() + " generator "
-                            + GeneratorJars.fetch(fetching, kind));
+                GeneratorSpec spec = GeneratorSpec.standard(kind, fetching);
+                switch (spec.ref()) {
+                    case GeneratorRef.Local local ->
+                            out.println(spec.display() + " is this build's own, " + local.path());
+                    case GeneratorRef.Maven maven -> out.println(spec.display() + " "
+                            + GeneratorArtifacts.kept(fetching, maven));
                 }
             }
             return WROTE_IT;
@@ -361,6 +380,8 @@ public final class Main {
         List<Path> alongside = new ArrayList<>();
         Map<KnownBindings.Kind, Path> asked = new HashMap<>();
         Map<KnownBindings.Kind, Map<String, String>> qualified = new HashMap<>();
+        List<Named> external = new ArrayList<>();
+        Map<String, String> externalOptions = null;
         List<Path> sources = new ArrayList<>();
         List<Path> classPath = new ArrayList<>();
         boolean offline = false;
@@ -380,10 +401,40 @@ public final class Main {
                     }
                 }
                 case "--with" -> alongside.add(Path.of(valueOf(args, ++at, held)));
+                case "--binding" -> {
+                    GeneratorRef ref;
+                    try {
+                        ref = GeneratorRef.parse(valueOf(args, ++at, held));
+                    } catch (IllegalArgumentException e) {
+                        throw new NotACommand(held + ": " + e.getMessage());
+                    }
+                    externalOptions = new LinkedHashMap<>();
+                    external.add(new Named(ref, Path.of(valueOf(args, ++at, held + " <generator>")),
+                            externalOptions));
+                }
+                case "--binding-option" -> {
+                    String option = valueOf(args, ++at, held);
+                    if (externalOptions == null) {
+                        throw new NotACommand(held + " qualifies the --binding before it, and"
+                                + " there is none");
+                    }
+                    int equals = option.indexOf('=');
+                    if (equals <= 0) {
+                        throw new NotACommand(held + " is <key>=<value>, and \"" + option
+                                + "\" is not");
+                    }
+                    String key = option.substring(0, equals);
+                    if (externalOptions.put(key, option.substring(equals + 1)) != null) {
+                        throw new NotACommand(held + " names " + key + " twice for one binding");
+                    }
+                }
                 default -> {
                     Optional<KnownBindings.Kind> asks = KnownBindings.askedBy(held);
                     Optional<KnownBindings.Kind> qualifies = KnownBindings.qualifiedBy(held);
                     if (asks.isPresent()) {
+                        // A --binding-option after a flag of the catalog would read as the
+                        // flag's, and belongs to no --binding before it.
+                        externalOptions = null;
                         asked.put(asks.get(),
                                 once(held, asked.get(asks.get()), Path.of(valueOf(args, ++at, held))));
                     } else if (qualifies.isPresent()) {
@@ -404,7 +455,8 @@ public final class Main {
                 throw new NotACommand("--fetch and --offline ask for opposite things");
             }
             if (object != null || library != null || !sources.isEmpty() || !alongside.isEmpty()
-                    || !classPath.isEmpty() || !asked.isEmpty() || !qualified.isEmpty()) {
+                    || !classPath.isEmpty() || !asked.isEmpty() || !qualified.isEmpty()
+                    || !external.isEmpty()) {
                 throw new NotACommand("--fetch is a command of its own, and takes nothing else");
             }
             return new Command(new Output.Fetch(), List.of(), List.of(), false);
@@ -418,6 +470,9 @@ public final class Main {
         if (library == null) {
             if (!alongside.isEmpty()) {
                 throw new NotACommand("--with goes with --library");
+            }
+            if (!external.isEmpty()) {
+                throw new NotACommand("--binding goes with --library");
             }
             for (KnownBindings.Kind kind : KnownBindings.all()) {
                 if (asked.containsKey(kind)) {
@@ -441,23 +496,29 @@ public final class Main {
                         + " goes with " + kind.flag());
             }
         }
-        List<Named> directories = new ArrayList<>(List.of(new Named("--library", true)));
+        List<String> directories = new ArrayList<>(List.of("--library"));
         List<Path> placed = new ArrayList<>(List.of(library));
         List<HostBinding> bindings = new ArrayList<>();
         for (KnownBindings.Kind kind : KnownBindings.all()) {
             if (asked.containsKey(kind)) {
-                bindings.add(new HostBinding(kind, asked.get(kind),
+                bindings.add(new HostBinding(new Asked.Standard(kind), asked.get(kind),
                         qualified.getOrDefault(kind, Map.of())));
-                directories.add(new Named(kind.flag(), true));
-                placed.add(asked.get(kind));
             }
+        }
+        for (Named binding : external) {
+            bindings.add(new HostBinding(new Asked.External(binding.ref()), binding.into(),
+                    binding.options()));
+        }
+        for (HostBinding binding : bindings) {
+            directories.add(binding.option());
+            placed.add(binding.into());
         }
         for (int one = 0; one < placed.size(); one++) {
             for (int other = one + 1; other < placed.size(); other++) {
                 if (within(placed.get(one), placed.get(other))
                         || within(placed.get(other), placed.get(one))) {
-                    throw new NotACommand(directories.get(other).option() + " and "
-                            + directories.get(one).option() + " are each replaced whole, so"
+                    throw new NotACommand(directories.get(other) + " and "
+                            + directories.get(one) + " are each replaced whole, so"
                             + " neither can hold the other");
                 }
             }
@@ -466,7 +527,8 @@ public final class Main {
                 List.copyOf(sources), List.copyOf(classPath), offline);
     }
 
-    private record Named(String option, boolean given) {
+    /** A {@code --binding} as read so far: its options are added to as the command line goes on. */
+    private record Named(GeneratorRef ref, Path into, Map<String, String> options) {
     }
 
     private static String valueOf(String[] args, int at, String option) throws NotACommand {

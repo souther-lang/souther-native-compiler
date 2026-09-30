@@ -28,6 +28,13 @@
             <type>test-jar</type>
             <scope>test</scope>
         </dependency>
+        <!-- What a test builds its library with, as a generator of someone else's is tested. -->
+        <dependency>
+            <groupId>org.souther-lang</groupId>
+            <artifactId>souther-bindings-testkit</artifactId>
+            <version>${project.version}</version>
+            <scope>test</scope>
+        </dependency>
         <dependency>
             <groupId>org.souther-lang</groupId>
             <artifactId>souther-native-compiler</artifactId>
@@ -45,6 +52,21 @@
 
     <build>
         <plugins>
+            <!-- Which generator the jar is and what it is compatible with, read by the command before
+                 any of the jar's code runs (souther.bindings.BindingApi). -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <configuration>
+                    <archive>
+                        <manifestEntries>
+                            <Souther-Binding-Id>rust</Souther-Binding-Id>
+                            <Souther-Binding-Api>${souther.bindings.api}</Souther-Binding-Api>
+                            <Souther-Abi-Generations>${souther.abi.generations}</Souther-Abi-Generations>
+                        </manifestEntries>
+                    </archive>
+                </configuration>
+            </plugin>
             <plugin>
                 <groupId>org.codehaus.mojo</groupId>
                 <artifactId>exec-maven-plugin</artifactId>

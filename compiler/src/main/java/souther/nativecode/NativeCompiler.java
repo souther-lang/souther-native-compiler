@@ -22,11 +22,12 @@ import java.util.List;
 public final class NativeCompiler {
 
     /**
-     * Where the driver is: the one place it is looked for. A clone names the one Cargo built
-     * ({@code scripts/souther-native} does, and so do the tests), and a released compiler names the one
-     * it fetched and checked. It is not looked for in the directory the command is run in, which a
-     * released compiler is run in the middle of somebody's project, and whose executable it would
-     * then run in place of the one it holds a checksum for.
+     * Where the driver is in a build that is not a release: the one place such a build looks for it.
+     * A clone names the one Cargo built ({@code scripts/souther-native} does, and so do the tests). A
+     * release never reads it, and runs the driver of its own release, verified and unpacked for the
+     * command, as it runs only the generators its checksums name. A driver is never looked for in the
+     * directory the command is run in, which a released compiler is run in the middle of somebody's
+     * project, and whose executable it would then run in place of the one it holds a checksum for.
      */
     public static final String DRIVER_PROPERTY = "souther.native.driver";
 
@@ -44,17 +45,15 @@ public final class NativeCompiler {
     private NativeCompiler() {
     }
 
-    /**
-     * Whether a driver is named by {@link #DRIVER_PROPERTY}, and by nothing else. Where none is, a
-     * released compiler fetches its own.
-     */
-    public static boolean hasDriver() {
-        return System.getProperty(DRIVER_PROPERTY) != null;
-    }
-
     /** The object holding every behavior the program declares. */
     public static byte[] compile(CheckedProgram program) throws IOException, InterruptedException {
         return driven(ProgramWriter.written(program));
+    }
+
+    /** As {@link #compile(CheckedProgram)}, handed to {@code driver}. */
+    public static byte[] compile(CheckedProgram program, Path driver)
+            throws IOException, InterruptedException {
+        return run(ProgramWriter.written(program), List.of(), driver);
     }
 
     /**
@@ -93,6 +92,61 @@ public final class NativeCompiler {
     }
 
     /**
+     * As {@link #library(CheckedProgram, List, Path)}, handed to {@code driver} and not to the one
+     * {@link #DRIVER_PROPERTY} names: for a caller that chose its driver itself, as the testkit does.
+     */
+    public static Library library(CheckedProgram program, List<byte[]> alongside, Path into,
+                                  Path driver) throws IOException, InterruptedException {
+        return library(ProgramWriter.written(program), alongside, into, driver);
+    }
+
+    /**
+     * The driver of release {@code release} for this platform: fetched and kept where it is not, held
+     * to the checksum that release carries, and unpacked for the caller from the bytes that were
+     * hashed. The caller owns it, and {@link ReleasedDriver#close} deletes it. Refused where this
+     * compiler is not that release, or where what came with it is of another release: a driver and a
+     * checksum are one release's, and a caller asking for one release's driver from another's
+     * compiler would get the wrong one.
+     */
+    public static ReleasedDriver releasedDriver(String release) throws IOException {
+        Fetching fetching = Fetching.standard();
+        if (!release.equals(fetching.version())) {
+            throw new NotFetched("the driver of " + release + " is asked of souther-native-compiler "
+                    + fetching.version() + ": the testkit, the compiler and the API are to be of one"
+                    + " release");
+        }
+        Holding held = new Holding();
+        try (Holding building = new Holding()) {
+            building.hold(held, held::close);
+            Path driver = NativeBundle.unpacked(held, fetching);
+            building.handOver();
+            return new ReleasedDriver(driver, held);
+        }
+    }
+
+    /** A driver unpacked for whoever asked for it, deleted when they close it. */
+    public static final class ReleasedDriver implements AutoCloseable {
+
+        private final Path path;
+        private final Holding held;
+
+        private ReleasedDriver(Path path, Holding held) {
+            this.path = path;
+            this.held = held;
+        }
+
+        /** Where the driver is. */
+        public Path path() {
+            return path;
+        }
+
+        @Override
+        public void close() throws IOException {
+            held.close();
+        }
+    }
+
+    /**
      * The library a transport document is built into, reaching no other build's object.
      * Package-visible for a test that asks what a binding makes of a document no checked program of
      * today's language writes, as {@link #driven} is for an object.
@@ -103,6 +157,11 @@ public final class NativeCompiler {
 
     private static Library library(String document, List<byte[]> alongside, Path into)
             throws IOException, InterruptedException {
+        return library(document, alongside, into, driver());
+    }
+
+    private static Library library(String document, List<byte[]> alongside, Path into,
+                                   Path driver) throws IOException, InterruptedException {
         Path handed = Files.createTempDirectory("souther-native-alongside");
         try {
             List<String> arguments = new ArrayList<>(
@@ -113,7 +172,7 @@ public final class NativeCompiler {
                 arguments.add("--with");
                 arguments.add(object.toString());
             }
-            byte[] said = run(document, arguments);
+            byte[] said = run(document, arguments, driver);
             // Where the driver wrote each, one to a line, which is how what a shared library is
             // called on this host is said by the side that named it.
             List<Path> written =
@@ -138,13 +197,12 @@ public final class NativeCompiler {
      * driver does with a document no checked program of today's language writes.
      */
     static byte[] driven(String document) throws IOException, InterruptedException {
-        return run(document, List.of());
+        return run(document, List.of(), driver());
     }
 
     /** What the driver writes on stdout when handed the document with these arguments. */
-    private static byte[] run(String document, List<String> arguments)
+    private static byte[] run(String document, List<String> arguments, Path driver)
             throws IOException, InterruptedException {
-        Path driver = driver();
         if (!Files.isExecutable(driver)) {
             throw new IOException("no driver at " + driver.toAbsolutePath()
                     + ", which `cargo build` in native/ writes");
@@ -184,11 +242,19 @@ public final class NativeCompiler {
     }
 
     private static Path driver() throws IOException {
+        return namedDriver();
+    }
+
+    /**
+     * The driver {@link #DRIVER_PROPERTY} names, which a build that is not a release runs: the one
+     * its clone built. A release reads no such property, and runs the driver of its own release.
+     */
+    static Path namedDriver() throws IOException {
         String named = System.getProperty(DRIVER_PROPERTY);
         if (named == null) {
-            throw new IOException("no driver is named: " + DRIVER_PROPERTY + " is the one place it is"
-                    + " looked for (a released compiler fetches its own, and scripts/souther-native"
-                    + " names a clone's)");
+            throw new IOException("no driver is named: " + DRIVER_PROPERTY + " is the one place a"
+                    + " build that is not a release looks for one (scripts/souther-native names a"
+                    + " clone's, and a release runs its own)");
         }
         return Path.of(named);
     }

@@ -1,10 +1,12 @@
 package souther.bindings.php;
 
+import souther.bindings.testkit.SoutherBindingTest;
+import souther.bindings.testkit.TestLibrary;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import souther.nativecode.Generated;
-import souther.nativecode.Checked;
-import souther.nativecode.NativeCompiler;
+
+
 import souther.nativecode.Php;
 
 import java.nio.charset.StandardCharsets;
@@ -71,8 +73,8 @@ class APhpHostReadsATupleAndAnOptionalAtAnyDepthTest {
 
     @Test
     void aTupleAndAnOptionalAtAnyDepthAreReadAsPhpHoldsThem(@TempDir Path into) throws Exception {
-        NativeCompiler.Library library =
-                NativeCompiler.library(Checked.of(List.of(SHAPE)), into.resolve("native"));
+        TestLibrary library =
+                SoutherBindingTest.compile(into.resolve("native"), SHAPE);
         Generated binding =
                 LibraryBinding.generated(library, into.resolve("php"), "Acme\\Shape");
         Path host = into.resolve("host.php");
@@ -97,8 +99,8 @@ class APhpHostReadsATupleAndAnOptionalAtAnyDepthTest {
      */
     @Test
     void eachIsTypedAsWhatPhpHolds(@TempDir Path into) throws Exception {
-        NativeCompiler.Library library =
-                NativeCompiler.library(Checked.of(List.of(SHAPE)), into.resolve("native"));
+        TestLibrary library =
+                SoutherBindingTest.compile(into.resolve("native"), SHAPE);
         Generated binding =
                 LibraryBinding.generated(library, into.resolve("php"), "Acme\\Shape");
 

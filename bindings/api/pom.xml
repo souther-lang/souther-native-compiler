@@ -20,10 +20,18 @@
 
     <build>
         <plugins>
-            <!-- What the tests share, for the modules that test against these helpers. -->
+            <!-- Which release this is, which a released compiler holds to its own; and what the tests
+                 share, for the modules that test against these helpers. -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-jar-plugin</artifactId>
+                <configuration>
+                    <archive>
+                        <manifest>
+                            <addDefaultImplementationEntries>true</addDefaultImplementationEntries>
+                        </manifest>
+                    </archive>
+                </configuration>
                 <executions>
                     <execution>
                         <goals>

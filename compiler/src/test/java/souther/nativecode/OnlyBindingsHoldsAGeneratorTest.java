@@ -57,14 +57,11 @@ class OnlyBindingsHoldsAGeneratorTest {
 
     /** Every class the command's own classes declare, nested ones among them. */
     private static List<Class<?>> declared() throws Exception {
-        Path classes = Path.of(Bindings.class.getProtectionDomain().getCodeSource().getLocation()
-                .toURI());
+        Path classes = souther.bindings.Classes.of(Bindings.class);
         List<Class<?>> types = new ArrayList<>();
         try (Stream<Path> files = Files.walk(classes.resolve("souther/nativecode"))) {
             for (Path file : files.filter(it -> it.toString().endsWith(".class")).sorted().toList()) {
-                String name = classes.relativize(file).toString()
-                        .replace(file.getFileSystem().getSeparator(), ".")
-                        .replaceAll("\\.class$", "");
+                String name = souther.bindings.Classes.nameOf(classes, file);
                 types.add(Class.forName(name, false, Bindings.class.getClassLoader()));
             }
         }

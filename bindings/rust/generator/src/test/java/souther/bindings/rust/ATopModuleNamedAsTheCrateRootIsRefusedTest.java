@@ -1,10 +1,12 @@
 package souther.bindings.rust;
 
+import souther.bindings.testkit.SoutherBindingTest;
+import souther.bindings.testkit.TestLibrary;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import souther.bindings.NotBindable;
-import souther.nativecode.Checked;
-import souther.nativecode.NativeCompiler;
+
+
 
 import java.nio.file.Path;
 import java.util.List;
@@ -20,11 +22,11 @@ class ATopModuleNamedAsTheCrateRootIsRefusedTest {
 
     @Test
     void aTopModuleNamedAsTheDecodingARunLendsIsRefused(@TempDir Path into) throws Exception {
-        NativeCompiler.Library library = NativeCompiler.library(Checked.of(List.of("""
+        TestLibrary library = SoutherBindingTest.compile(into.resolve("native"), """
                 module Decoding exposing ( Quantity )
 
                 data Quantity = Int
-                """)), into.resolve("native"));
+                """);
 
         assertThatThrownBy(() -> RustHost.generated(library, into.resolve("binding"), "shop-binding"))
                 .isInstanceOf(NotBindable.class)

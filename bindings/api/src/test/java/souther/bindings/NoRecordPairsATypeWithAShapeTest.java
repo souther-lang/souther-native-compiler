@@ -55,14 +55,11 @@ class NoRecordPairsATypeWithAShapeTest {
 
     /** Every class the API's own classes declare, nested ones among them. */
     private static List<Class<?>> declared() throws Exception {
-        Path classes = Path.of(Manifest.class.getProtectionDomain().getCodeSource().getLocation()
-                .toURI());
+        Path classes = Classes.of(Manifest.class);
         List<Class<?>> types = new ArrayList<>();
         try (Stream<Path> files = Files.walk(classes.resolve("souther/bindings"))) {
             for (Path file : files.filter(it -> it.toString().endsWith(".class")).sorted().toList()) {
-                String name = classes.relativize(file).toString()
-                        .replace(file.getFileSystem().getSeparator(), ".")
-                        .replaceAll("\\.class$", "");
+                String name = Classes.nameOf(classes, file);
                 types.add(Class.forName(name));
             }
         }

@@ -1,5 +1,6 @@
 package souther.nativecode;
 
+import org.jspecify.annotations.Nullable;
 import souther.bindings.BindingGenerator;
 import souther.bindings.BindingInput;
 
@@ -11,14 +12,12 @@ import java.util.Map;
 /**
  * A generator that a test packs into a jar and serves as the artifact of the PHP binding: it is
  * what is loaded once the jar is fetched, and it writes one file so that a build can be seen to have
- * used it.
+ * used it. It carries a JSpecify annotation as the standard generators do, which its loader cannot
+ * resolve and does not need to.
  */
 public final class FetchedGenerator implements BindingGenerator {
 
-    @Override
-    public String id() {
-        return "php";
-    }
+    private @Nullable String written;
 
     @Override
     public void preflight(Map<String, String> options) {
@@ -27,6 +26,7 @@ public final class FetchedGenerator implements BindingGenerator {
     @Override
     public void generate(BindingInput input, Path into, Map<String, String> options)
             throws IOException {
-        Files.writeString(into.resolve("fetched.txt"), "written by a fetched generator");
+        written = "written by a fetched generator";
+        Files.writeString(into.resolve("fetched.txt"), written);
     }
 }

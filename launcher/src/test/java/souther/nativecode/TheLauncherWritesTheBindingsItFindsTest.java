@@ -13,15 +13,17 @@ import java.nio.file.Path;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * The command with its generators installed writes a library and the PHP and the Rust binding of
- * it, as the API does and through it: an application needs no Java of its own to build what it
- * runs.
+ * The command as a clone runs it writes a library and the PHP, the Rust and the Go binding of it,
+ * from the jars this build made: an application needs no Java of its own to build what it runs.
  *
- * <p>The compiler's own tests hold the command to what it does with any generator, through ones that
- * only record what they were asked. What is here is what needs the real ones: that each is found by
- * the id the catalog names it by, and what each refuses before the library is built.
+ * <p>The compiler's own tests hold the command to what it does with any generator's jar, through
+ * ones that only record what they were asked. What is here is what needs the real ones: that each
+ * jar says it is the generator the catalog names and is compatible with this command, that it is run
+ * behind a loader of its own and not from the launcher's class path, and what each refuses before
+ * the library is built.
  */
 class TheLauncherWritesTheBindingsItFindsTest {
 
@@ -45,13 +47,35 @@ class TheLauncherWritesTheBindingsItFindsTest {
     private record Ran(int ended, String printed, String said) {
     }
 
+    /**
+     * Each binding of the catalog is a jar this build made, which says it is that generator, of this
+     * major of the API and for this ABI generation, and is loaded as any jar is: nothing of the
+     * compiler resolves through its loader.
+     */
     @Test
-    void everyBindingTheCatalogNamesHasAGeneratorHere() throws Exception {
-        Bindings installed = Bindings.installed();
-
+    void everyBindingTheCatalogNamesIsAJarThisBuildMade() throws Exception {
+        Fetching fetching = Fetching.standard();
         for (KnownBindings.Kind kind : KnownBindings.all()) {
-            assertThat(installed.generatorFor(kind).implementation()).isNotBlank();
+            try (Bindings.Generator generator =
+                         Bindings.load(fetching, GeneratorSpec.standard(kind, fetching))) {
+                assertThat(generator.id()).isEqualTo(kind.id());
+                assertThat(generator.implementation()).isNotBlank();
+                assertThatThrownBy(() -> Class.forName(Main.class.getName(), false,
+                        generator.loader())).isInstanceOf(ClassNotFoundException.class);
+            }
         }
+    }
+
+    /** The command the launcher runs has no generator on its class path, and finds none there. */
+    @Test
+    void theLaunchersClassPathHoldsNoGenerator() throws Exception {
+        String classPath = Files.readString(Path.of("target", "runtime-classpath.txt"));
+
+        assertThat(classPath).isNotBlank().doesNotContain("souther-binding-")
+                .doesNotContain("bindings/php").doesNotContain("bindings/rust")
+                .doesNotContain("bindings/go");
+        assertThat(java.util.ServiceLoader.load(souther.bindings.BindingGenerator.class,
+                ClassLoader.getPlatformClassLoader()).stream()).isEmpty();
     }
 
     @Test
@@ -66,7 +90,7 @@ class TheLauncherWritesTheBindingsItFindsTest {
         assertThat(into.resolve("native").resolve("souther.json")).exists();
         assertThat(into.resolve("php").resolve("Shop").resolve("Lines").resolve("Behaviors.php"))
                 .exists();
-        assertThat(ran.printed()).contains("from 2 sources").contains("wrote the PHP binding");
+        assertThat(ran.printed()).contains("from 2 sources").contains("with the PHP generator");
     }
 
     /**

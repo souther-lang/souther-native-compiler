@@ -15,12 +15,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * The catalog says which artifact brings each generator, and what a missing generator is fetched by
  * is that name. The modules say what each artifact is, in their own poms, so the same fact is written
- * twice, and nothing else would notice the two parting: a launcher takes its generators from its own
- * dependencies, and the catalog's name is not used on any path a build runs.
+ * twice, and nothing else would notice the two parting: a launcher is handed the jars its own
+ * build made, and the catalog's name is not used on any path a build runs.
  *
  * <p>So for every binding the catalog names, an artifact of that name is a module of this
- * repository, and the generator it provides, the one found through its service file, is the one the
- * catalog's id asks for.
+ * repository, and the generator its jar provides, the one found through its service file, is the
+ * one that module's service file names.
  */
 class TheCatalogNamesTheArtifactsThatProvideItsGeneratorsTest {
 
@@ -50,8 +50,12 @@ class TheCatalogNamesTheArtifactsThatProvideItsGeneratorsTest {
 
             Path services = named.getFirst()
                     .resolve("src/main/resources/META-INF/services/souther.bindings.BindingGenerator");
-            assertThat(Files.readAllLines(services)).as("what %s provides", kind.artifact())
-                    .contains(Bindings.installed().generatorFor(kind).implementation());
+            Fetching fetching = Fetching.standard();
+            try (Bindings.Generator generator =
+                         Bindings.load(fetching, GeneratorSpec.standard(kind, fetching))) {
+                assertThat(Files.readAllLines(services)).as("what %s provides", kind.artifact())
+                        .containsExactly(generator.implementation());
+            }
         }
     }
 

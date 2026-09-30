@@ -20,8 +20,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  *
  * <p>A command is one output, read before anything is built: an option of the other output, or
  * one qualifying a binding that was not asked for, is a command refused and not a build half done.
- * What each binding is asked for is the catalog's, and what the generators write is held to the
- * launcher's tests, where they are installed.
+ * A binding of the catalog is asked for by its flag, and one of someone else's by {@code --binding};
+ * what the standard generators write is held to the launcher's tests, which run their jars.
  */
 class TheCommandLineBuildsALibraryAndItsBindingTest {
 
@@ -102,9 +102,66 @@ class TheCommandLineBuildsALibraryAndItsBindingTest {
                         binding("rust", "rust", "crate", "acme"))));
     }
 
+    /**
+     * A generator named with {@code --binding} is read by its coordinate and digest, or as a path; an
+     * option of it is split at its first {@code =}, and belongs to the {@code --binding} before it.
+     */
+    @Test
+    void aBindingIsReadWithTheOptionsThatFollowIt() throws Exception {
+        String digest = "ab".repeat(32);
+        Main.Command command = Main.read(new String[]{"--library", "out",
+                "--binding", "com.acme:souther-binding-kotlin:1.2.0@sha256:" + digest, "kotlin",
+                "--binding-option", "package=com.acme.shop", "--binding-option", "style=a=b",
+                "--binding", "build/generator.jar", "local",
+                "--binding", "/tmp/build@experimental/g:1.jar", "at", "m.sou"});
+
+        assertThat(command.output()).isEqualTo(new Main.Output.Library(Path.of("out"), List.of(),
+                List.of(new Main.HostBinding(new Main.Asked.External(new GeneratorRef.Maven(
+                                MavenCoordinate.parse("com.acme:souther-binding-kotlin:1.2.0"), digest)),
+                                Path.of("kotlin"), Map.of("package", "com.acme.shop", "style", "a=b")),
+                        new Main.HostBinding(new Main.Asked.External(new GeneratorRef.Local(
+                                Path.of("build/generator.jar"))), Path.of("local"), Map.of()),
+                        new Main.HostBinding(new Main.Asked.External(new GeneratorRef.Local(
+                                Path.of("/tmp/build@experimental/g:1.jar"))), Path.of("at"),
+                                Map.of()))));
+    }
+
+    @Test
+    void aBindingIsRefusedWhatItCannotMean() {
+        String digest = "ab".repeat(32);
+        refused("a coordinate with no digest", "--library", "out", "--binding",
+                "com.acme:kotlin:1.2.0", "kotlin", "m.sou");
+        refused("a digest that is not SHA-256", "--library", "out", "--binding",
+                "com.acme:kotlin:1.2.0@md5:" + digest, "kotlin", "m.sou");
+        refused("a digest that is not one", "--library", "out", "--binding",
+                "com.acme:kotlin:1.2.0@sha256:abc", "kotlin", "m.sou");
+        refused("neither a jar nor a coordinate", "--library", "out", "--binding",
+                "build/generator", "kotlin", "m.sou");
+        refused("a coordinate of two parts", "--library", "out", "--binding",
+                "com.acme:kotlin@sha256:" + digest, "kotlin", "m.sou");
+        refused("a --binding with no directory", "--library", "out", "m.sou", "--binding",
+                "g.jar");
+        refused("an option with no --binding", "--library", "out", "--binding-option", "a=b",
+                "m.sou");
+        refused("an option after a flag of the catalog", "--library", "out", "--binding", "g.jar",
+                "b", "--php", "php", "--namespace", "N", "--binding-option", "a=b", "m.sou");
+        refused("an option with no key", "--library", "out", "--binding", "g.jar", "b",
+                "--binding-option", "=b", "m.sou");
+        refused("an option with no =", "--library", "out", "--binding", "g.jar", "b",
+                "--binding-option", "ab", "m.sou");
+        refused("a key named twice", "--library", "out", "--binding", "g.jar", "b",
+                "--binding-option", "a=1", "--binding-option", "a=2", "m.sou");
+        refused("a --binding without a library", "-o", "a.o", "--binding", "g.jar", "b", "m.sou");
+        refused("a --binding inside the library", "--library", "out", "--binding", "g.jar",
+                "out/b", "m.sou");
+        refused("two bindings in one directory", "--library", "out", "--binding", "g.jar", "b",
+                "--binding", "h.jar", "b", "m.sou");
+        refused("--fetch with a --binding", "--fetch", "--binding", "g.jar", "b");
+    }
+
     private static Main.HostBinding binding(String id, String into, String option, String value) {
-        return new Main.HostBinding(KnownBindings.all().stream()
-                .filter(kind -> kind.id().equals(id)).findFirst().orElseThrow(), Path.of(into),
+        return new Main.HostBinding(new Main.Asked.Standard(KnownBindings.all().stream()
+                .filter(kind -> kind.id().equals(id)).findFirst().orElseThrow()), Path.of(into),
                 Map.of(option, value));
     }
 

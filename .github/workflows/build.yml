@@ -71,7 +71,9 @@ jobs:
             examples/rust-cart
 
       # souther-compiler comes from Maven Central at the release pom.xml's `souther.version` names.
-      - run: mvn --batch-mode test
+      # Through verify and not test: the launcher's tests run the generators' jars, which the reactor
+      # packs before it, as the command runs any generator's jar.
+      - run: mvn --batch-mode verify
 
       # What an application does, with no Java calling the API: the command line builds a library
       # and its binding, Composer installs the runtime from its path, and PHP calls the library.

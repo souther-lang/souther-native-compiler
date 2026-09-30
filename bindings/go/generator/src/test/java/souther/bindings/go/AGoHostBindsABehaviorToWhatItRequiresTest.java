@@ -1,9 +1,11 @@
 package souther.bindings.go;
 
+import souther.bindings.testkit.SoutherBindingTest;
+import souther.bindings.testkit.TestLibrary;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import souther.nativecode.Checked;
-import souther.nativecode.NativeCompiler;
+
+
 
 import java.nio.file.Path;
 import java.util.List;
@@ -167,8 +169,7 @@ class AGoHostBindsABehaviorToWhatItRequiresTest {
 
     @Test
     void aGoHostImplementsBindsAndCallsABehavior(@TempDir Path into) throws Exception {
-        NativeCompiler.Library library = NativeCompiler.library(
-                Checked.of(List.of(CATALOG, WHOLESALE, SHOP)), into.resolve("native"));
+        TestLibrary library = SoutherBindingTest.compile(into.resolve("native"), CATALOG, WHOLESALE, SHOP);
         var binding = GoHost.generated(library, into.resolve("binding"), "example.com/billing");
 
         String said = GoHost.ran(into, binding, "example.com/billing", HOST,

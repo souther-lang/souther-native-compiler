@@ -12,11 +12,6 @@ import java.util.Map;
 public final class PhpBindingGenerator implements BindingGenerator {
 
     @Override
-    public String id() {
-        return "php";
-    }
-
-    @Override
     public void preflight(Map<String, String> options) {
         PhpBindings.refuseAhead(namespace(options));
     }
@@ -28,6 +23,12 @@ public final class PhpBindingGenerator implements BindingGenerator {
     }
 
     private static String namespace(Map<String, String> options) {
+        for (String key : options.keySet()) {
+            if (!key.equals("namespace")) {
+                throw new NotBindable("the PHP binding takes no option \"" + key + "\"; it takes"
+                        + " namespace");
+            }
+        }
         String namespace = options.get("namespace");
         if (namespace == null) {
             throw new NotBindable("--php wants --namespace, the namespace the binding is under");

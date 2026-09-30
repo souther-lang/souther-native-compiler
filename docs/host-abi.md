@@ -40,12 +40,15 @@ a generator. What it says is described with its types in
 
 Everything a host calls of a library belongs to one ABI generation, and the generation moves when
 any of it changes. It is `ABI_GENERATION` in the `abi` crate, and the file of its number under
-`generations/` records the contract the generation begins from: every function a host calls and
+`generations/` records every contract the generation has offered: every function a host calls and
 every function generated code calls in the runtime, with what each takes and answers; every word
 and what it is on the machine; the storage a host lays out; the scope contract; the input contract;
 the statuses and the range reserved for a host; how a value is hashed; and the constants generated
-code and the runtime agree on. A test fails when what the current generation records changes without
-a new generation, and another that a generation has no record.
+code and the runtime agree on. The record only grows: a host or an object can be built on any day of a
+generation's life, so what is added under a generation is recorded under it, and taking it away
+later is a change of generation. A test fails when a recorded line is gone or changed without a new
+generation, and when the contract has a line the record does not yet; another fails where a
+generation has no record.
 
 A host asks a library which generation it answers to before it calls anything else, with `uint32_t
 souther_abi_generation(void)`, and refuses one it was not written for. That function is outside the

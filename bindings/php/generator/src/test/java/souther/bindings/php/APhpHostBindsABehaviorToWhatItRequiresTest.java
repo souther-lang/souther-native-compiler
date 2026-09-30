@@ -1,10 +1,12 @@
 package souther.bindings.php;
 
+import souther.bindings.testkit.SoutherBindingTest;
+import souther.bindings.testkit.TestLibrary;
 import souther.nativecode.Generated;
-import souther.nativecode.Checked;
+
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import souther.nativecode.NativeCompiler;
+
 import souther.nativecode.Php;
 
 import java.nio.charset.StandardCharsets;
@@ -282,8 +284,7 @@ class APhpHostBindsABehaviorToWhatItRequiresTest {
     @Test
     void aHostBindsABehaviorToClassesImplementingWhatItRequires(@TempDir Path into)
             throws Exception {
-        NativeCompiler.Library library = NativeCompiler.library(
-                Checked.of(List.of(CATALOG, WHOLESALE, SHOP)), into.resolve("native"));
+        TestLibrary library = SoutherBindingTest.compile(into.resolve("native"), CATALOG, WHOLESALE, SHOP);
         Generated binding =
                 LibraryBinding.generated(library, into.resolve("php"), "Acme\\Billing");
         Path host = into.resolve("host.php");

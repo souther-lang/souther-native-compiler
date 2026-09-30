@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>org.souther-lang</groupId>
+        <artifactId>souther-native-parent</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+        <relativePath>../../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>souther-bindings-testkit</artifactId>
+    <name>Souther Bindings Testkit</name>
+    <description>What a binding generator is tested with outside this repository: Souther sources built into a library by the compiler and the driver of the same release, and handed over as the input a generator is given, with the library and its header beside it.</description>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.souther-lang</groupId>
+            <artifactId>souther-bindings-api</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <!-- Used inside, and named by nothing public: the testkit is a facade, not a second API of
+             the compiler. -->
+        <dependency>
+            <groupId>org.souther-lang</groupId>
+            <artifactId>souther-native-compiler</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.souther-lang</groupId>
+            <artifactId>souther-compiler</artifactId>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!-- Which release this is, which chooses where the driver comes from: a release fetches its
+                 own, and a build that is not one is handed its reactor's. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <configuration>
+                    <archive>
+                        <manifest>
+                            <addDefaultImplementationEntries>true</addDefaultImplementationEntries>
+                        </manifest>
+                    </archive>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

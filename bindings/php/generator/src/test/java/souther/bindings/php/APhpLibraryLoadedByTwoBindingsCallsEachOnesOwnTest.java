@@ -1,10 +1,12 @@
 package souther.bindings.php;
 
+import souther.bindings.testkit.SoutherBindingTest;
+import souther.bindings.testkit.TestLibrary;
 import souther.nativecode.Generated;
-import souther.nativecode.Checked;
+
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import souther.nativecode.NativeCompiler;
+
 import souther.nativecode.Php;
 
 import java.nio.charset.StandardCharsets;
@@ -95,8 +97,7 @@ class APhpLibraryLoadedByTwoBindingsCallsEachOnesOwnTest {
 
     @Test
     void eachBindingsImplementationIsCalledThroughItsOwnAdapter(@TempDir Path into) throws Exception {
-        NativeCompiler.Library library = NativeCompiler.library(
-                Checked.of(List.of(CATALOG, SHOP)), into.resolve("native"));
+        TestLibrary library = SoutherBindingTest.compile(into.resolve("native"), CATALOG, SHOP);
         Generated a = LibraryBinding.generated(library, into.resolve("a"), "A");
         Generated b = LibraryBinding.generated(library, into.resolve("b"), "B");
         Path host = into.resolve("host.php");

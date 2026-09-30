@@ -1,10 +1,12 @@
 package souther.bindings.go;
 
+import souther.bindings.testkit.SoutherBindingTest;
+import souther.bindings.testkit.TestLibrary;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import souther.nativecode.Generated;
-import souther.nativecode.Checked;
-import souther.nativecode.NativeCompiler;
+
+
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -41,7 +43,7 @@ class AMethodWithNoBodyIsWrittenAsGofmtWritesItTest {
 
     @Test
     void aHeaderOfOneHundredBytesHasItsBracesOnTwoLines(@TempDir Path into) throws Exception {
-        NativeCompiler.Library library = NativeCompiler.library(Checked.of(List.of(LEDGER)), into.resolve("native"));
+        TestLibrary library = SoutherBindingTest.compile(into.resolve("native"), LEDGER);
 
         Generated binding = GoHost.generated(library, into.resolve("binding"), "example.com/books");
 

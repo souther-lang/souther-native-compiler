@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- A binding generator as someone outside this repository writes one, and its test: it depends on the
+     API and the testkit of a release and on nothing else of this project, and is no module of the
+     reactor. scripts/testkit-acceptance.sh runs it against a publication, before one is published,
+     so that a testkit that cannot build a library outside this repository is never released. -->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>com.example</groupId>
+    <artifactId>souther-binding-acceptance</artifactId>
+    <version>1.0.0</version>
+
+    <properties>
+        <maven.compiler.release>25</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <!-- The release under test, and where it is published: given by the script. -->
+        <souther.version>set-by-the-script</souther.version>
+        <souther.publication>set-by-the-script</souther.publication>
+        <souther.releases>set-by-the-script</souther.releases>
+    </properties>
+
+    <repositories>
+        <repository>
+            <id>publication</id>
+            <url>${souther.publication}</url>
+        </repository>
+    </repositories>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.souther-lang</groupId>
+            <artifactId>souther-bindings-api</artifactId>
+            <version>${souther.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.souther-lang</groupId>
+            <artifactId>souther-bindings-testkit</artifactId>
+            <version>${souther.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>5.14.0</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.5.4</version>
+                <configuration>
+                    <!-- Where the release's bundles are, which the testkit fetches its driver from. No
+                         driver is named: a released testkit reads none. -->
+                    <systemPropertyVariables>
+                        <souther.releases>${souther.releases}</souther.releases>
+                    </systemPropertyVariables>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>
