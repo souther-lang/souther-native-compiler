@@ -13,6 +13,7 @@ import souther.bindings.Manifest.Type;
 import souther.bindings.Manifest.Word;
 import souther.bindings.NotBindable;
 import souther.bindings.Output;
+import souther.bindings.ValueCrossing;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -209,54 +210,42 @@ public final class GoBindings {
      */
     private @Nullable Crossing crossing(Manifest.Module module, Type type, Shape shape,
                                         Manifest.Way way) {
-        Crossing made = switch (shape) {
-            case Shape.Leaf leaf -> switch (type) {
-                case Type.Primitive it -> Crossing.Whole.primitive(it.primitive(), leaf.word());
-                case Type.Declared it -> leaf.word() == Word.VALUE ? handle(it.module(), it.name())
-                        : null;
-                // Handed to Go only as a behavior's answer, which says which case it is
-                // (`answered`): anywhere else Go would be handed a value of it told nothing.
-                case Type.Union union -> leaf.word() == Word.VALUE && way == Manifest.Way.GIVEN
-                        ? oneOf(module, union, null) : null;
-                default -> null;
-            };
-            case Shape.Option option -> type instanceof Type.Option it
-                    && crossing(module, it.of(), option.of(), way) instanceof Crossing of
+        ValueCrossing zipped = ValueCrossing.of(module, type, shape);
+        return zipped == null ? null : held(module, zipped, way);
+    }
+
+    /** How Go holds {@code value}, crossing the way {@code way} says, or null where it has no way. */
+    private @Nullable Crossing held(Manifest.Module module, ValueCrossing value, Manifest.Way way) {
+        Crossing made = switch (value) {
+            case ValueCrossing.Primitive it -> Crossing.Whole.primitive(it.type().primitive(), it.word());
+            case ValueCrossing.Handle it -> handle(it.type().module(), it.type().name());
+            // Handed to Go only as a behavior's answer, which says which case it is
+            // (`answered`): anywhere else Go would be handed a value of it told nothing.
+            case ValueCrossing.Union it -> way == Manifest.Way.GIVEN ? oneOf(module, it.type(), null) : null;
+            case ValueCrossing.Optional it -> held(module, it.of(), way) instanceof Crossing of
                     ? new Crossing.Optional(of) : null;
-            case Shape.Product product -> {
-                if (!(type instanceof Type.Tuple it) || it.of().size() != product.of().size()
-                        || product.of().size() > Crossing.Tuple.MOST) {
+            case ValueCrossing.Tuple it -> {
+                if (it.members().size() > Crossing.Tuple.MOST) {
                     yield null;
                 }
-                List<Crossing> members = crossings(module, it.of(), product.of(), way);
+                List<Crossing> members = helds(module, it.members(), way);
                 yield members == null ? null : new Crossing.Tuple(members);
             }
-            case Shape.ListOf list -> {
-                if (!(Type.listed(type) instanceof Type of)
-                        || !(crossing(module, of, list.element(), way) instanceof Crossing element)) {
-                    yield null;
-                }
-                Manifest.ListCrossing listed = module.lists().stream()
-                        .filter(l -> l.element().equals(list.element())).findFirst().orElseThrow();
-                if (way == Manifest.Way.GIVEN ? listed.construct() == null : listed.read() == null) {
-                    yield null;
-                }
-                yield new Crossing.Listed(element, listed.construct(), listed.read());
-            }
-            case Shape.FunctionOf function -> {
-                if (!(type instanceof Type.Function it)) {
-                    yield null;
-                }
-                FunctionType written = functionType(module, it, function);
+            case ValueCrossing.Listed it -> it.crosses(way)
+                    && held(module, it.element(), way) instanceof Crossing element
+                    ? new Crossing.Listed(element, it.crossing().construct(), it.crossing().read())
+                    : null;
+            case ValueCrossing.FunctionValue it -> {
+                FunctionType written = functionType(module, it);
                 // Handed to Go, a function value is one the library made, which is called through
                 // the library; handed over, it may be one of the host's, which the library calls.
                 yield written == null
                         || !(way == Manifest.Way.HANDED ? written.called() : written.hosted())
-                        ? null : new Crossing.FunctionValue(written.importPath(), written.name(), function);
+                        ? null : new Crossing.FunctionValue(written.importPath(), written.name(), it.shape());
             }
         };
-        if (made != null && !made.shape().equals(shape)) {
-            throw new IllegalStateException("this binding holds a value crossing as " + shape
+        if (made != null && !made.shape().equals(value.shape())) {
+            throw new IllegalStateException("this binding holds a value crossing as " + value.shape()
                     + " as what crosses as " + made.shape());
         }
         return made;
@@ -268,12 +257,16 @@ public final class GoBindings {
      */
     private @Nullable List<Crossing> crossings(Manifest.Module module, List<Type> types,
                                                List<Shape> shapes, Manifest.Way way) {
-        if (types.size() != shapes.size()) {
-            return null;
-        }
+        List<ValueCrossing> zipped = ValueCrossing.all(module, types, shapes);
+        return zipped == null ? null : helds(module, zipped, way);
+    }
+
+    /** How Go holds each of {@code values}, or null where it has no way to hold any of them. */
+    private @Nullable List<Crossing> helds(Manifest.Module module, List<ValueCrossing> values,
+                                           Manifest.Way way) {
         List<Crossing> made = new ArrayList<>();
-        for (int at = 0; at < types.size(); at++) {
-            Crossing it = crossing(module, types.get(at), shapes.get(at), way);
+        for (ValueCrossing value : values) {
+            Crossing it = held(module, value, way);
             if (it == null) {
                 return null;
             }
@@ -319,29 +312,24 @@ public final class GoBindings {
      * since a union is handed over and not handed to Go, and each is written where the manifest
      * says how ({@code call}, {@code make}).
      */
-    private @Nullable FunctionType functionType(Manifest.Module module, Type.Function type,
-                                                Shape.FunctionOf shape) {
+    private @Nullable FunctionType functionType(Manifest.Module module,
+                                                ValueCrossing.FunctionValue value) {
         // Written by the module that says it, and by no other, as a union is.
-        List<Object> key = List.of(module.name(), type, shape);
+        List<Object> key = List.of(module.name(), value.type(), value.shape());
         if (functions.containsKey(key)) {
             return functions.get(key);
         }
         functions.put(key, null);
-        Manifest.Signature signature = shape.signature();
-        Manifest.FunctionCrossing crossing = module.functions().stream()
-                .filter(it -> it.signature().equals(signature)).findFirst().orElseThrow();
-        if (type.takes().size() != signature.takes().size()) {
-            return null;
-        }
+        Manifest.FunctionCrossing crossing = value.crossing();
         List<Crossing> handedOver = crossing.call() == null ? null
-                : crossings(module, type.takes(), signature.takes(), Manifest.Way.GIVEN);
+                : helds(module, value.takes(), Manifest.Way.GIVEN);
         Crossing answered = crossing.call() == null ? null
-                : crossing(module, type.answers(), signature.answers(), Manifest.Way.HANDED);
+                : held(module, value.answers(), Manifest.Way.HANDED);
         boolean called = handedOver != null && answered != null;
         List<Crossing> handed = crossing.make() == null ? null
-                : crossings(module, type.takes(), signature.takes(), Manifest.Way.HANDED);
+                : helds(module, value.takes(), Manifest.Way.HANDED);
         Crossing answering = crossing.make() == null ? null
-                : crossing(module, type.answers(), signature.answers(), Manifest.Way.GIVEN);
+                : held(module, value.answers(), Manifest.Way.GIVEN);
         boolean hosted = handed != null && answering != null;
         if (!called && !hosted) {
             return null;

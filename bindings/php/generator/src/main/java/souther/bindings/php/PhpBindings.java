@@ -12,6 +12,7 @@ import souther.bindings.Manifest.Type;
 import souther.bindings.Manifest.Word;
 import souther.bindings.NotBindable;
 import souther.bindings.Output;
+import souther.bindings.ValueCrossing;
 import souther.bindings.php.Crossing.Given;
 import souther.bindings.php.Crossing.GivenFunction;
 import souther.bindings.php.Crossing.GivenList;
@@ -365,46 +366,33 @@ public final class PhpBindings {
          * found where it is made rather than at a call.
          */
         @Nullable Given given(Type type, Shape shape) {
-            return agreeing(heldGiven(type, shape), shape);
+            ValueCrossing zipped = ValueCrossing.of(module, type, shape);
+            return zipped == null ? null : given(zipped);
         }
 
-        private @Nullable Given heldGiven(Type type, Shape shape) {
-            return switch (shape) {
-                case Shape.Leaf leaf -> switch (type) {
-                    case Type.Primitive it -> Whole.primitive(it.primitive(), leaf.word());
-                    case Type.Declared it ->
-                            leaf.word() == Word.VALUE ? whole(it.module(), it.name()) : null;
-                    case Type.Union union -> {
-                        List<Member> members = leaf.word() == Word.VALUE ? members(union) : null;
-                        yield members == null ? null : new OneOf(union, members);
-                    }
-                    default -> null;
-                };
-                case Shape.Option option -> type instanceof Type.Option it
-                        && given(it.of(), option.of()) instanceof Given of
+        private @Nullable Given given(ValueCrossing value) {
+            return agreeing(heldGiven(value), value.shape());
+        }
+
+        private @Nullable Given heldGiven(ValueCrossing value) {
+            return switch (value) {
+                case ValueCrossing.Primitive it -> Whole.primitive(it.type().primitive(), it.word());
+                case ValueCrossing.Handle it -> whole(it.type().module(), it.type().name());
+                case ValueCrossing.Union it -> {
+                    List<Member> members = members(it.type());
+                    yield members == null ? null : new OneOf(it.type(), members);
+                }
+                case ValueCrossing.Optional it -> given(it.of()) instanceof Given of
                         ? new GivenOptional(of) : null;
-                case Shape.Product product -> type instanceof Type.Tuple it
-                        && givens(it.of(), product.of()) instanceof List<Given> members
+                case ValueCrossing.Tuple it -> givens(it.members()) instanceof List<Given> members
                         ? new GivenTuple(members) : null;
-                case Shape.ListOf list -> {
-                    if (!(Type.listed(type) instanceof Type listed)
-                            || !(given(listed, list.element()) instanceof Given element)) {
-                        yield null;
-                    }
-                    Manifest.ListCrossing crossing = listOf(list.element());
-                    yield crossing.construct() == null ? null : new GivenList(element, crossing);
-                }
-                case Shape.FunctionOf function -> {
-                    if (!(type instanceof Type.Function it)
-                            || !(receiveds(it.takes(), function.signature().takes())
-                            instanceof List<Received> takes)
-                            || !(given(it.answers(), function.signature().answers())
-                            instanceof Given answers)) {
-                        yield null;
-                    }
-                    Manifest.FunctionCrossing crossing = functionOf(function.signature());
-                    yield crossing.make() == null ? null : hosted(takes, answers, crossing);
-                }
+                case ValueCrossing.Listed it -> it.crosses(Manifest.Way.GIVEN)
+                        && given(it.element()) instanceof Given element
+                        ? new GivenList(element, it.crossing()) : null;
+                case ValueCrossing.FunctionValue it -> it.crosses(Manifest.Way.GIVEN)
+                        && receiveds(it.takes()) instanceof List<Received> takes
+                        && given(it.answers()) instanceof Given answers
+                        ? hosted(takes, answers, it.crossing()) : null;
             };
         }
 
@@ -415,43 +403,30 @@ public final class PhpBindings {
          * {@link #given} says, and what is made is held to the shape the manifest says the same way.
          */
         @Nullable Received received(Type type, Shape shape) {
-            return agreeing(heldReceived(type, shape), shape);
+            ValueCrossing zipped = ValueCrossing.of(module, type, shape);
+            return zipped == null ? null : received(zipped);
         }
 
-        private @Nullable Received heldReceived(Type type, Shape shape) {
-            return switch (shape) {
-                case Shape.Leaf leaf -> switch (type) {
-                    case Type.Primitive it -> Whole.primitive(it.primitive(), leaf.word());
-                    case Type.Declared it ->
-                            leaf.word() == Word.VALUE ? whole(it.module(), it.name()) : null;
-                    default -> null;
-                };
-                case Shape.Option option -> type instanceof Type.Option it
-                        && received(it.of(), option.of()) instanceof Received of
+        private @Nullable Received received(ValueCrossing value) {
+            return agreeing(heldReceived(value), value.shape());
+        }
+
+        private @Nullable Received heldReceived(ValueCrossing value) {
+            return switch (value) {
+                case ValueCrossing.Primitive it -> Whole.primitive(it.type().primitive(), it.word());
+                case ValueCrossing.Handle it -> whole(it.type().module(), it.type().name());
+                case ValueCrossing.Union it -> null;
+                case ValueCrossing.Optional it -> received(it.of()) instanceof Received of
                         ? new ReceivedOptional(of) : null;
-                case Shape.Product product -> type instanceof Type.Tuple it
-                        && receiveds(it.of(), product.of()) instanceof List<Received> members
+                case ValueCrossing.Tuple it -> receiveds(it.members()) instanceof List<Received> members
                         ? new ReceivedTuple(members) : null;
-                case Shape.ListOf list -> {
-                    if (!(Type.listed(type) instanceof Type listed)
-                            || !(received(listed, list.element()) instanceof Received element)) {
-                        yield null;
-                    }
-                    Manifest.ListCrossing crossing = listOf(list.element());
-                    yield crossing.read() == null ? null : new ReceivedList(element, crossing);
-                }
-                case Shape.FunctionOf function -> {
-                    if (!(type instanceof Type.Function it)
-                            || !(givens(it.takes(), function.signature().takes())
-                            instanceof List<Given> takes)
-                            || !(received(it.answers(), function.signature().answers())
-                            instanceof Received answers)) {
-                        yield null;
-                    }
-                    Manifest.FunctionCrossing crossing = functionOf(function.signature());
-                    yield crossing.call() == null ? null
-                            : new ReceivedFunction(takes, answers, crossing, bindingClass());
-                }
+                case ValueCrossing.Listed it -> it.crosses(Manifest.Way.HANDED)
+                        && received(it.element()) instanceof Received element
+                        ? new ReceivedList(element, it.crossing()) : null;
+                case ValueCrossing.FunctionValue it -> it.crosses(Manifest.Way.HANDED)
+                        && givens(it.takes()) instanceof List<Given> takes
+                        && received(it.answers()) instanceof Received answers
+                        ? new ReceivedFunction(takes, answers, it.crossing(), bindingClass()) : null;
             };
         }
 
@@ -470,18 +445,6 @@ public final class PhpBindings {
                         + " as what crosses as " + made.shape());
             }
             return made;
-        }
-
-        /** What this module says a list of {@code element} is reached through. */
-        private Manifest.ListCrossing listOf(Shape element) {
-            return module.lists().stream().filter(it -> it.element().equals(element)).findFirst()
-                    .orElseThrow();
-        }
-
-        /** What this module says a function value of {@code signature} is reached through. */
-        private Manifest.FunctionCrossing functionOf(Manifest.Signature signature) {
-            return module.functions().stream().filter(it -> it.signature().equals(signature))
-                    .findFirst().orElseThrow();
         }
 
         /**
@@ -535,12 +498,14 @@ public final class PhpBindings {
          * way, or the two say different counts.
          */
         @Nullable List<Given> givens(List<Type> types, List<Shape> shapes) {
-            if (types.size() != shapes.size()) {
-                return null;
-            }
+            List<ValueCrossing> zipped = ValueCrossing.all(module, types, shapes);
+            return zipped == null ? null : givens(zipped);
+        }
+
+        private @Nullable List<Given> givens(List<ValueCrossing> values) {
             List<Given> crossings = new ArrayList<>();
-            for (int at = 0; at < types.size(); at++) {
-                Given crossing = given(types.get(at), shapes.get(at));
+            for (ValueCrossing value : values) {
+                Given crossing = given(value);
                 if (crossing == null) {
                     return null;
                 }
@@ -554,12 +519,14 @@ public final class PhpBindings {
          * way, or the two say different counts.
          */
         @Nullable List<Received> receiveds(List<Type> types, List<Shape> shapes) {
-            if (types.size() != shapes.size()) {
-                return null;
-            }
+            List<ValueCrossing> zipped = ValueCrossing.all(module, types, shapes);
+            return zipped == null ? null : receiveds(zipped);
+        }
+
+        private @Nullable List<Received> receiveds(List<ValueCrossing> values) {
             List<Received> crossings = new ArrayList<>();
-            for (int at = 0; at < types.size(); at++) {
-                Received crossing = received(types.get(at), shapes.get(at));
+            for (ValueCrossing value : values) {
+                Received crossing = received(value);
                 if (crossing == null) {
                     return null;
                 }

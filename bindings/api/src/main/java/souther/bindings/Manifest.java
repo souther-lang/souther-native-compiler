@@ -531,6 +531,29 @@ public final class Manifest {
         }
 
         /**
+         * What this module says a list whose elements cross in {@code element} is built and read
+         * through.
+         *
+         * @throws IllegalArgumentException where it says nothing of one
+         */
+        public ListCrossing listOf(Shape element) {
+            return lists.stream().filter(it -> it.element().equals(element)).findFirst()
+                    .orElseThrow(() -> new IllegalArgumentException("module `" + name
+                            + "` says nothing of a list of " + element));
+        }
+
+        /**
+         * What this module says a function value of {@code signature} is called and made through.
+         *
+         * @throws IllegalArgumentException where it says nothing of one
+         */
+        public FunctionCrossing functionOf(Signature signature) {
+            return functions.stream().filter(it -> it.signature().equals(signature)).findFirst()
+                    .orElseThrow(() -> new IllegalArgumentException("module `" + name
+                            + "` says nothing of a function value of " + signature));
+        }
+
+        /**
          * Refuses {@code shape}, crossing the way {@code way} says, where anything in it is a list
          * or a function value this module says nothing to reach that way through: a list a host
          * hands over with nothing to build it, one it is handed with nothing to read it, a function

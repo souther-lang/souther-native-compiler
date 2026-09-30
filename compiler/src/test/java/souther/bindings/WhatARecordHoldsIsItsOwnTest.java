@@ -78,6 +78,24 @@ class WhatARecordHoldsIsItsOwnTest {
         owning.walk(manifest.cases());
         owning.walk(manifest.modules());
         owning.walk(functions.modules());
+        // What a value crosses as, taken apart together with its type: a published tuple and a
+        // published function value among them, which reach every record of ValueCrossing.
+        for (Manifest m : List.of(manifest, functions)) {
+            for (Manifest.Module module : m.modules()) {
+                for (Manifest.PublishedValue value : module.values()) {
+                    if (value.read() instanceof Manifest.Reach.Available<Manifest.Call>(Manifest.Call call)) {
+                        owning.walk(ValueCrossing.of(module, value.type(),
+                                call.signature().answers()));
+                    }
+                }
+                for (Manifest.Behavior behavior : module.behaviors()) {
+                    if (behavior.call() instanceof Manifest.Reach.Available<Manifest.Call>(Manifest.Call call)) {
+                        owning.walk(ValueCrossing.all(module, behavior.parameters().types(),
+                                call.signature().takes()));
+                    }
+                }
+            }
+        }
         Path written = into.resolve("written");
         owning.walk(new Generated(written, List.of(written.resolve("a"))));
 

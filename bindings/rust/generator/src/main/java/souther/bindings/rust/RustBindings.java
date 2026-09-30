@@ -13,6 +13,7 @@ import souther.bindings.Manifest.Type;
 import souther.bindings.Manifest.Word;
 import souther.bindings.NotBindable;
 import souther.bindings.Output;
+import souther.bindings.ValueCrossing;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -214,57 +215,46 @@ public final class RustBindings {
      */
     private @Nullable Crossing crossing(Manifest.Module module, Type type, Shape shape,
                                         Manifest.Way way) {
-        Crossing made = switch (shape) {
-            case Shape.Leaf leaf -> switch (type) {
-                case Type.Primitive it -> Crossing.Whole.primitive(it.primitive(), leaf.word());
-                case Type.Declared it -> leaf.word() == Word.VALUE ? handle(it.module(), it.name())
-                        : null;
-                // Handed to Rust only as a behavior's answer, which says which case it is
-                // (`answered`): anywhere else Rust would be handed a value of it told nothing.
-                case Type.Union union -> leaf.word() == Word.VALUE && way == Manifest.Way.GIVEN
-                        ? oneOf(module, union, null) : null;
-                default -> null;
-            };
-            case Shape.Option option -> type instanceof Type.Option it
-                    && crossing(module, it.of(), option.of(), way) instanceof Crossing of
+        ValueCrossing zipped = ValueCrossing.of(module, type, shape);
+        return zipped == null ? null : held(module, zipped, way);
+    }
+
+    /** How Rust holds {@code value}, crossing the way {@code way} says, or null where it has no way. */
+    private @Nullable Crossing held(Manifest.Module module, ValueCrossing value, Manifest.Way way) {
+        Crossing made = switch (value) {
+            case ValueCrossing.Primitive it -> Crossing.Whole.primitive(it.type().primitive(), it.word());
+            case ValueCrossing.Handle it -> handle(it.type().module(), it.type().name());
+            // Handed to Rust only as a behavior's answer, which says which case it is
+            // (`answered`): anywhere else Rust would be handed a value of it told nothing.
+            case ValueCrossing.Union it -> way == Manifest.Way.GIVEN ? oneOf(module, it.type(), null) : null;
+            case ValueCrossing.Optional it -> held(module, it.of(), way) instanceof Crossing of
                     ? new Crossing.Optional(of) : null;
-            case Shape.Product product -> {
-                if (!(type instanceof Type.Tuple it) || it.of().size() != product.of().size()) {
-                    yield null;
-                }
-                List<Crossing> members = crossings(module, it.of(), product.of(), way);
+            case ValueCrossing.Tuple it -> {
+                List<Crossing> members = helds(module, it.members(), way);
                 yield members == null ? null : new Crossing.Tuple(members);
             }
-            case Shape.ListOf list -> {
-                if (!(Type.listed(type) instanceof Type of)
-                        || !(crossing(module, of, list.element(), way) instanceof Crossing element)) {
+            case ValueCrossing.Listed it -> {
+                if (!it.crosses(way) || !(held(module, it.element(), way) instanceof Crossing element)) {
                     yield null;
                 }
-                Manifest.ListCrossing listed = module.lists().stream()
-                        .filter(l -> l.element().equals(list.element())).findFirst().orElseThrow();
+                Manifest.ListCrossing listed = it.crossing();
                 Manifest.ListRead read = listed.read();
-                if (way == Manifest.Way.GIVEN ? listed.construct() == null : read == null) {
-                    yield null;
-                }
                 yield new Crossing.Listed(element, listed,
                         listed.construct() == null ? null : symbol(listed.construct()),
                         read == null ? null : symbol(read.length()),
                         read == null ? null : symbol(read.at()));
             }
-            case Shape.FunctionOf function -> {
-                if (!(type instanceof Type.Function it)) {
-                    yield null;
-                }
-                FunctionEnum written = functionEnum(module, it, function);
+            case ValueCrossing.FunctionValue it -> {
+                FunctionEnum written = functionEnum(module, it);
                 // Handed to Rust, a function value is one the library made, which is called through
                 // the library; handed over, it may be one of the host's, which the library calls.
                 yield written == null
                         || !(way == Manifest.Way.HANDED ? written.called() : written.hosted())
-                        ? null : new Crossing.Function(written.type(), function);
+                        ? null : new Crossing.Function(written.type(), it.shape());
             }
         };
-        if (made != null && !made.shape().equals(shape)) {
-            throw new IllegalStateException("this binding holds a value crossing as " + shape
+        if (made != null && !made.shape().equals(value.shape())) {
+            throw new IllegalStateException("this binding holds a value crossing as " + value.shape()
                     + " as what crosses as " + made.shape());
         }
         return made;
@@ -276,12 +266,16 @@ public final class RustBindings {
      */
     private @Nullable List<Crossing> crossings(Manifest.Module module, List<Type> types,
                                                List<Shape> shapes, Manifest.Way way) {
-        if (types.size() != shapes.size()) {
-            return null;
-        }
+        List<ValueCrossing> zipped = ValueCrossing.all(module, types, shapes);
+        return zipped == null ? null : helds(module, zipped, way);
+    }
+
+    /** How Rust holds each of {@code values}, or null where it has no way to hold any of them. */
+    private @Nullable List<Crossing> helds(Manifest.Module module, List<ValueCrossing> values,
+                                           Manifest.Way way) {
         List<Crossing> made = new ArrayList<>();
-        for (int at = 0; at < types.size(); at++) {
-            Crossing it = crossing(module, types.get(at), shapes.get(at), way);
+        for (ValueCrossing value : values) {
+            Crossing it = held(module, value, way);
             if (it == null) {
                 return null;
             }
@@ -444,28 +438,23 @@ public final class RustBindings {
      * apart, since a union is handed over and not handed to Rust, and each is written where the
      * manifest says how ({@code call}, {@code make}).
      */
-    private @Nullable FunctionEnum functionEnum(Manifest.Module module, Type.Function type,
-                                                Shape.FunctionOf shape) {
-        List<Object> key = List.of(type, shape);
+    private @Nullable FunctionEnum functionEnum(Manifest.Module module,
+                                                ValueCrossing.FunctionValue value) {
+        List<Object> key = List.of(value.type(), value.shape());
         if (functions.containsKey(key)) {
             return functions.get(key);
         }
         functions.put(key, null);
-        Manifest.Signature signature = shape.signature();
-        Manifest.FunctionCrossing crossing = module.functions().stream()
-                .filter(it -> it.signature().equals(signature)).findFirst().orElseThrow();
-        if (type.takes().size() != signature.takes().size()) {
-            return null;
-        }
+        Manifest.FunctionCrossing crossing = value.crossing();
         List<Crossing> handedOver = crossing.call() == null ? null
-                : crossings(module, type.takes(), signature.takes(), Manifest.Way.GIVEN);
+                : helds(module, value.takes(), Manifest.Way.GIVEN);
         Crossing answered = crossing.call() == null ? null
-                : crossing(module, type.answers(), signature.answers(), Manifest.Way.HANDED);
+                : held(module, value.answers(), Manifest.Way.HANDED);
         boolean called = handedOver != null && answered != null;
         List<Crossing> handed = crossing.make() == null ? null
-                : crossings(module, type.takes(), signature.takes(), Manifest.Way.HANDED);
+                : helds(module, value.takes(), Manifest.Way.HANDED);
         Crossing answering = crossing.make() == null ? null
-                : crossing(module, type.answers(), signature.answers(), Manifest.Way.GIVEN);
+                : held(module, value.answers(), Manifest.Way.GIVEN);
         boolean hosted = handed != null && answering != null;
         if (!called && !hosted) {
             return null;
