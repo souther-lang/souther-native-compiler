@@ -123,7 +123,7 @@ class AManifestIsReadAsTheDriverPromisesItTest {
         Manifest read = Manifest.read(built(into, CONSTRUCTED).manifest());
 
         assertThat(read.abi()).isEqualTo(Manifest.ABI);
-        assertThat(read.runtime()).extracting(Manifest.Function::name).contains("souther_reset");
+        assertThat(read.runtime()).extracting(Manifest.Function::name).contains("souther_scope_close");
         assertThat(read.modules()).extracting(Manifest.Module::name).containsExactly("demo");
     }
 

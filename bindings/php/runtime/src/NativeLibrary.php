@@ -24,7 +24,7 @@ final class NativeLibrary
 
     /**
      * The runs going, innermost last. They nest as calls do, and each ends before the one it was
-     * started in: the arena is reset to each run's mark in that order and no other.
+     * started in: each run's scope of the arena is closed in that order and no other.
      *
      * @var list<Session>
      */

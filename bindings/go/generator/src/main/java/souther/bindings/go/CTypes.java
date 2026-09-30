@@ -27,7 +27,7 @@ final class CTypes {
     static @Nullable String scalar(Word word) {
         return switch (word) {
             case STATUS, CASE -> "uint32_t";
-            case INT, COUNT, MARK -> "int64_t";
+            case INT, COUNT, SCOPE -> "int64_t";
             case BOOL -> "uint8_t";
             case OUTCOME -> "int32_t";
             default -> null;

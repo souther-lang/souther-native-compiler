@@ -726,14 +726,14 @@ final class Running {
                 %s%s
 
                 %s
-                extern int64_t souther_mark(void);
-                extern void souther_reset(int64_t);
+                extern int64_t souther_scope_open(void);
+                extern uint8_t souther_scope_close(int64_t);
                 extern int64_t souther_string_length(const uint8_t *);
                 extern const uint8_t *souther_string_bytes(const uint8_t *);
 
                 %s
                 static int run(int argc, char **argv) {
-                    int64_t mark = souther_mark();
+                    int64_t scope = souther_scope_open();
                     const uint8_t *answered;
                     uint32_t status;
                 %s
@@ -746,7 +746,7 @@ final class Running {
                                 (size_t) souther_string_length(answered), stdout);
                         printf("\\n");
                     }
-                    souther_reset(mark);
+                    souther_scope_close(scope);
                     return 0;
                 }
 

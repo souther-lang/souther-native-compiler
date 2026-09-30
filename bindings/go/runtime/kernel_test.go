@@ -35,23 +35,39 @@ func statuses(t *testing.T) statusTable {
 type tagA struct{}
 type tagB struct{}
 
-// arena is a library's arena: how much has been made in it, and how often it was dropped back.
+// arena is a library's arena: how much has been made in it, the scopes open on it, and where it
+// was dropped back to each time one closed.
 type arena struct {
 	mu     sync.Mutex
 	taken  int64
+	tokens int64
+	open   [][2]int64
 	resets []int64
 }
 
-func (a *arena) mark() int64 { a.mu.Lock(); defer a.mu.Unlock(); return a.taken }
-
-func (a *arena) reset(mark int64) {
+func (a *arena) scopeOpen() int64 {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if mark > a.taken {
-		panic("a mark is never above where the arena stands")
+	a.tokens++
+	a.open = append(a.open, [2]int64{a.tokens, a.taken})
+	return a.tokens
+}
+
+// scopeClose closes scope where it is open. One arena stands here for every thread's, so which
+// scope is innermost is not asked: the library's runtime holds that of each thread, and its own
+// tests and the bridge's hold it to that.
+func (a *arena) scopeClose(scope int64) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for at, open := range a.open {
+		if open[0] == scope {
+			a.open = append(a.open[:at], a.open[at+1:]...)
+			a.taken = open[1]
+			a.resets = append(a.resets, open[1])
+			return true
+		}
 	}
-	a.taken = mark
-	a.resets = append(a.resets, mark)
+	return false
 }
 
 func (a *arena) make() unsafe.Pointer {
@@ -61,12 +77,12 @@ func (a *arena) make() unsafe.Pointer {
 	return unsafe.Pointer(new(int))
 }
 
-func (a *arena) size() int64 { return a.mark() }
+func (a *arena) size() int64 { a.mu.Lock(); defer a.mu.Unlock(); return a.taken }
 
 func libraryOf[B any](t *testing.T, identity uintptr) (*Library[B], *arena) {
 	t.Helper()
 	a := &arena{}
-	rt := newRuntime(identity, a.mark, a.reset, statuses(t))
+	rt := newRuntime(identity, a.scopeOpen, a.scopeClose, statuses(t))
 	return newLibrary[B](rt), a
 }
 
@@ -225,7 +241,7 @@ func TestAZeroValueHoldsNothing(t *testing.T) {
 func TestASecondRootRunOfOneRuntimeOnOneThreadIsRefused(t *testing.T) {
 	lib, _ := libraryOf[tagA](t, 1)
 	// Another handle on the same arena is the same runtime.
-	other := newLibrary[tagA](newRuntime(1, func() int64 { return 0 }, func(int64) {}, statuses(t)))
+	other := newLibrary[tagA](newRuntime(1, func() int64 { return 0 }, func(int64) bool { return true }, statuses(t)))
 	_ = lib.Run(func(*Run[tagA]) error {
 		if err := lib.Run(func(*Run[tagA]) error { return nil }); !errors.Is(err, ErrAlreadyRunning) {
 			t.Errorf("a second root run through the same handle: %v", err)
@@ -288,7 +304,7 @@ func TestOneRuntimeHasARootRunOnEachThread(t *testing.T) {
 
 func TestAValueOfAnotherRuntimeIsRefusedBeforeTheCall(t *testing.T) {
 	lib, a := libraryOf[tagA](t, 1)
-	other := newLibrary[tagA](newRuntime(2, func() int64 { return 0 }, func(int64) {}, statuses(t)))
+	other := newLibrary[tagA](newRuntime(2, func() int64 { return 0 }, func(int64) bool { return true }, statuses(t)))
 	_ = lib.Run(func(r *Run[tagA]) error {
 		mine := NewRef(r, a.make())
 		return other.Run(func(o *Run[tagA]) error {
@@ -302,7 +318,7 @@ func TestAValueOfAnotherRuntimeIsRefusedBeforeTheCall(t *testing.T) {
 
 func TestAValueOfAnotherHandleOnTheSameArenaIsGoodInThisOne(t *testing.T) {
 	lib, a := libraryOf[tagA](t, 1)
-	sameArena := newLibrary[tagA](newRuntime(1, a.mark, a.reset, statuses(t)))
+	sameArena := newLibrary[tagA](newRuntime(1, a.scopeOpen, a.scopeClose, statuses(t)))
 	_ = lib.Run(func(r *Run[tagA]) error {
 		mine := NewRef(r, a.make())
 		// Same identity, so same arena: it cannot be opened as a root through the other handle

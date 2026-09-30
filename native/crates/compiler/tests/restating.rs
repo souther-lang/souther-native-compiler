@@ -428,11 +428,11 @@ BEHAVIOR(taking)
 BEHAVIOR(aborting)
 BEHAVIOR(shared)
 BEHAVIOR(unshared)
-extern int64_t souther_mark(void);
-extern void souther_reset(int64_t);
+extern int64_t souther_scope_open(void);
+extern uint8_t souther_scope_close(int64_t);
 
 static void ran(const char *what, uint32_t (*behavior)(const void *, int64_t, int64_t *), int64_t a) {
-    int64_t mark = souther_mark();
+    int64_t scope = souther_scope_open();
     int64_t answer = 0;
     uint32_t status = behavior(0, a, &answer);
     if (status == 0) {
@@ -440,7 +440,7 @@ static void ran(const char *what, uint32_t (*behavior)(const void *, int64_t, in
     } else {
         printf("%s ended\n", what);
     }
-    souther_reset(mark);
+    souther_scope_close(scope);
 }
 
 int main(void) {

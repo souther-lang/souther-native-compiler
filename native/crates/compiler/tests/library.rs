@@ -154,14 +154,14 @@ const CALLING: &str = r#"
 #include "souther.h"
 
 int main(void) {
-    int64_t mark = souther_mark();
+    int64_t scope = souther_scope_open();
     int64_t answer = -1;
     souther_status status = souther@_m_calculation_b_add(NULL, 2, 3, &answer);
     printf("%u %" PRId64 "\n", status, answer);
     answer = -1;
     status = souther@_m_calculation_b_add(NULL, INT64_MAX, 1, &answer);
     printf("%d %" PRId64 "\n", status == SOUTHER_REQUIRED_FORM_HAS_NO_PLACE, answer);
-    souther_reset(mark);
+    souther_scope_close(scope);
     return 0;
 }
 "#;
@@ -179,7 +179,7 @@ static void said(souther_string text) {
 }
 
 int main(void) {
-    int64_t mark = souther_mark();
+    int64_t scope = souther_scope_open();
     souther_value built = NULL;
     souther_status status = souther@_m_m_t_P_construct(7, &built);
     int64_t n = 0;
@@ -205,7 +205,7 @@ int main(void) {
     status = souther@_m_m_v_ys(&published);
     souther@_m_m_t_P_f_n(published, &n);
     printf("%u %" PRId64 "\n", status, n);
-    souther_reset(mark);
+    souther_scope_close(scope);
     return 0;
 }
 "#;
@@ -338,7 +338,7 @@ static void *elsewhere(void *with) {
 }
 
 int main(void) {
-    int64_t mark = souther_mark();
+    int64_t scope = souther_scope_open();
     int64_t answer = -1;
     souther_status status = souther@_m_m_b_twice(NULL, 1, &answer);
     printf("nothing %d %lld\n", status == SOUTHER_INJECTION_UNBOUND, (long long) answer);
@@ -381,7 +381,7 @@ int main(void) {
 
     implement(&by_nesting, nesting, (void *) by_twenty.requirements);
     twice("outer", &by_nesting);
-    souther_reset(mark);
+    souther_scope_close(scope);
     return 0;
 }
 "#;
@@ -555,7 +555,7 @@ static void read(const char *json) {
 }
 
 int main(void) {
-    int64_t mark = souther_mark();
+    int64_t scope = souther_scope_open();
     read("{\"type\": \"Int\", \"value\": 4}");
     read("{\"type\": \"DivisionByZero\"}");
     read("{\"type\": \"A\"}");
@@ -563,7 +563,7 @@ int main(void) {
     read("{\"type\": \"Int\", \"value\": true}");
     said(souther@_m_m_t_Q_encode(souther_case_int_make(9)));
     said(souther@_m_m_t_Q_encode(souther_case_division_by_zero_make()));
-    souther_reset(mark);
+    souther_scope_close(scope);
     return 0;
 }
 "#;

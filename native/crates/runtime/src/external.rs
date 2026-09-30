@@ -420,7 +420,7 @@ fn quoted(text: &[u8], out: &mut Vec<u8>) {
 mod tests {
     use super::*;
     use crate::{
-        souther_mark, souther_reset, souther_string_bytes, souther_string_length,
+        souther_scope_close, souther_scope_open, souther_string_bytes, souther_string_length,
         souther_string_of_utf8,
     };
 
@@ -461,13 +461,13 @@ mod tests {
         ];
         let array = handed(Form::Array(members));
         unsafe { souther_external_order(array) };
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         assert_eq!(
             json(array),
             "[null,false,true,-3,2.5,10,\"a\",\"\u{10000}\",\"\u{ff61}\",[1],[1,2],\
              {\"a\":1,\"c\":0},{\"b\":1,\"a\":2}]"
         );
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     /// A map's entries, as the object written with its keys ascending.
@@ -482,12 +482,12 @@ mod tests {
             pair("a", Form::Number(1)),
         ]));
         unsafe { souther_external_entries(array) };
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         assert_eq!(
             json(array),
             "{\"a\":1,\"b\":2,\"\u{10000}\":3,\"\u{ff61}\":4}"
         );
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     fn json(form: *mut Form) -> String {
@@ -511,7 +511,7 @@ mod tests {
 
     #[test]
     fn each_kind_is_written_as_the_json_it_is() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         assert_eq!(json(souther_external_null()), "null");
         assert_eq!(json(souther_external_bool(1)), "true");
         assert_eq!(json(souther_external_bool(0)), "false");
@@ -522,39 +522,39 @@ mod tests {
         );
         assert_eq!(json(souther_external_array()), "[]");
         assert_eq!(json(souther_external_object()), "{}");
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     #[test]
     fn a_truth_is_any_byte_but_nought() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         assert_eq!(json(souther_external_bool(-1)), "true");
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     #[test]
     fn the_ends_of_an_int_are_written_whole() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         assert_eq!(json(souther_external_int(i64::MIN)), "-9223372036854775808");
         assert_eq!(json(souther_external_int(i64::MAX)), "9223372036854775807");
         assert_eq!(json(souther_external_int(-1)), "-1");
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     #[test]
     fn members_stand_in_the_order_they_were_put() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         let written = object(&[
             ("since", souther_external_int(3)),
             ("type", unsafe { souther_external_string(string("Open")) }),
         ]);
         assert_eq!(json(written), r#"{"since":3,"type":"Open"}"#);
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     #[test]
     fn items_stand_in_the_order_they_were_appended_and_nest() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         let array = souther_external_array();
         unsafe {
             souther_external_append(array, souther_external_int(1));
@@ -562,26 +562,26 @@ mod tests {
             souther_external_append(array, souther_external_null());
         }
         assert_eq!(json(array), r#"[1,{"state":{}},null]"#);
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     #[test]
     fn what_json_cannot_hold_bare_is_escaped_and_the_rest_is_written_as_it_is() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         let text = "a\"b\\c\nd\re\tf\u{1}g\u{1f}h𠮷￥";
         assert_eq!(
             json(unsafe { souther_external_string(string(text)) }),
             "\"a\\\"b\\\\c\\nd\\re\\tf\\u0001g\\u001fh𠮷￥\""
         );
         assert_eq!(json(unsafe { souther_external_string(string("")) }), "\"\"");
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     /// As deep as a value can be made, and not as deep as a stack happens to be: a tree is written
     /// and dropped without a frame per level.
     #[test]
     fn a_tree_deeper_than_any_stack_is_written_and_dropped() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         let depth = 1_000_000;
         let root = souther_external_array();
         let mut innermost = root;
@@ -596,14 +596,14 @@ mod tests {
         let written = json(root);
         assert_eq!(written.len(), 2 * (depth + 1));
         assert!(written.starts_with("[[[") && written.ends_with("]]]"));
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     #[test]
     fn a_key_is_escaped_the_way_a_string_is() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         let written = object(&[("a\"b", souther_external_null())]);
         assert_eq!(json(written), r#"{"a\"b":null}"#);
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 }

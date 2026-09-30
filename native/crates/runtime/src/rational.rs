@@ -770,7 +770,7 @@ fn rational_of(ratio: &Ratio) -> *mut Rational {
 ///
 /// # Safety
 ///
-/// `at` is one [`rational_of`] answered, and the mark below it still stands.
+/// `at` is one [`rational_of`] answered, and the scope it was made in is still open.
 unsafe fn ratio(at: *const Rational) -> Ratio {
     let at = at.cast::<u8>();
     unsafe {
@@ -800,7 +800,7 @@ pub extern "C" fn souther_rational_from_int(value: i64) -> *mut Rational {
 ///
 /// # Safety
 ///
-/// `at` is a `Decimal` the runtime answered, and the mark below it still stands. So for every
+/// `at` is a `Decimal` the runtime answered, and the scope it was made in is still open. So for every
 /// function here that reads a `Rational`, of one.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_rational_from_decimal(at: *const Decimal) -> *mut Rational {
@@ -1020,7 +1020,7 @@ pub unsafe extern "C" fn souther_rational_to_decimal(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{souther_mark, souther_reset};
+    use crate::{souther_scope_close, souther_scope_open};
 
     fn whole(n: i64) -> Ratio {
         Ratio::of_int(n)
@@ -1259,7 +1259,7 @@ mod tests {
 
     #[test]
     fn what_the_arena_holds_reads_back_as_what_went_in() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         for value in [
             Ratio::ZERO,
             ratio_of(1, 3),
@@ -1287,7 +1287,7 @@ mod tests {
         let mut whole = 0;
         assert_eq!(unsafe { souther_rational_to_whole(third, &mut whole) }, 1);
         assert_eq!(whole, 3);
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     /// The digits as a `Decimal` at `scale`.

@@ -77,6 +77,9 @@ fn surface() -> BTreeSet<String> {
         lines.insert(format!("status {name} = {status}"));
     }
     lines.insert(format!("answers {IMPLEMENTATION_ANSWERS:?}"));
+    for (name, promise) in SCOPE_CONTRACT {
+        lines.insert(format!("scope {name}: {promise}"));
+    }
     for (at, rule) in HASHING.iter().enumerate() {
         lines.insert(format!("hashing {at} {rule}"));
     }

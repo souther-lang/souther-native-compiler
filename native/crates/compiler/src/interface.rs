@@ -145,7 +145,7 @@ pub(crate) fn machine(word: HostWord) -> types::Type {
     match word {
         HostWord::Bool => types::I8,
         HostWord::Status | HostWord::Case | HostWord::Outcome => types::I32,
-        HostWord::Int | HostWord::Count | HostWord::Mark => types::I64,
+        HostWord::Int | HostWord::Count | HostWord::Scope => types::I64,
         HostWord::Bytes
         | HostWord::Value
         | HostWord::String
@@ -174,7 +174,7 @@ fn c_word(word: Word) -> &'static str {
         Word::Case => "uint32_t",
         Word::Outcome => "int32_t",
         Word::Count => "int64_t",
-        Word::Mark => "int64_t",
+        Word::Scope => "int64_t",
         Word::Bytes => "const uint8_t *",
         Word::Value => "souther_value",
         Word::String => "souther_string",

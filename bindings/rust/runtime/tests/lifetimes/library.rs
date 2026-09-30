@@ -1,13 +1,13 @@
 // A library as far as the compiler sees one: a runtime, something that makes a value, and a
 // computation that takes one. Included by every case, none of which runs.
 
-use souther_binding_runtime::{Held, RawMark, Run, Runtime, Statuses};
+use souther_binding_runtime::{Held, RawScope, Run, Runtime, Statuses};
 
-extern "C" fn mark() -> RawMark {
-    RawMark(0)
+extern "C" fn open() -> RawScope {
+    RawScope(0)
 }
 
-extern "C" fn reset(_: RawMark) {}
+extern "C" fn close(_: RawScope) -> i8 { 1 }
 
 #[allow(dead_code)]
 fn runtime() -> Runtime {
@@ -17,7 +17,7 @@ fn runtime() -> Runtime {
         ("INJECTION_PROTOCOL_VIOLATION", 0x7fff_fffe),
         ("HOST_EXCEPTION", 0x7fff_ffff),
     ];
-    unsafe { Runtime::new(mark, reset, Statuses::new(STATUSES).unwrap()) }
+    unsafe { Runtime::new(open, close, Statuses::new(STATUSES).unwrap()) }
 }
 
 #[allow(dead_code)]

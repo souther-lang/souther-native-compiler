@@ -252,14 +252,19 @@ host RuntimeFunction { name: "souther_issue_code", takes: [Given(Issue)], answer
 host RuntimeFunction { name: "souther_issue_message_key", takes: [Given(Issue)], answers: Some(String) }
 host RuntimeFunction { name: "souther_issue_meta", takes: [Given(Issue)], answers: Some(String) }
 host RuntimeFunction { name: "souther_issue_path", takes: [Given(Issue)], answers: Some(String) }
-host RuntimeFunction { name: "souther_mark", takes: [], answers: Some(Mark) }
-host RuntimeFunction { name: "souther_reset", takes: [Given(Mark)], answers: None }
+host RuntimeFunction { name: "souther_scope_close", takes: [Given(Scope)], answers: Some(Bool) }
+host RuntimeFunction { name: "souther_scope_open", takes: [], answers: Some(Scope) }
 host RuntimeFunction { name: "souther_string_bytes", takes: [Given(String)], answers: Some(Bytes) }
 host RuntimeFunction { name: "souther_string_length", takes: [Given(String)], answers: Some(Count) }
 host RuntimeFunction { name: "souther_string_of_utf8", takes: [Given(Bytes), Given(Count), Room(String)], answers: Some(Bool) }
 host RuntimeFunction { name: "souther_time_of_parts", takes: [Given(Int), Given(Int), Given(Int), Room(Time)], answers: Some(Bool) }
 host RuntimeFunction { name: "souther_time_parts", takes: [Given(Time), Room(Int), Room(Int), Room(Int)], answers: None }
 runtime says souther_runtime_abi_9
+scope arena: one to each thread
+scope close-order: the innermost open scope of the calling thread, and no other
+scope close-refused: answered as false, and nothing changes
+scope token: never answered twice, on any thread
+scope value-life: until the scope it was made in closes, on the thread that made it
 status FAKE_NO_OUTPUT = 2147483644
 status HOST_EXCEPTION = 2147483647
 status INJECTION_PROTOCOL_VIOLATION = 2147483646

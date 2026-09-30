@@ -1,5 +1,5 @@
-/* A stand-in for a Souther library: an arena of its own that is a count, souther_mark and
-   souther_reset over it, the ABI marker, a behavior that answers, and a behavior a host
+/* A stand-in for a Souther library: an arena of its own that is a count, souther_scope_open and
+   souther_scope_close over it, the ABI marker, a behavior that answers, and a behavior a host
    implements, which it calls back through the capability it was handed. */
 #include "fake.h"
 #include <stdio.h>
@@ -12,13 +12,34 @@
 /* A library with a thread-local variable is one macOS does not unload, as the real one is; a test of
    unloading one that failed to load asks a library without one. */
 #ifdef NO_TLS
-static int64_t arena;
+#define PER_THREAD
 #else
-static __thread int64_t arena;
+#define PER_THREAD __thread
 #endif
+static PER_THREAD int64_t arena;
 
-int64_t souther_mark(void) { return arena; }
-void souther_reset(int64_t mark) { arena = mark; }
+/* The scopes open on a thread, innermost last, each a token and where the arena stood. */
+static PER_THREAD int64_t open_tokens[64];
+static PER_THREAD int64_t open_at[64];
+static PER_THREAD int depth;
+static int64_t tokens;
+
+int64_t souther_scope_open(void) {
+    int64_t token = __atomic_add_fetch(&tokens, 1, __ATOMIC_RELAXED);
+    open_tokens[depth] = token;
+    open_at[depth] = arena;
+    depth++;
+    return token;
+}
+
+uint8_t souther_scope_close(int64_t scope) {
+    if (depth == 0 || open_tokens[depth - 1] != scope) {
+        return 0;
+    }
+    depth--;
+    arena = open_at[depth];
+    return 1;
+}
 
 #define CAT(a, b) CAT_(a, b)
 #define CAT_(a, b) a##b

@@ -72,7 +72,7 @@ sealed interface Crossing {
     static String word(Word word) {
         return switch (word) {
             case STATUS -> "u32";
-            case INT, COUNT, MARK -> "i64";
+            case INT, COUNT, SCOPE -> "i64";
             case BOOL -> "u8";
             case CASE -> "u32";
             case OUTCOME -> "i32";
@@ -91,7 +91,7 @@ sealed interface Crossing {
      */
     static String nothing(Word word) {
         return switch (word) {
-            case INT, COUNT, MARK, STATUS, CASE, OUTCOME, BOOL -> "0";
+            case INT, COUNT, SCOPE, STATUS, CASE, OUTCOME, BOOL -> "0";
             case BYTES, VALUE, STRING, DECIMAL, DATE, TIME, DATETIME, INSTANT, DECODED, ISSUE,
                  LIST, FUNCTION, REQUIREMENTS -> "std::ptr::null()";
             case USERDATA -> "std::ptr::null_mut()";

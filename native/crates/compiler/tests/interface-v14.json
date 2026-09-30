@@ -21,18 +21,18 @@
   },
   "runtime": [
     {
-      "name": "souther_mark",
+      "name": "souther_scope_open",
       "takes": [],
-      "answers": "mark"
+      "answers": "scope"
     },
     {
-      "name": "souther_reset",
+      "name": "souther_scope_close",
       "takes": [
         {
-          "given": "mark"
+          "given": "scope"
         }
       ],
-      "answers": null
+      "answers": "bool"
     },
     {
       "name": "souther_string_of_utf8",

@@ -246,7 +246,7 @@ class AHostImplementsABehaviorWithNoBodyTest {
             }
 
             int main(void) {
-                int64_t mark = souther_mark();
+                int64_t scope = souther_scope_open();
                 souther_capability pricing, judging;
                 souther_hosted priced_by, judged_by;
                 souther@_m_shop_b_priceOf_implement(&pricing, &priced_by, priced, NULL);
@@ -266,7 +266,7 @@ class AHostImplementsABehaviorWithNoBodyTest {
                 printf("cheap %u %u\\n", status, cheap);
                 status = souther@_m_shop_b_cheap(isCheap, 400, &cheap);
                 printf("dear %u %u\\n", status, cheap);
-                souther_reset(mark);
+                souther_scope_close(scope);
                 return 0;
             }
             """;

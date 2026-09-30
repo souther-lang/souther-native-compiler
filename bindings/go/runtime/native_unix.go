@@ -8,8 +8,8 @@ package souther
 #include <stdint.h>
 #include <stdlib.h>
 
-static int64_t call_mark(void *fn) { return ((int64_t (*)(void))fn)(); }
-static void call_reset(void *fn, int64_t mark) { ((void (*)(int64_t))fn)(mark); }
+static int64_t call_scope_open(void *fn) { return ((int64_t (*)(void))fn)(); }
+static uint8_t call_scope_close(void *fn, int64_t scope) { return ((uint8_t (*)(int64_t))fn)(scope); }
 */
 import "C"
 
@@ -118,7 +118,7 @@ func Load[B any](path string, spec Spec) (*Library[B], error) {
 	}()
 	symbols := make(map[string]unsafe.Pointer, len(spec.Symbols)+2)
 	var missing []string
-	for _, name := range append([]string{"souther_mark", "souther_reset"}, spec.Symbols...) {
+	for _, name := range append([]string{"souther_scope_open", "souther_scope_close"}, spec.Symbols...) {
 		if at, ok := native.symbol(name); ok {
 			symbols[name] = at
 		} else if !slices.Contains(missing, name) {
@@ -128,10 +128,10 @@ func Load[B any](path string, spec Spec) (*Library[B], error) {
 	if len(missing) > 0 {
 		return nil, &MissingSymbols{path, missing}
 	}
-	mark, reset := symbols["souther_mark"], symbols["souther_reset"]
-	rt := newRuntime(uintptr(mark),
-		func() int64 { return int64(C.call_mark(mark)) },
-		func(at int64) { C.call_reset(reset, C.int64_t(at)) },
+	open, close := symbols["souther_scope_open"], symbols["souther_scope_close"]
+	rt := newRuntime(uintptr(open),
+		func() int64 { return int64(C.call_scope_open(open)) },
+		func(scope int64) bool { return C.call_scope_close(close, C.int64_t(scope)) != 0 },
 		statuses)
 	lib := newLibrary[B](rt)
 	lib.native, lib.symbols, lib.outcomes, lib.layout = native, symbols, spec.Outcomes, spec.Layout

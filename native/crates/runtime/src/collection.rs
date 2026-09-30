@@ -12,7 +12,7 @@
 //! the entries that share every bit are kept side by side in a node of their own and told apart by
 //! equality. Every operation copies the path it changes and shares the rest, since a value is never
 //! changed once made and nothing here is ever freed on its own: the arena drops a run's values in
-//! one go (`souther_reset`).
+//! one go (`souther_scope_close`).
 //!
 //! A key the collection holds is never replaced by one equal to it. Two keys equal under the
 //! language's equality can still be told apart (`1.0` and `1.00` are one `Decimal` key, written at
@@ -108,7 +108,7 @@ impl Trie {
     ///
     /// # Safety
     ///
-    /// `at` is a set or a map this file answered, and the mark below it still stands.
+    /// `at` is a set or a map this file answered, and the scope it was made in is still open.
     unsafe fn at<T>(at: *const T) -> Trie {
         let words = at.cast::<u64>();
         unsafe {
@@ -470,7 +470,7 @@ unsafe fn taken(node: u64, shift: u32, hash: u64, key: i64, equal: Equality) -> 
 ///
 /// # Safety
 ///
-/// `node` is a node this file wrote, and the mark below it still stands.
+/// `node` is a node this file wrote, and the scope it was made in is still open.
 unsafe fn gather(node: u64, found: &mut Vec<Entry>) {
     let at = node as *const u64;
     let header = unsafe { at.read() };
@@ -507,7 +507,7 @@ pub extern "C" fn souther_set_empty() -> *mut Set {
 ///
 /// # Safety
 ///
-/// `set` is a set this file answered, the mark below it still stands, and `hash` and `equal` take
+/// `set` is a set this file answered, the scope it was made in is still open, and `hash` and `equal` take
 /// values of its elements' type. So for every function here that takes a set. And `out` is room
 /// for the address of one.
 #[unsafe(no_mangle)]
@@ -759,7 +759,7 @@ pub extern "C" fn souther_map_empty() -> *mut Map {
 ///
 /// # Safety
 ///
-/// `map` is a map this file answered, the mark below it still stands, and `hash` and `equal` take
+/// `map` is a map this file answered, the scope it was made in is still open, and `hash` and `equal` take
 /// values of its keys' type. So for every function here that takes a map.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_map_get(
@@ -964,7 +964,7 @@ pub unsafe extern "C" fn souther_map_hash(map: *const Map, values: Hasher) -> Ha
 ///
 /// # Safety
 ///
-/// `list` is a list, and the mark below it still stands.
+/// `list` is a list, and the scope it was made in is still open.
 unsafe fn elements(list: *const List) -> Vec<i64> {
     let at = list.cast::<u8>();
     let length = unsafe { at.offset(LIST_LENGTH as isize).cast::<i64>().read() };
@@ -1010,7 +1010,7 @@ pub(crate) fn hash_of_parts(parts: &[&[u8]]) -> Hash {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{souther_mark, souther_reset};
+    use crate::{souther_scope_close, souther_scope_open};
 
     /// A key's hash, from what it is: the number, or where it is all but one bit the same as every
     /// other key's, so that every key lands in one node side by side.
@@ -1080,7 +1080,7 @@ mod tests {
     /// that the nodes that keep entries side by side are walked as well as the ones that split.
     #[test]
     fn a_set_holds_each_member_once_whatever_its_hash() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         for (hash, clashes) in [(spread as Hasher, false), (clashing as Hasher, true)] {
             let set = set_of(&[3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5], hash);
             if clashes {
@@ -1118,14 +1118,14 @@ mod tests {
             assert_eq!(unsafe { souther_set_size(emptied) }, 0);
             assert_eq!(members(emptied), Vec::<i64>::new());
         }
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     /// Equal where the members are, whatever order they went in: which is what the hash of one
     /// has to agree with.
     #[test]
     fn two_sets_built_apart_are_equal_and_hash_alike_where_their_members_are() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         let many: Vec<i64> = (0..500).collect();
         let backwards: Vec<i64> = many.iter().rev().copied().collect();
         let one = set_of(&many, spread);
@@ -1138,14 +1138,14 @@ mod tests {
         assert_eq!(unsafe { souther_set_equal(one, fewer, numbers) }, 0);
         let swapped = inserted(fewer, 1000, spread);
         assert_eq!(unsafe { souther_set_equal(one, swapped, numbers) }, 0);
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     /// A set already holding as many members as a set holds takes no other, and still takes one
     /// equal to one it holds. Its size is read, not counted, so no such set has to be built.
     #[test]
     fn a_set_as_full_as_a_set_holds_takes_no_new_member() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         let full: *const Set = Trie {
             size: HOLDS,
             root: 0,
@@ -1170,7 +1170,7 @@ mod tests {
         let mut map_out = std::ptr::null();
         let wrote = unsafe { souther_map_insert(full_map, 1, 1, spread, numbers, &mut map_out) };
         assert_eq!(wrote, 0);
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     /// A `Decimal` hashes as its amount and a `Rational` as the value it is, however each was
@@ -1180,7 +1180,7 @@ mod tests {
         use crate::amount::Amount;
         use crate::decimal::{decimal_of, souther_decimal_hash};
         use crate::rational::{Rational, souther_rational_divide, souther_rational_from_int};
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         let decimal = |unscaled: u8, scale| unsafe {
             souther_decimal_hash(decimal_of(&Amount::of_parts(false, &[unscaled], scale)))
         };
@@ -1200,7 +1200,7 @@ mod tests {
         assert_eq!(ratio(1, 2), ratio(2, 4));
         assert_ne!(ratio(1, 2), ratio(1, 3));
         assert_ne!(ratio(1, 2), ratio(-1, 2));
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     /// Keys equal where their last digits are, as `1.0` and `1.00` are one `Decimal`: equal, and
@@ -1249,7 +1249,7 @@ mod tests {
     /// where the trie splits or side by side at its bottom, which the clashing hash is held to reach.
     #[test]
     fn a_key_held_is_not_replaced_by_an_equal_one() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         for (hash, clashing) in [
             (last_digit as Hasher, false),
             (last_digit_clashing as Hasher, true),
@@ -1289,7 +1289,7 @@ mod tests {
             unsafe { souther_set_insert(set, 21, hash, by_last_digit, &mut out) };
             assert_eq!(members(out), vec![1, 3], "the members first put in");
         }
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     fn map_of(pairs: &[(i64, i64)], hash: Hasher) -> *const Map {
@@ -1311,7 +1311,7 @@ mod tests {
 
     #[test]
     fn a_map_holds_the_last_value_put_under_a_key_whatever_its_hash() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         for (hash, clashes) in [(spread as Hasher, false), (clashing as Hasher, true)] {
             let map = map_of(&[(1, 10), (2, 20), (3, 30), (1, 11)], hash);
             if clashes {
@@ -1338,6 +1338,6 @@ mod tests {
                 souther_map_hash(back, spread)
             });
         }
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 }

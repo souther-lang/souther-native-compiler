@@ -67,7 +67,7 @@ class ALibraryHoldsTheBuildsItReachesTest {
             }
 
             int main(void) {
-                int64_t mark = souther_mark();
+                int64_t scope = souther_scope_open();
 
                 souther_value three = NULL, price = NULL, closed = NULL, order = NULL;
                 souther@_m_lib_m_money_t_Money_construct(3, &three);
@@ -97,7 +97,7 @@ class ALibraryHoldsTheBuildsItReachesTest {
                 text(souther_issue_code(issue));
                 printf("\\n");
 
-                souther_reset(mark);
+                souther_scope_close(scope);
                 return 0;
             }
             """;

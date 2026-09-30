@@ -15,8 +15,8 @@ use Raoh\Path;
 use Raoh\Result;
 
 /**
- * One run of a library: what is made in it stands in the library's arena from the mark the run
- * took, and is handed back when the run ends. A value made in a run is good until then.
+ * One run of a library: what is made in it stands in the scope of the library's arena the run
+ * opened, and is handed back when the run ends. A value made in a run is good until then.
  *
  * Held by the runtime and the binding, and by no host code. A function of a binding asks its
  * `Binding` for the session of the innermost run going on this fiber ({@see Binding::innermostOf()})
@@ -150,8 +150,8 @@ final class Session
     /**
      * @internal The library's functions, to start a computation: construct, read, call.
      *
-     * Only through the innermost run's session. What a computation makes stands after that run's
-     * mark and is dropped when it ends, so one started through an outer session would answer a
+     * Only through the innermost run's session. What a computation makes stands in that run's
+     * scope and is dropped when it ends, so one started through an outer session would answer a
      * value its caller holds for longer than it lives.
      */
     public function call(): FFI
@@ -189,7 +189,7 @@ final class Session
      * @internal A value the library answered, held for this session's run.
      *
      * Asked through the session the value's memory is dropped with, which a binding knows by where
-     * the pointer came from. What a computation answers was made after the mark of the innermost
+     * the pointer came from. What a computation answers was made in the scope of the innermost
      * run, and a computation is started only through that run's session ({@see call()}). What a
      * reader answers is a value the one it was read out of already held, made no later than it, so
      * it is asked through that value's session. What an implementation is handed is asked through

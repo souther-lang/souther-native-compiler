@@ -57,7 +57,7 @@ sealed interface Crossing {
     static String local(Word word, Body.Imports imports) {
         return switch (word) {
             case STATUS, CASE -> "C.uint32_t";
-            case INT, COUNT, MARK -> "C.int64_t";
+            case INT, COUNT, SCOPE -> "C.int64_t";
             case BOOL -> "C.uint8_t";
             case OUTCOME -> "C.int32_t";
             case BYTES, VALUE, STRING, DECIMAL, DATE, TIME, DATETIME, INSTANT, DECODED, ISSUE,

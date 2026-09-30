@@ -172,7 +172,7 @@ class AHostCallsALibraryThroughItsHeaderTest {
             }
 
             int main(void) {
-                int64_t mark = souther_mark();
+                int64_t scope = souther_scope_open();
 
                 souther_value three = NULL;
                 souther_status status = souther@_m_shop_t_Money_construct(3, &three);
@@ -313,7 +313,7 @@ class AHostCallsALibraryThroughItsHeaderTest {
                 text(souther_decimal_unscaled(nought));
                 printf(" at %" PRId64 "\\n", souther_decimal_scale(nought));
 
-                souther_reset(mark);
+                souther_scope_close(scope);
                 return 0;
             }
             """;
@@ -364,7 +364,7 @@ class AHostCallsALibraryThroughItsHeaderTest {
                 echo "\n";
             }
 
-            $mark = $ffi->souther_mark();
+            $scope = $ffi->souther_scope_open();
 
             $three = $ffi->new("souther_value");
             $status = $ffi->souther@_m_shop_t_Money_construct(3, FFI::addr($three));
@@ -510,7 +510,7 @@ class AHostCallsALibraryThroughItsHeaderTest {
                     text($ffi, $ffi->souther_decimal_unscaled($nought)), " at ",
                     $ffi->souther_decimal_scale($nought), "\n";
 
-            $ffi->souther_reset($mark);
+            $ffi->souther_scope_close($scope);
             """;
 
     /** What both hosts are answered, which is the one program asked the same things. */

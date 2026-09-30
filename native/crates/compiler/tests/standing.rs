@@ -52,15 +52,15 @@ const HARNESS: &str = r#"
 extern uint32_t stated(int64_t *) __asm__("PREFIXsouther@.m.twice$example$0");
 extern uint32_t rest(int64_t *) __asm__("PREFIXsouther@.m.twice$example$1");
 extern uint32_t unstated(int64_t *) __asm__("PREFIXsouther@.m.twice$example$2");
-extern int64_t souther_mark(void);
-extern void souther_reset(int64_t);
+extern int64_t souther_scope_open(void);
+extern uint8_t souther_scope_close(int64_t);
 
 static void ran(const char *what, uint32_t (*row)(int64_t *)) {
-    int64_t mark = souther_mark();
+    int64_t scope = souther_scope_open();
     int64_t answer = -1;
     uint32_t status = row(&answer);
     printf("%s %u %" PRId64 "\n", what, status, answer);
-    souther_reset(mark);
+    souther_scope_close(scope);
 }
 
 int main(void) {

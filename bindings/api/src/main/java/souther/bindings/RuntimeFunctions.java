@@ -38,9 +38,11 @@ public final class RuntimeFunctions {
             }
             functions.put(name, new Function(name, takes, (Word) words.getLast()));
         };
-        functions.put("souther_mark", new Function("souther_mark", List.of(), Word.MARK));
-        functions.put("souther_reset",
-                new Function("souther_reset", List.of(Parameter.given(Word.MARK)), null));
+        // A scope, and never where the arena stands: closing one answers whether it was the
+        // innermost the thread had open (souther-native-compiler#137).
+        functions.put("souther_scope_open", new Function("souther_scope_open", List.of(), Word.SCOPE));
+        functions.put("souther_scope_close", new Function("souther_scope_close",
+                List.of(Parameter.given(Word.SCOPE)), Word.BOOL));
         // A String has no place for text past what the language bounds it to
         // (souther-native-compiler#109), so this answers whether it wrote one, as a generated
         // string operation already does, in place of always answering a String.

@@ -1404,7 +1404,7 @@ pub unsafe extern "C" fn souther_read_map_max_size(
 /// What a reading came to: [`DECODED_VALUE`], [`DECODED_ISSUES`] or [`DECODED_MALFORMED`].
 ///
 /// # Safety
-/// `decoded` is a reading a decoder answered, and the mark below it still stands.
+/// `decoded` is a reading a decoder answered, and the scope it was made in is still open.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_decoded_outcome(decoded: *const Decoding) -> i32 {
     let decoded = unsafe { &*decoded };
@@ -1469,7 +1469,7 @@ pub unsafe extern "C" fn souther_decoded_issue(
 /// The issue's code, as a string of the runtime's layout.
 ///
 /// # Safety
-/// `issue` is one [`souther_decoded_issue`] answered, and the mark below it still stands.
+/// `issue` is one [`souther_decoded_issue`] answered, and the scope it was made in is still open.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_issue_code(issue: *const Issue) -> *const Text {
     unsafe { (*issue).code.cast() }
@@ -1509,7 +1509,7 @@ pub unsafe extern "C" fn souther_issue_meta(issue: *const Issue) -> *const Text 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{souther_mark, souther_reset, souther_string_of_utf8};
+    use crate::{souther_scope_close, souther_scope_open, souther_string_of_utf8};
 
     fn said(at: *const Text) -> String {
         String::from_utf8(unsafe { text(&at).as_bytes() }.to_vec()).unwrap()
@@ -1575,7 +1575,7 @@ mod tests {
     /// the call is never taken for anything.
     #[test]
     fn a_scalar_reader_writes_its_room_whether_it_read_one_or_not() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         let decoding = begun("{}");
         let root = unsafe { souther_decode_root(decoding) };
         let mut int = -7;
@@ -1594,12 +1594,12 @@ mod tests {
             souther_decode_abandon(decoding);
         }
         assert_eq!((int, truth, text), (0, 0, ptr::null_mut()));
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     #[test]
     fn an_int_is_a_whole_number_within_sixty_four_bits() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         assert_eq!(int("42"), Ok(42));
         assert_eq!(int("-0"), Ok(0));
         assert_eq!(int("9223372036854775807"), Ok(i64::MAX));
@@ -1634,13 +1634,13 @@ mod tests {
                 r#" type_mismatch {"actual":"string","expected":"Int"}"#.to_string()
             ])
         );
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     /// A key holding `/` or `~` is one step of the pointer and not two (RFC 6901).
     #[test]
     fn a_path_is_a_json_pointer_with_its_steps_escaped() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         let decoding = begun("{}");
         let path = unsafe {
             let a = souther_path_below(ptr::null(), literal("a/b"));
@@ -1652,14 +1652,14 @@ mod tests {
             issues(decoding),
             vec![r#"/a~1b/~0c/0 missing_field {"actual":"nothing","expected":"a field"}"#]
         );
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     /// An element's place is its index below the array's, and a place that is not an array is
     /// recorded as one.
     #[test]
     fn an_array_is_read_element_by_element_at_its_index() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         let decoding = begun("[1, true]");
         let root = unsafe { souther_decode_root(decoding) };
         unsafe {
@@ -1678,13 +1678,13 @@ mod tests {
                 r#"/xs/1 type_mismatch {"actual":"boolean","expected":"an array"}"#,
             ]
         );
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     /// Text arriving is canonicalized to NFC: か followed by a combining mark is read as が.
     #[test]
     fn text_is_read_canonicalized_to_nfc() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         let decoding = begun("\"\u{304b}\u{3099}\"");
         let mut out = ptr::null_mut();
         let read = unsafe {
@@ -1702,7 +1702,7 @@ mod tests {
             1
         );
         unsafe { souther_decode_abandon(decoding) };
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     /// A string leaf whose canonical value has no place at what a `String` holds is refused with
@@ -1717,7 +1717,7 @@ mod tests {
     /// (spec §what-a-string-holds).
     #[test]
     fn text_with_no_place_is_invalid_format_and_not_a_silent_refusal() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         let decoding = begun("{}");
         let refused = unsafe {
             admitted_text(
@@ -1731,7 +1731,7 @@ mod tests {
         let found = issues(decoding);
         assert_eq!(found.len(), 1, "{found:?}");
         assert!(found[0].contains("invalid_format"), "{found:?}");
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     /// The regression `souther-native-compiler#109` actually was: a case name whose canonical
@@ -1744,7 +1744,7 @@ mod tests {
     /// this door — still fails a test.
     #[test]
     fn an_oversized_case_name_is_invalid_format_at_the_gate_and_never_not_allowed() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         let decoding = begun("{}");
         let oversized = Node::String(Box::from(*b"abcd"));
         let gated = unsafe {
@@ -1763,12 +1763,12 @@ mod tests {
             !found.iter().any(|it| it.contains("not_allowed")),
             "the gate must not fall through to \"not a case\": {found:?}"
         );
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     #[test]
     fn an_invariant_names_its_type_and_the_clause_where_it_has_a_name() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         let decoding = begun("{}");
         unsafe {
             souther_read_invariant(
@@ -1793,7 +1793,7 @@ mod tests {
                 r#"/x invariant_violation {"module":"shop","type":"Line"}"#,
             ]
         );
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     fn decimal(unscaled: &str, scale: i64) -> *mut Decimal {
@@ -1819,7 +1819,7 @@ mod tests {
     /// its metadata with numbers as numbers — a `Decimal` at its scale, as Raoh's own holds it.
     #[test]
     fn a_constraint_a_value_breaks_is_reported_as_raohs() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         let decoding = begun("{}");
         let at = |step: &str| unsafe { souther_path_below(ptr::null(), literal(step)) };
         let held = unsafe {
@@ -1865,14 +1865,14 @@ mod tests {
                 r#"/o invalid_size {"actual":1,"expected":2}"#,
             ]
         );
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     /// The elements a list repeats are each answered once, in the order their repetition was
     /// found, and reported as the form they are written in.
     #[test]
     fn a_list_repeating_elements_reports_each_once() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         extern "C" fn hash(value: i64) -> crate::Hash {
             crate::Hash(value)
         }
@@ -1892,12 +1892,12 @@ mod tests {
             issues(decoding),
             vec![r#" duplicate_element {"duplicates":[3,1]}"#]
         );
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     #[test]
     fn bytes_that_are_not_a_document_say_where_and_read_as_nothing() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         let decoding = begun("{\"a\":");
         unsafe {
             assert!(souther_decode_root(decoding).is_null());
@@ -1905,6 +1905,6 @@ mod tests {
             assert_eq!(souther_decoded_outcome(decoding), DECODED_MALFORMED);
             assert_eq!(souther_decoded_malformed_at(decoding), Count(5));
         }
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 }

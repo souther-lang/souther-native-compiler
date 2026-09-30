@@ -2,7 +2,7 @@
 
 use crate::decimal::Decimal;
 use crate::failure::{Failure, Statuses, UnnamedStatus};
-use crate::run::{Loaded, MarkFn, ResetFn, Run, Runtime};
+use crate::run::{Loaded, Run, Runtime, ScopeCloseFn, ScopeOpenFn};
 use crate::temporal::{Date, DateTime, Instant, Time};
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -83,7 +83,7 @@ impl NativeLibrary {
     ///
     /// # Errors
     ///
-    /// Where the library has no `souther_mark` or `souther_reset`, or `statuses` does not name one
+    /// Where the library has no `souther_scope_open` or `souther_scope_close`, or `statuses` does not name one
     /// a host has to tell apart.
     pub unsafe fn runtime(
         &self,
@@ -93,9 +93,9 @@ impl NativeLibrary {
         // SAFETY: both are the runtime's, as the ABI states them, and the caller keeps this
         // library loaded while the runtime is used.
         unsafe {
-            let mark: MarkFn = self.function("souther_mark")?;
-            let reset: ResetFn = self.function("souther_reset")?;
-            Ok(Runtime::new(mark, reset, statuses))
+            let open: ScopeOpenFn = self.function("souther_scope_open")?;
+            let close: ScopeCloseFn = self.function("souther_scope_close")?;
+            Ok(Runtime::new(open, close, statuses))
         }
     }
 }

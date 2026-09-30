@@ -157,8 +157,12 @@ pub const GENERATIONS: &[(u32, &str)] = &[
         "what a host hands in never ends the process: a temporal is made of and read as the numbers \
          it means, each an `Int` (`souther_date_of_parts`, `_parts`, and the same for `time`, \
          `datetime` and `instant`), in place of the ISO text `souther_date_of_iso` and the rest took \
-         and answered and ended the process on; and `souther_decimal_of_parts` writes the `Decimal` \
-         through room and answers whether its parts name one (souther-native-compiler#137)",
+         and answered and ended the process on; `souther_decimal_of_parts` writes the `Decimal` \
+         through room and answers whether its parts name one; and a host brackets its calls with \
+         a scope (`souther_scope_open`, `souther_scope_close`), which the runtime closes only as \
+         the innermost open on the calling thread and refuses otherwise, in place of the arena \
+         position `souther_mark` answered and `souther_reset` took back unchecked \
+         (souther-native-compiler#137)",
     ),
 ];
 
@@ -1118,7 +1122,7 @@ pub const STRING_CODE_POINT_VALUES: &str = "souther_string_code_point_values";
 
 /// The symbol a caller outside a Souther program makes a string with, from bytes it holds.
 ///
-/// Here rather than left to whoever writes such a caller, for the reason [`MARK`] is: the layout
+/// Here rather than left to whoever writes such a caller, for the reason [`SCOPE_OPEN`] is: the layout
 /// above is between this crate and the runtime, and a caller that built a string from it would be
 /// a third party to a two-party contract.
 pub const STRING_OF_UTF8: &str = "souther_string_of_utf8";
@@ -1487,11 +1491,42 @@ pub const HASH_PRESENT: i64 = 1;
 /// that bracketed the call, so nothing generated has to know what owns what.
 pub const ALLOCATE: &str = "souther_alloc";
 
-/// The symbol a caller reads the arena's position from, to reset to afterwards.
-pub const MARK: &str = "souther_mark";
+/// The symbol a host opens a scope with: the stretch of a run that everything the library answers
+/// inside it lives for, answered as a token to close it with.
+///
+/// What a host brackets its calls with, and the one thing of the arena it is told. A value the
+/// library answers is good on the thread that made it, until the scope it was made in is closed,
+/// and on no other thread; scopes on a thread close in the order opposite to the one they opened
+/// in; a token closes the scope it was answered for once. The runtime holds all of that itself
+/// ([`SCOPE_CONTRACT`]): closing with a token that is not the innermost open scope of the calling
+/// thread — one never answered, one already closed, one opened later than a scope still open
+/// inside it, or one another thread opened — is answered as that and changes nothing. How far the
+/// arena stood is the runtime's own and never crosses: a host that held a position could hand
+/// back one the arena never stood at, and nothing could tell.
+pub const SCOPE_OPEN: &str = "souther_scope_open";
 
-/// The symbol a caller gives a mark back to, dropping everything taken since.
-pub const RESET: &str = "souther_reset";
+/// The symbol a host closes a scope with, dropping everything made inside it, and answering whether
+/// the token was the innermost open scope of the calling thread.
+pub const SCOPE_CLOSE: &str = "souther_scope_close";
+
+/// What a scope promises and what the runtime holds of it, in the words a generation records.
+///
+/// Written as data so that the record of a generation holds it: a change to any of these is a
+/// change to what a host's runtime was written against, however little the functions' types say
+/// of it.
+pub const SCOPE_CONTRACT: &[(&str, &str)] = &[
+    ("arena", "one to each thread"),
+    (
+        "value-life",
+        "until the scope it was made in closes, on the thread that made it",
+    ),
+    (
+        "close-order",
+        "the innermost open scope of the calling thread, and no other",
+    ),
+    ("close-refused", "answered as false, and nothing changes"),
+    ("token", "never answered twice, on any thread"),
+];
 
 /// The runtime's external form: what a value is written as at a boundary, built as a tree by
 /// generated code and written out as JSON in one step.
@@ -1500,7 +1535,7 @@ pub const RESET: &str = "souther_reset";
 /// the caller a form it owns; `EXTERNAL_APPEND` and `EXTERNAL_PUT` take ownership of the item they
 /// are given and leave the container with the caller; `EXTERNAL_JSON` takes the root, drops the
 /// whole tree, and answers a string of the runtime's own layout (`TEXT_LENGTH`, `TEXT_BYTES`) in
-/// the arena. So nothing of the tree outlives the call that writes it, and what `RESET` drops is
+/// the arena. So nothing of the tree outlives the call that writes it, and what closing a scope drops is
 /// only what it always dropped.
 ///
 /// A key and a string handed in are strings of that same layout, not NUL-terminated text: a key a
@@ -1739,8 +1774,8 @@ pub enum HostWord {
     Outcome,
     /// How many of something there are, or where one stands among them: sixty-four bits.
     Count,
-    /// Where the arena stood, to be given back to [`RESET`].
-    Mark,
+    /// An open scope, as [`SCOPE_OPEN`] answers one and [`SCOPE_CLOSE`] takes it back.
+    Scope,
     /// Bytes the host holds, read and never kept.
     Bytes,
     /// The address of a value of a declared type, which a host never reads behind.
@@ -1798,7 +1833,7 @@ impl HostWord {
             HostWord::Case => "case",
             HostWord::Outcome => "outcome",
             HostWord::Count => "count",
-            HostWord::Mark => "mark",
+            HostWord::Scope => "scope",
             HostWord::Bytes => "bytes",
             HostWord::Value => "value",
             HostWord::String => "string",
@@ -1995,19 +2030,19 @@ pub struct RuntimeFunction {
 pub const HOST_RUNTIME: &[RuntimeFunction] = {
     use HostParameter::{Given, Room};
     use HostWord::{
-        Bool, Bytes, Count, Date, DateTime, Decimal, Decoded, Instant, Int, Issue, Mark, Outcome,
+        Bool, Bytes, Count, Date, DateTime, Decimal, Decoded, Instant, Int, Issue, Outcome, Scope,
         String, Time, Value,
     };
     &[
         RuntimeFunction {
-            name: MARK,
+            name: SCOPE_OPEN,
             takes: &[],
-            answers: Some(Mark),
+            answers: Some(Scope),
         },
         RuntimeFunction {
-            name: RESET,
-            takes: &[Given(Mark)],
-            answers: None,
+            name: SCOPE_CLOSE,
+            takes: &[Given(Scope)],
+            answers: Some(Bool),
         },
         RuntimeFunction {
             name: STRING_OF_UTF8,

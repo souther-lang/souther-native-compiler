@@ -39,7 +39,7 @@ fn list_of_strings(pieces: &[Held]) -> *mut List {
 ///
 /// # Safety
 ///
-/// `list` is a list whose every element is a string, and the mark below it still stands.
+/// `list` is a list whose every element is a string, and the scope it was made in is still open.
 unsafe fn texts<'a>(list: &'a *const List) -> Vec<Held<'a>> {
     let at = list.cast::<u8>();
     let elements = unsafe { at.offset(LIST_LENGTH as isize).cast::<i64>().read() };
@@ -337,7 +337,7 @@ pub unsafe extern "C" fn souther_string_code_point_values(s: *const Text) -> *mu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{souther_mark, souther_reset, souther_string_concat};
+    use crate::{souther_scope_close, souther_scope_open, souther_string_concat};
     use std::ptr;
 
     fn made(text: &str) -> *mut Text {
@@ -359,7 +359,7 @@ mod tests {
     /// out of it by what a join reads.
     #[test]
     fn a_list_of_strings_is_written_as_the_layout_says_and_read_back() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         let pieces = unsafe { souther_string_split(made(","), made("a,,日")) };
         assert_eq!(strings(pieces), ["a", "", "日"]);
         let mut joined = ptr::null_mut();
@@ -370,26 +370,26 @@ mod tests {
         assert_eq!(said(joined), "a--日");
         assert_eq!(unsafe { souther_string_concat_all(pieces, &mut joined) }, 1);
         assert_eq!(said(joined), "a日");
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     /// Two strings joined are put in NFC at the seam.
     #[test]
     fn a_join_of_two_strings_is_canonical() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         let mut joined = ptr::null_mut();
         assert_eq!(
             unsafe { souther_string_concat(made("e"), made("\u{301}"), &mut joined) },
             1
         );
         assert_eq!(said(joined), "\u{e9}");
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     /// A kernel that can answer nothing writes its value only where it has one, and says which.
     #[test]
     fn a_kernel_answering_nothing_writes_nothing() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         let mut out: *mut Text = ptr::null_mut();
         assert_eq!(
             unsafe { souther_string_slice(1, 3, made("a𠮷b"), &mut out) },
@@ -411,13 +411,13 @@ mod tests {
             0
         );
         assert_eq!(unread, -1);
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     /// Code points are written into a list as the numbers they are.
     #[test]
     fn code_points_are_a_list_of_numbers() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         let list = unsafe { souther_string_code_point_values(made("a𠮷")) };
         let at = list.cast::<u8>();
         unsafe {
@@ -425,6 +425,6 @@ mod tests {
             assert_eq!(at.offset(list_at(0) as isize).cast::<i64>().read(), 0x61);
             assert_eq!(at.offset(list_at(1) as isize).cast::<i64>().read(), 0x20bb7);
         }
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 }

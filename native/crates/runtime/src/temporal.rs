@@ -564,7 +564,7 @@ pub unsafe extern "C" fn souther_date_of_parts(
 ///
 /// # Safety
 ///
-/// `at` is a `Date` the runtime answered, and the mark below it still stands. So for every function
+/// `at` is a `Date` the runtime answered, and the scope it was made in is still open. So for every function
 /// here that reads one. Each of the rest is room for an `Int`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_date_parts(
@@ -1163,7 +1163,7 @@ pub unsafe extern "C" fn souther_external_instant(at: *const Instant) -> *mut Fo
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{souther_mark, souther_reset};
+    use crate::{souther_scope_close, souther_scope_open};
 
     /// The year, month and day a host reads off a `Date`.
     fn civil(at: *const Date) -> (i64, i64, i64) {
@@ -1174,7 +1174,7 @@ mod tests {
 
     #[test]
     fn a_shift_runs_off_the_end_or_lands() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         let mut out = std::ptr::null_mut();
         let jan31 = date_of(days_from_civil(2026, 1, 31));
         assert_eq!(unsafe { souther_date_add_months(1, jan31, &mut out) }, 1);
@@ -1213,12 +1213,12 @@ mod tests {
             unsafe { souther_datetime_add_days(1, first, &mut moved) },
             1
         );
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     #[test]
     fn a_date_time_between_counts_whole_minutes_towards_nought() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         let at = |second| date_time_of(second);
         let base = days_from_civil(2026, 7, 25) * SECONDS_PER_DAY;
         unsafe {
@@ -1237,12 +1237,12 @@ mod tests {
                 (MAX_LOCAL - MIN_LOCAL) / 60
             );
         }
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     #[test]
     fn a_date_is_its_parts_and_parts_that_name_none_are_refused() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         let mut out = std::ptr::null_mut();
         unsafe {
             assert_eq!(souther_date_from_parts(2024, 2, 29, &mut out), 1);
@@ -1280,14 +1280,14 @@ mod tests {
                 assert_eq!(souther_time_from_parts(hour, minute, second, &mut time), 0);
             }
         }
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     /// A value a host made of its parts reads back as those parts, parts that name no value are
     /// answered as that and end nothing, and two made apart compare equal where they name one.
     #[test]
     fn a_host_reads_back_the_parts_it_made_a_value_of() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         unsafe {
             let mut date = std::ptr::null_mut();
             assert_eq!(souther_date_of_parts(2026, 7, 25, &mut date), 1);
@@ -1348,7 +1348,7 @@ mod tests {
                 1
             );
         }
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     /// The bounds are the ones `java.time` states: `LocalDate.MIN`/`MAX` as epoch days,

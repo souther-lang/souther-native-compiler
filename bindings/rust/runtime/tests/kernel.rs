@@ -3,7 +3,7 @@
 
 use souther_binding_runtime::{
     AlreadyRunning, Bound, Capability, Failure, Held, HostError, HostFailure, Hosted, Implemented,
-    RawMark, Requirement, Run, Runtime, Status, Statuses,
+    RawScope, Requirement, Run, Runtime, Status, Statuses,
 };
 use std::cell::{Cell, RefCell};
 use std::ffi::c_void;
@@ -23,8 +23,9 @@ const STATUSES: &[(&str, Status)] = &[
     ("HOST_EXCEPTION", HOST_EXCEPTION),
 ];
 
-/// A library's runtime: its own arena, and `souther_mark` and `souther_reset` over it. Each one
-/// written out here is a different pair of functions, so a different runtime.
+/// A library's runtime: its own arena, and `souther_scope_open` and `souther_scope_close` over it,
+/// holding which scopes are open on the thread as the library's runtime does. Each one written out
+/// here is a different pair of functions, so a different runtime.
 macro_rules! library {
     ($name:ident) => {
         mod $name {
@@ -32,26 +33,42 @@ macro_rules! library {
 
             thread_local! {
                 pub static ARENA: Cell<i64> = const { Cell::new(0) };
+                pub static OPEN: RefCell<Vec<(i64, i64)>> = const { RefCell::new(Vec::new()) };
             }
 
-            pub extern "C" fn mark() -> RawMark {
-                RawMark(ARENA.with(Cell::get))
+            static TOKENS: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(1);
+
+            pub extern "C" fn open() -> RawScope {
+                let token = TOKENS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let stood = ARENA.with(Cell::get);
+                OPEN.with(|it| it.borrow_mut().push((token, stood)));
+                RawScope(token)
             }
 
-            pub extern "C" fn reset(mark: RawMark) {
-                ARENA.with(|it| {
-                    assert!(
-                        mark.0 <= it.get(),
-                        "a mark is never above where the arena stands"
-                    );
-                    it.set(mark.0);
+            pub extern "C" fn close(scope: RawScope) -> i8 {
+                let stood = OPEN.with(|it| {
+                    let mut open = it.borrow_mut();
+                    match open.last() {
+                        Some(&(token, stood)) if token == scope.0 => {
+                            open.pop();
+                            Some(stood)
+                        }
+                        _ => None,
+                    }
                 });
+                match stood {
+                    Some(stood) => {
+                        ARENA.with(|it| it.set(stood));
+                        1
+                    }
+                    None => 0,
+                }
             }
 
             pub fn runtime() -> Runtime {
                 let statuses = Statuses::new(STATUSES).unwrap();
                 // SAFETY: both are this library's, and are functions of this program.
-                unsafe { Runtime::new(mark, reset, statuses) }
+                unsafe { Runtime::new(open, close, statuses) }
             }
 
             pub fn taken() -> i64 {

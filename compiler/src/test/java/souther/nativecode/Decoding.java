@@ -57,8 +57,8 @@ final class Decoding {
 
                 typedef const void *Value;
 
-                extern int64_t souther_mark(void);
-                extern void souther_reset(int64_t);
+                extern int64_t souther_scope_open(void);
+                extern uint8_t souther_scope_close(int64_t);
                 extern int64_t souther_string_length(Value);
                 extern const uint8_t *souther_string_bytes(Value);
                 extern int32_t souther_decoded_outcome(Value);
@@ -86,13 +86,13 @@ final class Decoding {
 
                 static void report(const char *label, Decode decode, Encode encode,
                                    const char *document, int64_t length) {
-                    int64_t mark = souther_mark();
+                    int64_t scope = souther_scope_open();
                     Value read = 0;
                     uint32_t status = decode((const uint8_t *) document, length, &read);
                     printf("%s: ", label);
                     if (status != 0) {
                         printf("status %u\\n", status);
-                        souther_reset(mark);
+                        souther_scope_close(scope);
                         return;
                     }
                     switch (souther_decoded_outcome(read)) {
@@ -127,7 +127,7 @@ final class Decoding {
                         printf("an outcome nobody said");
                     }
                     printf("\\n");
-                    souther_reset(mark);
+                    souther_scope_close(scope);
                 }
 
                 """);

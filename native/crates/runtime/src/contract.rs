@@ -64,7 +64,7 @@ words! {
     i32 => Word::Host(HostWord::Outcome),
     i64 => Word::Host(HostWord::Int),
     Count => Word::Host(HostWord::Count),
-    Mark => Word::Host(HostWord::Mark),
+    Scope => Word::Host(HostWord::Scope),
     Comparison => Word::Comparison,
     *const u8 => Word::Host(HostWord::Bytes),
     *mut u8 => Word::Memory,
@@ -175,12 +175,12 @@ fn functions() -> Vec<(&'static str, Shape)> {
             shape_of(souther_alloc as extern "C" fn(Count) -> *mut u8),
         ),
         (
-            "souther_mark",
-            shape_of(souther_mark as extern "C" fn() -> Mark),
+            "souther_scope_open",
+            shape_of(souther_scope_open as extern "C" fn() -> Scope),
         ),
         (
-            "souther_reset",
-            shape_of(souther_reset as extern "C" fn(Mark)),
+            "souther_scope_close",
+            shape_of(souther_scope_close as extern "C" fn(Scope) -> i8),
         ),
         (
             "souther_string_compare",
@@ -1481,6 +1481,10 @@ fn every_function_is_what_the_table_naming_it_says() {
     }
 }
 
+/// What the runtime defines for its own tests and the driver's to count with, and for no other
+/// party: in neither table, so no header declares it and no library exports it.
+const INSTRUMENTS: &[&str] = &["souther_arena_taken"];
+
 /// Every function the runtime defines for another party is in exactly one of the two tables, and
 /// is written above: read off the source, so a function added here and to neither table is caught
 /// rather than called by someone the tables say nothing to.
@@ -1522,7 +1526,7 @@ fn every_function_the_runtime_defines_is_in_one_table() {
                 .chars()
                 .take_while(|it| it.is_ascii_alphanumeric() || *it == '_')
                 .collect();
-            if name.starts_with("souther_") {
+            if name.starts_with("souther_") && !INSTRUMENTS.contains(&name.as_str()) {
                 defined.insert(name);
             }
         }
@@ -1572,7 +1576,7 @@ fn a_rational_is_a_case_and_no_host_crosses_it() {
 /// the case: the token at its front is the one the runtime defines for it.
 #[test]
 fn a_case_a_host_makes_reads_back_as_what_it_holds() {
-    let mark = souther_mark();
+    let scope = souther_scope_open();
     let which = |value: *const Value| unsafe { value.cast::<*const u8>().read() };
     let int = souther_case_int_make(-42);
     assert_eq!(which(int), CASE_INT.as_ptr());
@@ -1593,5 +1597,5 @@ fn a_case_a_host_makes_reads_back_as_what_it_holds() {
         text.cast_const()
     );
     assert_eq!(which(souther_case_none_make()), CASE_NONE.as_ptr());
-    souther_reset(mark);
+    souther_scope_close(scope);
 }

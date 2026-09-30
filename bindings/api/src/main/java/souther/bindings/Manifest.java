@@ -273,7 +273,7 @@ public final class Manifest {
 
     /** One word a host hands over or is handed. */
     public enum Word {
-        STATUS, INT, BOOL, CASE, OUTCOME, COUNT, MARK, BYTES, VALUE, STRING, DECIMAL, DATE, TIME,
+        STATUS, INT, BOOL, CASE, OUTCOME, COUNT, SCOPE, BYTES, VALUE, STRING, DECIMAL, DATE, TIME,
         DATETIME, INSTANT, DECODED, ISSUE, LIST, REQUIREMENTS, CAPABILITY, USERDATA, FUNCTION
     }
 

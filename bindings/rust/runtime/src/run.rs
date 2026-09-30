@@ -11,48 +11,50 @@ use std::ops::{Deref, DerefMut};
 use std::panic::{self, AssertUnwindSafe};
 use std::ptr::NonNull;
 
-/// Where the arena stood, as `souther_mark` answers it and `souther_reset` takes it back.
+/// An open scope of the arena, as `souther_scope_open` answers it and `souther_scope_close` takes it
+/// back: a token, and never where the arena stands.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct RawMark(pub i64);
+pub struct RawScope(pub i64);
 
-/// `souther_mark`, as a library exports it.
-pub type MarkFn = unsafe extern "C" fn() -> RawMark;
+/// `souther_scope_open`, as a library exports it.
+pub type ScopeOpenFn = unsafe extern "C" fn() -> RawScope;
 
-/// `souther_reset`, as a library exports it.
-pub type ResetFn = unsafe extern "C" fn(RawMark);
+/// `souther_scope_close`, as a library exports it: whether the scope was the innermost the thread
+/// had open, which it closes only then.
+pub type ScopeCloseFn = unsafe extern "C" fn(RawScope) -> i8;
 
-/// One library's runtime: the functions that mark its arena and drop it back, and what its
+/// One library's runtime: the functions that open a scope of its arena and close it, and what its
 /// statuses are numbered.
 ///
-/// Which runtime this is is the address of its `souther_mark`. Whatever works on one arena has one
-/// `souther_mark`, so two `Runtime`s with the same one are two handles on the same arena, however
+/// Which runtime this is is the address of its `souther_scope_open`. Whatever works on one arena has
+/// one `souther_scope_open`, so two `Runtime`s with the same one are two handles on the same arena, however
 /// the library was reached — without this crate depending on how a loader tells files apart. A way
 /// of loading that let the runtime's symbols be interposed would have to look at this again.
 pub struct Runtime {
-    mark: MarkFn,
-    reset: ResetFn,
+    open: ScopeOpenFn,
+    close: ScopeCloseFn,
     statuses: Statuses,
 }
 
 impl Runtime {
-    /// A runtime over a library's `souther_mark` and `souther_reset`, answering the statuses
+    /// A runtime over a library's `souther_scope_open` and `souther_scope_close`, answering the statuses
     /// `statuses` numbers.
     ///
     /// # Safety
     ///
     /// Both functions are the same library's, stay callable for as long as this `Runtime` lives,
     /// and `statuses` numbers what that library's functions answer.
-    pub unsafe fn new(mark: MarkFn, reset: ResetFn, statuses: Statuses) -> Self {
+    pub unsafe fn new(open: ScopeOpenFn, close: ScopeCloseFn, statuses: Statuses) -> Self {
         Runtime {
-            mark,
-            reset,
+            open,
+            close,
             statuses,
         }
     }
 
     pub(crate) fn identity(&self) -> usize {
-        self.mark as usize
+        self.open as usize
     }
 
     /// What each status the library answers is.
@@ -448,26 +450,32 @@ impl Drop for Open {
     }
 }
 
-/// A mark on the arena, dropped back to when this is.
+/// A scope of the arena, closed when this is dropped.
 struct Bracket<'lib> {
     runtime: &'lib Runtime,
-    mark: RawMark,
+    scope: RawScope,
 }
 
 impl<'lib> Bracket<'lib> {
     fn open(runtime: &'lib Runtime) -> Self {
         // SAFETY: `Runtime::new` was told the function is the library's and callable while the
         // runtime lives, which it does for as long as it is borrowed here.
-        let mark = unsafe { (runtime.mark)() };
-        Bracket { runtime, mark }
+        let scope = unsafe { (runtime.open)() };
+        Bracket { runtime, scope }
     }
 }
 
 impl Drop for Bracket<'_> {
     fn drop(&mut self) {
-        // SAFETY: as in `open`; and the mark is the one this arena answered there, which no run
-        // inside has dropped back past, since each of theirs was taken later and dropped sooner.
-        unsafe { (self.runtime.reset)(self.mark) }
+        // SAFETY: as in `open`.
+        let closed = unsafe { (self.runtime.close)(self.scope) };
+        // The scope is the innermost this thread has open, since every run inside was opened later
+        // and is dropped sooner, and a run is on no other thread. The library refusing it is this
+        // crate and the library disagreeing, and nothing a program did; where the thread is already
+        // unwinding, a second panic would abort it, and the first one says more.
+        if closed == 0 && !std::thread::panicking() {
+            panic!("the library refused to close the innermost scope this crate opened");
+        }
     }
 }
 

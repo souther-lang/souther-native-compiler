@@ -71,7 +71,7 @@ class AHostHandsOverATemporalAsTheNumbersItMeansTest {
             }
 
             int main(void) {
-                int64_t mark = souther_mark();
+                int64_t scope = souther_scope_open();
 
                 souther_date day = NULL;
                 uint8_t made = souther_date_of_parts(2026, 1, 31, &day);
@@ -133,7 +133,7 @@ class AHostHandsOverATemporalAsTheNumbersItMeansTest {
                        souther_instant_of_parts(0, 1000000000, &no_moment),
                        souther_instant_of_parts(0, -1, &no_moment));
 
-                souther_reset(mark);
+                souther_scope_close(scope);
                 return 0;
             }
             """;

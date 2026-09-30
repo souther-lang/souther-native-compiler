@@ -1,7 +1,8 @@
 //! What every Rust binding of a Souther library runs on.
 //!
 //! A library keeps what a computation makes in an arena of its own, one for each thread, and a
-//! run is a mark on it that the library is told to drop back to when the run ends. A value made in
+//! run is a scope of it that the library is told to close, dropping what was made in it, when the
+//! run ends. A value made in
 //! a run is an address into that arena, good until then. The PHP runtime checks that at run time,
 //! value by value (`Expired`, `RunOnAnotherFiber`, `NotTheInnermostRun`). Here it is held in the
 //! types instead, and a program that would break it does not compile:
@@ -45,8 +46,8 @@ pub use failure::{
 pub use keep::{FunctionImplementFn, HostedFunction};
 pub use native::{Construction, LoadError, NativeLibrary, Reading, Word, Words};
 pub use run::{
-    AlreadyRunning, Held, HostFailure, Loaded, MarkFn, RawMark, ResetFn, Run, Runtime, Scope, host,
-    implemented, run,
+    AlreadyRunning, Held, HostFailure, Loaded, RawScope, Run, Runtime, Scope, ScopeCloseFn,
+    ScopeOpenFn, host, implemented, run,
 };
 pub use temporal::{Date, DateTime, Instant, NotATemporal, Time};
 

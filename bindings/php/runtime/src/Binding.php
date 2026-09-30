@@ -146,7 +146,7 @@ abstract class Binding
     /**
      * Runs `$body` in a session of its own, handed `$injections`.
      *
-     * The arena is marked before and put back after, so every value made in the run is refused once
+     * A scope of the arena is opened before and closed after, so every value made in the run is refused once
      * it ends, and anything that has to outlive it leaves as its external form (`encode()`).
      *
      * A behavior called through `Behaviors` in the run is constructed from `$injections`: each
@@ -165,14 +165,21 @@ abstract class Binding
     public function run(callable $body, Injections ...$injections): mixed
     {
         $ffi = $this->library->ffi();
-        $mark = $ffi->souther_mark();
+        // The session first: a run refused (on another fiber, say) opens no scope, which would
+        // otherwise stay open above the scopes of the runs it was refused beside.
         $session = $this->library->open(array_merge(...array_map(
             static fn (Injections $set): array => $set->implemented(), $injections)));
+        $scope = $ffi->souther_scope_open();
         try {
             return $body();
         } finally {
             $this->library->close($session);
-            $ffi->souther_reset($mark);
+            // The innermost scope this fiber's thread has open, since runs nest as calls do. The
+            // library refusing it is this runtime and the library disagreeing, and nothing a host
+            // program did.
+            if ($ffi->souther_scope_close($scope) === 0) {
+                throw new \LogicException('the library refused to close the innermost scope this runtime opened');
+            }
         }
     }
 

@@ -119,8 +119,8 @@ class AHostReachesAValueWithoutItsLayoutTest {
 
                 typedef const void *Value;
 
-                extern int64_t souther_mark(void);
-                extern void souther_reset(int64_t);
+                extern int64_t souther_scope_open(void);
+                extern uint8_t souther_scope_close(int64_t);
                 extern uint8_t souther_string_of_utf8(const uint8_t *, int64_t, Value *);
                 extern int64_t souther_string_length(Value);
                 extern const uint8_t *souther_string_bytes(Value);
@@ -186,7 +186,7 @@ class AHostReachesAValueWithoutItsLayoutTest {
                 }
 
                 int main(void) {
-                    int64_t mark = souther_mark();
+                    int64_t scope = souther_scope_open();
 
                     Value three = untouched;
                     uint32_t status = money(3, &three);
@@ -236,7 +236,7 @@ class AHostReachesAValueWithoutItsLayoutTest {
                     present = lineGift(given, &gift);
                     printf("gift given: present %%u, gift %%u\\n", present, gift);
 
-                    souther_reset(mark);
+                    souther_scope_close(scope);
                     return 0;
                 }
                 """.formatted(

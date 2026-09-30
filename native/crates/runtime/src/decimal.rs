@@ -61,7 +61,7 @@ pub(crate) fn decimal_of(amount: &Amount) -> *mut Decimal {
 ///
 /// # Safety
 ///
-/// `at` is one [`decimal_of`] answered, and the mark below it still stands.
+/// `at` is one [`decimal_of`] answered, and the scope it was made in is still open.
 pub(crate) unsafe fn amount(at: *const Decimal) -> Amount {
     let at = at.cast::<u8>();
     unsafe {
@@ -208,7 +208,7 @@ pub unsafe extern "C" fn souther_decimal_literal(
 ///
 /// # Safety
 ///
-/// `at` is a `Decimal` the runtime answered, and the mark below it still stands. So for every
+/// `at` is a `Decimal` the runtime answered, and the scope it was made in is still open. So for every
 /// function here that reads one.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_decimal_unscaled(at: *const Decimal) -> *mut Text {
@@ -420,7 +420,7 @@ pub unsafe extern "C" fn souther_external_decimal(at: *const Decimal) -> *mut Fo
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Count, souther_mark, souther_reset, souther_string_of_utf8};
+    use crate::{Count, souther_scope_close, souther_scope_open, souther_string_of_utf8};
     use souther_native_abi::{LANGUAGE_UNITS, type_symbol};
     use std::collections::BTreeSet;
 
@@ -469,7 +469,7 @@ mod tests {
     /// What a host hands over is what it reads back, the scale as it was and nought unsigned.
     #[test]
     fn a_decimal_reads_back_as_the_integer_and_scale_it_was_made_of() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         for (unscaled, scale, read) in [
             ("150", 2, "150"),
             ("-150", 2, "-150"),
@@ -489,13 +489,13 @@ mod tests {
                 "{unscaled}"
             );
         }
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     /// Every rounding mode reaches the mode its token names.
     #[test]
     fn a_mode_is_the_case_its_token_names() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         let value = of("25", 1);
         let mut whole = 0;
         for (token, answer) in [
@@ -513,13 +513,13 @@ mod tests {
             );
             assert_eq!(whole, answer);
         }
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     /// An operation that has no answer writes nothing and says so.
     #[test]
     fn an_operation_with_no_answer_writes_nothing() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         let mut out: *mut Decimal = ptr::null_mut();
         let tiny = of("1", 2147483647);
         assert_eq!(unsafe { souther_decimal_multiply(tiny, tiny, &mut out) }, 0);
@@ -534,12 +534,12 @@ mod tests {
             0
         );
         assert!(out.is_null());
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     #[test]
     fn the_operations_answer_through_the_arena() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         let mut out: *mut Decimal = ptr::null_mut();
         assert_eq!(
             unsafe { souther_decimal_add(of("15", 1), of("225", 2), &mut out) },
@@ -580,14 +580,14 @@ mod tests {
             1
         );
         assert_eq!(said(text), "100.000");
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     /// A value whose plain notation is more text than a string holds is refused, before any of the
     /// text is written, at either end of the scale range; one whose text a string holds is not.
     #[test]
     fn the_text_of_a_value_no_string_holds_is_not_written() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         let mut text = std::ptr::null_mut();
         for scale in [1_500_000_000, -1_500_000_000] {
             assert_eq!(
@@ -601,7 +601,7 @@ mod tests {
             1
         );
         assert_eq!(said(text), "1000");
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     /// Every unit the language declares that the table names has a token here, under the symbol a
@@ -636,7 +636,7 @@ mod tests {
     /// Parts that name no `Decimal` are answered as that, and end nothing.
     #[test]
     fn parts_that_name_no_decimal_are_refused() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         let mut out = ptr::null_mut();
         for (unscaled, scale) in [
             ("12.5", 0),
@@ -666,6 +666,6 @@ mod tests {
             0
         );
         assert_eq!(parts(of("-120", 2)), (String::from("-120"), 2));
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 }

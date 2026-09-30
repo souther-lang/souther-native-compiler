@@ -286,7 +286,7 @@ static souther_status aborted(void *by, int64_t x, int64_t *out) {
 }
 
 int main(void) {
-    int64_t mark = souther_mark();
+    int64_t scope = souther_scope_open();
 
     souther_function bump = NULL;
     souther_status status = souther@_m_m_v_bump(&bump);
@@ -363,7 +363,7 @@ int main(void) {
     souther@_m_m_fn_f1_int_int_call(plus_ten, 1, &out);
     printf("lifted %u %" PRId64 "\n", called, out);
 
-    souther_reset(mark);
+    souther_scope_close(scope);
     return 0;
 }
 "#;
