@@ -997,8 +997,8 @@ public final class RustBindings {
 
     /**
      * Each case of {@code sum} in the order its {@code which} counts them, or null where a case has
-     * no variant this binding can write: where nothing says which case a value is, a primitive
-     * Rust holds no way, or two cases that would be one variant. A case the model keeps, a
+     * no variant this binding can write: where nothing says which case a value is, or two cases
+     * that would be one variant. A case the model keeps, a
      * declared type it does not publish, is {@value #KEPT}, holding the value as the sum, as the
      * PHP binding holds one as the sum's own class.
      */
@@ -1009,24 +1009,11 @@ public final class RustBindings {
         List<CaseArm> arms = new ArrayList<>();
         Set<String> variants = new java.util.HashSet<>();
         CaseArm kept = new CaseArm(KEPT, of.type() + "<'run>", "*self");
-        for (Case each : sum.cases()) {
-            CaseArm arm = switch (each) {
-                case Case.Declared d -> {
-                    Declared it = declared.get(d.module() + "." + d.name());
-                    yield it == null ? kept : new CaseArm(it.name(), it.type() + "<'run>",
-                            "unsafe { " + it.type() + "::__held(library, value) }");
-                }
-                case Case.Primitive p -> {
-                    Manifest.CaseCrossing crossing = manifest.crossing(p);
-                    Word held = crossing.holds();
-                    Crossing.Whole whole = held == null ? null : Crossing.Whole.primitive(p.primitive(), held);
-                    yield whole == null ? null : new CaseArm(p.primitive().spelt(), whole.owned(),
-                            carried(symbol(Objects.requireNonNull(crossing.read())), whole));
-                }
-                case Case.Language l -> RustNames.takes(RustNames.capitalized(l.name()))
-                        ? new CaseArm(RustNames.capitalized(l.name()), "", "") : null;
-            };
-            if (arm == null || !RustNames.takes(arm.variant())
+        for (Case.Declared each : sum.cases()) {
+            Declared it = declared.get(each.module() + "." + each.name());
+            CaseArm arm = it == null ? kept : new CaseArm(it.name(), it.type() + "<'run>",
+                    "unsafe { " + it.type() + "::__held(library, value) }");
+            if (!RustNames.takes(arm.variant())
                     || !variants.add(arm.variant()) && arm != kept) {
                 return null;
             }
@@ -1040,7 +1027,7 @@ public final class RustBindings {
     }
 
     /**
-     * What a value of a union or a sum that is a primitive holds, read out through {@code read}
+     * What a value of a union that is a primitive holds, read out through {@code read}
      * and made as {@code whole} makes one: the word read first, so that what reads it and what
      * makes of it are two blocks and not one inside the other.
      */
@@ -1054,11 +1041,8 @@ public final class RustBindings {
     }
 
     private static Set<String> cases(Declaration.Sum sum) {
-        return sum.cases().stream().map(it -> switch (it) {
-            case Case.Declared d -> d.module() + "." + d.name();
-            case Case.Primitive p -> "primitive:" + p.primitive().spelt();
-            case Case.Language l -> "language:" + l.name();
-        }).collect(Collectors.toCollection(LinkedHashSet::new));
+        return sum.cases().stream().map(it -> it.module() + "." + it.name())
+                .collect(Collectors.toCollection(LinkedHashSet::new));
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -1592,8 +1576,9 @@ public final class RustBindings {
                     ///
                     /// # Errors
                     ///
-                    /// Where no library can be loaded from `path`, or it has none of a function the
-                    /// binding calls.
+                    /// Where no library can be loaded from `path`, it is of another ABI generation
+                    /// than the binding was generated for, or it has none of a function the binding
+                    /// calls.
                     pub unsafe fn load(path: impl AsRef<std::path::Path>) -> Result<Self, LoadError> {
                         // SAFETY: what the caller says.
                         unsafe {

@@ -7,7 +7,7 @@ namespace Souther\Runtime;
 /**
  * A Souther `Time` as PHP holds one: a time of day, held to the second, as its hour, minute and
  * second. It is written as `LocalTime.toString` writes it, `:ss` only where the second is not
- * nought, which is the text the library takes for it.
+ * nought, which is for PHP to show: the library is handed its numbers.
  *
  * Refused where the numbers name no time of day.
  */

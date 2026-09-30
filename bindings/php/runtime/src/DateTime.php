@@ -6,7 +6,7 @@ namespace Souther\Runtime;
 
 /**
  * A Souther `DateTime` as PHP holds one: a date and a time of day, in no zone. It is written as
- * `LocalDateTime.toString` writes it, which is the text the library takes for it.
+ * `LocalDateTime.toString` writes it, which is for PHP to show: the library is handed its numbers.
  */
 final class DateTime implements \Stringable
 {

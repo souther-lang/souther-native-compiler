@@ -27,8 +27,8 @@ impl Decimal {
     ///
     /// # Errors
     ///
-    /// [`NotADecimal`] where `unscaled` is written otherwise. The library ends the process on
-    /// such an integer, so it is refused here first.
+    /// [`NotADecimal`] where `unscaled` is written otherwise. The library refuses such an integer
+    /// too; refused here, it is said in this crate's own words where the value is made.
     pub fn new(unscaled: &str, scale: i32) -> Result<Self, NotADecimal> {
         let (negative, digits) = match unscaled.strip_prefix('-') {
             Some(digits) => (true, digits),

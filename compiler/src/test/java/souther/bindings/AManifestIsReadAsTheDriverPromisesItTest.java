@@ -237,6 +237,33 @@ class AManifestIsReadAsTheDriverPromisesItTest {
     }
 
     /**
+     * Every case of a sum is a declaration, as the language says (E1020): a manifest saying a sum
+     * has a primitive among its cases describes what no program is, and is refused rather than
+     * handed to a generator to find a way to read.
+     */
+    @Test
+    void aSumWhoseCaseIsNoDeclarationIsRefused(@TempDir Path into) throws Exception {
+        NativeCompiler.Library library = built(into, """
+                module settled exposing ( Free, Paid, Settled )
+
+                data Free
+                data Paid = { amount: Int }
+                data Settled = Free | Paid
+                """);
+
+        assertThatThrownBy(() -> readAfter(into, library, "settled", module -> {
+            for (JsonNode declaration : module.get("declarations")) {
+                if (declaration.get("kind").stringValue().equals("sum")) {
+                    ((ArrayNode) declaration.get("cases")).set(0,
+                            JSON.readTree("{\"kind\": \"primitive\", \"name\": \"Int\"}"));
+                }
+            }
+        }))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("is not a manifest this generator reads");
+    }
+
+    /**
      * A list is reached the way it crosses: a cart's items are handed over to its constructor and
      * handed back by its reader, so the manifest has to say what builds such a list as well as what
      * reads one, and saying only the one is refused.

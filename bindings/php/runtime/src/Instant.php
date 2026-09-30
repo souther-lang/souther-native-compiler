@@ -7,8 +7,8 @@ namespace Souther\Runtime;
 /**
  * A Souther `Instant` as PHP holds one: a moment, as the second from 1970-01-01T00:00:00Z and the
  * nanosecond within it, in the range `java.time.Instant` holds. It is written as `Instant.toString`
- * writes it, in UTC with a fraction only where there is one, which is the text the library takes
- * for it.
+ * writes it, in UTC with a fraction only where there is one, which is for PHP to show: the library
+ * is handed its numbers.
  *
  * Refused where the nanosecond is not below a second, or the moment is past what an `Instant`
  * holds.

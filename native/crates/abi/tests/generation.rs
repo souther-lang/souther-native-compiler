@@ -169,6 +169,33 @@ fn every_generation_has_its_record() {
     }
 }
 
+/// A record is of a generation `GENERATIONS` names, and nothing else is kept beside the records: a
+/// record of a generation the crate does not name is one nothing holds to the code, and whoever
+/// reads the records by what is there, rather than by `ABI_GENERATION`, would take it for one.
+#[test]
+fn no_record_is_of_a_generation_the_crate_does_not_name() {
+    let named: BTreeSet<u32> = GENERATIONS
+        .iter()
+        .map(|(generation, _)| *generation)
+        .filter(|generation| *generation >= FIRST_RECORDED)
+        .collect();
+    let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("generations");
+    let mut stray = Vec::new();
+    for entry in std::fs::read_dir(&directory).unwrap() {
+        let name = entry.unwrap().file_name().into_string().unwrap();
+        let generation = name
+            .strip_suffix(".txt")
+            .and_then(|number| number.parse::<u32>().ok());
+        if !generation.is_some_and(|it| named.contains(&it)) {
+            stray.push(name);
+        }
+    }
+    assert!(
+        stray.is_empty(),
+        "kept beside the records of the generations the crate names: {stray:?}"
+    );
+}
+
 /// The first generation with a record, which is the generation this was written under.
 const FIRST_RECORDED: u32 = 5;
 

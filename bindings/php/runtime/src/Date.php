@@ -10,7 +10,7 @@ namespace Souther\Runtime;
  *
  * It is not a `\DateTimeInterface`, which is a moment in a zone: a `Date` has neither. `of` takes
  * the day a `\DateTimeInterface` falls on in its own zone. It is written as `LocalDate.toString`
- * writes it, which is the text the library takes for it.
+ * writes it, which is for PHP to show: the library is handed its numbers.
  *
  * Refused where the calendar has no such day, or the year is past what a `Date` holds.
  */

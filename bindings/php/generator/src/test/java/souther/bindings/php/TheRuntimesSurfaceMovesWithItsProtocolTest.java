@@ -68,6 +68,28 @@ class TheRuntimesSurfaceMovesWithItsProtocolTest {
     }
 
     /**
+     * A record is of a protocol the runtime has been, up to the one it is, and nothing else is kept
+     * beside the records: a record of a protocol it is not is one nothing holds to the code.
+     */
+    @Test
+    void noRecordIsOfAProtocolTheRuntimeHasNotBeen() throws Exception {
+        int protocol = Integer.parseInt(Php.ran(List.of("-r", "require '"
+                + RUNTIME.resolve("src").resolve("Binding.php").toAbsolutePath()
+                + "'; echo \\Souther\\Runtime\\Binding::PROTOCOL;")).strip());
+        List<String> stray = new java.util.ArrayList<>();
+        try (var records = Files.list(RECORDED)) {
+            for (Path record : records.toList()) {
+                String name = record.getFileName().toString();
+                if (!name.matches("[1-9]\\d*\\.txt")
+                        || Integer.parseInt(name.replace(".txt", "")) > protocol) {
+                    stray.add(name);
+                }
+            }
+        }
+        assertThat(stray).as("kept beside the records of protocols up to %s", protocol).isEmpty();
+    }
+
+    /**
      * Two spellings of one type are one line: {@code self} and the class it stands for, {@code
      * parent} and the parent class, {@code ?T} and {@code T|null}, a union or an intersection in
      * any order. A listing that read them apart would call a PHP's way of writing a type a change
