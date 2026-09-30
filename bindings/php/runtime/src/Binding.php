@@ -16,7 +16,7 @@ abstract class Binding
      * binding generated before would call something this does not have, or call it as something it
      * is not; a binding says which it was generated for and refuses to load over any other.
      */
-    public const PROTOCOL = 10;
+    public const PROTOCOL = 11;
 
     /**
      * What each version of the protocol moved, by its number, oldest first. The versions before the
@@ -53,6 +53,14 @@ abstract class Binding
             . 'DateTime, Instant, Calendar, Session::date, Session::dateOf, Session::time, '
             . 'Session::timeOf, Session::dateTime, Session::dateTimeOf, Session::instant, '
             . 'Session::instantOf)',
+        11 => 'a Date, a Time, a DateTime and an Instant are handed over and read back as the numbers '
+            . 'they mean, each an int, and never as text: the library answers whether they name one, '
+            . 'and a refusal is a LogicException; the text java.time writes is only for PHP to show '
+            . '(Session::date and the rest, Calendar); and a library is asked its ABI generation '
+            . 'before anything else and refused where it is not this runtime\'s '
+            . '(NativeLibrary::ABI_GENERATION, UnsupportedGeneration); a primitive a union carries '
+            . 'is read through Session::carried, which the library answers whether the value is that '
+            . 'case for',
     ];
 
     /**
@@ -142,7 +150,7 @@ abstract class Binding
     /**
      * Runs `$body` in a session of its own, handed `$injections`.
      *
-     * The arena is marked before and put back after, so every value made in the run is refused once
+     * A scope of the arena is opened before and closed after, so every value made in the run is refused once
      * it ends, and anything that has to outlive it leaves as its external form (`encode()`).
      *
      * A behavior called through `Behaviors` in the run is constructed from `$injections`: each
@@ -161,14 +169,21 @@ abstract class Binding
     public function run(callable $body, Injections ...$injections): mixed
     {
         $ffi = $this->library->ffi();
-        $mark = $ffi->souther_mark();
+        // The session first: a run refused (on another fiber, say) opens no scope, which would
+        // otherwise stay open above the scopes of the runs it was refused beside.
         $session = $this->library->open(array_merge(...array_map(
             static fn (Injections $set): array => $set->implemented(), $injections)));
+        $scope = $ffi->souther_scope_open();
         try {
             return $body();
         } finally {
             $this->library->close($session);
-            $ffi->souther_reset($mark);
+            // The innermost scope this fiber's thread has open, since runs nest as calls do. The
+            // library refusing it is this runtime and the library disagreeing, and nothing a host
+            // program did.
+            if ($ffi->souther_scope_close($scope) === 0) {
+                throw new \LogicException('the library refused to close the innermost scope this runtime opened');
+            }
         }
     }
 

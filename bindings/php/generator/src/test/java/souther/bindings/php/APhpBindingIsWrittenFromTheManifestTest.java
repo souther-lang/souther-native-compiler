@@ -1,7 +1,8 @@
 package souther.bindings.php;
 
-import souther.bindings.Generated;
+import souther.nativecode.Generated;
 import souther.bindings.Manifest;
+import souther.nativecode.ManifestReader;
 import souther.nativecode.Checked;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -72,9 +73,9 @@ class APhpBindingIsWrittenFromTheManifestTest {
     }
 
     /**
-     * A type crossing in a shape this binding knows no way to hold it in is not written, and the
-     * manifest saying so is not refused: which shape a type crosses in is the driver's, and what
-     * PHP can hold of it is this binding's own.
+     * A type crossing as a word this binding knows no way to hold it in is not written, and the
+     * manifest saying so is not refused: which word a type crosses as is the driver's, and what PHP
+     * can hold of it is this binding's own.
      */
     @Test
     void aTypeInAShapeThisBindingCannotHoldIsNotWritten(@TempDir Path into) throws Exception {
@@ -86,8 +87,9 @@ class APhpBindingIsWrittenFromTheManifestTest {
                 let other: (Int, Bool) = (4, false)
                 """)), into.resolve("native"));
 
-        generatedAfter(into, library, "m", module -> ((ObjectNode) module.get("values").get(0))
-                .set("type", JSON.readTree("{\"kind\":\"primitive\",\"name\":\"Decimal\"}")));
+        generatedAfter(into, library, "m", module -> ((ArrayNode) module.get("values").get(0)
+                .get("type").get("of"))
+                .set(0, JSON.readTree("{\"kind\":\"primitive\",\"name\":\"Decimal\"}")));
 
         assertThat(Files.readString(into.resolve("php").resolve("M").resolve("Values.php")))
                 .contains("function other(").doesNotContain("function pair(");
@@ -189,7 +191,8 @@ class APhpBindingIsWrittenFromTheManifestTest {
                 if (crossing.get("case").get("name").stringValue().equals("Int")) {
                     ((ArrayNode) crossing.get("make").get("takes"))
                             .set(0, JSON.readTree("{\"given\":\"string\"}"));
-                    ((ObjectNode) crossing.get("read")).put("answers", "string");
+                    ((ArrayNode) crossing.get("read").get("takes"))
+                            .set(1, JSON.readTree("{\"room\":\"string\"}"));
                 }
             }
         });
@@ -265,7 +268,7 @@ class APhpBindingIsWrittenFromTheManifestTest {
         assertThat(written).contains(
                 "find(int $id):"
                         + " \\Acme\\Billing\\M\\Found|\\Acme\\Billing\\M\\Missing",
-                "$session->ffi()->souther" + Manifest.ABI + "_m_m_b_find_answer_case($answer)",
+                "$session->ffi()->souther" + ManifestReader.ABI + "_m_m_b_find_answer_case($answer)",
                 "0 => new \\Acme\\Billing\\M\\Found($session->held($answer))",
                 "1 => new \\Acme\\Billing\\M\\Missing($session->held($answer))");
         assertThat(generated.files()).extracting(it -> generated.root().relativize(it).toString())
@@ -714,10 +717,10 @@ class APhpBindingIsWrittenFromTheManifestTest {
                 LibraryBinding.generated(twoModules(into), into.resolve("php"), "Acme\\Billing");
 
         assertThat(Files.readString(generated.root().resolve("Shop").resolve("Cart.php")))
-                .contains("souther" + Manifest.ABI + "_m_shop_l_value_construct", "souther" + Manifest.ABI + "_m_shop_l_value_at")
-                .doesNotContain("souther" + Manifest.ABI + "_m_stock_");
+                .contains("souther" + ManifestReader.ABI + "_m_shop_l_value_construct", "souther" + ManifestReader.ABI + "_m_shop_l_value_at")
+                .doesNotContain("souther" + ManifestReader.ABI + "_m_stock_");
         assertThat(Files.readString(generated.root().resolve("Stock").resolve("Bin.php")))
-                .contains("souther" + Manifest.ABI + "_m_stock_l_value_construct", "souther" + Manifest.ABI + "_m_stock_l_value_at")
-                .doesNotContain("souther" + Manifest.ABI + "_m_shop_");
+                .contains("souther" + ManifestReader.ABI + "_m_stock_l_value_construct", "souther" + ManifestReader.ABI + "_m_stock_l_value_at")
+                .doesNotContain("souther" + ManifestReader.ABI + "_m_shop_");
     }
 }

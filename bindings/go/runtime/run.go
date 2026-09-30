@@ -7,24 +7,24 @@ import (
 	"unsafe"
 )
 
-// Runtime is one library's runtime: the functions that mark its arena and drop it back, and what
-// its statuses are numbered.
+// Runtime is one library's runtime: the functions that open a scope of its arena and close it, and
+// what its statuses are numbered.
 type Runtime struct {
 	identity uintptr
-	mark     func() int64
-	reset    func(int64)
+	open     func() int64
+	close    func(int64) bool
 	statuses statusTable
 }
 
-// newRuntime is the runtime of a library whose souther_mark is at identity.
+// newRuntime is the runtime of a library whose souther_scope_open is at identity.
 //
-// mark and reset are that library's souther_mark and souther_reset, and stay callable for as long
-// as the runtime is used. Two runtimes with one identity are two handles on one arena.
-func newRuntime(identity uintptr, mark func() int64, reset func(int64), statuses statusTable) *Runtime {
-	return &Runtime{identity, mark, reset, statuses}
+// open and close are that library's souther_scope_open and souther_scope_close, and stay callable
+// for as long as the runtime is used. Two runtimes with one identity are two handles on one arena.
+func newRuntime(identity uintptr, open func() int64, close func(int64) bool, statuses statusTable) *Runtime {
+	return &Runtime{identity, open, close, statuses}
 }
 
-// Identity is the address of the library's souther_mark.
+// Identity is the address of the library's souther_scope_open.
 func (r *Runtime) Identity() uintptr { return r.identity }
 
 // Library is a loaded library, of the binding B was made for.
@@ -167,17 +167,24 @@ func (r *Run[B]) Scope(f func(*Run[B]) error) error {
 	return within(inner, f)
 }
 
-// within takes a mark, runs f over run, and ends the run when f returns or panics: the run
-// expires first, then the arena is dropped back to the mark, and what the run kept is released
-// once nothing in the arena reads it.
+// within opens a scope, runs f over run, and ends the run when f returns or panics: the run
+// expires first, then the scope is closed, dropping what was made in it, and what the run kept is
+// released once nothing in the arena reads it.
+//
+// The scope is the innermost the thread has open when it is closed, since runs on a thread nest
+// and this thread is locked to the goroutine; the library refusing it is this package and the
+// library disagreeing about which scopes are open, and nothing a program did.
 func within[B any](run *Run[B], f func(*Run[B]) error) error {
 	rt := run.lib.rt
-	mark := rt.mark()
+	scope := rt.open()
 	run.live.Store(true)
 	defer func() {
 		run.live.Store(false)
-		rt.reset(mark)
+		closed := rt.close(scope)
 		run.end()
+		if !closed {
+			panic("souther: the library refused to close the innermost scope this package opened")
+		}
 	}()
 	return f(run)
 }

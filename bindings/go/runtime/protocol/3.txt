@@ -1,0 +1,366 @@
+package souther // import "github.com/souther-lang/souther-native-compiler/bindings/go/runtime"
+
+Package souther is what every Go binding of a Souther library runs on.
+
+A library keeps what a computation makes in an arena of its own, one for each OS
+thread, and a run is a scope of it that the library is told to close, dropping
+what was made in it, when the run ends. A value made in a run is an address into
+that arena, good until then. The Rust runtime holds that in types. Go cannot,
+so a value keeps the run it was made in and is checked when it is used:
+
+  - A run holds its goroutine on one OS thread (runtime.LockOSThread) from the
+  - Using a value after its run ended, from another goroutine, or through a
+  - What Rust reports at run time is an error here as well: a value another
+  - Reading a value, and copying what a native call answered into the host's own
+
+A binding gives each generated library a tag type B, and its Run and Ref are
+of that tag: a run of another generated binding is another type, and does not
+compile.
+
+A library's runtime is known by its identity, the address of its
+souther_scope_open. Whatever works on one arena has one, so two [Runtime]s with
+the same identity are two handles on one arena, however the library was reached.
+
+CONSTANTS
+
+const ABIGeneration uint32 = 9
+
+const Protocol = 3
+
+
+VARIABLES
+
+var (
+	// ErrUnbound is a behavior reached through a requirement it was handed nothing for.
+	ErrUnbound = errors.New("a behavior was reached through a requirement it was handed nothing for")
+	// ErrProtocolViolation is a host implementation that answered what it may not, or said it
+	// failed and nothing was kept.
+	ErrProtocolViolation = errors.New("a host implementation answered what it may not, or failed and left nothing")
+	// ErrForeignHandle is a value, a function value or what stands for a required behavior that
+	// another runtime made, handed to this one's. The call was not made.
+	ErrForeignHandle = errors.New("a value that another library's runtime made was handed to this one's")
+	// ErrAlreadyRunning is a root run asked for where one of the same runtime is already open on
+	// this thread. A run inside it is opened from it with [Run.Scope].
+	ErrAlreadyRunning = errors.New("a run of this library is already open on this thread; a run inside it is opened from it with Scope")
+)
+var (
+	// ErrExpired is a value used after the run it was made in ended.
+	ErrExpired = errors.New("the run this was made in has ended")
+	// ErrRunOnAnotherGoroutine is a run, or a value made in one, used from another goroutine than
+	// the one that opened it.
+	ErrRunOnAnotherGoroutine = errors.New("a run belongs to the goroutine that opened it")
+	// ErrNotTheInnermostRun is something made through a run while a run inside it is open.
+	ErrNotTheInnermostRun = errors.New("something was made through a run that is not the innermost one")
+	// ErrNoValue is a value that was never made: the zero value of a handle.
+	ErrNoValue = errors.New("this handle holds no value: it is a zero value, and was not made by the library")
+)
+var ErrNotTemporal = errors.New("numbers that name no value of a temporal type")
+
+var ErrNotUTF8 = errors.New("text handed to the library is not valid UTF-8")
+
+
+FUNCTIONS
+
+func Addr[T any](s []T) unsafe.Pointer
+
+func Amount[B any](r *Run[B], word unsafe.Pointer) raoh.Decimal
+
+func Call[B any](r *Run[B], native func() Status) error
+
+
+func Called[B any](r *Run[B], native func() Status) error
+
+func Constructed(err error) error
+
+func Crossing(err error) error
+
+func DateTimeWord[B any](r *Run[B], dt DateTime) (unsafe.Pointer, error)
+
+func DateWord[B any](r *Run[B], date Date) (unsafe.Pointer, error)
+
+func Decimal[B any](r *Run[B], d raoh.Decimal) (unsafe.Pointer, error)
+
+func Decoder[B, T any](r *Run[B], decode func(*Run[B], []byte) (T, error)) raoh.Decoder[any, T]
+
+
+func HostFunction[B any](r *Run[B], key any, dispatch func() any, implement func(room, userdata unsafe.Pointer) unsafe.Pointer) unsafe.Pointer
+
+
+func InstantOf(t time.Time) (Instant, error)
+
+func InstantWord[B any](r *Run[B], i Instant) (unsafe.Pointer, error)
+
+func Load[B any](path string, spec Spec) (*Library[B], error)
+
+
+func Making[B any](r *Run[B])
+
+func NewDate(year int32, month, day uint8) (Date, error)
+
+func NewInstant(second int64, nano uint32) (Instant, error)
+
+func NewTime(hour, minute, second uint8) (Time, error)
+
+func NoValue()
+
+func Reading[B any](r *Run[B], decoded unsafe.Pointer) (unsafe.Pointer, error)
+
+func String[B any](r *Run[B], text string) (unsafe.Pointer, error)
+
+
+func Text[B any](r *Run[B], word unsafe.Pointer) string
+
+func TimeWord[B any](r *Run[B], t Time) (unsafe.Pointer, error)
+
+func UserdataValue(userdata unsafe.Pointer) any
+
+
+TYPES
+
+type Abort struct {
+	Status Status
+	// Name is what the manifest calls the status, empty where it names none.
+	Name string
+}
+
+func (e *Abort) Error() string
+
+type Capability[B any] struct {
+	// Has unexported fields.
+}
+
+
+func Bound[B any](r *Run[B], requires []Capability[B], bind func(capability, requirements unsafe.Pointer)) Capability[B]
+
+
+func Implemented[B any](r *Run[B], dispatch any, implement func(capability, hosted, userdata unsafe.Pointer)) Capability[B]
+
+func (c Capability[B]) Requirements(r *Run[B]) (unsafe.Pointer, error)
+
+
+type Date struct {
+	// Has unexported fields.
+}
+
+func DateOf[B any](r *Run[B], word unsafe.Pointer) Date
+
+func (d Date) Day() uint8
+
+func (d Date) Month() uint8
+
+func (d Date) String() string
+
+func (d Date) Year() int32
+
+type DateTime struct {
+	// Has unexported fields.
+}
+
+func DateTimeOf[B any](r *Run[B], word unsafe.Pointer) DateTime
+
+func NewDateTime(date Date, time Time) DateTime
+
+func (d DateTime) Date() Date
+
+func (d DateTime) String() string
+
+func (d DateTime) Time() Time
+
+type HostError struct{ Err error }
+
+func (e *HostError) Error() string
+
+func (e *HostError) Unwrap() error
+
+type Instant struct {
+	// Has unexported fields.
+}
+
+func InstantOfWord[B any](r *Run[B], word unsafe.Pointer) Instant
+
+func (i Instant) Nano() uint32
+
+func (i Instant) Second() int64
+
+func (i Instant) String() string
+
+func (i Instant) Time() time.Time
+
+type Layout struct {
+	// Pointer is the size of a pointer to a capability, which the capabilities of what a behavior
+	// requires are laid out as an array of.
+	Pointer uintptr
+	// Capability is the size of souther_capability.
+	Capability uintptr
+	// Hosted is the size of souther_hosted.
+	Hosted uintptr
+	// HostedFunction is the size of souther_hosted_function.
+	HostedFunction uintptr
+}
+
+type Library[B any] struct {
+	// Has unexported fields.
+}
+
+func (l *Library[B]) Run(f func(*Run[B]) error) error
+
+
+func (l *Library[B]) Runtime() *Runtime
+
+func (l *Library[B]) Symbol(name string) unsafe.Pointer
+
+type MissingSymbols struct {
+	Path  string
+	Names []string
+}
+
+func (e *MissingSymbols) Error() string
+
+type Misuse struct{ Err error }
+
+func (m *Misuse) Error() string
+
+func (m *Misuse) Unwrap() error
+
+type Option[T any] struct {
+	// Has unexported fields.
+}
+
+
+func None[T any]() Option[T]
+
+func Some[T any](value T) Option[T]
+
+func (o Option[T]) Get() (T, bool)
+
+func (o Option[T]) IsSome() bool
+
+func (o Option[T]) OrElse(fallback T) T
+
+type Ref[B any] struct {
+	// Has unexported fields.
+}
+
+func NewRef[B any](run *Run[B], ptr unsafe.Pointer) Ref[B]
+
+func (v Ref[B]) In(run *Run[B]) (unsafe.Pointer, error)
+
+
+func (v Ref[B]) Read() unsafe.Pointer
+
+func (v Ref[B]) Run() *Run[B]
+
+type Run[B any] struct {
+	// Has unexported fields.
+}
+
+
+func (r *Run[B]) Library() *Library[B]
+
+func (r *Run[B]) Scope(f func(*Run[B]) error) error
+
+
+type Runtime struct {
+	// Has unexported fields.
+}
+
+func (r *Runtime) Identity() uintptr
+
+type Spec struct {
+	Layout   Layout
+	Statuses map[string]Status
+	// Outcomes is what a reading comes to, by the names the manifest gives them.
+	Outcomes map[string]int32
+	Symbols  []string
+}
+
+type Status = uint32
+
+func Host[B any](origin *Run[B], f func(*Run[B]) error) Status
+
+
+type Time struct {
+	// Has unexported fields.
+}
+
+func TimeOf[B any](r *Run[B], word unsafe.Pointer) Time
+
+func (t Time) Hour() uint8
+
+func (t Time) Minute() uint8
+
+func (t Time) Second() uint8
+
+func (t Time) String() string
+
+type Tuple2[A any, B any] struct {
+	V0 A
+	V1 B
+}
+
+type Tuple3[A any, B any, C any] struct {
+	V0 A
+	V1 B
+	V2 C
+}
+
+type Tuple4[A any, B any, C any, D any] struct {
+	V0 A
+	V1 B
+	V2 C
+	V3 D
+}
+
+type Tuple5[A any, B any, C any, D any, E any] struct {
+	V0 A
+	V1 B
+	V2 C
+	V3 D
+	V4 E
+}
+
+type Tuple6[A any, B any, C any, D any, E any, F any] struct {
+	V0 A
+	V1 B
+	V2 C
+	V3 D
+	V4 E
+	V5 F
+}
+
+type Tuple7[A any, B any, C any, D any, E any, F any, G any] struct {
+	V0 A
+	V1 B
+	V2 C
+	V3 D
+	V4 E
+	V5 F
+	V6 G
+}
+
+type Tuple8[A any, B any, C any, D any, E any, F any, G any, H any] struct {
+	V0 A
+	V1 B
+	V2 C
+	V3 D
+	V4 E
+	V5 F
+	V6 G
+	V7 H
+}
+
+type UnnamedOutcome struct{ Name string }
+
+func (e *UnnamedOutcome) Error() string
+
+type UnnamedStatus struct{ Name string }
+
+func (e *UnnamedStatus) Error() string
+
+type UnsupportedGeneration struct {
+	Path  string
+	Found uint32
+}
+
+func (e *UnsupportedGeneration) Error() string
+

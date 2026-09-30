@@ -24,6 +24,10 @@ serde_json = { version = "1", features = ["arbitrary_precision"] }
 
 [dev-dependencies]
 trybuild = "1"
+# The ABI's own tables, which the tests hold every type this crate writes of the ABI to: the
+# functions it calls, the rooms it lays out, and the generation it calls a library as. A test's
+# only: nothing this crate builds reads them.
+souther-native-abi = { path = "../../../native/crates/abi" }
 
 # A function that cannot fail and says it can hands every caller a failure to answer for that never
 # comes, and a `?` at the call hides which calls can actually end the work.

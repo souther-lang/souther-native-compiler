@@ -1,7 +1,7 @@
 {
   "format": "souther-native-interface",
-  "version": 14,
-  "abi": 8,
+  "version": 15,
+  "abi": 9,
   "statuses": {
     "ANSWERED": 0,
     "DIVISION_BY_ZERO": 4,
@@ -19,244 +19,6 @@
     "MALFORMED": 2,
     "VALUE": 0
   },
-  "runtime": [
-    {
-      "name": "souther_mark",
-      "takes": [],
-      "answers": "mark"
-    },
-    {
-      "name": "souther_reset",
-      "takes": [
-        {
-          "given": "mark"
-        }
-      ],
-      "answers": null
-    },
-    {
-      "name": "souther_string_of_utf8",
-      "takes": [
-        {
-          "given": "bytes"
-        },
-        {
-          "given": "count"
-        },
-        {
-          "room": "string"
-        }
-      ],
-      "answers": "bool"
-    },
-    {
-      "name": "souther_string_length",
-      "takes": [
-        {
-          "given": "string"
-        }
-      ],
-      "answers": "count"
-    },
-    {
-      "name": "souther_string_bytes",
-      "takes": [
-        {
-          "given": "string"
-        }
-      ],
-      "answers": "bytes"
-    },
-    {
-      "name": "souther_decimal_of_parts",
-      "takes": [
-        {
-          "given": "bytes"
-        },
-        {
-          "given": "count"
-        },
-        {
-          "given": "int"
-        }
-      ],
-      "answers": "decimal"
-    },
-    {
-      "name": "souther_decimal_unscaled",
-      "takes": [
-        {
-          "given": "decimal"
-        }
-      ],
-      "answers": "string"
-    },
-    {
-      "name": "souther_decimal_scale",
-      "takes": [
-        {
-          "given": "decimal"
-        }
-      ],
-      "answers": "int"
-    },
-    {
-      "name": "souther_date_of_iso",
-      "takes": [
-        {
-          "given": "string"
-        }
-      ],
-      "answers": "date"
-    },
-    {
-      "name": "souther_date_iso",
-      "takes": [
-        {
-          "given": "date"
-        }
-      ],
-      "answers": "string"
-    },
-    {
-      "name": "souther_time_of_iso",
-      "takes": [
-        {
-          "given": "string"
-        }
-      ],
-      "answers": "time"
-    },
-    {
-      "name": "souther_time_iso",
-      "takes": [
-        {
-          "given": "time"
-        }
-      ],
-      "answers": "string"
-    },
-    {
-      "name": "souther_datetime_of_iso",
-      "takes": [
-        {
-          "given": "string"
-        }
-      ],
-      "answers": "datetime"
-    },
-    {
-      "name": "souther_datetime_iso",
-      "takes": [
-        {
-          "given": "datetime"
-        }
-      ],
-      "answers": "string"
-    },
-    {
-      "name": "souther_instant_of_iso",
-      "takes": [
-        {
-          "given": "string"
-        }
-      ],
-      "answers": "instant"
-    },
-    {
-      "name": "souther_instant_iso",
-      "takes": [
-        {
-          "given": "instant"
-        }
-      ],
-      "answers": "string"
-    },
-    {
-      "name": "souther_decoded_outcome",
-      "takes": [
-        {
-          "given": "decoded"
-        }
-      ],
-      "answers": "outcome"
-    },
-    {
-      "name": "souther_decoded_value",
-      "takes": [
-        {
-          "given": "decoded"
-        }
-      ],
-      "answers": "value"
-    },
-    {
-      "name": "souther_decoded_malformed_at",
-      "takes": [
-        {
-          "given": "decoded"
-        }
-      ],
-      "answers": "count"
-    },
-    {
-      "name": "souther_decoded_issue_count",
-      "takes": [
-        {
-          "given": "decoded"
-        }
-      ],
-      "answers": "count"
-    },
-    {
-      "name": "souther_decoded_issue",
-      "takes": [
-        {
-          "given": "decoded"
-        },
-        {
-          "given": "count"
-        }
-      ],
-      "answers": "issue"
-    },
-    {
-      "name": "souther_issue_code",
-      "takes": [
-        {
-          "given": "issue"
-        }
-      ],
-      "answers": "string"
-    },
-    {
-      "name": "souther_issue_message_key",
-      "takes": [
-        {
-          "given": "issue"
-        }
-      ],
-      "answers": "string"
-    },
-    {
-      "name": "souther_issue_path",
-      "takes": [
-        {
-          "given": "issue"
-        }
-      ],
-      "answers": "string"
-    },
-    {
-      "name": "souther_issue_meta",
-      "takes": [
-        {
-          "given": "issue"
-        }
-      ],
-      "answers": "string"
-    }
-  ],
   "cases": [
     {
       "case": {
@@ -277,9 +39,12 @@
         "takes": [
           {
             "given": "value"
+          },
+          {
+            "room": "int"
           }
         ],
-        "answers": "int"
+        "answers": "bool"
       }
     },
     {
@@ -301,9 +66,12 @@
         "takes": [
           {
             "given": "value"
+          },
+          {
+            "room": "string"
           }
         ],
-        "answers": "string"
+        "answers": "bool"
       }
     },
     {
@@ -325,6 +93,9 @@
         "takes": [
           {
             "given": "value"
+          },
+          {
+            "room": "bool"
           }
         ],
         "answers": "bool"
@@ -349,9 +120,12 @@
         "takes": [
           {
             "given": "value"
+          },
+          {
+            "room": "decimal"
           }
         ],
-        "answers": "decimal"
+        "answers": "bool"
       }
     },
     {
@@ -373,9 +147,12 @@
         "takes": [
           {
             "given": "value"
+          },
+          {
+            "room": "date"
           }
         ],
-        "answers": "date"
+        "answers": "bool"
       }
     },
     {
@@ -397,9 +174,12 @@
         "takes": [
           {
             "given": "value"
+          },
+          {
+            "room": "time"
           }
         ],
-        "answers": "time"
+        "answers": "bool"
       }
     },
     {
@@ -421,9 +201,12 @@
         "takes": [
           {
             "given": "value"
+          },
+          {
+            "room": "datetime"
           }
         ],
-        "answers": "datetime"
+        "answers": "bool"
       }
     },
     {
@@ -445,9 +228,12 @@
         "takes": [
           {
             "given": "value"
+          },
+          {
+            "room": "instant"
           }
         ],
-        "answers": "instant"
+        "answers": "bool"
       }
     },
     {
@@ -583,7 +369,7 @@
           "call": {
             "available": {
               "function": {
-                "name": "souther8_m_shop_b_settle",
+                "name": "souther9_m_shop_b_settle",
                 "takes": [
                   {
                     "given": "requirements"
@@ -640,7 +426,7 @@
           "call": {
             "available": {
               "function": {
-                "name": "souther8_m_shop_b_owing",
+                "name": "souther9_m_shop_b_owing",
                 "takes": [
                   {
                     "given": "requirements"
@@ -692,7 +478,7 @@
           "call": {
             "available": {
               "function": {
-                "name": "souther8_m_shop_b_stillOwing",
+                "name": "souther9_m_shop_b_stillOwing",
                 "takes": [
                   {
                     "given": "requirements"
@@ -720,6 +506,69 @@
                 ],
                 "answers": {
                   "leaf": "int"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "agree",
+          "parameters": {
+            "named": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "primitive",
+                  "name": "Bool"
+                }
+              },
+              {
+                "name": "b",
+                "type": {
+                  "kind": "primitive",
+                  "name": "Bool"
+                }
+              }
+            ]
+          },
+          "answers": {
+            "type": {
+              "kind": "primitive",
+              "name": "Bool"
+            },
+            "union": null
+          },
+          "call": {
+            "available": {
+              "function": {
+                "name": "souther9_m_shop_b_agree",
+                "takes": [
+                  {
+                    "given": "requirements"
+                  },
+                  {
+                    "given": "bool"
+                  },
+                  {
+                    "given": "bool"
+                  },
+                  {
+                    "room": "bool"
+                  }
+                ],
+                "answers": "status"
+              },
+              "signature": {
+                "takes": [
+                  {
+                    "leaf": "bool"
+                  },
+                  {
+                    "leaf": "bool"
+                  }
+                ],
+                "answers": {
+                  "leaf": "bool"
                 }
               }
             }
@@ -778,7 +627,7 @@
                 }
               ],
               "case": {
-                "name": "souther8_m_shop_b_charge_answer_case",
+                "name": "souther9_m_shop_b_charge_answer_case",
                 "takes": [
                   {
                     "given": "value"
@@ -791,7 +640,7 @@
           "call": {
             "available": {
               "function": {
-                "name": "souther8_m_shop_b_charge",
+                "name": "souther9_m_shop_b_charge",
                 "takes": [
                   {
                     "given": "requirements"
@@ -859,7 +708,7 @@
                 }
               ],
               "case": {
-                "name": "souther8_m_shop_b_quantityOf_answer_case",
+                "name": "souther9_m_shop_b_quantityOf_answer_case",
                 "takes": [
                   {
                     "given": "value"
@@ -872,7 +721,7 @@
           "call": {
             "available": {
               "function": {
-                "name": "souther8_m_shop_b_quantityOf",
+                "name": "souther9_m_shop_b_quantityOf",
                 "takes": [
                   {
                     "given": "requirements"
@@ -926,7 +775,7 @@
           "call": {
             "available": {
               "function": {
-                "name": "souther8_m_shop_b_counted",
+                "name": "souther9_m_shop_b_counted",
                 "takes": [
                   {
                     "given": "requirements"
@@ -983,7 +832,7 @@
           "call": {
             "available": {
               "function": {
-                "name": "souther8_m_shop_b_doubled",
+                "name": "souther9_m_shop_b_doubled",
                 "takes": [
                   {
                     "given": "requirements"
@@ -1036,7 +885,7 @@
           "call": {
             "available": {
               "function": {
-                "name": "souther8_m_shop_b_discounted",
+                "name": "souther9_m_shop_b_discounted",
                 "takes": [
                   {
                     "given": "requirements"
@@ -1111,7 +960,7 @@
                 }
               ],
               "case": {
-                "name": "souther8_m_shop_b_rated_answer_case",
+                "name": "souther9_m_shop_b_rated_answer_case",
                 "takes": [
                   {
                     "given": "value"
@@ -1124,7 +973,7 @@
           "call": {
             "available": {
               "function": {
-                "name": "souther8_m_shop_b_rated",
+                "name": "souther9_m_shop_b_rated",
                 "takes": [
                   {
                     "given": "requirements"
@@ -1168,7 +1017,7 @@
             }
           ],
           "bind": {
-            "name": "souther8_m_shop_b_discounted_bind",
+            "name": "souther9_m_shop_b_discounted_bind",
             "takes": [
               {
                 "room": "capability"
@@ -1209,7 +1058,7 @@
             }
           },
           "implementation": {
-            "type": "souther8_m_shop_b_discountFor_implementation",
+            "type": "souther9_m_shop_b_discountFor_implementation",
             "takes": [
               {
                 "given": "userdata"
@@ -1223,7 +1072,7 @@
             ],
             "answers": "status"
           },
-          "implement": "souther8_m_shop_b_discountFor_implement"
+          "implement": "souther9_m_shop_b_discountFor_implement"
         }
       ],
       "values": [
@@ -1245,7 +1094,7 @@
           "read": {
             "available": {
               "function": {
-                "name": "souther8_m_shop_v_pair",
+                "name": "souther9_m_shop_v_pair",
                 "takes": [
                   {
                     "room": "int"
@@ -1287,7 +1136,7 @@
           "read": {
             "available": {
               "function": {
-                "name": "souther8_m_shop_v_deep",
+                "name": "souther9_m_shop_v_deep",
                 "takes": [
                   {
                     "room": "bool"
@@ -1335,7 +1184,7 @@
           "read": {
             "available": {
               "function": {
-                "name": "souther8_m_shop_v_pairs",
+                "name": "souther9_m_shop_v_pairs",
                 "takes": [
                   {
                     "room": "list"
@@ -1400,7 +1249,7 @@
             "read": {
               "available": {
                 "function": {
-                  "name": "souther8_m_shop_t_Money_f_value",
+                  "name": "souther9_m_shop_t_Money_f_value",
                   "takes": [
                     {
                       "given": "value"
@@ -1420,7 +1269,7 @@
           "construct": {
             "available": {
               "function": {
-                "name": "souther8_m_shop_t_Money_construct",
+                "name": "souther9_m_shop_t_Money_construct",
                 "takes": [
                   {
                     "given": "int"
@@ -1439,7 +1288,7 @@
             }
           },
           "decode": {
-            "name": "souther8_m_shop_t_Money_decode",
+            "name": "souther9_m_shop_t_Money_decode",
             "takes": [
               {
                 "given": "bytes"
@@ -1454,7 +1303,7 @@
             "answers": "status"
           },
           "decodehost": {
-            "name": "souther8_m_shop_t_Money_decode_host",
+            "name": "souther9_m_shop_t_Money_decode_host",
             "takes": [
               {
                 "given": "bytes"
@@ -1469,7 +1318,7 @@
             "answers": "status"
           },
           "encode": {
-            "name": "souther8_m_shop_t_Money_encode",
+            "name": "souther9_m_shop_t_Money_encode",
             "takes": [
               {
                 "given": "value"
@@ -1492,7 +1341,7 @@
               "read": {
                 "available": {
                   "function": {
-                    "name": "souther8_m_shop_t_Line_f_price",
+                    "name": "souther9_m_shop_t_Line_f_price",
                     "takes": [
                       {
                         "given": "value"
@@ -1518,7 +1367,7 @@
               "read": {
                 "available": {
                   "function": {
-                    "name": "souther8_m_shop_t_Line_f_quantity",
+                    "name": "souther9_m_shop_t_Line_f_quantity",
                     "takes": [
                       {
                         "given": "value"
@@ -1547,7 +1396,7 @@
               "read": {
                 "available": {
                   "function": {
-                    "name": "souther8_m_shop_t_Line_f_note",
+                    "name": "souther9_m_shop_t_Line_f_note",
                     "takes": [
                       {
                         "given": "value"
@@ -1573,7 +1422,7 @@
           "construct": {
             "available": {
               "function": {
-                "name": "souther8_m_shop_t_Line_construct",
+                "name": "souther9_m_shop_t_Line_construct",
                 "takes": [
                   {
                     "given": "value"
@@ -1609,7 +1458,7 @@
             }
           },
           "decode": {
-            "name": "souther8_m_shop_t_Line_decode",
+            "name": "souther9_m_shop_t_Line_decode",
             "takes": [
               {
                 "given": "bytes"
@@ -1624,7 +1473,7 @@
             "answers": "status"
           },
           "decodehost": {
-            "name": "souther8_m_shop_t_Line_decode_host",
+            "name": "souther9_m_shop_t_Line_decode_host",
             "takes": [
               {
                 "given": "bytes"
@@ -1639,7 +1488,7 @@
             "answers": "status"
           },
           "encode": {
-            "name": "souther8_m_shop_t_Line_encode",
+            "name": "souther9_m_shop_t_Line_encode",
             "takes": [
               {
                 "given": "value"
@@ -1654,7 +1503,7 @@
           "construct": {
             "available": {
               "function": {
-                "name": "souther8_m_shop_t_Free_construct",
+                "name": "souther9_m_shop_t_Free_construct",
                 "takes": [
                   {
                     "room": "value"
@@ -1666,7 +1515,7 @@
             }
           },
           "decode": {
-            "name": "souther8_m_shop_t_Free_decode",
+            "name": "souther9_m_shop_t_Free_decode",
             "takes": [
               {
                 "given": "bytes"
@@ -1681,7 +1530,7 @@
             "answers": "status"
           },
           "decodehost": {
-            "name": "souther8_m_shop_t_Free_decode_host",
+            "name": "souther9_m_shop_t_Free_decode_host",
             "takes": [
               {
                 "given": "bytes"
@@ -1696,7 +1545,7 @@
             "answers": "status"
           },
           "encode": {
-            "name": "souther8_m_shop_t_Free_encode",
+            "name": "souther9_m_shop_t_Free_encode",
             "takes": [
               {
                 "given": "value"
@@ -1719,7 +1568,7 @@
               "read": {
                 "available": {
                   "function": {
-                    "name": "souther8_m_shop_t_Paid_f_amount",
+                    "name": "souther9_m_shop_t_Paid_f_amount",
                     "takes": [
                       {
                         "given": "value"
@@ -1740,7 +1589,7 @@
           "construct": {
             "available": {
               "function": {
-                "name": "souther8_m_shop_t_Paid_construct",
+                "name": "souther9_m_shop_t_Paid_construct",
                 "takes": [
                   {
                     "given": "value"
@@ -1759,7 +1608,7 @@
             }
           },
           "decode": {
-            "name": "souther8_m_shop_t_Paid_decode",
+            "name": "souther9_m_shop_t_Paid_decode",
             "takes": [
               {
                 "given": "bytes"
@@ -1774,7 +1623,7 @@
             "answers": "status"
           },
           "decodehost": {
-            "name": "souther8_m_shop_t_Paid_decode_host",
+            "name": "souther9_m_shop_t_Paid_decode_host",
             "takes": [
               {
                 "given": "bytes"
@@ -1789,7 +1638,7 @@
             "answers": "status"
           },
           "encode": {
-            "name": "souther8_m_shop_t_Paid_encode",
+            "name": "souther9_m_shop_t_Paid_encode",
             "takes": [
               {
                 "given": "value"
@@ -1812,7 +1661,7 @@
               "read": {
                 "available": {
                   "function": {
-                    "name": "souther8_m_shop_t_Owed_f_amount",
+                    "name": "souther9_m_shop_t_Owed_f_amount",
                     "takes": [
                       {
                         "given": "value"
@@ -1838,7 +1687,7 @@
               "read": {
                 "available": {
                   "function": {
-                    "name": "souther8_m_shop_t_Owed_f_overdue",
+                    "name": "souther9_m_shop_t_Owed_f_overdue",
                     "takes": [
                       {
                         "given": "value"
@@ -1859,7 +1708,7 @@
           "construct": {
             "available": {
               "function": {
-                "name": "souther8_m_shop_t_Owed_construct",
+                "name": "souther9_m_shop_t_Owed_construct",
                 "takes": [
                   {
                     "given": "value"
@@ -1884,7 +1733,7 @@
             }
           },
           "decode": {
-            "name": "souther8_m_shop_t_Owed_decode",
+            "name": "souther9_m_shop_t_Owed_decode",
             "takes": [
               {
                 "given": "bytes"
@@ -1899,7 +1748,7 @@
             "answers": "status"
           },
           "decodehost": {
-            "name": "souther8_m_shop_t_Owed_decode_host",
+            "name": "souther9_m_shop_t_Owed_decode_host",
             "takes": [
               {
                 "given": "bytes"
@@ -1914,7 +1763,7 @@
             "answers": "status"
           },
           "encode": {
-            "name": "souther8_m_shop_t_Owed_encode",
+            "name": "souther9_m_shop_t_Owed_encode",
             "takes": [
               {
                 "given": "value"
@@ -1944,7 +1793,7 @@
             }
           ],
           "case": {
-            "name": "souther8_m_shop_t_Settled_case",
+            "name": "souther9_m_shop_t_Settled_case",
             "takes": [
               {
                 "given": "value"
@@ -1953,7 +1802,7 @@
             "answers": "case"
           },
           "decode": {
-            "name": "souther8_m_shop_t_Settled_decode",
+            "name": "souther9_m_shop_t_Settled_decode",
             "takes": [
               {
                 "given": "bytes"
@@ -1968,7 +1817,7 @@
             "answers": "status"
           },
           "decodehost": {
-            "name": "souther8_m_shop_t_Settled_decode_host",
+            "name": "souther9_m_shop_t_Settled_decode_host",
             "takes": [
               {
                 "given": "bytes"
@@ -1983,7 +1832,7 @@
             "answers": "status"
           },
           "encode": {
-            "name": "souther8_m_shop_t_Settled_encode",
+            "name": "souther9_m_shop_t_Settled_encode",
             "takes": [
               {
                 "given": "value"
@@ -2018,7 +1867,7 @@
             }
           ],
           "case": {
-            "name": "souther8_m_shop_t_Outcome_case",
+            "name": "souther9_m_shop_t_Outcome_case",
             "takes": [
               {
                 "given": "value"
@@ -2027,7 +1876,7 @@
             "answers": "case"
           },
           "decode": {
-            "name": "souther8_m_shop_t_Outcome_decode",
+            "name": "souther9_m_shop_t_Outcome_decode",
             "takes": [
               {
                 "given": "bytes"
@@ -2042,7 +1891,7 @@
             "answers": "status"
           },
           "decodehost": {
-            "name": "souther8_m_shop_t_Outcome_decode_host",
+            "name": "souther9_m_shop_t_Outcome_decode_host",
             "takes": [
               {
                 "given": "bytes"
@@ -2057,7 +1906,7 @@
             "answers": "status"
           },
           "encode": {
-            "name": "souther8_m_shop_t_Outcome_encode",
+            "name": "souther9_m_shop_t_Outcome_encode",
             "takes": [
               {
                 "given": "value"
@@ -2083,7 +1932,7 @@
               "read": {
                 "available": {
                   "function": {
-                    "name": "souther8_m_shop_t_Basket_f_lines",
+                    "name": "souther9_m_shop_t_Basket_f_lines",
                     "takes": [
                       {
                         "given": "value"
@@ -2117,7 +1966,7 @@
               "read": {
                 "available": {
                   "function": {
-                    "name": "souther8_m_shop_t_Basket_f_notes",
+                    "name": "souther9_m_shop_t_Basket_f_notes",
                     "takes": [
                       {
                         "given": "value"
@@ -2153,7 +2002,7 @@
               "read": {
                 "available": {
                   "function": {
-                    "name": "souther8_m_shop_t_Basket_f_groups",
+                    "name": "souther9_m_shop_t_Basket_f_groups",
                     "takes": [
                       {
                         "given": "value"
@@ -2178,7 +2027,7 @@
           "construct": {
             "available": {
               "function": {
-                "name": "souther8_m_shop_t_Basket_construct",
+                "name": "souther9_m_shop_t_Basket_construct",
                 "takes": [
                   {
                     "given": "list"
@@ -2219,7 +2068,7 @@
             }
           },
           "decode": {
-            "name": "souther8_m_shop_t_Basket_decode",
+            "name": "souther9_m_shop_t_Basket_decode",
             "takes": [
               {
                 "given": "bytes"
@@ -2234,7 +2083,7 @@
             "answers": "status"
           },
           "decodehost": {
-            "name": "souther8_m_shop_t_Basket_decode_host",
+            "name": "souther9_m_shop_t_Basket_decode_host",
             "takes": [
               {
                 "given": "bytes"
@@ -2249,7 +2098,7 @@
             "answers": "status"
           },
           "encode": {
-            "name": "souther8_m_shop_t_Basket_encode",
+            "name": "souther9_m_shop_t_Basket_encode",
             "takes": [
               {
                 "given": "value"
@@ -2271,7 +2120,7 @@
               "read": {
                 "available": {
                   "function": {
-                    "name": "souther8_m_shop_t_Partial_f_count",
+                    "name": "souther9_m_shop_t_Partial_f_count",
                     "takes": [
                       {
                         "given": "value"
@@ -2297,7 +2146,7 @@
               "read": {
                 "available": {
                   "function": {
-                    "name": "souther8_m_shop_t_Partial_f_opened",
+                    "name": "souther9_m_shop_t_Partial_f_opened",
                     "takes": [
                       {
                         "given": "value"
@@ -2318,7 +2167,7 @@
           "construct": {
             "available": {
               "function": {
-                "name": "souther8_m_shop_t_Partial_construct",
+                "name": "souther9_m_shop_t_Partial_construct",
                 "takes": [
                   {
                     "given": "int"
@@ -2343,7 +2192,7 @@
             }
           },
           "decode": {
-            "name": "souther8_m_shop_t_Partial_decode",
+            "name": "souther9_m_shop_t_Partial_decode",
             "takes": [
               {
                 "given": "bytes"
@@ -2358,7 +2207,7 @@
             "answers": "status"
           },
           "decodehost": {
-            "name": "souther8_m_shop_t_Partial_decode_host",
+            "name": "souther9_m_shop_t_Partial_decode_host",
             "takes": [
               {
                 "given": "bytes"
@@ -2373,7 +2222,7 @@
             "answers": "status"
           },
           "encode": {
-            "name": "souther8_m_shop_t_Partial_encode",
+            "name": "souther9_m_shop_t_Partial_encode",
             "takes": [
               {
                 "given": "value"
@@ -2389,20 +2238,23 @@
             "leaf": "value"
           },
           "construct": {
-            "name": "souther8_m_shop_l_value_construct",
+            "name": "souther9_m_shop_l_value_construct",
             "takes": [
               {
                 "given": "count"
               },
               {
                 "slice": "value"
+              },
+              {
+                "room": "list"
               }
             ],
-            "answers": "list"
+            "answers": "bool"
           },
           "read": {
             "length": {
-              "name": "souther8_m_shop_l_value_length",
+              "name": "souther9_m_shop_l_value_length",
               "takes": [
                 {
                   "given": "list"
@@ -2411,7 +2263,7 @@
               "answers": "count"
             },
             "at": {
-              "name": "souther8_m_shop_l_value_at",
+              "name": "souther9_m_shop_l_value_at",
               "takes": [
                 {
                   "given": "list"
@@ -2434,7 +2286,7 @@
             }
           },
           "construct": {
-            "name": "souther8_m_shop_l_o_string_construct",
+            "name": "souther9_m_shop_l_o_string_construct",
             "takes": [
               {
                 "given": "count"
@@ -2444,13 +2296,16 @@
               },
               {
                 "slice": "string"
+              },
+              {
+                "room": "list"
               }
             ],
-            "answers": "list"
+            "answers": "bool"
           },
           "read": {
             "length": {
-              "name": "souther8_m_shop_l_o_string_length",
+              "name": "souther9_m_shop_l_o_string_length",
               "takes": [
                 {
                   "given": "list"
@@ -2459,7 +2314,7 @@
               "answers": "count"
             },
             "at": {
-              "name": "souther8_m_shop_l_o_string_at",
+              "name": "souther9_m_shop_l_o_string_at",
               "takes": [
                 {
                   "given": "list"
@@ -2483,20 +2338,23 @@
             "leaf": "int"
           },
           "construct": {
-            "name": "souther8_m_shop_l_int_construct",
+            "name": "souther9_m_shop_l_int_construct",
             "takes": [
               {
                 "given": "count"
               },
               {
                 "slice": "int"
+              },
+              {
+                "room": "list"
               }
             ],
-            "answers": "list"
+            "answers": "bool"
           },
           "read": {
             "length": {
-              "name": "souther8_m_shop_l_int_length",
+              "name": "souther9_m_shop_l_int_length",
               "takes": [
                 {
                   "given": "list"
@@ -2505,7 +2363,7 @@
               "answers": "count"
             },
             "at": {
-              "name": "souther8_m_shop_l_int_at",
+              "name": "souther9_m_shop_l_int_at",
               "takes": [
                 {
                   "given": "list"
@@ -2528,20 +2386,23 @@
             }
           },
           "construct": {
-            "name": "souther8_m_shop_l_l_int_construct",
+            "name": "souther9_m_shop_l_l_int_construct",
             "takes": [
               {
                 "given": "count"
               },
               {
                 "slice": "list"
+              },
+              {
+                "room": "list"
               }
             ],
-            "answers": "list"
+            "answers": "bool"
           },
           "read": {
             "length": {
-              "name": "souther8_m_shop_l_l_int_length",
+              "name": "souther9_m_shop_l_l_int_length",
               "takes": [
                 {
                   "given": "list"
@@ -2550,7 +2411,7 @@
               "answers": "count"
             },
             "at": {
-              "name": "souther8_m_shop_l_l_int_at",
+              "name": "souther9_m_shop_l_l_int_at",
               "takes": [
                 {
                   "given": "list"
@@ -2580,7 +2441,7 @@
           "construct": null,
           "read": {
             "length": {
-              "name": "souther8_m_shop_l_t2_int_string_length",
+              "name": "souther9_m_shop_l_t2_int_string_length",
               "takes": [
                 {
                   "given": "list"
@@ -2589,7 +2450,7 @@
               "answers": "count"
             },
             "at": {
-              "name": "souther8_m_shop_l_t2_int_string_at",
+              "name": "souther9_m_shop_l_t2_int_string_at",
               "takes": [
                 {
                   "given": "list"

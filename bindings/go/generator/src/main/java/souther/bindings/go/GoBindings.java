@@ -1,8 +1,8 @@
 package souther.bindings.go;
 
 import org.jspecify.annotations.Nullable;
+import souther.bindings.Claimed;
 import souther.bindings.BindingInput;
-import souther.bindings.Generated;
 import souther.bindings.Manifest;
 import souther.bindings.Manifest.Case;
 import souther.bindings.Manifest.Declaration;
@@ -12,8 +12,7 @@ import souther.bindings.Manifest.Shape;
 import souther.bindings.Manifest.Type;
 import souther.bindings.Manifest.Word;
 import souther.bindings.NotBindable;
-import souther.bindings.Output;
-import souther.bindings.RuntimeFunctions;
+import souther.bindings.ValueCrossing;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -49,13 +48,12 @@ import java.util.TreeSet;
 public final class GoBindings {
 
     /** What says a directory is a Go binding this wrote, and may be replaced whole. */
-    static final String MARK = ".souther-go-binding";
 
     /**
      * The protocol of the runtime module this writes for: what its public surface is, as recorded
      * under {@code bindings/go/runtime/protocol}. A test holds it to the runtime's own.
      */
-    static final int RUNTIME_PROTOCOL = 2;
+    static final int RUNTIME_PROTOCOL = 3;
 
     /**
      * The version of Raoh the runtime module asks for, which a package that imports it asks for as
@@ -70,7 +68,6 @@ public final class GoBindings {
     private final BindingInput input;
     private final String importPath;
     private final Path into;
-    private final List<Path> written = new ArrayList<>();
 
     /** What each declared type is, by {@code module.Name}. */
     private final Map<String, Declared> declared = new LinkedHashMap<>();
@@ -89,40 +86,27 @@ public final class GoBindings {
     }
 
     /**
-     * Refuses what a generation into {@code into} as {@code importPath} would refuse whatever the
-     * manifest said: a path Go will not take, and a directory holding what no generation wrote.
+     * Refuses what a generation as {@code importPath} would refuse whatever the manifest said: a
+     * path Go will not take.
      *
-     * @throws NotBindable where the path or the directory would be refused
+     * @throws NotBindable where the path would be refused
      */
-    public static void refuseAhead(Path into, String importPath) throws IOException {
+    public static void refuseAhead(String importPath) {
         GoNames.importPath(importPath);
-        Output.replaceable(into, MARK);
     }
 
     /**
      * Writes the binding of what the input's manifest describes into {@code into}, as the package
-     * {@code importPath}, which a host depends on by path.
-     *
-     * <p>{@code into} is then that package and nothing else: it is written beside it and put in
-     * place whole ({@link Output}), so a module the model no longer declares does not survive a
-     * generation, and a refused one leaves what was there as it was.
+     * {@code importPath}, which a host depends on by path; and answers {@code into}.
      *
      * @throws NotBindable where a name in the model is not one Go takes
      */
-    public static Generated generate(BindingInput input, Path into, String importPath)
+    public static Path generate(BindingInput input, Path into, String importPath)
             throws IOException {
         String path = GoNames.importPath(importPath);
-        Output output = Output.replacing(into, MARK);
-        GoBindings binding = new GoBindings(input, path, output.staging());
-        try {
-            binding.write();
-            output.commit();
-        } catch (IOException | RuntimeException e) {
-            output.abandon();
-            throw e;
-        }
-        return new Generated(output.placed(output.staging()),
-                binding.written.stream().map(output::placed).toList());
+        Files.createDirectories(into);
+        new GoBindings(input, path, into).write();
+        return into;
     }
 
     /** One module of the model: the package it is written as, and the Go written in it. */
@@ -131,7 +115,7 @@ public final class GoBindings {
         final List<String> path;
         final String importPath;
         final Body.Imports imports;
-        final GoNames.Claimed names;
+        final Claimed names;
         final StringBuilder items = new StringBuilder();
         final Map<String, Function> shims = new LinkedHashMap<>();
         /** What a host implements that the library calls back: each an exported function and what it needs declared. */
@@ -144,7 +128,7 @@ public final class GoBindings {
             this.path = path;
             this.importPath = GoBindings.this.importPath + "/" + String.join("/", path);
             this.imports = new Body.Imports(GoBindings.this.importPath, importPath);
-            this.names = new GoNames.Claimed("the package of module `" + module.name() + "`");
+            this.names = new Claimed("the package of module `" + module.name() + "`");
         }
 
         /** The name of the C function that calls {@code function} through its address. */
@@ -168,7 +152,6 @@ public final class GoBindings {
     }
 
     private void write() throws IOException {
-        RuntimeFunctions.check(manifest, "Go");
         Map<List<String>, String> directories = new LinkedHashMap<>();
         for (Manifest.Module module : manifest.modules()) {
             List<String> path = GoNames.modulePath(module.name());
@@ -203,79 +186,51 @@ public final class GoBindings {
     // ---------------------------------------------------------------------------------------------
     // What a model type crosses as.
 
-    /**
-     * How a value of {@code type} crosses in {@code shape}, the way {@code way} says, in a function
-     * of {@code module}'s, or null where this binding has no way to hold it: a pair of a type and a
-     * shape it knows no way to hold, a declared type it has no handle for, a union no declaration
-     * names where nothing says which case it is, and a function value.
-     */
-    private @Nullable Crossing crossing(Manifest.Module module, Type type, Shape shape,
-                                        Manifest.Way way) {
-        Crossing made = switch (shape) {
-            case Shape.Leaf leaf -> switch (type) {
-                case Type.Primitive it -> Crossing.Whole.primitive(it.name(), leaf.word());
-                case Type.Declared it -> leaf.word() == Word.VALUE ? handle(it.module(), it.name())
-                        : null;
-                // Handed to Go only as a behavior's answer, which says which case it is
-                // (`answered`): anywhere else Go would be handed a value of it told nothing.
-                case Type.Union union -> leaf.word() == Word.VALUE && way == Manifest.Way.GIVEN
-                        ? oneOf(module, union, null) : null;
-                default -> null;
-            };
-            case Shape.Option option -> type instanceof Type.Option it
-                    && crossing(module, it.of(), option.of(), way) instanceof Crossing of
+    /** How Go holds {@code value}, crossing the way {@code way} says, or null where it has no way. */
+    private @Nullable Crossing held(Manifest.Module module, ValueCrossing value, Manifest.Way way) {
+        Crossing made = switch (value) {
+            case ValueCrossing.Primitive it -> Crossing.Whole.primitive(it.type().primitive(), it.word());
+            case ValueCrossing.Handle it -> it.word() == Word.VALUE
+                    ? handle(it.type().module(), it.type().name()) : null;
+            // Handed to Go only as a behavior's answer, which says which case it is
+            // (`answered`): anywhere else Go would be handed a value of it told nothing.
+            case ValueCrossing.Union it -> it.word() == Word.VALUE && way == Manifest.Way.GIVEN
+                    ? oneOf(module, it.type(), null) : null;
+            case ValueCrossing.Optional it -> held(module, it.of(), way) instanceof Crossing of
                     ? new Crossing.Optional(of) : null;
-            case Shape.Product product -> {
-                if (!(type instanceof Type.Tuple it) || it.of().size() != product.of().size()
-                        || product.of().size() > Crossing.Tuple.MOST) {
+            case ValueCrossing.Tuple it -> {
+                if (it.members().size() > Crossing.Tuple.MOST) {
                     yield null;
                 }
-                List<Crossing> members = crossings(module, it.of(), product.of(), way);
+                List<Crossing> members = helds(module, it.members(), way);
                 yield members == null ? null : new Crossing.Tuple(members);
             }
-            case Shape.ListOf list -> {
-                if (!(Type.listed(type) instanceof Type of)
-                        || !(crossing(module, of, list.element(), way) instanceof Crossing element)) {
-                    yield null;
-                }
-                Manifest.ListCrossing listed = module.lists().stream()
-                        .filter(l -> l.element().equals(list.element())).findFirst().orElseThrow();
-                if (way == Manifest.Way.GIVEN ? listed.construct() == null : listed.read() == null) {
-                    yield null;
-                }
-                yield new Crossing.Listed(element, listed.construct(), listed.read());
-            }
-            case Shape.FunctionOf function -> {
-                if (!(type instanceof Type.Function it)) {
-                    yield null;
-                }
-                FunctionType written = functionType(module, it, function);
+            case ValueCrossing.Listed it -> it.crosses(way)
+                    && held(module, it.element(), way) instanceof Crossing element
+                    ? new Crossing.Listed(element, it.crossing().construct(), it.crossing().read())
+                    : null;
+            case ValueCrossing.FunctionValue it -> {
+                FunctionType written = functionType(module, it);
                 // Handed to Go, a function value is one the library made, which is called through
                 // the library; handed over, it may be one of the host's, which the library calls.
                 yield written == null
                         || !(way == Manifest.Way.HANDED ? written.called() : written.hosted())
-                        ? null : new Crossing.FunctionValue(written.importPath(), written.name(), function);
+                        ? null : new Crossing.FunctionValue(written.importPath(), written.name(), it.shape());
             }
         };
-        if (made != null && !made.shape().equals(shape)) {
-            throw new IllegalStateException("this binding holds a value crossing as " + shape
+        if (made != null && !made.shape().equals(value.shape())) {
+            throw new IllegalStateException("this binding holds a value crossing as " + value.shape()
                     + " as what crosses as " + made.shape());
         }
         return made;
     }
 
-    /**
-     * How each of {@code types} crosses in its shape, or null where any of them has no way, or the
-     * two say different counts.
-     */
-    private @Nullable List<Crossing> crossings(Manifest.Module module, List<Type> types,
-                                               List<Shape> shapes, Manifest.Way way) {
-        if (types.size() != shapes.size()) {
-            return null;
-        }
+    /** How Go holds each of {@code values}, or null where it has no way to hold any of them. */
+    private @Nullable List<Crossing> helds(Manifest.Module module, List<ValueCrossing> values,
+                                           Manifest.Way way) {
         List<Crossing> made = new ArrayList<>();
-        for (int at = 0; at < types.size(); at++) {
-            Crossing it = crossing(module, types.get(at), shapes.get(at), way);
+        for (ValueCrossing value : values) {
+            Crossing it = held(module, value, way);
             if (it == null) {
                 return null;
             }
@@ -289,12 +244,13 @@ public final class GoBindings {
      * union no declaration names as the type of the member the case the library says it is belongs
      * to, and anything else as a value of its type is handed.
      */
-    private @Nullable Crossing answered(Manifest.Module module, Manifest.Answer answer, Shape shape) {
+    private @Nullable Crossing answered(Manifest.Module module, Manifest.Answer answer,
+                                        ValueCrossing value) {
         if (!(answer.type() instanceof Type.Union union)) {
-            return crossing(module, answer.type(), shape, Manifest.Way.HANDED);
+            return held(module, value, Manifest.Way.HANDED);
         }
         Manifest.UnionAnswer told = Objects.requireNonNull(answer.union());
-        if (!(shape instanceof Shape.Leaf leaf) || leaf.word() != Word.VALUE || told.which() == null) {
+        if (!(value instanceof ValueCrossing.Union it) || it.word() != Word.VALUE || told.which() == null) {
             return null;
         }
         return oneOf(module, union, told);
@@ -321,29 +277,24 @@ public final class GoBindings {
      * since a union is handed over and not handed to Go, and each is written where the manifest
      * says how ({@code call}, {@code make}).
      */
-    private @Nullable FunctionType functionType(Manifest.Module module, Type.Function type,
-                                                Shape.FunctionOf shape) {
+    private @Nullable FunctionType functionType(Manifest.Module module,
+                                                ValueCrossing.FunctionValue value) {
         // Written by the module that says it, and by no other, as a union is.
-        List<Object> key = List.of(module.name(), type, shape);
+        List<Object> key = List.of(module.name(), value.type(), value.shape());
         if (functions.containsKey(key)) {
             return functions.get(key);
         }
         functions.put(key, null);
-        Manifest.Signature signature = shape.signature();
-        Manifest.FunctionCrossing crossing = module.functions().stream()
-                .filter(it -> it.signature().equals(signature)).findFirst().orElseThrow();
-        if (type.takes().size() != signature.takes().size()) {
-            return null;
-        }
+        Manifest.FunctionCrossing crossing = value.crossing();
         List<Crossing> handedOver = crossing.call() == null ? null
-                : crossings(module, type.takes(), signature.takes(), Manifest.Way.GIVEN);
+                : helds(module, value.takes(), Manifest.Way.GIVEN);
         Crossing answered = crossing.call() == null ? null
-                : crossing(module, type.answers(), signature.answers(), Manifest.Way.HANDED);
+                : held(module, value.answers(), Manifest.Way.HANDED);
         boolean called = handedOver != null && answered != null;
         List<Crossing> handed = crossing.make() == null ? null
-                : crossings(module, type.takes(), signature.takes(), Manifest.Way.HANDED);
+                : helds(module, value.takes(), Manifest.Way.HANDED);
         Crossing answering = crossing.make() == null ? null
-                : crossing(module, type.answers(), signature.answers(), Manifest.Way.GIVEN);
+                : held(module, value.answers(), Manifest.Way.GIVEN);
         boolean hosted = handed != null && answering != null;
         if (!called && !hosted) {
             return null;
@@ -561,11 +512,11 @@ public final class GoBindings {
                 case Case.Primitive p -> {
                     Manifest.CaseCrossing crossing = manifest.crossing(p);
                     Word held = crossing.holds();
-                    Crossing.Whole whole = held == null ? null : Crossing.Whole.primitive(p.name(), held);
+                    Crossing.Whole whole = held == null ? null : Crossing.Whole.primitive(p.primitive(), held);
                     if (whole == null) {
                         yield null;
                     }
-                    yield new Crossing.OneOf.Member(p.name(), whole, crossing.make(),
+                    yield new Crossing.OneOf.Member(p.primitive().spelt(), whole, crossing.make(),
                             Objects.requireNonNull(crossing.read()), false);
                 }
                 case Case.Language l -> null;
@@ -585,7 +536,7 @@ public final class GoBindings {
         StringBuilder out = new StringBuilder();
         String what = union.cases().stream().map(it -> switch (it) {
             case Case.Declared d -> d.module() + "." + d.name();
-            case Case.Primitive p -> p.name();
+            case Case.Primitive p -> p.primitive().spelt();
             case Case.Language l -> l.name();
         }).collect(java.util.stream.Collectors.joining(" | "));
         out.append("\n// ").append(name).append(" is a value of `").append(what)
@@ -642,7 +593,7 @@ public final class GoBindings {
     /** The struct a value of {@code it} is held as, with what reads it and makes it. */
     private void handleType(GoModule at, Declared it) {
         Declaration declaration = it.declaration();
-        GoNames.Claimed methods = new GoNames.Claimed("the methods of `" + it.key() + "`");
+        Claimed methods = new Claimed("the methods of `" + it.key() + "`");
         methods.claim("Encode", "the generated `Encode`");
         List<String> readers = new ArrayList<>();
         for (Manifest.Field field : declaration.fields()) {
@@ -717,8 +668,8 @@ public final class GoBindings {
                 }
                 case Case.Primitive p -> {
                     Word held = manifest.crossing(p).holds();
-                    Crossing.Whole whole = held == null ? null : Crossing.Whole.primitive(p.name(), held);
-                    yield whole == null ? null : new Arm(p.name(), whole.type(at.imports), each, false);
+                    Crossing.Whole whole = held == null ? null : Crossing.Whole.primitive(p.primitive(), held);
+                    yield whole == null ? null : new Arm(p.primitive().spelt(), whole.type(at.imports), each, false);
                 }
                 case Case.Language l -> new Arm(GoNames.exported(l.name(), "case `" + l.name() + "`"),
                         null, each, false);
@@ -738,7 +689,7 @@ public final class GoBindings {
     private static Set<String> cases(Declaration.Sum sum) {
         return sum.cases().stream().map(it -> switch (it) {
             case Case.Declared d -> d.module() + "." + d.name();
-            case Case.Primitive p -> "primitive:" + p.name();
+            case Case.Primitive p -> "primitive:" + p.primitive().spelt();
             case Case.Language l -> "language:" + l.name();
         }).collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
     }
@@ -793,7 +744,7 @@ public final class GoBindings {
                 body.line("\treturn " + variant + "{}");
             } else if (arm.each() instanceof Case.Primitive p) {
                 Manifest.CaseCrossing crossing = manifest.crossing(p);
-                Crossing.Whole whole = Crossing.Whole.primitive(p.name(), crossing.holds());
+                Crossing.Whole whole = Crossing.Whole.primitive(p.primitive(), crossing.holds());
                 Body inner = new Body(at.imports, at::shim, new Names(List.of()), "run", "return", 2);
                 String word = inner.temp("held");
                 inner.line(word + " := " + at.shim(crossing.read()) + "(run.Library().Symbol(\""
@@ -841,15 +792,13 @@ public final class GoBindings {
     /** {@code New<Type>}: the value, or the invariant it does not hold as an issue. */
     private void construct(GoModule at, Declared it, Manifest.Construct construct) {
         List<Manifest.Field> fields = it.declaration().fields();
-        List<Crossing> takes = crossings(at.module,
-                fields.stream().map(Manifest.Field::type).toList(), construct.takes(),
-                Manifest.Way.GIVEN);
+        List<Crossing> takes = helds(at.module, construct.takes(), Manifest.Way.GIVEN);
         if (takes == null) {
             return;
         }
         String what = "the constructor of `" + it.key() + "`";
         String name = at.names.claim("New" + it.name(), what);
-        GoNames.Claimed claimed = new GoNames.Claimed("the parameters of " + what);
+        Claimed claimed = new Claimed("the parameters of " + what);
         List<String> names = new ArrayList<>();
         for (Manifest.Field field : fields) {
             names.add(claimed.claim(GoNames.local(field.name(),
@@ -924,7 +873,7 @@ public final class GoBindings {
         if (read == null) {
             return;
         }
-        Crossing crossing = crossing(at.module, field.type(), read.answers(), Manifest.Way.HANDED);
+        Crossing crossing = held(at.module, read.answers(), Manifest.Way.HANDED);
         if (crossing == null) {
             return;
         }
@@ -952,15 +901,14 @@ public final class GoBindings {
             if (call == null || !requiresOf(at.module.name() + "." + behavior.name()).isEmpty()) {
                 continue;
             }
-            List<Crossing> takes = crossings(at.module, behavior.parameters().types(),
-                    call.signature().takes(), Manifest.Way.GIVEN);
-            Crossing answers = answered(at.module, behavior.answers(), call.signature().answers());
+            List<Crossing> takes = helds(at.module, call.crossings().takes(), Manifest.Way.GIVEN);
+            Crossing answers = answered(at.module, behavior.answers(), call.crossings().answers());
             if (takes == null || answers == null) {
                 continue;
             }
             String what = "behavior `" + at.module.name() + "." + behavior.name() + "`";
             String name = at.names.claim(GoNames.exported(behavior.name(), what), what);
-            GoNames.Claimed claimed = new GoNames.Claimed("the parameters of " + what);
+            Claimed claimed = new Claimed("the parameters of " + what);
             List<String> names = switch (behavior.parameters()) {
                 case Manifest.Parameters.Named named -> named.parameters().stream()
                         .map(it -> claimed.claim(GoNames.local(it.name(),
@@ -981,8 +929,7 @@ public final class GoBindings {
             if (read == null) {
                 continue;
             }
-            Crossing answers = crossing(at.module, value.type(), read.signature().answers(),
-                    Manifest.Way.HANDED);
+            Crossing answers = held(at.module, read.crossings().answers(), Manifest.Way.HANDED);
             if (answers == null) {
                 continue;
             }
@@ -1182,24 +1129,21 @@ public final class GoBindings {
 
     /** Whether a host can be handed what {@code injection} takes and hand back what it answers. */
     private boolean implementable(Manifest.Module module, Manifest.Injection injection) {
-        return crossings(module, injection.parameters().stream().map(Manifest.NamedParameter::type)
-                .toList(), injection.signature().takes(), Manifest.Way.HANDED) != null
-                && crossing(module, injection.answers(), injection.signature().answers(),
-                Manifest.Way.GIVEN) != null;
+        return helds(module, injection.crossings().takes(), Manifest.Way.HANDED) != null
+                && held(module, injection.crossings().answers(), Manifest.Way.GIVEN) != null;
     }
 
     /** Whether a host can call {@code behavior}, handing over what it takes and handed what it answers. */
     private boolean callable(Manifest.Module module, Manifest.Behavior behavior) {
         Manifest.Call call = behavior.call().available();
         return call != null
-                && crossings(module, behavior.parameters().types(), call.signature().takes(),
-                Manifest.Way.GIVEN) != null
-                && answered(module, behavior.answers(), call.signature().answers()) != null;
+                && helds(module, call.crossings().takes(), Manifest.Way.GIVEN) != null
+                && answered(module, behavior.answers(), call.crossings().answers()) != null;
     }
 
     /** The names a behavior's parameters are written under. */
     private static List<String> parameterNames(Manifest.Parameters parameters, String what) {
-        GoNames.Claimed claimed = new GoNames.Claimed("the parameters of " + what);
+        Claimed claimed = new Claimed("the parameters of " + what);
         return switch (parameters) {
             case Manifest.Parameters.Named named -> named.parameters().stream()
                     .map(it -> claimed.claim(GoNames.local(it.name(),
@@ -1217,11 +1161,8 @@ public final class GoBindings {
      */
     private void injected(GoModule at, Manifest.Injection injection, BehaviorType it) {
         Manifest.Module module = at.module;
-        List<Crossing> takes = Objects.requireNonNull(crossings(module, injection.parameters()
-                .stream().map(Manifest.NamedParameter::type).toList(),
-                injection.signature().takes(), Manifest.Way.HANDED));
-        Crossing answers = Objects.requireNonNull(crossing(module, injection.answers(),
-                injection.signature().answers(), Manifest.Way.GIVEN));
+        List<Crossing> takes = Objects.requireNonNull(helds(module, injection.crossings().takes(), Manifest.Way.HANDED));
+        Crossing answers = Objects.requireNonNull(held(module, injection.crossings().answers(), Manifest.Way.GIVEN));
         String what = "behavior `" + it.key() + "`";
         List<String> names = parameterNames(new Manifest.Parameters.Named(injection.parameters()),
                 what);
@@ -1412,10 +1353,8 @@ public final class GoBindings {
     private void bound(GoModule at, Manifest.Behavior behavior, BehaviorType it) {
         Manifest.Module module = at.module;
         Manifest.Call call = Objects.requireNonNull(behavior.call().available());
-        List<Crossing> takes = Objects.requireNonNull(crossings(module,
-                behavior.parameters().types(), call.signature().takes(), Manifest.Way.GIVEN));
-        Crossing answers = Objects.requireNonNull(answered(module, behavior.answers(),
-                call.signature().answers()));
+        List<Crossing> takes = Objects.requireNonNull(helds(module, call.crossings().takes(), Manifest.Way.GIVEN));
+        Crossing answers = Objects.requireNonNull(answered(module, behavior.answers(), call.crossings().answers()));
         String what = "behavior `" + it.key() + "`";
         List<String> names = parameterNames(behavior.parameters(), what);
         List<Manifest.Required> requires = requiresOf(it.key());
@@ -1554,7 +1493,6 @@ public final class GoBindings {
         }
         Files.createDirectories(at.getParent());
         input.declarations().copyTo(at);
-        written.add(at);
     }
 
     /**
@@ -1763,9 +1701,7 @@ public final class GoBindings {
         go.append("\t},\n\tOutcomes: map[string]int32{\n");
         aligned(go, manifest.outcomes());
         go.append("\t},\n\tSymbols: []string{\n");
-        TreeSet<String> all = new TreeSet<>(symbols);
-        all.addAll(RuntimeFunctions.CALLED.keySet());
-        all.forEach(name -> go.append("\t\t\"").append(name).append("\",\n"));
+        new TreeSet<>(symbols).forEach(name -> go.append("\t\t\"").append(name).append("\",\n"));
         go.append("\t},\n}\n");
         file(List.of("internal", "binding", "binding.go"), go.toString());
         abi();
@@ -1773,17 +1709,15 @@ public final class GoBindings {
     }
 
     /**
-     * What the runtime module calls of the library and lays out room for, asked of the declarations
-     * and not worked out: the runtime's functions are asserted, by the C compiler, to be of the
-     * type their words make ({@link CTypes#asserted}), and each size is the compiler's
-     * {@code sizeof} of what the declarations declare.
+     * What the runtime module lays out room for, asked of the declarations and not worked out: each
+     * size is the compiler's {@code sizeof} of what the declarations declare. The runtime's own
+     * functions are the ABI generation's, which the runtime module asks a library for before it
+     * calls any, and its calls are held to that generation's record by its own test.
      */
     private void abi() throws IOException {
         StringBuilder go = new StringBuilder(header());
         go.append("package binding\n\n/*\n#include <stdint.h>\n#include \"souther.ffi.h\"\n\n"
                 + "typedef const souther_capability *souther_capability_ref;\n\n");
-        new TreeMap<>(RuntimeFunctions.CALLED).forEach((name, function) ->
-                go.append(CTypes.asserted(function, name)));
         go.append("*/\nimport \"C\"\n\nimport souther \"" + RUNTIME_MODULE + "\"\n\n"
                 + "// layout is what the declarations say a host lays out room for.\n"
                 + "var layout = souther.Layout{\n"
@@ -1825,6 +1759,5 @@ public final class GoBindings {
         }
         Files.createDirectories(at.getParent());
         Files.writeString(at, content, StandardCharsets.UTF_8);
-        written.add(at);
     }
 }

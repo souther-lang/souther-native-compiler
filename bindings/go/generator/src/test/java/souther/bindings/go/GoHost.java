@@ -2,8 +2,10 @@ package souther.bindings.go;
 
 import souther.bindings.BindingInput;
 import souther.bindings.Declarations;
-import souther.bindings.Generated;
+import souther.nativecode.BindingDirectory;
+import souther.nativecode.Generated;
 import souther.bindings.Manifest;
+import souther.nativecode.ManifestReader;
 import souther.nativecode.NativeCompiler;
 import souther.nativecode.Repository;
 
@@ -40,8 +42,11 @@ final class GoHost {
     /** The binding of {@code library} generated into {@code into} as the package {@code importPath}. */
     static Generated generated(NativeCompiler.Library library, Path into, String importPath)
             throws IOException {
-        return GoBindings.generate(new BindingInput(Manifest.read(library.manifest()),
-                Declarations.at(library.declarations())), into, importPath);
+        BindingInput input = new BindingInput(ManifestReader.read(library.manifest()),
+                Declarations.at(library.declarations()));
+        // Written and put in place as the command does.
+        return Generated.of(BindingDirectory.written(into, "go",
+                staging -> GoBindings.generate(input, staging, importPath)));
     }
 
     /**

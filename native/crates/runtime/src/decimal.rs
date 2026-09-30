@@ -22,7 +22,7 @@ use crate::amount::{Amount, Rounding};
 use crate::collection::{Hash, hash_of_parts};
 use crate::external::Form;
 use crate::kernels::answered;
-use crate::{Comparison, Count, Text, Value, souther_alloc, string_of, text};
+use crate::{Bool, Comparison, Count, Text, Value, souther_alloc, string_of, text};
 use souther_native_abi::{SLOT, WHICH};
 use std::ptr;
 
@@ -61,7 +61,7 @@ pub(crate) fn decimal_of(amount: &Amount) -> *mut Decimal {
 ///
 /// # Safety
 ///
-/// `at` is one [`decimal_of`] answered, and the mark below it still stands.
+/// `at` is one [`decimal_of`] answered, and the scope it was made in is still open.
 pub(crate) unsafe fn amount(at: *const Decimal) -> Amount {
     let at = at.cast::<u8>();
     unsafe {
@@ -150,9 +150,12 @@ unsafe fn of_parts(unscaled: *const Text, scale: i64) -> *mut Decimal {
     decimal_of(&amount)
 }
 
-/// A `Decimal` of this integer and scale, for a caller outside a Souther program: the integer as
-/// integer text (an optional sign and ASCII digits, `length` bytes at `unscaled`) and the scale as
-/// a number a scale may be.
+/// A `Decimal` of this integer and scale, for a caller outside a Souther program, written through
+/// `out` where they name one, and answering whether they did: the integer as integer text (an
+/// optional sign and ASCII digits, `length` bytes at `unscaled`) and the scale as a number a scale
+/// may be. Bytes that are not integer text, a count below nought and a scale past the 32-bit range
+/// name none, and are answered as that rather than ending the process: the runtime is what decides
+/// what a `Decimal` is, and a binding that checks first does so only to say it in its own words.
 ///
 /// Bytes and a count, and not a `String` of the runtime's layout: the unscaled digits are the
 /// integer's text and not the value's written form (spec §what-a-string-holds says what a
@@ -162,33 +165,28 @@ unsafe fn of_parts(unscaled: *const Text, scale: i64) -> *mut Decimal {
 ///
 /// # Safety
 ///
-/// `unscaled` points at `length` bytes that may be read.
-///
-/// # Panics
-///
-/// Where the bytes are not UTF-8, are not integer text, or the scale is outside the 32-bit range,
-/// which ends the process as a string of bytes that are not UTF-8 does: a binding says so first in
-/// its own terms.
+/// `unscaled` points at `length` bytes that may be read, where `length` is above nought, and `out`
+/// is room for the address of a `Decimal`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_decimal_of_parts(
     unscaled: *const u8,
     length: Count,
     scale: i64,
-) -> *mut Decimal {
-    let held =
-        usize::try_from(length.0).expect("text is handed over as bytes, and never fewer than 0");
-    let bytes = if held == 0 {
-        &[][..]
-    } else {
-        unsafe { std::slice::from_raw_parts(unscaled, held) }
-    };
-    let written =
-        std::str::from_utf8(bytes).expect("a Decimal's integer is handed over as UTF-8 text");
-    let scale = i32::try_from(scale).expect("a Decimal is handed over at a scale a Decimal has");
-    let amount = souther_text::decimal_text(souther_text::Text::held(written))
-        .and_then(|it| Amount::of_integer_text(it, scale))
-        .expect("a Decimal's integer is handed over as integer text");
-    decimal_of(&amount)
+    out: *mut *mut Decimal,
+) -> Bool {
+    let named = usize::try_from(length.0).ok().and_then(|held| {
+        let bytes = if held == 0 {
+            &[][..]
+        } else {
+            unsafe { std::slice::from_raw_parts(unscaled, held) }
+        };
+        let written = std::str::from_utf8(bytes).ok()?;
+        let scale = i32::try_from(scale).ok()?;
+        souther_text::decimal_text(souther_text::Text::held(written))
+            .and_then(|it| Amount::of_integer_text(it, scale))
+            .map(|amount| decimal_of(&amount))
+    });
+    unsafe { answered(named, out) }
 }
 
 /// A `Decimal` literal: the integer the checker read it as, which the object carries as a string,
@@ -210,7 +208,7 @@ pub unsafe extern "C" fn souther_decimal_literal(
 ///
 /// # Safety
 ///
-/// `at` is a `Decimal` the runtime answered, and the mark below it still stands. So for every
+/// `at` is a `Decimal` the runtime answered, and the scope it was made in is still open. So for every
 /// function here that reads one.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_decimal_unscaled(at: *const Decimal) -> *mut Text {
@@ -265,8 +263,8 @@ pub unsafe extern "C" fn souther_decimal_hash(at: *const Decimal) -> Hash {
 ///
 /// As [`souther_decimal_unscaled`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_decimal_is_zero(at: *const Decimal) -> i8 {
-    i8::from(unsafe { amount(at) }.is_zero())
+pub unsafe extern "C" fn souther_decimal_is_zero(at: *const Decimal) -> Bool {
+    Bool::from(unsafe { amount(at) }.is_zero())
 }
 
 /// The unary `-`.
@@ -289,7 +287,7 @@ pub unsafe extern "C" fn souther_decimal_add(
     left: *const Decimal,
     right: *const Decimal,
     out: *mut *mut Decimal,
-) -> i8 {
+) -> Bool {
     let sum = unsafe { amount(left).add(&amount(right)) };
     unsafe { answered(sum.as_ref().map(decimal_of), out) }
 }
@@ -304,7 +302,7 @@ pub unsafe extern "C" fn souther_decimal_subtract(
     left: *const Decimal,
     right: *const Decimal,
     out: *mut *mut Decimal,
-) -> i8 {
+) -> Bool {
     let difference = unsafe { amount(left).subtract(&amount(right)) };
     unsafe { answered(difference.as_ref().map(decimal_of), out) }
 }
@@ -319,7 +317,7 @@ pub unsafe extern "C" fn souther_decimal_multiply(
     left: *const Decimal,
     right: *const Decimal,
     out: *mut *mut Decimal,
-) -> i8 {
+) -> Bool {
     let product = unsafe { amount(left).multiply(&amount(right)) };
     unsafe { answered(product.as_ref().map(decimal_of), out) }
 }
@@ -341,7 +339,7 @@ pub unsafe extern "C" fn souther_decimal_to_int(
     mode: *const Value,
     at: *const Decimal,
     out: *mut i64,
-) -> i8 {
+) -> Bool {
     let whole = unsafe { amount(at).to_int(rounding(mode)) };
     unsafe { answered(whole, out) }
 }
@@ -358,7 +356,7 @@ pub unsafe extern "C" fn souther_decimal_round(
     mode: *const Value,
     at: *const Decimal,
     out: *mut *mut Decimal,
-) -> i8 {
+) -> Bool {
     let rounded = unsafe { amount(at).round(scale, rounding(mode)) };
     unsafe { answered(rounded.as_ref().map(decimal_of), out) }
 }
@@ -377,7 +375,7 @@ pub unsafe extern "C" fn souther_decimal_divide(
     scale: i64,
     mode: *const Value,
     out: *mut *mut Decimal,
-) -> i8 {
+) -> Bool {
     let quotient = unsafe { amount(dividend).divide(&amount(divisor), scale, rounding(mode)) };
     unsafe { answered(quotient.as_ref().map(decimal_of), out) }
 }
@@ -388,7 +386,7 @@ pub unsafe extern "C" fn souther_decimal_divide(
 ///
 /// As [`crate::souther_string_compare`], and `out` is room for the address of a `Decimal`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_string_to_decimal(s: *const Text, out: *mut *mut Decimal) -> i8 {
+pub unsafe extern "C" fn souther_string_to_decimal(s: *const Text, out: *mut *mut Decimal) -> Bool {
     let read = souther_text::decimal_text(unsafe { text(&s) }).map(Amount::of_decimal_text);
     unsafe { answered(read.as_ref().map(decimal_of), out) }
 }
@@ -404,7 +402,7 @@ pub unsafe extern "C" fn souther_string_to_decimal(s: *const Text, out: *mut *mu
 pub unsafe extern "C" fn souther_string_from_decimal(
     at: *const Decimal,
     out: *mut *mut Text,
-) -> i8 {
+) -> Bool {
     let written = unsafe { amount(at) }.plain_text();
     unsafe { answered(written.as_deref().map(string_of), out) }
 }
@@ -422,7 +420,7 @@ pub unsafe extern "C" fn souther_external_decimal(at: *const Decimal) -> *mut Fo
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Count, souther_mark, souther_reset, souther_string_of_utf8};
+    use crate::{Count, souther_scope_close, souther_scope_open, souther_string_of_utf8};
     use souther_native_abi::{LANGUAGE_UNITS, type_symbol};
     use std::collections::BTreeSet;
 
@@ -430,7 +428,7 @@ mod tests {
         let mut out = std::ptr::null_mut();
         let admitted =
             unsafe { souther_string_of_utf8(text.as_ptr(), Count(text.len() as i64), &mut out) };
-        assert_eq!(admitted, 1, "test text has a place");
+        assert_eq!(admitted, Bool::TRUE, "test text has a place");
         out
     }
 
@@ -439,7 +437,17 @@ mod tests {
     }
 
     fn of(unscaled: &str, scale: i64) -> *mut Decimal {
-        unsafe { souther_decimal_of_parts(unscaled.as_ptr(), Count(unscaled.len() as i64), scale) }
+        let mut out = ptr::null_mut();
+        let made = unsafe {
+            souther_decimal_of_parts(
+                unscaled.as_ptr(),
+                Count(unscaled.len() as i64),
+                scale,
+                &mut out,
+            )
+        };
+        assert_eq!(made, Bool::TRUE, "{unscaled} at {scale} names a Decimal");
+        out
     }
 
     fn parts(at: *const Decimal) -> (String, i64) {
@@ -461,7 +469,7 @@ mod tests {
     /// What a host hands over is what it reads back, the scale as it was and nought unsigned.
     #[test]
     fn a_decimal_reads_back_as_the_integer_and_scale_it_was_made_of() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         for (unscaled, scale, read) in [
             ("150", 2, "150"),
             ("-150", 2, "-150"),
@@ -481,13 +489,13 @@ mod tests {
                 "{unscaled}"
             );
         }
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     /// Every rounding mode reaches the mode its token names.
     #[test]
     fn a_mode_is_the_case_its_token_names() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         let value = of("25", 1);
         let mut whole = 0;
         for (token, answer) in [
@@ -501,46 +509,49 @@ mod tests {
         ] {
             assert_eq!(
                 unsafe { souther_decimal_to_int(mode(token), value, &mut whole) },
-                1
+                Bool::TRUE
             );
             assert_eq!(whole, answer);
         }
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     /// An operation that has no answer writes nothing and says so.
     #[test]
     fn an_operation_with_no_answer_writes_nothing() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         let mut out: *mut Decimal = ptr::null_mut();
         let tiny = of("1", 2147483647);
-        assert_eq!(unsafe { souther_decimal_multiply(tiny, tiny, &mut out) }, 0);
+        assert_eq!(
+            unsafe { souther_decimal_multiply(tiny, tiny, &mut out) },
+            Bool::FALSE
+        );
         assert!(out.is_null());
         assert_eq!(
             unsafe { souther_decimal_round(2147483648, mode(&UP), tiny, &mut out) },
-            0
+            Bool::FALSE
         );
         assert!(out.is_null());
         assert_eq!(
             unsafe { souther_string_to_decimal(made("1e5"), &mut out) },
-            0
+            Bool::FALSE
         );
         assert!(out.is_null());
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     #[test]
     fn the_operations_answer_through_the_arena() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         let mut out: *mut Decimal = ptr::null_mut();
         assert_eq!(
             unsafe { souther_decimal_add(of("15", 1), of("225", 2), &mut out) },
-            1
+            Bool::TRUE
         );
         assert_eq!(parts(out), ("375".to_string(), 2));
         assert_eq!(
             unsafe { souther_decimal_divide(of("10", 0), of("3", 0), 2, mode(&HALF_UP), &mut out) },
-            1
+            Bool::TRUE
         );
         assert_eq!(parts(out), ("333".to_string(), 2));
         assert_eq!(
@@ -559,41 +570,41 @@ mod tests {
             unsafe { souther_decimal_compare(of("-1", 0), of("0", 3)) }.0,
             -1
         );
-        assert_eq!(unsafe { souther_decimal_is_zero(of("0", 9)) }, 1);
-        assert_eq!(unsafe { souther_decimal_is_zero(of("1", 9)) }, 0);
+        assert_eq!(unsafe { souther_decimal_is_zero(of("0", 9)) }, Bool::TRUE);
+        assert_eq!(unsafe { souther_decimal_is_zero(of("1", 9)) }, Bool::FALSE);
         assert_eq!(
             unsafe { souther_string_to_decimal(made("001.50"), &mut out) },
-            1
+            Bool::TRUE
         );
         assert_eq!(parts(out), ("150".to_string(), 2));
         let mut text = std::ptr::null_mut();
         assert_eq!(
             unsafe { souther_string_from_decimal(of("100000", 3), &mut text) },
-            1
+            Bool::TRUE
         );
         assert_eq!(said(text), "100.000");
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     /// A value whose plain notation is more text than a string holds is refused, before any of the
     /// text is written, at either end of the scale range; one whose text a string holds is not.
     #[test]
     fn the_text_of_a_value_no_string_holds_is_not_written() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         let mut text = std::ptr::null_mut();
         for scale in [1_500_000_000, -1_500_000_000] {
             assert_eq!(
                 unsafe { souther_string_from_decimal(of("1", scale), &mut text) },
-                0,
+                Bool::FALSE,
                 "{scale}"
             );
         }
         assert_eq!(
             unsafe { souther_string_from_decimal(of("1", -3), &mut text) },
-            1
+            Bool::TRUE
         );
         assert_eq!(said(text), "1000");
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     /// Every unit the language declares that the table names has a token here, under the symbol a
@@ -623,5 +634,41 @@ mod tests {
                 format!("souther$type${module}${name}")
             );
         }
+    }
+
+    /// Parts that name no `Decimal` are answered as that, and end nothing.
+    #[test]
+    fn parts_that_name_no_decimal_are_refused() {
+        let scope = souther_scope_open();
+        let mut out = ptr::null_mut();
+        for (unscaled, scale) in [
+            ("12.5", 0),
+            ("", 0),
+            ("1e3", 0),
+            (" 1", 0),
+            ("1", i64::from(i32::MAX) + 1),
+            ("1", i64::from(i32::MIN) - 1),
+        ] {
+            let made = unsafe {
+                souther_decimal_of_parts(
+                    unscaled.as_ptr(),
+                    Count(unscaled.len() as i64),
+                    scale,
+                    &mut out,
+                )
+            };
+            assert_eq!(made, Bool::FALSE, "{unscaled:?} at {scale}");
+        }
+        let invalid = [0xff_u8, b'1'];
+        assert_eq!(
+            unsafe { souther_decimal_of_parts(invalid.as_ptr(), Count(2), 0, &mut out) },
+            Bool::FALSE
+        );
+        assert_eq!(
+            unsafe { souther_decimal_of_parts(invalid.as_ptr(), Count(-1), 0, &mut out) },
+            Bool::FALSE
+        );
+        assert_eq!(parts(of("-120", 2)), (String::from("-120"), 2));
+        souther_scope_close(scope);
     }
 }

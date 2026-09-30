@@ -1,5 +1,7 @@
 package souther.bindings;
 
+import souther.nativecode.ManifestReader;
+
 import souther.nativecode.Checked;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -68,33 +70,29 @@ class WhatARecordHoldsIsItsOwnTest {
 
     @Test
     void everyCollectionARecordHoldsIsItsOwn(@TempDir Path into) throws Exception {
-        Manifest manifest = Manifest.read(NativeCompiler.library(
+        Manifest manifest = ManifestReader.read(NativeCompiler.library(
                 Checked.of(List.of(EVERYTHING)), into).manifest());
-        Manifest functions = Manifest.read(Documents.library(Documents.FUNCTIONS,
+        Manifest functions = ManifestReader.read(Documents.library(Documents.FUNCTIONS,
                 into.resolve("functions")).manifest());
         Owning owning = new Owning();
-        owning.walk(manifest.runtime());
+        owning.walk(manifest.cases());
         owning.walk(manifest.modules());
         owning.walk(functions.modules());
-        Path written = into.resolve("written");
-        owning.walk(new Generated(written, List.of(written.resolve("a"))));
-
         assertThat(owning.wrong).isEmpty();
         assertThat(Owning.collectionsIn(Manifest.class, "souther.bindings")).contains(
-                Generated.class.getName() + ".files",
                 Manifest.Function.class.getName() + ".takes",
                 Manifest.Signature.class.getName() + ".takes",
-                Manifest.Refusal.class.getName() + ".path");
+                ValueCrossing.Tuple.class.getName() + ".members");
         assertThat(owning.asked).containsAll(Owning.collectionsIn(Manifest.class, "souther.bindings"));
     }
 
     /** The manifest's own collections are its own too, and cannot be changed through. */
     @Test
     void aManifestAnswersNothingItCanBeChangedThrough(@TempDir Path into) throws Exception {
-        Manifest manifest = Manifest.read(NativeCompiler.library(
+        Manifest manifest = ManifestReader.read(NativeCompiler.library(
                 Checked.of(List.of(EVERYTHING)), into).manifest());
 
-        assertThat(List.of(manifest.runtime(), manifest.modules(), manifest.statuses().keySet(),
+        assertThat(List.of(manifest.cases(), manifest.modules(), manifest.statuses().keySet(),
                 manifest.outcomes().keySet())).allSatisfy(held -> assertThat(held).isNotEmpty());
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> manifest.modules().clear())
                 .isInstanceOf(UnsupportedOperationException.class);

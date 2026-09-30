@@ -34,6 +34,8 @@ func TestMain(m *testing.M) {
 	build("fake")
 	build("second")
 	build("nodouble", "-DNO_DOUBLE", "-DNO_TLS")
+	build("othergeneration", "-DABI=8", "-DNO_TLS")
+	build("nogeneration", "-DNO_GENERATION_QUERY", "-DNO_TLS")
 	code := m.Run()
 	_ = os.RemoveAll(dir)
 	os.Exit(code)
@@ -89,6 +91,18 @@ func TestALibraryWithoutAFunctionTheBindingCallsIsRefused(t *testing.T) {
 	var missing *souther.MissingSymbols
 	if !errors.As(err, &missing) || len(missing.Names) != 1 || missing.Names[0] != "fake_double" {
 		t.Fatalf("got %v", err)
+	}
+}
+
+// A library is asked its generation before anything else, and one of another is refused as that,
+// as is one from before the query existed.
+func TestALibraryOfAnotherGenerationIsRefusedAsThat(t *testing.T) {
+	for name, found := range map[string]uint32{"othergeneration": 8, "nogeneration": 0} {
+		_, err := bridge.Load(path(name))
+		var other *souther.UnsupportedGeneration
+		if !errors.As(err, &other) || other.Found != found {
+			t.Errorf("%s: got %v", name, err)
+		}
 	}
 }
 

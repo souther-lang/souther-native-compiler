@@ -7,25 +7,29 @@ use std::ffi::c_void;
 use std::marker::PhantomData;
 use std::ptr::{self, NonNull};
 
+/// Room a host lays out and owns and never reads, as ABI generation 9 ([`crate::ABI_GENERATION`])
+/// states it: as many slots as each takes, a slot a `u64`, and no field. What stands in it is the
+/// generated code's alone.
+const CAPABILITY_SLOTS: usize = 2;
+const HOSTED_SLOTS: usize = 2;
+pub(crate) const HOSTED_FUNCTION_SLOTS: usize = 3;
+
 /// One capability, as a host lays out room for one and the library writes it: `souther_capability`.
 #[repr(C)]
 pub struct Capability {
-    invoke: *const c_void,
-    environment: *const c_void,
+    opaque: [u64; CAPABILITY_SLOTS],
 }
 
 /// What a capability of a host's own implementation reads it out of: `souther_hosted`.
 #[repr(C)]
 pub struct Hosted {
-    implementation: *const c_void,
-    userdata: *mut c_void,
+    opaque: [u64; HOSTED_SLOTS],
 }
 
 impl Hosted {
     pub(crate) fn empty() -> Self {
         Hosted {
-            implementation: ptr::null(),
-            userdata: ptr::null_mut(),
+            opaque: [0; HOSTED_SLOTS],
         }
     }
 }
@@ -33,8 +37,7 @@ impl Hosted {
 impl Capability {
     fn room() -> Room<Self> {
         Room::of(Capability {
-            invoke: ptr::null(),
-            environment: ptr::null(),
+            opaque: [0; CAPABILITY_SLOTS],
         })
     }
 }
@@ -262,5 +265,43 @@ unsafe impl<D> Requirement for Implemented<D> {
 
     fn made(&self) -> Option<Made> {
         Some(self.made)
+    }
+}
+
+#[cfg(test)]
+mod laid_out {
+    use super::{Capability, Hosted};
+    use crate::keep::HostedFunction;
+    use souther_native_abi::{HOST_STORAGE, SLOT};
+    use std::mem::{align_of, size_of};
+
+    /// The rooms this crate lays out are the size and the alignment the generation records, as
+    /// Rust lays them out: a type written with another size or another alignment is room the
+    /// library writes past or reads askew, whatever its slot count says.
+    #[test]
+    fn every_room_is_the_size_and_the_alignment_its_generation_records() {
+        let laid_out = [
+            (
+                "souther_capability",
+                size_of::<Capability>(),
+                align_of::<Capability>(),
+            ),
+            ("souther_hosted", size_of::<Hosted>(), align_of::<Hosted>()),
+            (
+                "souther_hosted_function",
+                size_of::<HostedFunction>(),
+                align_of::<HostedFunction>(),
+            ),
+        ];
+        assert_eq!(
+            laid_out.len(),
+            HOST_STORAGE.len(),
+            "every room the ABI records"
+        );
+        for (name, size, align) in laid_out {
+            let storage = HOST_STORAGE.iter().find(|it| it.name == name).expect(name);
+            assert_eq!(size as i64, storage.slots * SLOT, "{name}");
+            assert_eq!(align as i64, SLOT, "{name}");
+        }
     }
 }

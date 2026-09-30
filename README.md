@@ -407,9 +407,9 @@ of what they say.
 
 A host builds and reads a value of a type the module publishes through functions the object
 defines for it, and never through where the value keeps anything. A host holds a value as an
-address it does not look behind, good until the mark taken before it was made is reset, and hands
+address it does not look behind, good until the scope it was made in is closed, and hands
 it back to these and to the behaviors. For each published type with fields or none there is a
-constructor, `souther7_m_<module>_t_<Name>_construct`, taking the fields and answering `status +
+constructor, `souther<n>_m_<module>_t_<Name>_construct`, taking the fields and answering `status +
 out` the way the type's own constructor does, since it is that constructor it runs: a value whose
 clauses do not hold is answered `InvariantNotHeld` and nothing is written through `out`, and a type
 with no clause answers a status too, so a clause added later does not change how a host calls it.
@@ -427,25 +427,30 @@ manifest lists them under `cases`. A read is made only of a value `..._case` has
 and is not asked again. The case answered is the concrete one the value is, and
 whether a host can read that case further is its own publication's answer and not the sum's. A
 behavior answering a union no declaration names has the same reader beside its call,
-`souther7_m_<module>_b_<behavior>_answer_case`, counting the cases the union descends to: a member
+`souther<n>_m_<module>_b_<behavior>_answer_case`, counting the cases the union descends to: a member
 that is a sum counts as its own cases, since a value of it is one of them. It is the behavior's and
 not the union's, which has no name to be spelt under.
 
 How a value crosses is decided once, as the shape it crosses in, and the manifest says that shape
-beside every function that hands one across. An `Int` crosses as 64 bits, a `Bool` as a byte, and
-text and a value of a declared type or of a union as an address. A `Decimal` crosses as an address
-of type `souther_decimal`, which a host makes through `souther_decimal_of_parts`, handing its
-integer as integer text in a string and its scale, and reads back through `souther_decimal_unscaled`
-and `souther_decimal_scale`: the two numbers the language says a `Decimal` is, and not its text,
+beside every function that hands one across. An `Int` crosses as 64 bits, a `Bool` as a byte
+without a sign, and text and a value of a declared type or of a union as an address. The library
+answers a `Bool` as nought or one, and reads any byte but nought a host hands it as true. A
+`Decimal` crosses as an address of type `souther_decimal`, which a host makes through
+`souther_decimal_of_parts`, handing its integer as integer text in bytes and its scale, and reads
+back through `souther_decimal_unscaled` and `souther_decimal_scale`: the two numbers the language says a `Decimal` is, and not its text,
 which would be one spelling among several. A `Date`, a `Time`, a `DateTime` and an `Instant` cross
 each as an address of a type of its own (`souther_date`, `souther_time`, `souther_datetime` and
-`souther_instant`), which a host makes of the ISO 8601 text that names the value
-(`souther_date_of_iso`, and the same for the others) and reads back as the text a boundary writes
-(`souther_date_iso`). A word of their own and not a `souther_string`, so that a host handed one where
-the other was meant has been handed something else; what a binding makes of it, text or a type of
-its own language's, is the binding's. The text a host hands over is one that names a value of the
-type, and one that does not ends the process as a `Decimal`'s integer that is no integer does: it is
-a boundary's decoder alone that reports outside text as an issue. The PHP binding holds each of the
+`souther_instant`), which a host makes of the numbers the value means, each an `int64_t`
+(`souther_date_of_parts` takes a year, a month and a day; `souther_time_of_parts` an hour, a minute
+and a second; `souther_datetime_of_parts` all six; `souther_instant_of_parts` the second from the
+epoch and the nanosecond within it), and reads back as those numbers (`souther_date_parts` and the
+same for the others). A word of their own and not a `souther_string`, so that a host handed one where
+the other was meant has been handed something else; what a binding makes of it is the binding's.
+Every one of these makers writes the value through room and answers whether the numbers name one,
+so a month of 13, the thirtieth of February or integer text that is no integer is answered as that
+and ends nothing: the runtime decides what a value is, and a binding that checks first does so only
+to say it in its own words. It is a boundary's decoder alone that reports outside text as an issue.
+The PHP binding holds each of the
 four as a class of its runtime, as the Go binding does. An optional crosses as a presence
 and then what it holds: a constructor takes a byte and the words of the value, which are ignored
 where the byte is nought, and a reader writes the byte, and the value only where there is one. Each
@@ -469,7 +474,7 @@ but what a behavior answers, whose `..._answer_case` says.
 A list crosses as an address too, of type `souther_list`, wherever its element crosses: as a field,
 as what a behavior takes or answers, and as what a behavior a host implements takes or answers. A
 host builds one and reads one through functions the object defines for each way an element crosses,
-under the module: `souther7_m_<module>_l_<element>_construct`, taking a count and a column for each
+under the module: `souther<n>_m_<module>_l_<element>_construct`, taking a count and a column for each
 word an element crosses as and answering the list, `..._length`, and `..._at`, taking the list, an
 index and room for the element's words and answering one where the index is inside the list and
 nought, with nothing written, where it is not. `<element>` is the shape the element crosses in: a
@@ -488,7 +493,7 @@ an element is where it would read one, so such a list is built by a host and rea
 A function value crosses as an address too, of type `souther_function`, wherever a value holding
 one is handed across: today a published value and what such a value takes and answers, since a
 behavior's boundary and a field have no function in them. A host calls one through
-`souther7_m_<module>_fn_<shape>_call`, taking the value, what it takes as a host hands each over,
+`souther<n>_m_<module>_fn_<shape>_call`, taking the value, what it takes as a host hands each over,
 and room for what it answers, and answering the status the function answered. A host makes one of
 its own through `..._implement`, handing room laid out as `souther_hosted_function`, a pointer to a
 function of the type `..._implementation`, and what that function is handed first, and is answered
@@ -576,21 +581,25 @@ surface, so none of them names a function the others do not. A test holds the th
 object defines, to one set, reading each of them as it is.
 
 A host calls a function by a C identifier. The symbols one object built here calls in another carry
-`.` and `$`, and no C compiler or FFI that reads C declarations can name those. So what a host
-calls is spelt apart: `souther7`, the ABI generation, then the module as `_m_<segment>` per segment
-of its dotted name, then `_b_<behavior>`, `_v_<value>`, `_t_<type>`, or `_l_` and the shape a
-list's element crosses in, or `_fn_` and the shape of a function value, and what is done with it. A
-name is written as it is where it is ASCII letters and digits, with `_` doubled and any other
-character as `_u<hex>_`, its code point. So `shop.quote` is `souther7_m_shop_b_quote` and a
-behavior named `数量` is `..._b__u6570__u91cf_`, and inside a name `_` is only ever followed by `_`
-or `u`, which is what keeps every spelling readable back to the one set of names it was made from.
+`.` and `$`, and no C compiler or FFI that reads C declarations can name those. So what a host calls
+is spelt apart: `souther<n>`, `<n>` being the ABI generation, then the module as `_m_<segment>` per
+segment of its dotted name, then `_b_<behavior>`, `_v_<value>`, `_t_<type>`, or `_l_` and the shape
+a list's element crosses in, or `_fn_` and the shape of a function value, and what is done with it.
+A name is written as it is where it is ASCII letters and digits, with `_` doubled and any other
+character as `_u<hex>_`, its code point. So `shop.quote` is `souther9_m_shop_b_quote` at generation
+9, and a behavior named `数量` is `..._b__u6570__u91cf_`, and inside a name `_` is only ever followed
+by `_` or `u`, which is what keeps every spelling readable back to the one set of names it was made
+from.
 
 The functions generated code calls in the runtime are the runtime's own and carry no generation, so
 a linker would resolve one to a runtime that makes the call another way. The runtime instead defines
 a symbol only its generation defines, `souther_runtime_abi_<n>`, and every object refers to the one
 of its own: an object linked with a runtime of another generation has an undefined symbol.
 `native/crates/abi/generations/<n>.txt` records the contract each generation begins from, and a test
-fails when what the current one records changes without a new generation.
+fails when what the current one records changes without a new generation. A host asks a library
+which generation it answers to with `uint32_t souther_abi_generation(void)` before calling anything
+else, and refuses one it was not written for; that one function is outside every generation and the
+same in each.
 
 A published behavior and a published value have an entry of their own for a host, which converts
 what a host hands over and calls the symbol another object calls. The two are called by different
@@ -653,7 +662,7 @@ through a capability of the host's implementation and nothing else, so nothing d
 symbol of its own. A capability is two words, laid out as the header's `souther_capability`: the
 code a call through it reaches, which takes what the code is handed first and then what the behavior
 takes, and what it is handed first. The host makes one through
-`souther7_m_<module>_b_<behavior>_implement`, handing room for the capability, room laid out as
+`souther<n>_m_<module>_b_<behavior>_implement`, handing room for the capability, room laid out as
 `souther_hosted`, a pointer to a function of the type `..._implementation`, and what that function
 is to be handed first. The function takes that, then what the behavior takes and room for its
 answer, in the words a host hands a published behavior, and answers a status. A behavior with a body
@@ -784,8 +793,8 @@ PHP does with them — a `BcMath\Number`, text, a money library — is the appli
 A `Date`, a `Time`, a `DateTime` and an `Instant` are `Souther\Runtime\Date` and the classes of the
 other three names, held as their numbers (a year, month and day; an hour, minute and second; the
 second from the epoch and the nanosecond), checked where they are made against what the type holds,
-and handed over as the text `java.time` writes for each, which is the text the library reads and
-writes back. None of them is a `\DateTimeInterface`, a moment in a zone, which only an `Instant` is
+and handed over and read back as those numbers; the text `java.time` writes for each is only for
+PHP to show. None of them is a `\DateTimeInterface`, a moment in a zone, which only an `Instant` is
 and which does not reach every year one does; `Date::of` and `Instant::of` take one, and
 `Instant::toDateTime` gives one, to the microsecond.
 A module's classes build and read a list through that module's own functions and no other
@@ -833,8 +842,9 @@ that and not as whichever member moved since, as the driver reads a transport an
 carries.
 
 Everything else is in `bindings/php/runtime`, one Composer package every generated binding runs on.
-A host calls `$binding->run(fn () => ...)`: the run marks the arena, and when it ends it expires the
-run's session and resets the arena to the mark. No function of a binding takes a session. Each
+A host calls `$binding->run(fn () => ...)`: the run opens a scope of the arena, and when it ends it
+expires the run's session and closes the scope, which the library does only as the innermost scope
+open on the thread. No function of a binding takes a session. Each
 finds the innermost run going on this fiber of a library the binding was loaded for, and one called
 outside any run throws `OutsideAnyRun`. There is nothing for a caller to choose there: a
 computation belongs to the innermost run of its library, and a library's runs are on one fiber at a
@@ -844,7 +854,7 @@ was made in, and every read of one goes through the handle, which refuses a valu
 that has to outlive its run leaves it as its external form. Runs nest, and a value from an outer run
 may be handed to a call in an inner one. A value belongs to the run its memory is dropped with,
 which a binding knows by where the value came from. What a computation (a construction, a reading, a
-behavior, a published value) answers is made after the mark of the innermost run going, which is
+behavior, a published value) answers is made in the scope of the innermost run going, which is
 the run a function finds, and its answer belongs to it. What a field reader answers is a value the one read already held, made no
 later, so it belongs to that value's run, whichever run it is read in. What an implementation is
 handed belongs to the innermost run, which is no longer than it lives. A library is
@@ -905,7 +915,7 @@ lifetimes as a run and a run inside it are related. So every handle holds the li
 its address is reached only through what checks that the run a computation is started in is of
 the same runtime, and one another library made is refused before the call as `Failure::Foreign`;
 so is a behavior bound, at any depth, to what another library made. A library is told apart by the
-address of its `souther_mark`, which whatever works on one arena shares, so two `Library` values over
+address of its `souther_scope_open`, which whatever works on one arena shares, so two `Library` values over
 one file are one runtime, and a second root run of it on a thread with one open is refused where it
 is opened (`AlreadyRunning`).
 
@@ -988,8 +998,8 @@ the binding's import path, the module and the behavior, and never a spelling of 
 not take in a name replaced: two bindings in one program, and two modules ending alike, link together.
 
 A run is bracketed on one OS thread. The arena is per thread, and Go moves a goroutine between them,
-so `library.Run(func(r *Run) error { ... })` holds the goroutine on its thread from the mark to the
-reset (`runtime.LockOSThread`), and a callback from the library comes back on the same thread, since
+so `library.Run(func(r *Run) error { ... })` holds the goroutine on its thread from the scope's
+opening to its closing (`runtime.LockOSThread`), and a callback from the library comes back on the same thread, since
 cgo runs it where it was called from. What Rust holds in types, Go checks when a value is used, and
 a run and its values are of the binding's own tag, so a run of another generated binding is another
 type and does not compile.
@@ -1002,7 +1012,7 @@ type and does not compile.
 - A value another runtime made, or a behavior bound to one at any depth, and a second root run of one
   runtime on one thread, are what Rust also reports at run time. They are errors
   (`ErrForeignHandle`, `ErrAlreadyRunning`). A library is told apart by the address of its
-  `souther_mark`, so two `Library` values over one file are one runtime.
+  `souther_scope_open`, so two `Library` values over one file are one runtime.
 - Every function of the binding that takes a run asks it first (`souther.Making(r)`), whatever it goes
   on to do: calling a function of the host's own that touches no run is asked the same as calling the
   library's, and a test holds the generated code to it.

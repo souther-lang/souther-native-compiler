@@ -2,7 +2,6 @@ package souther.bindings.go;
 
 import souther.bindings.BindingGenerator;
 import souther.bindings.BindingInput;
-import souther.bindings.Generated;
 import souther.bindings.NotBindable;
 
 import java.io.IOException;
@@ -18,14 +17,14 @@ public final class GoBindingGenerator implements BindingGenerator {
     }
 
     @Override
-    public void preflight(Path into, Map<String, String> options) throws IOException {
-        GoBindings.refuseAhead(into, importPath(options));
+    public void preflight(Map<String, String> options) {
+        GoBindings.refuseAhead(importPath(options));
     }
 
     @Override
-    public Generated generate(BindingInput input, Path into, Map<String, String> options)
+    public void generate(BindingInput input, Path into, Map<String, String> options)
             throws IOException {
-        return GoBindings.generate(input, into, importPath(options));
+        GoBindings.generate(input, into, importPath(options));
     }
 
     private static String importPath(Map<String, String> options) {

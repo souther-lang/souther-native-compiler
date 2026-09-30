@@ -151,7 +151,7 @@ class AValueIsReadFromTheFormItIsWrittenInTest {
                     extern uint8_t souther_string_of_utf8(const uint8_t *, int64_t, Value *);
                     extern void lineQuantity(Value, int64_t *) __asm__("%3$s");
                     {
-                        int64_t mark = souther_mark();
+                        int64_t scope = souther_scope_open();
                         Value three = 0;
                         money(3, &three);
                         Value note = 0;
@@ -168,7 +168,7 @@ class AValueIsReadFromTheFormItIsWrittenInTest {
                         int64_t quantity = -1;
                         lineQuantity(souther_decoded_value(read), &quantity);
                         printf("read quantity: %%lld\\n", (long long) quantity);
-                        souther_reset(mark);
+                        souther_scope_close(scope);
                     }
                 """.formatted(
                 Decoding.symbol("wire", "Money", "construct"),

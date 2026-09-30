@@ -50,7 +50,7 @@ class TheLauncherWritesTheBindingsItFindsTest {
         Bindings installed = Bindings.installed();
 
         for (KnownBindings.Kind kind : KnownBindings.all()) {
-            assertThat(installed.generatorFor(kind).id()).isEqualTo(kind.id());
+            assertThat(installed.generatorFor(kind).implementation()).isNotBlank();
         }
     }
 

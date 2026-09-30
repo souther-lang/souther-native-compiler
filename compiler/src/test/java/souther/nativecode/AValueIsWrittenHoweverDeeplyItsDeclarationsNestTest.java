@@ -75,8 +75,8 @@ class AValueIsWrittenHoweverDeeplyItsDeclarationsNestTest {
 
                 typedef const void *Value;
 
-                extern int64_t souther_mark(void);
-                extern void souther_reset(int64_t);
+                extern int64_t souther_scope_open(void);
+                extern uint8_t souther_scope_close(int64_t);
                 extern int64_t souther_string_length(Value);
                 extern const uint8_t *souther_string_bytes(Value);
 
@@ -114,7 +114,7 @@ class AValueIsWrittenHoweverDeeplyItsDeclarationsNestTest {
                 }
 
                 int main(void) {
-                    int64_t mark = souther_mark();
+                    int64_t scope = souther_scope_open();
 
                     /* Built from the innermost level out, so the last one built is the outermost. */
                     Value outermost = 0;
@@ -164,7 +164,7 @@ class AValueIsWrittenHoweverDeeplyItsDeclarationsNestTest {
                     printf("held by its encoder: as spelt %%d\\n",
                            asSpelt(heldEncoded(wrapped), &heldSpelt));
 
-                    souther_reset(mark);
+                    souther_scope_close(scope);
                     return 0;
                 }
                 """.formatted(

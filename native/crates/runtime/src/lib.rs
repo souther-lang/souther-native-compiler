@@ -45,6 +45,7 @@ pub use rational::*;
 use souther_text::{Text as Held, append, code_points, compare};
 use std::cell::RefCell;
 use std::cmp::Ordering;
+use std::sync::atomic::{AtomicI64, Ordering as AtomicOrdering};
 pub use temporal::*;
 
 /// How much room a run starts with, and how much more it takes each time it runs out.
@@ -165,10 +166,36 @@ pub struct Value {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Count(pub i64);
 
-/// Where the arena stood, to be given back to [`souther_reset`].
+/// An open scope, as [`souther_scope_open`] answers it and [`souther_scope_close`] takes it back:
+/// a token, and never where the arena stands.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Mark(pub i64);
+pub struct Scope(pub i64);
+
+/// A `Bool`, or whether something is there: one byte, which the library answers as nought or one
+/// and reads as true wherever it is not nought. Its own type, and not a `u8`, for the reason
+/// [`Count`] is: a byte of memory and a truth are both eight bits, and are two words.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Bool(pub u8);
+
+impl Bool {
+    /// True.
+    pub const TRUE: Bool = Bool(1);
+    /// False.
+    pub const FALSE: Bool = Bool(0);
+
+    /// Whether this is true: anything but nought is.
+    pub fn is(self) -> bool {
+        self.0 != 0
+    }
+}
+
+impl From<bool> for Bool {
+    fn from(truth: bool) -> Self {
+        Bool(u8::from(truth))
+    }
+}
 
 /// Which of two strings comes first: below, at or above nought.
 #[repr(transparent)]
@@ -179,7 +206,7 @@ pub struct Comparison(pub i64);
 ///
 /// # Safety
 ///
-/// The pointer is good until a mark taken before this call is reset. Reading it after that is
+/// The pointer is good until the scope open around this call is closed. Reading it after that is
 /// reading room something else has been handed.
 /// # Panics
 ///
@@ -193,21 +220,65 @@ pub extern "C" fn souther_alloc(size: Count) -> *mut u8 {
     ARENA.with(|it| it.borrow_mut().room(wanted))
 }
 
-/// Where the arena stands, for a caller about to bracket a call.
+/// Which ABI generation this runtime, and every library built with it, answers to: the one
+/// function a host calls before any other, and the same in every generation
+/// ([`souther_native_abi::GENERATION_QUERY`]).
 #[unsafe(no_mangle)]
-pub extern "C" fn souther_mark() -> Mark {
-    Mark(ARENA.with(|it| it.borrow().mark() as i64))
+pub extern "C" fn souther_abi_generation() -> u32 {
+    souther_native_abi::ABI_GENERATION
 }
 
-/// Drops what a call made, back to `mark`.
-/// # Panics
-///
-/// Where the mark is one this never issued. Read as nought it would drop what a caller further out
-/// is still holding, which is the one thing a mark is for.
+/// The next token a scope is answered with. Shared by every thread, so a token another thread was
+/// answered is never one this thread has open.
+static TOKENS: AtomicI64 = AtomicI64::new(1);
+
+thread_local! {
+    /// The scopes open on this thread, innermost last: each token and where the arena stood when
+    /// it was opened.
+    static SCOPES: RefCell<Vec<(i64, usize)>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Opens a scope on this thread: what the library answers until it is closed lives until then.
 #[unsafe(no_mangle)]
-pub extern "C" fn souther_reset(mark: Mark) {
-    let held = usize::try_from(mark.0).expect("a mark is one this arena answered");
-    ARENA.with(|it| it.borrow_mut().reset(held));
+pub extern "C" fn souther_scope_open() -> Scope {
+    let token = TOKENS.fetch_add(1, AtomicOrdering::Relaxed);
+    let stood = ARENA.with(|it| it.borrow().mark());
+    SCOPES.with(|it| it.borrow_mut().push((token, stood)));
+    Scope(token)
+}
+
+/// Closes `scope` and drops everything made since it was opened, where it is the innermost scope
+/// open on this thread, and answers whether it was. A token never answered, one already closed, one
+/// with a scope still open inside it, or one another thread opened, is answered as that and
+/// changes nothing: the host's mistake is its to report, and never a run's values dropped under
+/// another scope still holding them.
+#[unsafe(no_mangle)]
+pub extern "C" fn souther_scope_close(scope: Scope) -> Bool {
+    let stood = SCOPES.with(|it| {
+        let mut open = it.borrow_mut();
+        match open.last() {
+            Some(&(token, stood)) if token == scope.0 => {
+                open.pop();
+                Some(stood)
+            }
+            _ => None,
+        }
+    });
+    match stood {
+        Some(stood) => {
+            ARENA.with(|it| it.borrow_mut().reset(stood));
+            Bool::TRUE
+        }
+        None => Bool::FALSE,
+    }
+}
+
+/// How many slots this thread's arena has handed out and not had back: an instrument for the
+/// runtime's own tests and the driver's, which count what a run takes. In neither table, so no
+/// header declares it and no library exports it.
+#[unsafe(no_mangle)]
+pub extern "C" fn souther_arena_taken() -> i64 {
+    ARENA.with(|it| it.borrow().mark() as i64)
 }
 
 /// How many bytes of text a string carries.
@@ -224,7 +295,7 @@ unsafe fn length(at: *const u8) -> usize {
 /// The text a string holds, for as long as the pointer to it is borrowed.
 ///
 /// Bound to a borrow of the caller's pointer and not to a lifetime the caller names: what a string
-/// holds is good until a mark below it is reset, which nothing here can see, so the text is let out
+/// holds is good until the scope it was made in closes, which nothing here can see, so the text is let out
 /// no further than the call that was handed the pointer.
 ///
 /// # Safety
@@ -267,7 +338,7 @@ pub(crate) fn string_of(text: &str) -> *mut Text {
 ///
 /// # Safety
 ///
-/// Both pointers are ones a string stands at, and the mark below each of them still stands.
+/// Both pointers are ones a string stands at, and the scope each was made in is still open.
 ///
 /// Every one of these is `unsafe` and not a safe function with a note about how to call it. What a
 /// safe function promises is that no way of calling it from safe code is a memory fault, and these
@@ -329,7 +400,7 @@ pub unsafe extern "C" fn souther_string_concat(
     left: *const Text,
     right: *const Text,
     out: *mut *mut Text,
-) -> i8 {
+) -> Bool {
     let joined = unsafe { append(text(&left), text(&right), STRING_HOLDS) };
     unsafe { answered(joined.as_deref().map(string_of), out) }
 }
@@ -345,45 +416,32 @@ pub unsafe extern "C" fn souther_string_concat(
 /// by the language's Unicode version, whatever the host's own is, and within what a `String` holds
 /// (`souther_text::admitted`). So every string holds text as the language says a string is,
 /// whoever made it. `out` is written and `1` answered where it is; nothing is written and `0` is
-/// answered where its canonical value has no place a `String` holds — a binding turns that into
-/// whatever it calls `RequiredFormHasNoPlace`.
+/// answered where there is no `String` of the bytes: a count below nought, bytes that are not
+/// UTF-8, or text whose canonical value has no place a `String` holds. The runtime decides all
+/// three and ends nothing on any of them; a binding that wants to tell them apart, to say which a
+/// host's text was, checks the first two itself, as each of this repository's does, and turns the
+/// third into whatever it calls `RequiredFormHasNoPlace`.
 ///
 /// # Safety
 ///
-/// `bytes` points at `length` bytes that may be read, and `out` is room for the address of a
-/// `Text`.
-///
-/// # Panics
-///
-/// Where the length is below nought, or the bytes are not UTF-8, which ends the process: a panic
-/// does not leave a function a C caller called. A host that hands over what is no text has no
-/// string to be answered with, and Rust's own `&str` and PHP's own UTF-8 check already hold a
-/// binding to handing over text before it calls this, so an invalid byte sequence reaching here is
-/// a binding's own contract violated and not a value this answers `0` for: `0` means only that the
-/// text's canonical value has no place, never that it was not text.
+/// `bytes` points at `length` bytes that may be read, where `length` is above nought, and `out` is
+/// room for the address of a `Text`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_string_of_utf8(
     bytes: *const u8,
     length: Count,
     out: *mut *mut Text,
-) -> i8 {
-    let held =
-        usize::try_from(length.0).expect("text is handed over as bytes, and never fewer than 0");
+) -> Bool {
+    let Ok(held) = usize::try_from(length.0) else {
+        return unsafe { answered(None, out) };
+    };
     let bytes = if held == 0 {
         &[][..]
     } else {
         unsafe { std::slice::from_raw_parts(bytes, held) }
     };
-    let admitted = match souther_text::admitted(bytes, STRING_HOLDS) {
-        Ok(admitted) => admitted,
-        Err(souther_text::AdmissionRefusal::NotText) => {
-            panic!("text handed to a Souther library is UTF-8")
-        }
-        Err(souther_text::AdmissionRefusal::NoPlace) => {
-            return unsafe { answered(None, out) };
-        }
-    };
-    unsafe { answered(Some(string_of(&admitted)), out) }
+    let admitted = souther_text::admitted(bytes, STRING_HOLDS).ok();
+    unsafe { answered(admitted.as_deref().map(string_of), out) }
 }
 
 /// How many bytes of text the string carries, for the same caller.
@@ -485,19 +543,18 @@ fn carried(token: &[u8; 1], held: Option<i64>) -> *const Value {
     room.cast_const().cast()
 }
 
-/// What a value carrying a primitive holds.
+/// What a value of a union carrying the primitive whose case `token` is holds, or none where the
+/// value is another case: which case a value is, is read off the value, so a host asking a value
+/// for a case it is not is answered that and not handed what another case's slot holds.
 ///
 /// # Safety
 ///
-/// `value` is a value of a union that a test of which case it is said is the primitive's case: what
-/// is read is not asked again here, as a run reading one out after the same test does not ask.
-unsafe fn held(value: *const Value) -> i64 {
+/// `value` is a value of a union the library answered, and the scope it was made in is open.
+unsafe fn held(value: *const Value, token: &[u8; 1]) -> Option<i64> {
     unsafe {
-        value
-            .cast::<u8>()
-            .add(CARRIED as usize)
-            .cast::<i64>()
-            .read()
+        let at = value.cast::<u8>();
+        let which = at.add(WHICH as usize).cast::<i64>().read();
+        (which == token.as_ptr() as i64).then(|| at.add(CARRIED as usize).cast::<i64>().read())
     }
 }
 
@@ -507,30 +564,36 @@ pub extern "C" fn souther_case_int_make(value: i64) -> *const Value {
     carried(&CASE_INT, Some(value))
 }
 
-/// What a value of a union that is the case `Int` holds.
+/// What a value of a union that is the case `Int` holds, written through `out` where it is
+/// that case, answering whether it is.
 ///
 /// # Safety
 ///
-/// `value` is one a test of which case it is said is `Int`.
+/// `value` is a value of a union the library answered, the scope it was made in is open, and
+/// `out` is room for what the case holds.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_case_int_read(value: *const Value) -> i64 {
-    unsafe { held(value) }
+pub unsafe extern "C" fn souther_case_int_read(value: *const Value, out: *mut i64) -> Bool {
+    unsafe { answered(held(value, &CASE_INT), out) }
 }
 
 /// A `Bool` carried as a case of a union: nought or one in its slot, as generated code widens one.
+/// A host's byte is a `Bool` by being nought or not, so any other byte is `true`, and the slot
+/// never holds a third value.
 #[unsafe(no_mangle)]
-pub extern "C" fn souther_case_bool_make(value: i8) -> *const Value {
-    carried(&CASE_BOOL, Some(i64::from(value as u8)))
+pub extern "C" fn souther_case_bool_make(value: Bool) -> *const Value {
+    carried(&CASE_BOOL, Some(i64::from(value != Bool::FALSE)))
 }
 
-/// What a value of a union that is the case `Bool` holds.
+/// What a value of a union that is the case `Bool` holds, written through `out` where it is
+/// that case, answering whether it is.
 ///
 /// # Safety
 ///
-/// `value` is one a test of which case it is said is `Bool`.
+/// `value` is a value of a union the library answered, the scope it was made in is open, and
+/// `out` is room for what the case holds.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_case_bool_read(value: *const Value) -> i8 {
-    (unsafe { held(value) } & 0xff) as u8 as i8
+pub unsafe extern "C" fn souther_case_bool_read(value: *const Value, out: *mut Bool) -> Bool {
+    unsafe { answered(held(value, &CASE_BOOL).map(|it| Bool::from(it != 0)), out) }
 }
 
 /// A `String` carried as a case of a union: its address in the slot, the text where it was.
@@ -539,14 +602,19 @@ pub extern "C" fn souther_case_string_make(value: *const Text) -> *const Value {
     carried(&CASE_STRING, Some(value as i64))
 }
 
-/// What a value of a union that is the case `String` holds.
+/// What a value of a union that is the case `String` holds, written through `out` where it is
+/// that case, answering whether it is.
 ///
 /// # Safety
 ///
-/// `value` is one a test of which case it is said is `String`.
+/// `value` is a value of a union the library answered, the scope it was made in is open, and
+/// `out` is room for what the case holds.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_case_string_read(value: *const Value) -> *const Text {
-    (unsafe { held(value) }) as *const Text
+pub unsafe extern "C" fn souther_case_string_read(
+    value: *const Value,
+    out: *mut *mut Text,
+) -> Bool {
+    unsafe { answered(held(value, &CASE_STRING).map(|it| it as *mut Text), out) }
 }
 
 /// A `Decimal` carried as a case of a union: its address in the slot, the value where it was.
@@ -555,14 +623,19 @@ pub extern "C" fn souther_case_decimal_make(value: *const Decimal) -> *const Val
     carried(&CASE_DECIMAL, Some(value as i64))
 }
 
-/// What a value of a union that is the case `Decimal` holds.
+/// What a value of a union that is the case `Decimal` holds, written through `out` where it is
+/// that case, answering whether it is.
 ///
 /// # Safety
 ///
-/// `value` is one a test of which case it is said is `Decimal`.
+/// `value` is a value of a union the library answered, the scope it was made in is open, and
+/// `out` is room for what the case holds.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_case_decimal_read(value: *const Value) -> *const Decimal {
-    (unsafe { held(value) }) as *const Decimal
+pub unsafe extern "C" fn souther_case_decimal_read(
+    value: *const Value,
+    out: *mut *mut Decimal,
+) -> Bool {
+    unsafe { answered(held(value, &CASE_DECIMAL).map(|it| it as *mut Decimal), out) }
 }
 
 /// A `Date` carried as a case of a union: its address in the slot, the value where it was.
@@ -571,14 +644,16 @@ pub extern "C" fn souther_case_date_make(value: *const Date) -> *const Value {
     carried(&CASE_DATE, Some(value as i64))
 }
 
-/// What a value of a union that is the case `Date` holds.
+/// What a value of a union that is the case `Date` holds, written through `out` where it is
+/// that case, answering whether it is.
 ///
 /// # Safety
 ///
-/// `value` is one a test of which case it is said is `Date`.
+/// `value` is a value of a union the library answered, the scope it was made in is open, and
+/// `out` is room for what the case holds.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_case_date_read(value: *const Value) -> *const Date {
-    (unsafe { held(value) }) as *const Date
+pub unsafe extern "C" fn souther_case_date_read(value: *const Value, out: *mut *mut Date) -> Bool {
+    unsafe { answered(held(value, &CASE_DATE).map(|it| it as *mut Date), out) }
 }
 
 /// A `Time` carried as a case of a union: its address in the slot, the value where it was.
@@ -587,14 +662,16 @@ pub extern "C" fn souther_case_time_make(value: *const Time) -> *const Value {
     carried(&CASE_TIME, Some(value as i64))
 }
 
-/// What a value of a union that is the case `Time` holds.
+/// What a value of a union that is the case `Time` holds, written through `out` where it is
+/// that case, answering whether it is.
 ///
 /// # Safety
 ///
-/// `value` is one a test of which case it is said is `Time`.
+/// `value` is a value of a union the library answered, the scope it was made in is open, and
+/// `out` is room for what the case holds.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_case_time_read(value: *const Value) -> *const Time {
-    (unsafe { held(value) }) as *const Time
+pub unsafe extern "C" fn souther_case_time_read(value: *const Value, out: *mut *mut Time) -> Bool {
+    unsafe { answered(held(value, &CASE_TIME).map(|it| it as *mut Time), out) }
 }
 
 /// A `DateTime` carried as a case of a union: its address in the slot, the value where it was.
@@ -603,14 +680,24 @@ pub extern "C" fn souther_case_datetime_make(value: *const DateTime) -> *const V
     carried(&CASE_DATETIME, Some(value as i64))
 }
 
-/// What a value of a union that is the case `DateTime` holds.
+/// What a value of a union that is the case `DateTime` holds, written through `out` where it is
+/// that case, answering whether it is.
 ///
 /// # Safety
 ///
-/// `value` is one a test of which case it is said is `DateTime`.
+/// `value` is a value of a union the library answered, the scope it was made in is open, and
+/// `out` is room for what the case holds.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_case_datetime_read(value: *const Value) -> *const DateTime {
-    (unsafe { held(value) }) as *const DateTime
+pub unsafe extern "C" fn souther_case_datetime_read(
+    value: *const Value,
+    out: *mut *mut DateTime,
+) -> Bool {
+    unsafe {
+        answered(
+            held(value, &CASE_DATETIME).map(|it| it as *mut DateTime),
+            out,
+        )
+    }
 }
 
 /// A `Instant` carried as a case of a union: its address in the slot, the value where it was.
@@ -619,14 +706,19 @@ pub extern "C" fn souther_case_instant_make(value: *const Instant) -> *const Val
     carried(&CASE_INSTANT, Some(value as i64))
 }
 
-/// What a value of a union that is the case `Instant` holds.
+/// What a value of a union that is the case `Instant` holds, written through `out` where it is
+/// that case, answering whether it is.
 ///
 /// # Safety
 ///
-/// `value` is one a test of which case it is said is `Instant`.
+/// `value` is a value of a union the library answered, the scope it was made in is open, and
+/// `out` is room for what the case holds.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_case_instant_read(value: *const Value) -> *const Instant {
-    (unsafe { held(value) }) as *const Instant
+pub unsafe extern "C" fn souther_case_instant_read(
+    value: *const Value,
+    out: *mut *mut Instant,
+) -> Bool {
+    unsafe { answered(held(value, &CASE_INSTANT).map(|it| it as *mut Instant), out) }
 }
 
 // Each case the language gives holds nothing, so a value of it is its token alone. Written out one
@@ -683,9 +775,10 @@ pub extern "C" fn souther_case_not_a_finite_decimal_make() -> *const Value {
 #[cfg(test)]
 mod tests {
     use super::{
-        BUILT_IN_CASE_TOKENS, Count, Text, souther_alloc, souther_mark, souther_reset,
-        souther_string_bytes, souther_string_code_points, souther_string_compare,
-        souther_string_concat, souther_string_length, souther_string_of_utf8,
+        BUILT_IN_CASE_TOKENS, Bool, Count, Scope, Text, souther_alloc, souther_arena_taken,
+        souther_scope_close, souther_scope_open, souther_string_bytes, souther_string_code_points,
+        souther_string_compare, souther_string_concat, souther_string_length,
+        souther_string_of_utf8,
     };
 
     use souther_native_abi::{BUILT_IN_CASES, SLOT};
@@ -695,12 +788,12 @@ mod tests {
     ///
     /// What the call owes is said here and not at every row below: the bytes are a `str`'s, so
     /// there are as many of them as this says and they are valid UTF-8; and every string these
-    /// tests make is given back before the mark they were made under is reset.
+    /// tests make is given back before the scope they were made in closes.
     fn made(text: &str) -> *mut Text {
         let mut out = std::ptr::null_mut();
         let admitted =
             unsafe { souther_string_of_utf8(text.as_ptr(), Count(text.len() as i64), &mut out) };
-        assert_eq!(admitted, 1, "test text has a place");
+        assert_eq!(admitted, Bool::TRUE, "test text has a place");
         out
     }
 
@@ -711,7 +804,10 @@ mod tests {
 
     fn joined_text(one: *const Text, other: *const Text) -> *mut Text {
         let mut out = std::ptr::null_mut();
-        assert_eq!(unsafe { souther_string_concat(one, other, &mut out) }, 1);
+        assert_eq!(
+            unsafe { souther_string_concat(one, other, &mut out) },
+            Bool::TRUE
+        );
         out
     }
 
@@ -735,7 +831,7 @@ mod tests {
     /// is the two regional indicators it is made of and not the one thing a reader sees.
     #[test]
     fn a_length_counts_code_points_and_not_bytes_or_what_a_reader_sees() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         for (text, counted) in [
             ("", 0),
             ("cart", 4),
@@ -748,7 +844,7 @@ mod tests {
             let at = made(text);
             assert_eq!(unsafe { souther_string_code_points(at) }, counted, "{text}");
         }
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     /// Every case the table names has a token here, and nothing else does, and each token is a
@@ -780,7 +876,7 @@ mod tests {
     /// report this going wrong except the answers.
     #[test]
     fn every_pointer_answered_is_aligned_to_a_slot() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         for size in [1i64, 7, 8, 9, 16, 40, 4096] {
             for _ in 0..4 {
                 let at = room(size);
@@ -791,14 +887,14 @@ mod tests {
                 );
             }
         }
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     /// Room for less than a slot is still a slot, so what is written into it does not reach into
     /// what was answered next.
     #[test]
     fn room_for_less_than_a_slot_is_a_slot_of_its_own() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         let one = room(1).cast::<i64>();
         let other = room(1).cast::<i64>();
         unsafe {
@@ -806,12 +902,12 @@ mod tests {
             other.write(0);
             assert_eq!(one.read(), -1);
         }
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     #[test]
     fn what_was_written_is_there_until_the_mark_is_reset() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         let held = room(16).cast::<i64>();
         unsafe {
             held.write(7);
@@ -819,7 +915,7 @@ mod tests {
             assert_eq!(held.read(), 7);
             assert_eq!(held.add(1).read(), 11);
         }
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     /// What the bracket is for: a run takes room, the caller gives it back, and the next run
@@ -829,35 +925,63 @@ mod tests {
     /// to the allocator, and what comes back next is wherever that allocator answers; what this
     /// promises is that a run repeated a thousand times costs what one costs.
     #[test]
-    fn room_taken_since_a_mark_is_taken_again_rather_than_added_to() {
-        let mark = souther_mark();
+    fn room_taken_in_a_scope_is_taken_again_rather_than_added_to() {
+        let before = souther_arena_taken();
+        let scope = souther_scope_open();
         let _taken = room(32);
-        let after_one = souther_mark();
-        souther_reset(mark);
+        let after_one = souther_arena_taken();
+        assert_eq!(souther_scope_close(scope), Bool::TRUE);
 
         for _ in 0..1000 {
+            let scope = souther_scope_open();
             let _taken = room(32);
-            assert_eq!(souther_mark(), after_one);
-            souther_reset(mark);
+            assert_eq!(souther_arena_taken(), after_one);
+            assert_eq!(souther_scope_close(scope), Bool::TRUE);
         }
-        assert_eq!(souther_mark(), mark);
+        assert_eq!(souther_arena_taken(), before);
     }
 
-    /// A reset takes back what it was asked for and no more.
+    /// A scope closes only as the innermost open scope of the thread that opened it, and once: any
+    /// other token is answered as that and drops nothing.
+    #[test]
+    fn a_scope_that_is_not_the_innermost_open_one_is_refused_and_drops_nothing() {
+        let outer = souther_scope_open();
+        let inner = souther_scope_open();
+        let held = room(8).cast::<i64>();
+        unsafe { held.write(7) };
+        assert_eq!(souther_scope_close(outer), Bool::FALSE, "out of order");
+        assert_eq!(
+            souther_scope_close(Scope(i64::MAX)),
+            Bool::FALSE,
+            "never answered"
+        );
+        assert_eq!(unsafe { held.read() }, 7);
+        let elsewhere = std::thread::spawn(|| souther_scope_open()).join().unwrap();
+        assert_eq!(
+            souther_scope_close(elsewhere),
+            Bool::FALSE,
+            "another thread's"
+        );
+        assert_eq!(souther_scope_close(inner), Bool::TRUE);
+        assert_eq!(souther_scope_close(inner), Bool::FALSE, "twice");
+        assert_eq!(souther_scope_close(outer), Bool::TRUE);
+    }
+
+    /// Closing a scope takes back what was made in it and no more.
     #[test]
     fn what_was_taken_before_a_mark_stays_where_it_is() {
         let held = room(8).cast::<i64>();
         unsafe { held.write(42) };
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         let _dropped = room(4096);
-        souther_reset(mark);
+        souther_scope_close(scope);
         assert_eq!(unsafe { held.read() }, 42);
     }
 
     /// A block's worth at a time, so what is answered crosses the block the arena starts with.
     #[test]
     fn room_past_one_block_is_still_room() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         let mut held = Vec::new();
         for value in 0..4096i64 {
             let at = room(1024).cast::<i64>();
@@ -867,26 +991,26 @@ mod tests {
         for (value, at) in held.iter().enumerate() {
             assert_eq!(unsafe { at.read() }, value as i64);
         }
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     /// A host's text is admitted where it comes in: put in NFC by the language's Unicode version,
     /// so a host normalizing by its own, or not at all, hands over the same string.
     #[test]
     fn a_hosts_text_is_put_in_nfc_where_it_comes_in() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         assert_eq!(said(made("e\u{301}")), "\u{e9}");
         assert_eq!(compared(made("e\u{301}"), made("\u{e9}")), 0);
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     #[test]
     fn a_string_carries_the_text_it_was_made_from() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         assert_eq!(said(made("hello")), "hello");
         assert_eq!(said(made("")), "");
         assert_eq!(said(made("\u{0}after a nought")), "\u{0}after a nought");
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     /// Text a host hands over past what a `String` holds (`souther_text::LONGEST_TEXT`, 2^28 - 1
@@ -905,7 +1029,7 @@ mod tests {
     /// coincide and the allocation stays a plain memset.
     #[test]
     fn text_past_what_a_string_holds_has_no_place() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         let longest = usize::try_from(souther_text::LONGEST_TEXT).unwrap();
         let past_the_bound = "a".repeat(longest + 1);
         let mut out = std::ptr::null_mut();
@@ -916,31 +1040,31 @@ mod tests {
                 &mut out,
             )
         };
-        assert_eq!(admitted, 0, "one code point more has no place");
+        assert_eq!(admitted, Bool::FALSE, "one code point more has no place");
         assert!(out.is_null(), "nothing is written where there is no place");
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     /// Two strings are equal by what they say. Made separately they stand at two addresses, and an
     /// answer read off the addresses would be the wrong one for exactly this pair.
     #[test]
     fn two_strings_of_one_text_made_separately_are_equal() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         let one = made("hello");
         let other = made("hello");
 
         assert_ne!(one, other);
         assert_eq!(compared(one, other), 0);
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     #[test]
     fn a_string_that_begins_another_comes_before_it() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         assert_eq!(compared(made("ab"), made("abc")), -1);
         assert_eq!(compared(made("abc"), made("ab")), 1);
         assert_eq!(compared(made(""), made("a")), -1);
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     /// The order is by scalar value, which is the order of the bytes and not the order of a JVM
@@ -951,23 +1075,23 @@ mod tests {
     /// read the text back as those units would answer the other way here.
     #[test]
     fn text_is_ordered_by_scalar_value_and_not_by_utf_16_code_unit() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         let astral = "\u{20bb7}";
         let basic = "\u{ffe5}";
 
         assert_eq!(compared(made(astral), made(basic)), 1);
         assert_eq!(compared(made(basic), made(astral)), -1);
         assert!(astral.encode_utf16().next() < basic.encode_utf16().next());
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     #[test]
     fn two_strings_joined_say_one_and_then_the_other() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         assert_eq!(said(joined_text(made("ab"), made("cd"))), "abcd");
         assert_eq!(said(joined_text(made(""), made("cd"))), "cd");
         assert_eq!(said(joined_text(made("ab"), made(""))), "ab");
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     /// A join makes a third value and leaves both operands as they were. Nothing frees a Souther
@@ -975,7 +1099,7 @@ mod tests {
     /// still holds after it.
     #[test]
     fn a_join_leaves_both_of_its_operands_as_they_were() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         let before = made("ab");
         let after = made("cd");
 
@@ -984,17 +1108,17 @@ mod tests {
         assert_eq!(said(joined), "abcd");
         assert_eq!(said(before), "ab");
         assert_eq!(said(after), "cd");
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     /// A join is a string like any other, so joining one again is not a different question.
     #[test]
     fn a_joined_string_is_one_that_can_be_joined_and_compared_again() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         let joined = joined_text(made("ab"), made("cd"));
 
         assert_eq!(compared(joined, made("abcd")), 0);
         assert_eq!(said(joined_text(joined, made("ef"))), "abcdef");
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 }

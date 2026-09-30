@@ -1,6 +1,7 @@
 package souther.bindings.rust;
 
 import org.jspecify.annotations.Nullable;
+import souther.bindings.Manifest;
 import souther.bindings.Manifest.ListCrossing;
 import souther.bindings.Manifest.Shape;
 import souther.bindings.Manifest.Word;
@@ -70,12 +71,21 @@ sealed interface Crossing {
 
     /** What Rust calls one word, as it stands in a function's parameters and in room. */
     static String word(Word word) {
+        // A number is the type its representation is, as the ABI records it; an address is named
+        // for what it is the address of.
+        String number = switch (word.representation()) {
+            case U8 -> "u8";
+            case U32 -> "u32";
+            case I32 -> "i32";
+            case I64 -> "i64";
+            case ADDRESS -> null;
+        };
+        if (number != null) {
+            return number;
+        }
         return switch (word) {
-            case STATUS -> "u32";
-            case INT, COUNT, MARK -> "i64";
-            case BOOL -> "u8";
-            case CASE -> "u32";
-            case OUTCOME -> "i32";
+            case STATUS, INT, COUNT, SCOPE, BOOL, CASE, OUTCOME ->
+                    throw new IllegalStateException(word + " is a number");
             case BYTES -> "*const u8";
             case VALUE, STRING, DECIMAL, DATE, TIME, DATETIME, INSTANT, DECODED, ISSUE, LIST,
                  FUNCTION -> "rt::Word";
@@ -91,7 +101,7 @@ sealed interface Crossing {
      */
     static String nothing(Word word) {
         return switch (word) {
-            case INT, COUNT, MARK, STATUS, CASE, OUTCOME, BOOL -> "0";
+            case INT, COUNT, SCOPE, STATUS, CASE, OUTCOME, BOOL -> "0";
             case BYTES, VALUE, STRING, DECIMAL, DATE, TIME, DATETIME, INSTANT, DECODED, ISSUE,
                  LIST, FUNCTION, REQUIREMENTS -> "std::ptr::null()";
             case USERDATA -> "std::ptr::null_mut()";
@@ -152,19 +162,20 @@ sealed interface Crossing {
          * or the runtime's, or null where this binding has no way to hold that pair. Both are
          * asked, the name and the word, as the PHP binding asks them.
          */
-        static @Nullable Whole primitive(String name, Word word) {
-            Kind kind = switch (name) {
-                case "Int" -> word == Word.INT ? Kind.INT : null;
-                case "Bool" -> word == Word.BOOL ? Kind.BOOL : null;
-                case "String" -> word == Word.STRING ? Kind.STRING : null;
-                case "Decimal" -> word == Word.DECIMAL ? Kind.DECIMAL : null;
-                // Each of the four as the runtime's type for it, held as its numbers and handed
-                // over as the text `java.time` writes, which the library reads.
-                case "Date" -> word == Word.DATE ? Kind.DATE : null;
-                case "Time" -> word == Word.TIME ? Kind.TIME : null;
-                case "DateTime" -> word == Word.DATETIME ? Kind.DATETIME : null;
-                case "Instant" -> word == Word.INSTANT ? Kind.INSTANT : null;
-                default -> null;
+        static @Nullable Whole primitive(Manifest.Primitive primitive, Word word) {
+            Kind kind = switch (primitive) {
+                case INT -> word == Word.INT ? Kind.INT : null;
+                case BOOL -> word == Word.BOOL ? Kind.BOOL : null;
+                case STRING -> word == Word.STRING ? Kind.STRING : null;
+                case DECIMAL -> word == Word.DECIMAL ? Kind.DECIMAL : null;
+                // Each of the four as the runtime's type for it, held as the numbers it means and
+                // handed over as those numbers.
+                case DATE -> word == Word.DATE ? Kind.DATE : null;
+                case TIME -> word == Word.TIME ? Kind.TIME : null;
+                case DATETIME -> word == Word.DATETIME ? Kind.DATETIME : null;
+                case INSTANT -> word == Word.INSTANT ? Kind.INSTANT : null;
+                // Held by objects and never handed to a host.
+                case RATIONAL -> null;
             };
             if (kind == null) {
                 return null;
@@ -212,7 +223,7 @@ sealed interface Crossing {
                 // The unscaled digits never go through String admission (souther-native-compiler#109):
                 // an integer's text is never the value's written form, so it is not fallible on a
                 // String's own capacity.
-                case DECIMAL -> "library.words.decimal(run, " + value + ")";
+                case DECIMAL -> "library.words.decimal(run, " + value + ")?";
                 case DATE -> "library.words.date(run, " + value + ")?";
                 case TIME -> "library.words.time(run, " + value + ")?";
                 case DATETIME -> "library.words.date_time(run, " + value + ")?";
@@ -443,12 +454,12 @@ sealed interface Crossing {
                         .append(");");
             }
             block.append(" } let count = i64::try_from(elements.len()).expect(\"a list's length is a"
-                    + " 64-bit count\"); unsafe { (library.symbols.").append(construct)
-                    .append(")(count");
+                    + " 64-bit count\"); let mut list = std::ptr::null(); let made = unsafe {"
+                    + " (library.symbols.").append(construct).append(")(count");
             for (int column = 0; column < words.size(); column++) {
                 block.append(", column").append(column).append(".as_ptr()");
             }
-            block.append(") } }");
+            block.append(", &mut list) }; rt::made(made, list)? }");
             return List.of(block.toString());
         }
 

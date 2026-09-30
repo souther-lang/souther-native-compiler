@@ -13,22 +13,10 @@
 
     <artifactId>souther-bindings-api</artifactId>
     <name>Souther Bindings API</name>
-    <description>What a binding generator is written against: the manifest of a library, the interface the command finds a generator by, and how a binding is put in place. It depends on nothing of the compiler, so a generator cannot reach a checked program.</description>
+    <description>What a binding generator is written against: the model of a library, the interface the command finds a generator by, and how a binding is put in place. It depends on nothing of the compiler and on no library of its own, so a generator cannot reach a checked program and brings nothing along.</description>
 
-    <dependencies>
-        <dependency>
-            <groupId>net.unit8.raoh</groupId>
-            <artifactId>raoh</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>net.unit8.raoh</groupId>
-            <artifactId>raoh-json</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>tools.jackson.core</groupId>
-            <artifactId>jackson-databind</artifactId>
-        </dependency>
-    </dependencies>
+    <!-- Nothing but what every module has (the parent's): a generator is loaded beside the
+         compiler, and a library this brought along would be one a generator could not choose. -->
 
     <build>
         <plugins>

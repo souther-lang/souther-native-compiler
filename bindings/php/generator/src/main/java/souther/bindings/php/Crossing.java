@@ -80,7 +80,7 @@ sealed interface Crossing {
             case LIST -> "souther_list";
             case FUNCTION -> "souther_function";
             case DECODED -> "souther_decoded";
-            case STATUS, CASE, OUTCOME, COUNT, MARK, BYTES, ISSUE, REQUIREMENTS, CAPABILITY,
+            case STATUS, CASE, OUTCOME, COUNT, SCOPE, BYTES, ISSUE, REQUIREMENTS, CAPABILITY,
                  USERDATA ->
                     throw new IllegalArgumentException("PHP holds no room for a " + word);
         };
@@ -176,30 +176,31 @@ sealed interface Crossing {
          * as an {@code INT} is a pair this binding does not hold, and not an {@code int}. A value of a union carrying the
          * primitive is asked the same.
          */
-        static @Nullable Whole primitive(String name, Word word) {
-            return switch (name) {
-                case "Int" -> word == Word.INT
+        static @Nullable Whole primitive(Manifest.Primitive primitive, Word word) {
+            return switch (primitive) {
+                case INT -> word == Word.INT
                         ? new Whole(new Shape.Leaf(word), "int", Kind.INT, null) : null;
-                case "Bool" -> word == Word.BOOL
+                case BOOL -> word == Word.BOOL
                         ? new Whole(new Shape.Leaf(word), "bool", Kind.BOOL, null) : null;
-                case "String" -> word == Word.STRING
+                case STRING -> word == Word.STRING
                         ? new Whole(new Shape.Leaf(word), "string", Kind.STRING, null) : null;
-                case "Decimal" -> word == Word.DECIMAL
+                case DECIMAL -> word == Word.DECIMAL
                         ? new Whole(new Shape.Leaf(word), "\\Souther\\Runtime\\Decimal",
                                 Kind.DECIMAL, null) : null;
-                case "Date" -> word == Word.DATE
+                case DATE -> word == Word.DATE
                         ? new Whole(new Shape.Leaf(word), "\\Souther\\Runtime\\Date", Kind.DATE, null)
                         : null;
-                case "Time" -> word == Word.TIME
+                case TIME -> word == Word.TIME
                         ? new Whole(new Shape.Leaf(word), "\\Souther\\Runtime\\Time", Kind.TIME, null)
                         : null;
-                case "DateTime" -> word == Word.DATETIME
+                case DATETIME -> word == Word.DATETIME
                         ? new Whole(new Shape.Leaf(word), "\\Souther\\Runtime\\DateTime",
                                 Kind.DATETIME, null) : null;
-                case "Instant" -> word == Word.INSTANT
+                case INSTANT -> word == Word.INSTANT
                         ? new Whole(new Shape.Leaf(word), "\\Souther\\Runtime\\Instant",
                                 Kind.INSTANT, null) : null;
-                default -> null;
+                // Held by objects and never handed to a host.
+                case RATIONAL -> null;
             };
         }
 
@@ -714,9 +715,13 @@ sealed interface Crossing {
 
         /** The PHP expression making a value of this member out of the union's value {@code word}. */
         String of(String word, String session) {
-            return whole.of(List.of(carried == null ? word
-                    : session + "->ffi()->" + java.util.Objects.requireNonNull(carried.read()).name()
-                    + "(" + word + ")"), session);
+            if (carried == null) {
+                return whole.of(List.of(word), session);
+            }
+            Word held = java.util.Objects.requireNonNull(carried.holds());
+            return whole.of(List.of(fromRoom(held, session + "->carried('"
+                    + java.util.Objects.requireNonNull(carried.read()).name() + "', '"
+                    + storage(held) + "', " + word + ")")), session);
         }
     }
 

@@ -2,7 +2,7 @@ package souther.bindings.rust;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import souther.bindings.Generated;
+import souther.nativecode.Generated;
 import souther.nativecode.Checked;
 import souther.nativecode.NativeCompiler;
 

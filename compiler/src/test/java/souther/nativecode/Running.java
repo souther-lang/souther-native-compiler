@@ -53,7 +53,7 @@ final class Running {
      * not answer to is exactly the silent ABI mismatch embedding this in the symbol exists to turn
      * into a linker error instead.
      */
-    static final String ABI = String.valueOf(Manifest.ABI);
+    static final String ABI = String.valueOf(ManifestReader.ABI);
 
     /**
      * {@code text}, a harness or a symbol a test writes, with every {@code souther@} spelt as
@@ -221,7 +221,7 @@ final class Running {
             throws IOException, InterruptedException {
         published(module, behavior);
         String reached = module.name() + "." + behavior.name().name();
-        return ran(linked(standIns), reached, inputs);
+        return ran(linked(standIns), reached, inputs, behavior.signature().takes());
     }
 
     /** What the behavior answered when this one of its rows was run. */
@@ -256,7 +256,7 @@ final class Running {
     private BoundaryOutcome rowAtItsBoundary(CheckedModule module, CheckedBehavior behavior,
                                              int at, List<StandsIn> standIns)
             throws IOException, InterruptedException {
-        return ran(linked(standIns), rowEntry(module, behavior, at), List.of());
+        return ran(linked(standIns), rowEntry(module, behavior, at), List.of(), List.of());
     }
 
     private static String rowEntry(CheckedModule module, CheckedBehavior behavior, int at) {
@@ -357,12 +357,12 @@ final class Running {
      * it could write either line, is neither {@link RunOutcome} case: it is this harness's own
      * failure and not a Souther computation's, so it is thrown rather than folded into one of them.
      */
-    private BoundaryOutcome ran(Path executable, String entry, List<ObservedValue> inputs)
-            throws IOException {
+    private BoundaryOutcome ran(Path executable, String entry, List<ObservedValue> inputs,
+                                List<Type> takes) throws IOException {
         List<String> asked = new ArrayList<>();
         asked.add(entry);
-        for (ObservedValue given : inputs) {
-            asked.add(written(given));
+        for (int at = 0; at < inputs.size(); at++) {
+            asked.add(written(inputs.get(at), takes.get(at)));
         }
         return Serving.of(executable).ask(asked);
     }
@@ -726,14 +726,14 @@ final class Running {
                 %s%s
 
                 %s
-                extern int64_t souther_mark(void);
-                extern void souther_reset(int64_t);
+                extern int64_t souther_scope_open(void);
+                extern uint8_t souther_scope_close(int64_t);
                 extern int64_t souther_string_length(const uint8_t *);
                 extern const uint8_t *souther_string_bytes(const uint8_t *);
 
                 %s
                 static int run(int argc, char **argv) {
-                    int64_t mark = souther_mark();
+                    int64_t scope = souther_scope_open();
                     const uint8_t *answered;
                     uint32_t status;
                 %s
@@ -746,7 +746,7 @@ final class Running {
                                 (size_t) souther_string_length(answered), stdout);
                         printf("\\n");
                     }
-                    souther_reset(mark);
+                    souther_scope_close(scope);
                     return 0;
                 }
 
@@ -992,38 +992,68 @@ final class Running {
                 return held;
             }
 
-            extern const void *souther_decimal_of_parts(const uint8_t *, int64_t, int64_t);
+            extern uint8_t souther_decimal_of_parts(const uint8_t *, int64_t, int64_t, const void **);
 
             /* A Decimal handed over as its integer, a colon and its scale, made through the runtime
                as a host makes one: the unscaled digits are bytes and a count, not a String, since
                they are never fallible on what a String holds. */
             static const void *readDecimal(const char *written) {
                 const char *colon = strchr(written, ':');
-                return souther_decimal_of_parts((const uint8_t *) written,
-                        (int64_t) (colon - written), strtoll(colon + 1, NULL, 10));
+                const void *made = NULL;
+                souther_decimal_of_parts((const uint8_t *) written, (int64_t) (colon - written),
+                        strtoll(colon + 1, NULL, 10), &made);
+                return made;
             }
 
-            extern const void *souther_date_of_iso(const uint8_t *);
-            extern const void *souther_time_of_iso(const uint8_t *);
-            extern const void *souther_datetime_of_iso(const uint8_t *);
-            extern const void *souther_instant_of_iso(const uint8_t *);
+            extern uint8_t souther_date_of_parts(int64_t, int64_t, int64_t, const void **);
+            extern uint8_t souther_time_of_parts(int64_t, int64_t, int64_t, const void **);
+            extern uint8_t souther_datetime_of_parts(int64_t, int64_t, int64_t, int64_t, int64_t,
+                    int64_t, const void **);
+            extern uint8_t souther_instant_of_parts(int64_t, int64_t, const void **);
 
-            /* A temporal handed over as the text that names it, made through the runtime as a host
+            /* The colon-separated numbers a temporal is handed over as. */
+            static void readParts(const char *written, int64_t *parts, int count) {
+                char *at = (char *) written;
+                for (int each = 0; each < count; each++) {
+                    parts[each] = strtoll(at, &at, 10);
+                    if (*at == ':') {
+                        at++;
+                    }
+                }
+            }
+
+            /* A temporal handed over as the numbers it means, made through the runtime as a host
                makes one. */
-            static const void *readDate(const char *hex) {
-                return souther_date_of_iso(readText(hex));
+            static const void *readDate(const char *written) {
+                int64_t p[3];
+                const void *made = NULL;
+                readParts(written, p, 3);
+                souther_date_of_parts(p[0], p[1], p[2], &made);
+                return made;
             }
 
-            static const void *readTime(const char *hex) {
-                return souther_time_of_iso(readText(hex));
+            static const void *readTime(const char *written) {
+                int64_t p[3];
+                const void *made = NULL;
+                readParts(written, p, 3);
+                souther_time_of_parts(p[0], p[1], p[2], &made);
+                return made;
             }
 
-            static const void *readDateTime(const char *hex) {
-                return souther_datetime_of_iso(readText(hex));
+            static const void *readDateTime(const char *written) {
+                int64_t p[6];
+                const void *made = NULL;
+                readParts(written, p, 6);
+                souther_datetime_of_parts(p[0], p[1], p[2], p[3], p[4], p[5], &made);
+                return made;
             }
 
-            static const void *readInstant(const char *hex) {
-                return souther_instant_of_iso(readText(hex));
+            static const void *readInstant(const char *written) {
+                int64_t p[2];
+                const void *made = NULL;
+                readParts(written, p, 2);
+                souther_instant_of_parts(p[0], p[1], &made);
+                return made;
             }
 
             """;
@@ -1059,15 +1089,15 @@ final class Running {
     }
 
     /** A value as the command line carries it, which is where a run is handed what it takes. */
-    private static String written(ObservedValue given) {
+    private static String written(ObservedValue given, Type type) {
         return switch (given) {
             case ObservedValue.Integer it -> Long.toString(it.value());
             case ObservedValue.Bool it -> it.value() ? "1" : "0";
             case ObservedValue.Text it -> hex(it.value().getBytes(StandardCharsets.UTF_8));
             // Its integer and its scale, which is what a host makes one of.
             case ObservedValue.Decimal it -> it.value().unscaledValue() + ":" + it.value().scale();
-            // The text that names it, which is what a host makes one of.
-            case ObservedValue.Temporal it -> hex(it.iso().getBytes(StandardCharsets.UTF_8));
+            // The numbers it means, colon-separated, which is what a host makes one of.
+            case ObservedValue.Temporal it -> parts(prim(type), it.iso());
             default -> throw new AssertionError("no harness hands over a " + given + " yet");
         };
     }
@@ -1087,6 +1117,30 @@ final class Running {
             case ObservedValue.Integer it -> Long.toString(it.value());
             case ObservedValue.Bool it -> it.value() ? "1" : "0";
             default -> throw new AssertionError("no harness stands in over a " + given + " yet");
+        };
+    }
+
+    /** The numbers a temporal of {@code prim}, written as {@code iso}, means, as a host hands them. */
+    private static String parts(Type.Prim prim, String iso) {
+        return switch (prim) {
+            case DATE -> {
+                java.time.LocalDate date = java.time.LocalDate.parse(iso);
+                yield date.getYear() + ":" + date.getMonthValue() + ":" + date.getDayOfMonth();
+            }
+            case TIME -> {
+                java.time.LocalTime time = java.time.LocalTime.parse(iso);
+                yield time.getHour() + ":" + time.getMinute() + ":" + time.getSecond();
+            }
+            case DATETIME -> {
+                java.time.LocalDateTime at = java.time.LocalDateTime.parse(iso);
+                yield at.getYear() + ":" + at.getMonthValue() + ":" + at.getDayOfMonth() + ":"
+                        + at.getHour() + ":" + at.getMinute() + ":" + at.getSecond();
+            }
+            case INSTANT -> {
+                java.time.Instant at = java.time.Instant.parse(iso);
+                yield at.getEpochSecond() + ":" + at.getNano();
+            }
+            default -> throw new AssertionError("no temporal is a " + prim);
         };
     }
 

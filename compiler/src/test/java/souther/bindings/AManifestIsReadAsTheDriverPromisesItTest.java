@@ -1,5 +1,7 @@
 package souther.bindings;
 
+import souther.nativecode.ManifestReader;
+
 import souther.nativecode.Checked;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -86,7 +88,7 @@ class AManifestIsReadAsTheDriverPromisesItTest {
         changing.accept(manifest);
         Path changed = into.resolve("changed.json");
         Files.writeString(changed, JSON.writeValueAsString(manifest), StandardCharsets.UTF_8);
-        return Manifest.read(changed);
+        return ManifestReader.read(changed);
     }
 
     /** The behavior named {@code name} of {@code module}. */
@@ -114,16 +116,18 @@ class AManifestIsReadAsTheDriverPromisesItTest {
         }
         Path changed = into.resolve("changed.json");
         Files.writeString(changed, JSON.writeValueAsString(manifest), StandardCharsets.UTF_8);
-        return Manifest.read(changed);
+        return ManifestReader.read(changed);
     }
 
-    /** What the driver writes is read, the runtime's functions among it, which a host calls too. */
+    /**
+     * What the driver writes is read, the cases a host makes and reads through the runtime among
+     * it; the runtime's other functions are the ABI generation's, and in no manifest.
+     */
     @Test
     void theManifestTheDriverWroteIsRead(@TempDir Path into) throws Exception {
-        Manifest read = Manifest.read(built(into, CONSTRUCTED).manifest());
+        Manifest read = ManifestReader.read(built(into, CONSTRUCTED).manifest());
 
-        assertThat(read.abi()).isEqualTo(Manifest.ABI);
-        assertThat(read.runtime()).extracting(Manifest.Function::name).contains("souther_reset");
+        assertThat(read.cases()).extracting(it -> it.make().name()).contains("souther_case_int_make");
         assertThat(read.modules()).extracting(Manifest.Module::name).containsExactly("demo");
     }
 
@@ -137,10 +141,10 @@ class AManifestIsReadAsTheDriverPromisesItTest {
         Path earlier = Path.of("src", "test", "resources", "souther", "bindings",
                 "interface-v3.json");
 
-        assertThatThrownBy(() -> Manifest.read(earlier))
+        assertThatThrownBy(() -> ManifestReader.read(earlier))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("is version 3 of souther-native-interface for ABI generation"
-                        + " 3, and this generator reads version 14")
+                        + " 3, and this generator reads version 15")
                 .hasMessageNotContaining("answers");
     }
 
@@ -173,7 +177,7 @@ class AManifestIsReadAsTheDriverPromisesItTest {
             ((ArrayNode) at.get("takes")).remove(2);
         }))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("souther" + Manifest.ABI + "_m_stock_l_value_at");
+                .hasMessageContaining("souther" + ManifestReader.ABI + "_m_stock_l_value_at");
     }
 
     /**
@@ -202,7 +206,7 @@ class AManifestIsReadAsTheDriverPromisesItTest {
             }
         }))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("hands across Primitive[name=Int], and nothing of how a value"
+                .hasMessageContaining("hands across Primitive[primitive=INT], and nothing of how a value"
                         + " of it is made or read");
     }
 
@@ -270,12 +274,13 @@ class AManifestIsReadAsTheDriverPromisesItTest {
         List<Manifest.Parameter> built = new ArrayList<>(
                 List.of(Manifest.Parameter.given(Manifest.Word.COUNT)));
         element.words().forEach(word -> built.add(Manifest.Parameter.slice(word)));
+        built.add(Manifest.Parameter.room(Manifest.Word.LIST));
         List<Manifest.Parameter> at = new ArrayList<>(List.of(
                 Manifest.Parameter.given(Manifest.Word.LIST),
                 Manifest.Parameter.given(Manifest.Word.COUNT)));
         element.words().forEach(word -> at.add(Manifest.Parameter.room(word)));
         return new Manifest.ListCrossing(element,
-                new Manifest.Function(name + "_construct", built, Manifest.Word.LIST),
+                new Manifest.Function(name + "_construct", built, Manifest.Word.BOOL),
                 new Manifest.ListRead(new Manifest.Function(name + "_length",
                         List.of(Manifest.Parameter.given(Manifest.Word.LIST)), Manifest.Word.COUNT),
                         new Manifest.Function(name + "_at", at, Manifest.Word.BOOL)));
@@ -305,23 +310,54 @@ class AManifestIsReadAsTheDriverPromisesItTest {
     }
 
     /**
-     * Which shape a type crosses in is the driver's to say, and is read as it says it, whatever the
-     * type: a `Date` said to cross as two words, as a later driver may say, is read, and not held
-     * to how any type crosses today. What is held is that each function takes and answers the words
-     * of the shapes said beside it.
+     * Which word a value crosses as is the driver's to say, and is read as it says it, whatever the
+     * type: a member of a pair said to be a `Date` where it crosses as a whole number, as a later
+     * driver may say, is read as a date crossing as that word, and not held to how any type
+     * crosses today.
      */
     @Test
-    void aShapeIsReadAsTheDriverSaysItWhateverTheType(@TempDir Path into) throws Exception {
+    void aWordIsReadAsTheDriverSaysItWhateverTheType(@TempDir Path into) throws Exception {
         NativeCompiler.Library library = built(into, SHAPED);
 
         Manifest read = readAfter(into, library, "shaped", module -> {
-            ObjectNode pair = (ObjectNode) module.get("values").get(0);
-            pair.set("type", JSON.readTree("{\"kind\": \"primitive\", \"name\": \"Date\"}"));
+            ObjectNode pair = (ObjectNode) named(module.get("values"), "pair");
+            ((ArrayNode) pair.get("type").get("of")).set(0,
+                    JSON.readTree("{\"kind\": \"primitive\", \"name\": \"Date\"}"));
         });
 
-        Manifest.PublishedValue pair = read.modules().getFirst().values().getFirst();
-        assertThat(pair.type()).isEqualTo(new Manifest.Type.Primitive("Date"));
-        assertThat(pair.read().available()).isNotNull();
+        Manifest.PublishedValue pair = read.modules().getFirst().values().stream()
+                .filter(it -> it.name().equals("pair")).findFirst().orElseThrow();
+        Manifest.Call answered = (Manifest.Call) pair.read().available();
+        assertThat(((ValueCrossing.Tuple) answered.crossings().answers()).members().getFirst())
+                .isEqualTo(new ValueCrossing.Primitive(
+                        new Manifest.Type.Primitive(Manifest.Primitive.DATE), Manifest.Word.INT));
+    }
+
+    /**
+     * A shape is what a value of its type is taken apart into, and the command pairs the two once,
+     * as it reads them: a `Date` said to cross as a product of two words is no value of a `Date`
+     * at all, and the manifest is refused rather than handed to a generator to pair its own way.
+     */
+    @Test
+    void aShapeNoValueOfItsTypeIsIsRefused(@TempDir Path into) throws Exception {
+        NativeCompiler.Library library = built(into, SHAPED);
+
+        assertThatThrownBy(() -> readAfter(into, library, "shaped", module -> {
+            ObjectNode pair = (ObjectNode) named(module.get("values"), "pair");
+            pair.set("type", JSON.readTree("{\"kind\": \"primitive\", \"name\": \"Date\"}"));
+        }))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("module `shaped` says")
+                .hasMessageContaining("which no value of it is");
+    }
+
+    private static JsonNode named(JsonNode all, String name) {
+        for (JsonNode it : all) {
+            if (it.get("name").stringValue().equals(name)) {
+                return it;
+            }
+        }
+        throw new IllegalArgumentException("nothing named " + name);
     }
 
     /**
@@ -349,7 +385,7 @@ class AManifestIsReadAsTheDriverPromisesItTest {
         NativeCompiler.Library library = Documents.library(Documents.FUNCTIONS,
                 into.resolve("native"));
 
-        assertThat(Manifest.read(library.manifest()).modules().getFirst().functions())
+        assertThat(ManifestReader.read(library.manifest()).modules().getFirst().functions())
                 .isNotEmpty();
         assertThatThrownBy(() -> readAfter(into, library, "m",
                 module -> ((ArrayNode) module.get("functions")).remove(0)))
@@ -357,15 +393,18 @@ class AManifestIsReadAsTheDriverPromisesItTest {
                 .hasMessageContaining("module `m` hands a function of");
     }
 
-    /** Why nothing reaches a value is read as the reason and where it stands. */
+    /**
+     * A value nothing reaches is read as that: the model still has it, and a generator knows it is
+     * there. Why, which the driver writes, is read strictly and kept by nothing a generator is
+     * handed.
+     */
     @Test
-    void whyNothingReachesAValueIsRead(@TempDir Path into) throws Exception {
-        Manifest read = Manifest.read(built(into, SHAPED).manifest());
+    void aValueNothingReachesIsReadAsThat(@TempDir Path into) throws Exception {
+        Manifest read = ManifestReader.read(built(into, SHAPED).manifest());
 
         Manifest.PublishedValue either = read.modules().getFirst().values().stream()
                 .filter(it -> it.name().equals("either")).findFirst().orElseThrow();
-        assertThat(either.read()).isEqualTo(new Manifest.Reach.Unavailable<>(new Manifest.Refusal(
-                Manifest.Reason.NO_DISCRIMINATOR, List.of(new Manifest.Step.Answers()))));
+        assertThat(either.read()).isEqualTo(new Manifest.Reach.Unavailable<>());
     }
 
     /** A tuple, a list of tuples, and a union a host would be handed with nothing to say which case it is. */

@@ -20,7 +20,7 @@ use crate::temporal::*;
 use crate::*;
 use souther_native_abi::{
     BUILT_IN_CASES, GENERATED_RUNTIME, HOST_CASES, HOST_RUNTIME, HostWord, Parameter,
-    RuntimeFunction, Word,
+    Representation, RuntimeFunction, Word,
 };
 use std::collections::BTreeSet;
 
@@ -34,10 +34,71 @@ trait Answered {
     const WORD: Word;
 }
 
+/// What a type here is on the machine, as a host's word is recorded as being
+/// ([`HostWord::representation`]). A Rust type has its own width and sign, which neither Cranelift
+/// nor a C compiler is told of, so a type standing for a host's word is held to the width and sign
+/// the generation records for it: an `Bool` standing for a `Bool` recorded as `U8` does not compile.
+trait Machine {
+    const REPRESENTATION: Representation;
+}
+
+macro_rules! machine {
+    (
+        $($primitive:ty => $representation:ident),* ;
+        $($word:ident($inner:ty)),* ;
+        $($function:ty),* $(,)?
+    ) => {
+        $(
+            impl Machine for $primitive {
+                const REPRESENTATION: Representation = Representation::$representation;
+            }
+        )*
+        $(
+            // A word of its own is what it wraps: this compiles only while it wraps that.
+            const _: fn($inner) -> $word = $word;
+            impl Machine for $word {
+                const REPRESENTATION: Representation = <$inner as Machine>::REPRESENTATION;
+            }
+        )*
+        $(
+            impl Machine for $function {
+                const REPRESENTATION: Representation = Representation::Address;
+            }
+        )*
+    };
+}
+
+machine! {
+    u8 => U8, i32 => I32, i64 => I64;
+    Bool(u8), Count(i64), Scope(i64), Comparison(i64), Hash(i64);
+    Hasher, Equality,
+}
+
+impl<T> Machine for *const T {
+    const REPRESENTATION: Representation = Representation::Address;
+}
+
+impl<T> Machine for *mut T {
+    const REPRESENTATION: Representation = Representation::Address;
+}
+
+/// Whether `T` is what `word` is on the machine, where `word` is a host's: a word only generated
+/// code sees has no record to be held to.
+const fn machine_is<T: Machine>(word: Word) -> bool {
+    match word {
+        Word::Host(host) => host.representation() as u8 == T::REPRESENTATION as u8,
+        _ => true,
+    }
+}
+
 /// Types that are one word, whether handed over or answered.
 macro_rules! words {
     ($($ty:ty => $word:expr),* $(,)?) => {
         $(
+            const _: () = assert!(
+                machine_is::<$ty>($word),
+                concat!(stringify!($ty), " is not what the generation records its word as"),
+            );
             impl Taken for $ty {
                 const PARAMETER: Parameter = Parameter::Given($word);
             }
@@ -48,10 +109,14 @@ macro_rules! words {
     };
 }
 
-/// Types that are room for a word, written by the function.
+/// Types that are room for a word, written by the function: an address of what the word is.
 macro_rules! rooms {
     ($($ty:ty => $word:expr),* $(,)?) => {
         $(
+            const _: () = assert!(
+                machine_is::<<$ty as Room>::Of>($word),
+                concat!(stringify!($ty), " is not room for what the generation records its word as"),
+            );
             impl Taken for $ty {
                 const PARAMETER: Parameter = Parameter::Room($word);
             }
@@ -60,11 +125,11 @@ macro_rules! rooms {
 }
 
 words! {
-    i8 => Word::Host(HostWord::Bool),
+    Bool => Word::Host(HostWord::Bool),
     i32 => Word::Host(HostWord::Outcome),
     i64 => Word::Host(HostWord::Int),
     Count => Word::Host(HostWord::Count),
-    Mark => Word::Host(HostWord::Mark),
+    Scope => Word::Host(HostWord::Scope),
     Comparison => Word::Comparison,
     *const u8 => Word::Host(HostWord::Bytes),
     *mut u8 => Word::Memory,
@@ -104,7 +169,7 @@ words! {
 
 rooms! {
     *mut i64 => Word::Host(HostWord::Int),
-    *mut i8 => Word::Host(HostWord::Bool),
+    *mut Bool => Word::Host(HostWord::Bool),
     *mut *mut Text => Word::Host(HostWord::String),
     *mut *mut Decimal => Word::Host(HostWord::Decimal),
     *mut *mut Rational => Word::Rational,
@@ -114,6 +179,15 @@ rooms! {
     *mut *mut Instant => Word::Host(HostWord::Instant),
     *mut *const Set => Word::Set,
     *mut *const Map => Word::Map,
+}
+
+/// An address of room for one `Of`.
+trait Room {
+    type Of: Machine;
+}
+
+impl<T: Machine> Room for *mut T {
+    type Of = T;
 }
 
 /// What a function takes and answers.
@@ -156,6 +230,7 @@ shaped!(A, B, C);
 shaped!(A, B, C, D);
 shaped!(A, B, C, D, E);
 shaped!(A, B, C, D, E, F);
+shaped!(A, B, C, D, E, F, G);
 
 fn shape_of<F: Shaped>(_: F) -> Shape {
     F::shape()
@@ -174,12 +249,12 @@ fn functions() -> Vec<(&'static str, Shape)> {
             shape_of(souther_alloc as extern "C" fn(Count) -> *mut u8),
         ),
         (
-            "souther_mark",
-            shape_of(souther_mark as extern "C" fn() -> Mark),
+            "souther_scope_open",
+            shape_of(souther_scope_open as extern "C" fn() -> Scope),
         ),
         (
-            "souther_reset",
-            shape_of(souther_reset as extern "C" fn(Mark)),
+            "souther_scope_close",
+            shape_of(souther_scope_close as extern "C" fn(Scope) -> Bool),
         ),
         (
             "souther_string_compare",
@@ -187,7 +262,7 @@ fn functions() -> Vec<(&'static str, Shape)> {
         ),
         (
             "souther_string_concat",
-            shape_of(souther_string_concat as unsafe extern "C" fn(T, T, *mut M) -> i8),
+            shape_of(souther_string_concat as unsafe extern "C" fn(T, T, *mut M) -> Bool),
         ),
         (
             "souther_string_code_points",
@@ -199,32 +274,32 @@ fn functions() -> Vec<(&'static str, Shape)> {
         ),
         (
             "souther_string_lowercase",
-            shape_of(souther_string_lowercase as unsafe extern "C" fn(T, *mut M) -> i8),
+            shape_of(souther_string_lowercase as unsafe extern "C" fn(T, *mut M) -> Bool),
         ),
         (
             "souther_string_uppercase",
-            shape_of(souther_string_uppercase as unsafe extern "C" fn(T, *mut M) -> i8),
+            shape_of(souther_string_uppercase as unsafe extern "C" fn(T, *mut M) -> Bool),
         ),
         (
             "souther_string_contains",
-            shape_of(souther_string_contains as unsafe extern "C" fn(T, T) -> i8),
+            shape_of(souther_string_contains as unsafe extern "C" fn(T, T) -> Bool),
         ),
         (
             "souther_string_starts_with",
-            shape_of(souther_string_starts_with as unsafe extern "C" fn(T, T) -> i8),
+            shape_of(souther_string_starts_with as unsafe extern "C" fn(T, T) -> Bool),
         ),
         (
             "souther_string_ends_with",
-            shape_of(souther_string_ends_with as unsafe extern "C" fn(T, T) -> i8),
+            shape_of(souther_string_ends_with as unsafe extern "C" fn(T, T) -> Bool),
         ),
         (
             "souther_string_matches",
-            shape_of(souther_string_matches as unsafe extern "C" fn(*const u32, T) -> i8),
+            shape_of(souther_string_matches as unsafe extern "C" fn(*const u32, T) -> Bool),
         ),
         (
             "souther_string_slice",
             shape_of(
-                souther_string_slice as unsafe extern "C" fn(i64, i64, T, *mut *mut Text) -> i8,
+                souther_string_slice as unsafe extern "C" fn(i64, i64, T, *mut *mut Text) -> Bool,
             ),
         ),
         (
@@ -233,15 +308,17 @@ fn functions() -> Vec<(&'static str, Shape)> {
         ),
         (
             "souther_string_join",
-            shape_of(souther_string_join as unsafe extern "C" fn(T, *const List, *mut M) -> i8),
+            shape_of(souther_string_join as unsafe extern "C" fn(T, *const List, *mut M) -> Bool),
         ),
         (
             "souther_string_concat_all",
-            shape_of(souther_string_concat_all as unsafe extern "C" fn(*const List, *mut M) -> i8),
+            shape_of(
+                souther_string_concat_all as unsafe extern "C" fn(*const List, *mut M) -> Bool,
+            ),
         ),
         (
             "souther_string_replace",
-            shape_of(souther_string_replace as unsafe extern "C" fn(T, T, T, *mut M) -> i8),
+            shape_of(souther_string_replace as unsafe extern "C" fn(T, T, T, *mut M) -> Bool),
         ),
         (
             "souther_string_words",
@@ -257,26 +334,26 @@ fn functions() -> Vec<(&'static str, Shape)> {
         ),
         (
             "souther_string_to_int",
-            shape_of(souther_string_to_int as unsafe extern "C" fn(T, *mut i64) -> i8),
+            shape_of(souther_string_to_int as unsafe extern "C" fn(T, *mut i64) -> Bool),
         ),
         (
             "souther_string_reverse",
-            shape_of(souther_string_reverse as unsafe extern "C" fn(T, *mut M) -> i8),
+            shape_of(souther_string_reverse as unsafe extern "C" fn(T, *mut M) -> Bool),
         ),
         (
             "souther_string_repeat",
-            shape_of(souther_string_repeat as unsafe extern "C" fn(i64, T, *mut *mut Text) -> i8),
+            shape_of(souther_string_repeat as unsafe extern "C" fn(i64, T, *mut *mut Text) -> Bool),
         ),
         (
             "souther_string_pad_left",
             shape_of(
-                souther_string_pad_left as unsafe extern "C" fn(i64, T, T, *mut *mut Text) -> i8,
+                souther_string_pad_left as unsafe extern "C" fn(i64, T, T, *mut *mut Text) -> Bool,
             ),
         ),
         (
             "souther_string_pad_right",
             shape_of(
-                souther_string_pad_right as unsafe extern "C" fn(i64, T, T, *mut *mut Text) -> i8,
+                souther_string_pad_right as unsafe extern "C" fn(i64, T, T, *mut *mut Text) -> Bool,
             ),
         ),
         (
@@ -290,7 +367,7 @@ fn functions() -> Vec<(&'static str, Shape)> {
         (
             "souther_string_of_utf8",
             shape_of(
-                souther_string_of_utf8 as unsafe extern "C" fn(*const u8, Count, *mut M) -> i8,
+                souther_string_of_utf8 as unsafe extern "C" fn(*const u8, Count, *mut M) -> Bool,
             ),
         ),
         (
@@ -307,7 +384,7 @@ fn functions() -> Vec<(&'static str, Shape)> {
         ),
         (
             "souther_external_bool",
-            shape_of(souther_external_bool as extern "C" fn(i8) -> *mut Form),
+            shape_of(souther_external_bool as extern "C" fn(Bool) -> *mut Form),
         ),
         (
             "souther_external_int",
@@ -367,7 +444,9 @@ fn functions() -> Vec<(&'static str, Shape)> {
         ),
         (
             "souther_read_array",
-            shape_of(souther_read_array as unsafe extern "C" fn(*const Node, *const Path, D) -> i8),
+            shape_of(
+                souther_read_array as unsafe extern "C" fn(*const Node, *const Path, D) -> Bool,
+            ),
         ),
         (
             "souther_read_array_length",
@@ -382,7 +461,7 @@ fn functions() -> Vec<(&'static str, Shape)> {
         (
             "souther_read_object",
             shape_of(
-                souther_read_object as unsafe extern "C" fn(*const Node, *const Path, D) -> i8,
+                souther_read_object as unsafe extern "C" fn(*const Node, *const Path, D) -> Bool,
             ),
         ),
         (
@@ -395,32 +474,34 @@ fn functions() -> Vec<(&'static str, Shape)> {
         ),
         (
             "souther_read_null",
-            shape_of(souther_read_null as unsafe extern "C" fn(*const Node) -> i8),
+            shape_of(souther_read_null as unsafe extern "C" fn(*const Node) -> Bool),
         ),
         (
             "souther_read_int",
             shape_of(
                 souther_read_int
-                    as unsafe extern "C" fn(*const Node, *const Path, D, *mut i64) -> i8,
+                    as unsafe extern "C" fn(*const Node, *const Path, D, *mut i64) -> Bool,
             ),
         ),
         (
             "souther_read_bool",
             shape_of(
                 souther_read_bool
-                    as unsafe extern "C" fn(*const Node, *const Path, D, *mut i8) -> i8,
+                    as unsafe extern "C" fn(*const Node, *const Path, D, *mut Bool) -> Bool,
             ),
         ),
         (
             "souther_read_string",
             shape_of(
                 souther_read_string
-                    as unsafe extern "C" fn(*const Node, *const Path, D, *mut M) -> i8,
+                    as unsafe extern "C" fn(*const Node, *const Path, D, *mut M) -> Bool,
             ),
         ),
         (
             "souther_read_case",
-            shape_of(souther_read_case as unsafe extern "C" fn(*const Node, *const Path, D) -> i8),
+            shape_of(
+                souther_read_case as unsafe extern "C" fn(*const Node, *const Path, D) -> Bool,
+            ),
         ),
         (
             "souther_read_tag",
@@ -431,7 +512,7 @@ fn functions() -> Vec<(&'static str, Shape)> {
         ),
         (
             "souther_read_is",
-            shape_of(souther_read_is as unsafe extern "C" fn(*const Node, T) -> i8),
+            shape_of(souther_read_is as unsafe extern "C" fn(*const Node, T) -> Bool),
         ),
         (
             "souther_read_not_a_case",
@@ -443,118 +524,128 @@ fn functions() -> Vec<(&'static str, Shape)> {
         ),
         (
             "souther_read_min_length",
-            shape_of(souther_read_min_length as unsafe extern "C" fn(*const Path, D, T, i64) -> i8),
+            shape_of(
+                souther_read_min_length as unsafe extern "C" fn(*const Path, D, T, i64) -> Bool,
+            ),
         ),
         (
             "souther_read_max_length",
-            shape_of(souther_read_max_length as unsafe extern "C" fn(*const Path, D, T, i64) -> i8),
+            shape_of(
+                souther_read_max_length as unsafe extern "C" fn(*const Path, D, T, i64) -> Bool,
+            ),
         ),
         (
             "souther_read_fixed_length",
             shape_of(
-                souther_read_fixed_length as unsafe extern "C" fn(*const Path, D, T, i64) -> i8,
+                souther_read_fixed_length as unsafe extern "C" fn(*const Path, D, T, i64) -> Bool,
             ),
         ),
         (
             "souther_read_pattern",
             shape_of(
                 souther_read_pattern
-                    as unsafe extern "C" fn(*const Path, D, T, *const u32, T) -> i8,
+                    as unsafe extern "C" fn(*const Path, D, T, *const u32, T) -> Bool,
             ),
         ),
         (
             "souther_read_int_min",
-            shape_of(souther_read_int_min as unsafe extern "C" fn(*const Path, D, i64, i64) -> i8),
+            shape_of(
+                souther_read_int_min as unsafe extern "C" fn(*const Path, D, i64, i64) -> Bool,
+            ),
         ),
         (
             "souther_read_int_max",
-            shape_of(souther_read_int_max as unsafe extern "C" fn(*const Path, D, i64, i64) -> i8),
+            shape_of(
+                souther_read_int_max as unsafe extern "C" fn(*const Path, D, i64, i64) -> Bool,
+            ),
         ),
         (
             "souther_read_int_positive",
-            shape_of(souther_read_int_positive as unsafe extern "C" fn(*const Path, D, i64) -> i8),
+            shape_of(
+                souther_read_int_positive as unsafe extern "C" fn(*const Path, D, i64) -> Bool,
+            ),
         ),
         (
             "souther_read_int_non_negative",
             shape_of(
-                souther_read_int_non_negative as unsafe extern "C" fn(*const Path, D, i64) -> i8,
+                souther_read_int_non_negative as unsafe extern "C" fn(*const Path, D, i64) -> Bool,
             ),
         ),
         (
             "souther_read_decimal_min",
             shape_of(
                 souther_read_decimal_min
-                    as unsafe extern "C" fn(*const Path, D, *const Decimal, *const Decimal) -> i8,
+                    as unsafe extern "C" fn(*const Path, D, *const Decimal, *const Decimal) -> Bool,
             ),
         ),
         (
             "souther_read_decimal_max",
             shape_of(
                 souther_read_decimal_max
-                    as unsafe extern "C" fn(*const Path, D, *const Decimal, *const Decimal) -> i8,
+                    as unsafe extern "C" fn(*const Path, D, *const Decimal, *const Decimal) -> Bool,
             ),
         ),
         (
             "souther_read_decimal_positive",
             shape_of(
                 souther_read_decimal_positive
-                    as unsafe extern "C" fn(*const Path, D, *const Decimal) -> i8,
+                    as unsafe extern "C" fn(*const Path, D, *const Decimal) -> Bool,
             ),
         ),
         (
             "souther_read_decimal_non_negative",
             shape_of(
                 souther_read_decimal_non_negative
-                    as unsafe extern "C" fn(*const Path, D, *const Decimal) -> i8,
+                    as unsafe extern "C" fn(*const Path, D, *const Decimal) -> Bool,
             ),
         ),
         (
             "souther_read_list_non_empty",
             shape_of(
                 souther_read_list_non_empty
-                    as unsafe extern "C" fn(*const Path, D, *const List) -> i8,
+                    as unsafe extern "C" fn(*const Path, D, *const List) -> Bool,
             ),
         ),
         (
             "souther_read_list_min_size",
             shape_of(
                 souther_read_list_min_size
-                    as unsafe extern "C" fn(*const Path, D, *const List, i64) -> i8,
+                    as unsafe extern "C" fn(*const Path, D, *const List, i64) -> Bool,
             ),
         ),
         (
             "souther_read_list_max_size",
             shape_of(
                 souther_read_list_max_size
-                    as unsafe extern "C" fn(*const Path, D, *const List, i64) -> i8,
+                    as unsafe extern "C" fn(*const Path, D, *const List, i64) -> Bool,
             ),
         ),
         (
             "souther_read_list_fixed_size",
             shape_of(
                 souther_read_list_fixed_size
-                    as unsafe extern "C" fn(*const Path, D, *const List, i64) -> i8,
+                    as unsafe extern "C" fn(*const Path, D, *const List, i64) -> Bool,
             ),
         ),
         (
             "souther_read_map_non_empty",
             shape_of(
                 souther_read_map_non_empty
-                    as unsafe extern "C" fn(*const Path, D, *const Map) -> i8,
+                    as unsafe extern "C" fn(*const Path, D, *const Map) -> Bool,
             ),
         ),
         (
             "souther_read_map_min_size",
             shape_of(
                 souther_read_map_min_size
-                    as unsafe extern "C" fn(*const Path, D, *const Map, i64) -> i8,
+                    as unsafe extern "C" fn(*const Path, D, *const Map, i64) -> Bool,
             ),
         ),
         (
             "souther_read_map_max_size",
             shape_of(
                 souther_read_map_max_size
-                    as unsafe extern "C" fn(*const Path, D, *const Map, i64) -> i8,
+                    as unsafe extern "C" fn(*const Path, D, *const Map, i64) -> Bool,
             ),
         ),
         (
@@ -594,15 +685,17 @@ fn functions() -> Vec<(&'static str, Shape)> {
         ),
         (
             "souther_case_int_read",
-            shape_of(souther_case_int_read as unsafe extern "C" fn(*const Value) -> i64),
+            shape_of(souther_case_int_read as unsafe extern "C" fn(*const Value, *mut i64) -> Bool),
         ),
         (
             "souther_case_bool_make",
-            shape_of(souther_case_bool_make as extern "C" fn(i8) -> *const Value),
+            shape_of(souther_case_bool_make as extern "C" fn(Bool) -> *const Value),
         ),
         (
             "souther_case_bool_read",
-            shape_of(souther_case_bool_read as unsafe extern "C" fn(*const Value) -> i8),
+            shape_of(
+                souther_case_bool_read as unsafe extern "C" fn(*const Value, *mut Bool) -> Bool,
+            ),
         ),
         (
             "souther_case_string_make",
@@ -610,7 +703,10 @@ fn functions() -> Vec<(&'static str, Shape)> {
         ),
         (
             "souther_case_string_read",
-            shape_of(souther_case_string_read as unsafe extern "C" fn(*const Value) -> T),
+            shape_of(
+                souther_case_string_read
+                    as unsafe extern "C" fn(*const Value, *mut *mut Text) -> Bool,
+            ),
         ),
         (
             "souther_case_decimal_make",
@@ -619,14 +715,15 @@ fn functions() -> Vec<(&'static str, Shape)> {
         (
             "souther_case_decimal_read",
             shape_of(
-                souther_case_decimal_read as unsafe extern "C" fn(*const Value) -> *const Decimal,
+                souther_case_decimal_read
+                    as unsafe extern "C" fn(*const Value, *mut *mut Decimal) -> Bool,
             ),
         ),
         (
             "souther_decimal_of_parts",
             shape_of(
                 souther_decimal_of_parts
-                    as unsafe extern "C" fn(*const u8, Count, i64) -> *mut Decimal,
+                    as unsafe extern "C" fn(*const u8, Count, i64, *mut *mut Decimal) -> Bool,
             ),
         ),
         (
@@ -667,16 +764,17 @@ fn functions() -> Vec<(&'static str, Shape)> {
         ),
         (
             "souther_rational_is_zero",
-            shape_of(souther_rational_is_zero as unsafe extern "C" fn(*const Rational) -> i8),
+            shape_of(souther_rational_is_zero as unsafe extern "C" fn(*const Rational) -> Bool),
         ),
         (
             "souther_rational_is_whole",
-            shape_of(souther_rational_is_whole as unsafe extern "C" fn(*const Rational) -> i8),
+            shape_of(souther_rational_is_whole as unsafe extern "C" fn(*const Rational) -> Bool),
         ),
         (
             "souther_rational_has_finite_decimal",
             shape_of(
-                souther_rational_has_finite_decimal as unsafe extern "C" fn(*const Rational) -> i8,
+                souther_rational_has_finite_decimal
+                    as unsafe extern "C" fn(*const Rational) -> Bool,
             ),
         ),
         (
@@ -694,7 +792,7 @@ fn functions() -> Vec<(&'static str, Shape)> {
                         *const Rational,
                         *const Rational,
                         *mut *mut Rational,
-                    ) -> i8,
+                    ) -> Bool,
             ),
         ),
         (
@@ -705,7 +803,7 @@ fn functions() -> Vec<(&'static str, Shape)> {
                         *const Rational,
                         *const Rational,
                         *mut *mut Rational,
-                    ) -> i8,
+                    ) -> Bool,
             ),
         ),
         (
@@ -716,7 +814,7 @@ fn functions() -> Vec<(&'static str, Shape)> {
                         *const Rational,
                         *const Rational,
                         *mut *mut Rational,
-                    ) -> i8,
+                    ) -> Bool,
             ),
         ),
         (
@@ -727,27 +825,28 @@ fn functions() -> Vec<(&'static str, Shape)> {
                         *const Rational,
                         *const Rational,
                         *mut *mut Rational,
-                    ) -> i8,
+                    ) -> Bool,
             ),
         ),
         (
             "souther_rational_to_whole",
             shape_of(
-                souther_rational_to_whole as unsafe extern "C" fn(*const Rational, *mut i64) -> i8,
+                souther_rational_to_whole
+                    as unsafe extern "C" fn(*const Rational, *mut i64) -> Bool,
             ),
         ),
         (
             "souther_rational_to_finite_decimal",
             shape_of(
                 souther_rational_to_finite_decimal
-                    as unsafe extern "C" fn(*const Rational, *mut *mut Decimal) -> i8,
+                    as unsafe extern "C" fn(*const Rational, *mut *mut Decimal) -> Bool,
             ),
         ),
         (
             "souther_rational_to_int",
             shape_of(
                 souther_rational_to_int
-                    as unsafe extern "C" fn(*const Value, *const Rational, *mut i64) -> i8,
+                    as unsafe extern "C" fn(*const Value, *const Rational, *mut i64) -> Bool,
             ),
         ),
         (
@@ -759,12 +858,12 @@ fn functions() -> Vec<(&'static str, Shape)> {
                         *const Value,
                         *const Rational,
                         *mut *mut Decimal,
-                    ) -> i8,
+                    ) -> Bool,
             ),
         ),
         (
             "souther_decimal_is_zero",
-            shape_of(souther_decimal_is_zero as unsafe extern "C" fn(*const Decimal) -> i8),
+            shape_of(souther_decimal_is_zero as unsafe extern "C" fn(*const Decimal) -> Bool),
         ),
         (
             "souther_decimal_negate",
@@ -780,7 +879,7 @@ fn functions() -> Vec<(&'static str, Shape)> {
                         *const Decimal,
                         *const Decimal,
                         *mut *mut Decimal,
-                    ) -> i8,
+                    ) -> Bool,
             ),
         ),
         (
@@ -791,7 +890,7 @@ fn functions() -> Vec<(&'static str, Shape)> {
                         *const Decimal,
                         *const Decimal,
                         *mut *mut Decimal,
-                    ) -> i8,
+                    ) -> Bool,
             ),
         ),
         (
@@ -802,7 +901,7 @@ fn functions() -> Vec<(&'static str, Shape)> {
                         *const Decimal,
                         *const Decimal,
                         *mut *mut Decimal,
-                    ) -> i8,
+                    ) -> Bool,
             ),
         ),
         (
@@ -813,7 +912,7 @@ fn functions() -> Vec<(&'static str, Shape)> {
             "souther_decimal_to_int",
             shape_of(
                 souther_decimal_to_int
-                    as unsafe extern "C" fn(*const Value, *const Decimal, *mut i64) -> i8,
+                    as unsafe extern "C" fn(*const Value, *const Decimal, *mut i64) -> Bool,
             ),
         ),
         (
@@ -825,7 +924,7 @@ fn functions() -> Vec<(&'static str, Shape)> {
                         *const Value,
                         *const Decimal,
                         *mut *mut Decimal,
-                    ) -> i8,
+                    ) -> Bool,
             ),
         ),
         (
@@ -838,17 +937,19 @@ fn functions() -> Vec<(&'static str, Shape)> {
                         i64,
                         *const Value,
                         *mut *mut Decimal,
-                    ) -> i8,
+                    ) -> Bool,
             ),
         ),
         (
             "souther_string_to_decimal",
-            shape_of(souther_string_to_decimal as unsafe extern "C" fn(T, *mut *mut Decimal) -> i8),
+            shape_of(
+                souther_string_to_decimal as unsafe extern "C" fn(T, *mut *mut Decimal) -> Bool,
+            ),
         ),
         (
             "souther_string_from_decimal",
             shape_of(
-                souther_string_from_decimal as unsafe extern "C" fn(*const Decimal, *mut M) -> i8,
+                souther_string_from_decimal as unsafe extern "C" fn(*const Decimal, *mut M) -> Bool,
             ),
         ),
         (
@@ -859,7 +960,7 @@ fn functions() -> Vec<(&'static str, Shape)> {
             "souther_read_decimal",
             shape_of(
                 souther_read_decimal
-                    as unsafe extern "C" fn(*const Node, *const Path, D, *mut *mut Decimal) -> i8,
+                    as unsafe extern "C" fn(*const Node, *const Path, D, *mut *mut Decimal) -> Bool,
             ),
         ),
         (
@@ -868,19 +969,85 @@ fn functions() -> Vec<(&'static str, Shape)> {
         ),
         (
             "souther_case_date_read",
-            shape_of(souther_case_date_read as unsafe extern "C" fn(*const Value) -> *const Date),
+            shape_of(
+                souther_case_date_read
+                    as unsafe extern "C" fn(*const Value, *mut *mut Date) -> Bool,
+            ),
         ),
         (
-            "souther_date_of_iso",
-            shape_of(souther_date_of_iso as unsafe extern "C" fn(T) -> *mut Date),
+            "souther_date_of_parts",
+            shape_of(
+                souther_date_of_parts
+                    as unsafe extern "C" fn(i64, i64, i64, *mut *mut Date) -> Bool,
+            ),
+        ),
+        (
+            "souther_date_parts",
+            shape_of(
+                souther_date_parts
+                    as unsafe extern "C" fn(*const Date, *mut i64, *mut i64, *mut i64),
+            ),
+        ),
+        (
+            "souther_time_of_parts",
+            shape_of(
+                souther_time_of_parts
+                    as unsafe extern "C" fn(i64, i64, i64, *mut *mut Time) -> Bool,
+            ),
+        ),
+        (
+            "souther_time_parts",
+            shape_of(
+                souther_time_parts
+                    as unsafe extern "C" fn(*const Time, *mut i64, *mut i64, *mut i64),
+            ),
+        ),
+        (
+            "souther_datetime_of_parts",
+            shape_of(
+                souther_datetime_of_parts
+                    as unsafe extern "C" fn(
+                        i64,
+                        i64,
+                        i64,
+                        i64,
+                        i64,
+                        i64,
+                        *mut *mut DateTime,
+                    ) -> Bool,
+            ),
+        ),
+        (
+            "souther_datetime_parts",
+            shape_of(
+                souther_datetime_parts
+                    as unsafe extern "C" fn(
+                        *const DateTime,
+                        *mut i64,
+                        *mut i64,
+                        *mut i64,
+                        *mut i64,
+                        *mut i64,
+                        *mut i64,
+                    ),
+            ),
+        ),
+        (
+            "souther_instant_of_parts",
+            shape_of(
+                souther_instant_of_parts
+                    as unsafe extern "C" fn(i64, i64, *mut *mut Instant) -> Bool,
+            ),
+        ),
+        (
+            "souther_instant_parts",
+            shape_of(
+                souther_instant_parts as unsafe extern "C" fn(*const Instant, *mut i64, *mut i64),
+            ),
         ),
         (
             "souther_date_literal",
             shape_of(souther_date_literal as extern "C" fn(i64) -> *mut Date),
-        ),
-        (
-            "souther_date_iso",
-            shape_of(souther_date_iso as unsafe extern "C" fn(*const Date) -> M),
         ),
         (
             "souther_date_compare",
@@ -897,7 +1064,7 @@ fn functions() -> Vec<(&'static str, Shape)> {
             "souther_read_date",
             shape_of(
                 souther_read_date
-                    as unsafe extern "C" fn(*const Node, *const Path, D, *mut *mut Date) -> i8,
+                    as unsafe extern "C" fn(*const Node, *const Path, D, *mut *mut Date) -> Bool,
             ),
         ),
         (
@@ -906,19 +1073,14 @@ fn functions() -> Vec<(&'static str, Shape)> {
         ),
         (
             "souther_case_time_read",
-            shape_of(souther_case_time_read as unsafe extern "C" fn(*const Value) -> *const Time),
-        ),
-        (
-            "souther_time_of_iso",
-            shape_of(souther_time_of_iso as unsafe extern "C" fn(T) -> *mut Time),
+            shape_of(
+                souther_case_time_read
+                    as unsafe extern "C" fn(*const Value, *mut *mut Time) -> Bool,
+            ),
         ),
         (
             "souther_time_literal",
             shape_of(souther_time_literal as extern "C" fn(i64) -> *mut Time),
-        ),
-        (
-            "souther_time_iso",
-            shape_of(souther_time_iso as unsafe extern "C" fn(*const Time) -> M),
         ),
         (
             "souther_time_compare",
@@ -935,7 +1097,7 @@ fn functions() -> Vec<(&'static str, Shape)> {
             "souther_read_time",
             shape_of(
                 souther_read_time
-                    as unsafe extern "C" fn(*const Node, *const Path, D, *mut *mut Time) -> i8,
+                    as unsafe extern "C" fn(*const Node, *const Path, D, *mut *mut Time) -> Bool,
             ),
         ),
         (
@@ -945,20 +1107,13 @@ fn functions() -> Vec<(&'static str, Shape)> {
         (
             "souther_case_datetime_read",
             shape_of(
-                souther_case_datetime_read as unsafe extern "C" fn(*const Value) -> *const DateTime,
+                souther_case_datetime_read
+                    as unsafe extern "C" fn(*const Value, *mut *mut DateTime) -> Bool,
             ),
-        ),
-        (
-            "souther_datetime_of_iso",
-            shape_of(souther_datetime_of_iso as unsafe extern "C" fn(T) -> *mut DateTime),
         ),
         (
             "souther_datetime_literal",
             shape_of(souther_datetime_literal as extern "C" fn(i64) -> *mut DateTime),
-        ),
-        (
-            "souther_datetime_iso",
-            shape_of(souther_datetime_iso as unsafe extern "C" fn(*const DateTime) -> M),
         ),
         (
             "souther_datetime_compare",
@@ -977,7 +1132,12 @@ fn functions() -> Vec<(&'static str, Shape)> {
             "souther_read_datetime",
             shape_of(
                 souther_read_datetime
-                    as unsafe extern "C" fn(*const Node, *const Path, D, *mut *mut DateTime) -> i8,
+                    as unsafe extern "C" fn(
+                        *const Node,
+                        *const Path,
+                        D,
+                        *mut *mut DateTime,
+                    ) -> Bool,
             ),
         ),
         (
@@ -987,20 +1147,13 @@ fn functions() -> Vec<(&'static str, Shape)> {
         (
             "souther_case_instant_read",
             shape_of(
-                souther_case_instant_read as unsafe extern "C" fn(*const Value) -> *const Instant,
+                souther_case_instant_read
+                    as unsafe extern "C" fn(*const Value, *mut *mut Instant) -> Bool,
             ),
-        ),
-        (
-            "souther_instant_of_iso",
-            shape_of(souther_instant_of_iso as unsafe extern "C" fn(T) -> *mut Instant),
         ),
         (
             "souther_instant_literal",
             shape_of(souther_instant_literal as extern "C" fn(i64, i64) -> *mut Instant),
-        ),
-        (
-            "souther_instant_iso",
-            shape_of(souther_instant_iso as unsafe extern "C" fn(*const Instant) -> M),
         ),
         (
             "souther_instant_compare",
@@ -1017,28 +1170,28 @@ fn functions() -> Vec<(&'static str, Shape)> {
             "souther_read_instant",
             shape_of(
                 souther_read_instant
-                    as unsafe extern "C" fn(*const Node, *const Path, D, *mut *mut Instant) -> i8,
+                    as unsafe extern "C" fn(*const Node, *const Path, D, *mut *mut Instant) -> Bool,
             ),
         ),
         (
             "souther_date_add_days",
             shape_of(
                 souther_date_add_days
-                    as unsafe extern "C" fn(i64, *const Date, *mut *mut Date) -> i8,
+                    as unsafe extern "C" fn(i64, *const Date, *mut *mut Date) -> Bool,
             ),
         ),
         (
             "souther_date_add_months",
             shape_of(
                 souther_date_add_months
-                    as unsafe extern "C" fn(i64, *const Date, *mut *mut Date) -> i8,
+                    as unsafe extern "C" fn(i64, *const Date, *mut *mut Date) -> Bool,
             ),
         ),
         (
             "souther_date_add_years",
             shape_of(
                 souther_date_add_years
-                    as unsafe extern "C" fn(i64, *const Date, *mut *mut Date) -> i8,
+                    as unsafe extern "C" fn(i64, *const Date, *mut *mut Date) -> Bool,
             ),
         ),
         (
@@ -1063,14 +1216,14 @@ fn functions() -> Vec<(&'static str, Shape)> {
             "souther_date_from_parts",
             shape_of(
                 souther_date_from_parts
-                    as unsafe extern "C" fn(i64, i64, i64, *mut *mut Date) -> i8,
+                    as unsafe extern "C" fn(i64, i64, i64, *mut *mut Date) -> Bool,
             ),
         ),
         (
             "souther_time_from_parts",
             shape_of(
                 souther_time_from_parts
-                    as unsafe extern "C" fn(i64, i64, i64, *mut *mut Time) -> i8,
+                    as unsafe extern "C" fn(i64, i64, i64, *mut *mut Time) -> Bool,
             ),
         ),
         (
@@ -1089,21 +1242,21 @@ fn functions() -> Vec<(&'static str, Shape)> {
             "souther_datetime_add_minutes",
             shape_of(
                 souther_datetime_add_minutes
-                    as unsafe extern "C" fn(i64, *const DateTime, *mut *mut DateTime) -> i8,
+                    as unsafe extern "C" fn(i64, *const DateTime, *mut *mut DateTime) -> Bool,
             ),
         ),
         (
             "souther_datetime_add_hours",
             shape_of(
                 souther_datetime_add_hours
-                    as unsafe extern "C" fn(i64, *const DateTime, *mut *mut DateTime) -> i8,
+                    as unsafe extern "C" fn(i64, *const DateTime, *mut *mut DateTime) -> Bool,
             ),
         ),
         (
             "souther_datetime_add_days",
             shape_of(
                 souther_datetime_add_days
-                    as unsafe extern "C" fn(i64, *const DateTime, *mut *mut DateTime) -> i8,
+                    as unsafe extern "C" fn(i64, *const DateTime, *mut *mut DateTime) -> Bool,
             ),
         ),
         (
@@ -1230,7 +1383,7 @@ fn functions() -> Vec<(&'static str, Shape)> {
                         Hasher,
                         Equality,
                         *mut *const Set,
-                    ) -> i8,
+                    ) -> Bool,
             ),
         ),
         (
@@ -1244,7 +1397,7 @@ fn functions() -> Vec<(&'static str, Shape)> {
             "souther_set_contains",
             shape_of(
                 souther_set_contains
-                    as unsafe extern "C" fn(*const Set, i64, Hasher, Equality) -> i8,
+                    as unsafe extern "C" fn(*const Set, i64, Hasher, Equality) -> Bool,
             ),
         ),
         (
@@ -1256,7 +1409,7 @@ fn functions() -> Vec<(&'static str, Shape)> {
                         *const Set,
                         Equality,
                         *mut *const Set,
-                    ) -> i8,
+                    ) -> Bool,
             ),
         ),
         (
@@ -1291,7 +1444,7 @@ fn functions() -> Vec<(&'static str, Shape)> {
         (
             "souther_set_equal",
             shape_of(
-                souther_set_equal as unsafe extern "C" fn(*const Set, *const Set, Equality) -> i8,
+                souther_set_equal as unsafe extern "C" fn(*const Set, *const Set, Equality) -> Bool,
             ),
         ),
         (
@@ -1313,7 +1466,7 @@ fn functions() -> Vec<(&'static str, Shape)> {
             "souther_map_contains_key",
             shape_of(
                 souther_map_contains_key
-                    as unsafe extern "C" fn(*const Map, i64, Hasher, Equality) -> i8,
+                    as unsafe extern "C" fn(*const Map, i64, Hasher, Equality) -> Bool,
             ),
         ),
         (
@@ -1335,7 +1488,7 @@ fn functions() -> Vec<(&'static str, Shape)> {
                         Hasher,
                         Equality,
                         *mut *const Map,
-                    ) -> i8,
+                    ) -> Bool,
             ),
         ),
         (
@@ -1364,7 +1517,7 @@ fn functions() -> Vec<(&'static str, Shape)> {
             "souther_map_equal",
             shape_of(
                 souther_map_equal
-                    as unsafe extern "C" fn(*const Map, *const Map, Equality, Equality) -> i8,
+                    as unsafe extern "C" fn(*const Map, *const Map, Equality, Equality) -> Bool,
             ),
         ),
         (
@@ -1452,6 +1605,22 @@ fn every_function_is_what_the_table_naming_it_says() {
     }
 }
 
+/// What the runtime defines for its own tests and the driver's to count with, and for no other
+/// party: in neither table, so no header declares it and no library exports it.
+const INSTRUMENTS: &[&str] = &["souther_arena_taken"];
+
+/// The generation query is in neither table: it is outside every generation, the same in each,
+/// and held to what it was made as by the ABI's own test. Here it is held to being that function.
+#[test]
+fn the_generation_query_is_the_function_it_is_declared_as() {
+    let query: extern "C" fn() -> u32 = souther_abi_generation;
+    assert_eq!(query(), souther_native_abi::ABI_GENERATION);
+    assert_eq!(
+        souther_native_abi::GENERATION_QUERY,
+        "souther_abi_generation"
+    );
+}
+
 /// Every function the runtime defines for another party is in exactly one of the two tables, and
 /// is written above: read off the source, so a function added here and to neither table is caught
 /// rather than called by someone the tables say nothing to.
@@ -1493,7 +1662,10 @@ fn every_function_the_runtime_defines_is_in_one_table() {
                 .chars()
                 .take_while(|it| it.is_ascii_alphanumeric() || *it == '_')
                 .collect();
-            if name.starts_with("souther_") {
+            if name.starts_with("souther_")
+                && !INSTRUMENTS.contains(&name.as_str())
+                && name != souther_native_abi::GENERATION_QUERY
+            {
                 defined.insert(name);
             }
         }
@@ -1543,26 +1715,311 @@ fn a_rational_is_a_case_and_no_host_crosses_it() {
 /// the case: the token at its front is the one the runtime defines for it.
 #[test]
 fn a_case_a_host_makes_reads_back_as_what_it_holds() {
-    let mark = souther_mark();
+    let scope = souther_scope_open();
     let which = |value: *const Value| unsafe { value.cast::<*const u8>().read() };
     let int = souther_case_int_make(-42);
     assert_eq!(which(int), CASE_INT.as_ptr());
-    assert_eq!(unsafe { souther_case_int_read(int) }, -42);
-    for truth in [0, 1] {
+    let mut number = 0;
+    assert_eq!(
+        unsafe { souther_case_int_read(int, &mut number) },
+        Bool::TRUE
+    );
+    assert_eq!(number, -42);
+    for truth in [Bool::FALSE, Bool::TRUE] {
         let bool = souther_case_bool_make(truth);
         assert_eq!(which(bool), CASE_BOOL.as_ptr());
-        assert_eq!(unsafe { souther_case_bool_read(bool) }, truth);
+        let mut read = Bool(9);
+        assert_eq!(
+            unsafe { souther_case_bool_read(bool, &mut read) },
+            Bool::TRUE
+        );
+        assert_eq!(read, truth);
     }
     // SAFETY: three bytes of UTF-8 at the address handed over.
     let mut text = std::ptr::null_mut();
     let admitted = unsafe { souther_string_of_utf8("hé".as_ptr(), Count(3), &mut text) };
-    assert_eq!(admitted, 1, "test text has a place");
+    assert_eq!(admitted, Bool::TRUE, "test text has a place");
     let string = souther_case_string_make(text);
     assert_eq!(which(string), CASE_STRING.as_ptr());
+    let mut read = std::ptr::null_mut();
     assert_eq!(
-        unsafe { souther_case_string_read(string) },
-        text.cast_const()
+        unsafe { souther_case_string_read(string, &mut read) },
+        Bool::TRUE
     );
+    assert_eq!(read, text);
     assert_eq!(which(souther_case_none_make()), CASE_NONE.as_ptr());
-    souther_reset(mark);
+    souther_scope_close(scope);
+}
+
+/// What each function a host calls is held to of what a host hands it
+/// ([`souther_native_abi::HOST_INPUT_CONTRACT`]).
+enum Hostile {
+    /// It takes nothing but handles, and what a handle is, is the host's to hold to.
+    HandlesOnly,
+    /// It is called here with what a host can have wrong, and answers each as a refusal.
+    Refuses(fn()),
+}
+
+/// Every function a host calls, and what it answers a host that hands it what it does not take.
+/// A function a host calls that is missing here, or said to take only handles while it takes a
+/// datum, fails [`every_function_a_host_calls_answers_what_it_is_handed`].
+fn hostile() -> Vec<(&'static str, Hostile)> {
+    use Hostile::{HandlesOnly, Refuses};
+    vec![
+        (
+            "souther_scope_open",
+            Refuses(|| {
+                // Takes nothing, and every token it answers is closed by the one close for it.
+                let scope = souther_scope_open();
+                assert_eq!(souther_scope_close(scope), Bool::TRUE);
+            }),
+        ),
+        (
+            "souther_scope_close",
+            Refuses(|| {
+                for token in [i64::MIN, -1, 0, i64::MAX] {
+                    assert_eq!(souther_scope_close(Scope(token)), Bool::FALSE, "{token}");
+                }
+            }),
+        ),
+        (
+            "souther_string_of_utf8",
+            Refuses(|| {
+                let scope = souther_scope_open();
+                let mut out = std::ptr::null_mut();
+                let not_text = [0xff_u8, 0xfe, b'a'];
+                for (bytes, count) in [
+                    (&not_text[..], 3),
+                    (&b"abc"[..], -1),
+                    (&b"abc"[..], i64::MIN),
+                ] {
+                    let made =
+                        unsafe { souther_string_of_utf8(bytes.as_ptr(), Count(count), &mut out) };
+                    assert_eq!(made, Bool::FALSE, "{bytes:?} counted {count}");
+                }
+                souther_scope_close(scope);
+            }),
+        ),
+        ("souther_string_length", HandlesOnly),
+        ("souther_string_bytes", HandlesOnly),
+        (
+            "souther_decimal_of_parts",
+            Refuses(|| {
+                let scope = souther_scope_open();
+                let mut out = std::ptr::null_mut();
+                for (digits, count, scale) in [
+                    (&b"1.5"[..], 3, 0),
+                    (&[0xff_u8][..], 1, 0),
+                    (&b"15"[..], -1, 0),
+                    (&b"15"[..], 2, i64::MAX),
+                    (&b"15"[..], 2, i64::MIN),
+                ] {
+                    let made = unsafe {
+                        souther_decimal_of_parts(digits.as_ptr(), Count(count), scale, &mut out)
+                    };
+                    assert_eq!(made, Bool::FALSE, "{digits:?} counted {count} at {scale}");
+                }
+                souther_scope_close(scope);
+            }),
+        ),
+        ("souther_decimal_unscaled", HandlesOnly),
+        ("souther_decimal_scale", HandlesOnly),
+        (
+            "souther_date_of_parts",
+            Refuses(|| {
+                let mut out = std::ptr::null_mut();
+                for [y, m, d] in [
+                    [i64::MIN, 1, 1],
+                    [2026, -1, 1],
+                    [2026, 2, 30],
+                    [i64::MAX; 3],
+                ] {
+                    assert_eq!(
+                        unsafe { souther_date_of_parts(y, m, d, &mut out) },
+                        Bool::FALSE
+                    );
+                }
+            }),
+        ),
+        ("souther_date_parts", HandlesOnly),
+        (
+            "souther_time_of_parts",
+            Refuses(|| {
+                let mut out = std::ptr::null_mut();
+                for [h, m, s] in [[-1, 0, 0], [24, 0, 0], [0, 60, 0], [i64::MAX; 3]] {
+                    assert_eq!(
+                        unsafe { souther_time_of_parts(h, m, s, &mut out) },
+                        Bool::FALSE
+                    );
+                }
+            }),
+        ),
+        ("souther_time_parts", HandlesOnly),
+        (
+            "souther_datetime_of_parts",
+            Refuses(|| {
+                let mut out = std::ptr::null_mut();
+                for [y, mo, d, h, mi, s] in [[i64::MIN, 1, 1, 0, 0, 0], [2026, 1, 1, 0, 0, -1]] {
+                    assert_eq!(
+                        unsafe { souther_datetime_of_parts(y, mo, d, h, mi, s, &mut out) },
+                        Bool::FALSE
+                    );
+                }
+            }),
+        ),
+        ("souther_datetime_parts", HandlesOnly),
+        (
+            "souther_instant_of_parts",
+            Refuses(|| {
+                let mut out = std::ptr::null_mut();
+                for [s, n] in [[i64::MIN, 0], [i64::MAX, 0], [0, -1], [0, i64::MAX]] {
+                    assert_eq!(
+                        unsafe { souther_instant_of_parts(s, n, &mut out) },
+                        Bool::FALSE
+                    );
+                }
+            }),
+        ),
+        ("souther_instant_parts", HandlesOnly),
+        ("souther_decoded_outcome", HandlesOnly),
+        ("souther_decoded_value", HandlesOnly),
+        ("souther_decoded_malformed_at", HandlesOnly),
+        ("souther_decoded_issue_count", HandlesOnly),
+        (
+            "souther_decoded_issue",
+            Refuses(|| {
+                let scope = souther_scope_open();
+                let document = b"[]";
+                let decoded = unsafe { souther_decode_begin(document.as_ptr(), Count(2)) };
+                for at in [i64::MIN, -1, 0, i64::MAX] {
+                    assert!(unsafe { souther_decoded_issue(decoded, Count(at)) }.is_null());
+                }
+                // And a count below nought is a document that is none, and ends nothing.
+                let none = unsafe { souther_decode_begin(document.as_ptr(), Count(-1)) };
+                assert_eq!(unsafe { souther_decoded_malformed_at(none) }, Count(0));
+                souther_scope_close(scope);
+            }),
+        ),
+        ("souther_issue_code", HandlesOnly),
+        ("souther_issue_message_key", HandlesOnly),
+        ("souther_issue_path", HandlesOnly),
+        ("souther_issue_meta", HandlesOnly),
+        (
+            "souther_case_int_make",
+            Refuses(|| {
+                // Every Int is one.
+                for number in [i64::MIN, -1, i64::MAX] {
+                    let scope = souther_scope_open();
+                    let mut read = 0;
+                    let made = souther_case_int_make(number);
+                    assert_eq!(
+                        unsafe { souther_case_int_read(made, &mut read) },
+                        Bool::TRUE
+                    );
+                    assert_eq!(read, number);
+                    souther_scope_close(scope);
+                }
+            }),
+        ),
+        (
+            "souther_case_bool_make",
+            Refuses(|| {
+                let scope = souther_scope_open();
+                for (byte, is) in [
+                    (0, Bool::FALSE),
+                    (1, Bool::TRUE),
+                    (2, Bool::TRUE),
+                    (255, Bool::TRUE),
+                ] {
+                    let mut read = Bool(9);
+                    let made = souther_case_bool_make(Bool(byte));
+                    assert_eq!(
+                        unsafe { souther_case_bool_read(made, &mut read) },
+                        Bool::TRUE
+                    );
+                    assert_eq!(read, is, "{byte}");
+                }
+                souther_scope_close(scope);
+            }),
+        ),
+        ("souther_case_string_make", HandlesOnly),
+        ("souther_case_decimal_make", HandlesOnly),
+        ("souther_case_date_make", HandlesOnly),
+        ("souther_case_time_make", HandlesOnly),
+        ("souther_case_datetime_make", HandlesOnly),
+        ("souther_case_instant_make", HandlesOnly),
+        ("souther_case_some_make", HandlesOnly),
+        ("souther_case_none_make", HandlesOnly),
+        ("souther_case_division_by_zero_make", HandlesOnly),
+        ("souther_case_not_a_number_make", HandlesOnly),
+        ("souther_case_not_a_date_make", HandlesOnly),
+        ("souther_case_not_a_time_make", HandlesOnly),
+        ("souther_case_not_whole_make", HandlesOnly),
+        ("souther_case_not_a_finite_decimal_make", HandlesOnly),
+        ("souther_case_int_read", Refuses(read_as_another_case)),
+        ("souther_case_bool_read", Refuses(read_as_another_case)),
+        ("souther_case_string_read", Refuses(read_as_another_case)),
+        ("souther_case_decimal_read", Refuses(read_as_another_case)),
+        ("souther_case_date_read", Refuses(read_as_another_case)),
+        ("souther_case_time_read", Refuses(read_as_another_case)),
+        ("souther_case_datetime_read", Refuses(read_as_another_case)),
+        ("souther_case_instant_read", Refuses(read_as_another_case)),
+    ]
+}
+
+/// Which case a value is, is read off the value: a value of one case read as every other is
+/// answered as that, and read as its own is not.
+fn read_as_another_case() {
+    let scope = souther_scope_open();
+    let none = souther_case_none_make();
+    let int = souther_case_int_make(7);
+    unsafe {
+        let mut i = 0;
+        let mut b = Bool::FALSE;
+        let mut s = std::ptr::null_mut();
+        let mut d = std::ptr::null_mut();
+        let mut date = std::ptr::null_mut();
+        let mut time = std::ptr::null_mut();
+        let mut dt = std::ptr::null_mut();
+        let mut instant = std::ptr::null_mut();
+        for value in [none, int] {
+            assert_eq!(souther_case_bool_read(value, &mut b), Bool::FALSE);
+            assert_eq!(souther_case_string_read(value, &mut s), Bool::FALSE);
+            assert_eq!(souther_case_decimal_read(value, &mut d), Bool::FALSE);
+            assert_eq!(souther_case_date_read(value, &mut date), Bool::FALSE);
+            assert_eq!(souther_case_time_read(value, &mut time), Bool::FALSE);
+            assert_eq!(souther_case_datetime_read(value, &mut dt), Bool::FALSE);
+            assert_eq!(souther_case_instant_read(value, &mut instant), Bool::FALSE);
+        }
+        assert_eq!(souther_case_int_read(none, &mut i), Bool::FALSE);
+        assert_eq!(souther_case_int_read(int, &mut i), Bool::TRUE);
+        assert_eq!(i, 7);
+    }
+    souther_scope_close(scope);
+}
+
+/// Every function a host calls answers every datum it takes, as
+/// [`souther_native_abi::HOST_INPUT_CONTRACT`] says; and
+/// each is held here: one said to take only handles takes no datum, and one that takes a datum is
+/// called with what a host can have wrong. A function a host calls that this does not name fails
+/// it, so the next one is held too. A call that ends the process fails the run that makes it.
+#[test]
+fn every_function_a_host_calls_answers_what_it_is_handed() {
+    let hostile = hostile();
+    let named: BTreeSet<&str> = hostile.iter().map(|(name, _)| *name).collect();
+    let called: BTreeSet<&str> = host_functions().iter().map(|it| it.name).collect();
+    assert_eq!(named, called, "every function a host calls, and no other");
+    for (name, held) in hostile {
+        let function = host_functions()
+            .into_iter()
+            .find(|it| it.name == name)
+            .expect("named above");
+        let takes_a_datum = function.takes.iter().any(
+            |it| matches!(it, souther_native_abi::HostParameter::Given(word) if word.is_datum()),
+        );
+        match held {
+            Hostile::HandlesOnly => assert!(!takes_a_datum, "{name} takes a datum"),
+            Hostile::Refuses(call) => call(),
+        }
+    }
 }

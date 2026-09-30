@@ -30,7 +30,7 @@ use cranelift::object::ObjectModule;
 use object::{Object, ObjectSection};
 use souther_native_abi::{
     ABI_GENERATION, ANSWERED, DECODED_ISSUES, DECODED_MALFORMED, DECODED_VALUE, HOST_CASES,
-    HOST_RUNTIME, HOST_STATUSES, HostLeaf, HostParameter, HostShape, HostWord,
+    HOST_RUNTIME, HOST_STATUSES, HostLeaf, HostParameter, HostShape, HostWord, Representation,
 };
 use std::collections::BTreeMap;
 use target_lexicon::BinaryFormat;
@@ -140,41 +140,22 @@ fn signature_of(
     signature
 }
 
-/// What a word is on the machine.
+/// What a word is on the machine, as `souther_native_abi` says it is.
 pub(crate) fn machine(word: HostWord) -> types::Type {
-    match word {
-        HostWord::Bool => types::I8,
-        HostWord::Status | HostWord::Case | HostWord::Outcome => types::I32,
-        HostWord::Int | HostWord::Count | HostWord::Mark => types::I64,
-        HostWord::Bytes
-        | HostWord::Value
-        | HostWord::String
-        | HostWord::Decimal
-        | HostWord::Date
-        | HostWord::Time
-        | HostWord::DateTime
-        | HostWord::Instant
-        | HostWord::Decoded
-        | HostWord::Issue
-        | HostWord::List
-        | HostWord::Requirements
-        | HostWord::Capability
-        | HostWord::Userdata
-        | HostWord::Function => POINTER,
+    match word.representation() {
+        Representation::U8 => types::I8,
+        Representation::U32 | Representation::I32 => types::I32,
+        Representation::I64 => types::I64,
+        Representation::Address => POINTER,
     }
 }
 
 /// What a word is called in the header. An address a host never reads behind is a pointer to a
-/// struct nothing defines, so that a C compiler refuses one where another was meant.
+/// struct nothing defines, so that a C compiler refuses one where another was meant; a number is
+/// the type its representation is ([`Representation::c`]), and a status the typedef of one.
 fn c_word(word: Word) -> &'static str {
     match word {
         Word::Status => "souther_status",
-        Word::Int => "int64_t",
-        Word::Bool => "uint8_t",
-        Word::Case => "uint32_t",
-        Word::Outcome => "int32_t",
-        Word::Count => "int64_t",
-        Word::Mark => "int64_t",
         Word::Bytes => "const uint8_t *",
         Word::Value => "souther_value",
         Word::String => "souther_string",
@@ -190,6 +171,9 @@ fn c_word(word: Word) -> &'static str {
         Word::Capability => "souther_capability",
         Word::Userdata => "void *",
         Word::Function => "souther_function",
+        Word::Int | Word::Bool | Word::Case | Word::Outcome | Word::Count | Word::Scope => {
+            HostWord::from(word).representation().c()
+        }
     }
 }
 
@@ -727,13 +711,18 @@ pub(crate) fn manifest_of(modules: Vec<manifest::Module>) -> Result<Manifest> {
         abi: ABI_GENERATION,
         statuses: numbered(statuses()),
         outcomes: numbered(outcomes()),
-        runtime: HOST_RUNTIME.iter().map(runtime_function).collect(),
         cases: case_crossings(),
         modules,
     })
 }
 
-/// A function of the runtime's, as the manifest says one.
+/// The runtime's functions a host calls, as a header declares them: the ABI generation's, and not
+/// the manifest's, which says only what a library is.
+fn host_runtime() -> Vec<manifest::Function> {
+    HOST_RUNTIME.iter().map(runtime_function).collect()
+}
+
+/// A function of the runtime's, as a header declares one.
 fn runtime_function(function: &souther_native_abi::RuntimeFunction) -> manifest::Function {
     HostFunction {
         symbol: function.name.to_string(),
@@ -856,7 +845,8 @@ pub(crate) fn written(manifest: &Manifest) -> String {
     written
 }
 
-/// Every function the manifest names, in the order the header declares them.
+/// Every function the manifest names, in the order the header declares them after the runtime's
+/// own ([`host_runtime`]).
 fn functions(manifest: &Manifest) -> impl Iterator<Item = &manifest::Function> {
     let modules = manifest.modules.iter().flat_map(|module| {
         let behaviors = module.behaviors.iter().flat_map(behavior_functions);
@@ -879,7 +869,7 @@ fn functions(manifest: &Manifest) -> impl Iterator<Item = &manifest::Function> {
         .cases
         .iter()
         .flat_map(|it| std::iter::once(&it.make).chain(&it.read));
-    manifest.runtime.iter().chain(cases).chain(modules)
+    cases.chain(modules)
 }
 
 /// The function a call reaches through, where one does.
@@ -987,10 +977,14 @@ pub(crate) fn exported(manifest: &Manifest) -> Vec<String> {
             .filter_map(|it| it.make.as_ref().map(|make| &make.implement));
         injections.chain(functions)
     });
-    functions(manifest)
-        .map(|function| &function.name)
-        .chain(implements)
-        .cloned()
+    std::iter::once(souther_native_abi::GENERATION_QUERY.to_owned())
+        .chain(host_runtime().into_iter().map(|function| function.name))
+        .chain(
+            functions(manifest)
+                .map(|function| &function.name)
+                .chain(implements)
+                .cloned(),
+        )
         .collect()
 }
 
@@ -1006,7 +1000,7 @@ pub(crate) fn declarations(manifest: &Manifest) -> String {
          * declarations that has no preprocessor. A C or C++ compiler includes souther.h.\n \
          * souther.json describes the same functions in the model's terms. ABI generation {}. */\n\
          \n\
-         typedef uint32_t souther_status;\n\
+         typedef {} souther_status;\n\
          typedef const struct souther_value_ *souther_value;\n\
          typedef const struct souther_string_ *souther_string;\n\
          typedef const struct souther_decimal_ *souther_decimal;\n\
@@ -1018,20 +1012,24 @@ pub(crate) fn declarations(manifest: &Manifest) -> String {
          typedef const struct souther_issue_ *souther_issue;\n\
          typedef const struct souther_list_ *souther_list;\n\
          typedef const struct souther_function_ *souther_function;\n\
-         /* The address of code, which a host never calls or reads: what makes a capability writes it. */\n\
-         typedef void (*souther_code)(void);\n\
-         /* What is handed where a behavior is required: laid out by a host as room, and written by\n \
-         * what makes one. */\n\
-         typedef struct souther_capability {{ souther_code invoke; const void *environment; }} souther_capability;\n\
-         /* What a capability of a host's own implementation reads it out of: laid out by a host as\n \
-         * room, and written by what makes the capability. */\n\
-         typedef struct souther_hosted {{ souther_code implementation; void *userdata; }} souther_hosted;\n\
-         /* What a function value a host made of an implementation of its own is: laid out by a host as\n \
-         * room, written by what makes the value, and its address is the value. */\n\
-         typedef struct souther_hosted_function {{ souther_code invoke; souther_hosted hosted; }} souther_hosted_function;\n\
          \n",
-        manifest.abi
+        manifest.abi,
+        HostWord::Status.representation().c()
     );
+    // Room a host lays out and owns, and whose fields are the generated code's alone: as many
+    // slots as it takes, and nothing a host could read or write (`HOST_STORAGE`).
+    written.push_str(
+        "/* Room a host lays out, owns and never reads: allocated by its name, handed over by its\n \
+         * address, and written only by what makes the capability or the value. */\n",
+    );
+    for storage in souther_native_abi::HOST_STORAGE {
+        written.push_str(&format!(
+            "typedef struct {name} {{ uint64_t opaque[{slots}]; }} {name};\n",
+            name = storage.name,
+            slots = storage.slots
+        ));
+    }
+    written.push('\n');
     let statuses: Vec<String> = in_order(&manifest.statuses)
         .into_iter()
         .map(|(name, number)| format!("    SOUTHER_{name} = {number}"))
@@ -1043,8 +1041,13 @@ pub(crate) fn declarations(manifest: &Manifest) -> String {
         .collect();
     written.push_str(&format!("enum {{\n{}\n}};\n", outcomes.join(",\n")));
 
+    written.push_str(&format!(
+        "\n/* Which ABI generation this library answers to: asked before anything else, and the same\n \
+         * in every generation. */\n{}\n",
+        souther_native_abi::GENERATION_QUERY_DECLARED
+    ));
     written.push_str("\n/* The runtime. */\n");
-    for function in &manifest.runtime {
+    for function in &host_runtime() {
         written.push_str(&declared(function));
         written.push('\n');
     }

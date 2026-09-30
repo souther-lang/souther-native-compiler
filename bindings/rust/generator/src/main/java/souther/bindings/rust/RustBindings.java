@@ -1,8 +1,8 @@
 package souther.bindings.rust;
 
 import org.jspecify.annotations.Nullable;
+import souther.bindings.Claimed;
 import souther.bindings.BindingInput;
-import souther.bindings.Generated;
 import souther.bindings.Manifest;
 import souther.bindings.Manifest.Case;
 import souther.bindings.Manifest.Declaration;
@@ -12,8 +12,7 @@ import souther.bindings.Manifest.Shape;
 import souther.bindings.Manifest.Type;
 import souther.bindings.Manifest.Word;
 import souther.bindings.NotBindable;
-import souther.bindings.Output;
-import souther.bindings.RuntimeFunctions;
+import souther.bindings.ValueCrossing;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -49,7 +48,6 @@ import java.util.stream.Collectors;
 public final class RustBindings {
 
     /** What says a directory is a Rust binding this wrote, and may be replaced whole. */
-    static final String MARK = ".souther-rust-binding";
 
     /** The version of the runtime crate what this writes calls. */
     static final String RUNTIME_VERSION = "0.1";
@@ -66,7 +64,6 @@ public final class RustBindings {
     private final Manifest manifest;
     private final String crate;
     private final Path into;
-    private final List<Path> written = new ArrayList<>();
 
     /** What each declared type is, by {@code module.Name}. */
     private final Map<String, Declared> declared = new LinkedHashMap<>();
@@ -90,41 +87,26 @@ public final class RustBindings {
     }
 
     /**
-     * Refuses what a generation into {@code into} as {@code crate} would refuse whatever the
-     * manifest said: a name Cargo will not take, and a directory holding what no generation wrote.
+     * Refuses what a generation as {@code crate} would refuse whatever the manifest said: a name
+     * Cargo will not take.
      *
-     * @throws NotBindable where the name or the directory would be refused
+     * @throws NotBindable where the name would be refused
      */
-    public static void refuseAhead(Path into, String crate) throws IOException {
+    public static void refuseAhead(String crate) {
         RustNames.crateName(crate);
-        Output.replaceable(into, MARK);
     }
 
     /**
      * Writes the binding of what the input's manifest describes into {@code into}, as the crate
-     * {@code crate}, which a host depends on by path.
-     *
-     * <p>{@code into} is then that crate and nothing else: it is written beside it and put in place
-     * whole ({@link Output}), so a module the model no longer declares does not survive a
-     * generation, and a refused one leaves what was there as it was.
+     * {@code crate}, which a host depends on by path; and answers {@code into}.
      *
      * @throws NotBindable where a name in the model is not one Rust takes
      */
-    public static Generated generate(BindingInput input, Path into, String crate)
-            throws IOException {
-        Manifest read = input.manifest();
+    public static Path generate(BindingInput input, Path into, String crate) throws IOException {
         String name = RustNames.crateName(crate);
-        Output output = Output.replacing(into, MARK);
-        RustBindings binding = new RustBindings(read, name, output.staging());
-        try {
-            binding.write();
-            output.commit();
-        } catch (IOException | RuntimeException e) {
-            output.abandon();
-            throw e;
-        }
-        return new Generated(output.placed(output.staging()),
-                binding.written.stream().map(output::placed).toList());
+        Files.createDirectories(into);
+        new RustBindings(input.manifest(), name, into).write();
+        return into;
     }
 
     /** A declared type, and where the crate writes it. */
@@ -144,12 +126,12 @@ public final class RustBindings {
     private static final class RustModule {
         final Set<String> children = new LinkedHashSet<>();
         final StringBuilder items = new StringBuilder();
-        final RustNames.Claimed types;
-        final RustNames.Claimed values;
+        final Claimed types;
+        final Claimed values;
 
         RustModule(String where) {
-            types = new RustNames.Claimed("the types of " + where);
-            values = new RustNames.Claimed("the functions of " + where);
+            types = new Claimed("the types of " + where);
+            values = new Claimed("the functions of " + where);
             types.claim("rt", "the runtime crate's alias");
         }
     }
@@ -174,7 +156,6 @@ public final class RustBindings {
     }
 
     private void write() throws IOException {
-        checkRuntime();
         RustModule root = moduleAt(List.of());
         ROOT.forEach(it -> root.types.claim(it, "the generated `" + it + "`"));
         for (Manifest.Module module : manifest.modules()) {
@@ -205,93 +186,58 @@ public final class RustBindings {
         cargo();
     }
 
-    /**
-     * Refuses a manifest whose runtime functions the runtime crate would call as something they
-     * are not: each it calls is there, taking and answering what it calls it with.
-     */
-    private void checkRuntime() {
-        RuntimeFunctions.check(manifest, "Rust");
-    }
-
     // ---------------------------------------------------------------------------------------------
     // What a model type crosses as.
 
-    /**
-     * How a value of {@code type} crosses in {@code shape}, the way {@code way} says, in a function
-     * of {@code module}'s, or null where this binding has no way to hold it: a pair of a type and a
-     * shape it knows no way to hold, a declared type it has no handle for, a union no declaration
-     * names, and a function value.
-     */
-    private @Nullable Crossing crossing(Manifest.Module module, Type type, Shape shape,
-                                        Manifest.Way way) {
-        Crossing made = switch (shape) {
-            case Shape.Leaf leaf -> switch (type) {
-                case Type.Primitive it -> Crossing.Whole.primitive(it.name(), leaf.word());
-                case Type.Declared it -> leaf.word() == Word.VALUE ? handle(it.module(), it.name())
-                        : null;
-                // Handed to Rust only as a behavior's answer, which says which case it is
-                // (`answered`): anywhere else Rust would be handed a value of it told nothing.
-                case Type.Union union -> leaf.word() == Word.VALUE && way == Manifest.Way.GIVEN
-                        ? oneOf(module, union, null) : null;
-                default -> null;
-            };
-            case Shape.Option option -> type instanceof Type.Option it
-                    && crossing(module, it.of(), option.of(), way) instanceof Crossing of
+    /** How Rust holds {@code value}, crossing the way {@code way} says, or null where it has no way. */
+    private @Nullable Crossing held(Manifest.Module module, ValueCrossing value, Manifest.Way way) {
+        Crossing made = switch (value) {
+            case ValueCrossing.Primitive it -> Crossing.Whole.primitive(it.type().primitive(), it.word());
+            case ValueCrossing.Handle it -> it.word() == Word.VALUE
+                    ? handle(it.type().module(), it.type().name()) : null;
+            // Handed to Rust only as a behavior's answer, which says which case it is
+            // (`answered`): anywhere else Rust would be handed a value of it told nothing.
+            case ValueCrossing.Union it -> it.word() == Word.VALUE && way == Manifest.Way.GIVEN
+                    ? oneOf(module, it.type(), null) : null;
+            case ValueCrossing.Optional it -> held(module, it.of(), way) instanceof Crossing of
                     ? new Crossing.Optional(of) : null;
-            case Shape.Product product -> {
-                if (!(type instanceof Type.Tuple it) || it.of().size() != product.of().size()) {
-                    yield null;
-                }
-                List<Crossing> members = crossings(module, it.of(), product.of(), way);
+            case ValueCrossing.Tuple it -> {
+                List<Crossing> members = helds(module, it.members(), way);
                 yield members == null ? null : new Crossing.Tuple(members);
             }
-            case Shape.ListOf list -> {
-                if (!(Type.listed(type) instanceof Type of)
-                        || !(crossing(module, of, list.element(), way) instanceof Crossing element)) {
+            case ValueCrossing.Listed it -> {
+                if (!it.crosses(way) || !(held(module, it.element(), way) instanceof Crossing element)) {
                     yield null;
                 }
-                Manifest.ListCrossing listed = module.lists().stream()
-                        .filter(l -> l.element().equals(list.element())).findFirst().orElseThrow();
+                Manifest.ListCrossing listed = it.crossing();
                 Manifest.ListRead read = listed.read();
-                if (way == Manifest.Way.GIVEN ? listed.construct() == null : read == null) {
-                    yield null;
-                }
                 yield new Crossing.Listed(element, listed,
                         listed.construct() == null ? null : symbol(listed.construct()),
                         read == null ? null : symbol(read.length()),
                         read == null ? null : symbol(read.at()));
             }
-            case Shape.FunctionOf function -> {
-                if (!(type instanceof Type.Function it)) {
-                    yield null;
-                }
-                FunctionEnum written = functionEnum(module, it, function);
+            case ValueCrossing.FunctionValue it -> {
+                FunctionEnum written = functionEnum(module, it);
                 // Handed to Rust, a function value is one the library made, which is called through
                 // the library; handed over, it may be one of the host's, which the library calls.
                 yield written == null
                         || !(way == Manifest.Way.HANDED ? written.called() : written.hosted())
-                        ? null : new Crossing.Function(written.type(), function);
+                        ? null : new Crossing.Function(written.type(), it.shape());
             }
         };
-        if (made != null && !made.shape().equals(shape)) {
-            throw new IllegalStateException("this binding holds a value crossing as " + shape
+        if (made != null && !made.shape().equals(value.shape())) {
+            throw new IllegalStateException("this binding holds a value crossing as " + value.shape()
                     + " as what crosses as " + made.shape());
         }
         return made;
     }
 
-    /**
-     * How each of {@code types} crosses in its shape, or null where any of them has no way, or the
-     * two say different counts.
-     */
-    private @Nullable List<Crossing> crossings(Manifest.Module module, List<Type> types,
-                                               List<Shape> shapes, Manifest.Way way) {
-        if (types.size() != shapes.size()) {
-            return null;
-        }
+    /** How Rust holds each of {@code values}, or null where it has no way to hold any of them. */
+    private @Nullable List<Crossing> helds(Manifest.Module module, List<ValueCrossing> values,
+                                           Manifest.Way way) {
         List<Crossing> made = new ArrayList<>();
-        for (int at = 0; at < types.size(); at++) {
-            Crossing it = crossing(module, types.get(at), shapes.get(at), way);
+        for (ValueCrossing value : values) {
+            Crossing it = held(module, value, way);
             if (it == null) {
                 return null;
             }
@@ -306,12 +252,12 @@ public final class RustBindings {
      * belongs to, and anything else as a value of its type is handed.
      */
     private @Nullable Crossing answered(Manifest.Module module, Manifest.Answer answer,
-                                        Shape shape) {
+                                        ValueCrossing value) {
         if (!(answer.type() instanceof Type.Union union)) {
-            return crossing(module, answer.type(), shape, Manifest.Way.HANDED);
+            return held(module, value, Manifest.Way.HANDED);
         }
         Manifest.UnionAnswer told = Objects.requireNonNull(answer.union());
-        if (!(shape instanceof Shape.Leaf leaf) || leaf.word() != Word.VALUE || told.which() == null) {
+        if (!(value instanceof ValueCrossing.Union it) || it.word() != Word.VALUE || told.which() == null) {
             return null;
         }
         return oneOf(module, union, told);
@@ -395,8 +341,8 @@ public final class RustBindings {
                     Manifest.CaseCrossing crossing = manifest.crossing(p);
                     Word held = crossing.holds();
                     Crossing.Whole whole = held == null ? null
-                            : Crossing.Whole.primitive(p.name(), held);
-                    yield whole == null ? null : new Crossing.OneOf.Member(p.name(), whole,
+                            : Crossing.Whole.primitive(p.primitive(), held);
+                    yield whole == null ? null : new Crossing.OneOf.Member(p.primitive().spelt(), whole,
                             symbol(crossing.make()), symbol(Objects.requireNonNull(crossing.read())));
                 }
                 case Case.Language l -> null;
@@ -420,7 +366,7 @@ public final class RustBindings {
                 + "),\n").collect(Collectors.joining());
         String what = union.cases().stream().map(it -> switch (it) {
             case Case.Declared d -> d.module() + "." + d.name();
-            case Case.Primitive p -> p.name();
+            case Case.Primitive p -> p.primitive().spelt();
             case Case.Language l -> l.name();
         }).collect(Collectors.joining(" | "));
         at.items.append("""
@@ -454,28 +400,23 @@ public final class RustBindings {
      * apart, since a union is handed over and not handed to Rust, and each is written where the
      * manifest says how ({@code call}, {@code make}).
      */
-    private @Nullable FunctionEnum functionEnum(Manifest.Module module, Type.Function type,
-                                                Shape.FunctionOf shape) {
-        List<Object> key = List.of(type, shape);
+    private @Nullable FunctionEnum functionEnum(Manifest.Module module,
+                                                ValueCrossing.FunctionValue value) {
+        List<Object> key = List.of(value.type(), value.shape());
         if (functions.containsKey(key)) {
             return functions.get(key);
         }
         functions.put(key, null);
-        Manifest.Signature signature = shape.signature();
-        Manifest.FunctionCrossing crossing = module.functions().stream()
-                .filter(it -> it.signature().equals(signature)).findFirst().orElseThrow();
-        if (type.takes().size() != signature.takes().size()) {
-            return null;
-        }
+        Manifest.FunctionCrossing crossing = value.crossing();
         List<Crossing> handedOver = crossing.call() == null ? null
-                : crossings(module, type.takes(), signature.takes(), Manifest.Way.GIVEN);
+                : helds(module, value.takes(), Manifest.Way.GIVEN);
         Crossing answered = crossing.call() == null ? null
-                : crossing(module, type.answers(), signature.answers(), Manifest.Way.HANDED);
+                : held(module, value.answers(), Manifest.Way.HANDED);
         boolean called = handedOver != null && answered != null;
         List<Crossing> handed = crossing.make() == null ? null
-                : crossings(module, type.takes(), signature.takes(), Manifest.Way.HANDED);
+                : helds(module, value.takes(), Manifest.Way.HANDED);
         Crossing answering = crossing.make() == null ? null
-                : crossing(module, type.answers(), signature.answers(), Manifest.Way.GIVEN);
+                : held(module, value.answers(), Manifest.Way.GIVEN);
         boolean hosted = handed != null && answering != null;
         if (!called && !hosted) {
             return null;
@@ -784,7 +725,7 @@ public final class RustBindings {
     // A handle: what every declared type is held as.
 
     /** The struct a value of {@code it} is held as, and what reads and writes it. */
-    private void handleStruct(RustModule at, Declared it, String doc, RustNames.Claimed methods) {
+    private void handleStruct(RustModule at, Declared it, String doc, Claimed methods) {
         for (String fixed : List.of("__word", "__held")) {
             methods.claim(fixed, "the generated `" + fixed + "`");
         }
@@ -823,7 +764,7 @@ public final class RustBindings {
 
     private void handleType(RustModule at, Manifest.Module module, Declared it) {
         Declaration declaration = it.declaration();
-        RustNames.Claimed methods = new RustNames.Claimed("the methods of `" + it.key() + "`");
+        Claimed methods = new Claimed("the methods of `" + it.key() + "`");
         for (String fixed : List.of("new", "decode", "decoder", "encode")) {
             methods.claim(fixed, "the generated `" + fixed + "`");
         }
@@ -850,12 +791,11 @@ public final class RustBindings {
     /** {@code new}: the value, or the invariant it does not hold as an issue. */
     private void construct(RustModule at, Manifest.Module module, Declared it,
                            List<Manifest.Field> fields, Manifest.Construct construct) {
-        List<Crossing> takes = crossings(module, fields.stream().map(Manifest.Field::type).toList(),
-                construct.takes(), Manifest.Way.GIVEN);
+        List<Crossing> takes = helds(module, construct.takes(), Manifest.Way.GIVEN);
         if (takes == null) {
             return;
         }
-        RustNames.Claimed claimed = new RustNames.Claimed("the parameters of `" + it.key()
+        Claimed claimed = new Claimed("the parameters of `" + it.key()
                 + "::new`");
         claimed.claim("run", "the run it is made in");
         List<String> names = new ArrayList<>();
@@ -953,7 +893,7 @@ public final class RustBindings {
         if (read == null) {
             return;
         }
-        Crossing crossing = crossing(module, field.type(), read.answers(), Manifest.Way.HANDED);
+        Crossing crossing = held(module, read.answers(), Manifest.Way.HANDED);
         if (crossing == null) {
             return;
         }
@@ -978,7 +918,7 @@ public final class RustBindings {
     // A sum.
 
     private void sum(RustModule at, Manifest.Module module, Declared it, Declaration.Sum sum) {
-        RustNames.Claimed methods = new RustNames.Claimed("the methods of `" + it.key() + "`");
+        Claimed methods = new Claimed("the methods of `" + it.key() + "`");
         for (String fixed : List.of("case", "decode", "decoder", "encode")) {
             methods.claim(fixed, "the generated `" + fixed + "`");
         }
@@ -1079,8 +1019,8 @@ public final class RustBindings {
                 case Case.Primitive p -> {
                     Manifest.CaseCrossing crossing = manifest.crossing(p);
                     Word held = crossing.holds();
-                    Crossing.Whole whole = held == null ? null : Crossing.Whole.primitive(p.name(), held);
-                    yield whole == null ? null : new CaseArm(p.name(), whole.owned(),
+                    Crossing.Whole whole = held == null ? null : Crossing.Whole.primitive(p.primitive(), held);
+                    yield whole == null ? null : new CaseArm(p.primitive().spelt(), whole.owned(),
                             carried(symbol(Objects.requireNonNull(crossing.read())), whole));
                 }
                 case Case.Language l -> RustNames.takes(RustNames.capitalized(l.name()))
@@ -1105,7 +1045,10 @@ public final class RustBindings {
      * makes of it are two blocks and not one inside the other.
      */
     private static String carried(String read, Crossing.Whole whole) {
-        String word = "unsafe { (library.symbols." + read + ")(value) }";
+        // Read as the case the library said the value is, which it answers it is.
+        String word = "{ let mut held = unsafe { std::mem::zeroed() }; if unsafe { (library.symbols."
+                + read + ")(value, &mut held) } == 0 { unreachable!(\"the library read a value as a"
+                + " case it said it is not\") } held }";
         String made = whole.of(List.of("held"));
         return made.equals("held") ? word : "{ let held = " + word + "; " + made + " }";
     }
@@ -1113,7 +1056,7 @@ public final class RustBindings {
     private static Set<String> cases(Declaration.Sum sum) {
         return sum.cases().stream().map(it -> switch (it) {
             case Case.Declared d -> d.module() + "." + d.name();
-            case Case.Primitive p -> "primitive:" + p.name();
+            case Case.Primitive p -> "primitive:" + p.primitive().spelt();
             case Case.Language l -> "language:" + l.name();
         }).collect(Collectors.toCollection(LinkedHashSet::new));
     }
@@ -1131,15 +1074,14 @@ public final class RustBindings {
             if (!requiresOf(key).isEmpty()) {
                 continue;
             }
-            List<Crossing> takes = crossings(module, behavior.parameters().types(),
-                    call.signature().takes(), Manifest.Way.GIVEN);
-            Crossing answers = answered(module, behavior.answers(), call.signature().answers());
+            List<Crossing> takes = helds(module, call.crossings().takes(), Manifest.Way.GIVEN);
+            Crossing answers = answered(module, behavior.answers(), call.crossings().answers());
             if (takes == null || answers == null) {
                 continue;
             }
             String what = "behavior `" + key + "`";
             String name = at.values.claim(RustNames.identifier(behavior.name(), what), what);
-            RustNames.Claimed claimed = new RustNames.Claimed("the parameters of " + what);
+            Claimed claimed = new Claimed("the parameters of " + what);
             claimed.claim("run", "the run it is called in");
             List<String> names = switch (behavior.parameters()) {
                 case Manifest.Parameters.Named named -> named.parameters().stream()
@@ -1161,8 +1103,7 @@ public final class RustBindings {
             if (read == null) {
                 continue;
             }
-            Crossing answers = crossing(module, value.type(), read.signature().answers(),
-                    Manifest.Way.HANDED);
+            Crossing answers = held(module, read.crossings().answers(), Manifest.Way.HANDED);
             if (answers == null) {
                 continue;
             }
@@ -1348,25 +1289,22 @@ public final class RustBindings {
 
     /** Whether a host can be handed what {@code injection} takes and hand back what it answers. */
     private boolean implementable(Manifest.Module module, Manifest.Injection injection) {
-        return crossings(module, injection.parameters().stream().map(Manifest.NamedParameter::type)
-                .toList(), injection.signature().takes(), Manifest.Way.HANDED) != null
-                && crossing(module, injection.answers(), injection.signature().answers(),
-                Manifest.Way.GIVEN) != null;
+        return helds(module, injection.crossings().takes(), Manifest.Way.HANDED) != null
+                && held(module, injection.crossings().answers(), Manifest.Way.GIVEN) != null;
     }
 
     /** Whether a host can call {@code behavior}, handing over what it takes and handed what it answers. */
     private boolean callable(Manifest.Module module, Manifest.Behavior behavior) {
         Manifest.Call call = behavior.call().available();
         return call != null
-                && crossings(module, behavior.parameters().types(), call.signature().takes(),
-                Manifest.Way.GIVEN) != null
-                && answered(module, behavior.answers(), call.signature().answers()) != null;
+                && helds(module, call.crossings().takes(), Manifest.Way.GIVEN) != null
+                && answered(module, behavior.answers(), call.crossings().answers()) != null;
     }
 
     /** The names a behavior's parameters are written under, the run's name taken already. */
     private static List<String> parameterNames(Manifest.Parameters parameters, String what,
                                                String... taken) {
-        RustNames.Claimed claimed = new RustNames.Claimed("the parameters of " + what);
+        Claimed claimed = new Claimed("the parameters of " + what);
         for (String it : taken) {
             claimed.claim(it, "the generated `" + it + "`");
         }
@@ -1389,11 +1327,8 @@ public final class RustBindings {
      */
     private void injected(RustModule at, Manifest.Module module, Manifest.Injection injection,
                           BehaviorType it) {
-        List<Crossing> takes = Objects.requireNonNull(crossings(module, injection.parameters()
-                .stream().map(Manifest.NamedParameter::type).toList(),
-                injection.signature().takes(), Manifest.Way.HANDED));
-        Crossing answers = Objects.requireNonNull(crossing(module, injection.answers(),
-                injection.signature().answers(), Manifest.Way.GIVEN));
+        List<Crossing> takes = Objects.requireNonNull(helds(module, injection.crossings().takes(), Manifest.Way.HANDED));
+        Crossing answers = Objects.requireNonNull(held(module, injection.crossings().answers(), Manifest.Way.GIVEN));
         String what = "behavior `" + it.key() + "`";
         List<String> names = parameterNames(new Manifest.Parameters.Named(injection.parameters()),
                 what, "run", "self");
@@ -1516,10 +1451,8 @@ public final class RustBindings {
     private void bound(RustModule at, Manifest.Module module, Manifest.Behavior behavior,
                        BehaviorType it) {
         Manifest.Call call = Objects.requireNonNull(behavior.call().available());
-        List<Crossing> takes = Objects.requireNonNull(crossings(module,
-                behavior.parameters().types(), call.signature().takes(), Manifest.Way.GIVEN));
-        Crossing answers = Objects.requireNonNull(answered(module, behavior.answers(),
-                call.signature().answers()));
+        List<Crossing> takes = Objects.requireNonNull(helds(module, call.crossings().takes(), Manifest.Way.GIVEN));
+        Crossing answers = Objects.requireNonNull(answered(module, behavior.answers(), call.crossings().answers()));
         String what = "behavior `" + it.key() + "`";
         List<String> names = parameterNames(behavior.parameters(), what, "run", "self");
         List<Manifest.Required> requires = requiresOf(it.key());
@@ -1815,6 +1748,5 @@ public final class RustBindings {
         }
         Files.createDirectories(at.getParent());
         Files.writeString(at, content, StandardCharsets.UTF_8);
-        written.add(at);
     }
 }

@@ -3,7 +3,7 @@
 //!
 //! Nothing outside the runtime reads behind the address. Generated code hands it to the functions
 //! here and is handed one back, a value of a union carries it in a slot as it carries a string's,
-//! and a host makes one of the text that names it and reads that text back. So how one is kept is
+//! and a host makes one of the numbers that are its meaning and reads those numbers back. So how one is kept is
 //! not part of any contract, and the layout below can change without an object or a binding being
 //! built again.
 //!
@@ -22,14 +22,14 @@
 use crate::collection::{Hash, souther_hash_combine};
 use crate::external::{Form, handed};
 use crate::kernels::answered;
-use crate::{Comparison, Count, Text, souther_alloc, string_of, text};
+use crate::{Bool, Comparison, Count, souther_alloc};
 use souther_native_abi::{
     DATE_DAYS, DATE_TIME_SECONDS, HASH_START, INSTANT_SECONDS, SECONDS_PER_DAY, SLOT,
 };
 use std::cmp::Ordering;
 
 /// A `Date`, as the functions here take and answer one: an address, a type of its own for the
-/// reason [`Text`] is.
+/// reason [`crate::Text`] is.
 #[repr(C)]
 pub struct Date {
     _opaque: [u8; 0],
@@ -507,33 +507,197 @@ unsafe fn moment(at: *const Instant) -> (i64, i64) {
     unsafe { (number(at, 0), number(at, 1)) }
 }
 
-// What a host, a literal and a boundary make one of and read one as.
+// What a literal and a boundary make one of and read one as.
 
-/// The text of a string of the runtime's layout.
-///
-/// # Safety
-///
-/// As [`crate::souther_string_compare`].
-unsafe fn written(at: &*const Text) -> &[u8] {
-    unsafe { text(at) }.as_str().as_bytes()
+// What a host makes one of and reads one as: the numbers that are what the value means, each an
+// `Int`, and never text. The text a value is written as is a serialization of it, which a host has
+// its own ways of writing; handing it across would make every binding read and write the grammar
+// `java.time` writes, and a binding that got it wrong would hand over what the runtime then had to
+// refuse or read as something else. Every number is a whole `Int`, so a number no type holds —
+// month -1, a nanosecond past a second — reaches the runtime as it is, and is refused here rather
+// than turned into another by a narrower word on the way.
+
+/// The day that a year, a month and a day of the month name, or none where they name no day a
+/// `Date` holds: nothing is normalised, so the thirtieth of February names none.
+fn civil_day(year: i64, month: i64, date: i64) -> Option<i64> {
+    ((MIN_YEAR..=MAX_YEAR).contains(&year)
+        && (1..=12).contains(&month)
+        && (1..=month_length(year, month)).contains(&date))
+    .then(|| days_from_civil(year, month, date))
 }
 
-/// A `Date` of the text that names one, for a caller outside a Souther program. A literal is not
-/// made of text ([`souther_date_literal`]).
+/// The second of the day that an hour, a minute and a second name, or none where they name no
+/// time of day: hour 24, minute 60 and the leap second name none.
+fn clock_second(hour: i64, minute: i64, second: i64) -> Option<i64> {
+    ((0..=23).contains(&hour) && (0..=59).contains(&minute) && (0..=59).contains(&second))
+        .then(|| hour * 3600 + minute * 60 + second)
+}
+
+/// Writes each number through the room beside it.
 ///
 /// # Safety
 ///
-/// `iso` is a string of the runtime's layout.
+/// Each room is room for an `Int`.
+unsafe fn written_to(numbers: &[(i64, *mut i64)]) {
+    for (number, room) in numbers {
+        unsafe { room.write(*number) };
+    }
+}
+
+/// A `Date` of its year, month and day, for a caller outside a Souther program, written through
+/// `out` where they name one, and answering whether they did.
 ///
-/// # Panics
+/// # Safety
 ///
-/// Where the text names no `Date`, which ends the process as a `Decimal`'s integer that is no
-/// integer does: a binding says so first in its own terms.
+/// `out` is room for the address of a `Date`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_date_of_iso(iso: *const Text) -> *mut Date {
-    let day =
-        parse_date(unsafe { written(&iso) }).expect("a Date is handed over as text that names one");
-    date_of(day)
+pub unsafe extern "C" fn souther_date_of_parts(
+    year: i64,
+    month: i64,
+    date: i64,
+    out: *mut *mut Date,
+) -> Bool {
+    unsafe { answered(civil_day(year, month, date).map(date_of), out) }
+}
+
+/// The year, month and day of a `Date`, written through the rooms for them.
+///
+/// # Safety
+///
+/// `at` is a `Date` the runtime answered, and the scope it was made in is still open. So for every function
+/// here that reads one. Each of the rest is room for an `Int`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_date_parts(
+    at: *const Date,
+    year: *mut i64,
+    month: *mut i64,
+    date: *mut i64,
+) {
+    let (y, m, d) = civil_from_days(unsafe { day(at) });
+    unsafe { written_to(&[(y, year), (m, month), (d, date)]) };
+}
+
+/// A `Time` of its hour, minute and second, as [`souther_date_of_parts`].
+///
+/// # Safety
+///
+/// `out` is room for the address of a `Time`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_time_of_parts(
+    hour: i64,
+    minute: i64,
+    second: i64,
+    out: *mut *mut Time,
+) -> Bool {
+    unsafe { answered(clock_second(hour, minute, second).map(time_of), out) }
+}
+
+/// The hour, minute and second of a `Time`, as [`souther_date_parts`].
+///
+/// # Safety
+///
+/// As [`souther_date_parts`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_time_parts(
+    at: *const Time,
+    hour: *mut i64,
+    minute: *mut i64,
+    second: *mut i64,
+) {
+    let of_day = unsafe { second_of_day(at) };
+    unsafe {
+        written_to(&[
+            (of_day / 3600, hour),
+            (of_day % 3600 / 60, minute),
+            (of_day % 60, second),
+        ])
+    };
+}
+
+/// A `DateTime` of the parts of its date and of its time, as [`souther_date_of_parts`]: where both
+/// name one, the second they name together is one a `DateTime` holds.
+///
+/// # Safety
+///
+/// `out` is room for the address of a `DateTime`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_datetime_of_parts(
+    year: i64,
+    month: i64,
+    date: i64,
+    hour: i64,
+    minute: i64,
+    second: i64,
+    out: *mut *mut DateTime,
+) -> Bool {
+    let named = civil_day(year, month, date)
+        .zip(clock_second(hour, minute, second))
+        .map(|(day, of_day)| date_time_of(day * SECONDS_PER_DAY + of_day));
+    unsafe { answered(named, out) }
+}
+
+/// The parts of the date and of the time of a `DateTime`, as [`souther_date_parts`].
+///
+/// # Safety
+///
+/// As [`souther_date_parts`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_datetime_parts(
+    at: *const DateTime,
+    year: *mut i64,
+    month: *mut i64,
+    date: *mut i64,
+    hour: *mut i64,
+    minute: *mut i64,
+    second: *mut i64,
+) {
+    let local = unsafe { local_second(at) };
+    let (y, m, d) = civil_from_days(local.div_euclid(SECONDS_PER_DAY));
+    let of_day = local.rem_euclid(SECONDS_PER_DAY);
+    unsafe {
+        written_to(&[
+            (y, year),
+            (m, month),
+            (d, date),
+            (of_day / 3600, hour),
+            (of_day % 3600 / 60, minute),
+            (of_day % 60, second),
+        ])
+    };
+}
+
+/// An `Instant` of its second from 1970-01-01T00:00:00Z and the nanosecond within it, as
+/// [`souther_date_of_parts`]: the nanosecond is from nought to below a second, and the moment is
+/// one an `Instant` holds.
+///
+/// # Safety
+///
+/// `out` is room for the address of an `Instant`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_instant_of_parts(
+    second: i64,
+    nano: i64,
+    out: *mut *mut Instant,
+) -> Bool {
+    let named = (INSTANT_SECONDS.contains(&second) && (0..1_000_000_000).contains(&nano))
+        .then(|| instant_of(second, nano));
+    unsafe { answered(named, out) }
+}
+
+/// The second from 1970-01-01T00:00:00Z and the nanosecond within it of an `Instant`, as
+/// [`souther_date_parts`].
+///
+/// # Safety
+///
+/// As [`souther_date_parts`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_instant_parts(
+    at: *const Instant,
+    second: *mut i64,
+    nano: *mut i64,
+) {
+    let (s, n) = unsafe { moment(at) };
+    unsafe { written_to(&[(s, second), (n, nano)]) };
 }
 
 /// A `Date` literal, as the checker read it: its day, counted from 1970-01-01.
@@ -551,33 +715,6 @@ pub extern "C" fn souther_date_literal(day: i64) -> *mut Date {
     date_of(day)
 }
 
-/// The text a `Date` is written as: what a boundary writes.
-///
-/// # Safety
-///
-/// `at` is a `Date` the runtime answered, and the mark below it still stands. So for every function
-/// here that reads one.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_date_iso(at: *const Date) -> *mut Text {
-    string_of(&date_text(unsafe { day(at) }))
-}
-
-/// A `Time` of the text that names one.
-///
-/// # Safety
-///
-/// As [`souther_date_of_iso`].
-///
-/// # Panics
-///
-/// Where the text names no `Time`, or names one with a fraction of a second.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_time_of_iso(iso: *const Text) -> *mut Time {
-    let second =
-        parse_time(unsafe { written(&iso) }).expect("a Time is handed over as text that names one");
-    time_of(second)
-}
-
 /// A `Time` literal, as the checker read it: its second of the day.
 ///
 /// # Panics
@@ -590,28 +727,6 @@ pub extern "C" fn souther_time_literal(second: i64) -> *mut Time {
         "a Time literal is a second a day has"
     );
     time_of(second)
-}
-
-/// The text a `Time` is written as.
-///
-/// # Safety
-///
-/// As [`souther_date_iso`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_time_iso(at: *const Time) -> *mut Text {
-    string_of(&time_text(unsafe { second_of_day(at) }))
-}
-
-/// A `DateTime` of the text that names one.
-///
-/// # Safety
-///
-/// As [`souther_time_of_iso`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_datetime_of_iso(iso: *const Text) -> *mut DateTime {
-    let second = parse_date_time(unsafe { written(&iso) })
-        .expect("a DateTime is handed over as text that names one");
-    date_time_of(second)
 }
 
 /// A `DateTime` literal, as the checker read it: its second, counted from 1970-01-01T00:00:00 as
@@ -629,32 +744,6 @@ pub extern "C" fn souther_datetime_literal(second: i64) -> *mut DateTime {
     date_time_of(second)
 }
 
-/// The text a `DateTime` is written as.
-///
-/// # Safety
-///
-/// As [`souther_date_iso`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_datetime_iso(at: *const DateTime) -> *mut Text {
-    string_of(&date_time_text(unsafe { local_second(at) }))
-}
-
-/// An `Instant` of the text that names one, in UTC or from an offset.
-///
-/// # Safety
-///
-/// As [`souther_date_of_iso`].
-///
-/// # Panics
-///
-/// Where the text names no `Instant`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_instant_of_iso(iso: *const Text) -> *mut Instant {
-    let (second, nano) = parse_instant(unsafe { written(&iso) })
-        .expect("an Instant is handed over as text that names one");
-    instant_of(second, nano)
-}
-
 /// An `Instant` literal, as the checker read it: its second from the epoch and the nanosecond within
 /// it.
 ///
@@ -670,22 +759,11 @@ pub extern "C" fn souther_instant_literal(second: i64, nano: i64) -> *mut Instan
     instant_of(second, nano)
 }
 
-/// The text an `Instant` is written as: in UTC.
-///
-/// # Safety
-///
-/// As [`souther_date_iso`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_instant_iso(at: *const Instant) -> *mut Text {
-    let (second, nano) = unsafe { moment(at) };
-    string_of(&instant_text(second, nano))
-}
-
 /// Two `Date`s in order: `==`, `<` and the rest are read off the one answer, as they are for text.
 ///
 /// # Safety
 ///
-/// As [`souther_date_iso`].
+/// As [`souther_date_parts`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_date_compare(left: *const Date, right: *const Date) -> Comparison {
     Comparison(unsafe { day(left).cmp(&day(right)) } as i64)
@@ -695,7 +773,7 @@ pub unsafe extern "C" fn souther_date_compare(left: *const Date, right: *const D
 ///
 /// # Safety
 ///
-/// As [`souther_date_iso`].
+/// As [`souther_date_parts`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_time_compare(left: *const Time, right: *const Time) -> Comparison {
     Comparison(unsafe { second_of_day(left).cmp(&second_of_day(right)) } as i64)
@@ -705,7 +783,7 @@ pub unsafe extern "C" fn souther_time_compare(left: *const Time, right: *const T
 ///
 /// # Safety
 ///
-/// As [`souther_date_iso`].
+/// As [`souther_date_parts`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_datetime_compare(
     left: *const DateTime,
@@ -718,7 +796,7 @@ pub unsafe extern "C" fn souther_datetime_compare(
 ///
 /// # Safety
 ///
-/// As [`souther_date_iso`].
+/// As [`souther_date_parts`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_instant_compare(
     left: *const Instant,
@@ -732,7 +810,7 @@ pub unsafe extern "C" fn souther_instant_compare(
 ///
 /// # Safety
 ///
-/// As [`souther_date_iso`].
+/// As [`souther_date_parts`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_date_hash(at: *const Date) -> Hash {
     souther_hash_combine(Hash(HASH_START), unsafe { day(at) })
@@ -742,7 +820,7 @@ pub unsafe extern "C" fn souther_date_hash(at: *const Date) -> Hash {
 ///
 /// # Safety
 ///
-/// As [`souther_date_iso`].
+/// As [`souther_date_parts`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_time_hash(at: *const Time) -> Hash {
     souther_hash_combine(Hash(HASH_START), unsafe { second_of_day(at) })
@@ -752,7 +830,7 @@ pub unsafe extern "C" fn souther_time_hash(at: *const Time) -> Hash {
 ///
 /// # Safety
 ///
-/// As [`souther_date_iso`].
+/// As [`souther_date_parts`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_datetime_hash(at: *const DateTime) -> Hash {
     souther_hash_combine(Hash(HASH_START), unsafe { local_second(at) })
@@ -762,7 +840,7 @@ pub unsafe extern "C" fn souther_datetime_hash(at: *const DateTime) -> Hash {
 ///
 /// # Safety
 ///
-/// As [`souther_date_iso`].
+/// As [`souther_date_parts`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_instant_hash(at: *const Instant) -> Hash {
     let (second, nano) = unsafe { moment(at) };
@@ -777,13 +855,13 @@ pub unsafe extern "C" fn souther_instant_hash(at: *const Instant) -> Hash {
 ///
 /// # Safety
 ///
-/// As [`souther_date_iso`], and `out` is room for the address of a `Date`.
+/// As [`souther_date_parts`], and `out` is room for the address of a `Date`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_date_add_days(
     days: i64,
     of: *const Date,
     out: *mut *mut Date,
-) -> i8 {
+) -> Bool {
     let shifted = unsafe { day(of) }
         .checked_add(days)
         .filter(|it| (MIN_DAY..=MAX_DAY).contains(it));
@@ -800,7 +878,7 @@ pub unsafe extern "C" fn souther_date_add_months(
     months: i64,
     of: *const Date,
     out: *mut *mut Date,
-) -> i8 {
+) -> Bool {
     let (year, month, date) = civil_from_days(unsafe { day(of) });
     let shifted = (year * 12 + month - 1)
         .checked_add(months)
@@ -824,7 +902,7 @@ pub unsafe extern "C" fn souther_date_add_years(
     years: i64,
     of: *const Date,
     out: *mut *mut Date,
-) -> i8 {
+) -> Bool {
     let (year, month, date) = civil_from_days(unsafe { day(of) });
     let shifted = year
         .checked_add(years)
@@ -838,7 +916,7 @@ pub unsafe extern "C" fn souther_date_add_years(
 ///
 /// # Safety
 ///
-/// As [`souther_date_iso`].
+/// As [`souther_date_parts`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_date_days_between(from: *const Date, to: *const Date) -> i64 {
     unsafe { day(to) - day(from) }
@@ -848,7 +926,7 @@ pub unsafe extern "C" fn souther_date_days_between(from: *const Date, to: *const
 ///
 /// # Safety
 ///
-/// As [`souther_date_iso`].
+/// As [`souther_date_parts`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_date_year(of: *const Date) -> i64 {
     civil_from_days(unsafe { day(of) }).0
@@ -858,7 +936,7 @@ pub unsafe extern "C" fn souther_date_year(of: *const Date) -> i64 {
 ///
 /// # Safety
 ///
-/// As [`souther_date_iso`].
+/// As [`souther_date_parts`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_date_month(of: *const Date) -> i64 {
     civil_from_days(unsafe { day(of) }).1
@@ -868,7 +946,7 @@ pub unsafe extern "C" fn souther_date_month(of: *const Date) -> i64 {
 ///
 /// # Safety
 ///
-/// As [`souther_date_iso`].
+/// As [`souther_date_parts`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_date_day(of: *const Date) -> i64 {
     civil_from_days(unsafe { day(of) }).2
@@ -886,12 +964,8 @@ pub unsafe extern "C" fn souther_date_from_parts(
     month: i64,
     date: i64,
     out: *mut *mut Date,
-) -> i8 {
-    let named = ((MIN_YEAR..=MAX_YEAR).contains(&year)
-        && (1..=12).contains(&month)
-        && (1..=month_length(year, month)).contains(&date))
-    .then(|| date_of(days_from_civil(year, month, date)));
-    unsafe { answered(named, out) }
+) -> Bool {
+    unsafe { answered(civil_day(year, month, date).map(date_of), out) }
 }
 
 /// `Time.fromParts`, written through `out` where the three numbers name a time of day: hour 24,
@@ -906,18 +980,15 @@ pub unsafe extern "C" fn souther_time_from_parts(
     minute: i64,
     second: i64,
     out: *mut *mut Time,
-) -> i8 {
-    let named =
-        ((0..=23).contains(&hour) && (0..=59).contains(&minute) && (0..=59).contains(&second))
-            .then(|| time_of(hour * 3600 + minute * 60 + second));
-    unsafe { answered(named, out) }
+) -> Bool {
+    unsafe { answered(clock_second(hour, minute, second).map(time_of), out) }
 }
 
 /// `Time.hour`, from 0 to 23.
 ///
 /// # Safety
 ///
-/// As [`souther_date_iso`].
+/// As [`souther_date_parts`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_time_hour(of: *const Time) -> i64 {
     unsafe { second_of_day(of) / 3600 }
@@ -927,7 +998,7 @@ pub unsafe extern "C" fn souther_time_hour(of: *const Time) -> i64 {
 ///
 /// # Safety
 ///
-/// As [`souther_date_iso`].
+/// As [`souther_date_parts`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_time_minute(of: *const Time) -> i64 {
     unsafe { second_of_day(of) % 3600 / 60 }
@@ -937,7 +1008,7 @@ pub unsafe extern "C" fn souther_time_minute(of: *const Time) -> i64 {
 ///
 /// # Safety
 ///
-/// As [`souther_date_iso`].
+/// As [`souther_date_parts`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_time_second(of: *const Time) -> i64 {
     unsafe { second_of_day(of) % 60 }
@@ -945,7 +1016,7 @@ pub unsafe extern "C" fn souther_time_second(of: *const Time) -> i64 {
 
 /// A shift of a `DateTime` by so many seconds a unit is, written through `out` where what it
 /// shifts to is one a `DateTime` holds.
-unsafe fn shifted(of: *const DateTime, unit: i64, count: i64, out: *mut *mut DateTime) -> i8 {
+unsafe fn shifted(of: *const DateTime, unit: i64, count: i64, out: *mut *mut DateTime) -> Bool {
     let second = count
         .checked_mul(unit)
         .and_then(|seconds| unsafe { local_second(of) }.checked_add(seconds))
@@ -957,13 +1028,13 @@ unsafe fn shifted(of: *const DateTime, unit: i64, count: i64, out: *mut *mut Dat
 ///
 /// # Safety
 ///
-/// As [`souther_date_iso`], and `out` is room for the address of a `DateTime`.
+/// As [`souther_date_parts`], and `out` is room for the address of a `DateTime`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_datetime_add_minutes(
     minutes: i64,
     of: *const DateTime,
     out: *mut *mut DateTime,
-) -> i8 {
+) -> Bool {
     unsafe { shifted(of, 60, minutes, out) }
 }
 
@@ -977,7 +1048,7 @@ pub unsafe extern "C" fn souther_datetime_add_hours(
     hours: i64,
     of: *const DateTime,
     out: *mut *mut DateTime,
-) -> i8 {
+) -> Bool {
     unsafe { shifted(of, 3600, hours, out) }
 }
 
@@ -991,7 +1062,7 @@ pub unsafe extern "C" fn souther_datetime_add_days(
     days: i64,
     of: *const DateTime,
     out: *mut *mut DateTime,
-) -> i8 {
+) -> Bool {
     unsafe { shifted(of, SECONDS_PER_DAY, days, out) }
 }
 
@@ -1000,7 +1071,7 @@ pub unsafe extern "C" fn souther_datetime_add_days(
 ///
 /// # Safety
 ///
-/// As [`souther_date_iso`].
+/// As [`souther_date_parts`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_datetime_minutes_between(
     from: *const DateTime,
@@ -1013,7 +1084,7 @@ pub unsafe extern "C" fn souther_datetime_minutes_between(
 ///
 /// # Safety
 ///
-/// As [`souther_date_iso`].
+/// As [`souther_date_parts`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_datetime_to_date(of: *const DateTime) -> *mut Date {
     date_of(unsafe { local_second(of) }.div_euclid(SECONDS_PER_DAY))
@@ -1023,7 +1094,7 @@ pub unsafe extern "C" fn souther_datetime_to_date(of: *const DateTime) -> *mut D
 ///
 /// # Safety
 ///
-/// As [`souther_date_iso`].
+/// As [`souther_date_parts`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_datetime_to_time(of: *const DateTime) -> *mut Time {
     time_of(unsafe { local_second(of) }.rem_euclid(SECONDS_PER_DAY))
@@ -1034,7 +1105,7 @@ pub unsafe extern "C" fn souther_datetime_to_time(of: *const DateTime) -> *mut T
 ///
 /// # Safety
 ///
-/// As [`souther_date_iso`].
+/// As [`souther_date_parts`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_datetime_from_date_and_time(
     date: *const Date,
@@ -1052,7 +1123,7 @@ fn external(written: String) -> *mut Form {
 ///
 /// # Safety
 ///
-/// As [`souther_date_iso`].
+/// As [`souther_date_parts`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_external_date(at: *const Date) -> *mut Form {
     external(date_text(unsafe { day(at) }))
@@ -1062,7 +1133,7 @@ pub unsafe extern "C" fn souther_external_date(at: *const Date) -> *mut Form {
 ///
 /// # Safety
 ///
-/// As [`souther_date_iso`].
+/// As [`souther_date_parts`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_external_time(at: *const Time) -> *mut Form {
     external(time_text(unsafe { second_of_day(at) }))
@@ -1072,7 +1143,7 @@ pub unsafe extern "C" fn souther_external_time(at: *const Time) -> *mut Form {
 ///
 /// # Safety
 ///
-/// As [`souther_date_iso`].
+/// As [`souther_date_parts`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_external_datetime(at: *const DateTime) -> *mut Form {
     external(date_time_text(unsafe { local_second(at) }))
@@ -1082,7 +1153,7 @@ pub unsafe extern "C" fn souther_external_datetime(at: *const DateTime) -> *mut 
 ///
 /// # Safety
 ///
-/// As [`souther_date_iso`].
+/// As [`souther_date_parts`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_external_instant(at: *const Instant) -> *mut Form {
     let (second, nano) = unsafe { moment(at) };
@@ -1092,67 +1163,86 @@ pub unsafe extern "C" fn souther_external_instant(at: *const Instant) -> *mut Fo
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{souther_mark, souther_reset, souther_string_of_utf8};
+    use crate::{souther_scope_close, souther_scope_open};
 
-    fn made(text: &str) -> *mut Text {
-        let mut out = std::ptr::null_mut();
-        let admitted =
-            unsafe { souther_string_of_utf8(text.as_ptr(), Count(text.len() as i64), &mut out) };
-        assert_eq!(admitted, 1, "test text has a place");
-        out
-    }
-
-    fn said(at: *const Text) -> String {
-        String::from(unsafe { text(&at) }.as_str())
+    /// The year, month and day a host reads off a `Date`.
+    fn civil(at: *const Date) -> (i64, i64, i64) {
+        let (mut year, mut month, mut date) = (0, 0, 0);
+        unsafe { souther_date_parts(at, &mut year, &mut month, &mut date) };
+        (year, month, date)
     }
 
     #[test]
     fn a_shift_runs_off_the_end_or_lands() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         let mut out = std::ptr::null_mut();
         let jan31 = date_of(days_from_civil(2026, 1, 31));
-        assert_eq!(unsafe { souther_date_add_months(1, jan31, &mut out) }, 1);
-        assert_eq!(said(unsafe { souther_date_iso(out) }), "2026-02-28");
-        assert_eq!(unsafe { souther_date_add_months(-13, jan31, &mut out) }, 1);
-        assert_eq!(said(unsafe { souther_date_iso(out) }), "2024-12-31");
+        assert_eq!(
+            unsafe { souther_date_add_months(1, jan31, &mut out) },
+            Bool::TRUE
+        );
+        assert_eq!(civil(out), (2026, 2, 28));
+        assert_eq!(
+            unsafe { souther_date_add_months(-13, jan31, &mut out) },
+            Bool::TRUE
+        );
+        assert_eq!(civil(out), (2024, 12, 31));
         let leap = date_of(days_from_civil(2024, 2, 29));
-        assert_eq!(unsafe { souther_date_add_years(1, leap, &mut out) }, 1);
-        assert_eq!(said(unsafe { souther_date_iso(out) }), "2025-02-28");
-        assert_eq!(unsafe { souther_date_add_years(4, leap, &mut out) }, 1);
-        assert_eq!(said(unsafe { souther_date_iso(out) }), "2028-02-29");
+        assert_eq!(
+            unsafe { souther_date_add_years(1, leap, &mut out) },
+            Bool::TRUE
+        );
+        assert_eq!(civil(out), (2025, 2, 28));
+        assert_eq!(
+            unsafe { souther_date_add_years(4, leap, &mut out) },
+            Bool::TRUE
+        );
+        assert_eq!(civil(out), (2028, 2, 29));
         let last = date_of(MAX_DAY);
-        assert_eq!(unsafe { souther_date_add_days(1, last, &mut out) }, 0);
+        assert_eq!(
+            unsafe { souther_date_add_days(1, last, &mut out) },
+            Bool::FALSE
+        );
         assert_eq!(
             unsafe { souther_date_add_days(i64::MAX, last, &mut out) },
-            0
+            Bool::FALSE
         );
-        assert_eq!(unsafe { souther_date_add_months(1, last, &mut out) }, 0);
-        assert_eq!(unsafe { souther_date_add_years(1, last, &mut out) }, 0);
+        assert_eq!(
+            unsafe { souther_date_add_months(1, last, &mut out) },
+            Bool::FALSE
+        );
+        assert_eq!(
+            unsafe { souther_date_add_years(1, last, &mut out) },
+            Bool::FALSE
+        );
         assert_eq!(
             unsafe { souther_date_add_years(i64::MIN, last, &mut out) },
-            0
+            Bool::FALSE
         );
-        assert_eq!(unsafe { souther_date_add_days(-1, last, &mut out) }, 1);
+        assert_eq!(
+            unsafe { souther_date_add_days(-1, last, &mut out) },
+            Bool::TRUE
+        );
         let first = date_time_of(MIN_LOCAL);
         let mut moved = std::ptr::null_mut();
         assert_eq!(
             unsafe { souther_datetime_add_minutes(-1, first, &mut moved) },
-            0
+            Bool::FALSE
         );
         assert_eq!(
             unsafe { souther_datetime_add_hours(i64::MIN, first, &mut moved) },
-            0
+            Bool::FALSE
         );
         assert_eq!(
             unsafe { souther_datetime_add_days(1, first, &mut moved) },
-            1
+            Bool::TRUE
         );
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     #[test]
     fn a_date_time_between_counts_whole_minutes_towards_nought() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         let at = |second| date_time_of(second);
         let base = days_from_civil(2026, 7, 25) * SECONDS_PER_DAY;
         unsafe {
@@ -1171,15 +1261,15 @@ mod tests {
                 (MAX_LOCAL - MIN_LOCAL) / 60
             );
         }
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     #[test]
     fn a_date_is_its_parts_and_parts_that_name_none_are_refused() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         let mut out = std::ptr::null_mut();
         unsafe {
-            assert_eq!(souther_date_from_parts(2024, 2, 29, &mut out), 1);
+            assert_eq!(souther_date_from_parts(2024, 2, 29, &mut out), Bool::TRUE);
             assert_eq!(
                 (
                     souther_date_year(out),
@@ -1198,10 +1288,13 @@ mod tests {
                 (i64::MAX, 1, 1),
                 (2026, i64::MAX, 1),
             ] {
-                assert_eq!(souther_date_from_parts(year, month, date, &mut out), 0);
+                assert_eq!(
+                    souther_date_from_parts(year, month, date, &mut out),
+                    Bool::FALSE
+                );
             }
             let mut time = std::ptr::null_mut();
-            assert_eq!(souther_time_from_parts(23, 59, 59, &mut time), 1);
+            assert_eq!(souther_time_from_parts(23, 59, 59, &mut time), Bool::TRUE);
             assert_eq!(
                 (
                     souther_time_hour(time),
@@ -1211,41 +1304,93 @@ mod tests {
                 (23, 59, 59)
             );
             for (hour, minute, second) in [(24, 0, 0), (0, 60, 0), (0, 0, 60), (-1, 0, 0)] {
-                assert_eq!(souther_time_from_parts(hour, minute, second, &mut time), 0);
+                assert_eq!(
+                    souther_time_from_parts(hour, minute, second, &mut time),
+                    Bool::FALSE
+                );
             }
         }
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
-    /// A value a host made of text reads back as the text it is written as, and two made apart
-    /// compare equal where they name one moment.
+    /// A value a host made of its parts reads back as those parts, parts that name no value are
+    /// answered as that and end nothing, and two made apart compare equal where they name one.
     #[test]
-    fn a_host_reads_back_the_text_a_value_is_written_as() {
-        let mark = souther_mark();
+    fn a_host_reads_back_the_parts_it_made_a_value_of() {
+        let scope = souther_scope_open();
         unsafe {
+            let mut date = std::ptr::null_mut();
+            assert_eq!(souther_date_of_parts(2026, 7, 25, &mut date), Bool::TRUE);
+            assert_eq!(civil(date), (2026, 7, 25));
+            for (year, month, day) in [(2026, 2, 30), (2026, -1, 1), (MAX_YEAR + 1, 1, 1)] {
+                assert_eq!(
+                    souther_date_of_parts(year, month, day, &mut date),
+                    Bool::FALSE
+                );
+            }
+
+            let mut time = std::ptr::null_mut();
+            assert_eq!(souther_time_of_parts(9, 30, 5, &mut time), Bool::TRUE);
+            let (mut hour, mut minute, mut second) = (0, 0, 0);
+            souther_time_parts(time, &mut hour, &mut minute, &mut second);
+            assert_eq!((hour, minute, second), (9, 30, 5));
+            assert_eq!(souther_time_of_parts(24, 0, 0, &mut time), Bool::FALSE);
+
+            let mut local = std::ptr::null_mut();
             assert_eq!(
-                said(souther_date_iso(souther_date_of_iso(made("2026-07-25")))),
-                "2026-07-25"
+                souther_datetime_of_parts(-1, 12, 31, 23, 59, 59, &mut local),
+                Bool::TRUE
+            );
+            let mut parts = [0; 6];
+            let [y, m, d, h, mi, s] = &mut parts;
+            souther_datetime_parts(local, y, m, d, h, mi, s);
+            assert_eq!(parts, [-1, 12, 31, 23, 59, 59]);
+            assert_eq!(
+                souther_datetime_of_parts(2026, 7, 25, 9, 60, 0, &mut local),
+                Bool::FALSE
             );
             assert_eq!(
-                said(souther_time_iso(souther_time_of_iso(made("09:30:00")))),
-                "09:30"
+                souther_datetime_of_parts(MIN_YEAR, 1, 1, 0, 0, 0, &mut local),
+                Bool::TRUE
             );
+            assert_eq!(local_second(local), MIN_LOCAL);
             assert_eq!(
-                said(souther_datetime_iso(souther_datetime_of_iso(made(
-                    "2026-07-25T09:30:05"
-                )))),
-                "2026-07-25T09:30:05"
+                souther_datetime_of_parts(MAX_YEAR, 12, 31, 23, 59, 59, &mut local),
+                Bool::TRUE
             );
-            let apart = souther_instant_of_iso(made("2026-07-25T09:30:00+09:00"));
-            let together = souther_instant_of_iso(made("2026-07-25T00:30:00Z"));
-            assert_eq!(souther_instant_compare(apart, together), Comparison(0));
-            assert_eq!(said(souther_instant_iso(apart)), "2026-07-25T00:30:00Z");
-            let later = souther_instant_of_iso(made("2026-07-25T00:30:00.000000001Z"));
-            assert_eq!(souther_instant_compare(together, later), Comparison(-1));
-            assert_eq!(souther_instant_compare(later, together), Comparison(1));
+            assert_eq!(local_second(local), MAX_LOCAL);
+
+            let mut instant = std::ptr::null_mut();
+            let mut together = std::ptr::null_mut();
+            assert_eq!(
+                souther_instant_of_parts(-1, 999_999_999, &mut instant),
+                Bool::TRUE
+            );
+            let (mut s, mut n) = (0, 0);
+            souther_instant_parts(instant, &mut s, &mut n);
+            assert_eq!((s, n), (-1, 999_999_999));
+            assert_eq!(
+                souther_instant_of_parts(-1, 999_999_999, &mut together),
+                Bool::TRUE
+            );
+            assert_eq!(souther_instant_compare(instant, together), Comparison(0));
+            for (second, nano) in [
+                (0, -1),
+                (0, 1_000_000_000),
+                (MIN_MOMENT - 1, 0),
+                (MAX_MOMENT + 1, 0),
+            ] {
+                assert_eq!(
+                    souther_instant_of_parts(second, nano, &mut instant),
+                    Bool::FALSE
+                );
+            }
+            assert_eq!(
+                souther_instant_of_parts(MAX_MOMENT, 999_999_999, &mut instant),
+                Bool::TRUE
+            );
         }
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     /// The bounds are the ones `java.time` states: `LocalDate.MIN`/`MAX` as epoch days,

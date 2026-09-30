@@ -7,7 +7,7 @@
 //! kernel that can answer nothing says only whether it wrote its value, and what the caller makes
 //! of that is the caller's contract.
 
-use crate::{Count, List, STRING_HOLDS, Text, souther_alloc, string_of, text};
+use crate::{Bool, Count, List, STRING_HOLDS, Text, souther_alloc, string_of, text};
 use souther_native_abi::{LIST_LENGTH, list_at, room_for_list};
 use souther_text::Text as Held;
 use souther_text::pattern;
@@ -39,7 +39,7 @@ fn list_of_strings(pieces: &[Held]) -> *mut List {
 ///
 /// # Safety
 ///
-/// `list` is a list whose every element is a string, and the mark below it still stands.
+/// `list` is a list whose every element is a string, and the scope it was made in is still open.
 unsafe fn texts<'a>(list: &'a *const List) -> Vec<Held<'a>> {
     let at = list.cast::<u8>();
     let elements = unsafe { at.offset(LIST_LENGTH as isize).cast::<i64>().read() };
@@ -59,13 +59,13 @@ unsafe fn texts<'a>(list: &'a *const List) -> Vec<Held<'a>> {
 /// # Safety
 ///
 /// `out` is room for one `T`.
-pub(crate) unsafe fn answered<T>(value: Option<T>, out: *mut T) -> i8 {
+pub(crate) unsafe fn answered<T>(value: Option<T>, out: *mut T) -> Bool {
     match value {
         Some(value) => {
             unsafe { out.write(value) };
-            1
+            Bool::TRUE
         }
-        None => 0,
+        None => Bool::FALSE,
     }
 }
 
@@ -85,7 +85,7 @@ pub unsafe extern "C" fn souther_string_trim(s: *const Text) -> *mut Text {
 ///
 /// As [`souther_string_trim`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_string_lowercase(s: *const Text, out: *mut *mut Text) -> i8 {
+pub unsafe extern "C" fn souther_string_lowercase(s: *const Text, out: *mut *mut Text) -> Bool {
     let lowered = souther_text::lowercase(unsafe { text(&s) }, STRING_HOLDS);
     unsafe { answered(lowered.as_deref().map(string_of), out) }
 }
@@ -96,7 +96,7 @@ pub unsafe extern "C" fn souther_string_lowercase(s: *const Text, out: *mut *mut
 ///
 /// As [`souther_string_trim`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_string_uppercase(s: *const Text, out: *mut *mut Text) -> i8 {
+pub unsafe extern "C" fn souther_string_uppercase(s: *const Text, out: *mut *mut Text) -> Bool {
     let raised = souther_text::uppercase(unsafe { text(&s) }, STRING_HOLDS);
     unsafe { answered(raised.as_deref().map(string_of), out) }
 }
@@ -107,7 +107,7 @@ pub unsafe extern "C" fn souther_string_uppercase(s: *const Text, out: *mut *mut
 ///
 /// As [`souther_string_trim`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_string_contains(sub: *const Text, s: *const Text) -> i8 {
+pub unsafe extern "C" fn souther_string_contains(sub: *const Text, s: *const Text) -> Bool {
     unsafe { souther_text::contains(text(&sub), text(&s)) }.into()
 }
 
@@ -117,7 +117,7 @@ pub unsafe extern "C" fn souther_string_contains(sub: *const Text, s: *const Tex
 ///
 /// As [`souther_string_trim`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_string_starts_with(prefix: *const Text, s: *const Text) -> i8 {
+pub unsafe extern "C" fn souther_string_starts_with(prefix: *const Text, s: *const Text) -> Bool {
     unsafe { souther_text::starts_with(text(&prefix), text(&s)) }.into()
 }
 
@@ -127,7 +127,7 @@ pub unsafe extern "C" fn souther_string_starts_with(prefix: *const Text, s: *con
 ///
 /// As [`souther_string_trim`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_string_ends_with(suffix: *const Text, s: *const Text) -> i8 {
+pub unsafe extern "C" fn souther_string_ends_with(suffix: *const Text, s: *const Text) -> Bool {
     unsafe { souther_text::ends_with(text(&suffix), text(&s)) }.into()
 }
 
@@ -138,7 +138,7 @@ pub unsafe extern "C" fn souther_string_ends_with(suffix: *const Text, s: *const
 /// As [`souther_string_trim`], and `machine` is the first of the words `souther_text::pattern`
 /// compiled, all of which may be read.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_string_matches(machine: *const u32, s: *const Text) -> i8 {
+pub unsafe extern "C" fn souther_string_matches(machine: *const u32, s: *const Text) -> Bool {
     let words = unsafe { std::slice::from_raw_parts(machine, pattern::length(machine.read())) };
     pattern::matches(words, unsafe { text(&s) }).into()
 }
@@ -154,7 +154,7 @@ pub unsafe extern "C" fn souther_string_slice(
     to: i64,
     s: *const Text,
     out: *mut *mut Text,
-) -> i8 {
+) -> Bool {
     let sliced =
         souther_text::slice(from, to, unsafe { text(&s) }).map(|it| string_of(it.as_str()));
     unsafe { answered(sliced, out) }
@@ -182,7 +182,7 @@ pub unsafe extern "C" fn souther_string_join(
     separator: *const Text,
     xs: *const List,
     out: *mut *mut Text,
-) -> i8 {
+) -> Bool {
     let pieces = unsafe { texts(&xs) };
     let joined = souther_text::join(unsafe { text(&separator) }, pieces, STRING_HOLDS);
     unsafe { answered(joined.as_deref().map(string_of), out) }
@@ -194,7 +194,7 @@ pub unsafe extern "C" fn souther_string_join(
 ///
 /// As [`souther_string_join`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_string_concat_all(xs: *const List, out: *mut *mut Text) -> i8 {
+pub unsafe extern "C" fn souther_string_concat_all(xs: *const List, out: *mut *mut Text) -> Bool {
     let pieces = unsafe { texts(&xs) };
     let joined = souther_text::join(Held::held(""), pieces, STRING_HOLDS);
     unsafe { answered(joined.as_deref().map(string_of), out) }
@@ -211,7 +211,7 @@ pub unsafe extern "C" fn souther_string_replace(
     replacement: *const Text,
     s: *const Text,
     out: *mut *mut Text,
-) -> i8 {
+) -> Bool {
     let replaced =
         unsafe { souther_text::replace(text(&target), text(&replacement), text(&s), STRING_HOLDS) };
     unsafe { answered(replaced.as_deref().map(string_of), out) }
@@ -249,7 +249,7 @@ pub extern "C" fn souther_string_from_int(n: i64) -> *mut Text {
 ///
 /// As [`souther_string_trim`], and `out` is room for an `Int`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_string_to_int(s: *const Text, out: *mut i64) -> i8 {
+pub unsafe extern "C" fn souther_string_to_int(s: *const Text, out: *mut i64) -> Bool {
     unsafe { answered(souther_text::integer(text(&s)), out) }
 }
 
@@ -259,7 +259,7 @@ pub unsafe extern "C" fn souther_string_to_int(s: *const Text, out: *mut i64) ->
 ///
 /// As [`souther_string_trim`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_string_reverse(s: *const Text, out: *mut *mut Text) -> i8 {
+pub unsafe extern "C" fn souther_string_reverse(s: *const Text, out: *mut *mut Text) -> Bool {
     let reversed = souther_text::reverse(unsafe { text(&s) }, STRING_HOLDS);
     unsafe { answered(reversed.as_deref().map(string_of), out) }
 }
@@ -274,7 +274,7 @@ pub unsafe extern "C" fn souther_string_repeat(
     copies: i64,
     s: *const Text,
     out: *mut *mut Text,
-) -> i8 {
+) -> Bool {
     let repeated = souther_text::repeat(copies, unsafe { text(&s) }, STRING_HOLDS);
     unsafe { answered(repeated.as_deref().map(string_of), out) }
 }
@@ -290,7 +290,7 @@ pub unsafe extern "C" fn souther_string_pad_left(
     pad: *const Text,
     s: *const Text,
     out: *mut *mut Text,
-) -> i8 {
+) -> Bool {
     let padded = unsafe { souther_text::pad_left(width, text(&pad), text(&s), STRING_HOLDS) };
     unsafe { answered(padded.as_deref().map(string_of), out) }
 }
@@ -306,7 +306,7 @@ pub unsafe extern "C" fn souther_string_pad_right(
     pad: *const Text,
     s: *const Text,
     out: *mut *mut Text,
-) -> i8 {
+) -> Bool {
     let padded = unsafe { souther_text::pad_right(width, text(&pad), text(&s), STRING_HOLDS) };
     unsafe { answered(padded.as_deref().map(string_of), out) }
 }
@@ -337,7 +337,7 @@ pub unsafe extern "C" fn souther_string_code_point_values(s: *const Text) -> *mu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{souther_mark, souther_reset, souther_string_concat};
+    use crate::{souther_scope_close, souther_scope_open, souther_string_concat};
     use std::ptr;
 
     fn made(text: &str) -> *mut Text {
@@ -359,65 +359,71 @@ mod tests {
     /// out of it by what a join reads.
     #[test]
     fn a_list_of_strings_is_written_as_the_layout_says_and_read_back() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         let pieces = unsafe { souther_string_split(made(","), made("a,,日")) };
         assert_eq!(strings(pieces), ["a", "", "日"]);
         let mut joined = ptr::null_mut();
         assert_eq!(
             unsafe { souther_string_join(made("-"), pieces, &mut joined) },
-            1
+            Bool::TRUE
         );
         assert_eq!(said(joined), "a--日");
-        assert_eq!(unsafe { souther_string_concat_all(pieces, &mut joined) }, 1);
+        assert_eq!(
+            unsafe { souther_string_concat_all(pieces, &mut joined) },
+            Bool::TRUE
+        );
         assert_eq!(said(joined), "a日");
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     /// Two strings joined are put in NFC at the seam.
     #[test]
     fn a_join_of_two_strings_is_canonical() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         let mut joined = ptr::null_mut();
         assert_eq!(
             unsafe { souther_string_concat(made("e"), made("\u{301}"), &mut joined) },
-            1
+            Bool::TRUE
         );
         assert_eq!(said(joined), "\u{e9}");
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     /// A kernel that can answer nothing writes its value only where it has one, and says which.
     #[test]
     fn a_kernel_answering_nothing_writes_nothing() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         let mut out: *mut Text = ptr::null_mut();
         assert_eq!(
             unsafe { souther_string_slice(1, 3, made("a𠮷b"), &mut out) },
-            1
+            Bool::TRUE
         );
         assert_eq!(said(out), "𠮷b");
         let mut untouched: *mut Text = ptr::null_mut();
         assert_eq!(
             unsafe { souther_string_slice(2, 1, made("abc"), &mut untouched) },
-            0
+            Bool::FALSE
         );
         assert!(untouched.is_null());
         let mut read = -1;
-        assert_eq!(unsafe { souther_string_to_int(made("-007"), &mut read) }, 1);
+        assert_eq!(
+            unsafe { souther_string_to_int(made("-007"), &mut read) },
+            Bool::TRUE
+        );
         assert_eq!(read, -7);
         let mut unread = -1;
         assert_eq!(
             unsafe { souther_string_to_int(made("１２３"), &mut unread) },
-            0
+            Bool::FALSE
         );
         assert_eq!(unread, -1);
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 
     /// Code points are written into a list as the numbers they are.
     #[test]
     fn code_points_are_a_list_of_numbers() {
-        let mark = souther_mark();
+        let scope = souther_scope_open();
         let list = unsafe { souther_string_code_point_values(made("a𠮷")) };
         let at = list.cast::<u8>();
         unsafe {
@@ -425,6 +431,6 @@ mod tests {
             assert_eq!(at.offset(list_at(0) as isize).cast::<i64>().read(), 0x61);
             assert_eq!(at.offset(list_at(1) as isize).cast::<i64>().read(), 0x20bb7);
         }
-        souther_reset(mark);
+        souther_scope_close(scope);
     }
 }

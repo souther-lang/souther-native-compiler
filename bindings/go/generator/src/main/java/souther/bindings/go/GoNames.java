@@ -217,32 +217,4 @@ final class GoNames {
         }
         return out.toString();
     }
-
-    /**
-     * The names taken in one place Go reads names in, so that two things given one name there are
-     * refused with both of them named, rather than written as two declarations Go refuses.
-     */
-    static final class Claimed {
-
-        private final String where;
-        private final Map<String, String> taken = new HashMap<>();
-
-        Claimed(String where) {
-            this.where = where;
-        }
-
-        /** Takes {@code name} for {@code what}, answering it. */
-        String claim(String name, String what) {
-            String before = taken.putIfAbsent(name, what);
-            if (before != null) {
-                throw new NotBindable(what + " and " + before + " are both `" + name + "` in "
-                        + where);
-            }
-            return name;
-        }
-
-        boolean has(String name) {
-            return taken.containsKey(name);
-        }
-    }
 }

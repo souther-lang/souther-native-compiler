@@ -2,12 +2,10 @@ package souther.nativecode;
 
 import souther.bindings.BindingGenerator;
 import souther.bindings.BindingInput;
-import souther.bindings.Generated;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.List;
 import java.util.Map;
 
 /**
@@ -23,14 +21,12 @@ public final class FetchedGenerator implements BindingGenerator {
     }
 
     @Override
-    public void preflight(Path into, Map<String, String> options) {
+    public void preflight(Map<String, String> options) {
     }
 
     @Override
-    public Generated generate(BindingInput input, Path into, Map<String, String> options)
+    public void generate(BindingInput input, Path into, Map<String, String> options)
             throws IOException {
-        Files.createDirectories(into);
-        Path written = Files.writeString(into.resolve("fetched.txt"), "written by a fetched generator");
-        return new Generated(into, List.of(written));
+        Files.writeString(into.resolve("fetched.txt"), "written by a fetched generator");
     }
 }

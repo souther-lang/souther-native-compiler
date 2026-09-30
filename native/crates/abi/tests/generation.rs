@@ -77,6 +77,27 @@ fn surface() -> BTreeSet<String> {
         lines.insert(format!("status {name} = {status}"));
     }
     lines.insert(format!("answers {IMPLEMENTATION_ANSWERS:?}"));
+    lines.insert(format!("reserved {RESERVED:?}"));
+    for word in HostWord::ALL {
+        lines.insert(format!(
+            "word {}: {:?}, {}",
+            word.spelt(),
+            word.representation(),
+            if word.is_datum() { "datum" } else { "handle" }
+        ));
+    }
+    for storage in HOST_STORAGE {
+        lines.insert(format!(
+            "storage {}: {} slots of {SLOT} bytes, aligned to {SLOT}",
+            storage.name, storage.slots
+        ));
+    }
+    for (name, promise) in HOST_INPUT_CONTRACT {
+        lines.insert(format!("input {name}: {promise}"));
+    }
+    for (name, promise) in SCOPE_CONTRACT {
+        lines.insert(format!("scope {name}: {promise}"));
+    }
     for (at, rule) in HASHING.iter().enumerate() {
         lines.insert(format!("hashing {at} {rule}"));
     }

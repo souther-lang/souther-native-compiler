@@ -57,7 +57,7 @@ sealed interface Crossing {
     static String local(Word word, Body.Imports imports) {
         return switch (word) {
             case STATUS, CASE -> "C.uint32_t";
-            case INT, COUNT, MARK -> "C.int64_t";
+            case INT, COUNT, SCOPE -> "C.int64_t";
             case BOOL -> "C.uint8_t";
             case OUTCOME -> "C.int32_t";
             case BYTES, VALUE, STRING, DECIMAL, DATE, TIME, DATETIME, INSTANT, DECODED, ISSUE,
@@ -78,17 +78,18 @@ sealed interface Crossing {
          * A value of the primitive {@code name} crossing as {@code word}, or null where this binding
          * has no way to hold that pair. Both are asked, the name and the word.
          */
-        static @Nullable Whole primitive(String name, Word word) {
-            Kind kind = switch (name) {
-                case "Int" -> word == Word.INT ? Kind.INT : null;
-                case "Bool" -> word == Word.BOOL ? Kind.BOOL : null;
-                case "String" -> word == Word.STRING ? Kind.STRING : null;
-                case "Decimal" -> word == Word.DECIMAL ? Kind.DECIMAL : null;
-                case "Date" -> word == Word.DATE ? Kind.DATE : null;
-                case "Time" -> word == Word.TIME ? Kind.TIME : null;
-                case "DateTime" -> word == Word.DATETIME ? Kind.DATETIME : null;
-                case "Instant" -> word == Word.INSTANT ? Kind.INSTANT : null;
-                default -> null;
+        static @Nullable Whole primitive(Manifest.Primitive primitive, Word word) {
+            Kind kind = switch (primitive) {
+                case INT -> word == Word.INT ? Kind.INT : null;
+                case BOOL -> word == Word.BOOL ? Kind.BOOL : null;
+                case STRING -> word == Word.STRING ? Kind.STRING : null;
+                case DECIMAL -> word == Word.DECIMAL ? Kind.DECIMAL : null;
+                case DATE -> word == Word.DATE ? Kind.DATE : null;
+                case TIME -> word == Word.TIME ? Kind.TIME : null;
+                case DATETIME -> word == Word.DATETIME ? Kind.DATETIME : null;
+                case INSTANT -> word == Word.INSTANT ? Kind.INSTANT : null;
+                // Held by objects and never handed to a host.
+                case RATIONAL -> null;
             };
             return kind == null ? null : new Whole(new Shape.Leaf(word), kind, null);
         }
@@ -126,6 +127,7 @@ sealed interface Crossing {
         /** The function of the runtime handing a value of this over as the word the library reads. */
         private String hand() {
             return switch (kind) {
+                case DECIMAL -> "Decimal";
                 case DATE -> "DateWord";
                 case TIME -> "TimeWord";
                 case DATETIME -> "DateTimeWord";
@@ -157,11 +159,7 @@ sealed interface Crossing {
                     body.line(text + ", " + body.err() + " := " + body.imports.souther() + ".String(" + body.run
                             + ", " + value + ")").checked().line(word + " = " + text);
                 }
-                case DECIMAL -> {
-                    body.line(word + " = " + body.imports.souther() + ".Decimal(" + body.run + ", "
-                            + value + ")");
-                }
-                case DATE, TIME, DATETIME, INSTANT -> {
+                case DECIMAL, DATE, TIME, DATETIME, INSTANT -> {
                     String at = body.temp("at");
                     body.line(at + ", " + body.err() + " := " + body.imports.souther() + "." + hand() + "("
                             + body.run + ", " + value + ")").checked().line(word + " = " + at);
@@ -358,7 +356,12 @@ sealed interface Crossing {
             body.close();
             List<String> handed = new ArrayList<>(List.of("C.int64_t(" + count + ")"));
             columns.forEach(column -> handed.add(body.imports.souther() + ".Addr(" + column + ")"));
-            body.line(into.getFirst() + " = " + body.call(construct, handed));
+            handed.add("&" + into.getFirst());
+            // A Go slice has a count a list has, so the library refusing one is it and this
+            // binding disagreeing.
+            body.open("if " + body.call(construct, handed) + " == 0")
+                    .line(body.err() + " := " + body.imports.souther() + ".ErrProtocolViolation")
+                    .line(body.fail).close();
         }
 
         /** Each element read into room of its own, in order. */
@@ -490,8 +493,12 @@ sealed interface Crossing {
                 body.label("case " + place + ":");
                 String held = words.getFirst();
                 if (member.read() != null) {
+                    // Read as the case the library said the value is, which it answers it is.
                     held = body.temp("held");
-                    body.line(held + " := " + body.call(member.read(), List.of(words.getFirst())));
+                    body.line("var " + held + " " + local(member.whole().shape().word(), body.imports));
+                    body.open("if " + body.call(member.read(), List.of(words.getFirst(), "&" + held))
+                            + " == 0").line("panic(\"the library read a value as a case it said it is not\")")
+                            .close();
                 }
                 body.line(union + " = " + member.inUnion(member.whole().of(body, List.of(held)),
                         type(body.imports)));

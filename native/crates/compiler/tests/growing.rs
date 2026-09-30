@@ -32,8 +32,9 @@ const HARNESS: &str = r#"
 #include <stdlib.h>
 
 extern uint32_t grown(const void *, int64_t, int64_t *) __asm__("PREFIXsouther@.growing.grown");
-extern int64_t souther_mark(void);
-extern void souther_reset(int64_t);
+extern int64_t souther_scope_open(void);
+extern uint8_t souther_scope_close(int64_t);
+extern int64_t souther_arena_taken(void);
 
 int main(int argc, char **argv) {
     if (argc != 2) {
@@ -41,10 +42,11 @@ int main(int argc, char **argv) {
     }
     int64_t n = strtoll(argv[1], NULL, 10);
     int64_t out;
-    int64_t before = souther_mark();
+    int64_t scope = souther_scope_open();
+    int64_t before = souther_arena_taken();
     uint32_t status = grown(NULL, n, &out);
-    int64_t after = souther_mark();
-    souther_reset(before);
+    int64_t after = souther_arena_taken();
+    souther_scope_close(scope);
     printf("%u\n%" PRId64 "\n%" PRId64 "\n", status, out, after - before);
     return 0;
 }

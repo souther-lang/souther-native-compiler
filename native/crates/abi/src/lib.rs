@@ -100,6 +100,23 @@ pub fn runtime_generation_symbol() -> String {
     format!("souther_runtime_abi_{ABI_GENERATION}")
 }
 
+/// The one function a host calls before any other, to ask which generation a library it has loaded
+/// answers to: `uint32_t souther_abi_generation(void)`, answering [`ABI_GENERATION`].
+///
+/// Outside every generation, and not generation 0 of them: its name, what it takes and what it
+/// answers are the same for every library that has it, so a host can ask it of a library of any
+/// generation and refuse one it was not written for before it looks up anything else. No
+/// generation moving makes a change to it legal, so it is in no record of one, and a test of its
+/// own holds it (`tests/bootstrap.rs`). A library without the symbol is one of generation 8 or
+/// earlier, from before it existed.
+///
+/// [`runtime_generation_symbol`] is another thing: the guard a linker checks between generated
+/// objects and the runtime, which no library exports.
+pub const GENERATION_QUERY: &str = "souther_abi_generation";
+
+/// [`GENERATION_QUERY`] as a header declares it.
+pub const GENERATION_QUERY_DECLARED: &str = "uint32_t souther_abi_generation(void);";
+
 /// What each generation moved, oldest first, as the paragraphs above tell it at length.
 ///
 /// A change that moves the generation adds its line at the end under the next number, and the
@@ -151,6 +168,18 @@ pub const GENERATIONS: &[(u32, &str)] = &[
          takes the integer's digits as bytes and a count in place of a `String`, since they are \
          never the value's written form and were never fallible on a String's own bound \
          (souther-native-compiler#109)",
+    ),
+    (
+        9,
+        "what a host hands in never ends the process: a temporal is made of and read as the numbers \
+         it means, each an `Int` (`souther_date_of_parts`, `_parts`, and the same for `time`, \
+         `datetime` and `instant`), in place of the ISO text `souther_date_of_iso` and the rest took \
+         and answered and ended the process on; `souther_decimal_of_parts` writes the `Decimal` \
+         through room and answers whether its parts name one; and a host brackets its calls with \
+         a scope (`souther_scope_open`, `souther_scope_close`), which the runtime closes only as \
+         the innermost open on the calling thread and refuses otherwise, in place of the arena \
+         position `souther_mark` answered and `souther_reset` took back unchecked \
+         (souther-native-compiler#137)",
     ),
 ];
 
@@ -962,6 +991,40 @@ pub const fn room_for_hosted_function() -> i64 {
     HOSTED_FUNCTION_HOSTED + room_for_hosted()
 }
 
+/// Room a host lays out, owns and never reads: a capability, what a host's implementation of a
+/// behavior is read out of, and a function value made of a host's own function.
+///
+/// A host keeps each for as long as the thing it stands for may be called, which is longer than a
+/// scope, so the room is the host's and not the arena's. What stands in it is the generated code's
+/// own, written by what makes the capability or the value and read by nothing else: the offsets
+/// above are between the generated code and itself. So a host is told the size and the alignment
+/// and no field, and a declaration of it is as many slots, each a `uint64_t`, as the room takes:
+/// a host that allocates the type by its name has the size and the alignment right, and nothing
+/// it could write into a field.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct HostStorage {
+    /// Its name in C, which a host allocates it by.
+    pub name: &'static str,
+    /// How many slots it takes, each [`SLOT`] bytes and aligned to a slot.
+    pub slots: i64,
+}
+
+/// Every room a host lays out.
+pub const HOST_STORAGE: &[HostStorage] = &[
+    HostStorage {
+        name: "souther_capability",
+        slots: room_for_capability() / SLOT,
+    },
+    HostStorage {
+        name: "souther_hosted",
+        slots: room_for_hosted() / SLOT,
+    },
+    HostStorage {
+        name: "souther_hosted_function",
+        slots: room_for_hosted_function() / SLOT,
+    },
+];
+
 /// How much room an `Option` holding a value takes.
 pub const fn room_for_held() -> i64 {
     HELD + SLOT
@@ -1110,7 +1173,7 @@ pub const STRING_CODE_POINT_VALUES: &str = "souther_string_code_point_values";
 
 /// The symbol a caller outside a Souther program makes a string with, from bytes it holds.
 ///
-/// Here rather than left to whoever writes such a caller, for the reason [`MARK`] is: the layout
+/// Here rather than left to whoever writes such a caller, for the reason [`SCOPE_OPEN`] is: the layout
 /// above is between this crate and the runtime, and a caller that built a string from it would be
 /// a third party to a two-party contract.
 pub const STRING_OF_UTF8: &str = "souther_string_of_utf8";
@@ -1121,7 +1184,9 @@ pub const STRING_LENGTH: &str = "souther_string_length";
 pub const STRING_BYTES: &str = "souther_string_bytes";
 
 /// The symbol a caller outside a Souther program makes a `Decimal` with: its integer, as integer
-/// text in a string, and its scale.
+/// text in bytes, and its scale, written through room where they name one, answering whether they
+/// did. What does not name one is answered as that, and never ends the process: the runtime decides
+/// what a `Decimal` is, so no binding has to.
 ///
 /// A `Decimal` is an address and nothing a host reads behind: how the runtime keeps one is the
 /// runtime's alone, so a host hands over and reads back the two numbers the language says a
@@ -1221,31 +1286,36 @@ pub const RATIONAL_TO_INT: &str = "souther_rational_to_int";
 pub const RATIONAL_TO_DECIMAL: &str = "souther_rational_to_decimal";
 
 /// The symbols a caller outside a Souther program makes a temporal with, and reads one back
-/// through: the ISO 8601 text that names it, as a string.
+/// through: the numbers that are what it means, each an `Int`, and never the text it is written as.
 ///
 /// A temporal is an address and nothing a host reads behind, for the reason a `Decimal` is: how the
-/// runtime keeps one is the runtime's alone, so a host hands over and reads back the text the
-/// language writes it as. What the text is, for each, is what a boundary reads and writes
-/// (spec §primitives): `2026-07-25`, `09:30`, `2026-07-25T09:30`, `2026-07-25T00:00:00Z`. Making
-/// one is asking for a value the text names, so text that names none is a violation of what the
-/// binding promised and ends the process as a `Decimal`'s integer that is no integer does, and it
-/// is a boundary's decoder alone that reports outside text as an issue.
-pub const DATE_OF_ISO: &str = "souther_date_of_iso";
-/// The text a `Date` is written as.
-pub const DATE_ISO: &str = "souther_date_iso";
-/// As [`DATE_OF_ISO`], for a `Time`.
-pub const TIME_OF_ISO: &str = "souther_time_of_iso";
-/// The text a `Time` is written as.
-pub const TIME_ISO: &str = "souther_time_iso";
-/// As [`DATE_OF_ISO`], for a `DateTime`.
-pub const DATETIME_OF_ISO: &str = "souther_datetime_of_iso";
-/// The text a `DateTime` is written as.
-pub const DATETIME_ISO: &str = "souther_datetime_iso";
-/// As [`DATE_OF_ISO`], for an `Instant`, which may be written with an offset and is read as the
-/// moment it names.
-pub const INSTANT_OF_ISO: &str = "souther_instant_of_iso";
-/// The text an `Instant` is written as: in UTC.
-pub const INSTANT_ISO: &str = "souther_instant_iso";
+/// runtime keeps one is the runtime's alone. What a host hands over is the coordinate each type is
+/// defined by (spec §primitives): a `Date` its year, month and day; a `Time` its hour, minute and
+/// second, since it is held to the second; a `DateTime` both; an `Instant` its second from
+/// 1970-01-01T00:00:00Z and the nanosecond within it. Text is one way of writing those, which a host
+/// has its own ways of doing, and taking it here would put the grammar `java.time` writes into every
+/// binding.
+///
+/// Making one writes it through room where the numbers name one and answers whether they did, so
+/// a month of 13 or the thirtieth of February is answered as that and ends nothing: the runtime
+/// decides which numbers name a value, and a binding that checks first does so only to say it in
+/// its own words. Every number is a whole `Int`, and none is narrowed on the way, so a wrong one
+/// reaches the runtime as the number it is. Reading one writes each number through room for it.
+pub const DATE_OF_PARTS: &str = "souther_date_of_parts";
+/// The year, month and day of a `Date`.
+pub const DATE_PARTS: &str = "souther_date_parts";
+/// As [`DATE_OF_PARTS`], for a `Time`.
+pub const TIME_OF_PARTS: &str = "souther_time_of_parts";
+/// The hour, minute and second of a `Time`.
+pub const TIME_PARTS: &str = "souther_time_parts";
+/// As [`DATE_OF_PARTS`], for a `DateTime`: the parts of its date, then of its time.
+pub const DATETIME_OF_PARTS: &str = "souther_datetime_of_parts";
+/// The parts of the date and then of the time of a `DateTime`.
+pub const DATETIME_PARTS: &str = "souther_datetime_parts";
+/// As [`DATE_OF_PARTS`], for an `Instant`: its second from the epoch and the nanosecond within it.
+pub const INSTANT_OF_PARTS: &str = "souther_instant_of_parts";
+/// The second from the epoch and the nanosecond within it of an `Instant`.
+pub const INSTANT_PARTS: &str = "souther_instant_parts";
 
 /// What each temporal holds, as the counts a transport document and the runtime's literal functions
 /// speak in: the days from 1970-01-01 that a `Date` holds, and the seconds from 1970-01-01T00:00:00
@@ -1472,11 +1542,73 @@ pub const HASH_PRESENT: i64 = 1;
 /// that bracketed the call, so nothing generated has to know what owns what.
 pub const ALLOCATE: &str = "souther_alloc";
 
-/// The symbol a caller reads the arena's position from, to reset to afterwards.
-pub const MARK: &str = "souther_mark";
+/// The symbol a host opens a scope with: the stretch of a run that everything the library answers
+/// inside it lives for, answered as a token to close it with.
+///
+/// What a host brackets its calls with, and the one thing of the arena it is told. A value the
+/// library answers is good on the thread that made it, until the scope it was made in is closed,
+/// and on no other thread; scopes on a thread close in the order opposite to the one they opened
+/// in; a token closes the scope it was answered for once. The runtime holds all of that itself
+/// ([`SCOPE_CONTRACT`]): closing with a token that is not the innermost open scope of the calling
+/// thread — one never answered, one already closed, one opened later than a scope still open
+/// inside it, or one another thread opened — is answered as that and changes nothing. How far the
+/// arena stood is the runtime's own and never crosses: a host that held a position could hand
+/// back one the arena never stood at, and nothing could tell.
+pub const SCOPE_OPEN: &str = "souther_scope_open";
 
-/// The symbol a caller gives a mark back to, dropping everything taken since.
-pub const RESET: &str = "souther_reset";
+/// The symbol a host closes a scope with, dropping everything made inside it, and answering whether
+/// the token was the innermost open scope of the calling thread.
+pub const SCOPE_CLOSE: &str = "souther_scope_close";
+
+/// What a host function takes of what a host hands it, in the words a generation records.
+///
+/// A host hands over data and handles. Data ([`HostWord::is_datum`]) is a number, a truth, a count,
+/// a scope's token, or the bytes a pointer and a count describe: anything a host can have wrong
+/// while holding it rightly, and everything the runtime can tell is wrong by looking. So every
+/// function a host calls, the runtime's and every one generated for a library, answers every datum,
+/// and refuses one it does not take by what it answers — `false`, an absent value, a reading that
+/// came to nothing — and never by ending the process. A handle is an address the library answered:
+/// what it points at is the library's, and the runtime cannot tell one that is not what it was
+/// answered as without reading it as that. So a handle a function takes is one the library
+/// answered, of the type the function names, whose scope is still open on the calling thread; that
+/// is the one thing a host holds to, as a C caller holds a pointer to what it points at.
+pub const HOST_INPUT_CONTRACT: &[(&str, &str)] = &[
+    (
+        "datum",
+        "answered whatever it is; one a function does not take is refused by what it answers, \
+         and ends nothing",
+    ),
+    (
+        "bytes",
+        "read for as many as the count says where the count is above nought; a count below \
+         nought is a datum refused, and what the bytes say is a datum",
+    ),
+    ("bool", "a byte without a sign, true where it is not nought"),
+    (
+        "handle",
+        "one the library answered, of the type the function names, whose scope is open on the \
+         calling thread",
+    ),
+];
+
+/// What a scope promises and what the runtime holds of it, in the words a generation records.
+///
+/// Written as data so that the record of a generation holds it: a change to any of these is a
+/// change to what a host's runtime was written against, however little the functions' types say
+/// of it.
+pub const SCOPE_CONTRACT: &[(&str, &str)] = &[
+    ("arena", "one to each thread"),
+    (
+        "value-life",
+        "until the scope it was made in closes, on the thread that made it",
+    ),
+    (
+        "close-order",
+        "the innermost open scope of the calling thread, and no other",
+    ),
+    ("close-refused", "answered as false, and nothing changes"),
+    ("token", "never answered twice, on any thread"),
+];
 
 /// The runtime's external form: what a value is written as at a boundary, built as a tree by
 /// generated code and written out as JSON in one step.
@@ -1485,13 +1617,13 @@ pub const RESET: &str = "souther_reset";
 /// the caller a form it owns; `EXTERNAL_APPEND` and `EXTERNAL_PUT` take ownership of the item they
 /// are given and leave the container with the caller; `EXTERNAL_JSON` takes the root, drops the
 /// whole tree, and answers a string of the runtime's own layout (`TEXT_LENGTH`, `TEXT_BYTES`) in
-/// the arena. So nothing of the tree outlives the call that writes it, and what `RESET` drops is
+/// the arena. So nothing of the tree outlives the call that writes it, and what closing a scope drops is
 /// only what it always dropped.
 ///
 /// A key and a string handed in are strings of that same layout, not NUL-terminated text: a key a
 /// compile writes is a literal in the object, and a string a run worked out is in the arena.
 pub const EXTERNAL_NULL: &str = "souther_external_null";
-/// `(i8) -> form`: any value but 0 is true.
+/// `(bool) -> form`: any value but 0 is true.
 pub const EXTERNAL_BOOL: &str = "souther_external_bool";
 /// `(i64) -> form`.
 pub const EXTERNAL_INT: &str = "souther_external_int";
@@ -1557,9 +1689,9 @@ pub const DECODE_ABANDON: &str = "souther_decode_abandon";
 pub const PATH_BELOW: &str = "souther_path_below";
 /// `(path, i64) -> path`: the place of an array's element, by its index.
 pub const PATH_AT: &str = "souther_path_at";
-/// `(node, path, reading) -> i8`: whether it is an object.
+/// `(node, path, reading) -> bool`: whether it is an object.
 pub const READ_OBJECT: &str = "souther_read_object";
-/// `(node, path, reading) -> i8`: whether it is an array.
+/// `(node, path, reading) -> bool`: whether it is an array.
 pub const READ_ARRAY: &str = "souther_read_array";
 /// `(node) -> i64`: how many elements an array holds, asked of one `READ_ARRAY` said is one.
 pub const READ_ARRAY_LENGTH: &str = "souther_read_array_length";
@@ -1584,77 +1716,77 @@ pub const READ_MEMBER_VALUE: &str = "souther_read_member_value";
 pub const PATH_BELOW_MEMBER: &str = "souther_path_below_member";
 /// `(path, reading)`: two of a map's keys are one key once each is read as the key's type.
 pub const READ_DUPLICATE_KEY: &str = "souther_read_duplicate_key";
-/// `(node) -> i8`: whether it is `null`.
+/// `(node) -> bool`: whether it is `null`.
 pub const READ_NULL: &str = "souther_read_null";
-/// `(node, path, reading, out) -> i8`: an `Int` written through `out`.
+/// `(node, path, reading, out) -> bool`: an `Int` written through `out`.
 ///
 /// A scalar reader writes `out` whatever it answers: the value where it read one, and nought, or
 /// null for text, where it did not and recorded why. So a caller's room holds something the reader
 /// wrote after every call, the same as a type's reader, which writes its value or nothing whenever
 /// it answers `ANSWERED`.
 pub const READ_INT: &str = "souther_read_int";
-/// `(node, path, reading, out) -> i8`: a `Bool` written through `out` as one byte.
+/// `(node, path, reading, out) -> bool`: a `Bool` written through `out` as one byte.
 pub const READ_BOOL: &str = "souther_read_bool";
-/// `(node, path, reading, out) -> i8`: a string of this crate's layout written through `out`.
+/// `(node, path, reading, out) -> bool`: a string of this crate's layout written through `out`.
 pub const READ_STRING: &str = "souther_read_string";
-/// `(node, path, reading, out) -> i8`: a `Decimal` written through `out`, at the scale the number
+/// `(node, path, reading, out) -> bool`: a `Decimal` written through `out`, at the scale the number
 /// was spelt at.
 pub const READ_DECIMAL: &str = "souther_read_decimal";
-/// `(node, path, reading, out) -> i8`: a `Date` written through `out`, where the node is text that
+/// `(node, path, reading, out) -> bool`: a `Date` written through `out`, where the node is text that
 /// names one.
 pub const READ_DATE: &str = "souther_read_date";
-/// `(node, path, reading, out) -> i8`: a `Time`, as [`READ_DATE`].
+/// `(node, path, reading, out) -> bool`: a `Time`, as [`READ_DATE`].
 pub const READ_TIME: &str = "souther_read_time";
-/// `(node, path, reading, out) -> i8`: a `DateTime`, as [`READ_DATE`].
+/// `(node, path, reading, out) -> bool`: a `DateTime`, as [`READ_DATE`].
 pub const READ_DATETIME: &str = "souther_read_datetime";
-/// `(node, path, reading, out) -> i8`: an `Instant`, as [`READ_DATE`], from text written in UTC or
+/// `(node, path, reading, out) -> bool`: an `Instant`, as [`READ_DATE`], from text written in UTC or
 /// with an offset, as the moment it names.
 pub const READ_INSTANT: &str = "souther_read_instant";
-/// `(node, path, reading) -> i8`: whether it is text naming a case.
+/// `(node, path, reading) -> bool`: whether it is text naming a case.
 pub const READ_CASE: &str = "souther_read_case";
 /// `(node, key string, path, reading) -> node`: the text an object names its case with under a
 /// key, null where it names none.
 pub const READ_TAG: &str = "souther_read_tag";
-/// `(node, name string) -> i8`: whether the text is that name.
+/// `(node, name string) -> bool`: whether the text is that name.
 pub const READ_IS: &str = "souther_read_is";
 /// `(node, path, reading)`: the text names no case there is.
 pub const READ_NOT_A_CASE: &str = "souther_read_not_a_case";
 /// `(path, reading, module string, name string, clause string)`: a value read there breaks a
 /// clause, the clause's name null where it has none.
 pub const READ_INVARIANT: &str = "souther_read_invariant";
-/// `(path, reading, string, i64) -> i8`: whether the text holds at least that many characters,
+/// `(path, reading, string, i64) -> bool`: whether the text holds at least that many characters,
 /// having recorded Raoh's `too_short` where it does not.
 pub const READ_MIN_LENGTH: &str = "souther_read_min_length";
-/// `(path, reading, string, i64) -> i8`: at most that many, `too_long`.
+/// `(path, reading, string, i64) -> bool`: at most that many, `too_long`.
 pub const READ_MAX_LENGTH: &str = "souther_read_max_length";
-/// `(path, reading, string, i64) -> i8`: exactly that many, `invalid_length`.
+/// `(path, reading, string, i64) -> bool`: exactly that many, `invalid_length`.
 pub const READ_FIXED_LENGTH: &str = "souther_read_fixed_length";
-/// `(path, reading, string, machine, written string) -> i8`: whether the pattern matches the whole
+/// `(path, reading, string, machine, written string) -> bool`: whether the pattern matches the whole
 /// text, `invalid_format` with the pattern as written.
 pub const READ_PATTERN: &str = "souther_read_pattern";
-/// `(path, reading, i64, i64) -> i8`: at least the bound, `out_of_range.minimum`.
+/// `(path, reading, i64, i64) -> bool`: at least the bound, `out_of_range.minimum`.
 pub const READ_INT_MIN: &str = "souther_read_int_min";
-/// `(path, reading, i64, i64) -> i8`: at most the bound, `out_of_range.maximum`.
+/// `(path, reading, i64, i64) -> bool`: at most the bound, `out_of_range.maximum`.
 pub const READ_INT_MAX: &str = "souther_read_int_max";
-/// `(path, reading, i64) -> i8`: above nought, `out_of_range.positive`.
+/// `(path, reading, i64) -> bool`: above nought, `out_of_range.positive`.
 pub const READ_INT_POSITIVE: &str = "souther_read_int_positive";
-/// `(path, reading, i64) -> i8`: not below nought, `out_of_range.non_negative`.
+/// `(path, reading, i64) -> bool`: not below nought, `out_of_range.non_negative`.
 pub const READ_INT_NON_NEGATIVE: &str = "souther_read_int_non_negative";
-/// `(path, reading, decimal, decimal) -> i8`: at least the bound by amount.
+/// `(path, reading, decimal, decimal) -> bool`: at least the bound by amount.
 pub const READ_DECIMAL_MIN: &str = "souther_read_decimal_min";
-/// `(path, reading, decimal, decimal) -> i8`: at most the bound by amount.
+/// `(path, reading, decimal, decimal) -> bool`: at most the bound by amount.
 pub const READ_DECIMAL_MAX: &str = "souther_read_decimal_max";
-/// `(path, reading, decimal) -> i8`: above nought.
+/// `(path, reading, decimal) -> bool`: above nought.
 pub const READ_DECIMAL_POSITIVE: &str = "souther_read_decimal_positive";
-/// `(path, reading, decimal) -> i8`: not below nought.
+/// `(path, reading, decimal) -> bool`: not below nought.
 pub const READ_DECIMAL_NON_NEGATIVE: &str = "souther_read_decimal_non_negative";
-/// `(path, reading, list) -> i8`: one element or more, `too_small.nonempty`.
+/// `(path, reading, list) -> bool`: one element or more, `too_small.nonempty`.
 pub const READ_LIST_NON_EMPTY: &str = "souther_read_list_non_empty";
-/// `(path, reading, list, i64) -> i8`: at least that many elements, `too_small`.
+/// `(path, reading, list, i64) -> bool`: at least that many elements, `too_small`.
 pub const READ_LIST_MIN_SIZE: &str = "souther_read_list_min_size";
-/// `(path, reading, list, i64) -> i8`: at most that many, `too_big`.
+/// `(path, reading, list, i64) -> bool`: at most that many, `too_big`.
 pub const READ_LIST_MAX_SIZE: &str = "souther_read_list_max_size";
-/// `(path, reading, list, i64) -> i8`: exactly that many, `invalid_size`.
+/// `(path, reading, list, i64) -> bool`: exactly that many, `invalid_size`.
 pub const READ_LIST_FIXED_SIZE: &str = "souther_read_list_fixed_size";
 /// `(list, hasher, equality) -> list`: the elements the list holds more than once, each once, in
 /// the order their repetition was found.
@@ -1662,11 +1794,11 @@ pub const LIST_DUPLICATES: &str = "souther_list_duplicates";
 /// `(path, reading, form)`: a list held no element twice and does, `duplicate_element` with the
 /// form of the elements it repeats, which it takes.
 pub const READ_DUPLICATES: &str = "souther_read_duplicates";
-/// `(path, reading, map) -> i8`: one entry or more, `too_small.nonempty`.
+/// `(path, reading, map) -> bool`: one entry or more, `too_small.nonempty`.
 pub const READ_MAP_NON_EMPTY: &str = "souther_read_map_non_empty";
-/// `(path, reading, map, i64) -> i8`: at least that many entries, `too_small`.
+/// `(path, reading, map, i64) -> bool`: at least that many entries, `too_small`.
 pub const READ_MAP_MIN_SIZE: &str = "souther_read_map_min_size";
-/// `(path, reading, map, i64) -> i8`: at most that many, `too_big`.
+/// `(path, reading, map, i64) -> bool`: at most that many, `too_big`.
 pub const READ_MAP_MAX_SIZE: &str = "souther_read_map_max_size";
 
 /// What a host asks a reading once a decoder has answered it. `(reading) -> i32`, one of the three
@@ -1716,7 +1848,8 @@ pub enum HostWord {
     Status,
     /// An `Int`: sixty-four bits, signed.
     Int,
-    /// A `Bool`, or whether an optional holds a value: one byte, nought or one.
+    /// A `Bool`, or whether an optional holds a value: one byte without a sign, which the library
+    /// answers as nought or one and reads as true wherever it is not nought.
     Bool,
     /// Which of a sum's cases a value is, as its place among them.
     Case,
@@ -1724,8 +1857,8 @@ pub enum HostWord {
     Outcome,
     /// How many of something there are, or where one stands among them: sixty-four bits.
     Count,
-    /// Where the arena stood, to be given back to [`RESET`].
-    Mark,
+    /// An open scope, as [`SCOPE_OPEN`] answers one and [`SCOPE_CLOSE`] takes it back.
+    Scope,
     /// Bytes the host holds, read and never kept.
     Bytes,
     /// The address of a value of a declared type, which a host never reads behind.
@@ -1736,16 +1869,16 @@ pub enum HostWord {
     /// The address of a `Decimal`, which a host never reads behind: made through
     /// [`DECIMAL_OF_PARTS`], and read through [`DECIMAL_UNSCALED`] and [`DECIMAL_SCALE`].
     Decimal,
-    /// The address of a `Date`, which a host never reads behind: made through [`DATE_OF_ISO`] and
-    /// read through [`DATE_ISO`].
+    /// The address of a `Date`, which a host never reads behind: made through [`DATE_OF_PARTS`]
+    /// and read through [`DATE_PARTS`].
     Date,
-    /// The address of a `Time`: made through [`TIME_OF_ISO`] and read through [`TIME_ISO`].
+    /// The address of a `Time`: made through [`TIME_OF_PARTS`] and read through [`TIME_PARTS`].
     Time,
-    /// The address of a `DateTime`: made through [`DATETIME_OF_ISO`] and read through
-    /// [`DATETIME_ISO`].
+    /// The address of a `DateTime`: made through [`DATETIME_OF_PARTS`] and read through
+    /// [`DATETIME_PARTS`].
     DateTime,
-    /// The address of an `Instant`: made through [`INSTANT_OF_ISO`] and read through
-    /// [`INSTANT_ISO`].
+    /// The address of an `Instant`: made through [`INSTANT_OF_PARTS`] and read through
+    /// [`INSTANT_PARTS`].
     Instant,
     /// A reading a decoder answered, asked through the `DECODED_*` functions.
     Decoded,
@@ -1773,7 +1906,122 @@ pub enum HostWord {
     Function,
 }
 
+/// What a word is on the machine, which the driver's machine types and the header's C types are
+/// both read off, so that the two cannot say different things and a change to either is a change
+/// here, which the record of a generation holds.
+///
+/// Unsigned and signed are said apart though a machine integer has no sign, because a host's
+/// language does: a `Bool` is a byte a host may hand over as any of its values, and an `Outcome` a
+/// number a host may be handed below nought.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Representation {
+    /// Eight bits, read without a sign.
+    U8,
+    /// Thirty-two bits, read without a sign.
+    U32,
+    /// Thirty-two bits, read with a sign.
+    I32,
+    /// Sixty-four bits, read with a sign.
+    I64,
+    /// An address, as wide as the machine's.
+    Address,
+}
+
+impl Representation {
+    /// The type `<stdint.h>` names for it, or `void *` for an address a header does not name
+    /// otherwise.
+    pub const fn c(self) -> &'static str {
+        match self {
+            Representation::U8 => "uint8_t",
+            Representation::U32 => "uint32_t",
+            Representation::I32 => "int32_t",
+            Representation::I64 => "int64_t",
+            Representation::Address => "void *",
+        }
+    }
+}
+
 impl HostWord {
+    /// Every word, in the order they are declared.
+    pub const ALL: &[HostWord] = &[
+        HostWord::Status,
+        HostWord::Int,
+        HostWord::Bool,
+        HostWord::Case,
+        HostWord::Outcome,
+        HostWord::Count,
+        HostWord::Scope,
+        HostWord::Bytes,
+        HostWord::Value,
+        HostWord::String,
+        HostWord::Decimal,
+        HostWord::Date,
+        HostWord::Time,
+        HostWord::DateTime,
+        HostWord::Instant,
+        HostWord::Decoded,
+        HostWord::Issue,
+        HostWord::List,
+        HostWord::Requirements,
+        HostWord::Capability,
+        HostWord::Userdata,
+        HostWord::Function,
+    ];
+
+    /// Whether a host hands this word over as data, which every host function answers whatever
+    /// it is ([`HOST_INPUT_CONTRACT`]), and not as a handle to what the library holds.
+    pub const fn is_datum(self) -> bool {
+        match self {
+            HostWord::Status
+            | HostWord::Int
+            | HostWord::Bool
+            | HostWord::Case
+            | HostWord::Outcome
+            | HostWord::Count
+            | HostWord::Scope
+            | HostWord::Bytes => true,
+            HostWord::Value
+            | HostWord::String
+            | HostWord::Decimal
+            | HostWord::Date
+            | HostWord::Time
+            | HostWord::DateTime
+            | HostWord::Instant
+            | HostWord::Decoded
+            | HostWord::Issue
+            | HostWord::List
+            | HostWord::Requirements
+            | HostWord::Capability
+            | HostWord::Userdata
+            | HostWord::Function => false,
+        }
+    }
+
+    /// What the word is on the machine.
+    pub const fn representation(self) -> Representation {
+        match self {
+            HostWord::Bool => Representation::U8,
+            HostWord::Status | HostWord::Case => Representation::U32,
+            HostWord::Outcome => Representation::I32,
+            HostWord::Int | HostWord::Count | HostWord::Scope => Representation::I64,
+            HostWord::Bytes
+            | HostWord::Value
+            | HostWord::String
+            | HostWord::Decimal
+            | HostWord::Date
+            | HostWord::Time
+            | HostWord::DateTime
+            | HostWord::Instant
+            | HostWord::Decoded
+            | HostWord::Issue
+            | HostWord::List
+            | HostWord::Requirements
+            | HostWord::Capability
+            | HostWord::Userdata
+            | HostWord::Function => Representation::Address,
+        }
+    }
+
     /// The word as a symbol and a manifest spell it: its name, in lower case.
     pub const fn spelt(self) -> &'static str {
         match self {
@@ -1783,7 +2031,7 @@ impl HostWord {
             HostWord::Case => "case",
             HostWord::Outcome => "outcome",
             HostWord::Count => "count",
-            HostWord::Mark => "mark",
+            HostWord::Scope => "scope",
             HostWord::Bytes => "bytes",
             HostWord::Value => "value",
             HostWord::String => "string",
@@ -1856,7 +2104,7 @@ impl HostLeaf {
 pub enum HostShape {
     /// One word that is the value itself.
     Leaf(HostLeaf),
-    /// An optional: whether there is a value, as a [`HostWord::Bool`] that is nought or one, and
+    /// An optional: whether there is a value, as a [`HostWord::Bool`], and
     /// then the words of the value, which are read only where there is one and written only where
     /// there is one. Each optional says so of itself, so an optional of an optional is two
     /// presences, and absence at one depth is not absence at another.
@@ -1980,19 +2228,19 @@ pub struct RuntimeFunction {
 pub const HOST_RUNTIME: &[RuntimeFunction] = {
     use HostParameter::{Given, Room};
     use HostWord::{
-        Bool, Bytes, Count, Date, DateTime, Decimal, Decoded, Instant, Int, Issue, Mark, Outcome,
+        Bool, Bytes, Count, Date, DateTime, Decimal, Decoded, Instant, Int, Issue, Outcome, Scope,
         String, Time, Value,
     };
     &[
         RuntimeFunction {
-            name: MARK,
+            name: SCOPE_OPEN,
             takes: &[],
-            answers: Some(Mark),
+            answers: Some(Scope),
         },
         RuntimeFunction {
-            name: RESET,
-            takes: &[Given(Mark)],
-            answers: None,
+            name: SCOPE_CLOSE,
+            takes: &[Given(Scope)],
+            answers: Some(Bool),
         },
         RuntimeFunction {
             name: STRING_OF_UTF8,
@@ -2011,8 +2259,8 @@ pub const HOST_RUNTIME: &[RuntimeFunction] = {
         },
         RuntimeFunction {
             name: DECIMAL_OF_PARTS,
-            takes: &[Given(Bytes), Given(Count), Given(Int)],
-            answers: Some(Decimal),
+            takes: &[Given(Bytes), Given(Count), Given(Int), Room(Decimal)],
+            answers: Some(Bool),
         },
         RuntimeFunction {
             name: DECIMAL_UNSCALED,
@@ -2025,44 +2273,60 @@ pub const HOST_RUNTIME: &[RuntimeFunction] = {
             answers: Some(Int),
         },
         RuntimeFunction {
-            name: DATE_OF_ISO,
-            takes: &[Given(String)],
-            answers: Some(Date),
+            name: DATE_OF_PARTS,
+            takes: &[Given(Int), Given(Int), Given(Int), Room(Date)],
+            answers: Some(Bool),
         },
         RuntimeFunction {
-            name: DATE_ISO,
-            takes: &[Given(Date)],
-            answers: Some(String),
+            name: DATE_PARTS,
+            takes: &[Given(Date), Room(Int), Room(Int), Room(Int)],
+            answers: None,
         },
         RuntimeFunction {
-            name: TIME_OF_ISO,
-            takes: &[Given(String)],
-            answers: Some(Time),
+            name: TIME_OF_PARTS,
+            takes: &[Given(Int), Given(Int), Given(Int), Room(Time)],
+            answers: Some(Bool),
         },
         RuntimeFunction {
-            name: TIME_ISO,
-            takes: &[Given(Time)],
-            answers: Some(String),
+            name: TIME_PARTS,
+            takes: &[Given(Time), Room(Int), Room(Int), Room(Int)],
+            answers: None,
         },
         RuntimeFunction {
-            name: DATETIME_OF_ISO,
-            takes: &[Given(String)],
-            answers: Some(DateTime),
+            name: DATETIME_OF_PARTS,
+            takes: &[
+                Given(Int),
+                Given(Int),
+                Given(Int),
+                Given(Int),
+                Given(Int),
+                Given(Int),
+                Room(DateTime),
+            ],
+            answers: Some(Bool),
         },
         RuntimeFunction {
-            name: DATETIME_ISO,
-            takes: &[Given(DateTime)],
-            answers: Some(String),
+            name: DATETIME_PARTS,
+            takes: &[
+                Given(DateTime),
+                Room(Int),
+                Room(Int),
+                Room(Int),
+                Room(Int),
+                Room(Int),
+                Room(Int),
+            ],
+            answers: None,
         },
         RuntimeFunction {
-            name: INSTANT_OF_ISO,
-            takes: &[Given(String)],
-            answers: Some(Instant),
+            name: INSTANT_OF_PARTS,
+            takes: &[Given(Int), Given(Int), Room(Instant)],
+            answers: Some(Bool),
         },
         RuntimeFunction {
-            name: INSTANT_ISO,
-            takes: &[Given(Instant)],
-            answers: Some(String),
+            name: INSTANT_PARTS,
+            takes: &[Given(Instant), Room(Int), Room(Int)],
+            answers: None,
         },
         RuntimeFunction {
             name: DECODED_OUTCOME,
@@ -2126,8 +2390,9 @@ pub struct CaseCrossing {
     pub case: &'static str,
     /// `(what the case holds, where it holds something) -> value`.
     pub make: RuntimeFunction,
-    /// `(value) -> what it holds`, for a case that holds something. Called only on a value a test
-    /// of which case it is has said is this case, and nothing is asked of it again.
+    /// `(value, room for what it holds) -> bool`, for a case that holds something: what the value
+    /// holds is written where the value is this case, and whether it is is answered. Which case a
+    /// value is, is read off the value, so a value of another case is answered as that.
     pub read: Option<RuntimeFunction>,
 }
 
@@ -2135,7 +2400,7 @@ pub struct CaseCrossing {
 /// order that names them. The runtime's own tests hold each function to the one it names, and the
 /// cases to that table.
 pub const HOST_CASES: &[CaseCrossing] = {
-    use HostParameter::Given;
+    use HostParameter::{Given, Room};
     use HostWord::{Bool, Date, DateTime, Decimal, Instant, Int, String, Time, Value};
     const fn holding(
         case: &'static str,
@@ -2153,8 +2418,18 @@ pub const HOST_CASES: &[CaseCrossing] = {
             },
             read: Some(RuntimeFunction {
                 name: read,
-                takes: &[Given(Value)],
-                answers: Some(word),
+                takes: match word {
+                    Int => &[Given(Value), Room(Int)],
+                    Bool => &[Given(Value), Room(Bool)],
+                    String => &[Given(Value), Room(String)],
+                    Decimal => &[Given(Value), Room(Decimal)],
+                    Date => &[Given(Value), Room(Date)],
+                    Time => &[Given(Value), Room(Time)],
+                    DateTime => &[Given(Value), Room(DateTime)],
+                    Instant => &[Given(Value), Room(Instant)],
+                    _ => panic!("a case holds a primitive"),
+                },
+                answers: Some(Bool),
             }),
         }
     }
@@ -3477,6 +3752,15 @@ pub type Status = u32;
 /// The pointer holds the answer.
 pub const ANSWERED: Status = 0;
 
+/// The statuses this crate keeps for what no Souther computation answers: the top sixteen numbers
+/// below 2³¹. Every host status and every status only a row brings about is one of these, and
+/// every number a language abort is given is above [`ANSWERED`] and below them.
+///
+/// A status is a `u32`, and the numbers stop at 2³¹ − 1 all the same: a header names each status
+/// as an enumerator, and C gives an enumerator the range of an `int`, so a status past it is one a
+/// header could not name.
+pub const RESERVED: std::ops::RangeInclusive<Status> = 0x7fff_fff0..=0x7fff_ffff;
+
 /// A behavior was called through a requirement it was handed no capability for: the requirements
 /// were null, or the address standing for one of them was.
 ///
@@ -3505,10 +3789,8 @@ pub const INJECTION_PROTOCOL_VIOLATION: Status = 0x7fff_fffe;
 /// is not called a platform failure.
 pub const HOST_EXCEPTION: Status = 0x7fff_ffff;
 
-/// The statuses no Souther computation answers, by the names a host is told them under.
-///
-/// Numbered from the top of what a C `int` holds, which is what a header's enumeration is, so the
-/// numbers a language abort is given, counted up from one, never reach them.
+/// The statuses no Souther computation answers, by the names a host is told them under: each in
+/// [`RESERVED`].
 pub const HOST_STATUSES: &[(&str, Status)] = &[
     ("INJECTION_UNBOUND", INJECTION_UNBOUND),
     ("INJECTION_PROTOCOL_VIOLATION", INJECTION_PROTOCOL_VIOLATION),
@@ -3579,13 +3861,13 @@ mod tests {
     fn a_behavior_is_reached_by_its_module_and_its_name() {
         assert_eq!(
             behavior_symbol("calculation", "add"),
-            "souther8.calculation.add"
+            "souther9.calculation.add"
         );
     }
 
     #[test]
     fn a_dotted_module_keeps_its_dots() {
-        assert_eq!(behavior_symbol("lib.pub", "bill"), "souther8.lib.pub.bill");
+        assert_eq!(behavior_symbol("lib.pub", "bill"), "souther9.lib.pub.bill");
     }
 
     /// What the reading rests on. Were this admitted, `a.b` / `c` and `a` / `b.c` would be spelt
@@ -3625,7 +3907,7 @@ mod tests {
     fn each_row_of_a_behavior_is_its_own_symbol() {
         assert_eq!(
             example_symbol("calculation", "add", 0),
-            "souther8.calculation.add$example$0"
+            "souther9.calculation.add$example$0"
         );
         assert_ne!(
             example_symbol("calculation", "add", 0),
@@ -3640,7 +3922,7 @@ mod tests {
     #[test]
     fn an_entry_and_its_boundary_are_two_symbols() {
         let entry = behavior_symbol("shop", "quote");
-        assert_eq!(boundary_symbol(&entry), "souther8.shop.quote$boundary");
+        assert_eq!(boundary_symbol(&entry), "souther9.shop.quote$boundary");
         assert_ne!(boundary_symbol(&entry), entry);
         assert_ne!(
             boundary_symbol(&example_symbol("shop", "quote", 0)),
@@ -3711,7 +3993,7 @@ mod tests {
     fn a_published_value_is_reached_by_its_module_and_its_name() {
         assert_eq!(
             value_symbol("pricing", "standard"),
-            "souther8.pricing$value$standard"
+            "souther9.pricing$value$standard"
         );
     }
 
@@ -3749,7 +4031,7 @@ mod tests {
     fn a_type_is_built_through_its_module_and_its_name() {
         assert_eq!(
             constructor_symbol("pricing", "Amount"),
-            "souther8.pricing$construct$Amount"
+            "souther9.pricing$construct$Amount"
         );
     }
 
@@ -3769,7 +4051,7 @@ mod tests {
     fn what_decides_a_construction_is_reached_by_the_types_module_and_name() {
         assert_eq!(
             checked_constructor_symbol("pricing", "Amount"),
-            "souther8.pricing$checked$Amount"
+            "souther9.pricing$checked$Amount"
         );
     }
 
@@ -3799,23 +4081,23 @@ mod tests {
     fn a_host_reaches_a_type_under_its_module_and_its_name() {
         assert_eq!(
             host_constructor_symbol("pricing", "Amount"),
-            "souther8_m_pricing_t_Amount_construct"
+            "souther9_m_pricing_t_Amount_construct"
         );
         assert_eq!(
             host_field_symbol("pricing", "Amount", "value"),
-            "souther8_m_pricing_t_Amount_f_value"
+            "souther9_m_pricing_t_Amount_f_value"
         );
         assert_eq!(
             host_case_symbol("pricing", "Result"),
-            "souther8_m_pricing_t_Result_case"
+            "souther9_m_pricing_t_Result_case"
         );
         assert_eq!(
             host_decode_symbol("pricing", "Amount"),
-            "souther8_m_pricing_t_Amount_decode"
+            "souther9_m_pricing_t_Amount_decode"
         );
         assert_eq!(
             host_encode_symbol("pricing", "Amount"),
-            "souther8_m_pricing_t_Amount_encode"
+            "souther9_m_pricing_t_Amount_encode"
         );
     }
 
@@ -3823,15 +4105,15 @@ mod tests {
     fn a_host_reaches_a_behavior_and_a_value_under_their_module() {
         assert_eq!(
             host_behavior_symbol("lib.shop", "quote"),
-            "souther8_m_lib_m_shop_b_quote"
+            "souther9_m_lib_m_shop_b_quote"
         );
         assert_eq!(
             host_value_symbol("lib.shop", "standard"),
-            "souther8_m_lib_m_shop_v_standard"
+            "souther9_m_lib_m_shop_v_standard"
         );
         assert_eq!(
             host_behavior_answer_case_symbol("lib.shop", "find"),
-            "souther8_m_lib_m_shop_b_find_answer_case"
+            "souther9_m_lib_m_shop_b_find_answer_case"
         );
     }
 
@@ -3844,7 +4126,7 @@ mod tests {
                 &HostShape::Leaf(Value),
                 HostListOperation::Construct
             ),
-            "souther8_m_shop_l_value_construct"
+            "souther9_m_shop_l_value_construct"
         );
         assert_eq!(
             host_list_symbol(
@@ -3852,7 +4134,7 @@ mod tests {
                 &HostShape::Option(Box::new(HostShape::Leaf(Int))),
                 HostListOperation::At
             ),
-            "souther8_m_lib_m_shop_l_o_int_at"
+            "souther9_m_lib_m_shop_l_o_int_at"
         );
         assert_eq!(
             host_list_symbol(
@@ -3863,7 +4145,7 @@ mod tests {
                 ]))),
                 HostListOperation::Length
             ),
-            "souther8_m_shop_l_l_t2_int_o_bool_length"
+            "souther9_m_shop_l_l_t2_int_o_bool_length"
         );
     }
 
@@ -3876,11 +4158,11 @@ mod tests {
         };
         assert_eq!(
             host_function_symbol("shop", &function, HostFunctionOperation::Call),
-            "souther8_m_shop_fn_f2_int_string_o_int_call"
+            "souther9_m_shop_fn_f2_int_string_o_int_call"
         );
         assert_eq!(
             host_function_symbol("shop", &function, HostFunctionOperation::Implement),
-            "souther8_m_shop_fn_f2_int_string_o_int_implement"
+            "souther9_m_shop_fn_f2_int_string_o_int_implement"
         );
     }
 
@@ -3964,11 +4246,11 @@ mod tests {
     fn a_name_that_is_not_ascii_letters_and_digits_is_escaped() {
         assert_eq!(
             host_behavior_symbol("shop", "foo_bar"),
-            "souther8_m_shop_b_foo__bar"
+            "souther9_m_shop_b_foo__bar"
         );
         assert_eq!(
             host_behavior_symbol("shop", "数量"),
-            "souther8_m_shop_b__u6570__u91cf_"
+            "souther9_m_shop_b__u6570__u91cf_"
         );
     }
 
@@ -3978,7 +4260,7 @@ mod tests {
     fn a_type_is_read_through_its_module_and_its_name() {
         assert_eq!(
             reader_symbol("pricing", "Amount"),
-            "souther8.pricing$read$Amount"
+            "souther9.pricing$read$Amount"
         );
     }
 
@@ -4197,18 +4479,19 @@ mod tests {
     }
 
     /// What a host brings about is told apart by number alone, from `ANSWERED` and from each
-    /// other, and stays inside what a C `int` holds, which is what a header's enumeration is.
+    /// other, and is one of the reserved numbers, which all stay inside what a header's
+    /// enumeration holds.
     #[test]
     fn what_a_host_brings_about_is_a_number_of_its_own() {
+        assert!(i32::try_from(*super::RESERVED.end()).is_ok());
+        assert!(!super::RESERVED.contains(&super::ANSWERED));
         let mut seen = vec![super::ANSWERED];
-        for (name, number) in HOST_STATUSES {
+        for (name, number) in HOST_STATUSES.iter().chain(EXAMPLE_STATUSES) {
             assert!(!seen.contains(number), "{name} answers {number} twice");
-            assert!(i32::try_from(*number).is_ok(), "{name} is past a C int");
-            seen.push(*number);
-        }
-        for (name, number) in EXAMPLE_STATUSES {
-            assert!(!seen.contains(number), "{name} answers {number} twice");
-            assert!(i32::try_from(*number).is_ok(), "{name} is past a C int");
+            assert!(
+                super::RESERVED.contains(number),
+                "{name} is not a reserved number"
+            );
             seen.push(*number);
         }
         assert!(!IMPLEMENTATION_ANSWERS.contains(&INJECTION_UNBOUND));

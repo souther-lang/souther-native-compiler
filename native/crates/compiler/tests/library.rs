@@ -118,7 +118,16 @@ fn the_header_the_manifest_and_the_library_name_one_set_of_functions() {
         let header = declared_in(&declarations);
         let manifest: Value =
             serde_json::from_str(&fs::read_to_string(&built.manifest).unwrap()).unwrap();
-        let described = described_in(&manifest);
+        // And what the manifest does not describe, which the ABI generation says: the generation
+        // query, outside every generation, and the runtime's own functions, a binding's runtime
+        // calls and no generated code does.
+        let mut described = described_in(&manifest);
+        described.insert(souther_native_abi::GENERATION_QUERY.to_string());
+        described.extend(
+            souther_native_abi::HOST_RUNTIME
+                .iter()
+                .map(|it| it.name.to_string()),
+        );
         let exported = defined_in(&built.library, true);
 
         assert!(!header.is_empty());
@@ -154,14 +163,14 @@ const CALLING: &str = r#"
 #include "souther.h"
 
 int main(void) {
-    int64_t mark = souther_mark();
+    int64_t scope = souther_scope_open();
     int64_t answer = -1;
     souther_status status = souther@_m_calculation_b_add(NULL, 2, 3, &answer);
     printf("%u %" PRId64 "\n", status, answer);
     answer = -1;
     status = souther@_m_calculation_b_add(NULL, INT64_MAX, 1, &answer);
     printf("%d %" PRId64 "\n", status == SOUTHER_REQUIRED_FORM_HAS_NO_PLACE, answer);
-    souther_reset(mark);
+    souther_scope_close(scope);
     return 0;
 }
 "#;
@@ -179,7 +188,7 @@ static void said(souther_string text) {
 }
 
 int main(void) {
-    int64_t mark = souther_mark();
+    int64_t scope = souther_scope_open();
     souther_value built = NULL;
     souther_status status = souther@_m_m_t_P_construct(7, &built);
     int64_t n = 0;
@@ -205,7 +214,7 @@ int main(void) {
     status = souther@_m_m_v_ys(&published);
     souther@_m_m_t_P_f_n(published, &n);
     printf("%u %" PRId64 "\n", status, n);
-    souther_reset(mark);
+    souther_scope_close(scope);
     return 0;
 }
 "#;
@@ -224,16 +233,17 @@ int main() {
 "#;
 
 fn ran(document: &str, program: &str) -> String {
-    ran_as(document, program, "cc", "host.c")
+    ran_as(document, program, &["cc"], "host.c")
 }
 
-fn ran_as(document: &str, program: &str, compiler: &str, named: &str) -> String {
+fn ran_as(document: &str, program: &str, compiler: &[&str], named: &str) -> String {
     let into = tempdir().unwrap();
     let built = library_for(document, &linking(vec![]), into.path()).unwrap();
     let source = into.path().join(named);
     fs::write(&source, support::harness(program)).unwrap();
     let executable = into.path().join("host");
-    let compiled = Command::new(compiler)
+    let compiled = Command::new(compiler[0])
+        .args(&compiler[1..])
         .args(["-Wall", "-Werror", "-o"])
         .arg(&executable)
         .arg(&source)
@@ -338,7 +348,7 @@ static void *elsewhere(void *with) {
 }
 
 int main(void) {
-    int64_t mark = souther_mark();
+    int64_t scope = souther_scope_open();
     int64_t answer = -1;
     souther_status status = souther@_m_m_b_twice(NULL, 1, &answer);
     printf("nothing %d %lld\n", status == SOUTHER_INJECTION_UNBOUND, (long long) answer);
@@ -381,7 +391,7 @@ int main(void) {
 
     implement(&by_nesting, nesting, (void *) by_twenty.requirements);
     twice("outer", &by_nesting);
-    souther_reset(mark);
+    souther_scope_close(scope);
     return 0;
 }
 "#;
@@ -409,7 +419,16 @@ fn a_host_implements_a_behavior_with_no_body_through_a_capability() {
 
 #[test]
 fn a_cpp_program_calls_a_behavior_through_the_same_header() {
-    assert_eq!(ran_as(ADDING, CALLING_FROM_CPP, "c++", "host.cpp"), "0 5\n");
+    // As the compiler's own standard has it, which may be one with no static assertions, and as
+    // one that asks the header's measure of the room a host lays out.
+    assert_eq!(
+        ran_as(ADDING, CALLING_FROM_CPP, &["c++"], "host.cpp"),
+        "0 5\n"
+    );
+    assert_eq!(
+        ran_as(ADDING, CALLING_FROM_CPP, &["c++", "-std=c++17"], "host.cpp"),
+        "0 5\n"
+    );
 }
 
 /// A module is declared by one build, so an object carrying one this build carries too is refused
@@ -547,15 +566,16 @@ static void read(const char *json) {
     souther_value value = souther_decoded_value(reading);
     uint32_t which = souther@_m_m_t_Q_case(value);
     printf("%u case %u", status, which);
-    if (which == 0) {
-        printf(" holds %" PRId64, souther_case_int_read(value));
+    int64_t held = 0;
+    if (which == 0 && souther_case_int_read(value, &held)) {
+        printf(" holds %" PRId64, held);
     }
     printf(" ");
     said(souther@_m_m_t_Q_encode(value));
 }
 
 int main(void) {
-    int64_t mark = souther_mark();
+    int64_t scope = souther_scope_open();
     read("{\"type\": \"Int\", \"value\": 4}");
     read("{\"type\": \"DivisionByZero\"}");
     read("{\"type\": \"A\"}");
@@ -563,7 +583,7 @@ int main(void) {
     read("{\"type\": \"Int\", \"value\": true}");
     said(souther@_m_m_t_Q_encode(souther_case_int_make(9)));
     said(souther@_m_m_t_Q_encode(souther_case_division_by_zero_make()));
-    souther_reset(mark);
+    souther_scope_close(scope);
     return 0;
 }
 "#;

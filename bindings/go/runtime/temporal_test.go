@@ -26,9 +26,6 @@ func TestADateIsWrittenAsLocalDateWritesIt(t *testing.T) {
 		if got := date.String(); got != tc.written {
 			t.Errorf("wrote %s, want %s", got, tc.written)
 		}
-		if back := writtenDate(tc.written); back != date {
-			t.Errorf("read back %v, want %v", back, date)
-		}
 	}
 }
 
@@ -58,9 +55,6 @@ func TestATimeIsWrittenToTheSecondAndOnlyWhereItIsNotNought(t *testing.T) {
 		if got := want.String(); got != written {
 			t.Errorf("wrote %s, want %s", got, written)
 		}
-		if back := writtenTime(written); back != want {
-			t.Errorf("read back %v, want %v", back, want)
-		}
 	}
 }
 
@@ -70,9 +64,6 @@ func TestADateTimeIsItsDateAndItsTime(t *testing.T) {
 	dt := NewDateTime(date, clock)
 	if dt.String() != "2024-02-29T23:59:01" {
 		t.Errorf("wrote %s", dt)
-	}
-	if back := writtenDateTime(dt.String()); back != dt {
-		t.Errorf("read back %v", back)
 	}
 }
 
@@ -97,9 +88,6 @@ func TestAnInstantIsWrittenInUTCWithAFractionOnlyWhereThereIsOne(t *testing.T) {
 		}
 		if got := instant.String(); got != tc.written {
 			t.Errorf("wrote %s, want %s", got, tc.written)
-		}
-		if back := writtenInstant(tc.written); back != instant {
-			t.Errorf("read back %v, want %v", back, instant)
 		}
 	}
 }

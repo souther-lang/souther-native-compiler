@@ -1,14 +1,7 @@
 package souther.bindings;
 
-import net.unit8.raoh.Result;
-import net.unit8.raoh.decode.Decoder;
 import org.jspecify.annotations.Nullable;
-import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.json.JsonMapper;
 
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
@@ -17,56 +10,34 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-import static net.unit8.raoh.decode.Decoders.lazy;
-import static net.unit8.raoh.decode.Decoders.oneOf;
-import static net.unit8.raoh.json.JsonDecoders.combine;
-import static net.unit8.raoh.json.JsonDecoders.field;
-import static net.unit8.raoh.json.JsonDecoders.int_;
-import static net.unit8.raoh.json.JsonDecoders.list;
-import static net.unit8.raoh.json.JsonDecoders.literal;
-import static net.unit8.raoh.json.JsonDecoders.map;
-import static net.unit8.raoh.json.JsonDecoders.nullableField;
-import static net.unit8.raoh.json.JsonDecoders.string;
-import static net.unit8.raoh.json.JsonDecoders.strict;
-
-
 /**
- * What a manifest says, as every host's generator reads it: version {@value #VERSION} of
- * {@value #FORMAT}, and nothing else.
+ * What a library offers a host and asks of one, as every host's generator is handed it: the model
+ * of what the driver wrote beside the library, and not how it was written.
  *
- * <p>Read strictly, as the driver writes it. A member this does not name, or a version or ABI
- * generation it was not written for, is refused rather than read as much of as happens to parse:
- * a binding generated from a manifest that says more than was understood of it would call
- * functions as something they are not.
+ * <p>The command reads what the driver wrote, and is what knows how it is written and which
+ * version of it this is; a generator is handed this and never the file, so what the file looks
+ * like can change without a generator knowing.
  *
- * <p>Made only by {@link #read}, so a manifest a generator holds is one read that way; what it is
- * made of is plain records a generator takes apart as it needs. What the driver promises of a
+ * <p>Made only by {@link #of}, which holds it to what no part can hold alone; what it is made of
+ * is plain records a generator takes apart as it needs. What the driver promises of a
  * manifest is held by the part that holds it, wherever that part is made: a function by the words
  * of the shapes said beside it ({@link Call}, {@link Construct}, {@link Read}), a module by saying
  * the functions for every list and every function value it hands across, each the way it crosses
  * ({@link Module}), and what constructing a behavior requires by being closed over the whole.
  *
  * <p>How a value crosses is what the driver decided and the manifest says ({@link Shape}); nothing
- * here works it out again from the model, and nothing holds a shape to the type it is said beside:
- * which shape a type crosses in is the driver's to choose, and a shape it chooses later for a type
- * is read the day it is written. What a generator adds is whether its own language has a way to
- * hold what crosses, and a pair of a type and a shape it has none for is one it does not bind.
+ * here works it out again from the model. The command pairs each value's type with the shape it
+ * crosses in once, as it reads the manifest, and a generator is handed the pair as a
+ * {@link ValueCrossing}, never a type beside a shape to pair its own way. Which word a type crosses
+ * as is the driver's to choose, and a word it chooses later for a type is read the day it is
+ * written; a shape no value of the type is taken apart into is refused. What a generator adds is
+ * whether its own language has a way to hold what crosses, and a crossing it has none for is one
+ * it does not bind.
  */
 public final class Manifest {
 
-    /** What a manifest says it is. */
-    public static final String FORMAT = "souther-native-interface";
-
-    /** The version of what a manifest says that this reads. */
-    public static final int VERSION = 14;
-
-    /** The ABI generation the functions this binds answer to. */
-    public static final int ABI = 8;
-
-    private final int abi;
     private final Map<String, Integer> statuses;
     private final Map<String, Integer> outcomes;
-    private final List<Function> runtime;
     private final List<CaseCrossing> cases;
     private final List<Module> modules;
 
@@ -76,12 +47,10 @@ public final class Manifest {
      * implement. A construction naming what nothing constructs would be found out by a host, at a
      * call, as something no binding can build.
      */
-    private Manifest(int abi, Map<String, Integer> statuses, Map<String, Integer> outcomes,
-                     List<Function> runtime, List<CaseCrossing> cases, List<Module> modules) {
-        this.abi = abi;
+    private Manifest(Map<String, Integer> statuses, Map<String, Integer> outcomes,
+                     List<CaseCrossing> cases, List<Module> modules) {
         this.statuses = Collections.unmodifiableMap(new LinkedHashMap<>(statuses));
         this.outcomes = Collections.unmodifiableMap(new LinkedHashMap<>(outcomes));
-        this.runtime = List.copyOf(runtime);
         this.cases = List.copyOf(cases);
         this.modules = List.copyOf(modules);
         // One way to make and read each case, and one for every case no declaration names of a
@@ -124,9 +93,20 @@ public final class Manifest {
         }
     }
 
-    /** The ABI generation every function named here answers to. */
-    public int abi() {
-        return abi;
+    /**
+     * A library's model, of what the driver says of it.
+     *
+     * @param statuses every status a function answering one answers, by name
+     * @param outcomes what a reading comes to, by name
+     * @param cases    how a host makes and reads each case no declaration names
+     * @param modules  what each module offers and asks
+     * @throws IllegalArgumentException where what it says is not whole: a case a module hands
+     *         across with nothing to make and read it through, or a construction requiring what
+     *         nothing constructs
+     */
+    public static Manifest of(Map<String, Integer> statuses, Map<String, Integer> outcomes,
+                              List<CaseCrossing> cases, List<Module> modules) {
+        return new Manifest(statuses, outcomes, cases, modules);
     }
 
     /**
@@ -140,11 +120,6 @@ public final class Manifest {
     /** What a reading comes to, by name. */
     public Map<String, Integer> outcomes() {
         return outcomes;
-    }
-
-    /** The runtime's functions a host calls. */
-    public List<Function> runtime() {
-        return runtime;
     }
 
     /**
@@ -172,37 +147,10 @@ public final class Manifest {
      * reaches: each one a host hands over or is handed only through the runtime.
      */
     private static List<Case> carriedIn(Module module) {
-        List<Crossed> crossed = new ArrayList<>();
-        for (Behavior behavior : module.behaviors()) {
-            if (behavior.call() instanceof Reach.Available<Call>(Call call)) {
-                crossed.addAll(Crossed.of(behavior.parameters().types(), call.signature().takes()));
-                crossed.add(new Crossed(behavior.answers().type(), call.signature().answers()));
-            }
-        }
-        for (Injection injection : module.injections()) {
-            crossed.addAll(Crossed.of(injection.parameters().stream().map(NamedParameter::type)
-                    .toList(), injection.signature().takes()));
-            crossed.add(new Crossed(injection.answers(), injection.signature().answers()));
-        }
-        for (PublishedValue value : module.values()) {
-            if (value.read() instanceof Reach.Available<Call>(Call call)) {
-                crossed.add(new Crossed(value.type(), call.signature().answers()));
-            }
-        }
-        for (Declaration declaration : module.declarations()) {
-            for (Field field : declaration.fields()) {
-                if (field.read() instanceof Reach.Available<Read>(Read read)) {
-                    crossed.add(new Crossed(field.type(), read.answers()));
-                }
-            }
-            if (Declaration.built(declaration) instanceof Construct construct) {
-                crossed.addAll(Crossed.of(declaration.fields().stream().map(Field::type).toList(),
-                        construct.takes()));
-            }
-        }
         List<Case> carried = new ArrayList<>();
-        for (Crossed it : crossed) {
-            it.carried(carried);
+        for (ValueCrossing crossing : Module.crossed(module.behaviors(), module.injections(),
+                module.values(), module.declarations())) {
+            carried(crossing, carried);
         }
         for (Declaration declaration : module.declarations()) {
             if (declaration instanceof Declaration.Sum sum && sum.which() != null) {
@@ -213,55 +161,27 @@ public final class Manifest {
         return carried;
     }
 
-    /** A type, and the shape a value of it crosses in. */
-    private record Crossed(Type type, Shape shape) {
-
-        private static List<Crossed> of(List<Type> types, List<Shape> shapes) {
-            List<Crossed> crossed = new ArrayList<>();
-            for (int at = 0; at < types.size(); at++) {
-                crossed.add(new Crossed(types.get(at), shapes.get(at)));
+    /**
+     * Every case no declaration names of a union that crosses in {@code crossing} as one value,
+     * into {@code carried}: where a union crosses as a {@code VALUE}, a value of such a case is made
+     * and read through the runtime ({@link Manifest#cases}).
+     */
+    private static void carried(ValueCrossing crossing, List<Case> carried) {
+        switch (crossing) {
+            case ValueCrossing.Union it -> {
+                if (it.word() == Word.VALUE) {
+                    it.type().cases().stream().filter(c -> !(c instanceof Case.Declared))
+                            .forEach(carried::add);
+                }
             }
-            return crossed;
-        }
-
-        /**
-         * Every case no declaration names of a union that crosses here as one value, into {@code
-         * carried}: where the manifest says a union crosses as a {@code VALUE}, a value of such a
-         * case is made and read through the runtime ({@link Manifest#cases}). Followed only where
-         * the type and the shape are made alike; how else a type crosses is the driver's to say, and
-         * nothing here holds it to one way.
-         */
-        private void carried(List<Case> carried) {
-            switch (shape) {
-                case Shape.Leaf leaf -> {
-                    if (type instanceof Type.Union union && leaf.word() == Word.VALUE) {
-                        union.cases().stream().filter(it -> !(it instanceof Case.Declared))
-                                .forEach(carried::add);
-                    }
-                }
-                case Shape.Option option -> {
-                    if (type instanceof Type.Option it) {
-                        new Crossed(it.of(), option.of()).carried(carried);
-                    }
-                }
-                case Shape.Product product -> {
-                    if (type instanceof Type.Tuple it && it.of().size() == product.of().size()) {
-                        of(it.of(), product.of()).forEach(member -> member.carried(carried));
-                    }
-                }
-                case Shape.ListOf list -> {
-                    if (Type.listed(type) instanceof Type element) {
-                        new Crossed(element, list.element()).carried(carried);
-                    }
-                }
-                case Shape.FunctionOf function -> {
-                    if (type instanceof Type.Function it
-                            && it.takes().size() == function.signature().takes().size()) {
-                        of(it.takes(), function.signature().takes())
-                                .forEach(taken -> taken.carried(carried));
-                        new Crossed(it.answers(), function.signature().answers()).carried(carried);
-                    }
-                }
+            case ValueCrossing.Primitive it -> { }
+            case ValueCrossing.Handle it -> { }
+            case ValueCrossing.Optional it -> carried(it.of(), carried);
+            case ValueCrossing.Tuple it -> it.members().forEach(member -> carried(member, carried));
+            case ValueCrossing.Listed it -> carried(it.element(), carried);
+            case ValueCrossing.FunctionValue it -> {
+                it.takes().forEach(taken -> carried(taken, carried));
+                carried(it.answers(), carried);
             }
         }
     }
@@ -271,10 +191,46 @@ public final class Manifest {
         return modules;
     }
 
-    /** One word a host hands over or is handed. */
+    /**
+     * What a word is on the machine, as the ABI generation records it: what a generator writes a
+     * word's type from, so that no generator states a width of its own.
+     */
+    public enum Representation {
+        /** Eight bits, read without a sign. */
+        U8,
+        /** Thirty-two bits, read without a sign. */
+        U32,
+        /** Thirty-two bits, read with a sign. */
+        I32,
+        /** Sixty-four bits, read with a sign. */
+        I64,
+        /** An address, as wide as the machine's. */
+        ADDRESS
+    }
+
+    /** One word a host hands over or is handed, and what it is on the machine. */
     public enum Word {
-        STATUS, INT, BOOL, CASE, OUTCOME, COUNT, MARK, BYTES, VALUE, STRING, DECIMAL, DATE, TIME,
-        DATETIME, INSTANT, DECODED, ISSUE, LIST, REQUIREMENTS, CAPABILITY, USERDATA, FUNCTION
+        STATUS(Representation.U32), INT(Representation.I64), BOOL(Representation.U8),
+        CASE(Representation.U32), OUTCOME(Representation.I32), COUNT(Representation.I64),
+        SCOPE(Representation.I64), BYTES(Representation.ADDRESS), VALUE(Representation.ADDRESS),
+        STRING(Representation.ADDRESS), DECIMAL(Representation.ADDRESS),
+        DATE(Representation.ADDRESS), TIME(Representation.ADDRESS),
+        DATETIME(Representation.ADDRESS), INSTANT(Representation.ADDRESS),
+        DECODED(Representation.ADDRESS), ISSUE(Representation.ADDRESS),
+        LIST(Representation.ADDRESS), REQUIREMENTS(Representation.ADDRESS),
+        CAPABILITY(Representation.ADDRESS), USERDATA(Representation.ADDRESS),
+        FUNCTION(Representation.ADDRESS);
+
+        private final Representation representation;
+
+        Word(Representation representation) {
+            this.representation = representation;
+        }
+
+        /** What the word is on the machine. */
+        public Representation representation() {
+            return representation;
+        }
     }
 
     /**
@@ -424,8 +380,8 @@ public final class Manifest {
         record Available<T>(T it) implements Reach<T> {
         }
 
-        /** Why nothing does. */
-        record Unavailable<T>(Refusal refusal) implements Reach<T> {
+        /** Nothing does: the model has the thing, and a host has no way to it. */
+        record Unavailable<T>() implements Reach<T> {
         }
 
         /** What reaches it, or null where nothing does. */
@@ -434,87 +390,55 @@ public final class Manifest {
         }
     }
 
-    /**
-     * Why a host has no way to a value: what stands in the way, and where in what the function
-     * would hand over or be handed it stands, from the outside in. A binding says it in its own
-     * language's words.
-     */
-    public record Refusal(Reason reason, List<Step> path) {
-
-        public Refusal {
-            path = List.copyOf(path);
-        }
-    }
-
-    /** What stands in the way of a value crossing to a host. */
-    public enum Reason {
-        /**
-         * A type with no representation for a host: a {@code Rational}, which has no external
-         * form, and a set or a map in what a function value takes or answers.
-         */
-        NO_REPRESENTATION,
-        /** A type with no value to hand over. */
-        NO_VALUE,
-        /** A union a host would be handed with nothing to say which case it is. */
-        NO_DISCRIMINATOR
-    }
-
-    /** One step into what a function hands over or is handed. */
-    public sealed interface Step {
-
-        /** What is taken at this place, counted from nought. */
-        record Takes(int at) implements Step {
-        }
-
-        /** What is answered. */
-        record Answers() implements Step {
-        }
-
-        /** A field of a declared type, by its name. */
-        record Field(String name) implements Step {
-        }
-
-        /** What an optional holds. */
-        record Option() implements Step {
-        }
-
-        /** A tuple's member at this place. */
-        record Member(int at) implements Step {
-        }
-
-        /** A list's element. */
-        record Element() implements Step {
-        }
-    }
-
     /** A behavior's or a published value's call, and the shape each value it takes and answers crosses in. */
-    public record Call(Function function, Signature signature) {
+    /**
+     * What a function takes and answers, each as the value it is crossing in the shape it crosses
+     * in: what a behavior, a published value or a behavior a host implements is called with and
+     * answers.
+     */
+    public record Crossings(List<ValueCrossing> takes, ValueCrossing answers) {
+
+        public Crossings {
+            takes = List.copyOf(takes);
+        }
+
+        /** The shapes the values cross in. */
+        public Signature signature() {
+            return new Signature(ValueCrossing.shapes(takes), answers.shape());
+        }
+    }
+
+    /** A behavior's or a published value's call, and how each value it takes and answers crosses. */
+    public record Call(Function function, Crossings crossings) {
 
         /**
          * Refuses this unless its function takes what it was constructed with first where
-         * {@code constructed}, then what the signature takes, then room for what it answers, and
-         * answers a status.
+         * {@code constructed}, then what it takes, then room for what it answers, and answers a
+         * status.
          */
         private void calls(boolean constructed) {
+            Signature signature = crossings.signature();
             function.takes(constructed ? List.of(Parameter.given(Word.REQUIREMENTS)) : List.of(),
                     signature.takes(), List.of(signature.answers()), Word.STATUS);
         }
     }
 
-    /** A declared type's constructor, and the shape each field is handed over in. */
-    public record Construct(Function function, List<Shape> takes) {
+    /** A declared type's constructor, and how each field is handed over. */
+    public record Construct(Function function, List<ValueCrossing> takes) {
 
         public Construct {
             takes = List.copyOf(takes);
-            function.takes(List.of(), takes, List.of(new Shape.Leaf(Word.VALUE)), Word.STATUS);
+            function.takes(List.of(), ValueCrossing.shapes(takes),
+                    List.of(new Shape.Leaf(Word.VALUE)), Word.STATUS);
         }
     }
 
-    /** A field's reader, and the shape the field is handed over in. */
-    public record Read(Function function, Shape answers) {
+    /** A field's reader, and how the field is handed over. */
+    public record Read(Function function, ValueCrossing answers) {
 
         public Read {
-            function.takes(List.of(Parameter.given(Word.VALUE)), List.of(), List.of(answers), null);
+            function.takes(List.of(Parameter.given(Word.VALUE)), List.of(),
+                    List.of(answers.shape()), null);
         }
     }
 
@@ -601,6 +525,43 @@ public final class Manifest {
             }
         }
 
+        /**
+         * Every value that crosses anywhere in a module made of these, as it crosses: what each
+         * behavior, published value and behavior a host implements takes and answers, what each
+         * constructor takes, and each field read.
+         */
+        private static List<ValueCrossing> crossed(List<Behavior> behaviors, List<Injection> injections,
+                                                   List<PublishedValue> values,
+                                                   List<Declaration> declarations) {
+            List<ValueCrossing> crossed = new ArrayList<>();
+            java.util.function.Consumer<Crossings> both = it -> {
+                crossed.addAll(it.takes());
+                crossed.add(it.answers());
+            };
+            behaviors.forEach(it -> {
+                if (it.call().available() instanceof Call call) {
+                    both.accept(call.crossings());
+                }
+            });
+            injections.forEach(it -> both.accept(it.crossings()));
+            values.forEach(it -> {
+                if (it.read().available() instanceof Call call) {
+                    both.accept(call.crossings());
+                }
+            });
+            for (Declaration declaration : declarations) {
+                if (Declaration.built(declaration) instanceof Construct construct) {
+                    crossed.addAll(construct.takes());
+                }
+                for (Field field : declaration.fields()) {
+                    if (field.read().available() instanceof Read read) {
+                        crossed.add(read.answers());
+                    }
+                }
+            }
+            return crossed;
+        }
+
         /** A shape said somewhere in a module, and the way a value crossing in it crosses there. */
         private record Crossing(Shape shape, Way way) {
         }
@@ -624,22 +585,22 @@ public final class Manifest {
             };
             behaviors.forEach(it -> {
                 if (it.call().available() instanceof Call call) {
-                    signed.accept(call.signature(), Way.GIVEN);
+                    signed.accept(call.crossings().signature(), Way.GIVEN);
                 }
             });
-            injections.forEach(it -> signed.accept(it.signature(), Way.HANDED));
+            injections.forEach(it -> signed.accept(it.crossings().signature(), Way.HANDED));
             values.forEach(it -> {
                 if (it.read().available() instanceof Call call) {
-                    signed.accept(call.signature(), Way.GIVEN);
+                    signed.accept(call.crossings().signature(), Way.GIVEN);
                 }
             });
             for (Declaration declaration : declarations) {
                 if (Declaration.built(declaration) instanceof Construct construct) {
-                    construct.takes().forEach(it -> crossings.add(new Crossing(it, Way.GIVEN)));
+                    construct.takes().forEach(it -> crossings.add(new Crossing(it.shape(), Way.GIVEN)));
                 }
                 for (Field field : declaration.fields()) {
                     if (field.read().available() instanceof Read read) {
-                        crossings.add(new Crossing(read.answers(), Way.HANDED));
+                        crossings.add(new Crossing(read.answers().shape(), Way.HANDED));
                     }
                 }
             }
@@ -677,7 +638,8 @@ public final class Manifest {
      * What a list whose elements cross in the shape {@code element} is built through, where a host
      * hands one over, and read through, where it is handed one: a list of one declared type
      * through the same functions as a list of any other. Each function is of the shape a list of
-     * that element is: {@code (count, a slice for each word an element crosses as) -> list}, and
+     * that element is: {@code (count, a slice for each word an element crosses as, room for the list)
+     * -> bool}, answering whether the count is one a list has, and
      * {@code (list) -> count} and {@code (list, index, room for each word) -> bool}. At least one
      * of the two is there.
      */
@@ -690,9 +652,11 @@ public final class Manifest {
                         + " read");
             }
             if (construct != null) {
+                // The list written through room, and whether the count was one a list has.
                 List<Parameter> built = new ArrayList<>(List.of(Parameter.given(Word.COUNT)));
                 element.words().forEach(word -> built.add(Parameter.slice(word)));
-                if (!built.equals(construct.takes()) || construct.answers() != Word.LIST) {
+                built.add(Parameter.room(Word.LIST));
+                if (!built.equals(construct.takes()) || construct.answers() != Word.BOOL) {
                     throw new IllegalArgumentException("a list of " + element + " is built through "
                             + construct.name() + ", which takes " + construct.takes()
                             + " and answers " + construct.answers());
@@ -757,6 +721,9 @@ public final class Manifest {
         public Behavior {
             if (call.available() instanceof Call it) {
                 it.calls(true);
+                agree(ValueCrossing.types(it.crossings().takes()), parameters.types(),
+                        "what " + name + " takes");
+                agree(it.crossings().answers().type(), answers.type(), "what " + name + " answers");
             }
             UnionAnswer union = answers.union();
             if (union != null && (union.which() != null) != (call.available() != null)) {
@@ -824,6 +791,13 @@ public final class Manifest {
      * case in it, and a binding telling a value apart by which of none it is would have nothing to
      * make of it.
      */
+    /** Refuses {@code crossing} as {@code of} unless it is what the model says it is. */
+    private static void agree(Object crossing, Object said, String of) {
+        if (!crossing.equals(said)) {
+            throw new IllegalArgumentException(of + " crosses as " + crossing + ", and is " + said);
+        }
+    }
+
     private static List<Case> oneOrMore(List<Case> cases, String of) {
         if (cases.isEmpty()) {
             throw new IllegalArgumentException(of + " with no case in it");
@@ -866,11 +840,15 @@ public final class Manifest {
      * capability, room for a souther_hosted, the implementation, what it is handed first)}.
      */
     public record Injection(String name, List<NamedParameter> parameters, Type answers,
-                            Signature signature, Implementation implementation, String implement) {
+                            Crossings crossings, Implementation implementation, String implement) {
 
         public Injection {
             parameters = List.copyOf(parameters);
-            implementation.answering(signature);
+            implementation.answering(crossings.signature());
+            agree(ValueCrossing.types(crossings.takes()),
+                    parameters.stream().map(NamedParameter::type).toList(),
+                    "what " + name + " takes");
+            agree(crossings.answers().type(), answers, "what " + name + " answers");
         }
     }
 
@@ -897,10 +875,11 @@ public final class Manifest {
         public PublishedValue {
             if (read.available() instanceof Call call) {
                 call.calls(false);
-                if (!call.signature().takes().isEmpty()) {
+                if (!call.crossings().takes().isEmpty()) {
                     throw new IllegalArgumentException("the value " + name + " is read by a"
-                            + " function taking " + call.signature().takes());
+                            + " function taking " + call.crossings().signature().takes());
                 }
+                agree(call.crossings().answers().type(), type, "the value " + name);
             }
         }
     }
@@ -938,18 +917,31 @@ public final class Manifest {
 
         @Nullable Function encode();
 
+        /** Refuses a constructor that takes other than the fields it builds, in order. */
+        private static void constructs(String name, List<Field> fields, Reach<Construct> construct) {
+            if (construct.available() instanceof Construct it) {
+                agree(ValueCrossing.types(it.takes()), fields.stream().map(Field::type).toList(),
+                        "what constructs " + name);
+            }
+        }
+
         record Product(String name, List<Field> fields, Reach<Construct> construct,
                        @Nullable Function decode, @Nullable Function decodeHost,
                        @Nullable Function encode) implements Declaration {
 
             public Product {
                 fields = List.copyOf(fields);
+                constructs(name, fields, construct);
             }
         }
 
         record Newtype(String name, Field field, Reach<Construct> construct,
                        @Nullable Function decode, @Nullable Function decodeHost,
                        @Nullable Function encode) implements Declaration {
+
+            public Newtype {
+                constructs(name, List.of(field), construct);
+            }
 
             @Override
             public List<Field> fields() {
@@ -960,6 +952,10 @@ public final class Manifest {
         record Unit(String name, Reach<Construct> construct, @Nullable Function decode,
                     @Nullable Function decodeHost, @Nullable Function encode)
                 implements Declaration {
+
+            public Unit {
+                constructs(name, List.of(), construct);
+            }
 
             @Override
             public List<Field> fields() {
@@ -990,12 +986,39 @@ public final class Manifest {
 
     /** A field, and what a host reads it through, or why nothing does. */
     public record Field(String name, Type type, Reach<Read> read) {
+
+        public Field {
+            if (read.available() instanceof Read it) {
+                agree(it.answers().type(), type, "the field " + name);
+            }
+        }
+    }
+
+    /**
+     * A primitive the language has, closed: a generator switches over every one, so a primitive
+     * the language gains is a generator that stops compiling rather than one that quietly binds
+     * nothing for it.
+     */
+    public enum Primitive {
+        INT("Int"), STRING("String"), BOOL("Bool"), DECIMAL("Decimal"), RATIONAL("Rational"),
+        DATE("Date"), TIME("Time"), DATETIME("DateTime"), INSTANT("Instant");
+
+        private final String spelt;
+
+        Primitive(String spelt) {
+            this.spelt = spelt;
+        }
+
+        /** Its name as the language spells it. */
+        public String spelt() {
+            return spelt;
+        }
     }
 
     /** A type as the model says it, every one it has. */
     public sealed interface Type {
 
-        record Primitive(String name) implements Type {
+        record Primitive(Manifest.Primitive primitive) implements Type {
         }
 
         record Declared(String module, String name) implements Type {
@@ -1067,7 +1090,7 @@ public final class Manifest {
         }
 
         /** A primitive, carried: made and read through {@link Manifest#cases}. */
-        record Primitive(String name) implements Case {
+        record Primitive(Manifest.Primitive primitive) implements Case {
         }
 
         /** A case the language gives, which holds nothing: made through {@link Manifest#cases}. */
@@ -1093,9 +1116,13 @@ public final class Manifest {
                         + read.name()) + ", where a primitive holds itself and a case the language"
                         + " gives nothing");
             }
-            if (make.answers() != Word.VALUE || (read != null && (!read.takes().equals(
-                    List.of(Parameter.given(Word.VALUE))) || read.answers() == null
-                    || !make.takes().equals(List.of(Parameter.given(read.answers())))))
+            // Read by writing what the value holds through room and answering whether the value is
+            // this case, which is read off the value.
+            if (make.answers() != Word.VALUE || (read != null && (read.takes().size() != 2
+                    || !read.takes().getFirst().equals(Parameter.given(Word.VALUE))
+                    || read.takes().get(1).mode() != Parameter.Mode.ROOM
+                    || read.answers() != Word.BOOL
+                    || !make.takes().equals(List.of(Parameter.given(read.takes().get(1).word())))))
                     || (read == null && !make.takes().isEmpty())) {
                 throw new IllegalArgumentException(of + " is made by " + make + " and read by " + read
                         + ", which are not one value and what it holds, both ways");
@@ -1104,299 +1131,7 @@ public final class Manifest {
 
         /** The word what a value of this case holds is handed over as, where it holds one. */
         public @Nullable Word holds() {
-            return read == null ? null : read.answers();
+            return read == null ? null : read.takes().get(1).word();
         }
     }
-
-    /**
-     * The manifest at {@code path}.
-     *
-     * @throws IllegalArgumentException where it is not one this reads, saying where and why
-     */
-    public static Manifest read(Path path) throws IOException {
-        JsonNode read = JsonMapper.builder().build().readTree(Files.readString(path));
-        // What it says it is, first and alone: a manifest of another version fails on whichever
-        // member moved since, and would say that member is unknown rather than that it is another
-        // version.
-        Says says = SAYS.decode(read).orElseThrow(issues -> new IllegalArgumentException(
-                path + " is not a manifest: " + issues));
-        if (!says.format().equals(FORMAT) || says.version() != VERSION || says.abi() != ABI) {
-            throw new IllegalArgumentException(path + " is version " + says.version() + " of "
-                    + says.format() + " for ABI generation " + says.abi() + ", and this generator"
-                    + " reads version " + VERSION + " of " + FORMAT + " for generation " + ABI);
-        }
-        Result<Manifest> decoded;
-        try {
-            decoded = MANIFEST.decode(read);
-        } catch (IllegalArgumentException broken) {
-            // What a part of it holds of itself, refused where the part is made.
-            throw new IllegalArgumentException(path + " is not a manifest this generator reads: "
-                    + broken.getMessage(), broken);
-        }
-        return decoded.orElseThrow(issues -> new IllegalArgumentException(
-                path + " is not a manifest this generator reads: " + issues));
-    }
-
-    /** What a manifest says it is, read past everything else it says. */
-    private record Says(String format, int version, int abi) {
-    }
-
-    private static final Decoder<JsonNode, Says> SAYS = combine(
-            field("format", string()),
-            field("version", int_()),
-            field("abi", int_())).map(Says::new);
-
-    private static final Decoder<JsonNode, Word> WORD = string().flatMap(written -> {
-        for (Word word : Word.values()) {
-            if (word.name().toLowerCase(java.util.Locale.ROOT).equals(written)) {
-                return Result.ok(word);
-            }
-        }
-        return Result.fail("invalid_value", "no word is spelt " + written);
-    });
-
-    private static final Decoder<JsonNode, Parameter> PARAMETER = oneOf(
-            strict(field("given", WORD).asDecoder().map(Parameter::given), Set.of("given")),
-            strict(field("room", WORD).asDecoder().map(Parameter::room), Set.of("room")),
-            strict(field("slice", WORD).asDecoder().map(Parameter::slice), Set.of("slice")));
-
-    private static final Decoder<JsonNode, Function> FUNCTION = combine(
-            field("name", string()),
-            field("takes", list(PARAMETER)),
-            nullableField("answers", WORD)).strict(Function::new);
-
-    private static final Decoder<JsonNode, Case> CASE = oneOf(
-            combine(field("kind", literal("declared")), field("module", string()),
-                    field("name", string())).strict((kind, module, name) -> new Case.Declared(module, name)),
-            combine(field("kind", literal("primitive")), field("name", string()))
-                    .strict((kind, name) -> new Case.Primitive(name)),
-            combine(field("kind", literal("language")), field("name", string()))
-                    .strict((kind, name) -> new Case.Language(name)));
-
-    private static final Decoder<JsonNode, CaseCrossing> CASE_CROSSING = combine(
-            field("case", CASE),
-            field("make", FUNCTION),
-            nullableField("read", FUNCTION)).strict(CaseCrossing::new);
-
-    private static final Decoder<JsonNode, Type> TYPE = lazy(Manifest::type);
-
-    private static Decoder<JsonNode, Type> type() {
-        return oneOf(
-                combine(field("kind", literal("primitive")), field("name", string()))
-                        .strict((kind, name) -> new Type.Primitive(name)),
-                combine(field("kind", literal("declared")), field("module", string()),
-                        field("name", string()))
-                        .strict((kind, module, name) -> new Type.Declared(module, name)),
-                combine(field("kind", literal("union")), field("cases", list(CASE)))
-                        .strict((kind, cases) -> new Type.Union(cases)),
-                combine(field("kind", literal("option")), field("of", TYPE))
-                        .strict((kind, of) -> new Type.Option(of)),
-                combine(field("kind", literal("tuple")), field("of", list(TYPE)))
-                        .strict((kind, of) -> new Type.Tuple(of)),
-                combine(field("kind", literal("function")), field("takes", list(TYPE)),
-                        field("answers", TYPE))
-                        .strict((kind, takes, answers) -> new Type.Function(takes, answers)),
-                combine(field("kind", literal("list")), field("of", TYPE))
-                        .strict((kind, of) -> new Type.ListOf(of)),
-                combine(field("kind", literal("set")), field("of", TYPE))
-                        .strict((kind, of) -> new Type.SetOf(of)),
-                combine(field("kind", literal("map")), field("key", TYPE), field("value", TYPE))
-                        .strict((kind, key, value) -> new Type.MapOf(key, value)),
-                strict(field("kind", literal("nothing")).asDecoder()
-                        .<Type>map(kind -> new Type.Nothing()), Set.of("kind")),
-                strict(field("kind", literal("never")).asDecoder()
-                        .<Type>map(kind -> new Type.Never()), Set.of("kind")));
-    }
-
-    private static final Decoder<JsonNode, Shape> SHAPE = lazy(Manifest::shape);
-
-    private static final Decoder<JsonNode, Signature> SIGNATURE = lazy(() -> combine(
-            field("takes", list(SHAPE)),
-            field("answers", SHAPE)).strict(Signature::new));
-
-    /** A leaf's word, which is one of {@link Shape.Leaf#WORDS}: what a value is handed over whole as. */
-    private static final Decoder<JsonNode, Word> LEAF = WORD.flatMap(word ->
-            Shape.Leaf.WORDS.contains(word)
-                    ? Result.ok(word)
-                    : Result.fail("invalid_value", word + " is not a value handed over whole"));
-
-    private static Decoder<JsonNode, Shape> shape() {
-        return oneOf(
-                strict(field("leaf", LEAF).asDecoder().<Shape>map(Shape.Leaf::new), Set.of("leaf")),
-                strict(field("option", SHAPE).asDecoder().<Shape>map(Shape.Option::new),
-                        Set.of("option")),
-                strict(field("product", list(SHAPE)).asDecoder().<Shape>map(Shape.Product::new),
-                        Set.of("product")),
-                strict(field("list", SHAPE).asDecoder().<Shape>map(Shape.ListOf::new),
-                        Set.of("list")),
-                strict(field("function", SIGNATURE).asDecoder().<Shape>map(Shape.FunctionOf::new),
-                        Set.of("function")));
-    }
-
-    private static final Decoder<JsonNode, Reason> REASON = string().flatMap(written -> {
-        for (Reason reason : Reason.values()) {
-            if (reason.name().toLowerCase(java.util.Locale.ROOT).equals(written)) {
-                return Result.ok(reason);
-            }
-        }
-        return Result.fail("invalid_value", "no reason is spelt " + written);
-    });
-
-    private static final Decoder<JsonNode, Step> STEP = oneOf(
-            literal("answers").<Step>map(it -> new Step.Answers()),
-            literal("option").<Step>map(it -> new Step.Option()),
-            literal("element").<Step>map(it -> new Step.Element()),
-            strict(field("takes", int_()).asDecoder().<Step>map(Step.Takes::new), Set.of("takes")),
-            strict(field("member", int_()).asDecoder().<Step>map(Step.Member::new),
-                    Set.of("member")),
-            strict(field("field", string()).asDecoder().<Step>map(Step.Field::new),
-                    Set.of("field")));
-
-    private static final Decoder<JsonNode, Refusal> REFUSAL = combine(
-            field("reason", REASON),
-            field("path", list(STEP))).strict(Refusal::new);
-
-    /** What reaches a value as {@code of} reads it, or why nothing does. */
-    private static <T> Decoder<JsonNode, Reach<T>> reach(Decoder<JsonNode, T> of) {
-        return oneOf(
-                strict(field("available", of).asDecoder()
-                        .<Reach<T>>map(Reach.Available::new), Set.of("available")),
-                strict(field("unavailable", REFUSAL).asDecoder()
-                        .<Reach<T>>map(Reach.Unavailable::new), Set.of("unavailable")));
-    }
-
-    private static final Decoder<JsonNode, Call> CALL = combine(
-            field("function", FUNCTION),
-            field("signature", SIGNATURE)).strict(Call::new);
-
-    private static final Decoder<JsonNode, Construct> CONSTRUCT = combine(
-            field("function", FUNCTION),
-            field("takes", list(SHAPE))).strict(Construct::new);
-
-    private static final Decoder<JsonNode, Read> READ = combine(
-            field("function", FUNCTION),
-            field("answers", SHAPE)).strict(Read::new);
-
-    private static final Decoder<JsonNode, NamedParameter> NAMED_PARAMETER = combine(
-            field("name", string()), field("type", TYPE)).strict(NamedParameter::new);
-
-    private static final Decoder<JsonNode, Parameters> PARAMETERS = oneOf(
-            strict(field("named", list(NAMED_PARAMETER)).asDecoder()
-                    .<Parameters>map(Parameters.Named::new), Set.of("named")),
-            strict(field("positional", list(TYPE)).asDecoder()
-                    .<Parameters>map(Parameters.Positional::new), Set.of("positional")));
-
-    private static final Decoder<JsonNode, UnionAnswer> UNION_ANSWER = combine(
-            field("cases", list(CASE)),
-            nullableField("case", FUNCTION)).strict(UnionAnswer::new);
-
-    private static final Decoder<JsonNode, Answer> ANSWER = combine(
-            field("type", TYPE),
-            nullableField("union", UNION_ANSWER)).strict(Answer::new);
-
-    private static final Decoder<JsonNode, Required> REQUIRED = combine(
-            field("module", string()),
-            field("name", string())).strict(Required::new);
-
-    private static final Decoder<JsonNode, Behavior> BEHAVIOR = combine(
-            field("name", string()),
-            field("parameters", PARAMETERS),
-            field("answers", ANSWER),
-            field("call", reach(CALL))).strict(Behavior::new);
-
-    private static final Decoder<JsonNode, Construction> CONSTRUCTION = combine(
-            field("name", string()),
-            field("requires", list(REQUIRED)),
-            nullableField("bind", FUNCTION)).strict(Construction::new);
-
-    private static final Decoder<JsonNode, Implementation> IMPLEMENTATION = combine(
-            field("type", string()),
-            field("takes", list(PARAMETER)),
-            field("answers", WORD)).strict(Implementation::new);
-
-    private static final Decoder<JsonNode, Injection> INJECTION = combine(
-            field("name", string()),
-            field("parameters", list(NAMED_PARAMETER)),
-            field("answers", TYPE),
-            field("signature", SIGNATURE),
-            field("implementation", IMPLEMENTATION),
-            field("implement", string())).strict(Injection::new);
-
-    private static final Decoder<JsonNode, PublishedValue> VALUE = combine(
-            field("name", string()),
-            field("type", TYPE),
-            field("read", reach(CALL))).strict(PublishedValue::new);
-
-    private static final Decoder<JsonNode, Field> FIELD = combine(
-            field("name", string()),
-            field("type", TYPE),
-            field("read", reach(READ))).strict(Field::new);
-
-    private static final Decoder<JsonNode, Declaration> DECLARATION = oneOf(
-            combine(field("kind", literal("product")), field("name", string()),
-                    field("fields", list(FIELD)), field("construct", reach(CONSTRUCT)),
-                    nullableField("decode", FUNCTION), nullableField("decodehost", FUNCTION),
-                    nullableField("encode", FUNCTION))
-                    .strict((kind, name, fields, construct, decode, decodeHost, encode) ->
-                            new Declaration.Product(name, fields, construct, decode, decodeHost,
-                                    encode)),
-            combine(field("kind", literal("newtype")), field("name", string()),
-                    field("field", FIELD), field("construct", reach(CONSTRUCT)),
-                    nullableField("decode", FUNCTION), nullableField("decodehost", FUNCTION),
-                    nullableField("encode", FUNCTION))
-                    .strict((kind, name, held, construct, decode, decodeHost, encode) ->
-                            new Declaration.Newtype(name, held, construct, decode, decodeHost,
-                                    encode)),
-            combine(field("kind", literal("unit")), field("name", string()),
-                    field("construct", reach(CONSTRUCT)), nullableField("decode", FUNCTION),
-                    nullableField("decodehost", FUNCTION), nullableField("encode", FUNCTION))
-                    .strict((kind, name, construct, decode, decodeHost, encode) ->
-                            new Declaration.Unit(name, construct, decode, decodeHost, encode)),
-            combine(field("kind", literal("sum")), field("name", string()),
-                    field("cases", list(CASE)), nullableField("case", FUNCTION),
-                    nullableField("decode", FUNCTION), nullableField("decodehost", FUNCTION),
-                    nullableField("encode", FUNCTION))
-                    .strict((kind, name, cases, which, decode, decodeHost, encode) ->
-                            new Declaration.Sum(name, cases, which, decode, decodeHost,
-                                    encode)));
-
-    private static final Decoder<JsonNode, ListRead> LIST_READ = combine(
-            field("length", FUNCTION),
-            field("at", FUNCTION)).strict(ListRead::new);
-
-    private static final Decoder<JsonNode, ListCrossing> LIST_CROSSING = combine(
-            field("element", SHAPE),
-            nullableField("construct", FUNCTION),
-            nullableField("read", LIST_READ)).strict(ListCrossing::new);
-
-    private static final Decoder<JsonNode, FunctionMaking> FUNCTION_MAKING = combine(
-            field("implementation", IMPLEMENTATION),
-            field("implement", string())).strict(FunctionMaking::new);
-
-    private static final Decoder<JsonNode, FunctionCrossing> FUNCTION_CROSSING = combine(
-            field("signature", SIGNATURE),
-            nullableField("call", FUNCTION),
-            nullableField("make", FUNCTION_MAKING)).strict(FunctionCrossing::new);
-
-    private static final Decoder<JsonNode, Module> MODULE = combine(
-            field("name", string()),
-            field("behaviors", list(BEHAVIOR)),
-            field("constructions", list(CONSTRUCTION)),
-            field("injections", list(INJECTION)),
-            field("values", list(VALUE)),
-            field("declarations", list(DECLARATION)),
-            field("lists", list(LIST_CROSSING)),
-            field("functions", list(FUNCTION_CROSSING))).strict(Module::new);
-
-    private static final Decoder<JsonNode, Manifest> MANIFEST = combine(
-            field("format", string()),
-            field("version", int_()),
-            field("abi", int_()),
-            field("statuses", map(int_())),
-            field("outcomes", map(int_())),
-            field("runtime", list(FUNCTION)),
-            field("cases", list(CASE_CROSSING)),
-            field("modules", list(MODULE)))
-            .strict((format, version, abi, statuses, outcomes, runtime, cases, modules) ->
-                    new Manifest(abi, statuses, outcomes, runtime, cases, modules));
 }

@@ -63,27 +63,26 @@ use souther_native_abi::{
     DATETIME_LITERAL, DATETIME_MINUTES_BETWEEN, DATETIME_TO_DATE, DATETIME_TO_TIME, DECIMAL_ADD,
     DECIMAL_COMPARE, DECIMAL_DIVIDE, DECIMAL_FROM_INT, DECIMAL_HASH, DECIMAL_IS_ZERO,
     DECIMAL_LITERAL, DECIMAL_MULTIPLY, DECIMAL_NEGATE, DECIMAL_ROUND, DECIMAL_SUBTRACT,
-    DECIMAL_TO_INT, EXAMPLE_STATUSES, FAKE_NO_OUTPUT, HASH_COMBINE, HELD, HOST_STATUSES,
-    INJECTION_UNBOUND, INSTANT_COMPARE, INSTANT_HASH, INSTANT_LITERAL, LANGUAGE_UNITS, LIST_LENGTH,
-    MAP_CONTAINS_KEY, MAP_EMPTY, MAP_EQUAL, MAP_FROM_LIST, MAP_GET, MAP_HASH, MAP_INSERT, MAP_KEYS,
-    MAP_REMOVE, MAP_SIZE, MAP_TO_LIST, MAP_VALUES, NO_FAILED_CLAUSE, NOTHING, Parameter,
-    RATIONAL_ADD, RATIONAL_COMPARE, RATIONAL_DIVIDE, RATIONAL_FROM_DECIMAL, RATIONAL_FROM_INT,
-    RATIONAL_HAS_FINITE_DECIMAL, RATIONAL_HASH, RATIONAL_IS_WHOLE, RATIONAL_IS_ZERO,
-    RATIONAL_MULTIPLY, RATIONAL_NEGATE, RATIONAL_SUBTRACT, RATIONAL_TO_DECIMAL,
-    RATIONAL_TO_FINITE_DECIMAL, RATIONAL_TO_INT, RATIONAL_TO_WHOLE, SET_CONTAINS, SET_DIFFERENCE,
-    SET_EMPTY, SET_EQUAL, SET_FROM_LIST, SET_HASH, SET_INSERT, SET_INTERSECTION, SET_REMOVE,
-    SET_SIZE, SET_TO_LIST, SET_UNION, SLOT, STRING_CHARACTERS, STRING_CODE_POINT_VALUES,
-    STRING_CODE_POINTS, STRING_COMPARE, STRING_CONCAT, STRING_CONCAT_ALL, STRING_CONTAINS,
-    STRING_ENDS_WITH, STRING_FROM_DECIMAL, STRING_FROM_INT, STRING_HASH, STRING_JOIN, STRING_LINES,
-    STRING_LOWERCASE, STRING_MATCHES, STRING_PAD_LEFT, STRING_PAD_RIGHT, STRING_REPEAT,
-    STRING_REPLACE, STRING_REVERSE, STRING_SLICE, STRING_SPLIT, STRING_STARTS_WITH,
-    STRING_TO_DECIMAL, STRING_TO_INT, STRING_TRIM, STRING_UPPERCASE, STRING_WORDS, Status,
-    TIME_COMPARE, TIME_FROM_PARTS, TIME_HASH, TIME_HOUR, TIME_LITERAL, TIME_MINUTE, TIME_SECOND,
-    TOKEN, WHICH, Word, behavior_symbol, boundary_symbol, built_in_case_symbol,
-    checked_constructor_symbol, constructor_symbol, example_symbol, field_at, generated_call,
-    held_symbol, home_symbol, list_at, member_at, requirement_at, room_for_capability,
-    room_for_carried, room_for_fields, room_for_list, room_for_members, room_for_requirements,
-    spells_a_module, spells_a_name, type_symbol, value_symbol,
+    DECIMAL_TO_INT, FAKE_NO_OUTPUT, HASH_COMBINE, HELD, INJECTION_UNBOUND, INSTANT_COMPARE,
+    INSTANT_HASH, INSTANT_LITERAL, LANGUAGE_UNITS, LIST_LENGTH, MAP_CONTAINS_KEY, MAP_EMPTY,
+    MAP_EQUAL, MAP_FROM_LIST, MAP_GET, MAP_HASH, MAP_INSERT, MAP_KEYS, MAP_REMOVE, MAP_SIZE,
+    MAP_TO_LIST, MAP_VALUES, NO_FAILED_CLAUSE, NOTHING, Parameter, RATIONAL_ADD, RATIONAL_COMPARE,
+    RATIONAL_DIVIDE, RATIONAL_FROM_DECIMAL, RATIONAL_FROM_INT, RATIONAL_HAS_FINITE_DECIMAL,
+    RATIONAL_HASH, RATIONAL_IS_WHOLE, RATIONAL_IS_ZERO, RATIONAL_MULTIPLY, RATIONAL_NEGATE,
+    RATIONAL_SUBTRACT, RATIONAL_TO_DECIMAL, RATIONAL_TO_FINITE_DECIMAL, RATIONAL_TO_INT,
+    RATIONAL_TO_WHOLE, RESERVED, SET_CONTAINS, SET_DIFFERENCE, SET_EMPTY, SET_EQUAL, SET_FROM_LIST,
+    SET_HASH, SET_INSERT, SET_INTERSECTION, SET_REMOVE, SET_SIZE, SET_TO_LIST, SET_UNION, SLOT,
+    STRING_CHARACTERS, STRING_CODE_POINT_VALUES, STRING_CODE_POINTS, STRING_COMPARE, STRING_CONCAT,
+    STRING_CONCAT_ALL, STRING_CONTAINS, STRING_ENDS_WITH, STRING_FROM_DECIMAL, STRING_FROM_INT,
+    STRING_HASH, STRING_JOIN, STRING_LINES, STRING_LOWERCASE, STRING_MATCHES, STRING_PAD_LEFT,
+    STRING_PAD_RIGHT, STRING_REPEAT, STRING_REPLACE, STRING_REVERSE, STRING_SLICE, STRING_SPLIT,
+    STRING_STARTS_WITH, STRING_TO_DECIMAL, STRING_TO_INT, STRING_TRIM, STRING_UPPERCASE,
+    STRING_WORDS, Status, TIME_COMPARE, TIME_FROM_PARTS, TIME_HASH, TIME_HOUR, TIME_LITERAL,
+    TIME_MINUTE, TIME_SECOND, TOKEN, WHICH, Word, behavior_symbol, boundary_symbol,
+    built_in_case_symbol, checked_constructor_symbol, constructor_symbol, example_symbol, field_at,
+    generated_call, held_symbol, home_symbol, list_at, member_at, requirement_at,
+    room_for_capability, room_for_carried, room_for_fields, room_for_list, room_for_members,
+    room_for_requirements, spells_a_module, spells_a_name, type_symbol, value_symbol,
 };
 use specialize::{Instance, InstanceId, Specializations};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -103,10 +102,8 @@ use transport::{
 /// ending without a value, and the two are told apart by which channel answers for them.
 const NO_ARM: u8 = 2;
 
-/// A host handing a list's constructor a count no list holds: below nought, or past what room can
-/// be counted for. A trap for the reason [`NO_ARM`] is one: no Souther computation came to this,
-/// and a status would say one had.
-const COUNT_NO_LIST_HOLDS: u8 = 3;
+// 3 was a host handing a list's constructor a count no list holds, which is a datum and is now
+// answered as that (`HOST_INPUT_CONTRACT`); no trap is for what a host hands over.
 
 /// A walk that writes a value finding its result other than its work expects: a form where work
 /// is about to leave one, or none where work is about to take one. A trap for the reason
@@ -149,24 +146,16 @@ pub const fn native_status(kind: AbortKind) -> Status {
     }
 }
 
-/// That no reason a computation ends is answered with a number the `abi` crate reserves, or with
-/// the number of another reason. Both halves are constants, so a number given twice is a build
+/// That no reason a computation ends is answered with a number the `abi` crate reserves
+/// (`RESERVED`), or with the number of another reason. Both halves are constants, so a number given twice is a build
 /// that stops, and not a status a host reads as one thing when it meant the other.
 const _: () = {
     let mut at = 0;
     while at < AbortKind::ALL.len() {
         let number = native_status(AbortKind::ALL[at]);
         assert!(number != ANSWERED);
-        let mut reserved = 0;
-        while reserved < HOST_STATUSES.len() {
-            assert!(number != HOST_STATUSES[reserved].1);
-            reserved += 1;
-        }
-        let mut reserved = 0;
-        while reserved < EXAMPLE_STATUSES.len() {
-            assert!(number != EXAMPLE_STATUSES[reserved].1);
-            reserved += 1;
-        }
+        // Below the numbers the `abi` crate reserves, which every host status is one of.
+        assert!(number < *RESERVED.start());
         let mut other = 0;
         while other < at {
             assert!(number != native_status(AbortKind::ALL[other]));
@@ -270,9 +259,28 @@ const DECLARATIONS: &str = "souther.ffi.h";
 
 /// The header a C or C++ compiler includes. The same text for every library: what is declared is
 /// in [`DECLARATIONS`], written from the surface once, and this is only what a compiler needs
-/// around it — a guard, the header `int64_t` and the rest come from, and C linkage for C++ — none
-/// of which a reader with no preprocessor could read.
+/// around it — a guard, the header `int64_t` and the rest come from, C linkage for C++, and the
+/// compiler's own measure of the room a host lays out — none of which a reader with no preprocessor
+/// could read.
+///
+/// The declarations say each room as so many `uint64_t` slots, which is how this crate projects
+/// `HOST_STORAGE`; the assertions hold that projection to what the generation records, measured by
+/// the compiler that includes it, so a machine on which the slots are not what the record says is
+/// one no host compiles for, rather than one whose library writes past the room.
 fn header() -> String {
+    let mut measured = String::new();
+    measured.push_str(&format!(
+        "SOUTHER_ASSERT(sizeof(void *) == {SLOT}, \"an address is a slot\");\n"
+    ));
+    for storage in souther_native_abi::HOST_STORAGE {
+        measured.push_str(&format!(
+            "SOUTHER_ASSERT(sizeof({name}) == {size} && SOUTHER_ALIGNOF({name}) == {SLOT}, \
+             \"{name} is {slots} slots, aligned to one\");\n",
+            name = storage.name,
+            size = storage.slots * SLOT,
+            slots = storage.slots,
+        ));
+    }
     format!(
         "/* What a host calls in a Souther program built by souther-native-compiler: the\n \
          * declarations in {DECLARATIONS}, for a C or C++ compiler. */\n\
@@ -291,7 +299,23 @@ fn header() -> String {
          }}\n\
          #endif\n\
          \n\
-         #endif\n"
+         /* The room a host lays out, as this compiler measures it: what ABI generation {generation}\n \
+          * records. Asked of every compiler that can be asked, C11 and C++11 on. */\n\
+         #if defined(__cplusplus) && __cplusplus >= 201103L\n\
+         #define SOUTHER_ASSERT static_assert\n\
+         #define SOUTHER_ALIGNOF alignof\n\
+         #elif !defined(__cplusplus) && defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L\n\
+         #define SOUTHER_ASSERT _Static_assert\n\
+         #define SOUTHER_ALIGNOF _Alignof\n\
+         #endif\n\
+         #ifdef SOUTHER_ASSERT\n\
+         {measured}\
+         #undef SOUTHER_ASSERT\n\
+         #undef SOUTHER_ALIGNOF\n\
+         #endif\n\
+         \n\
+         #endif\n",
+        generation = souther_native_abi::ABI_GENERATION,
     )
 }
 

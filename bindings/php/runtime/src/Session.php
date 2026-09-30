@@ -15,8 +15,8 @@ use Raoh\Path;
 use Raoh\Result;
 
 /**
- * One run of a library: what is made in it stands in the library's arena from the mark the run
- * took, and is handed back when the run ends. A value made in a run is good until then.
+ * One run of a library: what is made in it stands in the scope of the library's arena the run
+ * opened, and is handed back when the run ends. A value made in a run is good until then.
  *
  * Held by the runtime and the binding, and by no host code. A function of a binding asks its
  * `Binding` for the session of the innermost run going on this fiber ({@see Binding::innermostOf()})
@@ -150,8 +150,8 @@ final class Session
     /**
      * @internal The library's functions, to start a computation: construct, read, call.
      *
-     * Only through the innermost run's session. What a computation makes stands after that run's
-     * mark and is dropped when it ends, so one started through an outer session would answer a
+     * Only through the innermost run's session. What a computation makes stands in that run's
+     * scope and is dropped when it ends, so one started through an outer session would answer a
      * value its caller holds for longer than it lives.
      */
     public function call(): FFI
@@ -189,7 +189,7 @@ final class Session
      * @internal A value the library answered, held for this session's run.
      *
      * Asked through the session the value's memory is dropped with, which a binding knows by where
-     * the pointer came from. What a computation answers was made after the mark of the innermost
+     * the pointer came from. What a computation answers was made in the scope of the innermost
      * run, and a computation is started only through that run's session ({@see call()}). What a
      * reader answers is a value the one it was read out of already held, made no later than it, so
      * it is asked through that value's session. What an implementation is handed is asked through
@@ -239,9 +239,11 @@ final class Session
      */
     public function decimal(Decimal $decimal): CData
     {
+        $ffi = $this->ffi();
+        $room = $ffi->new('souther_decimal');
         $unscaled = $decimal->unscaled;
-        return $this->ffi()->souther_decimal_of_parts(
-            $this->bytes($unscaled), strlen($unscaled), $decimal->scale);
+        return $this->made($ffi->souther_decimal_of_parts(
+            $this->bytes($unscaled), strlen($unscaled), $decimal->scale, FFI::addr($room)), $room, 'Decimal');
     }
 
     /** @internal A `Decimal` the library answered, as its integer and its scale. */
@@ -253,54 +255,105 @@ final class Session
     }
 
     /**
-     * @internal A `Date` as the library holds it, made in this run of the text that names it, which
-     * `Date` has already held to a day the library takes.
+     * @internal A `Date` as the library holds it, made in this run of its year, month and day,
+     * which `Date` has already held to a day the library takes.
      */
     public function date(Date $date): CData
     {
-        return $this->ffi()->souther_date_of_iso($this->string((string) $date));
+        return $this->temporal('date', 'souther_date', [$date->year, $date->month, $date->day]);
     }
 
-    /** @internal A `Date` the library answered, read out of the text it writes for one. */
+    /** @internal A `Date` the library answered, as its year, month and day. */
     public function dateOf(CData $date): Date
     {
-        return Calendar::writtenDate($this->text($this->ffi()->souther_date_iso($date)));
+        [$year, $month, $day] = $this->parts('date', $date, 3);
+        return new Date($year, $month, $day);
     }
 
-    /** @internal A `Time` as the library holds it, made in this run of the text that names it. */
+    /** @internal A `Time` as the library holds it, made in this run of its hour, minute and second. */
     public function time(Time $time): CData
     {
-        return $this->ffi()->souther_time_of_iso($this->string((string) $time));
+        return $this->temporal('time', 'souther_time', [$time->hour, $time->minute, $time->second]);
     }
 
-    /** @internal A `Time` the library answered, read out of the text it writes for one. */
+    /** @internal A `Time` the library answered, as its hour, minute and second. */
     public function timeOf(CData $time): Time
     {
-        return Calendar::writtenTime($this->text($this->ffi()->souther_time_iso($time)));
+        [$hour, $minute, $second] = $this->parts('time', $time, 3);
+        return new Time($hour, $minute, $second);
     }
 
-    /** @internal A `DateTime` as the library holds it, made in this run of the text that names it. */
+    /** @internal A `DateTime` as the library holds it, made in this run of its date's and time's parts. */
     public function dateTime(DateTime $dateTime): CData
     {
-        return $this->ffi()->souther_datetime_of_iso($this->string((string) $dateTime));
+        $date = $dateTime->date;
+        $time = $dateTime->time;
+        return $this->temporal('datetime', 'souther_datetime',
+            [$date->year, $date->month, $date->day, $time->hour, $time->minute, $time->second]);
     }
 
-    /** @internal A `DateTime` the library answered, read out of the text it writes for one. */
+    /** @internal A `DateTime` the library answered, as its date's and time's parts. */
     public function dateTimeOf(CData $dateTime): DateTime
     {
-        return Calendar::writtenDateTime($this->text($this->ffi()->souther_datetime_iso($dateTime)));
+        [$year, $month, $day, $hour, $minute, $second] = $this->parts('datetime', $dateTime, 6);
+        return new DateTime(new Date($year, $month, $day), new Time($hour, $minute, $second));
     }
 
-    /** @internal An `Instant` as the library holds it, made in this run of the text that names it. */
+    /** @internal An `Instant` as the library holds it, made in this run of its second and nanosecond. */
     public function instant(Instant $instant): CData
     {
-        return $this->ffi()->souther_instant_of_iso($this->string((string) $instant));
+        return $this->temporal('instant', 'souther_instant', [$instant->second, $instant->nano]);
     }
 
-    /** @internal An `Instant` the library answered, read out of the text it writes for one. */
+    /** @internal An `Instant` the library answered, as its second and nanosecond. */
     public function instantOf(CData $instant): Instant
     {
-        return Calendar::writtenInstant($this->text($this->ffi()->souther_instant_iso($instant)));
+        [$second, $nano] = $this->parts('instant', $instant, 2);
+        return new Instant($second, $nano);
+    }
+
+    /**
+     * The temporal of `$type` the library makes of `$parts`, the numbers it means, each an Int
+     * (souther-native-compiler#137).
+     *
+     * @param list<int> $parts
+     */
+    private function temporal(string $type, string $word, array $parts): CData
+    {
+        $ffi = $this->ffi();
+        $room = $ffi->new($word);
+        $made = $ffi->{'souther_' . $type . '_of_parts'}(...[...$parts, FFI::addr($room)]);
+        return $this->made($made, $room, $type);
+    }
+
+    /**
+     * The `$count` numbers the library writes of the temporal of `$type` at `$value`.
+     *
+     * @return list<int>
+     */
+    private function parts(string $type, CData $value, int $count): array
+    {
+        $ffi = $this->ffi();
+        $rooms = [];
+        for ($at = 0; $at < $count; $at++) {
+            $rooms[] = $ffi->new('int64_t');
+        }
+        $ffi->{'souther_' . $type . '_parts'}($value, ...array_map(fn (CData $room) => FFI::addr($room), $rooms));
+        return array_map(fn (CData $room) => $room->cdata, $rooms);
+    }
+
+    /**
+     * The value a function making one wrote through `$room`, where it answered that it made one. A
+     * value this binding hands over is one of its own classes, each held where it is made to what
+     * the library takes, so a refusal is the library and this binding disagreeing about what a
+     * value is.
+     */
+    private function made(int $made, CData $room, string $what): CData
+    {
+        if ($made === 0) {
+            throw new \LogicException("the library refused as no {$what} the parts this binding holds as one");
+        }
+        return $room;
     }
 
     /** @internal Bytes the library reads for the length of one call and does not keep. */
@@ -340,7 +393,24 @@ final class Session
                 $held[$column][$at] = $word;
             }
         }
-        return $ffi->{$construct}($count, ...$held);
+        $list = $ffi->new('souther_list');
+        return $this->made($ffi->{$construct}($count, ...[...$held, FFI::addr($list)]), $list, 'list');
+    }
+
+    /**
+     * @internal What `$value`, a value of a union the library said is a case holding a primitive,
+     * holds: read by `$read` into room of `$type`, the case's word as the declarations spell it.
+     * The library answers whether the value is that case, and a value it said is and reads as not
+     * is it and this binding disagreeing.
+     */
+    public function carried(string $read, string $type, CData $value): CData
+    {
+        $ffi = $this->ffi();
+        $room = $ffi->new($type);
+        if ($ffi->{$read}($value, FFI::addr($room)) === 0) {
+            throw new \LogicException('the library read a value as a case it said it is not');
+        }
+        return $room;
     }
 
     /**
