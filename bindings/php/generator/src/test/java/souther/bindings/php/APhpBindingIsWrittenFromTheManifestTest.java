@@ -60,11 +60,9 @@ class APhpBindingIsWrittenFromTheManifestTest {
                 let amount = Box(true)
                 """);
 
-        for (Path file : generated.files()) {
-            if (file.toString().endsWith(".php")) {
-                assertThat(Php.compiles(file)).as("%s", file).isTrue();
-            }
-        }
+        assertThat(Php.compiles(generated.files().stream()
+                .filter(file -> file.toString().endsWith(".php")).toList()))
+                .allSatisfy((file, compiles) -> assertThat(compiles).as("%s", file).isTrue());
         assertThat(generated.files()).extracting(it -> generated.root().relativize(it).toString())
                 .contains("Binding.php", "autoload.php", "souther.ffi.h", "M/Found.php",
                         "M/Missing.php", "M/Lookup.php", "M/LookupCodec.php", "M/Box.php",
@@ -355,11 +353,9 @@ class APhpBindingIsWrittenFromTheManifestTest {
                 "function lookupCodec(", "function charged(");
         assertThat(Files.readString(generated.root().resolve("M").resolve("LookupCodec.php")))
                 .contains("final class LookupCodec");
-        for (Path file : generated.files()) {
-            if (file.toString().endsWith(".php")) {
-                assertThat(Php.compiles(file)).as("%s", file).isTrue();
-            }
-        }
+        assertThat(Php.compiles(generated.files().stream()
+                .filter(file -> file.toString().endsWith(".php")).toList()))
+                .allSatisfy((file, compiles) -> assertThat(compiles).as("%s", file).isTrue());
     }
 
     /**

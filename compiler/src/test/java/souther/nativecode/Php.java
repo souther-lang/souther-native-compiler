@@ -5,7 +5,10 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * PHP, as every test runs it.
@@ -42,9 +45,47 @@ public final class Php {
         return ran.printed;
     }
 
-    /** Whether PHP compiles {@code file}, by what it ends with. */
-    public static boolean compiles(Path file) throws IOException, InterruptedException {
-        return run(List.of("-l", file.toString())).status == 0;
+    /**
+     * Whether PHP compiles each of {@code files}, each on its own, asked of one PHP.
+     *
+     * <p>PHP 8.3 and later lint every file {@code -l} is given, each apart from the others: a file
+     * whose error is fatal (a class named {@code int}) ends that file's compile, not the run, and
+     * a class one file declares is not declared to the next. What it ends with says only whether
+     * every file compiled, so each file is read from the line PHP prints for it, in the order they
+     * were given. A PHP that does not print one such line for every file (one before 8.3 lints the
+     * first alone) fails the run rather than answering for the first.
+     */
+    public static Map<Path, Boolean> compiles(List<Path> files)
+            throws IOException, InterruptedException {
+        if (files.isEmpty()) {
+            return Map.of();
+        }
+        if (new HashSet<>(files).size() != files.size()) {
+            throw new IllegalArgumentException("a file asked about twice: " + files);
+        }
+        List<String> arguments = new ArrayList<>();
+        arguments.add("-l");
+        files.forEach(file -> arguments.add(file.toString()));
+        Ran ran = run(arguments);
+        List<String> lines = ran.printed.lines().toList();
+        Map<Path, Boolean> compiles = new LinkedHashMap<>();
+        for (int i = 0; i < files.size() && i < lines.size(); i++) {
+            String file = files.get(i).toString();
+            if (lines.get(i).equals("No syntax errors detected in " + file)) {
+                compiles.put(files.get(i), true);
+            } else if (lines.get(i).equals("Errors parsing " + file)) {
+                compiles.put(files.get(i), false);
+            } else {
+                break;
+            }
+        }
+        if (compiles.size() != files.size() || lines.size() != files.size()
+                || (ran.status == 0) != !compiles.containsValue(false)) {
+            throw new AssertionError("php " + arguments + " did not say of each file, in turn,"
+                    + " whether it compiles; it ended with " + ran.status
+                    + "\nprinted:\n" + ran.printed + "\nsaid:\n" + ran.said);
+        }
+        return compiles;
     }
 
     private record Ran(int status, String printed, String said) {

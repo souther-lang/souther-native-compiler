@@ -8,10 +8,11 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
-import java.util.function.BiConsumer;
 import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -57,6 +58,10 @@ class PhpNamesAreTheOnesPhpTakesTest {
         }
     }
 
+    /** A word put in a place, and the file that puts it there. */
+    private record Question(Place place, String word, Path file) {
+    }
+
     @Test
     void everyNamePhpRefusesIsRefused(@TempDir Path into) throws Exception {
         Path script = into.resolve("candidates.php");
@@ -69,24 +74,30 @@ class PhpNamesAreTheOnesPhpTakesTest {
         // Kelvin sign is a capital K to Java): not the reserved word to PHP.
         candidates.add("brea\u212A");
 
+        // Every file is written first and PHP asked of them all at once: one PHP lints each file
+        // apart from the others, so a name fatal to one file's compile does not end the rest.
+        List<Question> questions = new ArrayList<>();
+        for (String word : candidates) {
+            for (Place place : Place.values()) {
+                Path file = Files.createTempFile(into, place.name(), ".php");
+                Files.writeString(file, place.written.formatted(word), StandardCharsets.UTF_8);
+                questions.add(new Question(place, word, file));
+            }
+        }
+        Map<Path, Boolean> compiles =
+                Php.compiles(questions.stream().map(Question::file).toList());
+
         Set<String> missed = new TreeSet<>();
         Set<String> needless = new TreeSet<>();
-        candidates.parallelStream().forEach(word -> {
-            for (Place place : Place.values()) {
-                boolean phpRefuses = refusedByPhp(into, place, word);
-                boolean refused = refusedHere(place, word);
-                BiConsumer<Set<String>, String> note = (set, it) -> {
-                    synchronized (set) {
-                        set.add(it);
-                    }
-                };
-                if (phpRefuses && !refused) {
-                    note.accept(missed, place + " " + word);
-                } else if (!phpRefuses && refused) {
-                    note.accept(needless, place + " " + word);
-                }
+        for (Question question : questions) {
+            boolean phpRefuses = !compiles.get(question.file());
+            boolean refused = refusedHere(question.place(), question.word());
+            if (phpRefuses && !refused) {
+                missed.add(question.place() + " " + question.word());
+            } else if (!phpRefuses && refused) {
+                needless.add(question.place() + " " + question.word());
             }
-        });
+        }
 
         assertThat(missed).as("names PHP refuses and a binding would write").isEmpty();
         // Refusing more than PHP does costs a model a name it could have had, and is kept only for
@@ -109,20 +120,32 @@ class PhpNamesAreTheOnesPhpTakesTest {
                 List.of("K", "\u212A"),
                 List.of("Stra\u00dfe", "STRASSE"),
                 List.of("Kept", "Kepts"));
+        List<Path> methods = new ArrayList<>();
+        List<Path> classes = new ArrayList<>();
         for (List<String> pair : pairs) {
             String one = pair.get(0);
             String other = pair.get(1);
-
-            Path methods = Files.createTempFile(into, "methods", ".php");
-            Files.writeString(methods, "<?php class C { public function " + one
+            Path twoMethods = Files.createTempFile(into, "methods", ".php");
+            Files.writeString(twoMethods, "<?php class C { public function " + one
                     + "() {} public function " + other + "() {} }\n", StandardCharsets.UTF_8);
-            boolean phpMethods = !Php.compiles(methods);
+            methods.add(twoMethods);
+            Path twoClasses = Files.createTempFile(into, "classes", ".php");
+            Files.writeString(twoClasses, "<?php class " + one + " {} class " + other + " {}\n",
+                    StandardCharsets.UTF_8);
+            classes.add(twoClasses);
+        }
+        List<Path> asked = new ArrayList<>(methods);
+        asked.addAll(classes);
+        Map<Path, Boolean> compiles = Php.compiles(asked);
+
+        for (int i = 0; i < pairs.size(); i++) {
+            String one = pairs.get(i).get(0);
+            String other = pairs.get(i).get(1);
+
+            boolean phpMethods = !compiles.get(methods.get(i));
             assertThat(claimsOne(PhpNames.Claimed.methods("a class"), one, other))
                     .as("the methods %s and %s", one, other).isEqualTo(phpMethods);
 
-            Path classes = Files.createTempFile(into, "classes", ".php");
-            Files.writeString(classes, "<?php class " + one + " {} class " + other + " {}\n",
-                    StandardCharsets.UTF_8);
             Path directory = Files.createTempDirectory(into, "files");
             Files.writeString(directory.resolve(one + ".php"), "one", StandardCharsets.UTF_8);
             Files.writeString(directory.resolve(other + ".php"), "other", StandardCharsets.UTF_8);
@@ -130,7 +153,7 @@ class PhpNamesAreTheOnesPhpTakesTest {
             try (var files = Files.list(directory)) {
                 oneFile = files.count() == 1;
             }
-            boolean phpClasses = !Php.compiles(classes);
+            boolean phpClasses = !compiles.get(classes.get(i));
             if (phpClasses || oneFile) {
                 assertThat(claimsOne(PhpNames.Claimed.classes("a namespace"), one, other))
                         .as("the classes %s and %s", one, other).isTrue();
@@ -158,16 +181,6 @@ class PhpNamesAreTheOnesPhpTakesTest {
             return false;
         } catch (NotBindable refused) {
             return true;
-        }
-    }
-
-    private static boolean refusedByPhp(Path into, Place place, String word) {
-        try {
-            Path file = Files.createTempFile(into, place.name(), ".php");
-            Files.writeString(file, place.written.formatted(word), StandardCharsets.UTF_8);
-            return !Php.compiles(file);
-        } catch (Exception e) {
-            throw new IllegalStateException(e);
         }
     }
 
