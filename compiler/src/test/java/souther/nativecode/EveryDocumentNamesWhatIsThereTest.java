@@ -11,7 +11,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -77,8 +76,12 @@ class EveryDocumentNamesWhatIsThereTest {
 
                 let one: Int = 1
                 """)), into.resolve("native"));
+        // The library is of the generation this command reads, which it refuses to read otherwise;
+        // the record of that generation, and not whichever record is there, says what it has.
+        ManifestReader.read(library.manifest());
+        Path record = ROOT.resolve("native/crates/abi/generations/" + ManifestReader.ABI + ".txt");
         Set<String> there = new HashSet<>();
-        Matcher each = C_NAME.matcher(read(currentRecord())
+        Matcher each = C_NAME.matcher(read(record)
                 + read(library.declarations())
                 + read(library.declarations().resolveSibling("souther.h")));
         while (each.find()) {
@@ -353,16 +356,6 @@ class EveryDocumentNamesWhatIsThereTest {
             assertThat(documents).contains(ROOT.resolve("README.md"),
                     ROOT.resolve("docs/host-abi.md"), ROOT.resolve("docs/writing-a-binding.md"));
             return documents;
-        }
-    }
-
-    /** The record of the newest generation, which is what the runtime is now. */
-    private static Path currentRecord() throws IOException {
-        try (Stream<Path> records = Files.list(ROOT.resolve("native/crates/abi/generations"))) {
-            return records.filter(it -> it.getFileName().toString().matches("\\d+\\.txt"))
-                    .max(Comparator.comparingInt(it ->
-                            Integer.parseInt(it.getFileName().toString().replace(".txt", ""))))
-                    .orElseThrow();
         }
     }
 

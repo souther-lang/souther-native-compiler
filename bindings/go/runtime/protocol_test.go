@@ -36,6 +36,22 @@ func declarations(text string) string {
 // The public surface of the package is what `go doc` says of it, and each protocol is what it said
 // when the protocol was made. A change to it that does not move the protocol is a change to what a
 // generated package calls without a package that says so.
+// A record is of a protocol this package has been, up to [Protocol], and nothing else is kept beside
+// the records: a record of a protocol this is not is one nothing holds to the code.
+func TestNoRecordIsOfAProtocolThisHasNotBeen(t *testing.T) {
+	entries, err := os.ReadDir("protocol")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		var n int
+		if _, err := fmt.Sscanf(entry.Name(), "%d.txt", &n); err != nil ||
+			fmt.Sprintf("%d.txt", n) != entry.Name() || n < 1 || n > Protocol {
+			t.Errorf("protocol/%s is no record of a protocol up to %d", entry.Name(), Protocol)
+		}
+	}
+}
+
 func TestTheSurfaceOfTheRuntimeMovesWithItsProtocol(t *testing.T) {
 	said := surface(t)
 	record := fmt.Sprintf("protocol/%d.txt", Protocol)
